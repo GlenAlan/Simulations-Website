@@ -241,10 +241,20 @@ html.dark-mode .sim-panel-close-button-insIDE {
     position: relative;
     width: 100%;
     padding-top: calc(100% / (var(--aspect-ratio, 2 / 1))); /* Default aspect ratio */
-    background-color: var(--color-bg-sub); /* Added for visual debugging if canvas fails */
+    background-color: var(--color-bg-subtle); /* Shows behind transparent canvases and if the canvas fails */
     border-radius: var(--border-radius-medium);
     border: 1px solid var(--color-border);
     overflow: hidden; /* Ensures canvas stays within bounds */
+}
+@supports (aspect-ratio: 1 / 1) {
+    /* Apply the ratio to the content box (where the canvas is drawn) rather than padding + border,
+       so e.g. a 1/1 canvas is exactly square. The padding-top rule above is the fallback. */
+    .sim-aspect-ratio-box {
+        box-sizing: content-box;
+        width: auto;
+        padding-top: 0;
+        aspect-ratio: var(--aspect-ratio, 2 / 1);
+    }
 }
 
 /* General canvas scaling (re-stated for clarity or overriding, ensure it\'s intended). */
@@ -253,8 +263,6 @@ html.dark-mode .sim-panel-close-button-insIDE {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%; /* Fills the aspect-ratio box. */
     display: block; /* Removes extra space below inline elements. */
     touch-action: none; /* Disables default touch behaviors like pinch-zoom on the canvas. */
-    image-rendering: -webkit-optimize-contrast; /* Improves image rendering sharpness in WebKit. */
-    image-rendering: crisp-edges; /* Improves image rendering sharpness. */
 }
 
 /* Info bar below the canvas for temperature display and reset button */
@@ -338,7 +346,7 @@ html.dark-mode .sim-show-charts-label {
 }
 
 html.dark-mode .sim-show-charts-label:hover .icon {
-    color: var(--color-accent-light);
+    color: var(--color-accent-light, var(--color-accent));
 }
 
 /* Ensure the visually hidden checkbox remains hidden */
@@ -413,7 +421,7 @@ html.dark-mode .sim-reset-button {
 }
 
 html.dark-mode .sim-reset-button:hover .icon {
-    color: var(--color-accent-light); /* Ensure hover color is appropriate for dark mode */
+    color: var(--color-accent-light, var(--color-accent)); /* Ensure hover color is appropriate for dark mode */
 }
 
 
@@ -422,7 +430,7 @@ html.dark-mode .sim-reset-button:hover .icon {
     position: fixed; /* Changed from absolute to ensure it's relative to viewport */
     top: calc(3.5em + var(--sim-button-offset)); /* Position below fixed header (approx 3.5em height) */
     right: var(--sim-button-offset);
-    z-index: 10001; /* Ensure it's above the site header (typically z-index 10000) */
+    z-index: 9999; /* Above simulation content, below the fixed site nav (z-index 10000) so the menu button stays clickable */
     display: flex;
     flex-direction: column; /* Stack buttons vertically */
     gap: 5px; /* Space between buttons for clarity */
@@ -544,6 +552,37 @@ html.dark-mode .sim-panel-toggle-button:hover {
     display: none; /* Typically shown/hidden by JavaScript. */
 }
 
+/* Optional charts below the simulation (shown/hidden by the simulation's JS via style.display).
+   These are low-specificity defaults (just enough to beat main.css's element reset) so any page rule overrides them. */
+div:where(#charts-container) {
+    display: none;
+    max-width: 800px;
+    margin: 10px auto 1.5em auto;
+}
+:where(.sim-charts-row) {
+    display: flex;
+    justify-content: space-around;
+    width: 100%;
+}
+div:where(#charts-container .chart-box) {
+    width: 48%;
+    height: 200px;
+    position: relative;
+    background-color: var(--color-bg-alt);
+    padding: 5px;
+    border-radius: 5px;
+}
+@media (max-width: 600px) {
+    /* Stack the charts on narrow screens (outside fullscreen) so they stay readable. */
+    :where(body:not(.sim-fullscreen-active) .sim-charts-row) {
+        flex-direction: column;
+        gap: 10px;
+    }
+    div:where(body:not(.sim-fullscreen-active) .sim-charts-row .chart-box) {
+        width: 100%;
+    }
+}
+
 /* Styling for the simulation description area. */
 .description-area {
     background-color: var(--color-bg-alt);
@@ -605,8 +644,8 @@ body.sim-fullscreen-active.sim-panel-active .simulation-area-wrapper {
 /* Ensure control panel adapts correctly in fullscreen. */
 body.sim-fullscreen-active .sim-controls-panel {
     /* Panel remains 'position:fixed'. These rules ensure it's correctly sized and positioned. */
-    top: 0 !important; 
-    height: calc(100vh - 60px) !important;
+    top: 0 !important;
+    height: calc(100vh - var(--sim-fullscreen-info-bar-height, 60px)) !important; /* Info bar height is set by simulation_ui.js */
     z-index: 1004; /* Ensures panel is above fullscreen canvas content but below action buttons. */
 }
 
@@ -667,7 +706,7 @@ body.sim-fullscreen-active .sim-canvas-wrapper {
     );
     height: min(
         calc(100vh - 140px), 
-        calc((100vw - 100px) / var(--aspect-ratio, 2))
+        calc((100vw - 100px) / (var(--aspect-ratio, 2)))
     );
     
     /* Ensure it stays within reasonable bounds */
@@ -684,10 +723,14 @@ body.sim-fullscreen-active .sim-canvas-wrapper {
 body.sim-fullscreen-active.sim-panel-active .sim-canvas-wrapper {
     /* Account for panel width in calculations */
     width: min(
-        calc(100vw - 100px - var(--sim-panel-width)), 
+        calc(100vw - 100px - var(--sim-panel-width)),
         calc((100vh - 140px) * var(--aspect-ratio, 2))
     );
-    
+    height: min(
+        calc(100vh - 140px),
+        calc((100vw - 100px - var(--sim-panel-width)) / (var(--aspect-ratio, 2)))
+    );
+
     /* Ensure it stays within reasonable bounds with panel open */
     max-width: calc(100vw - 50px - var(--sim-panel-width));
 }
@@ -695,18 +738,42 @@ body.sim-fullscreen-active.sim-panel-active .sim-canvas-wrapper {
 /* When charts are visible, reduce simulation height dynamically */
 body.sim-fullscreen-active.charts-visible .sim-canvas-wrapper {
     /* Recalculate height accounting for charts (180px + margins ~= 200px) */
+    width: min(
+        calc(100vw - 100px),
+        calc((100vh - 340px) * var(--aspect-ratio, 2))
+    );
     height: min(
-        calc(100vh - 340px), 
-        calc((100vw - 100px) / var(--aspect-ratio, 2))
+        calc(100vh - 340px),
+        calc((100vw - 100px) / (var(--aspect-ratio, 2)))
     );
     max-height: calc(100vh - 320px); /* Reserve space for charts + info bar */
+}
+body.sim-fullscreen-active.sim-panel-active.charts-visible .sim-canvas-wrapper {
+    width: min(
+        calc(100vw - 100px - var(--sim-panel-width)),
+        calc((100vh - 340px) * var(--aspect-ratio, 2))
+    );
+    height: min(
+        calc(100vh - 340px),
+        calc((100vw - 100px - var(--sim-panel-width)) / (var(--aspect-ratio, 2)))
+    );
+}
+
+/* The wrapper is the size container for the aspect-ratio box below. */
+body.sim-fullscreen-active .sim-canvas-wrapper {
+    container-type: size;
 }
 
 /* Aspect ratio box - simplified for fullscreen */
 body.sim-fullscreen-active .sim-aspect-ratio-box {
     /* Use full size of wrapper, let CSS aspect-ratio handle the rest */
+    box-sizing: border-box; /* Sizes below (and inline sizes set by simulations) include the border */
     width: 100%;
     height: 100%;
+    /* Keep the aspect ratio whatever shape the wrapper is (browsers without container query
+       units use the 100% above). Simulations that size this box in JS set inline styles, which win. */
+    width: min(100cqw, 100cqh * (var(--aspect-ratio, 2)));
+    height: min(100cqh, 100cqw / (var(--aspect-ratio, 2)));
     aspect-ratio: var(--aspect-ratio, 2);
     
     /* Remove padding-bottom trick for fullscreen */
@@ -718,7 +785,7 @@ body.sim-fullscreen-active .sim-aspect-ratio-box {
     overflow: hidden;
     border-radius: var(--border-radius-medium);
     border: 1px solid var(--color-border);
-    background-color: var(--color-bg-sub);
+    background-color: var(--color-bg-subtle);
 }
 
 /* General canvas scaling (re-stated for clarity or overriding, ensure it\'s intended). */
@@ -737,7 +804,9 @@ body.sim-fullscreen-active .sim-aspect-ratio-box {
         left: auto; /* Ensure it doesn't stick to 50% */
         transform: none; /* Remove translateX */
         /* top and right are set by JS based on --sim-button-offset */
-    }    /* On mobile, use even less padding and more space for simulation */
+    }
+
+    /* On mobile, use even less padding and more space for simulation */
     body.sim-fullscreen-active .simulation-main-content {
         padding: 5px 5px 55px 5px; /* Minimal padding on mobile */
     }
@@ -745,15 +814,32 @@ body.sim-fullscreen-active .sim-aspect-ratio-box {
     body.sim-fullscreen-active .sim-canvas-wrapper {
         /* On mobile, use almost the full screen with minimal margins */
         width: min(calc(100vw - 60px), calc((100vh - 100px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 100px), calc((100vw - 60px) / var(--aspect-ratio, 2)));
+        height: min(calc(100vh - 100px), calc((100vw - 60px) / (var(--aspect-ratio, 2))));
         max-width: calc(100vw - 60px);
         max-height: calc(100vh - 100px);
     }
     
     /* When charts are visible on mobile, give even less space to simulation */
     body.sim-fullscreen-active.charts-visible .sim-canvas-wrapper {
-        height: min(calc(100vh - 260px), calc((100vw - 60px) / var(--aspect-ratio, 2))); /* Account for charts on mobile */
+        width: min(calc(100vw - 60px), calc((100vh - 260px) * var(--aspect-ratio, 2)));
+        height: min(calc(100vh - 260px), calc((100vw - 60px) / (var(--aspect-ratio, 2)))); /* Account for charts on mobile */
         max-height: calc(100vh - 260px);
+    }
+
+    /* The panel is full width here and covers the simulation, so don't shrink the
+       simulation behind it (that squashed the canvas to a few pixels). */
+    body.sim-fullscreen-active.sim-panel-active .simulation-main-content {
+        margin-right: 0;
+        width: 100%;
+    }
+    body.sim-fullscreen-active.sim-panel-active .sim-canvas-wrapper {
+        width: min(calc(100vw - 60px), calc((100vh - 100px) * var(--aspect-ratio, 2)));
+        height: min(calc(100vh - 100px), calc((100vw - 60px) / (var(--aspect-ratio, 2))));
+        max-width: calc(100vw - 60px);
+    }
+    body.sim-fullscreen-active.sim-panel-active.charts-visible .sim-canvas-wrapper {
+        width: min(calc(100vw - 60px), calc((100vh - 260px) * var(--aspect-ratio, 2)));
+        height: min(calc(100vh - 260px), calc((100vw - 60px) / (var(--aspect-ratio, 2))));
     }
 
     .sim-controls-panel {
@@ -808,11 +894,15 @@ body.sim-fullscreen-active #charts-container {
 }
 
 /* Styling for the individual chart boxes within the container in fullscreen */
-body.sim-fullscreen-active #charts-container .chart-box {
-    /* Inline styles already define width: 48%, position, padding, border-radius. */
-    /* Override height and background for fullscreen consistency. */
-    height: 150px; /* Reduced from 180px to fit better and leave more space */
-    background-color: var(--color-bg-alt); 
+:where(body.sim-fullscreen-active #charts-container .chart-box) {
+    /* Size, padding and radius come from the base chart-box defaults above (200px high). */
+    background-color: var(--color-bg-alt);
+}
+@media (max-height: 600px) {
+    /* Less vertical room in fullscreen on short screens (e.g. phones in landscape). */
+    :where(body.sim-fullscreen-active #charts-container) .chart-box {
+        height: 150px;
+    }
 }
 
 html.dark-mode .sim-info-bar.fullscreen-style .sim-info-item,
@@ -826,5 +916,5 @@ html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button {
 }
 
 html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button .icon {
-    color: var(--color-accent-dark); /* Or specific color for icons in dark mode */
+    color: var(--color-accent-dark, var(--color-accent)); /* Or specific color for icons in dark mode */
 }
