@@ -7,6 +7,8 @@ Allow: /index.html
 Allow: /conduction_simulation.html
 Allow: /convection_simulation.html
 Allow: /radiation_simulation.html
+Allow: /buoyancy_simulation.html
+Allow: /pressure_simulation.html
 Allow: /maxwell_demon_simulation.html
 Allow: /sitemap.html
 
