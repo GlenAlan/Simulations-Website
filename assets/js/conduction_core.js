@@ -266,124 +266,106 @@
         return count > 0 ? (totalEnergy / count) / HOT_ENERGY * HOT_TEMPERATURE_K : 0;
     }
 
-    // --- Heating / cooling ---
-    let heating = false, cooling = false, mX = 0, mY = 0;
+    // --- Heating / cooling tool ---
+    // Mouse or pen: left button heats; right button (or Ctrl+click) cools.
+    // Touch: one finger heats; two or more fingers cool under each finger.
+    const TOOL_NONE = 0, TOOL_HEAT = 1, TOOL_COOL = -1;
+    const touchPoints = new Map();     // pointerId -> {x, y} (CSS px, canvas-relative)
+    let mouseTool = TOOL_NONE;
+    let mousePoint = { x: 0, y: 0 };
+    const brushPoints = [];            // where the tool acts this frame
+    let activeTool = TOOL_NONE;
+
+    function updateBrush() {
+        brushPoints.length = 0;
+        if (touchPoints.size > 0) {
+            touchPoints.forEach((p) => brushPoints.push(p));
+            activeTool = touchPoints.size >= 2 ? TOOL_COOL : TOOL_HEAT;
+        } else if (mouseTool !== TOOL_NONE) {
+            brushPoints.push(mousePoint);
+            activeTool = mouseTool;
+        } else {
+            activeTool = TOOL_NONE;
+        }
+    }
 
     function applyTool(frameMs) {
-        if (!heating && !cooling) return;
+        updateBrush();
+        if (activeTool === TOOL_NONE) return;
         const frameScale = frameMs / REFERENCE_FRAME_MS;
         const inv2R2 = 1 / (2 * heatRadius * heatRadius);
         const reach2 = 16 * heatRadius * heatRadius; // ignore atoms beyond 4 sigma
-        if (heating) {
-            const kick = HEAT_KICK * heatAmp * Math.sqrt(frameScale); // random walk: energy grows with time
+        const kick = HEAT_KICK * heatAmp * Math.sqrt(frameScale); // random walk: energy grows linearly in time
+        for (const p of brushPoints) {
             for (let i = 0; i < count; i++) {
-                const dx = sx[i] - mX, dy = sy[i] - mY;
+                const dx = sx[i] - p.x, dy = sy[i] - p.y;
                 const r2 = dx * dx + dy * dy;
                 if (r2 > reach2) continue;
-                const headroom = 1 - energy[i] / MAX_HEAT_ENERGY;
-                if (headroom <= 0) continue;
-                const dv = kick * Math.exp(-r2 * inv2R2) * headroom;
-                vx[i] += (Math.random() * 2 - 1) * dv;
-                vy[i] += (Math.random() * 2 - 1) * dv;
-            }
-        } else {
-            for (let i = 0; i < count; i++) {
-                const dx = sx[i] - mX, dy = sy[i] - mY;
-                const r2 = dx * dx + dy * dy;
-                if (r2 > reach2) continue;
-                const damping = Math.min(COOL_RATE, heatAmp * COOL_RATE * Math.exp(-r2 * inv2R2));
-                const keep = Math.pow(1 - damping, frameScale);
-                vx[i] *= keep;
-                vy[i] *= keep;
+                const weight = Math.exp(-r2 * inv2R2);
+                if (activeTool === TOOL_HEAT) {
+                    const headroom = 1 - energy[i] / MAX_HEAT_ENERGY;
+                    if (headroom <= 0) continue;
+                    const dv = kick * weight * headroom;
+                    vx[i] += (Math.random() * 2 - 1) * dv;
+                    vy[i] += (Math.random() * 2 - 1) * dv;
+                } else {
+                    const damping = Math.min(COOL_RATE, heatAmp * COOL_RATE * weight);
+                    const keep = Math.pow(1 - damping, frameScale);
+                    vx[i] *= keep;
+                    vy[i] *= keep;
+                }
             }
         }
     }
 
-    // Event Listeners for UI
-    // Left-click for heating
-    canvas.addEventListener('mousedown', (e) => {
-        if (e.button === 0) { // Left mouse button
-            heating = true;
-            cooling = false;
-            updateMousePosition(e);
-        }
-    });
-    canvas.addEventListener('mouseup', (e) => {
-        if (e.button === 0) { // Left mouse button
-            heating = false;
-        }
-    });
-
-    // Right-click for cooling
-    canvas.addEventListener('contextmenu', (e) => {
-        e.preventDefault(); // Prevent context menu from appearing
-        cooling = true;
-        heating = false;
-        updateMousePosition(e);
-        return false;
-    });
-
-    canvas.addEventListener('mousedown', (e) => {
-        if (e.button === 2) { // Right mouse button
-            cooling = true;
-            heating = false;
-            updateMousePosition(e);
-        }
-    });
-
-    canvas.addEventListener('mouseup', (e) => {
-        if (e.button === 2) { // Right mouse button
-            cooling = false;
-        }
-    });
-
-    canvas.addEventListener('mouseleave', () => {
-        heating = false;
-        cooling = false;
-    });
-
-    canvas.addEventListener('mousemove', (e) => {
-        if (heating || cooling) updateMousePosition(e);
-    });
-
-    // Touch events for mobile
-    canvas.addEventListener('touchstart', (e) => {
-        heating = true; // Default to heating for touch events
-        cooling = false;
-        updateMousePosition(e);
-        e.preventDefault(); // Prevent scrolling/default touch actions
-    }, { passive: false });
-
-    canvas.addEventListener('touchend', () => {
-        heating = false;
-        cooling = false;
-    });
-
-    canvas.addEventListener('touchcancel', () => {
-        heating = false;
-        cooling = false;
-    });
-
-    canvas.addEventListener('touchmove', (e) => {
-        if (heating || cooling) {
-            updateMousePosition(e);
-            e.preventDefault();
-        }
-    }, { passive: false });
-
-    function updateMousePosition(e) {
+    function canvasPoint(e) {
         const r = canvas.getBoundingClientRect();
-        let clientX, clientY;
-        if (e.touches && e.touches.length > 0) {
-            clientX = e.touches[0].clientX;
-            clientY = e.touches[0].clientY;
-        } else {
-            clientX = e.clientX;
-            clientY = e.clientY;
-        }
-        mX = clientX - r.left;
-        mY = clientY - r.top;
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
+
+    function toolForButtons(buttons, ctrlKey) {
+        if (buttons & (2 | 32)) return TOOL_COOL;     // right button or pen eraser
+        if (buttons & 1) return ctrlKey ? TOOL_COOL : TOOL_HEAT; // Ctrl+click: macOS one-button cooling
+        return TOOL_NONE;
+    }
+
+    function releaseAllTools() {
+        touchPoints.clear();
+        mouseTool = TOOL_NONE;
+    }
+
+    // Pointer capture keeps the tool working while a drag strays past the edge
+    // and guarantees the matching pointerup.
+    canvas.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'touch') {
+            touchPoints.set(e.pointerId, canvasPoint(e));
+        } else {
+            mouseTool = toolForButtons(e.buttons, e.ctrlKey);
+            if (mouseTool === TOOL_NONE) return;
+            mousePoint = canvasPoint(e);
+        }
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointer already released */ }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'touch') {
+            if (touchPoints.has(e.pointerId)) touchPoints.set(e.pointerId, canvasPoint(e));
+        } else if (mouseTool !== TOOL_NONE) {
+            // Buttons can be pressed or released mid-drag (chorded buttons, Ctrl).
+            mouseTool = toolForButtons(e.buttons, e.ctrlKey);
+            mousePoint = canvasPoint(e);
+        }
+    });
+    const endPointer = (e) => {
+        if (e.pointerType === 'touch') touchPoints.delete(e.pointerId);
+        else mouseTool = TOOL_NONE;
+    };
+    canvas.addEventListener('pointerup', endPointer);
+    canvas.addEventListener('pointercancel', endPointer);
+    canvas.addEventListener('lostpointercapture', endPointer);
+    window.addEventListener('blur', releaseAllTools);
+    // Only suppress the menu: Windows fires contextmenu after the right button
+    // is released, so it must not switch cooling on.
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // --- Canvas sizing ---
     // Sizes the canvas backing store to its displayed size times devicePixelRatio
