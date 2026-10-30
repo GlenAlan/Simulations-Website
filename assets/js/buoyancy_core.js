@@ -1154,13 +1154,12 @@
             if (W[bi] > 0 && !(R[B.cellLocal[bi]] && sub[B.cellLocal[bi]])) held += W[bi];
         }
         B.waterHeld = held * LIQUIDS[settings.liquid].rho * CELL_A * DEPTH;
-        if (changed) {
-            updateWaterMass(B);
-            for (let q = 0; q < oc.length; q++) {
-                const bi = oc[q];
-                const shown = W[bi] >= 0.5 ? 1 : 0;
-                if (shown !== B.waterShown[bi]) { B.waterShown[bi] = shown; B.cavDirty = true; }
-            }
+        if (changed) updateWaterMass(B);
+        for (let q = 0; q < oc.length; q++) {
+            const bi = oc[q];
+            const li = B.cellLocal[bi];
+            const shown = W[bi] < 0.5 ? 0 : ((R[li] && sub[li]) ? 2 : 1);
+            if (shown !== B.waterShown[bi]) { B.waterShown[bi] = shown; B.cavDirty = true; }
         }
     }
 
@@ -1226,6 +1225,15 @@
             if (sinceCavity >= 1 / 60 - 1e-9) { stepCavities(sinceCavity); stepParticles(sinceCavity); sinceCavity = 0; }
         }
         if (sinceCavity > 0) { stepCavities(sinceCavity); stepParticles(sinceCavity); }
+        // show the latest state directly (the frame loop only smooths while time is running)
+        disp.fbX = phys.fbX; disp.fbY = phys.fbY; disp.fdX = phys.fdX; disp.fdY = phys.fdY;
+        disp.fcX = phys.fcX; disp.fcY = phys.fcY;
+        disp.netX = phys.fbX + phys.fdX + phys.fcX + phys.fgrabX;
+        disp.netY = phys.fbY + phys.fdY + phys.fcY + phys.fgrabY - phys.weight + phys.airB;
+        disp.hasContact = phys.contactW > 0 ? 1 : 0;
+        if (phys.contactW > 0) { disp.cpx = phys.contactPX; disp.cpy = phys.contactPY; }
+        disp.sub = body.areaEnv > 0 ? phys.subEnv / body.areaEnv : 0;
+        resetAccumulators();
         return n;
     }
 
@@ -1342,6 +1350,23 @@
         forEachShapeCell(tool, cA, rA, cB, rB, thick, (c, r) => { if (!filter || filter(c, r)) setCell(c, r, m); });
     }
     const PRESETS = [
+        { key: 'ship', label: 'Steel ship with a wooden cabin', build() {
+            const S = MAT_ID.steel, P = MAT_ID.pine;
+            // 1 cm steel hull with raked ends (steps kept 4-connected so the hull is watertight)
+            fillRect(66, 51, 68, 1, S);
+            for (let r = 0; r < 28; r++) {
+                const k = Math.floor(r / 3), kn = Math.floor((r + 1) / 3);
+                setCell(65 - k, 52 + r, S); setCell(134 + k, 52 + r, S);
+                if (kn !== k && r < 27) { setCell(64 - k, 52 + r, S); setCell(135 + k, 52 + r, S); }
+            }
+            setCell(65, 51, S); setCell(134, 51, S);
+            // cabin with two sealed windows, a mast with a nylon flag, cork fenders
+            fillRect(88, 52, 22, 11, P);
+            fillRect(91, 56, 5, 4, 0); fillRect(102, 56, 5, 4, 0);
+            fillRect(97, 63, 2, 26, P);
+            fillRect(99, 80, 13, 7, MAT_ID.nylon);
+            fillRect(58, 66, 3, 6, MAT_ID.cork); fillRect(139, 66, 3, 6, MAT_ID.cork);
+        } },
         { key: 'boat', label: 'Steel boat (open hull)', build() {
             const S = MAT_ID.steel;
             fillRect(62, 52, 76, 1, S); fillRect(62, 53, 1, 23, S); fillRect(137, 53, 1, 23, S);
@@ -1380,34 +1405,17 @@
     // ------------------------------------------------------------------
     // Canvas size / palette / textures
     // ------------------------------------------------------------------
+    // The shared stylesheet sizes the aspect-ratio box (normal and fullscreen); the drawing
+    // buffer just follows the canvas's displayed size and the device pixel ratio.
     function handleResize() {
         const box = canvas.parentElement;
-        if (!box) return;
-        const isFs = document.body.classList.contains('sim-fullscreen-active');
-        const aspect = TANK_W / TANK_H;
-        let tw, th;
-        if (isFs) {
-            const wrap = box.parentElement;
-            if (!wrap) return;
-            const aw = wrap.clientWidth, ah = wrap.clientHeight;
-            if (aw <= 0 || ah <= 0) return;
-            if (aw / ah > aspect) { th = ah; tw = th * aspect; } else { tw = aw; th = tw / aspect; }
-            const ws = Math.floor(tw) + 'px', hs = Math.floor(th) + 'px';
-            if (box.style.width !== ws) box.style.width = ws;
-            if (box.style.height !== hs) box.style.height = hs;
-            tw = Math.floor(tw); th = Math.floor(th);
-        } else {
-            if (box.style.width) box.style.width = '';
-            if (box.style.height) box.style.height = '';
-            const r = box.getBoundingClientRect();
-            tw = r.width; th = r.height;
-        }
-        tw = Math.max(1, Math.round(tw));
-        th = Math.max(1, Math.round(th));
+        if (box && (box.style.width || box.style.height)) { box.style.width = ''; box.style.height = ''; }
+        const tw = Math.max(1, Math.round(canvas.clientWidth));
+        const th = Math.max(1, Math.round(canvas.clientHeight));
         const ndpr = Math.min(3, window.devicePixelRatio || 1);
         if (tw !== cssW || th !== cssH || ndpr !== dpr) {
             cssW = tw; cssH = th; dpr = ndpr;
-            scale = cssW / TANK_W;
+            scale = Math.min(cssW / TANK_W, cssH / TANK_H);
             canvas.width = Math.round(cssW * dpr);
             canvas.height = Math.round(cssH * dpr);
             gridLayerDirty = true;
@@ -1415,6 +1423,21 @@
             gradientKey = '';
             if (body) { body.imgKey = ''; body.cavKey = ''; }
         }
+    }
+
+    // Lets the fullscreen layout in buoyancy_styles.css reserve room for the toolbar.
+    function watchToolbarHeight() {
+        const tb = document.getElementById('buoyToolbar');
+        const area = document.querySelector('.buoyancy-sim');
+        if (!tb || !area) return;
+        const upd = () => {
+            const h = Math.ceil(tb.getBoundingClientRect().height);
+            const v = h + 'px';
+            if (area.style.getPropertyValue('--buoy-toolbar-h') !== v) area.style.setProperty('--buoy-toolbar-h', v);
+        };
+        upd();
+        if (typeof ResizeObserver !== 'undefined') new ResizeObserver(upd).observe(tb);
+        window.addEventListener('resize', upd);
     }
 
     function refreshPalette() {
@@ -1428,6 +1451,7 @@
             bgTop: dark ? '#1a1e23' : '#f7f9fb',
             bgBot: dark ? '#22282f' : '#e4eaf0',
             air: dark ? '#2b3641' : '#e6f0f8',
+            openAir: dark ? '#1e2329' : '#eef2f6',
             hatch: dark ? 'rgba(170,205,235,0.45)' : 'rgba(70,105,140,0.4)',
             gridMinor: dark ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.05)',
             gridMajor: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.13)',
@@ -1724,10 +1748,11 @@
             const lc = li % B.LW, lr = (li - lc) / B.LW;
             const x0 = Math.round(lc * cellPx), x1 = Math.round((lc + 1) * cellPx);
             const y0 = Math.round((B.LH - lr - 1) * cellPx), y1 = Math.round((B.LH - lr) * cellPx);
-            if (B.waterShown[bi]) { water.rect(x0, y0, x1 - x0, y1 - y0); nWater++; }
-            else { air.rect(x0, y0, x1 - x0, y1 - y0); nAir++; }
+            const shown = B.waterShown[bi];
+            if (shown === 1) { water.rect(x0, y0, x1 - x0, y1 - y0); nWater++; }
+            else if (shown === 0) { air.rect(x0, y0, x1 - x0, y1 - y0); nAir++; }
         }
-        if (nAir) { const g = B.cavAirImg.getContext('2d'); g.fillStyle = pal.air; g.fill(air); }
+        if (nAir) { const g = B.cavAirImg.getContext('2d'); g.fillStyle = pal.openAir; g.fill(air); }
         if (nWater) {
             const g = B.cavWaterImg.getContext('2d');
             const liq = LIQUIDS[settings.liquid];
@@ -1855,9 +1880,12 @@
             return;
         }
         if (B.nOpen) {
-            // air held in open cavities only shows where it keeps the liquid out
+            // air held in open cavities only shows where it keeps the liquid out (the clip is
+            // lifted a little so the waterline is not drawn across a dry hull)
             ctx.save();
+            ctx.translate(0, -2);
             ctx.clip(liqPath);
+            ctx.translate(0, 2);
             ctx.translate(X, Y);
             ctx.rotate(-st.th);
             ctx.drawImage(B.cavAirImg, ix, iy, iw, ih);
@@ -2017,8 +2045,9 @@
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
         const txt = liq.name + ' · ' + liq.rho.toLocaleString('en-US') + ' kg/m³';
+        // bottom-right corner: clear of the overlay buttons that sit top-right on small screens
         const x = cssW - 8;
-        const y = wy(surfaceAt(TANK_W - 0.1)) - 5;
+        const y = cssH - 6;
         ctx.lineWidth = 3;
         ctx.strokeStyle = pal.halo;
         ctx.strokeText(txt, x, y);
@@ -2435,7 +2464,10 @@
             n.checked = get();
             n.addEventListener('change', () => set(n.checked));
         };
-        bindCheck('rotationToggle', () => settings.rotation, (v) => { settings.rotation = v; if (!v) st.om = 0; });
+        const rotLabel = document.querySelector('label[for="rotationToggle"]');
+        const showRot = () => { if (rotLabel) rotLabel.textContent = 'Rotation: ' + (settings.rotation ? 'on' : 'off'); };
+        bindCheck('rotationToggle', () => settings.rotation, (v) => { settings.rotation = v; if (!v) st.om = 0; showRot(); });
+        showRot();
         Object.keys(settings.arrows).forEach((k) => {
             bindCheck('arrow_' + k, () => settings.arrows[k], (v) => { settings.arrows[k] = v; });
         });
@@ -2484,6 +2516,7 @@
 
         new MutationObserver(() => refreshPalette()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         window.addEventListener('resize', () => handleResize());
+        watchToolbarHeight();
         syncToolButtons();
         updateModeUI();
     }
@@ -2570,7 +2603,7 @@
         refreshPalette();
         setupUI();
         handleResize();
-        loadPreset('boat');
+        loadPreset('ship');
         undoStack.length = 0;
         requestAnimationFrame(frame);
     }
@@ -2589,7 +2622,8 @@
         setLiquid,
         setRotation(v) {
             settings.rotation = !!v; if (!v) st.om = 0;
-            const n = document.getElementById('rotationToggle'); if (n) n.checked = !!v;
+            const n = document.getElementById('rotationToggle');
+            if (n) { n.checked = !!v; n.dispatchEvent(new Event('change')); }
         },
         setGravity(v) { settings.gravity = v; updateWaveCoefficients(); },
         setSpeed(v) { settings.speed = v; },
@@ -2598,6 +2632,7 @@
         fillRect(c, r, w, h, matKey) { fillRect(c, r, w, h, matKey ? (MAT_ID[matKey] || 0) : 0); drawDirty = true; if (mode === 'sim') enterEditMode(); },
         clearGrid() { grid.fill(0); drawDirty = true; if (mode === 'sim') enterEditMode(); },
         advance(seconds) { return simulate(seconds); },
+        _poke(x, strength) { if (mode === 'sim') pokeLiquid(x, strength || 0.006); },
         setPose(x, y, theta, vx, vy, omega) {
             if (x !== undefined && x !== null) st.x = x;
             if (y !== undefined && y !== null) st.y = y;
