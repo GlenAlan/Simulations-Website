@@ -918,3 +918,13 @@ html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button {
 html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button .icon {
     color: var(--color-accent-dark, var(--color-accent)); /* Or specific color for icons in dark mode */
 }
+
+/* On narrow screens the theme toggle is stacked below the menu button and hangs over the top
+   of the open controls panel, so hide it while the panel is open (as main.js does on scroll). */
+@media screen and (max-width: 736px) {
+    body.sim-panel-active #header nav ul li #theme-toggle {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
+}
