@@ -6,37 +6,38 @@
 -->
 <html lang="en">
 	<head>
-		<title>Radiation | Simulations.Science</title>
+		<title>Radiation Simulation | Heat Transfer | Simulations.Science</title>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-		<meta name="description" content="Explore radiation with this interactive physics simulation. Watch photons radiate from hot objects and observe how distance affects energy absorption." />
-		<meta name="keywords" content="radiation, electromagnetic radiation, photons, heat transfer, Stefan-Boltzmann law, physics simulation, interactive science" />
+		<meta name="description" content="See how heat travels by thermal radiation: hot objects emit infrared, matte black surfaces absorb and emit best, shiny metal reflects, and radiation crosses a vacuum." />
+		<meta name="keywords" content="thermal radiation, heat transfer by radiation, infrared radiation, emissivity, absorption, black body radiation, Stefan-Boltzmann law, Wien's law, inverse square law, Leslie's cube, physics simulation, interactive science" />
 		<meta name="author" content="Simulations.Science" />
 		<meta name="robots" content="index, follow" />
-		
+
 		<!-- Open Graph / Facebook -->
 		<meta property="og:type" content="website" />
 		<meta property="og:url" content="https://simulations.science/radiation_simulation.html" />
-		<meta property="og:title" content="Radiation | Simulations.Science" />
-		<meta property="og:description" content="Visualize radiation and photon emission in this interactive simulation." />
+		<meta property="og:title" content="Radiation Simulation | Heat Transfer | Simulations.Science" />
+		<meta property="og:description" content="Watch a glowing heater warm matte black and polished silver blocks across a vacuum by infrared radiation." />
 		<meta property="og:image" content="https://simulations.science/images/radiation.png" />
-		
+
 		<!-- Twitter -->
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:url" content="https://simulations.science/radiation_simulation.html" />
-		<meta name="twitter:title" content="Radiation | Simulations.Science" />
-		<meta name="twitter:description" content="Visualize radiation and photon emission in this interactive simulation." />
+		<meta name="twitter:title" content="Radiation Simulation | Heat Transfer | Simulations.Science" />
+		<meta name="twitter:description" content="Watch a glowing heater warm matte black and polished silver blocks across a vacuum by infrared radiation." />
 		<meta name="twitter:image" content="https://simulations.science/images/radiation.png" />
-		
+
 		<!-- Canonical URL -->
 		<link rel="canonical" href="https://simulations.science/radiation_simulation.html" />
-		
+
 		<!-- Structured Data -->
-		<script type="application/ld+json">		{
+		<script type="application/ld+json">
+		{
 			"@context": "https://schema.org",
 			"@type": "LearningResource",
-			"name": "Radiation",
-			"description": "An interactive simulation demonstrating how radiation works, showing photons emitted from hot objects and their absorption by other materials based on distance and temperature",
+			"name": "Radiation Simulation",
+			"description": "An interactive simulation of heat transfer by thermal radiation: a heater radiates infrared across a vacuum to two blocks with selectable surfaces, showing emission, absorption and reflection, Kirchhoff's law, the Stefan-Boltzmann law, Wien's law, the inverse-square law and thermal equilibrium",
 			"provider": {
 				"@type": "Organization",
 				"name": "Simulations.Science",
@@ -48,30 +49,41 @@
 				"educationalRole": ["student", "teacher", "researcher"]
 			},
 			"learningResourceType": "Simulation",
-			"about": [				{
+			"about": [
+				{
 					"@type": "Thing",
-					"name": "Radiation",
-					"description": "The transfer of heat through electromagnetic waves"
+					"name": "Thermal Radiation",
+					"description": "The transfer of energy by electromagnetic waves, mainly infrared, emitted by every object because of its temperature; it needs no medium and can cross a vacuum"
 				},
 				{
 					"@type": "Thing",
-					"name": "Electromagnetic Radiation",
-					"description": "Energy propagated through space as waves or particles"
+					"name": "Absorption, Reflection and Emissivity",
+					"description": "Radiation reaching a surface is absorbed or reflected; good absorbers such as matte black surfaces are also good emitters (Kirchhoff's law of thermal radiation)"
 				},
 				{
 					"@type": "Thing",
 					"name": "Stefan-Boltzmann Law",
-					"description": "The law describing the power radiated by a black body in terms of its temperature"
+					"description": "The power radiated by an object is P = εσAT⁴, so it rises steeply with absolute temperature"
+				},
+				{
+					"@type": "Thing",
+					"name": "Wien's Displacement Law",
+					"description": "The peak wavelength of thermal radiation is inversely proportional to absolute temperature, so very hot objects glow red, then orange, then yellow-white"
+				},
+				{
+					"@type": "Thing",
+					"name": "Inverse-Square Law",
+					"description": "Radiation spreads out from a source, so the intensity falls with the square of the distance"
 				}
 			],
 			"educationalLevel": "High School and Above",
 			"image": "https://simulations.science/images/radiation.png",
 			"interactivityType": "active",
 			"isAccessibleForFree": true,
-			"keywords": "radiation, electromagnetic radiation, photons, heat transfer, physics simulation, interactive science"
+			"keywords": "thermal radiation, heat transfer by radiation, infrared radiation, emissivity, absorption, black body radiation, Stefan-Boltzmann law, Wien's law, inverse square law, physics simulation, interactive science"
 		}
 		</script>
-		
+
 		<!-- BreadcrumbList structured data -->
 		<script type="application/ld+json">
 		{
@@ -86,12 +98,14 @@
 				},
 				{
 					"@type": "ListItem",
-					"position": 2,					"name": "Radiation",
+					"position": 2,
+					"name": "Radiation",
 					"item": "https://simulations.science/radiation_simulation.html"
 				}
 			]
 		}
 		</script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js" defer></script>
 		<script>
 			// Theme toggle script
 			(function() {
@@ -101,7 +115,7 @@
 					var storedTheme = localStorage.getItem('theme');
 					// Only override if explicitly set to light
 					if (storedTheme === 'light') {
-						theme = 'light'; 
+						theme = 'light';
 					}
 				} catch (e) { /* Ignore */ }
 
@@ -114,6 +128,7 @@
 		</script>
 		<link rel="stylesheet" href="assets/css/main.css" />
 		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/radiation_styles.css" />
 		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
 		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
 	</head>
@@ -147,7 +162,7 @@
 					<nav id="menu">
 						<h2>Menu</h2>
 						<ul>
-							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>							
+							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>
 							<li itemprop="name"><a href="convection_simulation.html" itemprop="url">Convection</a></li>
 							<li itemprop="name"><a href="conduction_simulation.html" itemprop="url">Conduction</a></li>
 							<li itemprop="name"><a href="radiation_simulation.html" itemprop="url">Radiation</a></li>
@@ -160,33 +175,65 @@
 					<div id="main">
 						<div class="inner">
 							<h1 id="simulationTitle">Radiation Simulation</h1>
-							
+
 							<div class="simulation-area-wrapper">
                                 <div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
                                     <div class="sim-controls-header">
                                         <h3 id="simulationControlsPanelLabel">Controls</h3>
                                     </div>
-                                    <div class="sim-controls-content">                                        <label>Speed: <span id="timeScaleVal">1.0</span>x
-                                            <input type="range" id="timeScale" min="0.1" max="5.0" step="0.1" value="1.0">
-                                        </label>                                        <label>Temperature: <span id="temperatureVal">3000</span>K
-                                            <input type="range" id="temperature" min="1000" max="5000" step="10" value="3000">
+                                    <div class="sim-controls-content">
+                                        <label>Speed: <span id="speedVal">20</span>x
+                                            <input type="range" id="speedSlider" min="1" max="200" step="1" value="20">
                                         </label>
-                                        <label>Intensity: <span id="intensityVal">50</span>%
-                                            <input type="range" id="intensity" min="10" max="100" step="5" value="50">
+                                        <label>Heater Temperature: <span id="heaterTempVal">1000 K (727 °C)</span>
+                                            <input type="range" id="heaterTemp" min="300" max="2000" step="10" value="1000">
                                         </label>
-                                        <label>Object Distance: <span id="distanceVal">0.40</span>m
-                                            <input type="range" id="distance" min="20" max="95" step="1" value="50">
-                                        </label>                                        <label>Cooling Rate: <span id="coolingRateVal">0.5</span>W
-                                            <input type="range" id="coolingRate" min="0.0" max="1000.0" step="5.0" value="0.5">
-                                        </label>
+                                        <div class="rad-toggle">
+                                            <input type="checkbox" id="heaterOn" checked>
+                                            <label for="heaterOn">Heater On</label>
+                                        </div>
                                         <div class="sim-control-group">
-                                            <p class="sim-control-group-label">Absorption Object:</p>
-                                            <div class="sim-select-group">
-                                                <select id="objectTypeSelector" aria-label="Select Object Type">
-                                                    <option value="metal">Metal (High Absorption)</option>
-                                                    <option value="glass">Glass (Medium Absorption)</option>
-                                                    <option value="plastic">Plastic (Low Absorption)</option>
+                                            <p class="sim-control-group-label" id="leftSurfaceLabel">Left Block Surface:</p>
+                                            <div class="sim-select-container">
+                                                <select id="leftSurface" aria-labelledby="leftSurfaceLabel">
+                                                    <option value="black" selected>Matte black paint</option>
+                                                    <option value="grey">Dull grey metal</option>
+                                                    <option value="white">White paint</option>
+                                                    <option value="aluminium">Shiny aluminium</option>
+                                                    <option value="silver">Polished silver</option>
                                                 </select>
+                                            </div>
+                                            <label>Left Block Distance: <span id="leftDistanceVal">20</span> cm
+                                                <input type="range" id="leftDistance" min="10" max="50" step="1" value="20">
+                                            </label>
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label" id="rightSurfaceLabel">Right Block Surface:</p>
+                                            <div class="sim-select-container">
+                                                <select id="rightSurface" aria-labelledby="rightSurfaceLabel">
+                                                    <option value="black">Matte black paint</option>
+                                                    <option value="grey">Dull grey metal</option>
+                                                    <option value="white">White paint</option>
+                                                    <option value="aluminium">Shiny aluminium</option>
+                                                    <option value="silver" selected>Polished silver</option>
+                                                </select>
+                                            </div>
+                                            <label>Right Block Distance: <span id="rightDistanceVal">20</span> cm
+                                                <input type="range" id="rightDistance" min="10" max="50" step="1" value="20">
+                                            </label>
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label" id="viewModeLabel">View:</p>
+                                            <div class="sim-select-container">
+                                                <select id="viewMode" aria-labelledby="viewModeLabel">
+                                                    <option value="all" selected>Infrared + visible light</option>
+                                                    <option value="visible">Visible light only (your eyes)</option>
+                                                    <option value="thermal">Thermal camera</option>
+                                                </select>
+                                            </div>
+                                            <div class="rad-toggle">
+                                                <input type="checkbox" id="showWallRadiation">
+                                                <label for="showWallRadiation">Show Radiation from Walls</label>
                                             </div>
                                         </div>
                                     </div>
@@ -196,15 +243,34 @@
                                     <div class="simulation-display-container">
                                         <div class="sim-canvas-wrapper">
                                             <div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1;">
-                                                <canvas id="simulationCanvas" class="sim-canvas"></canvas>
+                                                <canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="A heater in a vacuum chamber radiating infrared packets to two blocks with different surfaces"></canvas>
                                             </div>
                                             <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
-                                        </div>                                        <div class="sim-info-bar">
-                                            <span class="sim-info-item">Absorbed Power: <span id="absorbedEnergyVal">0</span> mW</span>
-                                            <span class="sim-info-item">Photons/sec: <span id="emissionRateVal">0</span></span>
-                                            <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation">
-                                                <span class="icon solid fa-sync-alt"></span>
-                                            </button>
+                                        </div>
+                                        <div class="sim-info-bar" id="statsBar">
+                                            <div class="stats-container">
+                                                <div class="stats-box"><strong>Heater:</strong> <span id="sourceTempVal">727</span> °C</div>
+                                                <div class="stats-box"><strong>Left:</strong> <span id="leftTempVal">20.0</span> °C</div>
+                                                <div class="stats-box"><strong>Right:</strong> <span id="rightTempVal">20.0</span> °C</div>
+                                                <div class="stats-box"><strong>Time:</strong> <span id="simTimeVal">0:00</span></div>
+                                            </div>
+                                            <div class="sim-info-actions">
+                                                <label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Toggle Charts">
+                                                    <input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show charts">
+                                                    <span class="icon solid fa-chart-bar"></span>
+                                                </label>
+                                                <button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset Simulation">
+                                                    <span class="icon solid fa-sync-alt"></span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="charts-container" class="radiation-charts" style="display: none;">
+                                        <div class="chart-box">
+                                            <canvas id="tempChart" role="img" aria-label="Chart of block and heater temperatures against time"></canvas>
+                                        </div>
+                                        <div class="chart-box">
+                                            <canvas id="spectrumChart" role="img" aria-label="Chart of the heater's emission spectrum with the visible band marked"></canvas>
                                         </div>
                                     </div>
                                     <div class="sim-action-buttons-overlay">
@@ -215,19 +281,46 @@
                                     </div>
 
                                     <div class="description-area">
-                                        <h3>About this Simulation</h3>                                        
-										<p>This simulation models thermal radiation from an ideal radiating object. Radiation is the transfer of heat through electromagnetic waves. All objects emit thermal radiation based on their temperature. This simulation consists of a hot object radiating thermal energy in all directions, with an absorbing object that heats up as it absorbs radiation and cools down through due to passive environmental interactions.</p>
-                                        <p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) will restart the simulation with current settings.</p>
+                                        <h3>About this Simulation</h3>
+                                        <p>Thermal radiation is energy carried by electromagnetic waves &ndash; mostly <strong>infrared</strong>, which our eyes cannot see. Unlike conduction and convection it needs no particles, so it is the only way heat can cross empty space; that is how the Sun warms the Earth. Here a heater (a hot ball) sits in the middle of a <strong>vacuum chamber</strong> with a metal block on each side. Give the blocks different surfaces and watch which one warms up fastest.</p>
+                                        <p><strong>What you are seeing:</strong></p>
+                                        <ul>
+                                            <li><strong>Radiation packets:</strong> each wavy line is a packet of radiation. Every packet carries the same amount of energy, so the number of packets an object sends out each second is proportional to the power it radiates. Infrared is drawn pink (in reality it is invisible); visible light is drawn in its real colour, and longer wavelengths are drawn as longer, lazier waves. The packets are slowed down enormously so you can follow them &ndash; real radiation crosses the gap at the speed of light in about a billionth of a second.</li>
+                                            <li><strong>Absorbed or reflected:</strong> when a packet reaches a surface it is either absorbed &ndash; it vanishes with a small flash and its energy heats the object &ndash; or reflected. Shiny metal reflects like a mirror; paint scatters reflected radiation in random directions.</li>
+                                            <li><strong>Spreading out:</strong> the picture is a thin slice through 3D space. Radiation also travels towards you and away from you, so packets fade out as they leave the slice. That is why fewer packets reach a block that is further away.</li>
+                                            <li><strong>Thermometers and energy bars:</strong> below each block, the <em>in</em> bar is the power it absorbs (orange from the heater, grey from the 20&nbsp;°C chamber walls) and the <em>out</em> bar is the power it emits. A block warms up while in &gt; out and stays at a steady temperature when in = out.</li>
+                                        </ul>
+                                        <p><strong>Key ideas:</strong></p>
+                                        <ul>
+                                            <li><strong>Every object emits thermal radiation</strong> &ndash; the cold blocks and the chamber walls too. The power emitted is <em>P</em>&nbsp;=&nbsp;<em>&epsilon;&sigma;AT</em><sup>4</sup> (Stefan&ndash;Boltzmann law, with <em>T</em> in kelvin), so doubling the temperature makes an object emit 16 times as much. Watch the packet rate as you change the heater temperature.</li>
+                                            <li><strong>Hotter objects emit shorter wavelengths.</strong> The peak wavelength is <em>&lambda;</em><sub>max</sub>&nbsp;=&nbsp;2898&nbsp;&micro;m&middot;K&nbsp;&divide;&nbsp;<em>T</em> (Wien's law): about 10&nbsp;&micro;m at room temperature and 2.9&nbsp;&micro;m at 1000&nbsp;K. Above about 800&nbsp;K a tiny fraction is visible light, so the heater glows dull red, then orange, then yellow-white near 2000&nbsp;K &ndash; but even then most of its energy is infrared. Open the charts to see the spectrum.</li>
+                                            <li><strong>No medium is needed.</strong> There is nothing in the gaps, yet energy still reaches the blocks.</li>
+                                            <li><strong>Good absorbers are good emitters.</strong> A surface's emissivity <em>&epsilon;</em> equals the fraction of radiation it absorbs (Kirchhoff's law). Matte black absorbs about 97% and emits strongly; polished silver reflects about 98%, absorbs only 2% and emits only 2% as much as a black surface at the same temperature. White paint reflects most visible and near-infrared radiation, so it absorbs less from a very hot heater, but at the long infrared wavelengths that warm objects give out it is almost black, so it is a good emitter &ndash; this is why white paint keeps buildings cool in sunshine.</li>
+                                            <li><strong>The net flow is from hot to cold.</strong> The blocks radiate too, and some of their radiation reaches the heater, but the hotter object always emits more, so the net flow of energy is from hotter to colder. As a block warms up it emits more, until it emits as much as it absorbs and its temperature stops rising. Switch the heater off and everything cools towards the temperature of the walls.</li>
+                                            <li><strong>Distance matters.</strong> Radiation spreads out in all directions, so its intensity falls with the square of the distance (inverse-square law): moving a block from 20&nbsp;cm to 40&nbsp;cm cuts the power it receives from the heater to about a quarter.</li>
+                                        </ul>
+                                        <p><strong>Things to try:</strong></p>
+                                        <ul>
+                                            <li>Compare matte black with polished silver at the same distance. The black block warms quickly; the silver one barely changes. At high speed you will see that, in a vacuum, the silver block slowly creeps up towards the same final temperature: it absorbs little, but it also emits little, so it takes hours rather than minutes. In air, conduction and convection also cool both blocks, so the black one ends up hotter.</li>
+                                            <li>Make both blocks matte black and put one at 10&nbsp;cm and the other at 20&nbsp;cm, then compare the <em>in</em> bars.</li>
+                                            <li>Choose <em>Visible light only</em>: at 1000&nbsp;K the heater glows, yet you can see almost none of the radiation that is heating the blocks.</li>
+                                            <li>Choose <em>Thermal camera</em>: a thermal camera detects emitted infrared, so a hot polished-silver block looks almost as cold as the walls &ndash; it emits very little and mostly reflects the walls' radiation.</li>
+                                            <li>Turn the heater off and watch the in and out bars as everything cools.</li>
+                                        </ul>
+                                        <p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) restarts the simulation with the current settings, and the chart icon (<span class="icon solid fa-chart-bar"></span>) shows or hides the graphs. You can also drag the blocks left and right on the canvas.</p>
                                         <p><strong>Controls:</strong></p>
                                         <ul>
-                                            <li><strong>Speed:</strong> Adjusts the simulation rate.</li>
-                                            <li><strong>Temperature:</strong> Controls the temperature of the radiating object.</li>
-                                            <li><strong>Intensity:</strong> Adjusts the visual density of photons displayed.</li>
-                                            <li><strong>Object Distance:</strong> Controls how far the absorbing object is from the radiation source.</li>
-                                            <li><strong>Cooling Rate:</strong> Controls how quickly the absorbing object loses heat to the environment.</li>
-                                            <li><strong>Absorption Object:</strong> Select different materials with varying absorption properties and thermal characteristics.</li>
+                                            <li><strong>Speed:</strong> how fast simulated time passes (20x means 20 simulated seconds every real second). It speeds up the heating and cooling, not the radiation packets.</li>
+                                            <li><strong>Heater Temperature:</strong> the temperature the heater's thermostat holds it at, from 300&nbsp;K (27&nbsp;°C) to 2000&nbsp;K (1727&nbsp;°C).</li>
+                                            <li><strong>Heater On:</strong> when switched off, the heater gets no electrical power and cools down by radiating.</li>
+                                            <li><strong>Left / Right Block Surface:</strong> the surface finish of each block: matte black paint, dull grey metal, white paint, shiny aluminium or polished silver.</li>
+                                            <li><strong>Left / Right Block Distance:</strong> the distance from the centre of the heater to the face of each block (10&ndash;50&nbsp;cm).</li>
+                                            <li><strong>View:</strong> <em>Infrared + visible light</em> draws all the radiation; <em>Visible light only</em> shows only what your eyes would see; <em>Thermal camera</em> colours each object by the temperature a thermal camera would measure from its infrared emission.</li>
+                                            <li><strong>Show Radiation from Walls:</strong> also draws the infrared given out by the room-temperature chamber walls. It is always included in the calculations.</li>
+                                            <li><strong>Charts:</strong> temperatures against time, and the heater's spectrum (power at each wavelength) with the visible band and the Wien peak marked.</li>
+                                            <li><strong>Info bar:</strong> the temperatures of the heater and both blocks, and the simulated time.</li>
                                         </ul>
-                                        <p>The simulation demonstrates thermal radiation including blackbody radiation, the Stefan-Boltzmann law (total power ∝ T⁴), the inverse square law, and thermal equilibrium.</p>
+                                        <p><strong>Model details:</strong> the heater is an 8&nbsp;cm ball with emissivity 0.95 and a heat capacity of 300&nbsp;J/K; its thermostat can supply up to 25&nbsp;kW. Each block is a hollow 8&nbsp;cm metal cube with a heat capacity of 100&nbsp;J/K, starting at 20&nbsp;°C. Temperatures follow from conservation of energy: rate of temperature rise = (power absorbed &minus; power emitted) &divide; heat capacity. Surfaces absorb the same fraction at all wavelengths, except white paint, which absorbs 25% below 3&nbsp;&micro;m and 90% above. Radiation reflected by one object and then absorbed by another is left out of the energy calculation (it is a very small effect).</p>
                                     </div>
                                 </div>
 							</div>
