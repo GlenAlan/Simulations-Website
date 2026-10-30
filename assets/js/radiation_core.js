@@ -550,9 +550,18 @@
         const u = clamp((t - a[0]) / (b[0] - a[0]), 0, 1);
         THERMAL_LUT.push(`rgb(${Math.round(a[1] + (b[1] - a[1]) * u)},${Math.round(a[2] + (b[2] - a[2]) * u)},${Math.round(a[3] + (b[3] - a[3]) * u)})`);
     }
-    const THERMAL_MAX_C = 300;
+    // Like a real thermal camera, the colour scale auto-ranges (here to the hottest block);
+    // the heater is far off the top of the scale and shows white.
+    const THERMAL_MIN_C = 10;
+    let thermalMaxC = 60;
+    function updateThermalRange() {
+        let hottest = T_AMB;
+        for (const b of state.blocks) hottest = Math.max(hottest, apparentTemperature(b.T, b.eps));
+        const target = Math.max(50, THERMAL_MIN_C + (hottest - 273.15 - THERMAL_MIN_C) * 1.3);
+        thermalMaxC += (target - thermalMaxC) * 0.08;
+    }
     function thermalFraction(Tk) {
-        return Math.pow(clamp((Tk - 273.15) / THERMAL_MAX_C, 0, 1), 0.6);
+        return clamp((Tk - 273.15 - THERMAL_MIN_C) / (thermalMaxC - THERMAL_MIN_C), 0, 1);
     }
     function thermalColor(Tk) {
         return THERMAL_LUT[Math.round(thermalFraction(Tk) * 255)];
@@ -673,7 +682,7 @@
         ctx.fillText(thermal ? 'THERMAL CAMERA VIEW' : 'VACUUM CHAMBER', 8, 7);
         setFont(small, 400);
         ctx.fillStyle = thermal ? 'rgba(255,255,255,0.7)' : pal.faint;
-        ctx.fillText(thermal ? 'colours show the temperature the camera measures' : 'no air - walls at 20 °C', 8, 7 + small * 1.25);
+        ctx.fillText(thermal ? 'colours show the temperature the camera measures (auto range)' : 'no air - walls at 20 °C', 8, 7 + small * 1.25);
 
         if (!thermal) {
             // Label the empty gaps: a faint dimension line from the heater centre to each block face
@@ -759,8 +768,8 @@
         const amp = clamp(X(0.4), 1.6, 3.2);
         const lwIR = clamp(X(0.22), 1.1, 1.8);
         const lwVis = clamp(X(0.3), 1.4, 2.4);
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'bevel';
         for (let bk = 0; bk < BUCKETS; bk++) {
             const start = bucketStart[bk], end = bucketStart[bk + 1];
             if (end <= start) continue;
@@ -1122,11 +1131,12 @@
             ctx.strokeRect(x0 + 0.5, y - barH + 0.5, barW - 1, barH - 1);
             ctx.fillStyle = '#ffffff';
             ctx.textBaseline = 'top';
-            [0, 20, 100, 300].forEach((c) => {
-                const fx = Math.pow(c / THERMAL_MAX_C, 0.6) * barW;
-                ctx.textAlign = c === 0 ? 'left' : (c === 300 ? 'right' : 'center');
-                ctx.fillText(c === 300 ? '300+ °C' : String(c), x0 + fx, y + 2);
-            });
+            const top = Math.round(thermalMaxC);
+            [[THERMAL_MIN_C, 'left', `${THERMAL_MIN_C}`], [(THERMAL_MIN_C + top) / 2, 'center', `${Math.round((THERMAL_MIN_C + top) / 2)}`], [top, 'right', `${top}+ °C`]]
+                .forEach(([c, align, label]) => {
+                    ctx.textAlign = align;
+                    ctx.fillText(label, x0 + (c - THERMAL_MIN_C) / (top - THERMAL_MIN_C) * barW, y + 2);
+                });
             return;
         }
         const drawSample = (sx, sy, style, wave) => {
@@ -1160,6 +1170,7 @@
     function render() {
         if (!ctx || cssW <= 0) return;
         const thermal = state.view === 'thermal';
+        if (thermal) updateThermalRange();
         fontPx = clamp(cssW / 62, 9, 14);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssW, cssH);
