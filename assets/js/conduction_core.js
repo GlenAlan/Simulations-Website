@@ -61,7 +61,7 @@
     // spacing) is drawn fully red and counts as HOT_TEMPERATURE_K.
     const HOT_ENERGY = 1.4e-3;
     const HOT_TEMPERATURE_K = 1000;
-    const MAX_HEAT_ENERGY = 30 * HOT_ENERGY; // heating fades out here (amplitude ~20% of spacing)
+    const MAX_HEAT_ENERGY = 30 * HOT_ENERGY; // heating fades out here (amplitude roughly 20% of spacing)
     const COLOUR_SMOOTHING_S = 0.2;          // time constant of the colour smoothing
     const COLOUR_LEVELS = 120;               // hue steps from blue (cold) to red (hot)
 
@@ -304,7 +304,9 @@
                 if (r2 > reach2) continue;
                 const weight = Math.exp(-r2 * inv2R2);
                 if (activeTool === TOOL_HEAT) {
-                    const headroom = 1 - energy[i] / MAX_HEAT_ENERGY;
+                    // The smoothed energy damps the atom-to-atom fluctuations that
+                    // would otherwise let the cap leak.
+                    const headroom = 1 - Math.max(energy[i], smoothEnergy[i]) / MAX_HEAT_ENERGY;
                     if (headroom <= 0) continue;
                     const dv = kick * weight * headroom;
                     vx[i] += (Math.random() * 2 - 1) * dv;
