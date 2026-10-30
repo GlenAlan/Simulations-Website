@@ -66,7 +66,10 @@
     const MAX_FRAME_DT = 0.05;       // clamp long frames (tab switches)
     const PUMP_RATE = 300;           // particles per simulated second through the inlet
     const WEIGHT_P = 50 / KPA;       // each piston weight adds 50 kPa
-    const V_COL = 120;               // sqrt(m) * speed at the top of the colour scale
+    // Colour scale (like the Maxwell's demon page: blue = slower, red = faster than the median particle
+    // of the default gas). sqrt(m) * speed / V_COL is the position on the scale; the median speed
+    // at 300 K, sqrt(2 ln 2 * kT/m) = 35.3, lands on the violet midpoint (0.42) between blue and red.
+    const V_COL = 84;
     const NB = 24;                   // colour buckets
     const HIT_CAP = 640, HIT_LIFE = 0.3, HIT_SCALE = 0.07, HIT_MAX = 16;
     const AVG_SCALE = 9 / P_ATM, AVG_MAX = 24;   // 1 atm -> 9 units long

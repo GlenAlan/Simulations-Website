@@ -130,7 +130,11 @@ body:not(.sim-fullscreen-active) .pressure-charts {
     margin-bottom: 0.35em;
 }
 
-/* A little more room for the graphs in fullscreen when the screen is tall enough. */
+/* Fullscreen: simulation_styles.css leaves ~340px below the canvas for the charts; use 190px of it
+   when the screen is tall enough and stay compact on short screens (e.g. phones in landscape). */
+body.sim-fullscreen-active #charts-container .pressure-chart-box {
+    height: 150px;
+}
 @media (min-height: 700px) {
     body.sim-fullscreen-active #charts-container .pressure-chart-box {
         height: 190px;
