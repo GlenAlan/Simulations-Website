@@ -51,14 +51,11 @@ let prev_avg_density = ambientTemp;
 // UI STATE
 let heatRadius = 5, 
     heatAmp    = 0.5, 
-    coolRate   = 0.5, 
-    heating    = false,
-    cooling    = false, // Added for right-click cooling
-    mX = 0, mY = 0;
+    coolRate   = 0.5;
 
-// MULTI-TOUCH STATE
-let touchPoints = new Map(); // Map to store active touch points
-let activeTouchCount = 0;
+// POINTER STATE: every mouse button, finger or pen currently pressed on the canvas.
+// pointerId -> { x, y, sign } with x/y as fractions of the canvas size and sign +1 = heat, -1 = cool
+const activePointers = new Map();
 
 // DOM REFS
 const canvas      = document.getElementById('simulationCanvas'); 
@@ -211,122 +208,49 @@ if(heatAmpSlider && ampVal) {
 if(coolSlider && coolVal) coolSlider.oninput = () => { coolRate = +coolSlider.value; coolVal.textContent = coolRate.toFixed(2); };
 
 
-function updatePosition(e) {
-  if (!canvas) return;
+// Pointer position as a fraction of the canvas size (resolution-independent)
+function pointerFraction(e) {
   const r = canvas.getBoundingClientRect();
-  let clientX, clientY;
-  if (e.touches && e.touches.length > 0) {
-    clientX = e.touches[0].clientX;
-    clientY = e.touches[0].clientY;
-  } else if (e.clientX !== undefined) {
-    clientX = e.clientX;
-    clientY = e.clientY;
-  } else { return; }
-  mX = clientX - r.left;
-  mY = clientY - r.top;
-
-  if (r.width > 0 && r.height > 0) { 
-    mX = mX * (canvas.width / r.width);
-    mY = mY * (canvas.height / r.height);
-  } else {
-    mX = 0; mY = 0;
-  }
+  if (r.width <= 0 || r.height <= 0) return null;
+  return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
 }
 
-// Updated function to handle multiple touch points
-function updateTouchPoints(e) {
-  if (!canvas) return;
-  const r = canvas.getBoundingClientRect();
-  
-  if (e.touches) {
-    // Clear current touch points
-    touchPoints.clear();
-    
-    // Process all active touches
-    for (let i = 0; i < e.touches.length; i++) {
-      const touch = e.touches[i];
-      let x = touch.clientX - r.left;
-      let y = touch.clientY - r.top;
-      
-      if (r.width > 0 && r.height > 0) { 
-        x = x * (canvas.width / r.width);
-        y = y * (canvas.height / r.height);
-      } else {
-        x = 0; y = 0;
-      }
-      
-      touchPoints.set(touch.identifier, {
-        x: x,
-        y: y,
-        heating: true, // Default to heating for touch
-        cooling: false
-      });
-    }
-    
-    activeTouchCount = e.touches.length;
-    
-    // Also update the legacy single point for mouse compatibility
-    if (e.touches.length > 0) {
-      updatePosition(e);
-    }
-  }
+// Left mouse button, touch and pen heat; right mouse button (or Shift + left button) cools
+function pointerSign(e, buttons) {
+  if (e.pointerType !== 'mouse') return 1;
+  if (buttons & 1) return e.shiftKey ? -1 : 1;
+  if (buttons & 2) return -1;
+  return 0;
 }
 
 if (canvas) {
-    canvas.addEventListener('mousedown', (e) => {
-        updatePosition(e);
-        if (e.button === 0) { // Left click
-            heating = true;
-            cooling = false;
-        } else if (e.button === 2) { // Right click
-            cooling = true;
-            heating = false;
+    canvas.addEventListener('pointerdown', (e) => {
+        // e.button 0 = left (buttons bit 1), 2 = right (buttons bit 2); other buttons are ignored
+        const sign = pointerSign(e, e.button === 0 ? 1 : (e.button === 2 ? 2 : 0));
+        const pos = pointerFraction(e);
+        if (!sign || !pos) return;
+        e.preventDefault(); // No text selection or emulated mouse events while drawing
+        activePointers.set(e.pointerId, { x: pos.x, y: pos.y, sign: sign });
+        // Keep receiving moves (and the release) if the pointer is dragged off the canvas
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+        const pointer = activePointers.get(e.pointerId);
+        if (!pointer) return;
+        const pos = pointerFraction(e);
+        if (pos) { pointer.x = pos.x; pointer.y = pos.y; }
+        if (e.pointerType === 'mouse') {
+            // Pressing/releasing a second button (or Shift) mid-drag switches between heating and cooling
+            const sign = pointerSign(e, e.buttons);
+            if (sign) pointer.sign = sign;
         }
     });
-    canvas.addEventListener('mouseup', (e) => {
-        if (e.button === 0) {
-            heating = false;
-        } else if (e.button === 2) {
-            cooling = false;
-        }
-    });
-    canvas.addEventListener('mouseleave', () => {
-        heating = false;
-        cooling = false;
-    });
-    canvas.addEventListener('mousemove', (e) => {
-        if(heating || cooling) updatePosition(e);
-    });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Prevent context menu on right click
-
-    // Enhanced touch event handling for multiple touches
-    canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        heating = true;
-        updateTouchPoints(e);
-    }, { passive: false });
-    canvas.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        updateTouchPoints(e);
-        if (e.touches.length === 0) {
-            heating = false;
-            touchPoints.clear();
-            activeTouchCount = 0;
-        }
-    }, { passive: false });
-    
-    canvas.addEventListener('touchcancel', (e) => {
-        heating = false;
-        touchPoints.clear();
-        activeTouchCount = 0;
-    });
-    
-    canvas.addEventListener('touchmove', (e) => {
-        e.preventDefault(); 
-        if (heating) {
-            updateTouchPoints(e);
-        }
-    }, { passive: false });
+    const endPointer = (e) => { activePointers.delete(e.pointerId); };
+    canvas.addEventListener('pointerup', endPointer);
+    canvas.addEventListener('pointercancel', endPointer);
+    canvas.addEventListener('lostpointercapture', endPointer);
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Right-click is used for cooling
+    window.addEventListener('blur', () => activePointers.clear()); // Don't keep heating after switching windows
 }
 
 function IX(i,j){ return i + j*size; }
@@ -565,19 +489,9 @@ function applyHeatBrush(xFrac, yFrac, sign) {
 function simulate() {
   dens_prev.fill(0);
 
-  // Handle multi-touch input
-  if (touchPoints.size > 0 && canvas && canvas.width > 0 && canvas.height > 0) {
-    // Apply heating/cooling for each active touch point
-    touchPoints.forEach((touchPoint) => {
-      if (touchPoint.heating) applyHeatBrush(touchPoint.x / canvas.width, touchPoint.y / canvas.height, 1);
-      else if (touchPoint.cooling) applyHeatBrush(touchPoint.x / canvas.width, touchPoint.y / canvas.height, -1);
-    });
-  }
+  // Heat or cool around every active pointer (mouse, fingers, pen)
+  activePointers.forEach((pointer) => applyHeatBrush(pointer.x, pointer.y, pointer.sign));
 
-  // Handle legacy mouse input (for backward compatibility)
-  if ((heating || cooling) && canvas && canvas.width > 0 && canvas.height > 0) {
-    applyHeatBrush(mX / canvas.width, mY / canvas.height, heating ? 1 : -1);
-  }
   prev_avg_density = avg_density; avg_density = 0;
 
   // Buoyancy: fluid warmer than average is pushed up (+v), cooler fluid down (Boussinesq approximation)
@@ -754,21 +668,14 @@ function reinitializeArrays(newN) {
         offscreenCanvas.height = N;
         if (offscreenCtx) offscreenImageData = offscreenCtx.createImageData(N, N);
     }
-
-    // Potentially reset mouse interaction states if they depend on cell size
-    mX = 0; mY = 0;
-    
-    // Reset multi-touch state
-    touchPoints.clear();
-    activeTouchCount = 0;
+    // Pointer positions are stored as fractions of the canvas, so they stay valid at the new size
 }
 
 // Expose setSize to be called from simulation_ui.js
 window.convectionSimulation = {
     setSize: function(newSize) {
-        reinitializeArrays(newSize); // This already resets arrays and some state
-        // Call resetSimulation to ensure all relevant states are reset, including UI states like heating/cooling
-        resetSimulation(); // Call the new comprehensive reset function
+        reinitializeArrays(newSize); // Reallocates the arrays for the new grid
+        resetSimulation(); // Resets the fluid and time state
         if (typeof updateCanvasResolution === 'function') {
             requestAnimationFrame(updateCanvasResolution);
         }
@@ -795,21 +702,13 @@ function resetSimulation() {
     viscousDeltaU.fill(0);
     viscousDeltaV.fill(0);
     divergence.fill(0);
-    dens0.fill(ambientTemp); // Or new Float32Array(size*size).fill(ambientTemp) if dens0 needs to be pristine
+    dens0.fill(ambientTemp);
 
-    // Reset other relevant state variables
+    // Reset other relevant state variables. Pressed pointers are kept: they reflect what the user is
+    // physically holding down, and are released by their own pointerup/pointercancel events.
     avg_density = ambientTemp;
     prev_avg_density = ambientTemp;
-    mX = 0;
-    mY = 0;
-    heating = false;
-    cooling = false;
     accumulatedTime = 0;
-    
-    // Reset multi-touch state
-    touchPoints.clear();
-    activeTouchCount = 0;
-    // lastTimestamp = 0; // Resetting lastTimestamp can cause a jump if animation loop is running, usually not reset here
 
     // Update UI elements if they exist
     updateAverageDisplay();
