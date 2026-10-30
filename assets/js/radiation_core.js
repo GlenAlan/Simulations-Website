@@ -581,7 +581,7 @@
             faint: 'rgba(236,236,236,0.42)', panel: 'rgba(20,21,25,0.72)', ir: '#ff6ec7', lead: '#7c818b', glass: 'rgba(255,255,255,0.10)',
             glassEdge: 'rgba(255,255,255,0.65)', liquid: '#ff4d4f', barIn: '#ffa94d', barWalls: '#868e96',
             barOut: '#ff6ec7', barTrack: 'rgba(255,255,255,0.08)', warm: '#ff8787', cool: '#74c0fc',
-            steady: '#8ce99a', outline: 'rgba(255,255,255,0.55)', shadow: 'rgba(0,0,0,0.6)',
+            steady: '#8ce99a', outline: 'rgba(255,255,255,0.55)',
             chartText: '#d0d0d0', chartGrid: 'rgba(255,255,255,0.10)', left: '#4dabf7', right: '#ffa94d', heaterLine: '#bfbfbf'
         } : {
             dark: false,
@@ -589,7 +589,7 @@
             faint: 'rgba(43,43,43,0.6)', panel: 'rgba(245,246,248,0.82)', ir: '#c2187a', lead: '#8b9099', glass: 'rgba(0,0,0,0.05)',
             glassEdge: 'rgba(0,0,0,0.55)', liquid: '#e03131', barIn: '#f08c00', barWalls: '#adb5bd',
             barOut: '#c2187a', barTrack: 'rgba(0,0,0,0.06)', warm: '#e03131', cool: '#1c7ed6',
-            steady: '#2b8a3e', outline: 'rgba(0,0,0,0.55)', shadow: 'rgba(255,255,255,0.7)',
+            steady: '#2b8a3e', outline: 'rgba(0,0,0,0.55)',
             chartText: '#585858', chartGrid: 'rgba(0,0,0,0.10)', left: '#1c7ed6', right: '#e8590c', heaterLine: '#777777'
         };
         styleColors[0] = pal.ir;
