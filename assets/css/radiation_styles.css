@@ -1,0 +1,74 @@
+/* --- Radiation simulation page styles (loaded after simulation_styles.css) --- */
+
+/* On/off toggles in the controls panel use the template's checkbox style. */
+.sim-controls-content .rad-toggle {
+    margin: 0.35em 0 0.25em 0;
+}
+
+.sim-controls-content .rad-toggle label {
+    display: inline-block;
+    margin-bottom: 0;
+    line-height: 1.8;
+}
+
+/* The control-group divider already provides spacing; keep the checkbox close to the select above it. */
+.sim-control-group .rad-toggle {
+    margin-top: 0.6em;
+}
+
+.sim-control-group .sim-select-container {
+    margin-bottom: 0.5em;
+}
+
+/* Charts below the canvas: side by side on wide screens, stacked on narrow ones.
+   The container's display (flex/none) is set by radiation_core.js. Selectors include the id so they
+   take precedence over the generic #charts-container rules in simulation_styles.css; in fullscreen the
+   shared rules still control the chart height. */
+#charts-container.radiation-charts {
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    max-width: 750px;
+    margin: 0 auto 1.5em auto;
+}
+
+#charts-container.radiation-charts .chart-box {
+    position: relative;
+    flex: 1 1 300px;
+    width: auto;
+    min-width: 0;
+    height: 230px;
+    padding: 6px;
+    border-radius: 5px;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-bg-alt);
+    box-sizing: border-box;
+}
+
+/* Fullscreen leaves about 340px under the canvas for the charts (see simulation_styles.css). */
+body.sim-fullscreen-active #charts-container.radiation-charts .chart-box {
+    flex-basis: 260px;
+    height: 170px;
+}
+
+@media (max-width: 768px) {
+    body.sim-fullscreen-active #charts-container.radiation-charts .chart-box {
+        height: 150px;
+    }
+}
+
+/* Keep the info-bar stats readable when they wrap on small screens. */
+#statsBar .stats-box {
+    white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+    #statsBar .stats-container {
+        gap: 0.3em;
+    }
+
+    #statsBar .stats-box {
+        font-size: 0.75em;
+        padding: 0.2em 0.4em;
+    }
+}

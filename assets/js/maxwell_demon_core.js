@@ -1,819 +1,815 @@
+// Maxwell's Demon simulation.
+//
+// A 2D hard-disk gas in a box divided by a wall with a gate. All collisions
+// (particle-particle and particle-wall) are elastic, so total kinetic energy is
+// conserved and the speeds settle into a Maxwell-Boltzmann distribution.
+// Colour shows speed: red particles are faster than the median speed of the
+// starting gas, blue ones slower, so a particle changes colour when a
+// collision speeds it up or slows it down. In automatic mode the demon opens
+// the gate only for fast particles moving left -> right and slow particles
+// moving right -> left, so the right chamber heats up and the left cools.
+
 // --- DOM Element References ---
 const canvas = document.getElementById('simulationCanvas');
 const ctx = canvas ? canvas.getContext('2d') : null;
 
-// Maxwell's Demon specific controls
 const particleCountSlider = document.getElementById('particleCount');
 const countVal = document.getElementById('countVal');
 const speedSlider = document.getElementById('speedSlider');
 const speedValEl = document.getElementById('speedVal');
 const gateSizeSlider = document.getElementById('gateSizeSlider');
 const gateSizeValEl = document.getElementById('gateSizeVal');
-// const autoModeCheckbox = document.getElementById('autoMode'); // Replaced by demonModeSelector
 const demonModeSelector = document.getElementById('demonModeSelector');
 const showChartsCheckbox = document.getElementById('showCharts');
 const chartsContainer = document.getElementById('charts-container');
 
-// Stats elements
 const leftRedEl = document.getElementById('leftRed');
 const leftBlueEl = document.getElementById('leftBlue');
+const leftTempEl = document.getElementById('leftTemp');
 const rightRedEl = document.getElementById('rightRed');
 const rightBlueEl = document.getElementById('rightBlue');
+const rightTempEl = document.getElementById('rightTemp');
 
 const resetButton = document.getElementById('resetSimulationBtn');
-const fpsDisplay = document.getElementById('fpsDisplay'); // Added FPS display element
+const fpsDisplay = document.getElementById('fpsDisplay');
 
-
-// --- Simulation Constants & Parameters ---
-let nPerColor = particleCountSlider ? +particleCountSlider.value : 100;
-let speedMultiplier = speedSlider ? +speedSlider.value : 50; // Renamed from ticksPerFrame for clarity with new timing
-let gateSizePercent = gateSizeSlider ? +gateSizeSlider.value : 25; // Gate size as percentage (10-90%)
-// let autoMode = autoModeCheckbox ? autoModeCheckbox.checked : true; // Replaced by demonMode
-let demonMode = demonModeSelector ? demonModeSelector.value : 'automatic'; // 'automatic' or 'manual'
-
+// --- Simulation Constants ---
+// The physics runs in a fixed 750 x 375 "world" (matching the 2:1 canvas),
+// which is scaled to whatever size the canvas is displayed at. Resizing the
+// window or going fullscreen therefore never changes the physics.
+const WORLD_WIDTH = 750;
+const WORLD_HEIGHT = 375;
+const CENTER_X = WORLD_WIDTH / 2;
 const radius = 5;
-const BASE_DT = 1.0 / 60.0; // Target time step for each physics update (approx 60 FPS)
-const initialSpeed = 1.5; // Initial speed for particles
 
-// Canvas dimensions (will be updated by handleSimulationResize)
-let canvasWidth = 0; // Initialize to 0, will be set by handleSimulationResize
-let canvasHeight = 0;
-let centerX = 0;
+const MAX_PER_COLOR = particleCountSlider ? +particleCountSlider.max || 500 : 500;
+const MAX_PARTICLES = 2 * MAX_PER_COLOR;
 
-// --- Simulation State Variables ---
-let particles = [];
+// Starting temperature: each velocity component is normal with std-dev SIGMA
+// (mean speed ~1.5 world units per simulated second).
+const SIGMA = 1.2;
+const T0 = SIGMA * SIGMA;                                   // mean kinetic energy per particle at the start (m = 1, 2D)
+const SPEED_THRESHOLD = SIGMA * Math.sqrt(2 * Math.LN2);    // median speed of the starting gas
+const SPEED_THRESHOLD_SQ = SPEED_THRESHOLD * SPEED_THRESHOLD;
+
+const MAX_STEP_DISPLACEMENT = 0.5 * radius; // no particle moves more than this per sub-step (prevents tunnelling)
+const MAX_SUBSTEPS_PER_FRAME = 400;
+const PHYSICS_BUDGET_MS = 8;                // cap on physics time per frame; the simulation slows rather than stutters
+const MAX_FRAME_DT = 0.1;                   // seconds; avoids a huge jump after the tab was in the background
+const DEMON_LOOKAHEAD = 2 * radius;         // how far from the wall the demon watches approaching particles
+const READOUT_INTERVAL_MS = 200;
+const CHART_REDRAW_INTERVAL_MS = 250;
+const MAX_CHART_POINTS = 400;
+const INITIAL_SAMPLE_INTERVAL = 2;          // simulated seconds between chart samples (doubles as history grows)
+
+// --- Parameters from the controls ---
+let nPerColor = particleCountSlider ? +particleCountSlider.value : 100;
+let speedMultiplier = speedSlider ? +speedSlider.value : 50;
+let gateSizePercent = gateSizeSlider ? +gateSizeSlider.value : 25;
+let demonMode = demonModeSelector ? demonModeSelector.value : 'automatic';
+
+// --- Simulation State (struct of arrays for speed) ---
+let particleCount = 0;
+const posX = new Float64Array(MAX_PARTICLES);
+const posY = new Float64Array(MAX_PARTICLES);
+const velX = new Float64Array(MAX_PARTICLES);
+const velY = new Float64Array(MAX_PARTICLES);
+const side = new Uint8Array(MAX_PARTICLES); // 0 = left chamber, 1 = right chamber
+
 let gateOpen = false;
-let mouseDown = false;
-let lastTimestamp = 0;
-let physicsTimeAccumulator = 0.0; // Accumulator for frame-rate independent physics steps
-let currentSimulationTime = 0.0; // Total elapsed simulation time for charts
-let physicsStepCounter = 0; // Counter for physics steps to control chart sampling
-let lastChartUpdateStep = 0; // Track the last physics step when charts were updated
+let pointerHeld = false;       // manual mode: gate is held open by mouse / touch
+let currentSimulationTime = 0; // simulated seconds since reset
+let maxSpeed = 0;              // fastest particle at the end of the last sub-step
 
-// FPS calculation
+// Uniform grid for collision detection (cell size = particle diameter).
+const CELL_SIZE = 2 * radius;
+const GRID_COLS = Math.ceil(WORLD_WIDTH / CELL_SIZE);
+const GRID_ROWS = Math.ceil(WORLD_HEIGHT / CELL_SIZE);
+const CELL_COUNT = GRID_COLS * GRID_ROWS;
+const cellStart = new Int32Array(CELL_COUNT + 1);
+const cellCursor = new Int32Array(CELL_COUNT);
+const cellOfParticle = new Int32Array(MAX_PARTICLES);
+const particlesByCell = new Int32Array(MAX_PARTICLES);
+
+// --- Rendering State ---
+let canvasScaleX = 1; // device pixels per world unit
+let canvasScaleY = 1;
+let currentDpr = window.devicePixelRatio || 1;
+let palette = null;
+let lastTimestamp = null;
 let frameCount = 0;
 let lastFpsUpdate = 0;
+let lastReadoutUpdate = -Infinity;
 
-// Chart.js instances and data
-let leftChart, rightChart;
-const maxDataPoints = 10000;
-let chartTextColor = 'var(--color-text-secondary)'; // Default, will be updated
-let chartGridColor = 'var(--color-border)';
-let chartTitleColor = 'var(--color-text-primary)'; // Changed to use --color-text-primary
-
-// Function to update chart colors based on current theme
-function updateChartColors() {
-    const rootStyle = getComputedStyle(document.documentElement);
-    chartTextColor = rootStyle.getPropertyValue('--color-text-secondary').trim() || '#aaa';
-    chartGridColor = rootStyle.getPropertyValue('--color-border').trim() || 'rgba(255,255,255,0.1)';
-    // Ensure chartTitleColor uses the theme's primary text color.
-    chartTitleColor = rootStyle.getPropertyValue('--color-text-primary').trim() || (document.documentElement.classList.contains('dark-mode') ? '#fff' : '#333');
-
-    [leftChart, rightChart].forEach(chart => {
-        if (chart && chart.options) { // Ensure chart and options exist
-            // Update scales colors (axes, ticks, grid lines)
-            if (chart.options.scales) {
-                if (chart.options.scales.x) {
-                    if (chart.options.scales.x.title) chart.options.scales.x.title.color = chartTextColor;
-                    if (chart.options.scales.x.ticks) chart.options.scales.x.ticks.color = chartTextColor;
-                    if (chart.options.scales.x.grid) chart.options.scales.x.grid.color = chartGridColor;
-                }
-                if (chart.options.scales.y) {
-                    if (chart.options.scales.y.title) chart.options.scales.y.title.color = chartTextColor;
-                    if (chart.options.scales.y.ticks) chart.options.scales.y.ticks.color = chartTextColor;
-                    if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = chartGridColor;
-                }
-            }
-
-            // Update plugins colors (title, legend)
-            if (chart.options.plugins) {
-                if (chart.options.plugins.title) {
-                    chart.options.plugins.title.color = chartTitleColor; // Apply theme-based color to title
-                }
-                if (chart.options.plugins.legend && chart.options.plugins.legend.labels) {
-                    chart.options.plugins.legend.labels.color = chartTitleColor; // Legend labels also use this color
-                }
-            }
-            chart.update('none'); // Update chart without animation
-        }
-    });
-}
-
+// --- Charts ---
+let leftChart = null, rightChart = null;
 const chartData = {
-    left: { timestamps: [], red: [], blue: [] },
-    right: { timestamps: [], red: [], blue: [] },
-    startTime: 0, 
-    lastUpdateSimTime: 0 // Changed from lastUpdateTime to use simulation time
+    times: [],
+    left: { red: [], blue: [] },
+    right: { red: [], blue: [] }
 };
+let sampleInterval = INITIAL_SAMPLE_INTERVAL;
+let nextSampleTime = 0;
+let chartsDirty = false;
+let lastChartRedraw = -Infinity;
 
-// --- Core Simulation Classes and Functions ---
-class Particle {
-    constructor(x, y, vx, vy, color) {
-        this.x = x;
-        this.y = y;
-        this.vx = vx;
-        this.vy = vy;
-        this.color = color;
-    }
-      
-    get energy() {
-        return 0.5 * (this.vx * this.vx + this.vy * this.vy);
-    }
+// Scratch object for chamber statistics
+const chamberStats = { leftRed: 0, leftBlue: 0, rightRed: 0, rightBlue: 0, leftEnergy: 0, rightEnergy: 0 };
 
-    get speed() {
-        return Math.hypot(this.vx, this.vy);
-    }
-
-    setSpeed(newSpeed) {
-        if (this.speed === 0) {
-            // If speed is zero, give it a small random velocity before setting speed
-            const angle = Math.random() * 2 * Math.PI;
-            this.vx = Math.cos(angle) * 0.01;
-            this.vy = Math.sin(angle) * 0.01;
-        }
-        const factor = newSpeed / this.speed;
-        this.vx *= factor;
-        this.vy *= factor;
-    }
+// --- Helpers ---
+function gateBounds() {
+    const gateSize = (gateSizePercent / 100) * WORLD_HEIGHT;
+    const gateTop = WORLD_HEIGHT / 2 - gateSize / 2;
+    return [gateTop, gateTop + gateSize];
 }
 
-// Helper function to calculate gate size in pixels from percentage
-function getGateSizePixels() {
-    return (gateSizePercent / 100) * canvasHeight;
+// Sample a speed from the 2D Maxwell-Boltzmann (Rayleigh) distribution
+// using the inverse CDF, with u in [0, 1).
+function speedFromQuantile(u) {
+    return SIGMA * Math.sqrt(-2 * Math.log(1 - u));
 }
 
-function initializeSimulationState() {
-    if (canvasWidth === 0 || canvasHeight === 0) {
-        console.warn("Canvas dimensions not set before init. Attempting resize call.");
-        handleSimulationResize(); // Ensure dimensions are set
-        if (canvasWidth === 0 || canvasHeight === 0) {
-            console.error("Canvas dimensions still zero after resize call. Aborting init.");
-            return; // Critical error, cannot proceed
-        }
-    }
-    centerX = canvasWidth / 2;
-
-    particles = [];
-    for (let i = 0; i < 2 * nPerColor; i++) {
-        const color = i < nPerColor ? 'red' : 'blue';
-        
-        let x, y, validPosition = false;
-        while (!validPosition) {
-            x = Math.random() * (canvasWidth - 2 * radius) + radius;
-            y = Math.random() * (canvasHeight - 2 * radius) + radius;
-            // Ensure not too close to the barrier center line, and not on the exact line
-            if (Math.abs(x - centerX) > radius * 2.5) { 
-                validPosition = true;
-            }
-        }
-            
-        const angle = Math.random() * Math.PI * 2;
-        const vx = Math.cos(angle) * initialSpeed;
-        const vy = Math.sin(angle) * initialSpeed;
-        
-        particles.push(new Particle(x, y, vx, vy, color));
-    }
-  
-    chartData.left.timestamps = [];    chartData.left.red = [];
-    chartData.left.blue = [];
-    chartData.right.timestamps = [];
-    chartData.right.red = [];
-    chartData.right.blue = [];    chartData.startTime = performance.now();    currentSimulationTime = 0.0; 
-    chartData.lastUpdateSimTime = 0.0; // Reset simulation time tracker for chart updates
-    physicsStepCounter = 0; // Reset physics step counter
-    lastChartUpdateStep = 0; // Reset chart update step tracker
-    // Don't force initial zero data points - let the simulation naturally populate the charts
-}
-
-function handleWallCollision(p, dtArg) {
-    let bounced = false;
-    const minSpeed = 0.5;
-    const maxSpeed = 5.0; // Increased max speed
-
-    if (p.y - radius < 0) {
-        p.y = radius;
-        p.vy = -p.vy;
-        bounced = true;
-    } else if (p.y + radius > canvasHeight) {
-        p.y = canvasHeight - radius;
-        p.vy = -p.vy;
-        bounced = true;
-    }
-
-    if (p.x - radius < 0) {
-        p.x = radius;
-        p.vx = -p.vx;
-        bounced = true;
-    } else if (p.x + radius > canvasWidth) {
-        p.x = canvasWidth - radius;
-        p.vx = -p.vx;
-        bounced = true;
-    }
-
-    if (bounced) {
-        const currentSpeed = p.speed;
-        const currentAngle = Math.atan2(p.vy, p.vx);
-        const perturbation = (Math.random() - 0.5) * 0.2; // Small angle change
-        const newAngle = currentAngle + perturbation;
-        
-        p.vx = Math.cos(newAngle) * currentSpeed;
-        p.vy = Math.sin(newAngle) * currentSpeed;
-        
-        const newSpeedClamped = Math.max(minSpeed, Math.min(p.speed, maxSpeed));
-        if (p.speed > 0) p.setSpeed(newSpeedClamped);
-    }
-    return bounced;
-}
-
-function handleBarrierInteraction(p, dtArg) {
-    const gateSize = getGateSizePixels();
-    const gateY1 = canvasHeight / 2 - gateSize / 2;
-    const gateY2 = canvasHeight / 2 + gateSize / 2;
-
-    const nextX = p.x + p.vx * dtArg;
-    const crossesBarrier = (p.x < centerX && nextX >= centerX) || (p.x > centerX && nextX <= centerX);
-
-    if (crossesBarrier) {
-        // Calculate time to hit the barrier plane
-        const tToBarrier = (centerX - p.x) / p.vx;
-        const yAtBarrier = p.y + p.vy * tToBarrier;
-
-        const inGateArea = yAtBarrier >= gateY1 && yAtBarrier <= gateY2;
-
-        if (gateOpen && inGateArea) {
-            // Allowed to pass
-            return false; // No collision
+function computeChamberStats() {
+    let lr = 0, lb = 0, rr = 0, rb = 0, le = 0, re = 0;
+    for (let i = 0; i < particleCount; i++) {
+        const v2 = velX[i] * velX[i] + velY[i] * velY[i];
+        const fast = v2 > SPEED_THRESHOLD_SQ;
+        if (side[i] === 0) {
+            if (fast) lr++; else lb++;
+            le += v2;
         } else {
-            // Hits the closed gate or barrier wall
-            p.x = (p.vx > 0) ? centerX - radius - 0.01 : centerX + radius + 0.01;
-            p.vx *= -0.98; // Reflect with slight energy loss
-            
-            // Add perturbation to avoid getting stuck
-            const currentSpeed = p.speed;
-            if (currentSpeed > 0.1) {
-                const angle = Math.atan2(p.vy, p.vx) + (Math.random() - 0.5) * 0.3;
-                p.vx = Math.cos(angle) * currentSpeed;
-                p.vy = Math.sin(angle) * currentSpeed;
-                // Ensure it can escape
-                if (Math.abs(p.vx) < 0.2 * currentSpeed) {
-                    p.vx = (p.x < centerX ? -1 : 1) * 0.2 * currentSpeed;
-                    p.setSpeed(currentSpeed);
-                }
-            }
-            return true; // Collision occurred
+            if (fast) rr++; else rb++;
+            re += v2;
         }
     }
-    return false; // No collision with barrier this step
+    chamberStats.leftRed = lr; chamberStats.leftBlue = lb;
+    chamberStats.rightRed = rr; chamberStats.rightBlue = rb;
+    chamberStats.leftEnergy = 0.5 * le; chamberStats.rightEnergy = 0.5 * re;
+    return chamberStats;
 }
 
+// --- Initialisation ---
+function initializeSimulationState() {
+    const n = Math.max(0, Math.min(MAX_PER_COLOR, nPerColor | 0));
+    particleCount = 0;
+    cellStart.fill(0);
 
-function runSinglePhysicsStep(dtArgument) { 
-    const gateSize = getGateSizePixels();
-    const gateY1 = canvasHeight / 2 - gateSize / 2;
-    const gateY2 = canvasHeight / 2 + gateSize / 2;
+    // Occupancy grid for overlap-free placement
+    const placed = [];
+    for (let c = 0; c < CELL_COUNT; c++) placed[c] = null;
+    const minSep2 = 4 * radius * radius;
 
-    // if (autoMode) { // Replaced by demonMode check
-    if (demonMode === 'automatic') {
-        let soonest = null;
-        let tMin = Infinity;
-
-        for (const p of particles) {
-            if (Math.abs(p.vx) < 0.01) continue; 
-
-            const movingTowardsGate = (p.x < centerX && p.vx > 0) || (p.x > centerX && p.vx < 0);
-            if (!movingTowardsGate) continue;
-
-            const t = (centerX - p.x) / p.vx; 
-            if (t > 0 && t < tMin) { // Only consider future collisions
-                const yAtGate = p.y + p.vy * t; 
-                if (yAtGate >= gateY1 && yAtGate <= gateY2) {
-                    soonest = p;
-                    tMin = t;
+    function tryPlace(chamber) {
+        const xMin = chamber === 0 ? radius : CENTER_X + radius;
+        const xMax = chamber === 0 ? CENTER_X - radius : WORLD_WIDTH - radius;
+        let x = 0, y = 0;
+        for (let attempt = 0; attempt < 200; attempt++) {
+            x = xMin + Math.random() * (xMax - xMin);
+            y = radius + Math.random() * (WORLD_HEIGHT - 2 * radius);
+            const gx = Math.min(GRID_COLS - 1, (x / CELL_SIZE) | 0);
+            const gy = Math.min(GRID_ROWS - 1, (y / CELL_SIZE) | 0);
+            let ok = true;
+            for (let oy = -1; oy <= 1 && ok; oy++) {
+                for (let ox = -1; ox <= 1 && ok; ox++) {
+                    const cx = gx + ox, cy = gy + oy;
+                    if (cx < 0 || cy < 0 || cx >= GRID_COLS || cy >= GRID_ROWS) continue;
+                    const list = placed[cy * GRID_COLS + cx];
+                    if (!list) continue;
+                    for (let k = 0; k < list.length; k++) {
+                        const j = list[k];
+                        const dx = posX[j] - x, dy = posY[j] - y;
+                        if (dx * dx + dy * dy < minSep2) { ok = false; break; }
+                    }
                 }
             }
+            if (ok) break; // otherwise keep the last attempt; collisions will separate any overlap
         }
-        gateOpen = soonest ? 
-            (soonest.color === 'red' && soonest.vx > 0 && soonest.x < centerX) || 
-            (soonest.color === 'blue' && soonest.vx < 0 && soonest.x > centerX)  
-            : false;
-    } else { // Manual mode
-        gateOpen = mouseDown;
+        const cell = Math.min(GRID_ROWS - 1, (y / CELL_SIZE) | 0) * GRID_COLS + Math.min(GRID_COLS - 1, (x / CELL_SIZE) | 0);
+        (placed[cell] || (placed[cell] = [])).push(particleCount);
+        return [x, y];
     }
 
-    for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        
-        // Store previous position for collision detection (not strictly needed with current barrier logic but good practice)
-        // const prevX = p.x;
-        // const prevY = p.y;
-        
-        p.x += p.vx * dtArgument;
-        p.y += p.vy * dtArgument;
-        
-        handleWallCollision(p, dtArgument);
-        handleBarrierInteraction(p, dtArgument);
-        
-        const currentSpeed = p.speed;
-        const minSpeed = 0.5;
-        const maxSpeed = 5.0; 
-        if (currentSpeed < minSpeed && minSpeed > 0) p.setSpeed(minSpeed);
-        else if (currentSpeed > maxSpeed) p.setSpeed(maxSpeed);    }
+    // n fast (red) and n slow (blue) particles: speeds come from the upper and
+    // lower halves of the Maxwell-Boltzmann distribution, so together they form
+    // a gas at the starting temperature. Each colour is split evenly between
+    // the chambers (an odd one out goes left for red and right for blue).
+    for (let colour = 0; colour < 2; colour++) {
+        for (let k = 0; k < n; k++) {
+            const u = Math.random() * 0.5 + (colour === 0 ? 0.5 : 0);
+            const speed = speedFromQuantile(Math.min(u, 0.999999));
+            const angle = Math.random() * Math.PI * 2;
+            const chamber = (k + colour) % 2;
+            const [x, y] = tryPlace(chamber);
+            posX[particleCount] = x;
+            posY[particleCount] = y;
+            velX[particleCount] = Math.cos(angle) * speed;
+            velY[particleCount] = Math.sin(angle) * speed;
+            side[particleCount] = chamber;
+            particleCount++;
+        }
+    }
 
-    currentSimulationTime += dtArgument; 
-    physicsStepCounter++; // Increment physics step counter for chart sampling
+    maxSpeed = 0;
+    for (let i = 0; i < particleCount; i++) {
+        const s = Math.hypot(velX[i], velY[i]);
+        if (s > maxSpeed) maxSpeed = s;
+    }
+
+    currentSimulationTime = 0;
+    gateOpen = false;
+    observeGate();
+    resetChartData();
+    lastReadoutUpdate = -Infinity;
 }
 
-function updateCharts(leftRed, leftBlue, rightRed, rightBlue, realTimestamp, forceUpdate = false) {
-    // Ensure essential chart-related elements exist before proceeding.
-    if (!leftChart || !rightChart || !showChartsCheckbox) {
+// --- Physics ---
+
+// Bin particles into grid cells (counting sort).
+function buildGrid() {
+    cellStart.fill(0);
+    for (let i = 0; i < particleCount; i++) {
+        let gx = (posX[i] / CELL_SIZE) | 0;
+        let gy = (posY[i] / CELL_SIZE) | 0;
+        if (gx < 0) gx = 0; else if (gx >= GRID_COLS) gx = GRID_COLS - 1;
+        if (gy < 0) gy = 0; else if (gy >= GRID_ROWS) gy = GRID_ROWS - 1;
+        const c = gy * GRID_COLS + gx;
+        cellOfParticle[i] = c;
+        cellStart[c + 1]++;
+    }
+    for (let c = 0; c < CELL_COUNT; c++) cellStart[c + 1] += cellStart[c];
+    cellCursor.set(cellStart.subarray(0, CELL_COUNT));
+    for (let i = 0; i < particleCount; i++) {
+        particlesByCell[cellCursor[cellOfParticle[i]]++] = i;
+    }
+}
+
+// Elastic collisions between equal-mass disks: the components of velocity
+// along the line of centres are exchanged, which conserves both momentum and
+// kinetic energy exactly. Overlap is removed by moving both disks apart.
+const NEIGHBOUR_OFFSETS = [[0, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+function resolveCollisions(gateTop, gateBottom) {
+    const diameter = 2 * radius;
+    const diameterSq = diameter * diameter;
+    for (let i = 0; i < particleCount; i++) {
+        const c = cellOfParticle[i];
+        const gx = c % GRID_COLS;
+        const gy = (c - gx) / GRID_COLS;
+        for (let k = 0; k < 5; k++) {
+            const nx = gx + NEIGHBOUR_OFFSETS[k][0];
+            const ny = gy + NEIGHBOUR_OFFSETS[k][1];
+            if (nx < 0 || nx >= GRID_COLS || ny >= GRID_ROWS) continue;
+            const nc = ny * GRID_COLS + nx;
+            const end = cellStart[nc + 1];
+            for (let s = cellStart[nc]; s < end; s++) {
+                const j = particlesByCell[s];
+                if (k === 0 && j <= i) continue;
+                let dx = posX[j] - posX[i];
+                let dy = posY[j] - posY[i];
+                const d2 = dx * dx + dy * dy;
+                if (d2 >= diameterSq) continue;
+                // Particles on opposite sides of the wall only meet through the open gate
+                if (side[i] !== side[j] && !(gateOpen &&
+                    posY[i] > gateTop && posY[i] < gateBottom &&
+                    posY[j] > gateTop && posY[j] < gateBottom)) continue;
+                let d = Math.sqrt(d2);
+                if (d < 1e-9) {
+                    const a = Math.random() * Math.PI * 2;
+                    dx = Math.cos(a); dy = Math.sin(a); d = 0;
+                } else {
+                    dx /= d; dy /= d;
+                }
+                const vn = (velX[j] - velX[i]) * dx + (velY[j] - velY[i]) * dy;
+                if (vn < 0) {
+                    velX[i] += vn * dx; velY[i] += vn * dy;
+                    velX[j] -= vn * dx; velY[j] -= vn * dy;
+                }
+                const push = 0.5 * (diameter - d);
+                posX[i] -= push * dx; posY[i] -= push * dy;
+                posX[j] += push * dx; posY[j] += push * dy;
+            }
+        }
+    }
+}
+
+// Bounce a particle passing through the open gate off the end of the wall at (CENTER_X, tipY).
+function deflectFromGateEdge(i, tipY) {
+    const dx = posX[i] - CENTER_X;
+    const dy = posY[i] - tipY;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= radius * radius) return;
+    const d = Math.sqrt(d2) || 1e-9;
+    const nx = d2 > 0 ? dx / d : 0;
+    const ny = d2 > 0 ? dy / d : (tipY < WORLD_HEIGHT / 2 ? 1 : -1);
+    const vn = velX[i] * nx + velY[i] * ny;
+    if (vn < 0) {
+        velX[i] -= 2 * vn * nx;
+        velY[i] -= 2 * vn * ny;
+    }
+    posX[i] = CENTER_X + nx * radius;
+    posY[i] = tipY + ny * radius;
+}
+
+// Specular reflection from the box walls and the central wall / gate. A
+// particle can only change chamber through the open gate, so nothing can
+// tunnel through the wall whatever the speed setting.
+function enforceBoundaries(gateTop, gateBottom) {
+    const minX = radius, maxX = WORLD_WIDTH - radius;
+    const minY = radius, maxY = WORLD_HEIGHT - radius;
+    const leftLimit = CENTER_X - radius, rightLimit = CENTER_X + radius;
+    let vmax2 = 0;
+    for (let i = 0; i < particleCount; i++) {
+        let x = posX[i], y = posY[i];
+        if (x < minX) { x = 2 * minX - x; if (velX[i] < 0) velX[i] = -velX[i]; }
+        else if (x > maxX) { x = 2 * maxX - x; if (velX[i] > 0) velX[i] = -velX[i]; }
+        if (y < minY) { y = 2 * minY - y; if (velY[i] < 0) velY[i] = -velY[i]; }
+        else if (y > maxY) { y = 2 * maxY - y; if (velY[i] > 0) velY[i] = -velY[i]; }
+        // Safety clamp (only matters after a very deep overlap correction)
+        if (x < minX) x = minX; else if (x > maxX) x = maxX;
+        if (y < minY) y = minY; else if (y > maxY) y = maxY;
+        posX[i] = x; posY[i] = y;
+
+        const inGate = gateOpen && y > gateTop && y < gateBottom;
+        if (side[i] === 0) {
+            if (x > leftLimit) {
+                if (inGate) {
+                    deflectFromGateEdge(i, gateTop);
+                    deflectFromGateEdge(i, gateBottom);
+                    if (posX[i] >= CENTER_X) side[i] = 1;
+                } else {
+                    posX[i] = leftLimit;
+                    if (velX[i] > 0) velX[i] = -velX[i];
+                }
+            }
+        } else if (x < rightLimit) {
+            if (inGate) {
+                deflectFromGateEdge(i, gateTop);
+                deflectFromGateEdge(i, gateBottom);
+                if (posX[i] < CENTER_X) side[i] = 0;
+            } else {
+                posX[i] = rightLimit;
+                if (velX[i] < 0) velX[i] = -velX[i];
+            }
+        }
+        const v2 = velX[i] * velX[i] + velY[i] * velY[i];
+        if (v2 > vmax2) vmax2 = v2;
+    }
+    maxSpeed = Math.sqrt(vmax2);
+}
+
+// Set the gate for the next sub-step. In automatic mode the demon looks at the
+// particles about to reach the gate: it opens only if at least one of them
+// should go through (fast heading right, or slow heading left) and none of
+// them should not; it also holds the gate open for a particle still in the
+// doorway on its way out.
+function observeGate() {
+    if (demonMode !== 'automatic') {
+        gateOpen = pointerHeld;
         return;
     }
-    const simTimeSeconds = currentSimulationTime;
-
-    const updateIntervalSteps = 1000; // Update every 1000 physics steps
-    if (forceUpdate || chartData.left.timestamps.length === 0 ||
-        physicsStepCounter - lastChartUpdateStep >= updateIntervalSteps) {
-
-        lastChartUpdateStep = physicsStepCounter; // Track when we last updated
-        chartData.lastUpdateSimTime = simTimeSeconds;
-
-        chartData.left.timestamps.push(simTimeSeconds);
-        chartData.right.timestamps.push(simTimeSeconds);
-        chartData.left.red.push(leftRed);
-        chartData.left.blue.push(leftBlue);
-        chartData.right.red.push(rightRed);
-        chartData.right.blue.push(rightBlue);
-
-        if (chartData.left.timestamps.length > maxDataPoints) {
-            chartData.left.timestamps.shift();
-            chartData.left.red.shift();
-            chartData.left.blue.shift();
-            chartData.right.timestamps.shift();
-            chartData.right.red.shift();
-            chartData.right.blue.shift();
+    const [gateTop, gateBottom] = gateBounds();
+    let wanted = false, unwanted = false, inDoorway = false;
+    for (let i = 0; i < particleCount; i++) {
+        const offset = posX[i] - CENTER_X;
+        const dist = offset < 0 ? -offset : offset;
+        if (dist > DEMON_LOOKAHEAD) continue;
+        const vx = velX[i];
+        const y = posY[i];
+        const approaching = side[i] === 0 ? vx > 0 : vx < 0;
+        if (approaching) {
+            const yAtWall = y + velY[i] * (dist / (vx < 0 ? -vx : vx));
+            const willReachGap = yAtWall > gateTop && yAtWall < gateBottom;
+            const inGapNow = dist < radius && y > gateTop && y < gateBottom;
+            if (!willReachGap && !inGapNow) continue;
+            const fast = vx * vx + velY[i] * velY[i] > SPEED_THRESHOLD_SQ;
+            if ((side[i] === 0) === fast) wanted = true; else unwanted = true;
+        } else if (dist < radius && y > gateTop && y < gateBottom) {
+            inDoorway = true;
         }
+    }
+    gateOpen = !unwanted && (wanted || inDoorway);
+}
 
-        // Conditional rendering: only update Chart.js instances if charts are visible or update is forced.
-        if (showChartsCheckbox.checked || forceUpdate) { 
-            const timeRange = {
-                min: 0,
-                max: Math.max(10, simTimeSeconds) 
-            };
+function runSinglePhysicsStep(dt) {
+    const [gateTop, gateBottom] = gateBounds();
+    for (let i = 0; i < particleCount; i++) {
+        posX[i] += velX[i] * dt;
+        posY[i] += velY[i] * dt;
+    }
+    buildGrid();
+    resolveCollisions(gateTop, gateBottom);
+    enforceBoundaries(gateTop, gateBottom);
+    currentSimulationTime += dt;
+    observeGate();
 
-            [leftChart, rightChart].forEach(chart => {
-                if (chart && chart.options && chart.options.scales && chart.options.scales.x) {
-                    chart.options.scales.x.min = timeRange.min;
-                    chart.options.scales.x.max = timeRange.max;
-                }
-            });
-
-            if (leftChart && leftChart.data) {
-                leftChart.data.labels = chartData.left.timestamps;
-                leftChart.data.datasets[0].data = chartData.left.red;
-                leftChart.data.datasets[1].data = chartData.left.blue;
-                leftChart.update('none'); 
-            }
-            
-            if (rightChart && rightChart.data) {
-                rightChart.data.labels = chartData.right.timestamps;
-                rightChart.data.datasets[0].data = chartData.right.red;
-                rightChart.data.datasets[1].data = chartData.right.blue;
-                rightChart.update('none');
-            }
-        }
+    while (currentSimulationTime >= nextSampleTime) {
+        recordChartSample(nextSampleTime);
+        nextSampleTime += sampleInterval;
     }
 }
 
-function renderSimulation() { 
-    if (!ctx) return;
+// Advance the simulation by simDt simulated seconds using sub-steps small
+// enough that no particle moves more than MAX_STEP_DISPLACEMENT per step.
+function advanceSimulation(simDt) {
+    const start = performance.now();
+    let remaining = simDt;
+    let steps = 0;
+    while (remaining > 1e-12 && steps < MAX_SUBSTEPS_PER_FRAME) {
+        // Allow for speeds rising during a collision (at most sqrt(2) x for equal masses)
+        const h = Math.min(remaining, MAX_STEP_DISPLACEMENT / Math.max(1.5 * maxSpeed, 1e-6));
+        runSinglePhysicsStep(h);
+        remaining -= h;
+        steps++;
+        if ((steps & 7) === 0 && performance.now() - start > PHYSICS_BUDGET_MS) break;
+    }
+    // Any time left over is dropped: at extreme settings the simulation runs
+    // slower than requested instead of taking unstable steps.
+}
 
-    const gateSize = getGateSizePixels();
-    const gateY1 = canvasHeight / 2 - gateSize / 2;
-    const gateY2 = canvasHeight / 2 + gateSize / 2;
+// --- Charts ---
+function resetChartData() {
+    chartData.times = [];
+    chartData.left.red = []; chartData.left.blue = [];
+    chartData.right.red = []; chartData.right.blue = [];
+    sampleInterval = INITIAL_SAMPLE_INTERVAL;
+    nextSampleTime = 0;
+    chartsDirty = true;
+    lastChartRedraw = -Infinity;
+}
 
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+function recordChartSample(time) {
+    const s = computeChamberStats();
+    chartData.times.push(time);
+    chartData.left.red.push(s.leftRed);
+    chartData.left.blue.push(s.leftBlue);
+    chartData.right.red.push(s.rightRed);
+    chartData.right.blue.push(s.rightBlue);
+    if (chartData.times.length > MAX_CHART_POINTS) {
+        // Keep the whole history at half the resolution so memory and drawing
+        // cost stay bounded however long the simulation runs.
+        const keepEven = (_, idx) => idx % 2 === 0;
+        chartData.times = chartData.times.filter(keepEven);
+        chartData.left.red = chartData.left.red.filter(keepEven);
+        chartData.left.blue = chartData.left.blue.filter(keepEven);
+        chartData.right.red = chartData.right.red.filter(keepEven);
+        chartData.right.blue = chartData.right.blue.filter(keepEven);
+        sampleInterval *= 2;
+        nextSampleTime = chartData.times[chartData.times.length - 1];
+    }
+    chartsDirty = true;
+}
 
-    const barrierColor = getComputedStyle(document.documentElement).getPropertyValue('--color-border-dark').trim() || '#444';
-    ctx.strokeStyle = barrierColor;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(centerX, 0);
-    ctx.lineTo(centerX, gateY1);
-    ctx.moveTo(centerX, gateY2);
-    ctx.lineTo(centerX, canvasHeight);    ctx.stroke();
+function chartsVisible() {
+    return !!(showChartsCheckbox && showChartsCheckbox.checked && leftChart && rightChart);
+}
 
-    if (!gateOpen) {
-        ctx.strokeStyle = 'purple'; // Changed to purple
-        ctx.beginPath();
-        ctx.moveTo(centerX, gateY1);
-        ctx.lineTo(centerX, gateY2);
-        ctx.stroke(); 
-    } //else {
-      //  ctx.strokeStyle = 'purple'; // Changed to purple
-      //  ctx.setLineDash([2, 2]);
-      //  ctx.beginPath();
-      //  ctx.moveTo(centerX, gateY1);
-      //  ctx.lineTo(centerX, gateY2);
-      //  ctx.stroke();
-      //  ctx.setLineDash([]); 
-    //}
+function redrawCharts(now) {
+    if (!chartsVisible() || !chartsDirty) return;
+    if (now !== undefined && now - lastChartRedraw < CHART_REDRAW_INTERVAL_MS) return;
+    lastChartRedraw = now === undefined ? performance.now() : now;
+    chartsDirty = false;
+    const xMax = Math.max(10, currentSimulationTime);
+    const sets = [[leftChart, chartData.left], [rightChart, chartData.right]];
+    for (const [chart, data] of sets) {
+        chart.options.scales.x.max = xMax;
+        chart.data.labels = chartData.times;
+        chart.data.datasets[0].data = data.red;
+        chart.data.datasets[1].data = data.blue;
+        chart.update('none');
+    }
+}
 
-    let leftRed = 0, leftBlue = 0, rightRed = 0, rightBlue = 0;
+function readThemeColour(name, fallback) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+}
 
-    particles.forEach(p => {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        if (p.color === 'red') {
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.85)'; // Brighter red
-        } else if (p.color === 'blue') {
-            ctx.fillStyle = 'rgba(0, 100, 255, 0.85)'; // Brighter blue
-        } else {
-            ctx.fillStyle = 'grey'; 
-        }
-        ctx.fill();
-
-        if (p.x < centerX) {
-            if (p.color === 'red') leftRed++; else leftBlue++;
-        } else {
-            if (p.color === 'red') rightRed++; else rightBlue++;
-        }
+function updateChartColors() {
+    const textColor = readThemeColour('--color-text', '#888');
+    const gridColor = readThemeColour('--color-border', 'rgba(128,128,128,0.3)');
+    [leftChart, rightChart].forEach(chart => {
+        if (!chart) return;
+        const { x, y } = chart.options.scales;
+        x.title.color = textColor; x.ticks.color = textColor; x.grid.color = gridColor;
+        y.title.color = textColor; y.ticks.color = textColor; y.grid.color = gridColor;
+        chart.options.plugins.title.color = textColor;
+        chart.options.plugins.legend.labels.color = textColor;
+        chart.update('none');
     });
-
-    if (leftRedEl) leftRedEl.textContent = leftRed;
-    if (leftBlueEl) leftBlueEl.textContent = leftBlue;
-    if (rightRedEl) rightRedEl.textContent = rightRed;
-    if (rightBlueEl) rightBlueEl.textContent = rightBlue;
-
-    // Always call updateCharts to accumulate data.
-    // The updateCharts function itself will decide whether to render based on visibility.
-    updateCharts(leftRed, leftBlue, rightRed, rightBlue, performance.now());
 }
-
-// --- Main Animation Loop & Setup ---
-const MAX_PHYSICS_STEPS_PER_FRAME = 1000; // Max physics updates per animation frame
-
-function animate(timestamp) {
-    if (!ctx || !canvas) return; 
-
-    const elapsedRealSeconds = (timestamp - (lastTimestamp || timestamp)) / 1000.0;
-    lastTimestamp = timestamp;
-
-    // FPS Calculation
-    frameCount++;
-    if (timestamp - lastFpsUpdate > 1000) { // Update FPS display every second
-        const fps = frameCount / ((timestamp - lastFpsUpdate) / 1000);
-        if (fpsDisplay) fpsDisplay.textContent = `FPS: ${fps.toFixed(0)}`;
-        frameCount = 0;
-        lastFpsUpdate = timestamp;
-    }
-
-    // Accumulate time scaled by the speed multiplier.
-    physicsTimeAccumulator += elapsedRealSeconds * speedMultiplier;
-
-    let physicsStepsTakenThisFrame = 0;
-
-    while (physicsTimeAccumulator >= BASE_DT && physicsStepsTakenThisFrame < MAX_PHYSICS_STEPS_PER_FRAME) {
-        runSinglePhysicsStep(BASE_DT); 
-        physicsTimeAccumulator -= BASE_DT;
-        physicsStepsTakenThisFrame++;
-    }
-    if (physicsStepsTakenThisFrame >= MAX_PHYSICS_STEPS_PER_FRAME) {
-        physicsTimeAccumulator = 0; // Avoid runaway loop if lagging badly
-    }
-
-    renderSimulation();
-    requestAnimationFrame(animate);
-}
-
 
 function setupCharts() {
     const leftChartCanvas = document.getElementById('leftChart');
     const rightChartCanvas = document.getElementById('rightChart');
     if (!leftChartCanvas || !rightChartCanvas) return;
+    if (typeof Chart === 'undefined') {
+        // Chart.js failed to load (e.g. offline): hide the chart toggle rather than break the simulation
+        const toggle = showChartsCheckbox ? showChartsCheckbox.closest('label') : null;
+        if (toggle) toggle.style.display = 'none';
+        return;
+    }
 
-    updateChartColors(); // Initial color setup
-
-    const commonChartOptions = (titleText) => ({
+    const chartOptions = (titleText) => ({
         animation: false,
         responsive: true,
         maintainAspectRatio: false,
+        normalized: true,
+        elements: { point: { radius: 0, hitRadius: 4 }, line: { borderWidth: 2, tension: 0 } },
+        interaction: { mode: 'index', intersect: false },
         plugins: {
-            title: {
-                display: true,
-                text: titleText,
-                color: chartTitleColor // Set by updateChartColors
-            },
-            legend: {
-                labels: {
-                    color: chartTitleColor // Set by updateChartColors
-                }
+            title: { display: true, text: titleText },
+            legend: { labels: { boxWidth: 12 } },
+            tooltip: {
+                callbacks: { title: (items) => items.length ? `t = ${Number(items[0].label).toFixed(0)} s` : '' }
             }
         },
         scales: {
             x: {
                 type: 'linear',
-                position: 'bottom',
-                title: {
-                    display: true,
-                    text: 'Simulation Time (s)',
-                    color: chartTextColor // Set by updateChartColors
-                },
                 min: 0,
-                max: 10, 
-                ticks: { 
-                    color: chartTextColor, // Set by updateChartColors
-                    maxTicksLimit: 10,
-                    callback: function(value) {
-                        return (value).toFixed(0);
-                    }
-                },
-                grid: { color: chartGridColor } // Set by updateChartColors
+                max: 10,
+                title: { display: true, text: 'Simulation Time (s)' },
+                ticks: { maxTicksLimit: 6, callback: (value) => Number(value).toFixed(0) },
+                grid: {}
             },
             y: {
                 beginAtZero: true,
-                title: { // Added Y-axis title for completeness, can be removed if not needed
-                    display: true,
-                    text: 'Particle Count',
-                    color: chartTextColor
-                },
-                ticks: { color: chartTextColor }, // Set by updateChartColors
-                grid: { color: chartGridColor } // Set by updateChartColors
+                title: { display: true, text: 'Particle Count' },
+                ticks: { precision: 0 },
+                grid: {}
             }
-        },
+        }
     });
-    
-    const datasetDefaults = (label, borderColor, bgColor) => ({
-        label: label,
-        data: [],
-        borderColor: borderColor,
-        backgroundColor: bgColor,
-        fill: true,
-        tension: 0.2
+
+    const dataset = (label, color) => ({ label, data: [], borderColor: color, backgroundColor: color, fill: false });
+    const makeChart = (el, title) => new Chart(el, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                dataset('Red (fast)', 'rgba(255, 0, 0, 0.85)'),
+                dataset('Blue (slow)', 'rgba(0, 100, 255, 0.85)')
+            ]
+        },
+        options: chartOptions(title)
     });
 
     if (leftChart) leftChart.destroy();
-    leftChart = new Chart(leftChartCanvas, {
-        type: 'line',
-        data: {
-            labels: [], // Timestamps
-            datasets: [
-                datasetDefaults('Red Particles', 'rgba(255, 0, 0, 0.8)', 'rgba(255, 0, 0, 0.2)'),
-                datasetDefaults('Blue Particles', 'rgba(0, 100, 255, 0.8)', 'rgba(0, 100, 255, 0.2)')
-            ]
-        },
-        options: commonChartOptions('Left Chamber')
-    });
-
     if (rightChart) rightChart.destroy();
-    rightChart = new Chart(rightChartCanvas, {
-        type: 'line',
-        data: {
-            labels: [], // Timestamps
-            datasets: [
-                datasetDefaults('Red Particles', 'rgba(255, 0, 0, 0.8)', 'rgba(255, 0, 0, 0.2)'),
-                datasetDefaults('Blue Particles', 'rgba(0, 100, 255, 0.8)', 'rgba(0, 100, 255, 0.2)')
-            ]
-        },
-        options: commonChartOptions('Right Chamber')
-    });
+    leftChart = makeChart(leftChartCanvas, 'Left Chamber');
+    rightChart = makeChart(rightChartCanvas, 'Right Chamber');
+    updateChartColors();
+    chartsDirty = true;
 }
 
-function handleSimulationResize() {
-    if (!canvas) return;
-    const oldWidth = canvasWidth;
-    const oldHeight = canvasHeight;
+function applyChartsVisibility() {
+    if (!showChartsCheckbox || !chartsContainer) return;
+    const visible = showChartsCheckbox.checked;
+    chartsContainer.style.display = visible ? 'block' : 'none';
+    document.body.classList.toggle('charts-visible', visible);
+    if (visible && leftChart && rightChart) {
+        leftChart.resize();
+        rightChart.resize();
+        chartsDirty = true;
+        redrawCharts();
+    }
+}
 
+// --- Rendering ---
+function refreshPalette() {
+    const dark = document.documentElement.classList.contains('dark-mode');
+    palette = {
+        wall: dark ? '#6b6b6b' : '#444444',
+        gate: dark ? '#c47cff' : '#800080',
+        red: 'rgba(255, 0, 0, 0.85)',
+        blue: 'rgba(0, 100, 255, 0.85)'
+    };
+}
+
+function formatTemperature(energy, count) {
+    return count > 0 ? (energy / count / T0).toFixed(2) : '–';
+}
+
+function setText(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+}
+
+function updateReadouts() {
+    const s = computeChamberStats();
+    setText(leftRedEl, String(s.leftRed));
+    setText(leftBlueEl, String(s.leftBlue));
+    setText(rightRedEl, String(s.rightRed));
+    setText(rightBlueEl, String(s.rightBlue));
+    setText(leftTempEl, formatTemperature(s.leftEnergy, s.leftRed + s.leftBlue));
+    setText(rightTempEl, formatTemperature(s.rightEnergy, s.rightRed + s.rightBlue));
+}
+
+function renderSimulation() {
+    if (!ctx) return;
+    if (!palette) refreshPalette();
+    const [gateTop, gateBottom] = gateBounds();
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(canvasScaleX, 0, 0, canvasScaleY, 0, 0);
+
+    // Central wall with the gap for the gate
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = palette.wall;
+    ctx.beginPath();
+    ctx.moveTo(CENTER_X, 0);
+    ctx.lineTo(CENTER_X, gateTop);
+    ctx.moveTo(CENTER_X, gateBottom);
+    ctx.lineTo(CENTER_X, WORLD_HEIGHT);
+    ctx.stroke();
+
+    if (!gateOpen) {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = palette.gate;
+        ctx.beginPath();
+        ctx.moveTo(CENTER_X, gateTop);
+        ctx.lineTo(CENTER_X, gateBottom);
+        ctx.stroke();
+    }
+
+    // One path per colour keeps this cheap even with 1000 particles
+    const redPath = new Path2D();
+    const bluePath = new Path2D();
+    const twoPi = Math.PI * 2;
+    for (let i = 0; i < particleCount; i++) {
+        const x = posX[i], y = posY[i];
+        const path = (velX[i] * velX[i] + velY[i] * velY[i] > SPEED_THRESHOLD_SQ) ? redPath : bluePath;
+        path.moveTo(x + radius, y);
+        path.arc(x, y, radius, 0, twoPi);
+    }
+    ctx.fillStyle = palette.red;
+    ctx.fill(redPath);
+    ctx.fillStyle = palette.blue;
+    ctx.fill(bluePath);
+}
+
+// --- Main Animation Loop ---
+function animate(timestamp) {
+    requestAnimationFrame(animate);
+    if (!ctx) return;
+
+    let elapsed = lastTimestamp === null ? 0 : (timestamp - lastTimestamp) / 1000;
+    lastTimestamp = timestamp;
+    if (!(elapsed > 0)) elapsed = 0;
+    else if (elapsed > MAX_FRAME_DT) elapsed = MAX_FRAME_DT;
+
+    frameCount++;
+    if (timestamp - lastFpsUpdate >= 1000) {
+        const fps = frameCount * 1000 / (timestamp - lastFpsUpdate);
+        if (fpsDisplay) fpsDisplay.textContent = `FPS: ${fps.toFixed(0)}`;
+        frameCount = 0;
+        lastFpsUpdate = timestamp;
+    }
+
+    if ((window.devicePixelRatio || 1) !== currentDpr) handleSimulationResize();
+
+    if (demonMode !== 'automatic') gateOpen = pointerHeld;
+    advanceSimulation(elapsed * speedMultiplier);
+    renderSimulation();
+
+    if (timestamp - lastReadoutUpdate >= READOUT_INTERVAL_MS) {
+        updateReadouts();
+        lastReadoutUpdate = timestamp;
+    }
+    redrawCharts(timestamp);
+}
+
+// --- Sizing ---
+function handleSimulationResize() {
+    if (!canvas || !ctx) return;
     const aspectRatioBox = canvas.parentElement; // .sim-aspect-ratio-box
     if (!aspectRatioBox) return;
 
-    const isFullscreen = document.body.classList.contains('sim-fullscreen-active');
-    let targetWidth, targetHeight;
-
-    // Get aspect ratio from CSS custom property
-    const simStyle = getComputedStyle(aspectRatioBox);
-    const simAspectRatioString = simStyle.getPropertyValue('--aspect-ratio').trim();
-    let simAspectRatio = 2; // Default for Maxwell's Demon (2/1)
-    if (simAspectRatioString) {
-        const parts = simAspectRatioString.split('/');
-        if (parts.length === 2 && parseFloat(parts[1]) !== 0) {
-            simAspectRatio = parseFloat(parts[0]) / parseFloat(parts[1]);
-        } else if (parts.length === 1) {
-            simAspectRatio = parseFloat(simAspectRatioString);
-        }
-    }    if (isNaN(simAspectRatio) || simAspectRatio <= 0) simAspectRatio = 2;
-    
-    if (isFullscreen) {
-        // In fullscreen, calculate maximum size that fits while maintaining aspect ratio
-        const canvasWrapper = aspectRatioBox.parentElement; 
+    if (document.body.classList.contains('sim-fullscreen-active')) {
+        // Fit the largest 2:1 box into the space the fullscreen layout gives the canvas wrapper
+        const canvasWrapper = aspectRatioBox.parentElement;
         if (!canvasWrapper) return;
-        
-        // Get available space from the wrapper (accounts for padding from parent)
         const availableWidth = canvasWrapper.clientWidth;
         const availableHeight = canvasWrapper.clientHeight;
-        
-        // Calculate the largest size that fits the aspect ratio within available space
-        if (availableWidth / availableHeight > simAspectRatio) {
-            // Height is the limiting factor
-            targetHeight = availableHeight;
-            targetWidth = targetHeight * simAspectRatio;
-        } else {
-            // Width is the limiting factor  
-            targetWidth = availableWidth;
-            targetHeight = targetWidth / simAspectRatio;
+        if (availableWidth > 0 && availableHeight > 0) {
+            const aspect = WORLD_WIDTH / WORLD_HEIGHT;
+            let targetWidth = availableWidth, targetHeight = availableWidth / aspect;
+            if (targetHeight > availableHeight) {
+                targetHeight = availableHeight;
+                targetWidth = availableHeight * aspect;
+            }
+            aspectRatioBox.style.width = `${Math.floor(targetWidth)}px`;
+            aspectRatioBox.style.height = `${Math.floor(targetHeight)}px`;
         }
-        
-        // Set explicit dimensions for fullscreen to ensure proper scaling
-        aspectRatioBox.style.width = `${targetWidth}px`;
-        aspectRatioBox.style.height = `${targetHeight}px`;
     } else {
-        // Not fullscreen: reset inline styles so CSS can take over
-        aspectRatioBox.style.width = ''; 
-        aspectRatioBox.style.height = ''; 
-        
-        // Get the computed size based on CSS layout
-        const boxRect = aspectRatioBox.getBoundingClientRect();
-        targetWidth = boxRect.width;
-        targetHeight = boxRect.height;
+        // Let the CSS aspect-ratio box size itself
+        aspectRatioBox.style.width = '';
+        aspectRatioBox.style.height = '';
     }
 
-    targetWidth = Math.max(1, Math.round(targetWidth));
-    targetHeight = Math.max(1, Math.round(targetHeight));
-
-    const dpr = window.devicePixelRatio || 1;
-
-    canvasWidth = targetWidth;
-    canvasHeight = targetHeight;
-
-    canvas.width = Math.round(canvasWidth * dpr);
-    canvas.height = Math.round(canvasHeight * dpr);
-
-    ctx.scale(dpr, dpr); // Scale context to account for high DPI
-
-    centerX = canvasWidth / 2; // Update centerX based on new logical width
-
-    // If simulation has started and dimensions changed, adapt particles
-    if (particles.length > 0 && (oldWidth !== canvasWidth || oldHeight !== canvasHeight)) {
-        // Simple rescaling of particle positions. More complex logic might be needed.
-        const scaleX = canvasWidth / oldWidth;
-        const scaleY = canvasHeight / oldHeight;
-        if (oldWidth > 0 && oldHeight > 0) { // Avoid division by zero if initialized hidden
-             particles.forEach(p => {
-                p.x *= scaleX;
-                p.y *= scaleY;
-                // Clamp particles to new bounds if they somehow end up outside
-                p.x = Math.max(radius, Math.min(p.x, canvasWidth - radius));
-                p.y = Math.max(radius, Math.min(p.y, canvasHeight - radius));
-            });
-        }
-    }
-    // No need to re-initialize if particles exist, just adapt.
-    // If it's the very first call and particles are not yet initialized, 
-    // initializeSimulationState will handle it after this.
+    // Match the backing store to the canvas's displayed size for crisp high-DPI rendering
+    currentDpr = window.devicePixelRatio || 1;
+    const cssWidth = canvas.clientWidth;
+    const cssHeight = canvas.clientHeight;
+    if (cssWidth === 0 || cssHeight === 0) return;
+    const pixelWidth = Math.max(1, Math.round(cssWidth * currentDpr));
+    const pixelHeight = Math.max(1, Math.round(cssHeight * currentDpr));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    canvasScaleX = pixelWidth / WORLD_WIDTH;
+    canvasScaleY = pixelHeight / WORLD_HEIGHT;
+    renderSimulation();
 }
 
 function fullResetAndRestart() {
-    // Reset timing variables
-    lastTimestamp = 0;
-    physicsTimeAccumulator = 0.0;
-    currentSimulationTime = 0.0;
-    frameCount = 0;
-    lastFpsUpdate = performance.now(); // Reset FPS counter start time
-
-    // Re-initialize simulation state (which also handles canvas dimensions)
-    initializeSimulationState();    // Charts are re-initialized by setupCharts if needed, or updated.
-    if (showChartsCheckbox && showChartsCheckbox.checked) {
-        setupCharts(); // Re-setup charts to clear data and apply new colors if theme changed
-        // Don't force initial zero data points - let the simulation naturally populate the charts
-    } else if (chartsContainer) {
-        chartsContainer.style.display = 'none';
-    }
+    initializeSimulationState();
+    updateReadouts();
+    lastReadoutUpdate = performance.now();
+    redrawCharts();
+    renderSimulation();
 }
 
-// --- Event Listeners & Initialization ---
+// --- Event Listeners & Initialisation ---
 document.addEventListener('DOMContentLoaded', () => {
     if (!canvas || !ctx) {
         console.error("Canvas or context not found. Maxwell's Demon simulation cannot start.");
         return;
     }
 
-    // Initial resize and setup
-    handleSimulationResize(); // Set initial canvas size based on CSS/container
-    setupCharts(); // Setup charts initially
-    initializeSimulationState(); // Initialize particles and other sim state
-    
-    // Event Listeners for controls
+    refreshPalette();
+    setupCharts();
+    initializeSimulationState();
+    handleSimulationResize();
+    updateReadouts();
+
     if (particleCountSlider) {
-        particleCountSlider.oninput = () => {
-            nPerColor = +particleCountSlider.value; 
-            if(countVal) countVal.textContent = nPerColor; 
+        particleCountSlider.addEventListener('input', () => {
+            nPerColor = +particleCountSlider.value;
+            if (countVal) countVal.textContent = nPerColor;
             fullResetAndRestart();
-        };
-        if(countVal) countVal.textContent = nPerColor; // Initial display
+        });
+        if (countVal) countVal.textContent = nPerColor;
     }
-    
-    // if (autoModeCheckbox) { // Replaced by demonModeSelector logic
-    //     autoModeCheckbox.onchange = () => {
-    //         autoMode = autoModeCheckbox.checked;
-    //         // No need to reset, mode changes dynamically
-    //     };
-    // }
-    if (demonModeSelector) {
-        demonModeSelector.onchange = () => {
-            demonMode = demonModeSelector.value;
-            // No need to reset, mode changes dynamically
-        };
-        demonMode = demonModeSelector.value; // Initialize with current selection
-    }
-    
+
     if (speedSlider) {
-        speedSlider.oninput = () => {
+        speedSlider.addEventListener('input', () => {
             speedMultiplier = +speedSlider.value;
-            if(speedValEl) speedValEl.textContent = speedMultiplier;
-            // No need to reset, speed changes dynamically
-        };
-        if(speedValEl) speedValEl.textContent = speedMultiplier; // Initial display
+            if (speedValEl) speedValEl.textContent = speedMultiplier;
+        });
+        if (speedValEl) speedValEl.textContent = speedMultiplier;
     }
-      if (gateSizeSlider) {
-        gateSizeSlider.oninput = () => {
+
+    if (gateSizeSlider) {
+        gateSizeSlider.addEventListener('input', () => {
             gateSizePercent = +gateSizeSlider.value;
-            if(gateSizeValEl) gateSizeValEl.textContent = gateSizePercent;
-            // No need to reset, gate size changes dynamically
-        };
-        if(gateSizeValEl) gateSizeValEl.textContent = gateSizePercent; // Initial display
-    }if (showChartsCheckbox && chartsContainer) {
-        showChartsCheckbox.onchange = () => {
-            chartsContainer.style.display = showChartsCheckbox.checked ? 'block' : 'none'; // Or 'flex' if that's the desired display type
-            
-            // Add/remove charts-visible class for CSS styling
-            if (showChartsCheckbox.checked) {
-                document.body.classList.add('charts-visible');
-                setupCharts(); // Re-setup charts to ensure they are fresh and colors are correct
-                // Force an update with current counts if available
-                const lRed = parseInt(leftRedEl.textContent) || 0;
-                const lBlue = parseInt(leftBlueEl.textContent) || 0;
-                const rRed = parseInt(rightRedEl.textContent) || 0;
-                const rBlue = parseInt(rightBlueEl.textContent) || 0;
-                updateCharts(lRed, lBlue, rRed, rBlue, performance.now(), true);
-            } else {
-                document.body.classList.remove('charts-visible');
-            }
-            
-            // Trigger canvas resize to adjust simulation size when charts are toggled in fullscreen
-            const isFullscreen = document.body.classList.contains('sim-fullscreen-active');
-            if (isFullscreen) {
-                // Use setTimeout to allow charts container to render before resize calculation
-                setTimeout(() => {
-                    handleSimulationResize();
-                }, 50);
-            }        };
-        chartsContainer.style.display = showChartsCheckbox.checked ? 'block' : 'none'; // Initial state
-        
-        // Set initial charts-visible class state
-        if (showChartsCheckbox.checked) {
-            document.body.classList.add('charts-visible');
-        } else {
-            document.body.classList.remove('charts-visible');
-        }
+            if (gateSizeValEl) gateSizeValEl.textContent = gateSizePercent;
+        });
+        if (gateSizeValEl) gateSizeValEl.textContent = gateSizePercent;
     }
 
-    if (resetButton) {
-        resetButton.addEventListener('click', fullResetAndRestart);
+    const applyDemonMode = () => {
+        demonMode = demonModeSelector ? demonModeSelector.value : 'automatic';
+        canvas.style.cursor = demonMode === 'manual' ? 'pointer' : '';
+        observeGate();
+    };
+    if (demonModeSelector) demonModeSelector.addEventListener('change', applyDemonMode);
+    applyDemonMode();
+
+    if (showChartsCheckbox && chartsContainer) {
+        showChartsCheckbox.addEventListener('change', applyChartsVisibility);
+        applyChartsVisibility();
     }
 
-    // Mouse interaction for manual gate control
-    if (canvas) {
-        canvas.addEventListener('mousedown', (e) => { 
-            if (e.button === 0) mouseDown = true; 
-        });
-        canvas.addEventListener('mouseup', (e) => { 
-            if (e.button === 0) mouseDown = false; 
-        });
-        canvas.addEventListener('mouseleave', () => { 
-            mouseDown = false; // Also close gate if mouse leaves canvas while pressed
-        });
-    }
+    if (resetButton) resetButton.addEventListener('click', fullResetAndRestart);
 
-    // Resize listener
-    window.addEventListener('resize', () => {
-        handleSimulationResize();
-        // Charts might need redrawing if their container size changed, 
-        // Chart.js responsive option should handle this, but colors might need update.
-        if (showChartsCheckbox && showChartsCheckbox.checked) {
-            updateChartColors(); // Ensure colors are correct after resize/theme change
-            // Charts will be updated in the next animation frame or by updateCharts call
-        }
+    // Manual mode: press and hold (mouse, pen or touch) on the canvas to open the gate
+    const releaseGate = () => { pointerHeld = false; };
+    canvas.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        pointerHeld = true;
+        if (demonMode === 'manual') e.preventDefault();
     });
+    canvas.addEventListener('pointerup', releaseGate);
+    canvas.addEventListener('pointercancel', releaseGate);
+    canvas.addEventListener('pointerleave', releaseGate);
+    window.addEventListener('blur', releaseGate);
+    canvas.addEventListener('contextmenu', (e) => { if (demonMode === 'manual') e.preventDefault(); });
 
-    // Theme change listener (from main.js or simulation_ui.js)
-    document.addEventListener('themeChanged', () => {
-        if (showChartsCheckbox && showChartsCheckbox.checked) {
-            updateChartColors();
+    // Resize: window resizes, fullscreen / panel changes (simulation_ui.js) and layout shifts
+    window.addEventListener('resize', handleSimulationResize);
+    if (typeof ResizeObserver !== 'undefined') {
+        const resizeObserver = new ResizeObserver(() => handleSimulationResize());
+        resizeObserver.observe(canvas);
+        if (canvas.parentElement && canvas.parentElement.parentElement) {
+            resizeObserver.observe(canvas.parentElement.parentElement); // .sim-canvas-wrapper
         }
-        // The renderSimulation function already picks up theme colors for canvas elements dynamically.
-    });
+    }
 
-    // Start the animation loop
-    lastTimestamp = performance.now(); // Initialize lastTimestamp before first animate call
-    lastFpsUpdate = lastTimestamp; // Initialize FPS update time
+    // Theme changes (main.js toggles dark-mode / light-mode on <html>)
+    new MutationObserver(() => {
+        refreshPalette();
+        updateChartColors();
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    lastFpsUpdate = performance.now();
     requestAnimationFrame(animate);
 });
