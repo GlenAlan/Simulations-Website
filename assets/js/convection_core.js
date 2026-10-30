@@ -4,8 +4,8 @@ let size = N + 2;
 // Reference grid size: the heating brush radius and the cooled surface layer are specified in cells
 // of a 64x64 grid and scaled with N, so changing the grid size changes resolution, not the physics.
 const referenceN = 64;
-const iter = 4;
-const diff   = 0.0001;
+const iter = 4; // Gauss-Seidel sweeps per pressure/viscosity solve (both are warm-started, see below)
+const diff   = 0.0001; // Heat diffusion coefficient
 let visc   = 0.0001; // Made viscosity variable for dropdown control
 const buoyancyCoeff = 1.0,
       ambientTemp   = 0.5;
@@ -29,7 +29,9 @@ let frameCount = 0;
 let lastFpsUpdate = 0;
 let currentFps = 0;
 
-// FLUID STATE ARRAYS
+// FLUID STATE ARRAYS (size x size including a one-cell boundary; index with IX(i, j), j increases upwards)
+// u, v: velocity. dens: temperature (0 = 0 °C ... 1 = 100 °C), named after the "density" field of
+// Stam's stable-fluids method it is advected with. dens_prev: heat added by the brush this step.
 let u        = new Float32Array(size*size);
 let v        = new Float32Array(size*size);
 let dens     = new Float32Array(size*size);
@@ -139,11 +141,6 @@ function updateCanvasResolution() {
     targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
     targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
 
-    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-    }
-    
     // Ensure offscreen canvas for simulation logic always matches N
     if (!offscreenCanvas || offscreenCanvas.width !== N || offscreenCanvas.height !== N) {
         offscreenCanvas = document.createElement('canvas');
@@ -151,6 +148,14 @@ function updateCanvasResolution() {
         offscreenCanvas.height = N;
         offscreenCtx = offscreenCanvas.getContext('2d');
         if (offscreenCtx) offscreenImageData = offscreenCtx.createImageData(N, N);
+    }
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        // Resizing clears the canvas, and this can run after the frame's step() has drawn it:
+        // redraw now so a blank frame isn't shown on every resize (e.g. during panel/fullscreen transitions)
+        renderDensity();
     }
 }
 
