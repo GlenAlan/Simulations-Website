@@ -89,7 +89,8 @@ function updateCanvasResolution() {
         } else if (parts.length === 1) {
             simAspectRatio = parseFloat(simAspectRatioString);
         }
-    }    if (isNaN(simAspectRatio) || simAspectRatio <= 0) simAspectRatio = 1;
+    }
+    if (isNaN(simAspectRatio) || simAspectRatio <= 0) simAspectRatio = 1;
     
     if (isFullscreen) {
         // In fullscreen, calculate maximum size that fits while maintaining aspect ratio
@@ -282,13 +283,16 @@ if (canvas) {
     });
     canvas.addEventListener('mousemove', (e) => {
         if(heating || cooling) updatePosition(e);
-    });    canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Prevent context menu on right click    // Enhanced touch event handling for multiple touches
+    });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Prevent context menu on right click
+
+    // Enhanced touch event handling for multiple touches
     canvas.addEventListener('touchstart', (e) => {
-        e.preventDefault(); 
-        heating = true; 
+        e.preventDefault();
+        heating = true;
         updateTouchPoints(e);
     }, { passive: false });
-      canvas.addEventListener('touchend', (e) => {
+    canvas.addEventListener('touchend', (e) => {
         e.preventDefault();
         updateTouchPoints(e);
         if (e.touches.length === 0) {
@@ -678,7 +682,9 @@ function reinitializeArrays(newN) {
         offscreenCanvas.width = N;
         offscreenCanvas.height = N;
         if (offscreenCtx) offscreenImageData = offscreenCtx.createImageData(N, N);
-    }    // Potentially reset mouse interaction states if they depend on cell size
+    }
+
+    // Potentially reset mouse interaction states if they depend on cell size
     mX = 0; mY = 0;
     
     // Reset multi-touch state

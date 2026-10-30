@@ -43,7 +43,8 @@
 				"name": "Simulations.Science",
 				"url": "https://simulations.science/"
 			},
-			"url": "https://simulations.science/convection_simulation.html",			"audience": {
+			"url": "https://simulations.science/convection_simulation.html",
+			"audience": {
 				"@type": "EducationalAudience",
 				"educationalRole": ["student", "teacher", "researcher"]
 			},
@@ -68,7 +69,8 @@
 			"educationalLevel": "High School and Above",
 			"image": "https://simulations.science/images/convect.png",
 			"interactivityType": "active",
-			"isAccessibleForFree": true		}
+			"isAccessibleForFree": true
+		}
 		</script>
 		
 		<!-- BreadcrumbList structured data -->
@@ -174,7 +176,8 @@
                                         </label>
                                         <label>Heat Intensity: <span id="heatAmpVal">0.50</span>
                                             <input type="range" id="heatAmp" min="0.01" max="1" step="0.01" value="0.50">
-                                        </label>                                        <label>Surface Cooling: <span id="coolRateVal">0.50</span>
+                                        </label>
+                                        <label>Surface Cooling: <span id="coolRateVal">0.50</span>
                                             <input type="range" id="coolRate" min="0" max="1" step="0.01" value="0.50">
                                         </label>
                                         <div class="sim-control-group">
@@ -208,7 +211,7 @@
                                             <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
                                         </div>
                                         <div class="sim-info-bar">
-                                            <span class="sim-info-item">Avg. Temperature: <span id="avgDensityVal">0.00</span> °C</span>
+                                            <span class="sim-info-item">Avg. Temperature: <span id="avgDensityVal">50.0</span> °C</span>
                                             <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation">
                                                 <span class="icon solid fa-sync-alt"></span>
                                             </button>
@@ -223,14 +226,16 @@
 
                                     <div class="description-area">
                                         <h3>About this Simulation</h3>
-                                        <p>This simulation visualizes fluid convection. Hotter fluid (red) rises, and cooler fluid (blue) sinks due to changes in density from particle vibrations.This creates circulation patterns. Click and drag on the canvas to apply heat locally.</p>
-                                        <p>Adjust parameters using the controls panel (toggle with the <span class="icon solid fa-cog"></span> icon). Press 'F' to toggle the FPS display. Use the fullscreen icon (<span class="icon solid fa-expand"></span>) for an immersive view.</p>
+                                        <p>This simulation visualizes convection in a box of fluid. When fluid is heated it expands, becoming less dense than the fluid around it, so buoyancy makes it rise; cooler, denser fluid sinks to take its place. The top surface constantly loses heat, so warm fluid that reaches it cools and sinks again, creating circulating convection currents. Colours show temperature, from blue (cold) through green to red (hot).</p>
+                                        <p><strong>Left-click</strong> (or touch) and drag on the canvas to heat the fluid locally. <strong>Right-click</strong> and drag to cool it.</p>
+                                        <p>Adjust parameters using the controls panel (toggle with the <span class="icon solid fa-cog"></span> icon). Press 'F' to toggle the FPS display. Use the fullscreen icon (<span class="icon solid fa-expand"></span>) for an immersive view. The reset button (<span class="icon solid fa-sync-alt"></span>) restarts the simulation with the current settings.</p>
                                         <p><strong>Controls:</strong></p>
                                         <ul>
                                             <li><strong>Speed:</strong> Adjusts the simulation rate.</li>
-                                            <li><strong>Heating Radius:</strong> Controls the size of the area affected when you apply heat with the mouse.</li>
-                                            <li><strong>Heat Intensity:</strong> Determines how much energy is added when heating.</li>
+                                            <li><strong>Heating Radius:</strong> Controls the size of the area affected when you heat or cool the fluid.</li>
+                                            <li><strong>Heat Intensity:</strong> Determines how much energy is added when heating, or removed when cooling.</li>
                                             <li><strong>Surface Cooling:</strong> Adjusts the rate at which the fluid at the top surface cools down.</li>
+                                            <li><strong>Viscosity:</strong> Sets how "thick" the fluid is. Viscous fluids such as honey resist flowing, so their convection currents are slower and smoother.</li>
                                             <li><strong>Simulation Size:</strong> Changes the dimensions of the simulation grid. Larger sizes may impact performance.</li>
                                         </ul>
                                         <p>The simulation solves a simplified version of the Navier-Stokes equations for fluid dynamics. Temperature differences cause buoyancy effects and fluid motion.</p>
