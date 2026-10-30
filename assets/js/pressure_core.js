@@ -1292,7 +1292,7 @@
         ctx.textBaseline = 'middle';
         const roomy = fSmall < r * 0.2;
         for (let i = 0; i <= 4; i++) {
-            if (!roomy && (i === 1 || i === 3)) continue;
+            if (!roomy && (i === 0 || i === 4)) continue;   // small gauge: keep the bottom free for the readout
             const a = a0 + sweep * i / 4;
             const rl = r * 0.55;
             ctx.fillText(String(range * i / 4), cx + Math.cos(a) * rl, cy + Math.sin(a) * rl);
@@ -1340,9 +1340,9 @@
         ctx.fill();
         // digital readout
         ctx.fillStyle = pal.text;
-        ctx.font = fontMedBold;
+        ctx.font = roomy ? fontMedBold : fontSmallBold;
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText(txt.gauge, cx, cy + r * 0.93);
+        ctx.fillText(txt.gauge, cx, cy + r * 0.68);
     }
 
     function drawLegend(x, y, w) {
@@ -1582,7 +1582,7 @@
             maintainAspectRatio: false,
             plugins: {
                 title: { display: true, text: title, color: pal.text },
-                legend: { labels: { color: pal.text, boxWidth: 12, font: { size: 10 } } },
+                legend: { labels: { color: pal.text, boxWidth: 12, font: { size: 10 }, filter: (item) => !item.hidden } },
                 tooltip: { enabled: true }
             },
             scales: { x: axisOpts(xTitle), y: axisOpts(yTitle) }
