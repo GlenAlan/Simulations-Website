@@ -2039,6 +2039,9 @@
         ctx.beginPath(); ctx.arc(wx(ax), wy(ay), 4, 0, Math.PI * 2); ctx.fill();
     }
 
+    // labels along the bottom edge sit on the liquid, so they are light text with a dark halo in both themes
+    const ON_LIQUID_TEXT = '#ffffff', ON_LIQUID_HALO = 'rgba(0,0,0,0.55)';
+
     function drawLiquidLabel(liq) {
         const fs = clamp(cssW / 60, 9, 13);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
@@ -2049,9 +2052,10 @@
         const x = cssW - 8;
         const y = cssH - 6;
         ctx.lineWidth = 3;
-        ctx.strokeStyle = pal.halo;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = ON_LIQUID_HALO;
         ctx.strokeText(txt, x, y);
-        ctx.fillStyle = pal.text;
+        ctx.fillStyle = ON_LIQUID_TEXT;
         ctx.fillText(txt, x, y);
     }
 
@@ -2061,7 +2065,7 @@
         const fs = clamp(cssW / 70, 8, 12);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
         for (let pass = 0; pass < 2; pass++) {
-            ctx.strokeStyle = pass === 0 ? pal.halo : pal.text;
+            ctx.strokeStyle = pass === 0 ? ON_LIQUID_HALO : ON_LIQUID_TEXT;
             ctx.lineWidth = pass === 0 ? 4 : 1.5;
             ctx.beginPath();
             ctx.moveTo(x, y - 4); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.lineTo(x + len, y - 4);
@@ -2070,9 +2074,10 @@
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
         ctx.lineWidth = 3;
-        ctx.strokeStyle = pal.halo;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = ON_LIQUID_HALO;
         ctx.strokeText('10 cm', x + len + 5, y + 2);
-        ctx.fillStyle = pal.text;
+        ctx.fillStyle = ON_LIQUID_TEXT;
         ctx.fillText('10 cm', x + len + 5, y + 2);
     }
 
