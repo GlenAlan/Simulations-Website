@@ -30,6 +30,7 @@
     const springConstantSlider = document.getElementById('springConstant');
     const springConstantVal = document.getElementById('springConstantVal');
     const temperatureVal = document.getElementById('energyVal');
+    const fpsDisplay = document.getElementById('fpsDisplay');
     const resetButton = document.getElementById('resetSimulationBtn');
     const gridLayoutSelector = document.getElementById('gridLayoutSelector');
     const aspectRatioBox = canvas.parentElement;                              // .sim-aspect-ratio-box
@@ -429,6 +430,40 @@
     // Fullscreen / panel state is toggled through body classes.
     new MutationObserver(markLayoutDirty).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
+    // --- Theme-dependent palette (refreshed when the light/dark theme changes) ---
+    // Atoms go from blue (cold) through green and yellow to red (hot). On the
+    // dark theme the original fully saturated hues are kept; on the light theme
+    // greens, yellows and cyans are darkened until they contrast with white.
+    const palette = { atoms: [], spring: '', heatGlow: [], coolGlow: [] };
+
+    function hslToLuminance(h, s, l) {
+        const a = s * Math.min(l, 1 - l);
+        const channel = (n) => {
+            const k = (n + h / 30) % 12;
+            const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+            return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * channel(0) + 0.7152 * channel(8) + 0.0722 * channel(4);
+    }
+
+    function buildPalette() {
+        const light = !document.documentElement.classList.contains('dark-mode');
+        palette.atoms = [];
+        for (let level = 0; level <= COLOUR_LEVELS; level++) {
+            const hue = (1 - level / COLOUR_LEVELS) * 240;
+            let lightness = 50;
+            if (light) {
+                while (lightness > 30 && hslToLuminance(hue, 1, lightness / 100) > 0.42) lightness -= 1;
+            }
+            palette.atoms.push(`hsl(${hue.toFixed(1)}, 100%, ${lightness}%)`);
+        }
+        palette.spring = 'rgba(100, 100, 100, 0.5)';
+        palette.heatGlow = ['rgba(255, 70, 40, 0.3)', 'rgba(255, 70, 40, 0)'];
+        palette.coolGlow = ['rgba(40, 140, 255, 0.3)', 'rgba(40, 140, 255, 0)'];
+    }
+    buildPalette();
+    new MutationObserver(buildPalette).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
     // --- Rendering ---
     function updateScreenPositions() {
         for (let i = 0; i < count; i++) {
@@ -443,6 +478,21 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
 
+        // Soft glow showing where the heating/cooling brush acts (Gaussian, sigma = radius)
+        if (activeTool !== TOOL_NONE) {
+            const glow = activeTool === TOOL_HEAT ? palette.heatGlow : palette.coolGlow;
+            const reach = 2 * heatRadius;
+            for (const p of brushPoints) {
+                const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, reach);
+                gradient.addColorStop(0, glow[0]);
+                gradient.addColorStop(1, glow[1]);
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, reach, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
         // Springs, as a single path
         ctx.beginPath();
         for (let s = 0; s < springCount; s++) {
@@ -450,7 +500,7 @@
             ctx.moveTo(sx[a], sy[a]);
             ctx.lineTo(sx[b], sy[b]);
         }
-        ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
+        ctx.strokeStyle = palette.spring;
         ctx.lineWidth = 1;
         ctx.stroke();
 
@@ -472,7 +522,7 @@
                 ctx.arc(sx[i], sy[i], r, 0, Math.PI * 2);
                 end++;
             }
-            ctx.fillStyle = `hsl(${(1 - level / COLOUR_LEVELS) * 240}, 100%, 50%)`;
+            ctx.fillStyle = palette.atoms[level];
             ctx.fill();
             start = end;
         }
@@ -487,6 +537,21 @@
         if (text !== lastReadoutText) {
             temperatureVal.textContent = text;
             lastReadoutText = text;
+        }
+    }
+
+    // FPS counter (shown with the 'F' key by simulation_ui.js)
+    let fpsFrames = 0;
+    let fpsWindowStart = null;
+    function updateFps(timestamp) {
+        if (!fpsDisplay) return;
+        if (fpsWindowStart === null) fpsWindowStart = timestamp;
+        fpsFrames++;
+        const elapsed = timestamp - fpsWindowStart;
+        if (elapsed >= 500) {
+            fpsDisplay.textContent = `FPS: ${Math.round(fpsFrames * 1000 / elapsed)}`;
+            fpsFrames = 0;
+            fpsWindowStart = timestamp;
         }
     }
 
@@ -508,6 +573,7 @@
         updateScreenPositions();
         render();
         updateReadout(timestamp);
+        updateFps(timestamp);
 
         requestAnimationFrame(animate);
     }
