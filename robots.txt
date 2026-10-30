@@ -1,13 +1,12 @@
 User-agent: *
 Allow: /
-Disallow: /archive/
-Disallow: /assets/sass/
 Disallow: /assets/webfonts/
 
 # Allow important simulation pages explicitly
 Allow: /index.html
 Allow: /conduction_simulation.html
 Allow: /convection_simulation.html
+Allow: /radiation_simulation.html
 Allow: /maxwell_demon_simulation.html
 Allow: /sitemap.html
 

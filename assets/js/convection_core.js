@@ -287,12 +287,10 @@ if (canvas) {
         e.preventDefault(); 
         heating = true; 
         updateTouchPoints(e);
-        console.log(`Touch started: ${e.touches.length} touch(es)`);
     }, { passive: false });
       canvas.addEventListener('touchend', (e) => {
         e.preventDefault();
         updateTouchPoints(e);
-        console.log(`Touch ended: ${e.touches.length} touch(es) remaining`);
         if (e.touches.length === 0) {
             heating = false;
             touchPoints.clear();
@@ -691,7 +689,6 @@ function reinitializeArrays(newN) {
 // Expose setSize to be called from simulation_ui.js
 window.convectionSimulation = {
     setSize: function(newSize) {
-        console.log(`Convection_core: Setting simulation size to ${newSize}x${newSize}`);
         reinitializeArrays(newSize); // This already resets arrays and some state
         // Call resetSimulation to ensure all relevant states are reset, including UI states like heating/cooling
         resetSimulation(); // Call the new comprehensive reset function
@@ -739,7 +736,6 @@ function resetSimulation() {
         avgDensityDisplay.textContent = (ambientTemp * 100).toFixed(1); // Match formatting if it's a percentage, or ambientTemp.toFixed(2) if direct value
     }
 
-    console.log("Convection simulation reset.");
 }
 
 if (resetSimButton) {
@@ -750,6 +746,5 @@ if (resetSimButton) {
 if (viscositySelector) {
     viscositySelector.addEventListener('change', function() {
         visc = +this.value;
-        console.log("Viscosity changed to:", visc);
     });
 }

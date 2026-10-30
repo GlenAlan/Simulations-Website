@@ -96,7 +96,6 @@
 		if ($themeToggleButton.length) {
 			var $sunIcon = $themeToggleButton.find('.fa-sun');
 			var $moonIcon = $themeToggleButton.find('.fa-moon');
-			var prefersDarkScheme = window.matchMedia('(prefers-color-scheme: dark)');
 			var scrollThreshold = 50; // Hide when scrolled more than 50px
 
 			function checkScrollAndToggleThemeButton() {
@@ -118,7 +117,8 @@
 
 			if (!$sunIcon.length || !$moonIcon.length) {
 				console.error('Theme icons not found in toggle button');
-			} else {				function getCurrentTheme() {
+			} else {
+				function getCurrentTheme() {
 					let theme = window.localStorage.getItem('theme');
 					// Only respect 'light' as a valid stored value, otherwise force dark
 					if (theme === 'light') {
@@ -128,8 +128,7 @@
 				}
 
 				function loadTheme(theme) {
-					// $body.removeClass('light-mode dark-mode').addClass(theme + '-mode'); // OLD
-					$html.removeClass('light-mode dark-mode').addClass(theme + '-mode'); // NEW: Apply to <html>
+					$html.removeClass('light-mode dark-mode').addClass(theme + '-mode');
 
 					if (theme === 'dark') {
 						$sunIcon.hide();
@@ -147,20 +146,14 @@
 				}
 
 				$themeToggleButton.on('click', function() {
-					// let currentTheme = $body.hasClass('dark-mode') ? 'dark' : 'light'; // OLD
-					let currentTheme = $html.hasClass('dark-mode') ? 'dark' : 'light'; // NEW: Check on <html>
+					let currentTheme = $html.hasClass('dark-mode') ? 'dark' : 'light';
 					let newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 					window.localStorage.setItem('theme', newTheme);
 					loadTheme(newTheme);
 				});
 
-				loadTheme(getCurrentTheme());				// No longer changing theme based on system preferences
-				prefersDarkScheme.addEventListener('change', function(e) {
-					// Do nothing - we're ignoring system preferences
-				});
+				loadTheme(getCurrentTheme());
 			}
-		} else {
-			// console.warn('Theme toggle button #theme-toggle not found.'); 
 		}
 
 

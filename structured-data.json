@@ -9,14 +9,10 @@
       "description": "Interactive Physics & Science Simulations",
       "publisher": {
         "@id": "https://simulations.science/#organization"
-      },
-      "potentialAction": {
-        "@type": "SearchAction",
-        "target": "https://simulations.science/?search={search_term_string}",
-        "query-input": "required name=search_term_string"
       }
     },
-    {      "@type": "EducationalOrganization",
+    {
+      "@type": "EducationalOrganization",
       "@id": "https://simulations.science/#organization",
       "name": "Simulations.Science",
       "url": "https://simulations.science/",
@@ -35,7 +31,8 @@
         "educationalRole": ["student", "teacher", "researcher"]
       }
     },
-    {      "@type": "ItemList",
+    {
+      "@type": "ItemList",
       "@id": "https://simulations.science/#simulations",
       "name": "Physics Simulations",
       "itemListElement": [
@@ -65,7 +62,7 @@
             "name": "Convection Simulation",
             "description": "A simple box of fluid which responds to heating and cooling, demonstrating thermal energy transfer",
             "url": "https://simulations.science/convection_simulation.html",
-            "image": "https://simulations.science/images/pic00.png",
+            "image": "https://simulations.science/images/convect.png",
             "learningResourceType": "Simulation",
             "audience": {
               "@type": "EducationalAudience",
@@ -78,6 +75,24 @@
         {
           "@type": "ListItem",
           "position": 3,
+          "item": {
+            "@type": "LearningResource",
+            "name": "Radiation Simulation",
+            "description": "A black-body radiator transmitting thermal energy through electromagnetic radiation",
+            "url": "https://simulations.science/radiation_simulation.html",
+            "image": "https://simulations.science/images/radiation.png",
+            "learningResourceType": "Simulation",
+            "audience": {
+              "@type": "EducationalAudience",
+              "educationalRole": ["student", "teacher", "researcher"]
+            },
+            "educationalLevel": "High School and Above",
+            "isAccessibleForFree": true
+          }
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
           "item": {
             "@type": "LearningResource",
             "name": "Maxwell's Demon Simulation",

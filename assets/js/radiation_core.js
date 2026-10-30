@@ -391,7 +391,6 @@ function initializeSimulationState() {
     theoreticalPhotonsEmitted = 0;
     photonScalingFactor = 1.0;
     objectTemperature = ambientTemperature; // Reset object to ambient temperature
-    console.log("Thermal radiation simulation initialized.");
 }
 
 function adaptSimulationToResize(oldWidth, oldHeight, newWidth, newHeight) {
@@ -420,7 +419,6 @@ function adaptSimulationToResize(oldWidth, oldHeight, newWidth, newHeight) {
     
     // Update global geometry variables
     updateRadiationGeometry();
-      console.log(`Radiation simulation adapted to resize: ${newWidth}x${newHeight}. Scale factor: ${newGeom.scaleFactor.toFixed(2)}`);
 }
 
 // Comprehensive resize handler for radiation simulation
@@ -884,7 +882,6 @@ function startSimulation() {
     
     initializeSimulationState();
     requestAnimationFrame(animate);
-    console.log("Thermal radiation simulation started.");
 }
 
 // --- UI Event Listeners ---
@@ -947,7 +944,6 @@ if (objectTypeSelector) {
 if (resetButton) {
     resetButton.onclick = () => {
         initializeSimulationState();
-        console.log("Radiation simulation reset.");
     };
 }
 

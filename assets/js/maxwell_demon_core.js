@@ -183,7 +183,6 @@ function initializeSimulationState() {
     physicsStepCounter = 0; // Reset physics step counter
     lastChartUpdateStep = 0; // Reset chart update step tracker
     // Don't force initial zero data points - let the simulation naturally populate the charts
-    console.log("Maxwell's Demon simulation initialized.");
 }
 
 function handleWallCollision(p, dtArg) {
@@ -670,11 +669,9 @@ function handleSimulationResize() {
     // No need to re-initialize if particles exist, just adapt.
     // If it's the very first call and particles are not yet initialized, 
     // initializeSimulationState will handle it after this.
-    console.log(`Canvas resized to: ${canvasWidth}x${canvasHeight} (logical), DPI scaled.`);
 }
 
 function fullResetAndRestart() {
-    console.log("Full reset and restart triggered.");
     // Reset timing variables
     lastTimestamp = 0;
     physicsTimeAccumulator = 0.0;
@@ -723,7 +720,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (demonModeSelector) {
         demonModeSelector.onchange = () => {
             demonMode = demonModeSelector.value;
-            console.log(`Demon mode changed to: ${demonMode}`);
             // No need to reset, mode changes dynamically
         };
         demonMode = demonModeSelector.value; // Initialize with current selection
@@ -810,7 +806,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Theme change listener (from main.js or simulation_ui.js)
     document.addEventListener('themeChanged', () => {
-        console.log("Theme changed event detected in Maxwell's Demon core.");
         if (showChartsCheckbox && showChartsCheckbox.checked) {
             updateChartColors();
         }
@@ -821,5 +816,4 @@ document.addEventListener('DOMContentLoaded', () => {
     lastTimestamp = performance.now(); // Initialize lastTimestamp before first animate call
     lastFpsUpdate = lastTimestamp; // Initialize FPS update time
     requestAnimationFrame(animate);
-    console.log("Maxwell's Demon simulation core script loaded and initialized.");
 });

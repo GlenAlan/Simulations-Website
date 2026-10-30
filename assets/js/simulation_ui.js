@@ -281,14 +281,5 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.warn('window.convectionSimulation.setSize() function not found.');
             }
         });
-
-        // Initialize simulation with the current (or default) selection if not already handled by core
-        // This might be redundant if core already initializes to a default or the first available size.
-        // const initialSize = parseInt(convectionGridSizeSelector.value);
-        // if (window.convectionSimulation && typeof window.convectionSimulation.setSize === 'function') {
-        //    if(window.convectionSimulation.getCurrentGridSize() !== initialSize) { // Check if core is already at this size
-        //        window.convectionSimulation.setSize(initialSize);
-        //    }
-        // }
     }
 });

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
-        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">  <url>
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
     <loc>https://simulations.science/</loc>
     <lastmod>2025-06-06</lastmod>
     <changefreq>monthly</changefreq>
@@ -11,7 +11,8 @@
       <image:title>Simulations.Science Logo</image:title>
       <image:caption>Interactive Physics and Science Simulations</image:caption>
     </image:image>
-  </url>  <url>
+  </url>
+  <url>
     <loc>https://simulations.science/conduction_simulation.html</loc>
     <lastmod>2025-06-06</lastmod>
     <changefreq>monthly</changefreq>
@@ -21,17 +22,19 @@
       <image:title>Heat Conduction Simulation</image:title>
       <image:caption>A lattice of atoms which vibrate and transfer thermal energy</image:caption>
     </image:image>
-  </url>  <url>
+  </url>
+  <url>
     <loc>https://simulations.science/convection_simulation.html</loc>
     <lastmod>2025-06-06</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
     <image:image>
-      <image:loc>https://simulations.science/images/pic00.png</image:loc>
+      <image:loc>https://simulations.science/images/convect.png</image:loc>
       <image:title>Convection Fluid Simulation</image:title>
       <image:caption>A simple box of fluid which responds to heating and cooling</image:caption>
     </image:image>
-  </url>  <url>
+  </url>
+  <url>
     <loc>https://simulations.science/maxwell_demon_simulation.html</loc>
     <lastmod>2025-06-06</lastmod>
     <changefreq>monthly</changefreq>
@@ -52,26 +55,11 @@
       <image:title>Radiation Simulation</image:title>
       <image:caption>A black-body radiator transmitting thermal energy through electromagnetic radiation</image:caption>
     </image:image>
-  </url>  <url>
-    <loc>https://simulations.science/elements.html</loc>
-    <lastmod>2025-06-06</lastmod>
-    <changefreq>yearly</changefreq>
-    <priority>0.3</priority>
-  </url>  <url>
-    <loc>https://simulations.science/generic.html</loc>
-    <lastmod>2025-06-06</lastmod>
-    <changefreq>yearly</changefreq>
-    <priority>0.3</priority>
-  </url>  <url>
+  </url>
+  <url>
     <loc>https://simulations.science/sitemap.html</loc>
     <lastmod>2025-06-06</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://simulations.science/404.html</loc>
-    <lastmod>2025-06-06</lastmod>
-    <changefreq>yearly</changefreq>
-    <priority>0.1</priority>
   </url>
 </urlset>
