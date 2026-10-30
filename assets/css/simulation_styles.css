@@ -905,6 +905,19 @@ body.sim-fullscreen-active #charts-container {
     }
 }
 
+@media (max-height: 600px) and (min-width: 769px) {
+    /* With the shorter charts above, reserve less height so the canvas isn't squeezed to a sliver. */
+    body.sim-fullscreen-active.charts-visible .sim-canvas-wrapper {
+        width: min(calc(100vw - 100px), calc((100vh - 260px) * var(--aspect-ratio, 2)));
+        height: min(calc(100vh - 260px), calc((100vw - 100px) / (var(--aspect-ratio, 2))));
+        max-height: calc(100vh - 240px);
+    }
+    body.sim-fullscreen-active.sim-panel-active.charts-visible .sim-canvas-wrapper {
+        width: min(calc(100vw - 100px - var(--sim-panel-width)), calc((100vh - 260px) * var(--aspect-ratio, 2)));
+        height: min(calc(100vh - 260px), calc((100vw - 100px - var(--sim-panel-width)) / (var(--aspect-ratio, 2))));
+    }
+}
+
 html.dark-mode .sim-info-bar.fullscreen-style .sim-info-item,
 html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button {
     color: var(--color-text-primary-dark); /* Ensure text is visible in dark mode */

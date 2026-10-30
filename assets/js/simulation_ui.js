@@ -127,6 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const displayContainer = document.querySelector('.simulation-display-container');
 
             if (isFullscreen) {
+                body.classList.remove('sim-buttons-over-canvas');
                 const buttonOffset = getComputedStyle(document.documentElement).getPropertyValue('--sim-button-offset').trim();
                 actionButtonsOverlay.style.position = 'fixed';
                 actionButtonsOverlay.style.top = buttonOffset;
@@ -144,8 +145,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (displayContainer && simulationAreaWrapper) {
                     const displayRect = displayContainer.getBoundingClientRect();
                     const areaWrapperRect = simulationAreaWrapper.getBoundingClientRect();
+                    // Go over the canvas on small screens, or whenever there's no room to its right.
+                    const fitsBeside = displayRect.right + buttonOffsetNumeric + actionButtonsOverlay.offsetWidth <= document.documentElement.clientWidth;
+                    const overCanvas = window.matchMedia("(max-width: 768px)").matches || !fitsBeside;
+                    // Lets a simulation keep that corner of its canvas clear.
+                    if (body.classList.contains('sim-buttons-over-canvas') !== overCanvas) {
+                        body.classList.toggle('sim-buttons-over-canvas', overCanvas);
+                    }
 
-                    if (window.matchMedia("(max-width: 768px)").matches) {
+                    if (overCanvas) {
                         // Small screens: inside displayContainer (canvas area), top right edge
                         actionButtonsOverlay.style.top = `${(displayRect.top - areaWrapperRect.top) + buttonOffsetNumeric}px`;
                         actionButtonsOverlay.style.left = 'auto';

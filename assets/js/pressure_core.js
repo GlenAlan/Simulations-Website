@@ -859,10 +859,9 @@
     // Rendering
     // ------------------------------------------------------------------
     let cssW = 0, cssH = 0, dpr = 1, scale = 1, offX = 0, offY = 0;
-    // On narrow screens (not fullscreen) simulation_ui.js puts its buttons over the top-right of
-    // the canvas, so the instrument panel moves to the left and the containers to the right.
+    // When simulation_ui.js puts its buttons over the top-right of the canvas (it marks the body
+    // with sim-buttons-over-canvas), the instrument panel moves to the left and the containers to the right.
     let flip = false;
-    const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 768px)") : null;
     let fSmall = 3, fMed = 3.4, fBig = 4.6;
     let gaugeDisplay = 101.3;
     let meanSpeed = 0;
@@ -881,7 +880,7 @@
         if (!w || !h) return false;
         const newDpr = Math.min(window.devicePixelRatio || 1, 3);
         const bw = Math.round(w * newDpr), bh = Math.round(h * newDpr);
-        const newFlip = !!(narrowQuery && narrowQuery.matches) && !document.body.classList.contains('sim-fullscreen-active');
+        const newFlip = document.body.classList.contains('sim-buttons-over-canvas') && !document.body.classList.contains('sim-fullscreen-active');
         const flipChanged = newFlip !== flip;
         flip = newFlip;
         if (flipChanged) legendGradient = null;
