@@ -10,10 +10,15 @@ const buoyancyCoeff = 1.0,
 // TIME MANAGEMENT
 const physicsDt = 0.02;
 const targetPhysicsRate = 60;
+// Wall-clock budget for physics steps in one animation frame. If the requested speed needs more
+// steps than fit (large grid, high speed, slow device) the backlog is dropped and the simulation
+// runs slower than requested instead of piling up work and freezing the page.
+const maxPhysicsMsPerFrame = 6;
 const heatAmpMult = 1.25; // Multiplier for heat amplitude
 const coolAmpMult = 1; // Multiplier for cooling rate
 let accumulatedTime = 0;
-let timeScale = 2.5; 
+let physicsStepMs = 0; // Running estimate of the wall-clock cost of one simulate() call
+let timeScale = 2.5;
 let lastTimestamp = 0;
 
 // FPS TRACKING
@@ -24,8 +29,6 @@ let currentFps = 0;
 // FLUID STATE ARRAYS
 let u        = new Float32Array(size*size);
 let v        = new Float32Array(size*size);
-let u_prev   = new Float32Array(size*size);
-let v_prev   = new Float32Array(size*size);
 let dens     = new Float32Array(size*size);
 let dens_prev= new Float32Array(size*size);
 let u0    = new Float32Array(size*size); // Made u0, v0, dens0 mutable for resize
@@ -334,9 +337,9 @@ function setBnd(b, x_arr) {
   x_arr[IX(N+1, 0)]   = 0.5*(x_arr[IX(N,0)]   + x_arr[IX(N+1,1)]);
   x_arr[IX(N+1, N+1)] = 0.5*(x_arr[IX(N, N+1)]+ x_arr[IX(N+1,N)]);
 }
-function linSolve(b, x_arr, x0_arr, a, c) {
+function linSolve(b, x_arr, x0_arr, a, c, iterations = iter) {
   const c_inv = 1.0 / c;
-  for (let k_iter = 0; k_iter < iter; k_iter++) { // Renamed k to k_iter to avoid conflict
+  for (let k_iter = 0; k_iter < iterations; k_iter++) {
     for (let j = 1; j <= N; j++) {
       const prev_j_idx = (j - 1) * size;
       const curr_j_idx = j * size;
@@ -352,9 +355,17 @@ function linSolve(b, x_arr, x0_arr, a, c) {
     setBnd(b, x_arr);
   }
 }
+// Gauss-Seidel sweeps needed for an implicit diffusion solve. Starting from the old field, the
+// error is roughly r = 4a/(1+4a) of the field and shrinks by about r per sweep, so weakly diffusive
+// solves (heat, water, acetone) converge in 1-2 sweeps; viscous fluids still get the full `iter`.
+function diffusionIterations(a) {
+  const r = 4*a / (1 + 4*a);
+  if (r <= 0) return 0;
+  return Math.max(1, Math.min(iter, Math.ceil(Math.log(0.01) / Math.log(r)) - 1));
+}
 function diffuse(b, x_arr, x0_arr, diff_coeff) {
   const a = physicsDt * diff_coeff * N * N;
-  linSolve(b, x_arr, x0_arr, a, 1 + 4*a);
+  linSolve(b, x_arr, x0_arr, a, 1 + 4*a, diffusionIterations(a));
 }
 function advect(b, d_arr, d0_arr, u_vel, v_vel) {
   const dt0 = physicsDt * N;
@@ -418,9 +429,35 @@ function addSource(x_arr, s_arr) {
   for (let i = 0; i < x_arr.length; i++) x_arr[i] += physicsDt * s_arr[i];
 }
 
+// Temperature colour map (0 = blue, 0.5 = green, 1 = red), precomputed so rendering is a table lookup.
+const COLOR_LEVELS = 256;
+const colorLUT = new Uint8Array(COLOR_LEVELS * 3);
+(function buildColorLUT() {
+    for (let k = 0; k < COLOR_LEVELS; k++) {
+        const t = k / (COLOR_LEVELS - 1);
+        const hue = (1 - t) * 240;
+        const C = 1.0;
+        const X = C * (1 - Math.abs((hue / 60) % 2 - 1));
+
+        let r_prime, g_prime, b_prime;
+        const h_prime = hue / 60;
+
+        if (h_prime >= 0 && h_prime < 1) { r_prime = C; g_prime = X; b_prime = 0; }
+        else if (h_prime >= 1 && h_prime < 2) { r_prime = X; g_prime = C; b_prime = 0; }
+        else if (h_prime >= 2 && h_prime < 3) { r_prime = 0; g_prime = C; b_prime = X; }
+        else if (h_prime >= 3 && h_prime < 4) { r_prime = 0; g_prime = X; b_prime = C; }
+        else if (h_prime >= 4 && h_prime < 5) { r_prime = X; g_prime = 0; b_prime = C; }
+        else { r_prime = C; g_prime = 0; b_prime = X; }
+
+        colorLUT[k*3]     = Math.round(r_prime * 255);
+        colorLUT[k*3 + 1] = Math.round(g_prime * 255);
+        colorLUT[k*3 + 2] = Math.round(b_prime * 255);
+    }
+})();
+
 function renderDensity() {
     if (!ctx) return;
-    if (!offscreenCanvas) { 
+    if (!offscreenCanvas) {
         offscreenCanvas = document.createElement('canvas');
         offscreenCanvas.width = N;
         offscreenCanvas.height = N;
@@ -432,6 +469,7 @@ function renderDensity() {
 
     const data = offscreenImageData.data;
     let data_idx = 0; // Use a single incrementing index for imageData
+    const maxLevel = COLOR_LEVELS - 1;
 
     for (let y_px = 0; y_px < N; y_px++) {
         const sim_j = N - y_px; // Row in simulation grid (decreases as y_px increases)
@@ -440,30 +478,13 @@ function renderDensity() {
         for (let x_px = 0; x_px < N; x_px++) {
             const sim_i = x_px + 1; // Column in simulation grid
             const T_val = dens[dens_row_start_idx + sim_i]; // Optimized dens access
-            const t = Math.max(0, Math.min(1, T_val));
-            
-            const hue = (1 - t) * 240;
-            const C = 1.0; 
-            const X = C * (1 - Math.abs((hue / 60) % 2 - 1));
-            
-            let r_prime, g_prime, b_prime;
-            const h_prime = hue / 60;
+            const t = T_val > 0 ? (T_val < 1 ? T_val : 1) : 0;
+            const lut_idx = ((t * maxLevel + 0.5) | 0) * 3;
 
-            if (h_prime >= 0 && h_prime < 1) { r_prime = C; g_prime = X; b_prime = 0; }
-            else if (h_prime >= 1 && h_prime < 2) { r_prime = X; g_prime = C; b_prime = 0; }
-            else if (h_prime >= 2 && h_prime < 3) { r_prime = 0; g_prime = C; b_prime = X; }
-            else if (h_prime >= 3 && h_prime < 4) { r_prime = 0; g_prime = X; b_prime = C; }
-            else if (h_prime >= 4 && h_prime < 5) { r_prime = X; g_prime = 0; b_prime = C; } 
-            else { r_prime = C; g_prime = 0; b_prime = X; } 
-            
-            const R = Math.round(r_prime * 255);
-            const G = Math.round(g_prime * 255);
-            const B = Math.round(b_prime * 255);
-
-            data[data_idx++] = R;
-            data[data_idx++] = G;
-            data[data_idx++] = B;
-            data[data_idx++] = 255; 
+            data[data_idx++] = colorLUT[lut_idx];
+            data[data_idx++] = colorLUT[lut_idx + 1];
+            data[data_idx++] = colorLUT[lut_idx + 2];
+            data[data_idx++] = 255;
         }
     }
     offscreenCtx.putImageData(offscreenImageData, 0, 0);
@@ -472,7 +493,7 @@ function renderDensity() {
     ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
 }
 function simulate() {
-  u_prev.fill(0); v_prev.fill(0); dens_prev.fill(0);
+  dens_prev.fill(0);
   
   // Handle multi-touch input
   if (touchPoints.size > 0 && canvas && canvas.width > 0 && canvas.height > 0) {
@@ -538,24 +559,20 @@ function simulate() {
     }
   }
   prev_avg_density = avg_density; avg_density = 0;
-  
-  // Buoyancy calculation loop
+
+  // Buoyancy: fluid warmer than average is pushed up (+v), cooler fluid down (Boussinesq approximation)
+  const buoyancyStep = physicsDt * buoyancyCoeff;
   for (let j = 1; j <= N; j++) {
     const base_j_idx = j * size;
     for (let i = 1; i <= N; i++) {
       const id = base_j_idx + i;
       avg_density += dens[id];
       const anomaly = dens[id] - prev_avg_density;
-      v_prev[id] += buoyancyCoeff * anomaly;
+      v[id] += buoyancyStep * anomaly;
     }
   }
-  avg_density /= (N*N); // Potential division by zero if N is 0, but N is usually > 0
-  if (avgDensityDisplay) { // Update average density display
-    avgDensityDisplay.textContent = (avg_density*100).toFixed(1);
-  }
+  avg_density /= (N*N);
 
-  addSource(u, u_prev); addSource(v, v_prev);
-  
   u0.set(u); diffuse(1, u, u0, visc);
   v0.set(v); diffuse(2, v, v0, visc);
   
@@ -617,17 +634,35 @@ function step(timestamp) {
   const cappedDeltaTime = Math.min(deltaTime, 0.1);
   accumulatedTime += cappedDeltaTime * timeScale;
   const physicsInterval = 1.0 / targetPhysicsRate;
+  const physicsStart = performance.now();
   while (accumulatedTime >= physicsInterval) {
+    const stepStart = performance.now();
     simulate();
+    const stepEnd = performance.now();
+    physicsStepMs += 0.1 * ((stepEnd - stepStart) - physicsStepMs);
     accumulatedTime -= physicsInterval;
+    if (accumulatedTime >= physicsInterval && stepEnd - physicsStart + physicsStepMs > maxPhysicsMsPerFrame) {
+      accumulatedTime = 0; // Can't keep up: drop the backlog rather than spiral into ever longer frames
+      break;
+    }
   }
+  updateAverageDisplay();
 
   if (canvas.width > 0 && canvas.height > 0) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
     renderDensity();
   }
   updateFPS(timestamp);
   requestAnimationFrame(step);
+}
+
+let lastAvgText = '';
+function updateAverageDisplay() {
+  if (!avgDensityDisplay) return;
+  const text = (avg_density * 100).toFixed(1);
+  if (text !== lastAvgText) {
+    avgDensityDisplay.textContent = text;
+    lastAvgText = text;
+  }
 }
 
 // Initialize slider values from HTML defaults if sliders exist
@@ -665,8 +700,6 @@ function reinitializeArrays(newN) {
 
     u        = new Float32Array(size*size);
     v        = new Float32Array(size*size);
-    u_prev   = new Float32Array(size*size);
-    v_prev   = new Float32Array(size*size);
     dens     = new Float32Array(size*size);
     dens_prev= new Float32Array(size*size);
     u0       = new Float32Array(size*size);
@@ -715,8 +748,6 @@ function resetSimulation() {
     // Reinitialize arrays to their default states
     u.fill(0);
     v.fill(0);
-    u_prev.fill(0);
-    v_prev.fill(0);
     dens.fill(ambientTemp);
     dens_prev.fill(0);
     u0.fill(0);
@@ -738,10 +769,7 @@ function resetSimulation() {
     // lastTimestamp = 0; // Resetting lastTimestamp can cause a jump if animation loop is running, usually not reset here
 
     // Update UI elements if they exist
-    if (avgDensityDisplay) {
-        avgDensityDisplay.textContent = (ambientTemp * 100).toFixed(1); // Match formatting if it's a percentage, or ambientTemp.toFixed(2) if direct value
-    }
-
+    updateAverageDisplay();
 }
 
 if (resetSimButton) {
