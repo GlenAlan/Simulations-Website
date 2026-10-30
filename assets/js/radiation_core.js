@@ -628,9 +628,10 @@
         } else {
             box.style.width = '';
             box.style.height = '';
-            const rect = box.getBoundingClientRect();
-            w = rect.width; h = rect.height;
         }
+        // Measure the canvas itself: the box has a border, so its outer size is 2px larger.
+        const rect = canvas.getBoundingClientRect();
+        w = rect.width; h = rect.height;
         w = Math.max(1, Math.round(w));
         h = Math.max(1, Math.round(h));
         const newDpr = window.devicePixelRatio || 1;
