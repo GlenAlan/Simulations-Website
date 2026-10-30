@@ -1,0 +1,142 @@
+/* --- Gas Pressure simulation: page-specific styles (loaded after simulation_styles.css) --- */
+
+/* The `hidden` attribute must win over `.sim-controls-content label { display: block }`. */
+.sim-controls-content [hidden] {
+    display: none !important;
+}
+
+.sim-controls-content .pressure-first-group {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.sim-controls-content select {
+    font-size: 0.9em;
+    height: 2.6em;
+}
+
+.sim-controls-content input[type="range"]:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.sim-controls-content label.is-disabled {
+    opacity: 0.6;
+}
+
+.pressure-control-note {
+    font-size: 0.78em;
+    line-height: 1.45;
+    margin: -0.25em 0 0.25em 0;
+    color: var(--color-text-subtle);
+}
+
+/* Checkboxes use the template's own check-box style (main.css: input + label). */
+.pressure-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15em;
+}
+
+.pressure-toggle {
+    position: relative;
+}
+
+.sim-controls-content .pressure-toggle input[type="checkbox"] + label {
+    display: inline-block;
+    font-size: 0.85em;
+    line-height: 1.8em;
+    padding-left: 2.4em;
+    margin-bottom: 0.2em;
+}
+
+.sim-controls-content .pressure-toggle input[type="checkbox"] + label:before {
+    font-size: 0.75em;
+    height: 2.1em;
+    width: 2.1em;
+    line-height: 2.1em;
+    top: 0.1em;
+}
+
+/* Info bar: keep the stat boxes compact so five of them fit. */
+#statsBar .stats-box {
+    white-space: nowrap;
+}
+
+#statsBar .stats-box span {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Charts (shown with the chart toggle in the info bar). */
+.pressure-charts {
+    margin: 10px auto 0 auto;
+    max-width: 800px;
+    width: 100%;
+}
+
+.pressure-charts-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 2%;
+    width: 100%;
+}
+
+.pressure-chart-box {
+    width: 49%;
+    height: 220px;
+    position: relative;
+    background: var(--color-bg-alt);
+    padding: 5px;
+    border-radius: 5px;
+    border: 1px solid var(--color-border);
+    box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+    body:not(.sim-fullscreen-active) .pressure-charts-row {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    body:not(.sim-fullscreen-active) .pressure-chart-box {
+        width: 100%;
+    }
+}
+
+/* Keep the charts below the canvas when not fullscreen (same spacing as the canvas container). */
+body:not(.sim-fullscreen-active) .pressure-charts {
+    margin-bottom: 1.5em;
+}
+
+/* Plunger dragging cursor hints. */
+#simulationCanvas.pressure-can-drag {
+    cursor: grab;
+}
+
+#simulationCanvas.pressure-dragging {
+    cursor: grabbing;
+}
+
+.description-area h4 {
+    margin: 1.25em 0 0.5em 0;
+    font-size: 0.95em;
+    letter-spacing: 0.05em;
+}
+
+.description-area ul li {
+    font-size: 0.95em;
+    line-height: 1.6;
+    margin-bottom: 0.35em;
+}
+
+/* Fullscreen: simulation_styles.css leaves ~340px below the canvas for the charts; use 190px of it
+   when the screen is tall enough and stay compact on short screens (e.g. phones in landscape). */
+body.sim-fullscreen-active #charts-container .pressure-chart-box {
+    height: 150px;
+}
+@media (min-height: 700px) {
+    body.sim-fullscreen-active #charts-container .pressure-chart-box {
+        height: 190px;
+    }
+}

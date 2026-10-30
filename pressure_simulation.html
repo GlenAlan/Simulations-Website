@@ -1,0 +1,383 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Gas Pressure Simulation | Kinetic Theory &amp; Gas Laws | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Interactive gas pressure simulation: watch particle collisions with the walls create pressure, and explore Boyle's, Charles's and Gay-Lussac's gas laws." />
+		<meta name="keywords" content="gas pressure, kinetic theory of gases, ideal gas law, Boyle's law, Charles's law, Gay-Lussac's law, particle collisions, pressure and temperature, thermodynamics, physics simulation, interactive physics" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/pressure_simulation.html" />
+		<meta property="og:title" content="Gas Pressure Simulation | Simulations.Science" />
+		<meta property="og:description" content="See how molecular collisions create gas pressure and explore the gas laws." />
+		<meta property="og:image" content="https://simulations.science/images/pressure.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/pressure_simulation.html" />
+		<meta name="twitter:title" content="Gas Pressure Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="See how molecular collisions create gas pressure and explore the gas laws." />
+		<meta name="twitter:image" content="https://simulations.science/images/pressure.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/pressure_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Gas Pressure Simulation",
+			"description": "An interactive kinetic-theory simulation showing how gas particles colliding with the walls of a balloon, rigid box, syringe or weighted piston create pressure, and how pressure depends on temperature, volume and the number of particles.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/pressure_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"about": [
+				{
+					"@type": "Thing",
+					"name": "Gas Pressure",
+					"description": "The force per unit area exerted by a gas on the walls of its container, caused by molecular collisions"
+				},
+				{
+					"@type": "Thing",
+					"name": "Kinetic Theory of Gases",
+					"description": "The model that explains the properties of gases in terms of the motion of their molecules"
+				},
+				{
+					"@type": "Thing",
+					"name": "Ideal Gas Law",
+					"description": "The equation of state PV = NkT relating pressure, volume, temperature and the number of particles"
+				},
+				{
+					"@type": "Thing",
+					"name": "Gas Laws",
+					"description": "Boyle's law, Charles's law, Gay-Lussac's law and Avogadro's law"
+				}
+			],
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/pressure.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "gas pressure, kinetic theory of gases, ideal gas law, Boyle's law, Charles's law, Gay-Lussac's law, particle collisions, thermodynamics, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Gas Pressure Simulation",
+					"item": "https://simulations.science/pressure_simulation.html"
+				}
+			]
+		}
+		</script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/pressure_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>
+							<li itemprop="name"><a href="convection_simulation.html" itemprop="url">Convection</a></li>
+							<li itemprop="name"><a href="conduction_simulation.html" itemprop="url">Conduction</a></li>
+							<li itemprop="name"><a href="radiation_simulation.html" itemprop="url">Radiation</a></li>
+							<li itemprop="name"><a href="buoyancy_simulation.html" itemprop="url">Buoyancy</a></li>
+							<li itemprop="name"><a href="pressure_simulation.html" itemprop="url">Pressure</a></li>
+							<li itemprop="name"><a href="maxwell_demon_simulation.html" itemprop="url">Maxwell's Demon</a></li>
+							<li itemprop="name"><a href="sitemap.html" itemprop="url">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Gas Pressure Simulation</h1>
+
+							<div class="simulation-area-wrapper">
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group pressure-first-group">
+											<p class="sim-control-group-label" id="containerLabel">Container:</p>
+											<select id="containerSelect" aria-labelledby="containerLabel">
+												<option value="balloon" selected>Balloon (flexible)</option>
+												<option value="box">Rigid box (fixed volume)</option>
+												<option value="syringe">Syringe (you set the volume)</option>
+												<option value="piston">Piston with weights (fixed pressure)</option>
+											</select>
+										</div>
+										<label id="temperatureLabel">Temperature: <span id="temperatureVal">300</span> K
+											<input type="range" id="temperatureSlider" min="50" max="1000" step="10" value="300">
+										</label>
+										<p class="pressure-control-note" id="insulatedNote" hidden>Insulated walls: heat can't flow in or out, so this setting is paused. Compress or expand the gas to change its temperature.</p>
+										<label>Particles: <span id="particleCountVal">300</span>
+											<input type="range" id="particleCountSlider" min="20" max="1500" step="10" value="300">
+										</label>
+										<label id="volumeControl" hidden>Volume: <span id="volumeVal">0.80</span> L
+											<input type="range" id="volumeSlider" min="0.26" max="0.96" step="0.01" value="0.80">
+										</label>
+										<label id="weightsControl" hidden>Weights on piston: <span id="weightsVal">1</span>
+											<input type="range" id="weightsSlider" min="0" max="4" step="1" value="1">
+										</label>
+										<label>Speed: <span id="speedVal">1.0</span>x
+											<input type="range" id="speedSlider" min="0.1" max="3" step="0.1" value="1">
+										</label>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="gasLabel">Gas:</p>
+											<select id="gasSelect" aria-labelledby="gasLabel">
+												<option value="he">Helium (light, 4 u)</option>
+												<option value="n2" selected>Nitrogen (medium, 28 u)</option>
+												<option value="xe">Xenon (heavy, 131 u)</option>
+											</select>
+										</div>
+										<div class="sim-control-group pressure-toggles">
+											<p class="sim-control-group-label">Show &amp; physics options:</p>
+											<div class="pressure-toggle">
+												<input type="checkbox" id="hitArrowsToggle" checked>
+												<label for="hitArrowsToggle">Collision force arrows</label>
+											</div>
+											<div class="pressure-toggle">
+												<input type="checkbox" id="avgArrowsToggle" checked>
+												<label for="avgArrowsToggle">Average pressure arrows</label>
+											</div>
+											<div class="pressure-toggle">
+												<input type="checkbox" id="tracerToggle">
+												<label for="tracerToggle">Highlight one particle</label>
+											</div>
+											<div class="pressure-toggle">
+												<input type="checkbox" id="collisionsToggle">
+												<label for="collisionsToggle">Particle&ndash;particle collisions</label>
+											</div>
+											<div class="pressure-toggle">
+												<input type="checkbox" id="insulatedToggle">
+												<label for="insulatedToggle">Insulated walls (no heat flow)</label>
+											</div>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="graphModeLabel">Gas-law graph:</p>
+											<select id="graphModeSelect" aria-labelledby="graphModeLabel">
+												<option value="auto" selected>Automatic (suits container)</option>
+												<option value="PV">Pressure vs Volume (Boyle)</option>
+												<option value="PT">Pressure vs Temperature (Gay-Lussac)</option>
+												<option value="VT">Volume vs Temperature (Charles)</option>
+												<option value="PN">Pressure vs Particles (Avogadro)</option>
+											</select>
+										</div>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Gas particles bouncing inside a container, with a pressure gauge"></canvas>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<div class="sim-info-bar" id="statsBar">
+											<div class="stats-container">
+												<div class="stats-box" title="Measured pressure: total push of wall collisions per second, per unit of wall">
+													<strong>Pressure:</strong> <span id="statPressure">&ndash;</span> kPa
+												</div>
+												<div class="stats-box" title="Volume of the container (an area, since the simulation is 2D)">
+													<strong>Volume:</strong> <span id="statVolume">&ndash;</span> L
+												</div>
+												<div class="stats-box" title="Gas temperature, measured from the average kinetic energy of the particles">
+													<strong>Temp:</strong> <span id="statTemperature">&ndash;</span> K
+												</div>
+												<div class="stats-box" title="Number of particles">
+													<strong>N:</strong> <span id="statCount">&ndash;</span>
+												</div>
+												<div class="stats-box" title="Measured PV divided by NkT. Exactly 1 for an ideal gas">
+													<strong>PV/NkT:</strong> <span id="statRatio">&ndash;</span>
+												</div>
+											</div>
+											<div class="sim-info-actions">
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Toggle Charts">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
+												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset Simulation">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+											</div>
+										</div>
+									</div>
+									<div id="charts-container" class="pressure-charts" style="display: none;">
+										<div class="sim-charts-row pressure-charts-row">
+											<div class="chart-box pressure-chart-box">
+												<canvas id="pressureChart"></canvas>
+											</div>
+											<div class="chart-box pressure-chart-box">
+												<canvas id="lawChart"></canvas>
+											</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button class="sim-fullscreen-toggle" aria-label="Toggle Fullscreen View" aria-expanded="false">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button class="sim-panel-toggle-button" aria-label="Toggle Controls Panel" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<div class="description-area">
+										<h3>About this Simulation</h3>
+										<p>A gas is made of an enormous number of tiny particles flying about in straight lines until they hit something. Every time a particle bounces off a wall, the part of its velocity that points into the wall is reversed, so the wall gets a small push (an impulse of 2<em>mv</em>, where <em>m</em> is its mass and <em>v</em> its speed straight into the wall). Countless pushes every second add up to a steady force, and the force on each unit of wall area is the gas <strong>pressure</strong>: <em>P</em> = <em>F</em>/<em>A</em>.</p>
+										<p>This simulation measures pressure exactly that way. It adds up the impulse of every wall collision over the last 1.5 seconds and divides by the time and by the length of wall. The gauge shows the result; its small triangle marks the ideal-gas prediction <em>P</em> = <em>NkT</em>/<em>V</em>. The particles are coloured by speed: at room temperature (300 K) the slower half are bluish and the faster half reddish, and the fastest are orange. The thin arrows show individual collisions pushing on the wall (the longer the arrow, the harder the hit). The thicker amber arrows show the average push on each part of the wall: it is the same in every direction. Both kinds of arrow can be switched off in the controls.</p>
+
+										<h4>Why pressure depends on particles, temperature and volume</h4>
+										<ul>
+											<li><strong>More particles</strong> means more collisions every second, so the pressure goes up in proportion: double <em>N</em> and you double <em>P</em>.</li>
+											<li><strong>Higher temperature</strong> means faster particles. They hit the walls more often <em>and</em> harder. Both effects grow with speed, so the pressure grows with speed squared, which is the kinetic energy. Temperature measures the average kinetic energy, so <em>P</em> is proportional to the absolute temperature <em>T</em>.</li>
+											<li><strong>Smaller volume</strong> means each particle reaches a wall sooner, so the walls are hit more often: halve <em>V</em> and you double <em>P</em>.</li>
+										</ul>
+										<p>Put together, these give the <strong>ideal gas law</strong>, <em>PV</em> = <em>NkT</em>. The info bar shows <em>PV</em>/<em>NkT</em> from the measured values: 1.00 means the gas behaves ideally.</p>
+
+										<h4>Things to try</h4>
+										<ul>
+											<li><strong>Balloon:</strong> heat the gas or add particles and the balloon inflates; cool it and it shrinks. The rubber stretches until the push from inside balances the outside air pushing in plus the pull of the stretched rubber. With <em>Average pressure arrows</em> on, compare the gas pushing out (amber) with the outside air pushing in (blue). Because the outside pressure barely changes, volume follows temperature and particle number.</li>
+											<li><strong>Rigid box:</strong> the volume can't change, so heating the gas raises the pressure in proportion to the absolute temperature (<strong>Gay-Lussac's law</strong>, <em>P</em> &prop; <em>T</em>). On the pressure-temperature graph the points line up on a straight line through zero: at absolute zero (0&nbsp;K) the particles would stop and the pressure would vanish.</li>
+											<li><strong>Syringe:</strong> drag the plunger (or use the <em>Volume</em> slider). Halve the volume and the pressure doubles (<strong>Boyle's law</strong>, <em>PV</em> = constant at fixed temperature). Now tick <em>Insulated walls</em> and push the plunger in quickly: particles bounce off the moving plunger like a ball off a bat, come back faster, and the gas heats up (<strong>adiabatic compression</strong>). Pull it out and the gas cools. This is why a bike pump gets warm.</li>
+											<li><strong>Piston with weights:</strong> the piston settles where the gas pushes up exactly as hard as the weights and the air above push down, so the pressure stays fixed. Heat the gas and the piston rises: the volume is proportional to the absolute temperature (<strong>Charles's law</strong>). Add weights to raise the pressure and squeeze the gas.</li>
+											<li><strong>Gas type:</strong> at the same temperature, helium particles move much faster than xenon ones but each hit is much softer. The two effects cancel exactly, so the pressure is the same. Pressure depends on <em>how many</em> particles there are, not what they are (<strong>Avogadro's law</strong>).</li>
+											<li><strong>Particle&ndash;particle collisions:</strong> with these off, the particles pass through each other, which is the idealised gas of the gas laws. Switch them on and the particles share out their energy, so the speeds spread into the Maxwell&ndash;Boltzmann distribution. Real particles also take up some room, so at high particle numbers the pressure rises a little above the ideal value (<em>PV</em>/<em>NkT</em> &gt; 1).</li>
+										</ul>
+
+										<h4>About the model</h4>
+										<p>The simulation is two-dimensional, so its "volume" is really an area and pressure is force per unit length of wall. To make the numbers feel real, everything is scaled so that the rigid box holds 1.00&nbsp;L of a nitrogen-like gas at 300&nbsp;K and 101&nbsp;kPa (1&nbsp;atmosphere). Each dot then stands for roughly 10<sup>20</sup> real molecules. Speeds are given in m/s for real molecules, although the animation is slowed down enormously, and the dots are drawn far larger than real molecules. When heat can flow, the walls act as a <em>heat bath</em> at the set temperature: a particle bouncing off a hot wall tends to leave faster, and one bouncing off a cold wall tends to leave slower. The balloon and the piston jiggle slightly because only a few hundred particles hold them up. A real balloon is hit by about 10<sup>23</sup> molecules every second, so its jiggles average out.</p>
+
+										<p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) restarts the simulation with the current settings. The chart icon (<span class="icon solid fa-chart-bar"></span>) shows graphs of pressure over time and of the gas laws.</p>
+										<p><strong>Controls:</strong></p>
+										<ul>
+											<li><strong>Container:</strong> choose a flexible balloon, a rigid box, a syringe whose volume you set, or a free piston with weights that keeps the pressure fixed.</li>
+											<li><strong>Temperature:</strong> the temperature of the walls (or of the air around the balloon). The gas heats or cools towards it through collisions with the walls.</li>
+											<li><strong>Particles:</strong> pump particles in or let them out through the inlet.</li>
+											<li><strong>Volume</strong> (syringe only): moves the plunger. You can also drag the plunger on the canvas.</li>
+											<li><strong>Weights on piston</strong> (piston only): each weight adds 50&nbsp;kPa to the pressure the piston applies.</li>
+											<li><strong>Speed:</strong> slows down or speeds up the simulation.</li>
+											<li><strong>Gas:</strong> changes the particle mass (helium, nitrogen or xenon) while keeping the temperature the same.</li>
+											<li><strong>Collision force arrows:</strong> a short-lived arrow at each wall collision, with length proportional to the impulse.</li>
+											<li><strong>Average pressure arrows:</strong> the time-averaged pressure on each section of wall (and, for the balloon, the outside air pressure).</li>
+											<li><strong>Highlight one particle:</strong> follows a single particle and its path.</li>
+											<li><strong>Particle&ndash;particle collisions:</strong> lets particles bounce off each other.</li>
+											<li><strong>Insulated walls:</strong> stops heat flowing between the walls and the gas, so compression heats it and expansion cools it.</li>
+											<li><strong>Gas-law graph:</strong> chooses what the second graph plots. Each point is a measurement; the dashed line is the ideal gas law for the current settings.</li>
+										</ul>
+										<p>Press <strong>F</strong> to show the frame rate.</p>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script src="assets/js/pressure_core.js" defer></script> <!-- Simulation specific logic -->
+	</body>
+</html>
