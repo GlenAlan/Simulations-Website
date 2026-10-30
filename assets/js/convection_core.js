@@ -131,15 +131,13 @@ function updateCanvasResolution() {
         // Reset inline styles so CSS can take over.
         aspectRatioBox.style.width = ''; 
         aspectRatioBox.style.height = ''; 
-        
-        // Get the computed size based on CSS layout
-        const boxRect = aspectRatioBox.getBoundingClientRect();
-        targetWidth = boxRect.width;
-        targetHeight = boxRect.height; // Derived from width and padding-bottom
     }
 
-    targetWidth = Math.max(1, Math.round(targetWidth));
-    targetHeight = Math.max(1, Math.round(targetHeight));
+    // Size the drawing buffer to the canvas's on-screen size (inside the box border) in device pixels,
+    // so the grid cells are drawn with crisp edges instead of being upscaled and blurred on high-DPI screens
+    const dpr = window.devicePixelRatio || 1;
+    targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
 
     if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
         canvas.width = targetWidth;
@@ -158,10 +156,8 @@ function updateCanvasResolution() {
 
 
 if (canvas) {
-    // Observe .sim-canvas-wrapper for resizes in normal mode,
-    // and .simulation-main-content for fullscreen resizes.
-    const normalModeObserverTarget = canvas.closest('.sim-canvas-wrapper');
-    const fullscreenModeObserverTarget = canvas.closest('.simulation-main-content');
+    // Observe .sim-canvas-wrapper for resizes (window resize, fullscreen, settings panel)
+    const resizeObserverTarget = canvas.closest('.sim-canvas-wrapper');
 
     if (typeof ResizeObserver !== 'undefined') {
         const generalResizeObserver = new ResizeObserver(entries => {
@@ -169,12 +165,7 @@ if (canvas) {
             requestAnimationFrame(updateCanvasResolution);
         });
 
-        if (normalModeObserverTarget) generalResizeObserver.observe(normalModeObserverTarget);
-        // Observation of fullscreenModeObserverTarget might be redundant if normalMode one covers it,
-        // but specific observation for fullscreen area can be more direct.
-        if (fullscreenModeObserverTarget && fullscreenModeObserverTarget !== normalModeObserverTarget) {
-            // Potentially observe this too, or rely on body class change
-        }
+        if (resizeObserverTarget) generalResizeObserver.observe(resizeObserverTarget);
         
         const fullscreenClassObserver = new MutationObserver((mutationsList) => {
             for(const mutation of mutationsList) {
@@ -189,6 +180,16 @@ if (canvas) {
     } else {
         window.addEventListener('resize', () => setTimeout(updateCanvasResolution, 100));
     }
+
+    // Moving the window to a screen with a different pixel density changes devicePixelRatio
+    // without resizing anything, so watch for that separately
+    const watchPixelRatio = () => {
+        if (!window.matchMedia) return;
+        const query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+        if (!query.addEventListener) return;
+        query.addEventListener('change', () => { updateCanvasResolution(); watchPixelRatio(); }, { once: true });
+    };
+    watchPixelRatio();
 
     // Fallback initial sizing calls
     window.addEventListener('load', () => setTimeout(updateCanvasResolution, 250));
