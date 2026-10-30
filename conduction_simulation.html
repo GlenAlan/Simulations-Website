@@ -70,7 +70,8 @@
 			"image": "https://simulations.science/images/conduct.png",
 			"interactivityType": "active",
 			"isAccessibleForFree": true,
-			"keywords": "heat conduction, thermal energy, lattice vibration, physics simulation, heat transfer, thermal physics, interactive science"		}
+			"keywords": "heat conduction, thermal energy, lattice vibration, physics simulation, heat transfer, thermal physics, interactive science"
+		}
 		</script>
 		
 		<!-- BreadcrumbList structured data -->
@@ -115,6 +116,7 @@
 		</script>
 		<link rel="stylesheet" href="assets/css/main.css" />
 		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/conduction_styles.css" />
 		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
 		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
 	</head>
@@ -171,7 +173,7 @@
                                         <label>Speed: <span id="timeScaleVal">25</span>x
                                             <input type="range" id="timeScale" min="1" max="100" step="1" value="25">
                                         </label>
-                                        <label>Heating Radius: <span id="heatSizeVal">25</span>
+                                        <label>Heating Radius: <span id="heatSizeVal">25</span> px
                                             <input type="range" id="heatSize" min="10" max="100" step="1" value="25">
                                         </label>
                                         <label>Heat Intensity: <span id="heatAmpVal">1.0</span>
@@ -193,14 +195,14 @@
                                     <div class="simulation-display-container">
                                         <div class="sim-canvas-wrapper">
                                             <div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1;">
-                                                <canvas id="simulationCanvas" class="sim-canvas"></canvas>
+                                                <canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Lattice of atoms joined by springs; each atom's color shows its temperature, from blue (cold) to red (hot)"></canvas>
                                             </div>
-                                            <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div> <!-- Kept from template, conduction_core.js won't update it -->
+                                            <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
                                         </div>
                                         <div class="sim-info-bar">
-                                            <span class="sim-info-item">Avg. Temperature: <span id="energyVal">0</span>K</span>
+                                            <span class="sim-info-item">Avg. Temperature: <span id="energyVal">0</span> K</span>
                                             <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation">
-                                                <span class="icon solid fa-sync-alt"></span> <!-- Changed fas to solid -->
+                                                <span class="icon solid fa-sync-alt"></span>
                                             </button>
                                         </div>
                                     </div>
@@ -211,16 +213,19 @@
                                         </button>
                                     </div>
 
-                                    <div class="description-area">                                        <h3>About this Simulation</h3>
-                                        <p>This simulation models the conduction of heat energy through materials. The 2D lattice of particles represents a simplified material where each particle is connected to its neighbors by springs. You can "heat" an area with your mouse (or touch), which imparts kinetic energy to the particles in that region, causing them to vibrate with a greater amplitude. These vibrations propagate through the lattice representing the conduction of heat through a solid material.</p>
-                                        <p><strong>Left-click</strong> and drag on the canvas to apply heat. <strong>Right-click</strong> and drag to cool down particles. The color of the particles change based on their individual kinetic energy (amplitude of vibration), with higher energy particles appearing more red.</p>
+                                    <div class="description-area">
+                                        <h3>About this Simulation</h3>
+                                        <p>This simulation models the conduction of heat energy through materials. The 2D lattice of particles represents a simplified material where each particle is held near its place in the lattice and connected to its neighbors by springs. You can "heat" an area with your mouse (or touch), which imparts kinetic energy to the particles in that region, causing them to vibrate with a greater amplitude. These vibrations propagate through the lattice representing the conduction of heat through a solid material.</p>
+                                        <p><strong>Left-click</strong> and drag on the canvas to apply heat. <strong>Right-click</strong> and drag to cool down particles. On a touchscreen, drag with <strong>one finger</strong> to heat and <strong>two fingers</strong> to cool. The color of each particle shows its vibrational energy (how strongly it is vibrating): cold particles are blue, and hotter particles shift through green and yellow to red.</p>
                                         <p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) will restart the simulation with current settings.</p>
-                                        <p><strong>Controls:</strong></p>                                        <ul>
+                                        <p><strong>Controls:</strong></p>
+                                        <ul>
                                             <li><strong>Speed:</strong> Adjusts the simulation rate. Higher values make time pass faster.</li>
                                             <li><strong>Heating Radius:</strong> Controls the size of the area affected when you apply heat or cooling.</li>
                                             <li><strong>Heat Intensity:</strong> Determines how much energy is added to the particles when heating or removed when cooling.</li>
                                             <li><strong>Atom Interaction:</strong> Controls how strongly particles are connected, affecting how quickly heat conducts through the lattice.</li>
-                                            <li><strong>Avg. Temperature:</strong> Displays the average kinetic energy of all particles in the system, representing the overall "temperature" of the lattice.</li>
+                                            <li><strong>Grid Layout:</strong> Changes the number of particles in the lattice (columns x rows). Changing it restarts the simulation.</li>
+                                            <li><strong>Avg. Temperature:</strong> Displays the average temperature of the lattice, calculated from the vibrational (kinetic plus potential) energy per particle. The lattice starts at rest, at absolute zero, and the kelvin scale is illustrative. While you are not heating or cooling, energy is conserved, so the average stays constant as heat spreads from hot regions to cold ones. (Changing Atom Interaction alters the energy stored in the springs, so it changes the average too.)</li>
                                         </ul>
                                     </div>
                                 </div>
