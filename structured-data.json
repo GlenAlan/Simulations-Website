@@ -78,7 +78,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Radiation Simulation",
-            "description": "A black-body radiator transmitting thermal energy through electromagnetic radiation",
+            "description": "A glowing heater warms matte black and polished silver blocks across a vacuum by infrared radiation",
             "url": "https://simulations.science/radiation_simulation.html",
             "image": "https://simulations.science/images/radiation.png",
             "learningResourceType": "Simulation",
