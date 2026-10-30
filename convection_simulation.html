@@ -226,7 +226,7 @@
 
                                     <div class="description-area">
                                         <h3>About this Simulation</h3>
-                                        <p>This simulation visualizes convection in a box of fluid. When fluid is heated it expands, becoming less dense than the fluid around it, so buoyancy makes it rise; cooler, denser fluid sinks to take its place. The top surface constantly loses heat, so warm fluid that reaches it cools and sinks again, creating circulating convection currents. Colours show temperature, from blue (cold) through green to red (hot).</p>
+                                        <p>This simulation visualizes convection in a box of fluid. When fluid is heated it expands, becoming less dense than the fluid around it, so buoyancy makes it rise; cooler, denser fluid sinks to take its place. The top surface constantly loses heat, so warm fluid that reaches it cools and sinks again, creating circulating convection currents. Colours show temperature, from blue (0 °C) through green (50 °C) to red (100 °C).</p>
                                         <p><strong>Left-click</strong> (or touch) and drag on the canvas to heat the fluid locally. <strong>Right-click</strong> and drag to cool it.</p>
                                         <p>Adjust parameters using the controls panel (toggle with the <span class="icon solid fa-cog"></span> icon). Press 'F' to toggle the FPS display. Use the fullscreen icon (<span class="icon solid fa-expand"></span>) for an immersive view. The reset button (<span class="icon solid fa-sync-alt"></span>) restarts the simulation with the current settings.</p>
                                         <p><strong>Controls:</strong></p>
@@ -236,9 +236,9 @@
                                             <li><strong>Heat Intensity:</strong> Determines how much energy is added when heating, or removed when cooling.</li>
                                             <li><strong>Surface Cooling:</strong> Adjusts the rate at which the fluid at the top surface cools down.</li>
                                             <li><strong>Viscosity:</strong> Sets how "thick" the fluid is. Viscous fluids such as honey resist flowing, so their convection currents are slower and smoother.</li>
-                                            <li><strong>Simulation Size:</strong> Changes the dimensions of the simulation grid. Larger sizes may impact performance.</li>
+                                            <li><strong>Simulation Size:</strong> Changes the resolution of the simulation grid. Larger sizes show finer detail but may impact performance.</li>
                                         </ul>
-                                        <p>The simulation solves a simplified version of the Navier-Stokes equations for fluid dynamics. Temperature differences cause buoyancy effects and fluid motion.</p>
+                                        <p>The simulation solves a simplified version of the Navier-Stokes equations for an incompressible fluid. Temperature differences cause buoyancy effects and fluid motion: each region is pushed up or down in proportion to how much warmer or cooler it is than the average (the Boussinesq approximation). Moving fluid carries heat around without creating or destroying it, so the Avg. Temperature only changes when heat is added or removed, by you or by the cooled surface.</p>
                                     </div>
                                 </div>
 							</div>

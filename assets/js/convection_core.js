@@ -1,6 +1,9 @@
 // GRID & PHYSICS PARAMETERS
 let N    = 64; // Made N mutable
 let size = N + 2;
+// Reference grid size: the heating brush radius and the cooled surface layer are specified in cells
+// of a 64x64 grid and scaled with N, so changing the grid size changes resolution, not the physics.
+const referenceN = 64;
 const iter = 4;
 const diff   = 0.0001;
 let visc   = 0.0001; // Made viscosity variable for dropdown control
@@ -34,6 +37,13 @@ let dens_prev= new Float32Array(size*size);
 let u0    = new Float32Array(size*size); // Made u0, v0, dens0 mutable for resize
 let v0    = new Float32Array(size*size);
 let dens0 = new Float32Array(size*size);
+// Pressure of the two projections and the viscous velocity change in each step, kept between steps
+// to warm-start the iterative solvers
+let pressure1  = new Float32Array(size*size);
+let pressure2  = new Float32Array(size*size);
+let viscousDeltaU = new Float32Array(size*size);
+let viscousDeltaV = new Float32Array(size*size);
+let divergence = new Float32Array(size*size);
 for (let i = 0; i < dens.length; i++) dens[i] = ambientTemp;
 let avg_density = ambientTemp;
 let prev_avg_density = ambientTemp;
@@ -327,7 +337,7 @@ function setBnd(b, x_arr) {
     x_arr[IX(0, i)]   = (b === 1) ? -x_arr[IX(1, i)] : x_arr[IX(1, i)];
     x_arr[IX(N+1, i)] = (b === 1) ? -x_arr[IX(N, i)] : x_arr[IX(N, i)];
 
-    // Horizontal boundaries (top j=0, bottom j=N+1)
+    // Horizontal boundaries (bottom j=0, top j=N+1; j increases upwards and is drawn flipped)
     // b=2 for reflection (e.g., v velocity against horizontal wall)
     x_arr[IX(i, 0)]   = (b === 2) ? -x_arr[IX(i, 1)] : x_arr[IX(i, 1)];
     x_arr[IX(i, N+1)] = (b === 2) ? -x_arr[IX(i, N)] : x_arr[IX(i, N)];
@@ -337,6 +347,7 @@ function setBnd(b, x_arr) {
   x_arr[IX(N+1, 0)]   = 0.5*(x_arr[IX(N,0)]   + x_arr[IX(N+1,1)]);
   x_arr[IX(N+1, N+1)] = 0.5*(x_arr[IX(N, N+1)]+ x_arr[IX(N+1,N)]);
 }
+// Gauss-Seidel relaxation for c*x - a*(sum of 4 neighbours) = x0, starting from the current contents of x_arr
 function linSolve(b, x_arr, x0_arr, a, c, iterations = iter) {
   const c_inv = 1.0 / c;
   for (let k_iter = 0; k_iter < iterations; k_iter++) {
@@ -367,6 +378,31 @@ function diffuse(b, x_arr, x0_arr, diff_coeff) {
   const a = physicsDt * diff_coeff * N * N;
   linSolve(b, x_arr, x0_arr, a, 1 + 4*a, diffusionIterations(a));
 }
+// Viscous diffusion of a velocity component. The implicit solve is done for the change
+// delta = x - x0 and starts from the change made in the previous step, which barely varies in slow
+// viscous flow. Without this warm start a few sweeps are far from converged for viscous fluids such as
+// honey (more so on larger grids), which made them flow several times too freely.
+function diffuseVelocity(b, x_arr, x0_arr, diff_coeff, delta_arr) {
+  const a = physicsDt * diff_coeff * N * N;
+  const rhs = divergence; // Free scratch space at this point of the step
+  setBnd(b, x0_arr);
+  for (let j = 1; j <= N; j++) {
+    const curr_j_idx = j * size;
+    for (let i = 1; i <= N; i++) {
+      const idx = curr_j_idx + i;
+      rhs[idx] = a * (x0_arr[idx - 1] + x0_arr[idx + 1] + x0_arr[idx - size] + x0_arr[idx + size] - 4*x0_arr[idx]);
+    }
+  }
+  linSolve(b, delta_arr, rhs, a, 1 + 4*a, diffusionIterations(a));
+  for (let j = 1; j <= N; j++) {
+    const curr_j_idx = j * size;
+    for (let i = 1; i <= N; i++) {
+      const idx = curr_j_idx + i;
+      x_arr[idx] = x0_arr[idx] + delta_arr[idx];
+    }
+  }
+  setBnd(b, x_arr);
+}
 function advect(b, d_arr, d0_arr, u_vel, v_vel) {
   const dt0 = physicsDt * N;
   for (let j = 1; j <= N; j++) {
@@ -392,26 +428,28 @@ function advect(b, d_arr, d0_arr, u_vel, v_vel) {
   }
   setBnd(b, d_arr);
 }
+// Makes the velocity field divergence-free (incompressible) by subtracting a pressure gradient.
+// p_arr is not cleared: it still holds this projection's pressure from the previous step, which is
+// already close to the answer, so the few Gauss-Seidel sweeps converge at every grid size.
 function project(u_vel, v_vel, p_arr, div_arr) {
-  const h_inv = 1.0 / N;
+  const h = 1.0 / N;
   for (let j = 1; j <= N; j++) {
     const prev_j_idx = (j-1) * size;
     const curr_j_idx = j * size;
     const next_j_idx = (j+1) * size;
     for (let i = 1; i <= N; i++) {
       const idx = curr_j_idx + i;
-      div_arr[idx] = -0.5 * h_inv * (
+      div_arr[idx] = -0.5 * h * (
         u_vel[idx + 1] - u_vel[idx - 1] +           // u_vel[IX(i+1,j)] - u_vel[IX(i-1,j)]
         v_vel[next_j_idx + i] - v_vel[prev_j_idx + i] // v_vel[IX(i,j+1)] - v_vel[IX(i,j-1)]
       );
-      p_arr[idx] = 0;
     }
   }
   setBnd(0, div_arr); setBnd(0, p_arr);
   linSolve(0, p_arr, div_arr, 1, 4);
-  
-  // const N_half_inv = 0.5 * N; // This variable was unused.
+
   const N_half = 0.5 * N;
+  let pSum = 0;
 
   for (let j = 1; j <= N; j++) {
     const prev_j_idx = (j-1) * size;
@@ -421,9 +459,21 @@ function project(u_vel, v_vel, p_arr, div_arr) {
       const idx = curr_j_idx + i;
       u_vel[idx] -= N_half * (p_arr[idx + 1] - p_arr[idx - 1]); // p_arr[IX(i+1,j)] - p_arr[IX(i-1,j)]
       v_vel[idx] -= N_half * (p_arr[next_j_idx + i] - p_arr[prev_j_idx + i]); // p_arr[IX(i,j+1)] - p_arr[IX(i,j-1)]
+      pSum += p_arr[idx];
     }
   }
+  // Pressure is only defined up to a constant; keep its mean at zero so the reused field can't drift
+  const pMean = pSum / (N*N);
+  for (let k = 0; k < p_arr.length; k++) p_arr[k] -= pMean;
   setBnd(1, u_vel); setBnd(2, v_vel);
+}
+function sumInterior(x_arr) {
+  let sum = 0;
+  for (let j = 1; j <= N; j++) {
+    const base_j_idx = j * size;
+    for (let i = 1; i <= N; i++) sum += x_arr[base_j_idx + i];
+  }
+  return sum;
 }
 function addSource(x_arr, s_arr) {
   for (let i = 0; i < x_arr.length; i++) x_arr[i] += physicsDt * s_arr[i];
@@ -492,71 +542,41 @@ function renderDensity() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
 }
-function simulate() {
-  dens_prev.fill(0);
-  
-  // Handle multi-touch input
-  if (touchPoints.size > 0 && canvas && canvas.width > 0 && canvas.height > 0) {
-    const simCellW = canvas.width / N; 
-    const simCellH = canvas.height / N;
-    
-    if (simCellW > 0 && simCellH > 0) {
-      const heatRadiusSq = heatRadius*heatRadius;
-      const twiceHeatRadiusSq = 2*heatRadiusSq;
-      
-      // Apply heating/cooling for each active touch point
-      touchPoints.forEach((touchPoint) => {
-        const ci = Math.floor(touchPoint.x / simCellW) + 1; 
-        const cj = N - Math.floor(touchPoint.y / simCellH);
-        
-        for (let di = -heatRadius; di <= heatRadius; di++) {
-          for (let dj = -heatRadius; dj <= heatRadius; dj++) {
-            const ii = ci + di, jj = cj + dj;
-            if (ii>=1 && ii<=N && jj>=1 && jj<=N) {
-              const d2 = di*di + dj*dj;
-              if (d2 <= heatRadiusSq) {
-                const w = Math.exp(-d2/twiceHeatRadiusSq);
-                if (touchPoint.heating) {
-                    dens_prev[IX(ii,jj)] += heatAmpMult * heatAmp * w;
-                } else if (touchPoint.cooling) {
-                    dens_prev[IX(ii,jj)] -= heatAmpMult * heatAmp * w;
-                }
-              }
-            }
-          }
-        }
-      });
+// Adds heat (sign = +1) or removes it (sign = -1) around a point given as a fraction of the canvas
+// width/height. The radius is measured in cells of the 64x64 reference grid, so the brush covers the
+// same area (and adds the same heat per second) at every grid size.
+function applyHeatBrush(xFrac, yFrac, sign) {
+  const r = heatRadius * N / referenceN;
+  const rSq = r*r, twiceRSq = 2*rSq, reach = Math.floor(r);
+  const ci = Math.floor(xFrac * N) + 1;
+  const cj = N - Math.floor(yFrac * N);
+  const amount = sign * heatAmpMult * heatAmp;
+  for (let dj = -reach; dj <= reach; dj++) {
+    const jj = cj + dj;
+    if (jj < 1 || jj > N) continue;
+    for (let di = -reach; di <= reach; di++) {
+      const ii = ci + di;
+      if (ii < 1 || ii > N) continue;
+      const d2 = di*di + dj*dj;
+      if (d2 <= rSq) dens_prev[IX(ii,jj)] += amount * Math.exp(-d2/twiceRSq);
     }
   }
-  
-  // Handle legacy mouse input (for backward compatibility)
-  if ((heating || cooling) && canvas && canvas.width > 0 && canvas.height > 0) { 
-    const simCellW = canvas.width / N; 
-    const simCellH = canvas.height / N;
-    if (simCellW > 0 && simCellH > 0) {
-        const ci = Math.floor(mX / simCellW) + 1; 
-        const cj = N - Math.floor(mY / simCellH);
-        
-        const heatRadiusSq = heatRadius*heatRadius;
-        const twiceHeatRadiusSq = 2*heatRadiusSq; // Or 2 * heatRadius * heatRadius
+}
+function simulate() {
+  dens_prev.fill(0);
 
-        for (let di = -heatRadius; di <= heatRadius; di++) {
-          for (let dj = -heatRadius; dj <= heatRadius; dj++) {
-            const ii = ci + di, jj = cj + dj;
-            if (ii>=1 && ii<=N && jj>=1 && jj<=N) {
-              const d2 = di*di + dj*dj;
-              if (d2 <= heatRadiusSq) {
-                const w = Math.exp(-d2/twiceHeatRadiusSq);
-                if (heating) {
-                    dens_prev[IX(ii,jj)] += heatAmpMult * heatAmp * w;
-                } else if (cooling) {
-                    dens_prev[IX(ii,jj)] -= heatAmpMult * heatAmp * w; // Corrected typo: was 0.5heatAmpMult, ensuring it uses coolAmpMult
-                }
-              }
-            }
-          }
-        }
-    }
+  // Handle multi-touch input
+  if (touchPoints.size > 0 && canvas && canvas.width > 0 && canvas.height > 0) {
+    // Apply heating/cooling for each active touch point
+    touchPoints.forEach((touchPoint) => {
+      if (touchPoint.heating) applyHeatBrush(touchPoint.x / canvas.width, touchPoint.y / canvas.height, 1);
+      else if (touchPoint.cooling) applyHeatBrush(touchPoint.x / canvas.width, touchPoint.y / canvas.height, -1);
+    });
+  }
+
+  // Handle legacy mouse input (for backward compatibility)
+  if ((heating || cooling) && canvas && canvas.width > 0 && canvas.height > 0) {
+    applyHeatBrush(mX / canvas.width, mY / canvas.height, heating ? 1 : -1);
   }
   prev_avg_density = avg_density; avg_density = 0;
 
@@ -573,35 +593,48 @@ function simulate() {
   }
   avg_density /= (N*N);
 
-  u0.set(u); diffuse(1, u, u0, visc);
-  v0.set(v); diffuse(2, v, v0, visc);
-  
-  project(u, v, u0, v0);
-  
+  u0.set(u); diffuseVelocity(1, u, u0, visc, viscousDeltaU);
+  v0.set(v); diffuseVelocity(2, v, v0, visc, viscousDeltaV);
+
+  project(u, v, pressure1, divergence);
+
   u0.set(u); v0.set(v);
   advect(1, u, u0, u0, v0); // u0, v0 are velocity fields for advection of u
   advect(2, v, v0, u0, v0); // u0, v0 are velocity fields for advection of v
-  
-  project(u, v, u0, v0); // u0, v0 are p_arr, div_arr respectively in this call
-  
+
+  project(u, v, pressure2, divergence);
+
   addSource(dens, dens_prev);
-  // Clamp density after adding source to ensure it's within bounds
+  // Clamp temperature after adding the heat source: 0 = 0 °C (blue) ... 1 = 100 °C (red)
   for (let i = 0; i < dens.length; i++) {
-    dens[i] = Math.max(0, Math.min(1, dens[i])); // Clamp between 0 and 1 (or other appropriate range)
+    dens[i] = Math.max(0, Math.min(1, dens[i]));
   }
+  const heatBefore = sumInterior(dens);
   dens0.set(dens); diffuse(0, dens, dens0, diff);
   dens0.set(dens); advect(0, dens, dens0, u, v); // u, v are velocity fields for advection of dens
 
-  // Cooling loop
-  // const coolGradients = [1.0, 0.5, 1.0/3.0]; // Precompute if k range is fixed and larger
-  for (let k = 0; k < 3; k++) { // k is 0, 1, 2
-    const j_cool = N - k; 
-    const currentGradient = 1.0 / (k + 1); // gradient = 1.0, 0.5, 0.333...
+  // Diffusion and advection only move heat around, but semi-Lagrangian advection is not exactly
+  // conservative (mostly next to the walls). Spread the tiny error evenly over the fluid so the total
+  // heat only changes through heating, cooling and the 0-100 °C limits.
+  const heatCorrection = (heatBefore - sumInterior(dens)) / (N*N);
+  for (let j = 1; j <= N; j++) {
+    const base_j_idx = j * size;
+    for (let i = 1; i <= N; i++) {
+      const idx = base_j_idx + i;
+      dens[idx] = Math.max(0, Math.min(1, dens[idx] + heatCorrection));
+    }
+  }
+
+  // Surface cooling: a layer 3 cells deep on the 64x64 reference grid (the same physical depth at
+  // every grid size) loses heat, most strongly right at the surface
+  const coolRows = Math.max(1, Math.round(3 * N / referenceN));
+  for (let k = 0; k < coolRows; k++) {
+    const j_cool = N - k;
+    const currentGradient = 1.0 / (1 + k * referenceN / N); // 1, 1/2, 1/3 on the 64x64 grid
     const base_j_cool_idx = j_cool * size;
     const scaledCoolRateBase = (coolAmpMult * coolRate / 100) * currentGradient;
 
     for (let i = 1; i <= N; i++) {
-        // const rate = (coolRate/100) * currentGradient; // Moved out: scaledCoolRateBase
         const noise = 1 + (Math.random() - 0.5) * 0.2; // 0.9 to 1.1
         const idx = base_j_cool_idx + i;
         dens[idx] *= (1 - scaledCoolRateBase * noise);
@@ -705,6 +738,11 @@ function reinitializeArrays(newN) {
     u0       = new Float32Array(size*size);
     v0       = new Float32Array(size*size);
     dens0    = new Float32Array(size*size);
+    pressure1  = new Float32Array(size*size);
+    pressure2  = new Float32Array(size*size);
+    viscousDeltaU = new Float32Array(size*size);
+    viscousDeltaV = new Float32Array(size*size);
+    divergence = new Float32Array(size*size);
 
     for (let i = 0; i < dens.length; i++) dens[i] = ambientTemp;
     avg_density = ambientTemp;
@@ -752,6 +790,11 @@ function resetSimulation() {
     dens_prev.fill(0);
     u0.fill(0);
     v0.fill(0);
+    pressure1.fill(0);
+    pressure2.fill(0);
+    viscousDeltaU.fill(0);
+    viscousDeltaV.fill(0);
+    divergence.fill(0);
     dens0.fill(ambientTemp); // Or new Float32Array(size*size).fill(ambientTemp) if dens0 needs to be pristine
 
     // Reset other relevant state variables
