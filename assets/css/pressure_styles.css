@@ -129,3 +129,10 @@ body:not(.sim-fullscreen-active) .pressure-charts {
     line-height: 1.6;
     margin-bottom: 0.35em;
 }
+
+/* A little more room for the graphs in fullscreen when the screen is tall enough. */
+@media (min-height: 700px) {
+    body.sim-fullscreen-active #charts-container .pressure-chart-box {
+        height: 190px;
+    }
+}

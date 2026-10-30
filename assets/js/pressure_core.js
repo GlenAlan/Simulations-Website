@@ -49,6 +49,7 @@
     const WORLD_W = 200, WORLD_H = 100;
     const REGION_W = 140;            // particles / containers live in x < REGION_W
     const INSTR_X = 143;             // instrument panel (gauge, legend) on the right
+    const REGION_SHIFT = WORLD_W - (INSTR_X - 1);   // region offset when the layout is mirrored
     const KB = 3;                    // energy units per kelvin
     const A_REF = 4096;              // area that reads as 1.00 L
     const P_ATM = 300 * KB * 300 / A_REF;    // 65.92 sim units == 101.325 kPa (1 atm)
@@ -231,8 +232,9 @@
             rod: dark ? 'rgba(200,210,220,0.5)' : 'rgba(100,110,120,0.5)',
             glass: dark ? 'rgba(160,190,220,0.05)' : 'rgba(80,120,160,0.05)',
             hitRGB: dark ? '255,255,255' : '30,30,30',
-            avgArrow: dark ? 'rgba(255,196,64,0.9)' : 'rgba(200,110,0,0.9)',
-            outArrow: dark ? '#7ecaf6' : '#1f78b4',
+            avgArrow: dark ? 'rgba(255,190,60,0.62)' : 'rgba(205,115,0,0.62)',
+            outArrow: dark ? 'rgba(126,202,246,0.75)' : 'rgba(31,120,180,0.75)',
+            outSolid: dark ? '#7ecaf6' : '#1f78b4',
             air: dark ? 'rgba(210,210,210,0.32)' : 'rgba(70,70,70,0.30)',
             tracer: dark ? '#ffffff' : '#111111',
             trailRGB: dark ? '255,255,255' : '20,20,20',
@@ -854,6 +856,10 @@
     // Rendering
     // ------------------------------------------------------------------
     let cssW = 0, cssH = 0, dpr = 1, scale = 1, offX = 0, offY = 0;
+    // On narrow screens (not fullscreen) simulation_ui.js puts its buttons over the top-right of
+    // the canvas, so the instrument panel moves to the left and the containers to the right.
+    let flip = false;
+    const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 768px)") : null;
     let fSmall = 3, fMed = 3.4, fBig = 4.6;
     let gaugeDisplay = 101.3;
     let meanSpeed = 0;
@@ -872,7 +878,11 @@
         if (!w || !h) return false;
         const newDpr = Math.min(window.devicePixelRatio || 1, 3);
         const bw = Math.round(w * newDpr), bh = Math.round(h * newDpr);
-        if (bw === canvas.width && bh === canvas.height && w === cssW && h === cssH && newDpr === dpr) return false;
+        const newFlip = !!(narrowQuery && narrowQuery.matches) && !document.body.classList.contains('sim-fullscreen-active');
+        const flipChanged = newFlip !== flip;
+        flip = newFlip;
+        if (flipChanged) legendGradient = null;
+        if (bw === canvas.width && bh === canvas.height && w === cssW && h === cssH && newDpr === dpr) return flipChanged;
         dpr = newDpr; cssW = w; cssH = h;
         canvas.width = bw; canvas.height = bh;
         scale = Math.min(w / WORLD_W, h / WORLD_H);
@@ -1178,17 +1188,21 @@
         drawValve(cx, Math.min(WORLD_H - 2, yOut + 3.2), false);
     }
 
+    // Time-averaged pressure on each wall section: arrows inside the gas pressing on the wall.
+    // Length is proportional to pressure, capped (the same cap for every wall, so equal
+    // pressures always look equal) so that arrows never reach the middle of the container.
     function drawAvgArrows() {
-        const hl = 1.6;
-        ctx.lineWidth = 0.9;
+        const hl = 1.8;
+        ctx.lineWidth = 1.15;
         ctx.lineCap = 'round';
         ctx.strokeStyle = pal.avgArrow;
         ctx.beginPath();
         if (isBalloon()) {
             const cx = BALLOON.cx, cy = BALLOON.cy, hr = bal.R + R_DRAW * 0.6;
+            const cap = Math.min(AVG_MAX, 0.55 * bal.R);
             for (let k = 0; k < nSectors; k++) {
                 let L = secP[k] * AVG_SCALE;
-                if (L > AVG_MAX) L = AVG_MAX;
+                if (L > cap) L = cap;
                 if (L < 0.5) continue;
                 arrowPath(cx + secCos[k] * hr, cy + secSin[k] * hr, secCos[k], secSin[k], L, Math.min(hl, 0.45 * L));
             }
@@ -1205,11 +1219,12 @@
         } else {
             const x0 = box.x0, x1 = box.x1, y0 = box.y0, y1 = box.y1;
             const w = x1 - x0, h = y1 - y0;
+            const cap = Math.min(AVG_MAX, 0.4 * Math.min(w, h));
             for (let wall = 0; wall < 4; wall++) {
                 const n = segCount[wall], s0 = segStart[wall];
                 for (let s = 0; s < n; s++) {
                     let L = secP[s0 + s] * AVG_SCALE;
-                    if (L > AVG_MAX) L = AVG_MAX;
+                    if (L > cap) L = cap;
                     if (L < 0.5) continue;
                     const f = (s + 0.5) / n;
                     const hh = Math.min(hl, 0.45 * L);
@@ -1287,7 +1302,7 @@
         if (Pext > 0) {
             const v = Math.min(1, Pext * KPA / range);
             const a = a0 + sweep * v;
-            ctx.strokeStyle = pal.outArrow;
+            ctx.strokeStyle = pal.outSolid;
             ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.moveTo(cx + Math.cos(a) * r * 0.93, cy + Math.sin(a) * r * 0.93);
@@ -1327,7 +1342,7 @@
         ctx.fillStyle = pal.text;
         ctx.font = fontMedBold;
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText(txt.gauge, cx, cy + r * 0.78);
+        ctx.fillText(txt.gauge, cx, cy + r * 0.93);
     }
 
     function drawLegend(x, y, w) {
@@ -1358,8 +1373,8 @@
         ctx.textAlign = 'right'; ctx.fillText(txt.legend2, x + w, ly);
     }
 
-    function drawInstruments() {
-        const x0 = INSTR_X, x1 = WORLD_W - 1.5, w = x1 - x0, cx = x0 + w / 2;
+    function drawInstruments(x0) {
+        const x1 = x0 + (WORLD_W - 1.5 - INSTR_X), w = x1 - x0, cx = x0 + w / 2;
         ctx.fillStyle = pal.panelBg;
         roundRectPath(x0, 1.5, w, WORLD_H - 3, 2.5);
         ctx.fill();
@@ -1391,7 +1406,7 @@
         ctx.fillText(txt.ideal, tx + 3.4, y);
         y += lh;
         if (externalPressure() > 0) {
-            ctx.fillStyle = pal.outArrow;
+            ctx.fillStyle = pal.outSolid;
             ctx.fillRect(tx + 0.4, y - fSmall * 0.75, 1.4, fSmall * 0.65);
             ctx.fillStyle = pal.text;
             ctx.fillText(txt.outside, tx + 3.4, y);
@@ -1413,6 +1428,7 @@
         ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offX, dpr * offY);
 
         ctx.save();
+        if (flip) ctx.translate(REGION_SHIFT, 0);
         ctx.beginPath();
         ctx.rect(0, 0, INSTR_X - 1, WORLD_H);
         ctx.clip();
@@ -1436,7 +1452,7 @@
         ctx.fillText(regionLabel, 2, 2 + fSmall);
         ctx.restore();
 
-        drawInstruments();
+        drawInstruments(flip ? 1.5 : INSTR_X);
     }
 
     // ------------------------------------------------------------------
@@ -1586,7 +1602,7 @@
                 datasets: [
                     { label: 'Measured', data: series.meas, borderColor: pal.accent, backgroundColor: pal.accent, borderWidth: 2, pointRadius: 0, tension: 0.15 },
                     { label: 'Ideal NkT/V', data: series.ideal, borderColor: pal.ideal, backgroundColor: pal.ideal, borderWidth: 1.2, borderDash: [5, 4], pointRadius: 0 },
-                    { label: 'Outside', data: series.outside, borderColor: pal.outArrow, backgroundColor: pal.outArrow, borderWidth: 1.2, borderDash: [2, 3], pointRadius: 0 }
+                    { label: 'Outside', data: series.outside, borderColor: pal.outSolid, backgroundColor: pal.outSolid, borderWidth: 1.2, borderDash: [2, 3], pointRadius: 0 }
                 ]
             },
             options: o1
@@ -1621,7 +1637,7 @@
         if (pressureChart) {
             const ds = pressureChart.data.datasets;
             ds[1].borderColor = ds[1].backgroundColor = pal.ideal;
-            ds[2].borderColor = ds[2].backgroundColor = pal.outArrow;
+            ds[2].borderColor = ds[2].backgroundColor = pal.outSolid;
         }
         if (lawChart) {
             const ds = lawChart.data.datasets;
@@ -1635,8 +1651,8 @@
         if (!force && now - lastChartDraw < 300) return;
         lastChartDraw = now;
         const sx = pressureChart.options.scales.x;
-        sx.min = Math.max(0, simTime - SERIES_SPAN);
-        sx.max = Math.max(10, simTime);
+        sx.min = Math.max(0, Math.floor(simTime - SERIES_SPAN));
+        sx.max = Math.max(10, Math.ceil(simTime));
         pressureChart.data.datasets[2].hidden = series.outside.length === 0;
         pressureChart.update('none');
         const mode = lawMode();
@@ -1853,7 +1869,7 @@
     let dragging = false, dragOffset = 0, dragPointer = null;
     function toWorld(e) {
         const rect = canvas.getBoundingClientRect();
-        return { x: (e.clientX - rect.left - offX) / scale, y: (e.clientY - rect.top - offY) / scale };
+        return { x: (e.clientX - rect.left - offX) / scale - (flip ? REGION_SHIFT : 0), y: (e.clientY - rect.top - offY) / scale };
     }
     function overPlunger(w) {
         const slack = 10 / scale;
@@ -1921,7 +1937,6 @@
             t += d;
         }
     }
-    window.__B = BALLOON; window.__P = PISTON;
     window.pressureSimulation = {
         getState: function () {
             return {
@@ -1930,7 +1945,7 @@
                 R: bal.R, Rdot: bal.Rdot, box: { x0: box.x0, x1: box.x1, y0: box.y0, y1: box.y1 },
                 volumeL: area() / A_REF, gasT: gasTemperature(), KE: currentKE(),
                 window: { valid: win.valid, P_kPa: win.P * KPA, Pideal_kPa: win.Pideal * KPA, V_L: win.A / A_REF, T: win.T, ratio: win.ratio, hitRate: win.hitRate },
-                substeps: lastSubsteps, gaugeRange: GAUGE_RANGES[gaugeIdx]
+                substeps: lastSubsteps, gaugeRange: GAUGE_RANGES[gaugeIdx], mirroredLayout: flip
             };
         },
         setContainer: setContainer,
@@ -1985,6 +2000,8 @@
             ro.observe(canvas.parentElement);
         }
         window.addEventListener('resize', onResize);
+        // Fullscreen on/off changes where simulation_ui.js puts its buttons (see `flip`).
+        new MutationObserver(onResize).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
         // Theme changes: main.js swaps dark-mode / light-mode on <html>.
         new MutationObserver(() => {
