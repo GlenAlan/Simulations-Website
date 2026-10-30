@@ -544,6 +544,36 @@ html.dark-mode .sim-panel-toggle-button:hover {
     display: none; /* Typically shown/hidden by JavaScript. */
 }
 
+/* Optional charts below the simulation (shown/hidden by the simulation's JS via style.display). */
+#charts-container {
+    display: none;
+    max-width: 800px;
+    margin: 10px auto 1.5em auto;
+}
+.sim-charts-row {
+    display: flex;
+    justify-content: space-around;
+    width: 100%;
+}
+#charts-container .chart-box {
+    width: 48%;
+    height: 200px;
+    position: relative;
+    background-color: var(--color-bg-alt);
+    padding: 5px;
+    border-radius: 5px;
+}
+@media (max-width: 600px) {
+    /* Stack the charts on narrow screens (outside fullscreen) so they stay readable. */
+    body:not(.sim-fullscreen-active) .sim-charts-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    body:not(.sim-fullscreen-active) #charts-container .chart-box {
+        width: 100%;
+    }
+}
+
 /* Styling for the simulation description area. */
 .description-area {
     background-color: var(--color-bg-alt);
@@ -809,10 +839,14 @@ body.sim-fullscreen-active #charts-container {
 
 /* Styling for the individual chart boxes within the container in fullscreen */
 body.sim-fullscreen-active #charts-container .chart-box {
-    /* Inline styles already define width: 48%, position, padding, border-radius. */
-    /* Override height and background for fullscreen consistency. */
-    height: 150px; /* Reduced from 180px to fit better and leave more space */
-    background-color: var(--color-bg-alt); 
+    /* Size, padding and radius come from the base #charts-container .chart-box rule (200px high). */
+    background-color: var(--color-bg-alt);
+}
+@media (max-width: 768px) {
+    /* Less vertical room in fullscreen on small screens. */
+    body.sim-fullscreen-active #charts-container .chart-box {
+        height: 150px;
+    }
 }
 
 html.dark-mode .sim-info-bar.fullscreen-style .sim-info-item,
