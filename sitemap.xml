@@ -75,7 +75,7 @@
     <image:image>
       <image:loc>https://simulations.science/images/pressure.png</image:loc>
       <image:title>Gas Pressure Simulation</image:title>
-      <image:caption>Gas particles colliding with the walls of a balloon, rigid box or syringe, showing where pressure comes from</image:caption>
+      <image:caption>Gas particles striking the walls of a balloon, box, syringe or piston, showing how temperature, volume and particle count set the pressure</image:caption>
     </image:image>
   </url>
   <url>

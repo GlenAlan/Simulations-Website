@@ -114,7 +114,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Gas Pressure Simulation",
-            "description": "Gas particles colliding with the walls of a balloon, rigid box or syringe, showing where pressure comes from",
+            "description": "Gas particles striking the walls of a balloon, box, syringe or piston, showing how temperature, volume and particle count set the pressure",
             "url": "https://simulations.science/pressure_simulation.html",
             "image": "https://simulations.science/images/pressure.png",
             "learningResourceType": "Simulation",
