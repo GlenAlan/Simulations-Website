@@ -552,18 +552,19 @@ html.dark-mode .sim-panel-toggle-button:hover {
     display: none; /* Typically shown/hidden by JavaScript. */
 }
 
-/* Optional charts below the simulation (shown/hidden by the simulation's JS via style.display). */
-#charts-container {
+/* Optional charts below the simulation (shown/hidden by the simulation's JS via style.display).
+   These are low-specificity defaults (just enough to beat main.css's element reset) so any page rule overrides them. */
+div:where(#charts-container) {
     display: none;
     max-width: 800px;
     margin: 10px auto 1.5em auto;
 }
-.sim-charts-row {
+:where(.sim-charts-row) {
     display: flex;
     justify-content: space-around;
     width: 100%;
 }
-#charts-container .chart-box {
+div:where(#charts-container .chart-box) {
     width: 48%;
     height: 200px;
     position: relative;
@@ -573,11 +574,11 @@ html.dark-mode .sim-panel-toggle-button:hover {
 }
 @media (max-width: 600px) {
     /* Stack the charts on narrow screens (outside fullscreen) so they stay readable. */
-    body:not(.sim-fullscreen-active) .sim-charts-row {
+    :where(body:not(.sim-fullscreen-active) .sim-charts-row) {
         flex-direction: column;
         gap: 10px;
     }
-    body:not(.sim-fullscreen-active) #charts-container .chart-box {
+    div:where(body:not(.sim-fullscreen-active) .sim-charts-row .chart-box) {
         width: 100%;
     }
 }
@@ -893,13 +894,13 @@ body.sim-fullscreen-active #charts-container {
 }
 
 /* Styling for the individual chart boxes within the container in fullscreen */
-body.sim-fullscreen-active #charts-container .chart-box {
-    /* Size, padding and radius come from the base #charts-container .chart-box rule (200px high). */
+:where(body.sim-fullscreen-active #charts-container .chart-box) {
+    /* Size, padding and radius come from the base chart-box defaults above (200px high). */
     background-color: var(--color-bg-alt);
 }
-@media (max-width: 768px) {
-    /* Less vertical room in fullscreen on small screens. */
-    body.sim-fullscreen-active #charts-container .chart-box {
+@media (max-height: 600px) {
+    /* Less vertical room in fullscreen on short screens (e.g. phones in landscape). */
+    :where(body.sim-fullscreen-active #charts-container) .chart-box {
         height: 150px;
     }
 }
