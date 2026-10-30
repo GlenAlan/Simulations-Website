@@ -1,0 +1,10 @@
+/* Conduction simulation: page-specific styles (loaded after simulation_styles.css). */
+
+/* The canvas is a heating/cooling tool: show a crosshair, and stop drags and
+   long-presses on it from selecting page text or opening the iOS callout. */
+#simulationCanvas {
+    cursor: crosshair;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}

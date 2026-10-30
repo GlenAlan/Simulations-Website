@@ -3,7 +3,7 @@
         xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://simulations.science/</loc>
-    <lastmod>2025-06-06</lastmod>
+    <lastmod>2026-10-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
     <image:image>
@@ -14,7 +14,7 @@
   </url>
   <url>
     <loc>https://simulations.science/conduction_simulation.html</loc>
-    <lastmod>2025-06-06</lastmod>
+    <lastmod>2026-10-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
     <image:image>
@@ -25,7 +25,7 @@
   </url>
   <url>
     <loc>https://simulations.science/convection_simulation.html</loc>
-    <lastmod>2025-06-06</lastmod>
+    <lastmod>2026-10-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
     <image:image>
@@ -36,7 +36,7 @@
   </url>
   <url>
     <loc>https://simulations.science/maxwell_demon_simulation.html</loc>
-    <lastmod>2025-06-06</lastmod>
+    <lastmod>2026-10-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
     <image:image>
@@ -47,18 +47,40 @@
   </url>
   <url>
     <loc>https://simulations.science/radiation_simulation.html</loc>
-    <lastmod>2025-06-06</lastmod>
+    <lastmod>2026-10-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
     <image:image>
       <image:loc>https://simulations.science/images/radiation.png</image:loc>
       <image:title>Radiation Simulation</image:title>
-      <image:caption>A black-body radiator transmitting thermal energy through electromagnetic radiation</image:caption>
+      <image:caption>A glowing heater warms matte black and polished silver blocks across a vacuum by infrared radiation</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://simulations.science/buoyancy_simulation.html</loc>
+    <lastmod>2026-10-31</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://simulations.science/images/buoyancy.png</image:loc>
+      <image:title>Buoyancy Simulation</image:title>
+      <image:caption>Draw an object from different materials and drop it into a liquid to see why things float or sink</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://simulations.science/pressure_simulation.html</loc>
+    <lastmod>2026-10-31</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://simulations.science/images/pressure.png</image:loc>
+      <image:title>Gas Pressure Simulation</image:title>
+      <image:caption>Gas particles colliding with the walls of a balloon, rigid box or syringe, showing where pressure comes from</image:caption>
     </image:image>
   </url>
   <url>
     <loc>https://simulations.science/sitemap.html</loc>
-    <lastmod>2025-06-06</lastmod>
+    <lastmod>2026-10-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>

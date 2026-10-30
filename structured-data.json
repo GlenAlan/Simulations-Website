@@ -78,7 +78,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Radiation Simulation",
-            "description": "A black-body radiator transmitting thermal energy through electromagnetic radiation",
+            "description": "A glowing heater warms matte black and polished silver blocks across a vacuum by infrared radiation",
             "url": "https://simulations.science/radiation_simulation.html",
             "image": "https://simulations.science/images/radiation.png",
             "learningResourceType": "Simulation",
@@ -93,6 +93,42 @@
         {
           "@type": "ListItem",
           "position": 4,
+          "item": {
+            "@type": "LearningResource",
+            "name": "Buoyancy Simulation",
+            "description": "Draw an object from different materials and drop it into a liquid to see why things float or sink",
+            "url": "https://simulations.science/buoyancy_simulation.html",
+            "image": "https://simulations.science/images/buoyancy.png",
+            "learningResourceType": "Simulation",
+            "audience": {
+              "@type": "EducationalAudience",
+              "educationalRole": ["student", "teacher", "researcher"]
+            },
+            "educationalLevel": "High School and Above",
+            "isAccessibleForFree": true
+          }
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "item": {
+            "@type": "LearningResource",
+            "name": "Gas Pressure Simulation",
+            "description": "Gas particles colliding with the walls of a balloon, rigid box or syringe, showing where pressure comes from",
+            "url": "https://simulations.science/pressure_simulation.html",
+            "image": "https://simulations.science/images/pressure.png",
+            "learningResourceType": "Simulation",
+            "audience": {
+              "@type": "EducationalAudience",
+              "educationalRole": ["student", "teacher", "researcher"]
+            },
+            "educationalLevel": "High School and Above",
+            "isAccessibleForFree": true
+          }
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
           "item": {
             "@type": "LearningResource",
             "name": "Maxwell's Demon Simulation",
