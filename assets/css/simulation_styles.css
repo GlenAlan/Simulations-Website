@@ -1,355 +1,353 @@
-/* --- Simulation Page Specific Styles --- */
+/* =====================================================================
+   Simulation pages: shared layout and controls.
+   Loaded only by the simulation pages, after main.css and before any page stylesheet.
 
-/* Main container for the simulation interface. */
-.simulation-area-wrapper {
-    position: relative; /* Establishes a positioning context for child elements like overlays. */
-    box-sizing: border-box; /* Ensures padding/border are included in the element's total width and height. */
-}
+   Layout in normal (non-fullscreen) mode:
+   - The page column is wider than on the rest of the site (up to 1600px of content).
+   - The canvas is as wide as the column allows, but never so tall that the page header, the title,
+     the canvas and everything under it (toolbars, info bar) stop fitting in the viewport.
+     simulation_ui.js measures the space above the simulation (--sim-above-h) and under the canvas
+     (--sim-below-h); --aspect-ratio comes from .sim-aspect-ratio-box (copied up by simulation_ui.js).
+   - The info bar, charts and About section line up with the canvas.
+   - The settings panel docks beside the canvas on wide screens (body.sim-panel-side) and is a
+     bottom sheet on narrow ones (body.sim-panel-sheet); simulation_ui.js picks the mode.
+   - The fullscreen and settings buttons live in the info bar (simulation_ui.js moves them there).
+   ===================================================================== */
 
-/* Global CSS variables for the simulation interface. */
+/* ---------- Tokens ---------- */
 :root {
-    --sim-panel-width: 280px; /* Default width for the simulation control panel. */
-    --sim-button-offset: 5px; /* Consistent offset for buttons. Changed from 10px to 5px */
+    --sim-panel-width: clamp(280px, 21vw, 340px); /* Docked settings panel */
+    --sim-radius: 6px;
+    --sim-page-gutter: clamp(12px, 3vw, 2.5em);
+    --sim-content-max: 1600px;
+    --sim-above-h: 9em;    /* Set by simulation_ui.js: page top to the top of the simulation */
+    --sim-below-h: 4.5em;  /* Set by simulation_ui.js: height of what sits under the canvas */
+    --sim-fit-gap: 0.75em; /* Space left under the info bar when the simulation fits the screen */
+    --sim-button-offset: 5px; /* Kept for page stylesheets that use it */
+    --sim-track: #c9c9c9;
+    --sim-switch-off: #b4b4b4;
+    --sim-sheet-shadow: 0 -6px 28px rgba(0, 0, 0, 0.22);
 }
 
-/* Prevent horizontal scrollbar on the page if content slightly overflows. */
+html.dark-mode {
+    --sim-track: #555555;
+    --sim-switch-off: #5c5c5c;
+    --sim-sheet-shadow: 0 -6px 28px rgba(0, 0, 0, 0.6);
+}
+
+/* Prevent a horizontal scrollbar if something slightly overflows. */
 html {
     overflow-x: hidden;
 }
 
-/* Controls Panel: Right-side overlay sidebar for simulation settings. */
-.sim-controls-panel {
+/* ---------- Page frame: a wider column and a compact header ---------- */
+#wrapper > * > .inner {
+    max-width: calc(var(--sim-content-max) + 2 * var(--sim-page-gutter));
+    padding-left: var(--sim-page-gutter);
+    padding-right: var(--sim-page-gutter);
+}
+
+#header .logo {
+    margin-bottom: 1.1em;
+}
+
+#main > .inner > h1 {
+    font-size: 1.75em;
+    line-height: 1.2;
+    margin: 0 0 0.5em 0;
+    letter-spacing: -0.02em;
+}
+
+@media screen and (max-width: 736px) {
+    #header .logo {
+        margin-bottom: 1em;
+    }
+
+    /* Keep the title clear of the theme toggle, which sits under the menu button here. */
+    #main > .inner > h1 {
+        font-size: 1.4em;
+        padding-right: 2.9em;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    /* Keeps the site name clear of the menu button on phones. */
+    #header .logo {
+        letter-spacing: 0.2em;
+    }
+}
+
+/* ---------- Simulation area ---------- */
+.simulation-area-wrapper {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    box-sizing: border-box;
+}
+
+.simulation-main-content {
+    position: relative;
+    flex: 1 1 0%;
+    min-width: 0;
+    /* Tallest canvas that still lets everything from the page top to the info bar fit on screen,
+       and the canvas width (plus its 2px border) that goes with it. */
+    --sim-canvas-max-h: max(14em, calc(100vh - var(--sim-above-h) - var(--sim-below-h) - var(--sim-fit-gap)));
+    --sim-canvas-w: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 2 / 1)) + 2px));
+}
+
+@supports (height: 100svh) {
+    .simulation-main-content {
+        --sim-canvas-max-h: max(14em, calc(100svh - var(--sim-above-h) - var(--sim-below-h) - var(--sim-fit-gap)));
+    }
+}
+
+/* Short screens (e.g. phones in landscape): fit the canvas and info bar to the screen height and let
+   the header scroll away, rather than squeezing the canvas under it. */
+@media (max-height: 540px) {
+    .simulation-main-content {
+        --sim-canvas-max-h: max(12em, calc(100vh - var(--sim-below-h) - var(--sim-fit-gap)));
+    }
+
+    @supports (height: 100svh) {
+        .simulation-main-content {
+            --sim-canvas-max-h: max(12em, calc(100svh - var(--sim-below-h) - var(--sim-fit-gap)));
+        }
+    }
+}
+
+/* Canvas, toolbars and info bar: as wide as the canvas, centred. */
+.simulation-display-container {
+    position: relative;
+    width: var(--sim-canvas-w);
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+.sim-canvas-wrapper {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.sim-aspect-ratio-box {
+    position: relative;
+    box-sizing: content-box; /* The ratio applies to the canvas itself, inside the 1px border */
+    width: auto;
+    max-width: calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 2 / 1)));
+    margin: 0 auto;
+    aspect-ratio: var(--aspect-ratio, 2 / 1);
+    background-color: var(--color-bg-subtle); /* Shows behind transparent canvases and if the canvas fails */
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
+    overflow: hidden;
+}
+
+@supports not (aspect-ratio: 1 / 1) {
+    .sim-aspect-ratio-box {
+        height: 0;
+        padding-top: calc(100% / (var(--aspect-ratio, 2 / 1)));
+    }
+}
+
+.sim-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none; /* Canvases take drags; a page whose canvas has none can set touch-action: auto */
+}
+
+/* Frames-per-second counter (toggled with the F key). */
+.sim-fps-display {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 5;
+    display: none;
+    padding: 0.25em 0.5em;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #ffffff;
+    font-size: 0.75em;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+/* ---------- Info bar (readouts + actions) ---------- */
+.sim-info-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4em 0.75em;
+    margin-top: 0.5em;
+    padding: 0.3em 0.3em 0.3em 0.55em;
+    min-height: calc(44px + 0.6em + 2px);
+    box-sizing: border-box;
     background-color: var(--color-bg-alt);
-    border-left: 1px solid var(--color-border); /* Visible border on the panel\'s inner edge. */
-    padding: 1.5em;
-    overflow-y: auto; /* Allows scrolling for content taller than the panel. */
-    z-index: 4000; /* Ensures panel overlays other page content. */
-    box-shadow: -2px 0 10px rgba(0,0,0,0.2); /* Shadow for visual depth. */
-    
-    position: fixed; /* Fixed position relative to the viewport. */
-    right: 0;
-    top: 0;        /* Default; JS may adjust based on header height in non-fullscreen mode. */
-    height: 100vh; /* Default; JS may adjust based on header height in non-fullscreen mode. */
-    width: var(--sim-panel-width);
-    transform: translateX(100%); /* Initially off-screen to the right. */
-    transition: transform 0.3s ease-out; /* Smooth slide-in/out animation. */
-
-    /* Themed scrollbar for Firefox */
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-accent) var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
+    line-height: 1.4;
 }
 
-/* Themed scrollbar for WebKit browsers (Chrome, Safari, Edge) */
-.sim-controls-panel::-webkit-scrollbar {
-    width: 8px; /* Width of the scrollbar */
+.stats-container {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4em;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-.sim-controls-panel::-webkit-scrollbar-track {
-    background: var(--color-bg-alt); /* Background of the scrollbar track */
+.stats-box {
+    padding: 0.3em 0.65em;
+    font-size: 0.8em;
+    line-height: 1.4;
+    white-space: nowrap;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
     border-radius: 4px;
+    font-variant-numeric: tabular-nums;
 }
 
-.sim-controls-panel::-webkit-scrollbar-thumb {
-    background-color: var(--color-accent); /* Color of the scrollbar thumb */
-    border-radius: 4px; /* Roundness of the scrollbar thumb */
-    border: 2px solid var(--color-bg-alt); /* Creates padding around thumb */
+.stats-box strong {
+    font-weight: 700;
 }
 
-.sim-controls-panel::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-accent-active); /* Darker color on hover */
+.sim-info-item {
+    font-size: 0.85em;
+    white-space: nowrap;
+    color: var(--color-text);
+    font-variant-numeric: tabular-nums;
 }
 
-.sim-controls-panel.panel-open {
-    transform: translateX(0); /* Slides panel into view. */
+/* A live value: reserves room for --chars characters so changing numbers never move anything. */
+.sim-value {
+    display: inline-block;
+    min-width: calc(var(--chars, 4) * 1ch);
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
-.sim-controls-header {
-    display: flex; /* Enable flexbox for alignment */
-    justify-content: space-between; /* Pushes title and button to opposite ends */
-    align-items: center; /* Vertically aligns items */
-    margin-bottom: 1em;
-    padding-bottom: 0.5em;
-    border-bottom: 1px solid var(--color-border);
+
+.sim-info-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+    margin-left: auto;
 }
-.sim-controls-header h3 {
+
+/* ---------- Icon buttons (info bar and panel header) ---------- */
+.sim-icon-button,
+.sim-reset-button,
+.sim-show-charts-label,
+.sim-fullscreen-toggle,
+.sim-panel-toggle-button,
+.sim-panel-close-button-insIDE {
+    -webkit-appearance: none;
+    appearance: none;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--sim-radius);
+    outline: none;
+    background-color: transparent;
+    box-shadow: none;
+    color: var(--color-text) !important;
+    font-size: 16px;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.sim-icon-button .icon,
+.sim-reset-button .icon,
+.sim-show-charts-label .icon,
+.sim-fullscreen-toggle .icon,
+.sim-panel-toggle-button .icon,
+.sim-panel-close-button-insIDE .icon {
+    display: inline-block;
     margin: 0;
     font-size: 1.1em;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--color-text);
+    line-height: 1;
+    transition: transform 0.4s ease;
 }
 
-/* Style for the new close button INSIDE the panel */
-.sim-panel-close-button-insIDE {
-    border: none !important; 
-    outline: none !important;
-    color: var(--color-text); 
-    padding: 0; 
-    border-radius: 8px; 
-    cursor: pointer;
-    line-height: 1; 
-    box-shadow: none !important; 
-    display: inline-flex; 
-    align-items: center;    
-    justify-content: center; 
-    width: 44px;  
-    height: 44px; 
-    background-color: transparent !important;
-}
-
-.sim-panel-close-button-insIDE .icon {
-    font-size: 1em; /* Example, adjust as needed */
-    transition: color 0.2s ease-in-out; /* Smooth color transition for icon */
-}
-
-.sim-panel-close-button-insIDE:hover {
-    /* Button itself should not change background or border on hover */
-    background-color: transparent !important;
-    border: none !important;
-    /* color property removed from here */
-}
-
-.sim-panel-close-button-insIDE:hover .icon {
-    color: var(--color-accent); /* Icon color changes on button hover */
-}
-
-html.dark-mode .sim-panel-close-button-insIDE {
-    color: var(--color-text-light);
-}
-
-.sim-controls-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5em; /* Spacing between control elements. Reduced from 1em */
-}
-.sim-controls-content label {
-    display: block;
-    font-size: 0.9em;
-    color: var(--color-text);
-    margin-bottom: 0.25em;
-}
-.sim-controls-content label span {
-    color: var(--color-accent);
-    font-weight: bold;
-    margin-left: 0.5em; /* Space for value display next to label. */
-}
-.sim-controls-content input[type="range"] {
-    -webkit-appearance: none; appearance: none; height: 8px; /* Custom styling for range input. */
-    background: var(--color-border); border-radius: 4px;
-    outline: none; opacity: 0.9; transition: opacity .15s ease-in-out;
-    width: 100%; margin-top: 0.25em;
-}
-.sim-controls-content input[type="range"]:hover { opacity: 1; }
-.sim-controls-content input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none; width: 18px; height: 18px; /* Styles for the slider thumb (WebKit/Blink). */
-    background: var(--color-accent); border-radius: 50%; cursor: pointer;
-    border: 2px solid var(--color-bg-alt);
-}
-.sim-controls-content input[type="range"]::-moz-range-thumb {
-    width: 18px; height: 18px; background: var(--color-accent); /* Styles for the slider thumb (Firefox). */
-    border-radius: 50%; cursor: pointer; border: 2px solid var(--color-bg-alt);
-}
-
-/* Styling for control groups and checkbox groups */
-.sim-control-group {
-    margin-top: 0.5em;
-    padding-top: 0.5em;
-    border-top: 1px solid var(--color-border);
-}
-
-.sim-control-group-label {
-    display: block;
-    font-size: 0.9em;
-    color: var(--color-text);
-    margin-bottom: 0.5em; /* Adjusted from 0.5em to provide space for button-like labels */
-    font-weight: bold;
-}
-
-.sim-checkbox-group {
-    display: flex;
-    flex-direction: column; /* Stack checkboxes vertically */
-    gap: 0.5em; /* Reduced gap from 0.75em for tighter spacing */
-}
-
-/* Hide the actual checkbox input */
-.sim-checkbox-group input[type="checkbox"] {
-    opacity: 0;
+/* Accessible names stay available to screen readers. */
+.sim-icon-button .icon .label,
+.sim-fullscreen-toggle .icon .label,
+.sim-panel-toggle-button .icon .label,
+.sim-panel-close-button-insIDE .icon .label {
     position: absolute;
     width: 1px;
     height: 1px;
     margin: -1px;
+    padding: 0;
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
 }
 
-/* Style the label to look like a button */
-.sim-checkbox-group label {
-    display: block; /* Make label take full width in its column */
-    padding: 0.45em 0.8em; /* Reduced padding from 0.65em 1em for smaller buttons */
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    background-color: var(--color-bg); /* Default background */
-    color: var(--color-text);
-    cursor: pointer;
-    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out, border-color 0.2s ease-in-out;
-    text-align: center;
-    font-size: 0.85em; /* Slightly smaller font for button text */
-    line-height: 1.5;
-}
+@media (hover: hover) {
+    .sim-icon-button:hover,
+    .sim-reset-button:hover,
+    .sim-show-charts-label:hover,
+    .sim-fullscreen-toggle:hover,
+    .sim-panel-toggle-button:hover,
+    .sim-panel-close-button-insIDE:hover {
+        color: var(--color-accent) !important;
+        background-color: var(--color-bg-button-active-overlay);
+        box-shadow: none;
+    }
 
-/* Hover state for the label "button" */
-.sim-checkbox-group label:hover {
-    border-color: var(--color-accent);
-    background-color: var(--color-bg-subtle); /* Subtle background change on hover */
-}
-
-/* Styles for when the checkbox is checked (selected button) */
-.sim-checkbox-group input[type="checkbox"]:checked + label {
-    background-color: var(--color-accent);
-    color: var(--color-text-light); /* Light text on accent background */
-    border-color: var(--color-accent-active); /* Or var(--color-accent) */
-}
-
-/* Focus-visible styling for keyboard navigation accessibility */
-.sim-checkbox-group input[type="checkbox"]:focus-visible + label {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
-}
-
-
-/* Main content area holding the canvas and description. */
-.simulation-main-content {
-    width: 100%;
-    min-width: 0; /* Prevents flex items from overflowing if a parent is a flex container. */
-}
-
-/* Container for the simulation canvas display. */
-.simulation-display-container {
-    width: 100%;
-    max-width: 750px; /* Maximum width for the simulation display area. */
-    margin: 0 auto 1.5em auto; /* Centers the container and adds bottom margin. */
-    position: relative; /* For positioning child elements like action buttons and FPS counter. */
-}
-
-.sim-canvas-wrapper {
-    width: 100%; /* Occupies full width of its parent. */
-    position: relative; /* For positioning the FPS display. */
-    box-sizing: border-box; /* Ensures padding/border are included in total width. */
-}
-.sim-aspect-ratio-box {
-    position: relative;
-    width: 100%;
-    padding-top: calc(100% / (var(--aspect-ratio, 2 / 1))); /* Default aspect ratio */
-    background-color: var(--color-bg-subtle); /* Shows behind transparent canvases and if the canvas fails */
-    border-radius: var(--border-radius-medium);
-    border: 1px solid var(--color-border);
-    overflow: hidden; /* Ensures canvas stays within bounds */
-}
-@supports (aspect-ratio: 1 / 1) {
-    /* Apply the ratio to the content box (where the canvas is drawn) rather than padding + border,
-       so e.g. a 1/1 canvas is exactly square. The padding-top rule above is the fallback. */
-    .sim-aspect-ratio-box {
-        box-sizing: content-box;
-        width: auto;
-        padding-top: 0;
-        aspect-ratio: var(--aspect-ratio, 2 / 1);
+    .sim-reset-button:hover .icon {
+        transform: rotate(180deg);
     }
 }
 
-/* General canvas scaling (re-stated for clarity or overriding, ensure it\'s intended). */
-/* This rule is general and not specific to fullscreen, ensure its placement and necessity. */
-.sim-canvas {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%; /* Fills the aspect-ratio box. */
-    display: block; /* Removes extra space below inline elements. */
-    touch-action: none; /* Disables default touch behaviors like pinch-zoom on the canvas. */
+.sim-icon-button:active,
+.sim-reset-button:active,
+.sim-fullscreen-toggle:active,
+.sim-panel-toggle-button:active,
+.sim-panel-close-button-insIDE:active {
+    background-color: var(--color-bg-button-active-overlay);
 }
 
-/* Info bar below the canvas for temperature display and reset button */
-.sim-info-bar {
-    display: flex;
-    justify-content: space-between; /* Pushes stats to left, actions to right */
-    align-items: center;
-    padding: 0.5em 0.5em; /* Adjusted padding */
-    margin-top: 0.5em;
-    background-color: var(--color-bg-subtle);
-    border-radius: 4px;
-    border: 1px solid var(--color-border);
-    flex-wrap: wrap; /* Allow wrapping on very small screens if necessary */
+.sim-icon-button:focus-visible,
+.sim-reset-button:focus-visible,
+.sim-fullscreen-toggle:focus-visible,
+.sim-panel-toggle-button:focus-visible,
+.sim-panel-close-button-insIDE:focus-visible,
+.sim-show-charts-label:has(input:focus-visible) {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
 }
 
-.stats-container {
-    display: flex;
-    gap: 0.5em; /* Space between individual stat boxes */
-    align-items: center;
-    flex-wrap: wrap; /* Allow stat boxes to wrap if needed */
+/* On states: settings panel open, charts shown. */
+.sim-panel-toggle-button[aria-expanded="true"],
+.sim-show-charts-label:has(input:checked) {
+    color: var(--color-accent) !important;
+    background-color: var(--color-bg-button-active-overlay);
 }
 
-.stats-box {
-    font-size: 0.85em; /* Slightly smaller font for stats */
-    color: var(--color-text);
-    padding: 0.25em 0.5em;
-    background-color: var(--color-bg);
-    border-radius: 3px;
-    border: 1px solid var(--color-border-subtle);
-}
-
-.stats-box strong {
-    color: var(--color-text-strong); /* Or a specific color if needed */
-}
-
-.sim-info-actions {
-    display: flex;
-    align-items: center; /* This should vertically align the label and button */
-    gap: 0.25em; /* Reduced gap between action buttons */
-}
-
-/* Styling for the "Toggle Charts" label to make it an icon button */
-.sim-show-charts-label {
-    border: none !important;
-    outline: none !important;
-    color: var(--color-text);
-    padding: 0;
-    border-radius: 8px;
-    cursor: pointer;
-    line-height: 1;
-    box-shadow: none !important;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;  /* Match other icon button size */
-    height: 44px; /* Match other icon button size */
-    background-color: transparent !important;
-    transition: color 0.2s ease-in-out;
-    margin-right: 0.25em; /* Small margin to separate from reset button */
-    vertical-align: middle; /* Ensure vertical alignment */
-    /* Ensure exact same box model as sim-reset-button */
-    margin-top: 0;
-    margin-bottom: 0;
-    position: relative;
-    flex-shrink: 0; /* Prevent shrinking */
-}
-
-.sim-show-charts-label .icon {
-    font-size: 1em; /* Adjust icon size as needed */
-    display: inline-block; /* Ensure a block-like box for transform-origin */
-    transition: transform 0.5s ease-in-out; /* For potential hover effect on icon */
-    transform-origin: 38% 52%; /* Explicitly set to center - same as reset button */
-}
-
-.sim-show-charts-label:hover .icon {
-    color: var(--color-accent);
-}
-
-html.dark-mode .sim-show-charts-label {
-    color: var(--color-text-light);
-}
-
-html.dark-mode .sim-show-charts-label:hover .icon {
-    color: var(--color-accent-light, var(--color-accent));
-}
-
-/* Ensure the visually hidden checkbox remains hidden */
+/* The chart toggle's checkbox stays focusable but invisible. */
 .visually-hidden-checkbox {
     position: absolute;
     width: 1px;
@@ -362,582 +360,935 @@ html.dark-mode .sim-show-charts-label:hover .icon {
     border: 0;
 }
 
-
-.sim-info-item {
-    font-size: 0.9em;
-    color: var(--color-text);
-    margin-right: 1.5em; /* Increased spacing between info items */
-}
-
-.sim-info-item #energyVal {
-    color: var(--color-accent);
-    font-weight: bold;
-}
-
-/* Styling for the new Reset button, similar to panel toggle */
-.sim-reset-button {
-    border: none !important; 
-    outline: none !important;
-    color: var(--color-text); 
-    padding: 0; 
-    border-radius: 8px; 
-    cursor: pointer;
-    line-height: 1; 
-    box-shadow: none !important; 
-    display: inline-flex; 
-    align-items: center;    
-    justify-content: center; 
-    width: 44px;  /* Match panel toggle button size */
-    height: 44px; /* Match panel toggle button size */
-    background-color: transparent !important;
-    transition: color 0.2s ease-in-out; /* Smooth color transition for icon */
-    vertical-align: middle; /* Ensure vertical alignment */
-    /* Ensure exact same box model as sim-show-charts-label */
-    margin-top: 0;
-    margin-bottom: 0;
-    position: relative;
-    flex-shrink: 0; /* Prevent shrinking */
-}
-
-.sim-reset-button .icon {
-    display: inline-block; /* Ensure a block-like box for transform-origin */
-    font-size: 1em; /* Adjust icon size as needed */
-    transition: transform 0.5s ease-in-out; /* For potential hover effect on icon */
-    transform-origin: 38% 52%; /* Explicitly set to center */
-}
-
-.sim-reset-button:hover {
-    background-color: transparent !important;
-    border: none !important;
-}
-
-.sim-reset-button:hover .icon {
-    color: var(--color-accent); /* Icon color changes on button hover */
-    transform: rotate(180deg); /* Example hover effect: rotate icon */
-}
-
-html.dark-mode .sim-reset-button {
-    color: var(--color-text-light);
-}
-
-html.dark-mode .sim-reset-button:hover .icon {
-    color: var(--color-accent-light, var(--color-accent)); /* Ensure hover color is appropriate for dark mode */
-}
-
-
-/* Overlay for action buttons (e.g., Fullscreen, Settings Toggle). */
+/* Fullscreen + settings buttons. simulation_ui.js moves them into the info bar (after the page's own
+   actions); until then (or without JS) they are hidden. */
 .sim-action-buttons-overlay {
-    position: fixed; /* Changed from absolute to ensure it's relative to viewport */
-    top: calc(3.5em + var(--sim-button-offset)); /* Position below fixed header (approx 3.5em height) */
-    right: var(--sim-button-offset);
-    z-index: 9999; /* Above simulation content, below the fixed site nav (z-index 10000) so the menu button stays clickable */
     display: flex;
-    flex-direction: column; /* Stack buttons vertically */
-    gap: 5px; /* Space between buttons for clarity */
+    align-items: center;
+    gap: 2px;
 }
 
-/* Adjust action buttons overlay top when in simulation fullscreen (header is hidden) */
-body.sim-fullscreen-active .sim-action-buttons-overlay {
-    top: var(--sim-button-offset); /* Position from top of viewport */
+.simulation-main-content > .sim-action-buttons-overlay {
+    display: none;
 }
 
-/* Hide action buttons when the main site menu is visible to prevent overlap/conflict */
-body.is-menu-visible .sim-action-buttons-overlay {
+.sim-info-bar .sim-action-buttons-overlay {
+    position: static;
+    margin-left: 2px;
+    padding-left: 4px;
+    border-left: 1px solid var(--color-border);
+}
+
+/* Fallback for a page without an info bar: the buttons sit over the canvas's top-right corner
+   (body.sim-buttons-over-canvas is set so the page can keep that corner clear). */
+.sim-action-buttons-overlay.sim-actions-floating {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 6;
+    flex-direction: column;
+    border-radius: var(--sim-radius);
+    background-color: var(--color-bg-header-nav);
+}
+
+/* ---------- Settings panel ---------- */
+.sim-controls-panel {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: clamp(15px, 0.85em, 17px);
+    line-height: 1.45;
+    color: var(--color-text);
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+
+    /* Default (and narrow screens): a sheet that slides up from the bottom of the screen. */
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 9000;
+    width: auto;
+    max-width: 40rem;
+    margin: 0 auto;
+    max-height: min(56vh, 34rem);
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: var(--sim-sheet-shadow);
+    transform: translateY(calc(100% + 40px));
+    visibility: hidden;
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 0.28s;
+}
+
+@supports (height: 100svh) {
+    .sim-controls-panel {
+        max-height: min(56svh, 34rem);
+    }
+}
+
+.sim-controls-panel.panel-open {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Wide screens: docked to the right of the simulation, which shrinks to make room. The width
+   changes in one step (not animated) so the canvas is resized once, not on every frame. */
+body.sim-panel-side .sim-controls-panel {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    z-index: 2;
+    order: 2;
+    flex: 0 0 auto;
+    align-self: flex-start;
+    width: 0;
+    max-width: none;
+    margin: 0;
+    max-height: calc(100vh - var(--sim-above-h) - var(--sim-fit-gap));
+    border-width: 0;
+    border-radius: var(--sim-radius);
+    box-shadow: none;
+    opacity: 0;
+    transform: translateX(16px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s linear 0.2s, width 0s linear 0.2s, margin 0s linear 0.2s, border-width 0s linear 0.2s;
+}
+
+@supports (height: 100svh) {
+    body.sim-panel-side .sim-controls-panel {
+        max-height: calc(100svh - var(--sim-above-h) - var(--sim-fit-gap));
+    }
+}
+
+@media (max-height: 540px) {
+    body.sim-panel-side .sim-controls-panel {
+        max-height: calc(100vh - 2 * var(--sim-fit-gap));
+    }
+}
+
+body.sim-panel-side .sim-controls-panel.panel-open {
+    width: var(--sim-panel-width);
+    margin-left: 1em;
+    border-width: 1px;
+    opacity: 1;
+    transform: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Keep the panel's contents at full width while it collapses (it is clipped, not squashed). */
+body.sim-panel-side .sim-controls-panel > * {
+    min-width: calc(var(--sim-panel-width) - 2px);
+}
+
+/* The site menu button would hang over the canvas while the sheet is open. */
+body.sim-panel-sheet.sim-panel-active #header nav {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.sim-controls-panel [hidden] {
     display: none !important;
 }
 
-/* Hide action buttons when the control panel is open. */
-body.sim-panel-active .sim-action-buttons-overlay {
-    opacity: 0;
-    visibility: hidden;
-    /* JS no longer moves this based on panel width, so no 'right' adjustment needed here. */
+.sim-controls-header {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    margin: 0;
+    padding: 0.2em 0.2em 0.2em 1em;
+    border-bottom: 1px solid var(--color-border);
 }
 
-/* Disables visual feedback (background, border, shadow) on hover for action buttons specifically within the overlay. */
-/* This rule is important if the buttons have global hover styles that need to be overridden here. */
-.sim-action-buttons-overlay .sim-fullscreen-toggle:hover,
-.sim-action-buttons-overlay .sim-panel-toggle-button:hover {
-    background-color: transparent !important; /* Keep transparent or match base style if not transparent */
-    border-color: transparent !important; /* Keep transparent or match base style if not transparent */
-    box-shadow: none !important; /* No shadow on hover for these specific buttons */
+body.sim-panel-sheet .sim-controls-header {
+    padding-top: 0.6em;
 }
 
-/* General styling for fullscreen and panel toggle buttons. */
-/* These styles are ALREADY PRESENT and should NOT be changed as per user request */
-.sim-fullscreen-toggle,
-.sim-panel-toggle-button {
-    border: none; 
-    outline: none; /* Removes default focus outline. */
-    color: var(--color-text); 
-    padding: 0; /* Padding removed; size is controlled by width/height. */
-    border-radius: 8px; /* Rounded corners. */
-    cursor: pointer;
-    line-height: 1; 
-    box-shadow: none; 
-    display: inline-flex; /* Enables flex item alignment for centering icon. */
-    align-items: center;    /* Vertically centers the icon. */
-    justify-content: center; /* Horizontally centers the icon. */
-    width: 44px;  /* Fixed width for consistent button size and icon centering. */
-    height: 44px; /* Fixed height for consistent button size and icon centering. */
-    position: relative; /* Establishes positioning context for child elements (e.g., labels). */
-}
-
-/* Adjusts button text color for dark mode. */
-/* These styles are ALREADY PRESENT and should NOT be changed */
-html.dark-mode .sim-fullscreen-toggle,
-html.dark-mode .sim-panel-toggle-button {
-    color: var(--color-text-light);
-}
-
-/* Default hover style for toggle buttons: no visual change. */
-/* These styles are ALREADY PRESENT and should NOT be changed */
-.sim-fullscreen-toggle:hover,
-.sim-panel-toggle-button:hover {
-    background-color: transparent !important;
-    border-color: transparent !important;
-    box-shadow: none !important;
-}
-
-/* The following rule block is identical to a previous one for .sim-action-buttons-overlay :hover. */
-/* If the previous rule is sufficient, this block may be redundant. */
-/* These styles are ALREADY PRESENT and should NOT be changed */
-.sim-action-buttons-overlay .sim-fullscreen-toggle:hover,
-.sim-action-buttons-overlay .sim-panel-toggle-button:hover {
-    background-color: transparent !important; 
-    border-color: transparent !important; 
-    box-shadow: none !important; 
-}
-
-/* Dark mode: Also disable visual feedback on hover for toggle buttons. */
-/* These styles are ALREADY PRESENT and should NOT be changed */
-html.dark-mode .sim-fullscreen-toggle:hover,
-html.dark-mode .sim-panel-toggle-button:hover {
-    background-color: transparent !important;
-    border-color: transparent !important;
-    box-shadow: none !important;
-}
-
-.sim-fullscreen-toggle .icon,
-.sim-panel-toggle-button .icon {
-    margin: 0; /* Resets any default margins on icon elements. */
-    font-size: 1.2em; /* Icon size. */
-    transition: color 0.2s ease-in-out; /* Smooth color transition on hover/state change. */
-    display: flex; /* Enables flex item alignment within the icon container. */
-    align-items: center; /* Vertically centers content within the icon. */
-    justify-content: center; /* Horizontally centers content within the icon. */
-    height: 100%; /* Icon container fills button height. */
-    width: 100%; /* Icon container fills button width. */
-}
-
-/* Visually hides button labels, keeping them accessible to screen readers (sr-only technique). */
-.sim-fullscreen-toggle .icon .label,
-.sim-panel-toggle-button .icon .label {
+/* Grab handle on the sheet. */
+body.sim-panel-sheet .sim-controls-header::before {
+    content: '';
     position: absolute;
+    top: 7px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: 2px;
+    background-color: var(--color-border);
+}
+
+.sim-controls-header h3 {
+    margin: 0;
+    font-size: 0.8em;
+    font-weight: 900;
+    line-height: 1.3;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--color-text);
+}
+
+.sim-controls-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9em;
+    padding: 0.9em 1em 1.1em 1em;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+}
+
+.sim-controls-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.sim-controls-content::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 4px;
+    border: 2px solid var(--color-bg-alt);
+}
+
+.sim-controls-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Slider rows: "Label: value unit" above the slider. */
+.sim-controls-content label {
+    display: block;
+    margin: 0;
+    font-size: 0.95em;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--color-text);
+}
+
+.sim-controls-content label > span:not([class]),
+.sim-controls-content label > .sim-value {
+    color: var(--color-accent);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-controls-content p {
+    margin: 0;
+    font-size: 0.85em;
+    line-height: 1.45;
+}
+
+.sim-controls-content input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 28px;
+    margin: 0.1em 0 0 0;
+    padding: 0;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+}
+
+.sim-controls-content input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sim-track);
+}
+
+.sim-controls-content input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    margin-top: -6px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+    transition: transform 0.1s ease;
+}
+
+.sim-controls-content input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sim-track);
+}
+
+.sim-controls-content input[type="range"]::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-accent);
+}
+
+.sim-controls-content input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.sim-controls-content input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.15);
+}
+
+.sim-controls-content input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.sim-controls-content input[type="range"]:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.sim-controls-content input[type="range"]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Bigger slider thumbs and hit areas for fingers. */
+@media (pointer: coarse) {
+    .sim-controls-content input[type="range"] {
+        height: 36px;
+    }
+
+    .sim-controls-content input[type="range"]::-webkit-slider-thumb {
+        width: 24px;
+        height: 24px;
+        margin-top: -9px;
+    }
+
+    .sim-controls-content input[type="range"]::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+    }
+}
+
+.sim-controls-content select {
+    height: 2.6em;
+    padding: 0 2.4em 0 0.75em;
+    font-size: 0.95em;
+    font-weight: 400;
+    line-height: normal;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    background-position: calc(100% - 0.8em) center;
+    background-size: 0.95em;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.sim-controls-content select:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* Groups with a small heading. */
+.sim-control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    margin: 0;
+    padding: 0.9em 0 0 0;
+    border-top: 1px solid var(--color-border);
+}
+
+.sim-controls-content > .sim-control-group:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.sim-control-group-label,
+.sim-controls-content .sim-control-group-label {
+    display: block;
+    margin: 0;
+    font-size: 0.72em;
+    font-weight: 900;
+    line-height: 1.3;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-text);
+    opacity: 0.75;
+}
+
+/* Collapsed "More options". */
+.sim-controls-more {
+    margin: 0;
+    padding: 0.2em 0 0 0;
+    border-top: 1px solid var(--color-border);
+}
+
+.sim-controls-more > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    min-height: 40px;
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.8em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-text);
+    border-radius: 4px;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sim-controls-more > summary::-webkit-details-marker {
+    display: none;
+}
+
+.sim-controls-more > summary::after {
+    content: '\f078';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    font-size: 0.9em;
+    letter-spacing: 0;
+    line-height: 1;
+    padding: 0 0.35em;
+    transition: transform 0.2s ease;
+}
+
+.sim-controls-more[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.sim-controls-more > summary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+@media (hover: hover) {
+    .sim-controls-more > summary:hover {
+        color: var(--color-accent);
+    }
+}
+
+.sim-controls-more > * + * {
+    margin-top: 0.9em;
+}
+
+.sim-controls-more[open] {
+    padding-bottom: 0.2em;
+}
+
+.sim-controls-more > .sim-control-group:first-of-type {
+    padding-top: 0;
+    border-top: 0;
+}
+
+/* On/off toggles: a row with the label on the left and a switch on the right.
+   The switch is drawn entirely by label::before (track colour + knob gradient). */
+.sim-checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1em;
+}
+
+.sim-checkbox-group input[type="checkbox"] {
+    position: absolute;
+    float: none;
     width: 1px;
     height: 1px;
+    margin: 0;
     padding: 0;
-    margin: -1px; /* Positions off-screen. */
+    opacity: 0;
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
+    z-index: auto;
+    pointer-events: none;
+}
+
+.sim-checkbox-group input[type="checkbox"] + label {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-height: 40px;
+    margin: 0;
+    padding: 0.25em 3.4em 0.25em 0;
+    font-size: 0.95em;
+    font-weight: 400;
+    line-height: 1.35;
+    text-align: left;
+    color: var(--color-text);
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sim-checkbox-group input[type="checkbox"] + label:before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 0;
+    left: auto;
+    width: 2.5em;
+    height: 1.4em;
+    margin-top: -0.7em;
+    font-size: 1em;
+    line-height: 1;
+    border: 0;
+    border-radius: 0.7em;
+    box-shadow: none;
+    background: radial-gradient(circle closest-side, #ffffff 86%, rgba(255, 255, 255, 0) 100%) 0.18em 50% / 1.05em 1.05em no-repeat, var(--sim-switch-off);
+    transition: background-position 0.18s ease, background-color 0.18s ease;
+}
+
+.sim-checkbox-group input[type="checkbox"]:checked + label:before {
+    content: '';
+    background-color: var(--color-accent);
+    background-position: calc(100% - 0.18em) 50%;
     border: 0;
 }
 
-/* FPS (Frames Per Second) display styling. */
-.sim-fps-display {
-    position: absolute; top: 10px; left: 10px; /* Positioned at top-left of its relative parent (sim-canvas-wrapper). */
-    background: rgba(0,0,0,0.7); color: #fff;
-    padding: 0.25em 0.5em; border-radius: 3px;
-    font-size: 0.75em; z-index: 110; /* Above canvas, below panel/buttons. */
-    display: none; /* Typically shown/hidden by JavaScript. */
+.sim-checkbox-group input[type="checkbox"]:focus + label:before {
+    border: 0;
+    box-shadow: none;
 }
 
-/* Optional charts below the simulation (shown/hidden by the simulation's JS via style.display).
-   These are low-specificity defaults (just enough to beat main.css's element reset) so any page rule overrides them. */
+.sim-checkbox-group input[type="checkbox"]:focus-visible + label:before {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.sim-checkbox-group input[type="checkbox"]:disabled + label {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (hover: hover) {
+    .sim-checkbox-group input[type="checkbox"]:not(:disabled) + label:hover {
+        color: var(--color-accent);
+    }
+}
+
+/* Optional variant: compact chips in a row (e.g. a set of overlay toggles with colour keys). */
+.sim-checkbox-group.sim-chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.4em;
+}
+
+.sim-checkbox-group.sim-chips input[type="checkbox"] + label {
+    min-height: 2.4em;
+    padding: 0.3em 0.75em;
+    font-size: 0.9em;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-bg);
+    opacity: 0.8;
+}
+
+.sim-checkbox-group.sim-chips input[type="checkbox"] + label:before {
+    display: none;
+}
+
+.sim-checkbox-group.sim-chips input[type="checkbox"]:checked + label {
+    opacity: 1;
+    border-color: var(--color-accent);
+    background-color: var(--color-bg-button-active-overlay);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.sim-checkbox-group.sim-chips input[type="checkbox"]:focus-visible + label {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+/* ---------- Charts (optional, under the canvas; shown by the page's JS via style.display) ----------
+   Low-specificity defaults (just enough to beat main.css's element reset), so any page rule wins. */
 div:where(#charts-container) {
     display: none;
-    max-width: 800px;
-    margin: 10px auto 1.5em auto;
+    width: max(min(100%, 40em), var(--sim-canvas-w));
+    max-width: 100%;
+    margin: 0.75em auto 0 auto;
+    box-sizing: border-box;
 }
+
 :where(.sim-charts-row) {
     display: flex;
-    justify-content: space-around;
+    gap: 0.75em;
     width: 100%;
 }
+
 div:where(#charts-container .chart-box) {
-    width: 48%;
-    height: 200px;
     position: relative;
+    flex: 1 1 0%;
+    min-width: 0;
+    height: 220px;
+    padding: 6px;
+    box-sizing: border-box;
     background-color: var(--color-bg-alt);
-    padding: 5px;
-    border-radius: 5px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
 }
+
 @media (max-width: 600px) {
     /* Stack the charts on narrow screens (outside fullscreen) so they stay readable. */
     :where(body:not(.sim-fullscreen-active) .sim-charts-row) {
         flex-direction: column;
         gap: 10px;
     }
+
     div:where(body:not(.sim-fullscreen-active) .sim-charts-row .chart-box) {
+        flex: 0 0 auto;
         width: 100%;
     }
 }
 
-/* Styling for the simulation description area. */
+/* ---------- About this simulation ---------- */
 .description-area {
+    box-sizing: border-box;
+    width: max(min(100%, 40em), var(--sim-canvas-w));
+    max-width: 100%;
+    margin: 1.25em auto 0 auto;
     background-color: var(--color-bg-alt);
-    padding: 1.5em; border-radius: 4px;
     border: 1px solid var(--color-border);
-    max-width: 750px; /* Matches simulation display container's max-width for consistency. */
-    margin: 0 auto; /* Centers the description area. */
+    border-radius: var(--sim-radius);
 }
+
+/* Older markup: <div class="description-area"><h3>About this Simulation</h3>... */
+div.description-area {
+    padding: 1.25em 1.5em;
+}
+
+div.description-area > * {
+    max-width: 75ch;
+}
+
 .description-area h3 {
-    color: var(--color-text); margin-bottom: 0.75em;
-    padding-bottom: 0.5em; border-bottom: 1px solid var(--color-border);
-    font-size: 1.1em; text-transform: uppercase; letter-spacing: 0.1em;
+    margin: 0 0 0.75em 0;
+    padding-bottom: 0.5em;
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.85em;
+    letter-spacing: 0.2em;
+    color: var(--color-text);
 }
-.description-area p { font-size: 0.95em; line-height: 1.7; }
-.description-area .icon { color: var(--color-accent); }
 
+/* Collapsed markup: <details class="description-area"><summary>About this simulation</summary>
+   <div class="description-content">...</div></details> */
+details.description-area > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+    min-height: 44px;
+    padding: 0.8em 1.1em 0.8em 1.25em;
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.8em;
+    font-weight: 900;
+    line-height: 1.4;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-text);
+    border-radius: var(--sim-radius);
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s ease;
+}
 
-/* --- Fullscreen Active Styles --- */
+details.description-area > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.description-area > summary::before,
+details.description-area > summary::after {
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+}
+
+details.description-area > summary::before {
+    content: '\f05a'; /* info-circle */
+    font-size: 1.2em;
+    color: var(--color-accent);
+}
+
+details.description-area > summary::after {
+    content: '\f078'; /* chevron-down */
+    margin-left: auto;
+    padding-left: 0.5em;
+    font-size: 1em;
+    transition: transform 0.2s ease;
+}
+
+details.description-area[open] > summary {
+    border-bottom: 1px solid var(--color-border);
+    border-radius: var(--sim-radius) var(--sim-radius) 0 0;
+}
+
+details.description-area[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+details.description-area > summary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+@media (hover: hover) {
+    details.description-area > summary:hover {
+        color: var(--color-accent);
+    }
+}
+
+.description-content {
+    padding: 1.1em 1.5em 1.25em 1.5em;
+}
+
+.description-content > * {
+    max-width: 75ch;
+}
+
+.description-area p {
+    margin: 0 0 1em 0;
+    font-size: 0.95em;
+    line-height: 1.7;
+}
+
+.description-area ul,
+.description-area ol {
+    margin: 0 0 1em 0;
+}
+
+.description-area li {
+    font-size: 0.95em;
+    line-height: 1.6;
+    margin-bottom: 0.3em;
+}
+
+.description-area li p,
+.description-area li li {
+    font-size: 1em;
+}
+
+.description-area h4 {
+    margin: 1.4em 0 0.5em 0;
+    font-size: 0.8em;
+    letter-spacing: 0.15em;
+}
+
+.description-content > :first-child,
+.description-area h3 + * {
+    margin-top: 0;
+}
+
+.description-area > :last-child,
+.description-content > :last-child {
+    margin-bottom: 0;
+}
+
+.description-area .icon {
+    color: var(--color-accent);
+}
+
+@media screen and (max-width: 480px) {
+    div.description-area,
+    .description-content {
+        padding-left: 1em;
+        padding-right: 1em;
+    }
+
+    details.description-area > summary {
+        padding-left: 1em;
+        padding-right: 0.75em;
+    }
+}
+
+/* ---------- Phones: readouts in a two-column grid, actions on their own row ---------- */
+@media screen and (max-width: 600px) {
+    .sim-info-bar {
+        padding: 0.35em;
+        gap: 0.35em;
+    }
+
+    .stats-container {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.35em;
+        flex: 1 1 100%;
+    }
+
+    .stats-container > :not(.stats-box) {
+        grid-column: 1 / -1;
+    }
+
+    .stats-box {
+        white-space: normal;
+        padding: 0.3em 0.5em;
+    }
+
+    .sim-info-bar > .sim-info-item {
+        flex: 1 1 auto;
+        padding-left: 0.2em;
+    }
+}
+
+/* ---------- Fullscreen ---------- */
 body.sim-fullscreen-active {
-    overflow: hidden; /* Prevents scrolling of underlying page content when simulation is fullscreen. */
-    /* Background color is inherited from <html> (handles light/dark mode). */
+    overflow: hidden;
 }
 
-/* Hide non-simulation elements when fullscreen mode is active. */
 body.sim-fullscreen-active #wrapper > header,
 body.sim-fullscreen-active #wrapper > footer,
-body.sim-fullscreen-active #wrapper > #menu,
-body.sim-fullscreen-active #main > .inner > h1, /* Hides the main site H1. */
-body.sim-fullscreen-active #main > .inner > .simulation-area-wrapper > .simulation-main-content > .description-area {
-    display: none !important; /* Force hide these elements. */
+body.sim-fullscreen-active #main > .inner > h1,
+body.sim-fullscreen-active .description-area {
+    display: none !important;
 }
 
-/* Expand main content area to fill viewport in fullscreen. */
 body.sim-fullscreen-active #main {
-    padding: 0 !important; margin: 0 !important;
-    height: 100vh; width: 100vw;
-}
-body.sim-fullscreen-active #main > .inner {
-    padding: 0 !important; margin: 0 !important;
-    max-width: none !important; /* Allow full width. */
-    height: 100%; width: 100%;
-    display: flex; /* Used for centering or structuring fullscreen content. */
-}
-
-/* Adjust simulation wrapper for fullscreen mode. */
-body.sim-fullscreen-active .simulation-area-wrapper {
-    position: static; /* Overrides 'relative' as it's no longer needed for panel positioning in this context. */
-    width: 100%; height: 100%;
-    display: flex; /* Allows panel and main content to be side-by-side if panel is open. */
-    align-items: stretch; /* Stretches children to fill height. */
-    box-sizing: border-box; /* Ensures padding/border are included in total width/height. */
-}
-
-/* When controls panel is open in fullscreen, adjust the simulation area wrapper */
-body.sim-fullscreen-active.sim-panel-active .simulation-area-wrapper {
-    justify-content: flex-start; /* Align content to the left */
-}
-
-/* Ensure control panel adapts correctly in fullscreen. */
-body.sim-fullscreen-active .sim-controls-panel {
-    /* Panel remains 'position:fixed'. These rules ensure it's correctly sized and positioned. */
-    top: 0 !important;
-    height: calc(100vh - var(--sim-fullscreen-info-bar-height, 60px)) !important; /* Info bar height is set by simulation_ui.js */
-    z-index: 1004; /* Ensures panel is above fullscreen canvas content but below action buttons. */
-}
-
-/* Apply transition to all states of simulation-main-content for smoother animation */
-.simulation-main-content {
-    transition: margin-right 0.3s ease-out, width 0.3s ease-out; /* Smooth transition */
-}
-
-/* When panel is open in fullscreen mode, adjust the main content to avoid overlap */
-body.sim-fullscreen-active.sim-panel-active .simulation-main-content {
-    margin-right: var(--sim-panel-width); /* Add margin to avoid overlap with panel */
-    width: calc(100% - var(--sim-panel-width)); /* Adjust width to account for panel */
-}
-
-/* Main content area layout in fullscreen. */
-body.sim-fullscreen-active .simulation-main-content {
-    flex-grow: 1; /* Takes remaining space if panel is visible. */
-    width: 100%; /* Occupies full available width from parent flex container. */
-    height: 100%; /* Occupies full available height. */
-    display: flex;
-    flex-direction: column; /* Stack children (canvas container, charts) vertically */
-    align-items: center; /* Center children horizontally */
-    justify-content: center; /* Center the block of children vertically when no charts */
-    /* Minimal padding to avoid buttons and provide breathing room */
-    padding: 10px 10px 60px 10px; /* Top/sides minimal, bottom for info bar */
-    box-sizing: border-box;
-    position: relative;
-    overflow: hidden; /* Prevent scrollbars in fullscreen mode */
-}
-
-/* When charts are visible, change layout to start from top instead of centering */
-body.sim-fullscreen-active.charts-visible .simulation-main-content {
-    justify-content: flex-start; /* Start from top when charts are present */
-    padding-top: 20px; /* Add a bit more top padding when charts are present */
-}
-
-/* Simulation display container - now uses viewport-based sizing */
-body.sim-fullscreen-active .simulation-display-container {
-    /* Remove max-width constraint for fullscreen - let it use available space */
     width: 100%;
-    /* Don't set height: 100% - let it size based on content and available space */
-    max-width: none; /* Override the 750px limit in fullscreen */
+    height: 100vh;
+    height: 100dvh;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+body.sim-fullscreen-active #main > .inner {
+    width: 100%;
+    height: 100%;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+/* Everything above the info bar (fixed to the bottom of the screen; its height is measured by
+   simulation_ui.js). When the settings sheet is open, everything above the sheet. */
+body.sim-fullscreen-active .simulation-area-wrapper {
+    width: 100%;
+    height: calc(100% - var(--sim-fullscreen-info-bar-height, 56px));
+    align-items: stretch;
+}
+
+body.sim-fullscreen-active.sim-panel-sheet.sim-panel-active .simulation-area-wrapper {
+    height: calc(100% - var(--sim-sheet-h, 50%));
+}
+
+/* A column: the canvas takes whatever toolbars and charts leave. */
+body.sim-fullscreen-active .simulation-main-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+body.sim-fullscreen-active .simulation-display-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+}
+
+body.sim-fullscreen-active .simulation-display-container > * {
+    flex: 0 0 auto;
+}
+
+body.sim-fullscreen-active .sim-canvas-wrapper {
+    flex: 1 1 0%;
+    min-height: 0;
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 1; /* Allow shrinking when charts are present */
-    box-sizing: border-box;
-    margin: 0; /* Remove margins in fullscreen */
-}
-
-/* Canvas wrapper - uses CSS for aspect ratio calculations */
-body.sim-fullscreen-active .sim-canvas-wrapper {
-    /* Calculate size accounting for potential charts presence */
-    /* Base calculations: subtract padding, info bar space, and potential charts space */
-    width: min(
-        calc(100vw - 100px), 
-        calc((100vh - 140px) * var(--aspect-ratio, 2))
-    );
-    height: min(
-        calc(100vh - 140px), 
-        calc((100vw - 100px) / (var(--aspect-ratio, 2)))
-    );
-    
-    /* Ensure it stays within reasonable bounds */
-    max-width: calc(100vw - 50px); /* Leave space for settings panel toggle and other UI */
-    max-height: calc(100vh - 120px); /* Leave space for info bar, padding, and potential charts */
-    
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-}
-
-/* Adjust canvas wrapper dimensions when control panel is open in fullscreen mode */
-body.sim-fullscreen-active.sim-panel-active .sim-canvas-wrapper {
-    /* Account for panel width in calculations */
-    width: min(
-        calc(100vw - 100px - var(--sim-panel-width)),
-        calc((100vh - 140px) * var(--aspect-ratio, 2))
-    );
-    height: min(
-        calc(100vh - 140px),
-        calc((100vw - 100px - var(--sim-panel-width)) / (var(--aspect-ratio, 2)))
-    );
-
-    /* Ensure it stays within reasonable bounds with panel open */
-    max-width: calc(100vw - 50px - var(--sim-panel-width));
-}
-
-/* When charts are visible, reduce simulation height dynamically */
-body.sim-fullscreen-active.charts-visible .sim-canvas-wrapper {
-    /* Recalculate height accounting for charts (180px + margins ~= 200px) */
-    width: min(
-        calc(100vw - 100px),
-        calc((100vh - 340px) * var(--aspect-ratio, 2))
-    );
-    height: min(
-        calc(100vh - 340px),
-        calc((100vw - 100px) / (var(--aspect-ratio, 2)))
-    );
-    max-height: calc(100vh - 320px); /* Reserve space for charts + info bar */
-}
-body.sim-fullscreen-active.sim-panel-active.charts-visible .sim-canvas-wrapper {
-    width: min(
-        calc(100vw - 100px - var(--sim-panel-width)),
-        calc((100vh - 340px) * var(--aspect-ratio, 2))
-    );
-    height: min(
-        calc(100vh - 340px),
-        calc((100vw - 100px - var(--sim-panel-width)) / (var(--aspect-ratio, 2)))
-    );
-}
-
-/* The wrapper is the size container for the aspect-ratio box below. */
-body.sim-fullscreen-active .sim-canvas-wrapper {
     container-type: size;
 }
 
-/* Aspect ratio box - simplified for fullscreen */
+/* Largest box with the page's aspect ratio that fits the wrapper. Pages that size the box in JS
+   set inline width/height, which win. */
 body.sim-fullscreen-active .sim-aspect-ratio-box {
-    /* Use full size of wrapper, let CSS aspect-ratio handle the rest */
-    box-sizing: border-box; /* Sizes below (and inline sizes set by simulations) include the border */
+    flex: 0 0 auto;
+    box-sizing: border-box;
     width: 100%;
     height: 100%;
-    /* Keep the aspect ratio whatever shape the wrapper is (browsers without container query
-       units use the 100% above). Simulations that size this box in JS set inline styles, which win. */
-    width: min(100cqw, 100cqh * (var(--aspect-ratio, 2)));
-    height: min(100cqh, 100cqw / (var(--aspect-ratio, 2)));
-    aspect-ratio: var(--aspect-ratio, 2);
-    
-    /* Remove padding-bottom trick for fullscreen */
-    padding-bottom: 0 !important;
-    padding-top: 0 !important;
-    
-    /* Maintain visual styles */
-    position: relative;
-    overflow: hidden;
-    border-radius: var(--border-radius-medium);
-    border: 1px solid var(--color-border);
-    background-color: var(--color-bg-subtle);
+    width: min(100cqw, 100cqh * (var(--aspect-ratio, 2 / 1)));
+    height: min(100cqh, 100cqw / (var(--aspect-ratio, 2 / 1)));
+    max-width: none;
+    margin: 0;
+    padding: 0 !important;
+    aspect-ratio: auto;
 }
 
-/* General canvas scaling (re-stated for clarity or overriding, ensure it\'s intended). */
-/* This rule is general and not specific to fullscreen, ensure its placement and necessity. */
-.sim-canvas {
-    display: block; /* Removes extra space if it were inline. */
-    width: 100%;
-    height: 100%; /* Fills its parent (e.g., sim-aspect-ratio-box). */
-}
-
-/* --- Responsive Adjustments --- */
-@media (max-width: 768px) { /* Styles for 'medium' screens (e.g., tablets) and smaller. */
-
-    body.sim-fullscreen-active .sim-action-buttons-overlay {
-        /* In fullscreen on small screens, JS handles fixed positioning to top right via --sim-button-offset */
-        left: auto; /* Ensure it doesn't stick to 50% */
-        transform: none; /* Remove translateX */
-        /* top and right are set by JS based on --sim-button-offset */
-    }
-
-    /* On mobile, use even less padding and more space for simulation */
-    body.sim-fullscreen-active .simulation-main-content {
-        padding: 5px 5px 55px 5px; /* Minimal padding on mobile */
-    }
-    
-    body.sim-fullscreen-active .sim-canvas-wrapper {
-        /* On mobile, use almost the full screen with minimal margins */
-        width: min(calc(100vw - 60px), calc((100vh - 100px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 100px), calc((100vw - 60px) / (var(--aspect-ratio, 2))));
-        max-width: calc(100vw - 60px);
-        max-height: calc(100vh - 100px);
-    }
-    
-    /* When charts are visible on mobile, give even less space to simulation */
-    body.sim-fullscreen-active.charts-visible .sim-canvas-wrapper {
-        width: min(calc(100vw - 60px), calc((100vh - 260px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 260px), calc((100vw - 60px) / (var(--aspect-ratio, 2)))); /* Account for charts on mobile */
-        max-height: calc(100vh - 260px);
-    }
-
-    /* The panel is full width here and covers the simulation, so don't shrink the
-       simulation behind it (that squashed the canvas to a few pixels). */
-    body.sim-fullscreen-active.sim-panel-active .simulation-main-content {
-        margin-right: 0;
-        width: 100%;
-    }
-    body.sim-fullscreen-active.sim-panel-active .sim-canvas-wrapper {
-        width: min(calc(100vw - 60px), calc((100vh - 100px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 100px), calc((100vw - 60px) / (var(--aspect-ratio, 2))));
-        max-width: calc(100vw - 60px);
-    }
-    body.sim-fullscreen-active.sim-panel-active.charts-visible .sim-canvas-wrapper {
-        width: min(calc(100vw - 60px), calc((100vh - 260px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 260px), calc((100vw - 60px) / (var(--aspect-ratio, 2))));
-    }
-
-    .sim-controls-panel {
-        width: 100%; /* Panel takes full width on small screens */
-        border-left: none; /* No left border when full width */
-        padding: 1em;
-    }
-
-    body.sim-panel-active .sim-action-buttons-overlay {
-        opacity: 0; /* Ensure it's hidden */
-        visibility: hidden; /* Ensure it's hidden and not focusable */
-    }
-}
-
-/* Styles for the info bar in fullscreen mode */
+/* The info bar is fixed to the bottom of the screen. */
 .sim-info-bar.fullscreen-style {
     position: fixed;
-    bottom: 0;
     left: 0;
-    width: 100%;
-    background-color: var(--color-bg-subtle); /* Changed from --color-bg-tertiary */
-    padding: 8px 15px;
-    box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
-    z-index: 1005; /* Ensure it's above other fullscreen content but below modals/menus if any */
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-top: 1px solid var(--color-border-subtle);
+    right: 0;
+    bottom: 0;
+    z-index: 1005;
+    width: auto;
+    margin: 0;
+    padding: 4px 8px 4px 12px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+    border-width: 1px 0 0 0;
+    border-radius: 0;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.12);
 }
 
-html.dark-mode .sim-info-bar.fullscreen-style {
-    /* background-color is now handled by --color-bg-subtle which adapts to dark mode */
-    border-top: 1px solid var(--color-border-subtle-dark);
-}
-
-/* Hide the default (non-fullscreen) sim-info-bar when in fullscreen, as .fullscreen-style one is used */
 body.sim-fullscreen-active .simulation-display-container > .sim-info-bar:not(.fullscreen-style) {
     display: none !important;
 }
 
-/* Charts container in fullscreen */
+/* Docked panel in fullscreen: full height beside the canvas, above the info bar. */
+body.sim-fullscreen-active.sim-panel-side .sim-controls-panel {
+    align-self: stretch;
+    max-height: none;
+    border-radius: 0;
+}
+
+body.sim-fullscreen-active.sim-panel-side .sim-controls-panel.panel-open {
+    margin-left: 0;
+    border-width: 0 0 0 1px;
+}
+
+/* Charts in fullscreen: a strip under the canvas. */
 body.sim-fullscreen-active #charts-container {
-    /* display property is handled by JS (block/none) based on checkbox. */
-    /* These styles apply when it's made visible by JS. */
-    width: 100%; /* Takes width from parent's flex column context */
-    max-width: 800px; /* Respects original max-width, will be centered by parent's align-items */
-    margin-top: 10px; /* Spacing from the simulation display container above */
-    margin-bottom: 10px; /* Add bottom margin to prevent overlap with info bar */
-    flex-shrink: 0; /* Its height is determined by its content (.chart-box) */
-    position: relative; /* Ensure proper positioning */
-    z-index: 1; /* Stay above other elements */
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 1200px;
+    margin: 0;
 }
 
-/* Styling for the individual chart boxes within the container in fullscreen */
-:where(body.sim-fullscreen-active #charts-container .chart-box) {
-    /* Size, padding and radius come from the base chart-box defaults above (200px high). */
-    background-color: var(--color-bg-alt);
+div:where(body.sim-fullscreen-active #charts-container .chart-box) {
+    height: 180px;
 }
+
 @media (max-height: 600px) {
-    /* Less vertical room in fullscreen on short screens (e.g. phones in landscape). */
-    :where(body.sim-fullscreen-active #charts-container) .chart-box {
-        height: 150px;
+    div:where(body.sim-fullscreen-active #charts-container .chart-box) {
+        height: 130px;
     }
 }
 
-@media (max-height: 600px) and (min-width: 769px) {
-    /* With the shorter charts above, reserve less height so the canvas isn't squeezed to a sliver. */
-    body.sim-fullscreen-active.charts-visible .sim-canvas-wrapper {
-        width: min(calc(100vw - 100px), calc((100vh - 260px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 260px), calc((100vw - 100px) / (var(--aspect-ratio, 2))));
-        max-height: calc(100vh - 240px);
-    }
-    body.sim-fullscreen-active.sim-panel-active.charts-visible .sim-canvas-wrapper {
-        width: min(calc(100vw - 100px - var(--sim-panel-width)), calc((100vh - 260px) * var(--aspect-ratio, 2)));
-        height: min(calc(100vh - 260px), calc((100vw - 100px - var(--sim-panel-width)) / (var(--aspect-ratio, 2))));
-    }
-}
-
-html.dark-mode .sim-info-bar.fullscreen-style .sim-info-item,
-html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button {
-    color: var(--color-text-primary-dark); /* Ensure text is visible in dark mode */
-}
-
-/* Ensure the reset button in fullscreen info bar maintains its icon color */
-.sim-info-bar.fullscreen-style .sim-reset-button .icon {
-    color: var(--color-accent); /* Or specific color for icons */
-}
-
-html.dark-mode .sim-info-bar.fullscreen-style .sim-reset-button .icon {
-    color: var(--color-accent-dark, var(--color-accent)); /* Or specific color for icons in dark mode */
-}
-
-/* On narrow screens the theme toggle is stacked below the menu button and hangs over the top
-   of the open controls panel, so hide it while the panel is open (as main.js does on scroll). */
-@media screen and (max-width: 736px) {
-    body.sim-panel-active #header nav ul li #theme-toggle {
-        opacity: 0;
-        visibility: hidden;
-        pointer-events: none;
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+    .sim-controls-panel,
+    .sim-controls-panel.panel-open,
+    body.sim-panel-side .sim-controls-panel,
+    body.sim-panel-side .sim-controls-panel.panel-open {
+        transition: none;
     }
 }
