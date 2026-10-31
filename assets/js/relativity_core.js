@@ -88,6 +88,9 @@
         MIN_SPAN: 5.5     // narrowest scene (ls)
     };
 
+    // Half the height of the ship and of the station, fins and solar panels included (ls, at full size)
+    const LT_HALF = 0.47;
+
     // Lightning (light-seconds and seconds): the light-clock ship and station, without their clocks
     const LN = {
         SIZE: 0.75,       // drawing scale (the light-clock craft are 1.6 ls long)
@@ -116,7 +119,7 @@
     const HG = {
         SHIP: 1.6,        // the ship's rest length (ls)
         L0: 1.2,          // the hangar's rest length, door to door (ls)
-        IN: 0.42,         // half the hangar's inner height (ls)
+        IN: 0.52,         // half the hangar's inner height (ls): room for the ship's fins
         WALL: 0.07,       // roof and floor thickness (ls)
         SHUT: 0.55,       // the doors are shut for this fraction of the time the contracted ship spends wholly inside
         HOLD: 1.3,        // s (real) paused at each door's shut moment
@@ -306,7 +309,9 @@
         pal = Object.assign(common, dark ? {
             bg: '#16181c', text: '#e8e8e8', muted: 'rgba(232,232,232,0.62)', faint: 'rgba(232,232,232,0.22)',
             starRGB: '255,255,255', pillBg: 'rgba(22,24,28,0.86)', pillEdge: 'rgba(255,255,255,0.18)',
-            metal: '#5b6472', metalLo: '#444b57', edge: 'rgba(0,0,0,0.35)', outline: null,
+            shipShade: '#c75b9b', stationShade: '#4f95c4', panel: '#8499e7', panelGrid: 'rgba(16,20,36,0.55)',
+            truss: '#8d96a1', edge: 'rgba(0,0,0,0.35)',
+            chamber: '#0a0c10', chamberEdge: 'rgba(255,255,255,0.2)', mirror: '#e9eef4',
             photon: '#fff4c4', lightRGB: '255,214,92',
             earthOcean: '#3d86c6', ground: '#22332f', groundLine: '#7bd0c1', skyRGB: '126,202,246',
             muon: '#c9a5e3',
@@ -314,20 +319,17 @@
         } : {
             bg: '#f4f6f8', text: '#2b2b2b', muted: 'rgba(43,43,43,0.62)', faint: 'rgba(43,43,43,0.2)',
             starRGB: '40,50,70', pillBg: 'rgba(255,255,255,0.9)', pillEdge: 'rgba(0,0,0,0.16)',
-            metal: '#7d8794', metalLo: '#646d79', edge: 'rgba(0,0,0,0.3)', outline: 'rgba(30,40,60,0.22)',
+            shipShade: '#c75b9b', stationShade: '#4f95c4', panel: '#8499e7', panelGrid: 'rgba(16,20,36,0.45)',
+            truss: '#7c8590', edge: 'rgba(0,0,0,0.3)',
+            chamber: '#1a1f27', chamberEdge: 'rgba(0,0,0,0.25)', mirror: '#e9eef4',
             photon: '#fff4c4', lightRGB: '214,140,0',
             earthOcean: '#3d86c6', ground: '#cfe3d8', groundLine: '#3f9e8f', skyRGB: '90,160,215',
             muon: '#8a5cb0',
             pinkText: '#d4587a', blueText: '#2f84bb', purpleText: '#8a5cb0'
         });
-        // Craft: flat tones of the site's pink and blue, a dark clock bay with silver mirrors. The light inside the
-        // dark bays is always the bright yellow.
-        Object.assign(pal, {
-            shipHi: '#f8a9bb', ship: '#f2849e', shipLo: '#da6b8b', shipDeep: '#b9557a',
-            stHi: '#aadcfa', st: '#7ecaf6', stLo: '#5fb0e0', stDeep: '#3f88bb',
-            glass: '#1d2533', chamber: '#0d1016', mirror: '#e9eef4', seam: 'rgba(30,20,40,0.2)',
-            chamberLightRGB: '255,214,92'
-        });
+        // The light inside the dark chambers is always the bright yellow; detector panels are the windows' colour.
+        pal.chamberLightRGB = '255,214,92';
+        pal.glass = '#2a3140';
         if (charts) recolorCharts();
     }
 
@@ -871,9 +873,12 @@
     function setCraft(x, y, kx, ky) {
         tcx = x; tcy = y; tkx = kx; tky = ky;
     }
-    // Rounded rectangle in local coordinates. The corner radius is in local units too, so the corners squeeze
-    // along with the craft (and a craft drawn facing left, with tkx < 0, works the same way).
-    function localRect(x0, y0, x1, y1, r) {
+    // Rounded rectangle in local coordinates; the corner radius is in px.
+    function localRect(x0, y0, x1, y1, rPx) {
+        roundRectPath(tx(x0), ty(y0), (x1 - x0) * tkx, (y1 - y0) * tky, rPx);
+    }
+    // The same with the corner radius in local units, so the corners squeeze along with the drawing.
+    function localRectScaled(x0, y0, x1, y1, r) {
         const a = tx(x0), b = tx(x1);
         const left = Math.min(a, b), w = Math.abs(b - a);
         const top = ty(y0), h = (y1 - y0) * tky;
@@ -1153,49 +1158,157 @@
     // ------------------------------------------------------------------
     // Craft drawings (local coordinates in light-seconds, centred, nose to +x)
     // ------------------------------------------------------------------
-    // Flat style: each part is filled in its base colour, with a darker lower part and a pale strip along the
-    // top, and no gradients. Seams are left out once the craft is squeezed too far for them to stay apart.
-    function fillTones(base, lo, hi, split, top) {
-        ctx.save();
-        ctx.fillStyle = base;
+    function drawShipBody(withChamber) {
+        const edge = Math.max(1, tky * 0.006);
+        // Fins and nozzle (behind the hull)
+        ctx.fillStyle = pal.shipShade;
+        ctx.beginPath();
+        ctx.moveTo(tx(-0.34), ty(-0.3));
+        ctx.lineTo(tx(-0.6), ty(-0.47));
+        ctx.lineTo(tx(-0.74), ty(-0.47));
+        ctx.lineTo(tx(-0.74), ty(-0.3));
+        ctx.closePath();
+        ctx.moveTo(tx(-0.34), ty(0.3));
+        ctx.lineTo(tx(-0.6), ty(0.47));
+        ctx.lineTo(tx(-0.74), ty(0.47));
+        ctx.lineTo(tx(-0.74), ty(0.3));
+        ctx.closePath();
+        ctx.moveTo(tx(-0.72), ty(-0.15));
+        ctx.lineTo(tx(-0.8), ty(-0.19));
+        ctx.lineTo(tx(-0.8), ty(0.19));
+        ctx.lineTo(tx(-0.72), ty(0.15));
+        ctx.closePath();
         ctx.fill();
-        if (pal.outline) {
-            ctx.strokeStyle = pal.outline;
-            ctx.lineWidth = 1;
-            ctx.stroke();
+        // Hull
+        ctx.beginPath();
+        ctx.moveTo(tx(-0.7), ty(-0.31));
+        ctx.lineTo(tx(0.3), ty(-0.31));
+        ctx.bezierCurveTo(tx(0.56), ty(-0.31), tx(0.76), ty(-0.16), tx(0.8), ty(0));
+        ctx.bezierCurveTo(tx(0.76), ty(0.16), tx(0.56), ty(0.31), tx(0.3), ty(0.31));
+        ctx.lineTo(tx(-0.7), ty(0.31));
+        ctx.quadraticCurveTo(tx(-0.76), ty(0.31), tx(-0.76), ty(0.25));
+        ctx.lineTo(tx(-0.76), ty(-0.25));
+        ctx.quadraticCurveTo(tx(-0.76), ty(-0.31), tx(-0.7), ty(-0.31));
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(0, ty(-0.31), 0, ty(0.31));
+        grad.addColorStop(0, '#f7a4b8');
+        grad.addColorStop(0.55, pal.pink);
+        grad.addColorStop(1, '#d96f8c');
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.strokeStyle = pal.edge;
+        ctx.lineWidth = edge;
+        ctx.stroke();
+        // Cockpit window
+        ctx.beginPath();
+        ctx.ellipse(tx(0.52), ty(-0.06), Math.max(0.5, 0.075 * Math.abs(tkx)), 0.075 * tky, 0, 0, TAU);
+        ctx.fillStyle = '#2a3140';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.lineWidth = Math.max(1, tky * 0.012);
+        ctx.stroke();
+        if (!withChamber) {
+            ctx.beginPath();
+            ctx.ellipse(tx(0.2), ty(-0.06), Math.max(0.5, 0.06 * Math.abs(tkx)), 0.06 * tky, 0, 0, TAU);
+            ctx.ellipse(tx(-0.08), ty(-0.06), Math.max(0.5, 0.06 * Math.abs(tkx)), 0.06 * tky, 0, 0, TAU);
+            ctx.fillStyle = '#2a3140';
+            ctx.fill();
         }
-        ctx.clip();
-        const x0 = Math.min(tx(-1), tx(1)), w = Math.abs(tx(1) - tx(-1));
-        ctx.fillStyle = lo;
-        ctx.fillRect(x0, ty(split), w, 1e4);
-        ctx.fillStyle = hi;
-        ctx.fillRect(x0, ty(top) - 1, w, Math.max(2, 0.035 * tky) + 1);
-        ctx.restore();
     }
 
-    // The light clock bay: a dark window with a mirror across its top and bottom (the mirrors' inner faces are
-    // LC.MIRROR apart). A tick lights up the lower mirror.
-    const BAY = { hw: 0.15, hh: 0.275 };
-    function drawBay(flash) {
-        localRect(-BAY.hw, -BAY.hh, BAY.hw, BAY.hh, 0.035);
+    function drawStationBody() {
+        const edge = Math.max(1, tky * 0.006);
+        // Truss and solar panels
+        ctx.strokeStyle = pal.truss;
+        ctx.lineWidth = Math.max(1.5, tky * 0.018);
+        ctx.beginPath();
+        for (const s of [-1, 1]) {
+            ctx.moveTo(tx(s * 0.6), ty(0));
+            ctx.lineTo(tx(s * 0.73), ty(0));
+            ctx.moveTo(tx(s * 0.73), ty(-0.45));
+            ctx.lineTo(tx(s * 0.73), ty(0.45));
+        }
+        ctx.stroke();
+        for (const s of [-1, 1]) {
+            for (const v of [-1, 1]) {
+                const x0 = s > 0 ? 0.665 : -0.8, x1 = s > 0 ? 0.8 : -0.665;
+                const y0 = v > 0 ? 0.11 : -0.47, y1 = v > 0 ? 0.47 : -0.11;
+                localRect(x0, y0, x1, y1, 2);
+                ctx.fillStyle = pal.panel;
+                ctx.fill();
+                ctx.strokeStyle = pal.panelGrid;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.beginPath();
+                for (let j = 1; j < 4; j++) {
+                    const yy = y0 + (y1 - y0) * j / 4;
+                    ctx.moveTo(tx(x0), ty(yy));
+                    ctx.lineTo(tx(x1), ty(yy));
+                }
+                ctx.moveTo(tx((x0 + x1) / 2), ty(y0));
+                ctx.lineTo(tx((x0 + x1) / 2), ty(y1));
+                ctx.stroke();
+            }
+        }
+        const grad = ctx.createLinearGradient(0, ty(-0.32), 0, ty(0.32));
+        grad.addColorStop(0, '#a6dbfa');
+        grad.addColorStop(0.55, pal.blue);
+        grad.addColorStop(1, '#5fa9d8');
+        // Docking stubs and modules
+        ctx.fillStyle = pal.stationShade;
+        localRect(-0.665, -0.08, -0.58, 0.08, 2);
+        ctx.fill();
+        localRect(0.58, -0.08, 0.665, 0.08, 2);
+        ctx.fill();
+        ctx.fillStyle = grad;
+        ctx.strokeStyle = pal.edge;
+        ctx.lineWidth = edge;
+        localRect(-0.6, -0.17, -0.22, 0.17, 0.05 * tky);
+        ctx.fill();
+        ctx.stroke();
+        localRect(0.22, -0.17, 0.6, 0.17, 0.05 * tky);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+        ctx.beginPath();
+        for (const s of [-1, 1]) {
+            ctx.moveTo(tx(s * 0.41), ty(-0.17));
+            ctx.lineTo(tx(s * 0.41), ty(0.17));
+        }
+        ctx.stroke();
+        // Hub around the light clock
+        localRect(-0.25, -0.32, 0.25, 0.32, 0.07 * tky);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.strokeStyle = pal.edge;
+        ctx.stroke();
+    }
+
+    // The light clock: a dark chamber with a mirror at the top and bottom and the pulse of light between.
+    function drawLightClock(height, flash) {
+        const hw = 0.17;
+        localRect(-hw, -0.29, hw, 0.29, Math.min(4, 0.03 * tky));
         ctx.fillStyle = pal.chamber;
         ctx.fill();
+        ctx.strokeStyle = pal.chamberEdge;
+        ctx.lineWidth = 1;
+        ctx.stroke();
         const mh = Math.max(2, 0.022 * tky);
         const m = LC.MIRROR / 2;
-        const xa = tx(-BAY.hw * 0.8), w = (2 * BAY.hw * 0.8) * tkx;
         ctx.fillStyle = pal.mirror;
-        ctx.fillRect(xa, ty(-m) - mh, w, mh);
-        ctx.fillRect(xa, ty(m), w, mh);
+        ctx.fillRect(tx(-hw * 0.82), ty(-m) - mh, (2 * hw * 0.82) * tkx, mh);
+        ctx.fillRect(tx(-hw * 0.82), ty(m), (2 * hw * 0.82) * tkx, mh);
         if (flash > 0) {
+            // A tick: the lower mirror glows as the light gets back to it.
             ctx.fillStyle = `rgba(${pal.chamberLightRGB},${(0.85 * flash).toFixed(3)})`;
-            ctx.fillRect(xa, ty(m) - 1, w, mh + 2);
+            ctx.fillRect(tx(-hw * 0.82), ty(m) - 1, (2 * hw * 0.82) * tkx, mh + 2);
         }
     }
 
-    // A detector in place of a craft's windows: a dark panel with two lamps, lit by light that has arrived
-    // from behind (lit[0]) and from ahead (lit[1]).
+    // A detector, drawn over a craft in place of its windows (lightning): a dark panel with two lamps, lit by
+    // light that has arrived from behind (lit[0]) and from ahead (lit[1]).
     function drawLamps(lit) {
-        localRect(-0.15, -0.22, 0.15, -0.08, 0.035);
+        localRectScaled(-0.15, -0.22, 0.15, -0.08, 0.035);
         ctx.fillStyle = pal.glass;
         ctx.fill();
         [[-0.125, -0.012], [0.012, 0.125]].forEach((seg, i) => {
@@ -1209,127 +1322,10 @@
                 ctx.arc(x, y, r, 0, TAU);
                 ctx.fill();
             }
-            localRect(seg[0], -0.19, seg[1], -0.11, 0.015);
+            localRectScaled(seg[0], -0.19, seg[1], -0.11, 0.015);
             ctx.fillStyle = lit[i] ? pal.photon : 'rgba(255,255,255,0.14)';
             ctx.fill();
         });
-    }
-
-    // The ship: a slim fuselage with a long nose, a swept tail fin and an engine bell, and a tall collar
-    // amidships that holds the light clock (or, with bay false, two cabin windows).
-    function drawShip(bay, flash) {
-        const detail = Math.abs(tkx) / tky;     // 1 at rest, 1/γ when squeezed
-        const sgn = Math.sign(tkx) || 1;
-        // Engine bell
-        ctx.beginPath();
-        ctx.moveTo(tx(-0.7), ty(-0.08));
-        ctx.lineTo(tx(-0.8), ty(-0.13));
-        ctx.lineTo(tx(-0.8), ty(0.13));
-        ctx.lineTo(tx(-0.7), ty(0.08));
-        ctx.closePath();
-        ctx.fillStyle = pal.metal;
-        ctx.fill();
-        ctx.fillStyle = pal.metalLo;
-        ctx.fillRect(tx(-0.8), ty(-0.13), sgn * Math.max(1.5, 0.018 * Math.abs(tkx)), 0.26 * tky);
-        // Tail fin
-        ctx.beginPath();
-        ctx.moveTo(tx(-0.62), ty(-0.16));
-        ctx.lineTo(tx(-0.72), ty(-0.34));
-        ctx.lineTo(tx(-0.63), ty(-0.34));
-        ctx.lineTo(tx(-0.44), ty(-0.16));
-        ctx.closePath();
-        ctx.fillStyle = pal.shipLo;
-        ctx.fill();
-        // Fuselage
-        ctx.beginPath();
-        ctx.moveTo(tx(-0.7), ty(-0.14));
-        ctx.quadraticCurveTo(tx(-0.7), ty(-0.18), tx(-0.66), ty(-0.18));
-        ctx.lineTo(tx(0.3), ty(-0.18));
-        ctx.bezierCurveTo(tx(0.56), ty(-0.18), tx(0.74), ty(-0.06), tx(0.8), ty(0.02));
-        ctx.bezierCurveTo(tx(0.74), ty(0.12), tx(0.58), ty(0.18), tx(0.4), ty(0.18));
-        ctx.lineTo(tx(-0.66), ty(0.18));
-        ctx.quadraticCurveTo(tx(-0.7), ty(0.18), tx(-0.7), ty(0.14));
-        ctx.closePath();
-        fillTones(pal.ship, pal.shipLo, pal.shipHi, 0.06, -0.18);
-        // Cockpit window along the nose
-        ctx.beginPath();
-        ctx.moveTo(tx(0.46), ty(-0.15));
-        ctx.bezierCurveTo(tx(0.6), ty(-0.13), tx(0.7), ty(-0.065), tx(0.745), ty(-0.02));
-        ctx.lineTo(tx(0.5), ty(-0.02));
-        ctx.closePath();
-        ctx.fillStyle = pal.glass;
-        ctx.fill();
-        if (detail > 0.3) {
-            ctx.strokeStyle = pal.seam;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for (const sx of [-0.5, 0.36]) {
-                ctx.moveTo(tx(sx), ty(-0.18));
-                ctx.lineTo(tx(sx), ty(0.18));
-            }
-            ctx.stroke();
-        }
-        // Collar
-        localRect(-0.22, -0.33, 0.22, 0.33, 0.1);
-        fillTones(pal.ship, pal.shipLo, pal.shipHi, 0.06, -0.33);
-        if (Array.isArray(bay)) {
-            drawLamps(bay);
-        } else if (bay) {
-            drawBay(flash || 0);
-        } else {
-            ctx.fillStyle = pal.glass;
-            for (const wx of [-0.08, 0.08]) {
-                localRect(wx - 0.045, -0.21, wx + 0.045, -0.08, 0.02);
-                ctx.fill();
-            }
-        }
-    }
-
-    // The station: a wheel seen nearly edge-on (a tall ellipse) round a hub that holds the light clock, with a
-    // habitat module and an end node with a docking port on each side of a central spine.
-    function drawStation(bay, flash) {
-        const ring = (from, to) => {
-            ctx.beginPath();
-            ctx.ellipse(tx(0), ty(0), 0.32 * Math.abs(tkx), 0.46 * tky, 0, from, to, false);
-            ctx.ellipse(tx(0), ty(0), 0.265 * Math.abs(tkx), 0.405 * tky, 0, to, from, true);
-            ctx.closePath();
-        };
-        // Far half of the wheel, in shadow
-        ring(-Math.PI / 2, Math.PI / 2);
-        ctx.fillStyle = pal.stDeep;
-        ctx.fill();
-        // Spine and spokes
-        ctx.fillStyle = pal.metal;
-        localRect(-0.74, -0.035, 0.74, 0.035, 0.01);
-        ctx.fill();
-        ctx.fillRect(tx(-0.025), ty(-0.41), 0.05 * tkx, 0.82 * tky);
-        const module = (x0, x1, h, r) => {
-            localRect(x0, -h, x1, h, r);
-            fillTones(pal.st, pal.stLo, pal.stHi, h * 0.3, -h);
-        };
-        for (const s of [-1, 1]) {
-            module(s * 0.6, s * 0.74, 0.1, 0.04);
-            localRect(s * 0.74, -0.05, s * 0.79, 0.05, 0.015);
-            ctx.fillStyle = pal.metalLo;
-            ctx.fill();
-            module(s * 0.33, s * 0.57, 0.16, 0.06);
-        }
-        // Hub, then the near half of the wheel in front of it
-        module(-0.2, 0.2, 0.33, 0.08);
-        ring(Math.PI / 2, Math.PI * 1.5);
-        ctx.fillStyle = pal.st;
-        ctx.fill();
-        if (Array.isArray(bay)) {
-            drawLamps(bay);
-        } else if (bay) {
-            drawBay(flash || 0);
-        } else {
-            ctx.fillStyle = pal.glass;
-            for (const wy of [-0.2, -0.06]) {
-                localRect(-0.1, wy - 0.045, 0.1, wy + 0.045, 0.02);
-                ctx.fill();
-            }
-        }
     }
 
     // A pulse of light: a pale core in a yellow glow (amber on the light theme's open canvas).
@@ -1460,8 +1456,8 @@
         const pr = Math.max(2.5, k * 0.02);
         const dy = clamp(LT.PROBE_Y * k, 7, 22);          // the probes fly just under the flashes
         const lanes = [
-            { which: 'away', c: st.away, y: lay.yShip, color: pal.pink, text: pal.pinkText, dark2: pal.shipDeep },
-            { which: 'home', c: st.home, y: lay.yStation, color: pal.blue, text: pal.blueText, dark2: pal.stDeep }
+            { which: 'away', c: st.away, y: lay.yShip, color: pal.pink, text: pal.pinkText, dark2: pal.shipShade },
+            { which: 'home', c: st.home, y: lay.yStation, color: pal.blue, text: pal.blueText, dark2: pal.stationShade }
         ];
         lanes.forEach((lane) => {
             lane.w = st.probe[lane.which];
@@ -1536,8 +1532,8 @@
             const xs = X(c.x);
             const s = LT.SIZE;
             setCraft(xs, y, k * s * (c.moving ? 1 / st.g : 1), k * s);
-            if (lane.which === 'away') drawShip(false);
-            else drawStation(false);
+            if (lane.which === 'away') drawShipBody(false);
+            else drawStationBody();
             const labelY = y - (LT.HEIGHT / 2) * k - lay.labelH / 2;
             const tag = drawNameTag(xs, labelY, SCENARIOS.light[lane.which].name, lane.text, f, c.u);
             hitRects.push({ x0: Math.min(xs - c.length * k / 2, tag.x0) - 6, x1: Math.max(xs + c.length * k / 2, tag.x1) + 6,
@@ -1584,14 +1580,14 @@
         const labelH = Math.round(f * 1.9);
         const botH = Math.round(f * 1.8);
         const s = LN.SIZE;
-        const span = (0.34 + 0.33 + 0.46 + 0.46) * s + LN.GAP;     // fin top to the bottom of the station's wheel (ls)
+        const span = 4 * LT_HALF * s + LN.GAP;     // top of the ship's fins to the bottom of the station's panels (ls)
         const free = viewH - capH - botH - 2 * labelH;
         const k = Math.max(8, Math.min(viewW / LN.MIN_SPAN, free / span));
         const spare = Math.max(0, free - span * k);
         const top = capH + labelH + spare / 2;
-        const yShip = top + 0.34 * s * k;
-        const yStation = yShip + (0.33 * s + LN.GAP + 0.46 * s) * k;
-        return { f, k, labelH, yShip, yStation, top, bottom: yStation + 0.46 * s * k, cx: viewW / 2, P: viewW / k };
+        const yShip = top + LT_HALF * s * k;
+        const yStation = yShip + (2 * LT_HALF * s + LN.GAP) * k;
+        return { f, k, labelH, yShip, yStation, top, bottom: yStation + LT_HALF * s * k, cx: viewW / 2, P: viewW / k };
     }
 
     // A lightning bolt from the top of the canvas down to (x, y), fading out.
@@ -1641,7 +1637,7 @@
         drawStars(k, lay.P, hm ? st.home.u * (t - st.start) : 0, hm ? g : 1);
         const lightRGB = dark ? pal.chamberLightRGB : pal.lightRGB;
         const y0 = lay.top - 0.04 * k, y1 = lay.bottom + 0.04 * k;
-        const yTag = (lay.yShip + 0.33 * LN.SIZE * k + lay.yStation - 0.46 * LN.SIZE * k) / 2;   // the gap between lanes
+        const yTag = (lay.yShip + lay.yStation) / 2;   // the gap between the lanes
 
         // Each flash runs both ways along the track at c from where its strike happened in this frame: a front
         // across both lanes, fading once it has passed both detectors.
@@ -1680,16 +1676,19 @@
             const xs = X(c.u * t);
             const lit = st.det[lane.which].map((td) => t >= td - 1e-9);
             setCraft(xs, lane.y, k * LN.SIZE * sx, k * LN.SIZE);
-            if (lane.which === 'away') drawShip(lit);
-            else drawStation(lit);
+            // The ship without its portholes, so the detector takes their place
+            if (lane.which === 'away') drawShipBody(true);
+            else drawStationBody();
+            drawLamps(lit);
             st.strikes.forEach((s, i) => {
-                if (t >= s.t) drawScorch(xs + st.own[lane.which][i] * sx * k, lane.y + (lane.which === 'away' ? 0.02 * LN.SIZE * k : 0));
+                if (t >= s.t) drawScorch(xs + st.own[lane.which][i] * sx * k, lane.y);
             });
-            const labelY = lane.which === 'away' ? lane.y - 0.34 * LN.SIZE * k - lay.labelH / 2 : lane.y + 0.46 * LN.SIZE * k + lay.labelH / 2;
+            const ext = LT_HALF * LN.SIZE * k;
+            const labelY = lane.which === 'away' ? lane.y - ext - lay.labelH / 2 : lane.y + ext + lay.labelH / 2;
             const tag = drawNameTag(xs, labelY, SCENARIOS.lightning[lane.which].name, lane.text, f, c.u);
             const half = (LN.L0 / 2) * sx * k;
             hitRects.push({ x0: Math.min(xs - half, tag.x0) - 6, x1: Math.max(xs + half, tag.x1) + 6,
-                y0: Math.min(labelY - f, lane.y - 0.46 * LN.SIZE * k), y1: Math.max(labelY + f, lane.y + 0.46 * LN.SIZE * k), frame: lane.which });
+                y0: Math.min(labelY - f, lane.y - ext), y1: Math.max(labelY + f, lane.y + ext), frame: lane.which });
         }
 
         // The strikes themselves: a bolt and a burst at the moment each happens
@@ -1771,8 +1770,9 @@
             const xShift = s;
 
             setCraft(xs, y, kx, k);
-            if (isShip) drawShip(true, flash);
-            else drawStation(true, flash);
+            if (isShip) drawShipBody(true);
+            else drawStationBody();
+            drawLightClock(lightHeight(c.clock), flash);
             if (S.showPaths) {
                 // A moving clock's path leaves its chamber, so it uses the colour that shows on the background.
                 const rgb = c.moving ? pal.lightRGB : pal.chamberLightRGB;
@@ -1870,7 +1870,7 @@
     // little past the doors, and a door at each end that drops from the roof when shut.
     function drawHangar(doors, both, glow) {
         const L = HG.L0 / 2, o = 0.09, w = HG.WALL;
-        localRect(-L - 0.02, -HG.IN, L + 0.02, HG.IN, 0.02);
+        localRectScaled(-L - 0.02, -HG.IN, L + 0.02, HG.IN, 0.02);
         ctx.fillStyle = dark ? 'rgba(126,202,246,0.07)' : 'rgba(63,136,187,0.08)';
         ctx.fill();
         if (both || glow > 0) {
@@ -1878,8 +1878,17 @@
             ctx.fill();
         }
         for (const s of [-1, 1]) {
-            localRect(-L - o, s > 0 ? HG.IN : -HG.IN - w, L + o, s > 0 ? HG.IN + w : -HG.IN, 0.025);
-            fillTones(pal.st, pal.stLo, pal.stHi, s > 0 ? HG.IN + w * 0.55 : -HG.IN - w * 0.45, s > 0 ? HG.IN : -HG.IN - w);
+            const y0 = s > 0 ? HG.IN : -HG.IN - w;
+            localRectScaled(-L - o, y0, L + o, y0 + w, 0.025);
+            const grad = ctx.createLinearGradient(0, ty(y0), 0, ty(y0 + w));
+            grad.addColorStop(0, '#a6dbfa');
+            grad.addColorStop(0.55, pal.blue);
+            grad.addColorStop(1, '#5fa9d8');
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.strokeStyle = pal.edge;
+            ctx.lineWidth = 1;
+            ctx.stroke();
         }
         drawDoors(doors, false);
     }
@@ -1891,7 +1900,7 @@
             if (door.shut !== shut) return;
             const side = i === 0 ? -1 : 1;
             const x0 = side * HG.L0 / 2 - (side < 0 ? 0.035 : 0);
-            localRect(x0, -HG.IN, x0 + 0.035, -HG.IN + (shut ? 2 * HG.IN : 0.06), 0.01);
+            localRectScaled(x0, -HG.IN, x0 + 0.035, -HG.IN + (shut ? 2 * HG.IN : 0.06), 0.01);
             ctx.fillStyle = pal.peri;
             ctx.fill();
             if (door.flash > 0) {
@@ -1915,7 +1924,7 @@
         setCraft(hx, y, hk, k);
         drawHangar(doors, st.both, 0);
         setCraft(sx, y, k * (hm ? 1 : 1 / g), k);
-        drawShip(false);
+        drawShipBody(false);
         // Shut doors in front (they never overlap the ship: each shuts only while the ship is clear of it)
         setCraft(hx, y, hk, k);
         drawDoors(doors, true);
@@ -1929,7 +1938,7 @@
         const hTag = drawNameTag(hx, above - lay.dimH - lay.tagH / 2, SCENARIOS.hangar.home.name, pal.blueText, f, st.hangar.u);
         const sTag = drawNameTag(sx, bot + lay.dimH + lay.tagH / 2, SCENARIOS.hangar.away.name, pal.pinkText, f, st.ship.u);
         hitRects.push({ x0: Math.min(hx - hl, hTag.x0) - 6, x1: Math.max(hx + hl, hTag.x1) + 6, y0: above - lay.dimH - lay.tagH, y1: top + 4, frame: 'home' });
-        hitRects.push({ x0: Math.min(sx - sl, sTag.x0) - 6, x1: Math.max(sx + sl, sTag.x1) + 6, y0: y - 0.34 * k, y1: bot + lay.dimH + lay.tagH, frame: 'away' });
+        hitRects.push({ x0: Math.min(sx - sl, sTag.x0) - 6, x1: Math.max(sx + sl, sTag.x1) + 6, y0: y - LT_HALF * k, y1: bot + lay.dimH + lay.tagH, frame: 'away' });
 
         // The hangar's clocks beside its doors (synchronised in the hangar's frame)
         if (S.showSync) {
@@ -2071,7 +2080,7 @@
         const shipY = y - lay.rE - lay.shipLen * 0.42;
         const kk = lay.shipLen / LC.L0;
         setCraft(xShip, shipY, st.facing * kk * sx, kk);
-        drawShip(false);
+        drawShipBody(false);
         if (!ship && S.v > 0 && moving) {
             const dir = Math.sign(st.shipU) || 1;
             drawVelocity(xShip + dir * (lay.shipLen / 2 * sx + 8), shipY, dir, arrowLen, f, S.v);
