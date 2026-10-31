@@ -4,12 +4,20 @@
  * Units: distances in AU, times in (Julian) years, masses in solar masses, so G = 4 pi^2 and a planet
  * 1 AU from a 1 M_sun star takes one year per orbit. Readouts convert to km, km/s, kg and N.
  *
- * Integration: kick-drift-kick leapfrog (symplectic and time-reversible) with one adaptive step for all
- *   bodies, dt = ETA * min over pairs of sqrt(r^3 / G(m_i + m_j)), so a close pass is taken in many
- *   small steps. Leftover frame time carries over to the next frame (no step is ever cut short), and the
- *   bodies are drawn extrapolated by that leftover so the motion stays smooth. If a close pass needs more
- *   steps than a frame allows, the simulation slows down for a moment instead of losing accuracy.
- *   Bodies whose real radii touch (checked along each step) merge, conserving mass and momentum.
+ * Integration: Yoshida's 4th-order composition of three kick-drift-kick leapfrog steps (symplectic and
+ *   time-reversible for a fixed step), with one adaptive step for all bodies, dt = ETA * min over pairs of
+ *   sqrt(r^3 / G(m_i + m_j)), so a close pass is taken in many small steps. That is accurate enough for
+ *   chaotic three-body encounters (the Pythagorean problem ends as published). Leftover frame time carries
+ *   over to the next frame (no step is ever cut short), and the bodies are drawn extrapolated by that
+ *   leftover so the motion stays smooth. If a close pass needs more steps than a frame allows, the
+ *   simulation slows down for a moment instead of losing accuracy.
+ *   Bodies whose real radii touch (checked along each step) merge, conserving mass and momentum; a black
+ *   hole swallows whatever crosses its event horizon.
+ *
+ * Realistic physics (off by default) draws every body at its true size (with a small marker so it can be
+ *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
+ *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
+ *   Roche limit of a much denser body.
  *
  * Frames: the view follows the centre of mass (an inertial frame) or is locked on a body. Trails are
  *   stored in inertial coordinates at shared sample times, so they can be redrawn relative to any body.
@@ -72,8 +80,9 @@
     const AUYR_KMS = AU_KM / YEAR_S;      // 4.74 km/s per AU/yr
     const ENERGY_J = MSUN_KG * (AU_M / YEAR_S) * (AU_M / YEAR_S); // J per M_sun AU^2 / yr^2
 
-    const ETA = 0.006;                    // step = ETA x the shortest pair free-fall time (~1000 steps per circular orbit)
-    const MAX_STEPS_PER_FRAME = 4000;
+    const ETA = 0.004;                    // step = ETA x the shortest pair free-fall time (~1600 steps per circular orbit)
+    const MAX_PAIRS_PER_FRAME = 1.2e6;    // force evaluations per frame (x pairs) before the simulation slows down
+    const YOSHIDA_W1 = 1 / (2 - Math.cbrt(2)), YOSHIDA_W0 = 1 - 2 * YOSHIDA_W1;
     const MAX_BODIES = 30;
     const SECONDS_PER_TREF = 6;           // real seconds per reference period of the scene at 1x
     const TRAIL_PER_TREF = 300;           // trail samples per reference period
@@ -411,7 +420,6 @@
     function leapfrog(dt) {
         const h = 0.5 * dt;
         for (const b of bodies) {
-            b.px = b.x; b.py = b.y;
             if (b.held) continue;
             b.vx += h * b.ax; b.vy += h * b.ay;
             b.x += dt * b.vx; b.y += dt * b.vy;
@@ -421,6 +429,14 @@
             if (b.held) continue;
             b.vx += h * b.ax; b.vy += h * b.ay;
         }
+    }
+
+    // One 4th-order step: leapfrog steps of w1 dt, w0 dt (backwards: w0 < 0) and w1 dt.
+    function step(dt) {
+        for (const b of bodies) { b.px = b.x; b.py = b.y; }
+        leapfrog(YOSHIDA_W1 * dt);
+        leapfrog(YOSHIDA_W0 * dt);
+        leapfrog(YOSHIDA_W1 * dt);
     }
 
     // Bodies whose real radii touched during the last step (closest approach along the straight
@@ -474,11 +490,12 @@
         if (forcesDirty) computeForces();
         acc += simDt;
         let steps = 0;
-        const limit = maxSteps || MAX_STEPS_PER_FRAME;
+        const pairs = Math.max(1, (bodies.length * (bodies.length - 1)) / 2);
+        const limit = maxSteps || clamp(Math.round(MAX_PAIRS_PER_FRAME / (3 * pairs)), 300, 4000);
         while (steps < limit) {
             const dt = nextDt;
             if (!(dt > 0) || acc < dt) break;
-            leapfrog(dt);
+            step(dt);
             simTime += dt;
             acc -= dt;
             steps++;
