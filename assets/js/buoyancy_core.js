@@ -460,7 +460,7 @@
             worldX: gc0 * CELL + comLX, worldY: gr0 * CELL + comLY,
             // liquid held in the cavities (body frame, about the dry centre of mass)
             waterMass: 0, waterMx: 0, waterMy: 0, waterInertia: 0, waterArea: 0,
-            img: null, imgKey: '', cavKey: ''
+            img: null, imgKey: ''
         };
     }
 
@@ -620,7 +620,7 @@
         const OX = B.ox, OY = B.oy;
         const hc = 0.5 * CELL;
         const aS = 1 - Math.exp(-dt / 0.06);
-        let mT = 0, mxT = 0, myT = 0, IT = 0, VT = 0;
+        let mT = 0, mxT = 0, myT = 0, IT = 0;
         for (let ci = 0; ci < cavs.length; ci++) {
             const cv = cavs[ci];
             const cells = cv.cells, Y = cv.Y, n = cv.nc;
@@ -805,7 +805,7 @@
             const rc2 = rx * rx + ry * ry;
             cv.m = m; cv.mx = m * rx; cv.my = m * ry;
             cv.I = m * rc2 + WATER_SPIN * m * Math.max(0, r2 - rc2);
-            mT += cv.m; mxT += cv.mx; myT += cv.my; IT += cv.I; VT += cv.V;
+            mT += cv.m; mxT += cv.mx; myT += cv.my; IT += cv.I;
         }
         B.waterMass = mT; B.waterMx = mxT; B.waterMy = myT; B.waterInertia = IT;
         B.waterArea = 0;
@@ -1692,7 +1692,7 @@
             gridLayerDirty = true;
             drawDirty = true;
             gradientKey = '';
-            if (body) { body.imgKey = ''; body.cavKey = ''; }
+            if (body) body.imgKey = '';
         }
     }
 
@@ -1707,7 +1707,6 @@
             bgTop: dark ? '#1a1e23' : '#f7f9fb',
             bgBot: dark ? '#22282f' : '#e4eaf0',
             air: dark ? '#2b3641' : '#e6f0f8',
-            openAir: dark ? '#1e2329' : '#eef2f6',
             hatch: dark ? 'rgba(170,205,235,0.45)' : 'rgba(70,105,140,0.4)',
             gridMinor: dark ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.05)',
             gridMajor: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.13)',
@@ -1725,7 +1724,7 @@
         textureKey = '';
         gridLayerDirty = true;
         drawDirty = true;
-        if (body) { body.imgKey = ''; body.cavKey = ''; }
+        if (body) body.imgKey = '';
     }
 
     function makeTexture(mat, pxPerM, seed) {
@@ -2869,7 +2868,7 @@
         const sel = document.getElementById('liquidSelector');
         if (sel && sel.value !== key) sel.value = key;
         gradientKey = '';
-        if (body) { updateWaterMass(body); body.cavKey = ''; }
+        if (body) updateWaterMass(body);
         updateWaveCoefficients();
         if (mode === 'draw') level = drawModeLevel(preview);
         updateStatsDisplay(true);
