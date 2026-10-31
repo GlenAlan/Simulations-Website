@@ -221,13 +221,15 @@ html {
     line-height: 1.4;
 }
 
+/* The readouts share a row with the actions and wrap inside their own box, so the actions stay at the
+   right of the first row (they only drop below when even the widest readout won't fit beside them). */
 .stats-container {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.4em;
-    flex: 1 1 auto;
-    min-width: 0;
+    flex: 1 1 0%;
+    min-width: min-content;
 }
 
 .stats-box {
@@ -619,6 +621,12 @@ details.description-area *::after {
     color: var(--color-accent);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+}
+
+/* Nothing follows a slider's value on its row, so it needn't reserve space (that would leave a gap). */
+.sim-controls-panel .sim-value {
+    min-width: 0;
+    text-align: left;
 }
 
 .sim-controls-content p {
