@@ -1,312 +1,317 @@
-// Generic Simulation Core Logic Template
+// Simulation core template: copy to assets/js/<name>_core.js, rename window.simulationTemplate and fill in the TODOs.
+// It runs as a placeholder (particles bouncing in a box) so the page works straight away.
+//
+// Conventions (layout details are at the top of assets/css/simulation_styles.css):
+// - CSS sizes the canvas: anything from ~320 to ~1900 CSS px wide, with the page's --aspect-ratio, in normal and
+//   fullscreen mode alike. Don't set the canvas or its box size here; size the drawing buffer from the canvas's
+//   CSS size x devicePixelRatio and redraw when it changes (ResizeObserver).
+// - Draw in CSS pixels (ctx.setTransform(dpr, ...)) and keep text and line widths in CSS px with clamps, so they stay
+//   readable at every canvas size instead of growing with it.
+// - Readouts: <span class="sim-value" style="--chars: N"> in the HTML, fixed-width formatting here (toFixed), so
+//   changing numbers never move anything. Numbers drawn on the canvas: anchor them (e.g. right-align at a fixed x).
+// - Exactly one requestAnimationFrame loop; reset changes state, it doesn't start another loop.
+// - Canvas input through pointer events (mouse, pen and touch alike).
+(function () {
+    'use strict';
 
-// --- DOM Element References ---
-const canvas = document.getElementById('simulationCanvas');
-const ctx = canvas ? canvas.getContext('2d') : null;
-
-// Generic controls from simulation_template.html
-const timeSlider = document.getElementById('timeScale');
-const timeScaleVal = document.getElementById('timeScaleVal'); // Matches HTML
-const simDataDisplay = document.getElementById('simDataVal');   // For generic data output
-const resetButton = document.getElementById('resetSimulationBtn');
-// Add more specific control element references here if needed for a particular simulation
-
-// --- Simulation Constants & Parameters (Customize as needed) ---
-let timeScale = timeSlider ? parseFloat(timeSlider.value) : 1.0; // User-adjustable simulation speed
-
-// Canvas and Grid
-let canvasWidth = 800;  // Default, will be updated on load and resize
-let canvasHeight = 400; // Default, will be updated on load and resize
-
-// Physics & Timing
-const REFERENCE_UPDATES_PER_SECOND = 60.0; // Target physics updates per second
-const BASE_DT = 1.0 / REFERENCE_UPDATES_PER_SECOND; // Base physics timestep for one sub-step
-
-// --- Simulation State Variables (Customize for your simulation) ---
-let entities = [];      // Array to hold your simulation objects (e.g., particles, agents)
-let currentForces = []; // Array to hold forces if using a physics model like Verlet integration
-                        // This should match the structure of 'entities' if forces are per-entity
-
-let lastTimestamp = 0;              // For calculating realDeltaTimeMs in animation loop
-let physicsStepAccumulator = 0.0;   // Accumulates time for fixed-step physics updates
-
-// --- Core Simulation Functions (Implement these for your specific simulation) ---
-
-/**
- * Initializes the state of the simulation.
- * Called on startup and reset.
- * - Clears and populates the 'entities' array.
- * - Sets initial positions, velocities, and other properties of entities.
- * - Calculates initial forces if necessary.
- */
-function initializeSimulationState() {
-    entities.length = 0; // Clear existing entities
-    currentForces.length = 0; // Clear existing forces
-
-    // TODO: Implement your simulation's initialization logic.
-    // Example: Create particles in a grid, set up agents, etc.
-    // for (let i = 0; i < 10; i++) {
-    //     entities.push({
-    //         x: Math.random() * canvasWidth, y: Math.random() * canvasHeight,
-    //         vx: 0, vy: 0, radius: 5, color: 'blue'
-    //         // Add other simulation-specific properties
-    //     });
-    //     currentForces.push({ fx: 0, fy: 0 }); // Initialize corresponding force entry
-    // }
-
-    console.log("Simulation state initialized (template).");
-    // currentForces = computeAllForces(); // Compute initial forces after entities are created
-}
-
-/**
- * Adapts the simulation state when the canvas is resized.
- * - Updates entity positions, scales, or recalculates layout based on new dimensions.
- * - Ensures the simulation remains consistent and visually correct.
- */
-function adaptSimulationToResize(oldWidth, oldHeight, newWidth, newHeight) {
-    // TODO: Implement logic to adjust entities to new canvas dimensions.
-    // This is crucial for a responsive simulation that doesn't just reset.
-    // Example: Scale positions proportionally
-    // const scaleX = newWidth / oldWidth;
-    // const scaleY = newHeight / oldHeight;
-    // entities.forEach(e => {
-    //     e.x *= scaleX;
-    //     e.y *= scaleY;
-    //     // Adjust other properties like rest lengths if they depend on spacing
-    // });
-
-    console.log(`Adapting simulation to resize: ${newWidth}x${newHeight} (template).`);
-}
-
-/**
- * Computes all forces acting on/between entities in the current state.
- * This is highly specific to your simulation\'s physics model.
- * @returns {Array} An array of force objects (e.g., {fx, fy} for each entity).
- */
-function computeAllForces() {
-    if (!entities || entities.length === 0) return [];
-
-    const forces = entities.map(() => ({ fx: 0, fy: 0 })); // Initialize forces to zero
-
-    // TODO: Implement your force calculation logic.
-    // Example: Gravity, spring forces, electrostatic forces, agent interactions, etc.
-    // entities.forEach((entity, i) => {
-    //     // Example: Simple gravity towards center (replace with actual physics)
-    //     const gravityX = (canvasWidth / 2 - entity.x) * 0.01;
-    //     const gravityY = (canvasHeight / 2 - entity.y) * 0.01;
-    //     forces[i].fx += gravityX;
-    //     forces[i].fy += gravityY;
-    // });
-    return forces;
-}
-
-/**
- * Performs one discrete step of the physics simulation.
- * Updates entity states (positions, velocities) based on currentForces and BASE_DT.
- * This is where your integration method (e.g., Euler, Verlet) goes.
- */
-function runSinglePhysicsStep() {
-    // Assumes currentForces has been computed for the current state.
-    // TODO: Implement your physics integration step.
-    // Example: Verlet-like integration step (simplified)
-    // entities.forEach((p, i) => {
-    //     const halfDt = 0.5 * BASE_DT;
-    //     // Update velocities (first half step)
-    //     p.vx += currentForces[i].fx * halfDt;
-    //     p.vy += currentForces[i].fy * halfDt;
-    //     // Update positions
-    //     p.x += p.vx * BASE_DT;
-    //     p.y += p.vy * BASE_DT;
-    // });
-    //
-    // // Recompute forces based on new positions
-    // currentForces = computeAllForces();
-    //
-    // entities.forEach((p, i) => {
-    //     const halfDt = 0.5 * BASE_DT;
-    //     // Update velocities (second half step)
-    //     p.vx += currentForces[i].fx * halfDt;
-    //     p.vy += currentForces[i].fy * halfDt;
-    //
-    //     // Boundary conditions (example: wrap around canvas)
-    //     // if (p.x < 0) p.x += canvasWidth; if (p.x > canvasWidth) p.x -= canvasWidth;
-    //     // if (p.y < 0) p.y += canvasHeight; if (p.y > canvasHeight) p.y -= canvasHeight;
-    // });
-}
-
-/**
- * Renders the current state of the simulation to the canvas.
- * Draws all entities and other visual elements.
- */
-function renderSimulation() {
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-    // TODO: Implement your rendering logic.
-    // Example: Draw each entity
-    // entities.forEach(e => {
-    //     ctx.fillStyle = e.color || 'grey';
-    //     ctx.beginPath();
-    //     ctx.arc(e.x, e.y, e.radius || 5, 0, Math.PI * 2);
-    //     ctx.fill();
-    // });
-
-    // Example: Draw a border
-    // ctx.strokeStyle = 'black';
-    // ctx.strokeRect(0, 0, canvasWidth, canvasHeight);
-}
-
-/**
- * Computes and displays any relevant data from the simulation.
- * Updates the 'simDataDisplay' DOM element.
- */
-function computeAndDisplayData() {
-    if (!simDataDisplay) return;
-
-    // TODO: Calculate and display relevant simulation data.
-    // Example: Number of entities, average energy, etc.
-    // const dataToShow = entities.length;
-    // simDataDisplay.textContent = dataToShow;
-    simDataDisplay.textContent = "N/A"; // Default placeholder
-}
-
-// --- Main Animation Loop & Setup ---
-
-/**
- * The main animation loop.
- * - Handles timing and calls physics updates and rendering.
- * - Manages canvas resizing.
- */
-function animate(timestamp) {
-    if (!ctx) {
-        console.error("Canvas context not available for animation.");
-        return;
-    }
-
-    if (lastTimestamp === 0) lastTimestamp = timestamp; // Initialize on first frame
-    let realDeltaTimeMs = timestamp - lastTimestamp;
-    lastTimestamp = timestamp;
-
-    // Cap delta time to prevent physics spiral if tab was inactive
-    if (realDeltaTimeMs > 100) realDeltaTimeMs = 100;
-
-    // --- Physics Updates (Fixed Timestep) ---
-    const referenceSlotsPassed = realDeltaTimeMs / (1000.0 / REFERENCE_UPDATES_PER_SECOND);
-    physicsStepAccumulator += referenceSlotsPassed * timeScale; // Apply user-controlled speed
-
-    let maxStepsPerFrame = 100; // Safety break for the while loop
-    let stepsTaken = 0;
-    while (physicsStepAccumulator >= 1.0 && stepsTaken < maxStepsPerFrame) {
-        runSinglePhysicsStep(); // Each call performs one 'BASE_DT' physics step
-        physicsStepAccumulator -= 1.0;
-        stepsTaken++;
-    }
-    if (stepsTaken >= maxStepsPerFrame) {
-        console.warn("Max physics steps per frame reached. Simulation might be running too slow or timeScale is too high.");
-        physicsStepAccumulator = 0; // Reset accumulator to prevent runaway loop
-    }
-    
-    // --- Canvas Resize Handling ---
-    if (canvas.clientWidth !== canvasWidth || canvas.clientHeight !== canvasHeight) {
-        const oldWidth = canvasWidth;
-        const oldHeight = canvasHeight;
-        
-        canvasWidth = canvas.clientWidth;
-        canvasHeight = canvas.clientHeight;
-        canvas.width = canvasWidth;   // Set drawing buffer width
-        canvas.height = canvasHeight; // Set drawing buffer height
-        
-        if (entities.length > 0) {
-            adaptSimulationToResize(oldWidth, oldHeight, canvasWidth, canvasHeight);
-        } else {
-            // If no entities (e.g., initial setup failed or called before start), re-initialize.
-            initializeSimulationState();
-        }
-        currentForces = computeAllForces(); // Recompute forces with new positions/layout
-    }
-    
-    // --- Rendering & Data Display ---
-    renderSimulation();
-    computeAndDisplayData();
-    
-    requestAnimationFrame(animate); // Request next frame
-}
-
-/**
- * Initializes and starts the simulation.
- * Called once the DOM is ready.
- */
-function startSimulation() {
+    const canvas = document.getElementById('simulationCanvas');
+    const ctx = canvas ? canvas.getContext('2d') : null;
     if (!canvas || !ctx) {
-        console.error("Canvas or context not found. Simulation cannot start.");
-        if (!document.getElementById('simulationCanvas')) {
-            console.error("Element with ID 'simulationCanvas' not found in the DOM.");
-        } else if (canvas && !canvas.getContext) { // Check canvas directly
-            console.error("canvas.getContext is not a function. Is 'simulationCanvas' a canvas element?");
-        }
+        console.error('Simulation canvas not found.');
         return;
     }
 
-    // Set initial canvas dimensions from its CSS-defined size or aspect ratio box
-    const aspectRatioBox = canvas.parentElement; // Assumes canvas is child of .sim-aspect-ratio-box
-    if (aspectRatioBox && aspectRatioBox.classList.contains('sim-aspect-ratio-box')) {
-        canvasWidth = aspectRatioBox.clientWidth;
-        canvasHeight = aspectRatioBox.clientHeight;
-    } else {
-        // Fallback if structure is not as expected, use current canvas element size or defaults
-        canvasWidth = canvas.clientWidth || canvasWidth; // Use clientWidth if available
-        canvasHeight = canvas.clientHeight || canvasHeight; // Use clientHeight if available
-    }
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
+    // --- Controls (ids from simulation_template.html) ---
+    const $ = (id) => document.getElementById(id);
+    const speedSlider = $('speedSlider');
+    const speedVal = $('speedVal');
+    const param1Slider = $('param1Slider');
+    const param1Val = $('param1Val');
+    const param2Slider = $('param2Slider');
+    const param2Val = $('param2Val');
+    const modeSelector = $('modeSelector');
+    const showLabelsToggle = $('showLabelsToggle');
+    const resetButton = $('resetSimulationBtn');
+    const showChartsToggle = $('showCharts');
+    const chartsContainer = $('charts-container');
+    const fpsDisplay = $('fpsDisplay');
+    const stat1El = $('stat1');
+    const stat2El = $('stat2');
 
-    initializeSimulationState();
-    currentForces = computeAllForces(); // Initial force calculation
-    
-    requestAnimationFrame(animate); // Start the animation loop
-    console.log("Simulation started (template).");
-}
-
-// --- UI Event Listeners ---
-
-// Time scale slider
-if (timeSlider && timeScaleVal) {
-    timeSlider.oninput = () => {
-        timeScale = parseFloat(timeSlider.value);
-        timeScaleVal.textContent = timeScale.toFixed(1); // Update display
+    // --- Settings ---
+    const settings = {
+        speed: speedSlider ? parseFloat(speedSlider.value) : 1,
+        count: param1Slider ? parseInt(param1Slider.value, 10) : 40,
+        radius: param2Slider ? parseFloat(param2Slider.value) : 6, // CSS px
+        mode: modeSelector ? modeSelector.value : 'mode1',
+        showLabels: showLabelsToggle ? showLabelsToggle.checked : false,
     };
-    // Initialize display
-    timeScaleVal.textContent = parseFloat(timeSlider.value).toFixed(1);
-}
 
-// TODO: Add event listeners for other simulation-specific controls here.
+    // --- State ---
+    // Positions are stored as fractions of the canvas size, so a resize needs no special handling.
+    let particles = [];
+    let viewW = 0; // Canvas size in CSS px
+    let viewH = 0;
+    let dpr = 1;
+    let simTime = 0; // Simulated seconds
 
-// --- Global Simulation Control Object (for reset button, etc.) ---
-window.simulationTemplate = {
-    reset: () => {
-        console.log("Resetting simulation (template)...");
-        initializeSimulationState();
-        currentForces = computeAllForces(); // Recompute forces after reset
-        
-        // Reset timing variables
-        physicsStepAccumulator = 0;
-        lastTimestamp = 0; // Reset timestamp to avoid large jump on first frame after reset
-                           // The animate loop will re-initialize it on the next frame.
-        
-        computeAndDisplayData(); // Update displayed data
-        console.log("Simulation reset complete (template).");
-    },
-    // Add other control functions as needed (e.g., pause, step)
-};
+    function randomParticle() {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 0.08 + Math.random() * 0.12; // Canvas widths per second
+        return { x: Math.random(), y: Math.random(), vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed };
+    }
 
-// --- DOM Ready ---
-document.addEventListener('DOMContentLoaded', () => {
-    if (resetButton) {
-        resetButton.addEventListener('click', () => {
-            if (window.simulationTemplate && typeof window.simulationTemplate.reset === 'function') {
-                window.simulationTemplate.reset();
-            }
+    // TODO: set up the simulation's initial state (called on start and reset).
+    function initializeSimulationState() {
+        particles = [];
+        for (let i = 0; i < settings.count; i++) particles.push(randomParticle());
+        simTime = 0;
+        resetCharts();
+    }
+
+    // TODO: advance the simulation by dt seconds.
+    function step(dt) {
+        const aspect = viewW > 0 && viewH > 0 ? viewW / viewH : 2;
+        for (const p of particles) {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt * aspect; // Same speed in px horizontally and vertically
+            if (p.x < 0) { p.x = -p.x; p.vx = Math.abs(p.vx); }
+            if (p.x > 1) { p.x = 2 - p.x; p.vx = -Math.abs(p.vx); }
+            if (p.y < 0) { p.y = -p.y; p.vy = Math.abs(p.vy); }
+            if (p.y > 1) { p.y = 2 - p.y; p.vy = -Math.abs(p.vy); }
+        }
+        simTime += dt;
+    }
+
+    // --- Theme ---
+    function isDarkMode() {
+        return document.documentElement.classList.contains('dark-mode');
+    }
+
+    // --- Rendering (in CSS px) ---
+    // TODO: draw the simulation.
+    function render() {
+        if (viewW === 0 || viewH === 0) return;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const dark = isDarkMode();
+        ctx.fillStyle = dark ? '#16181c' : '#f4f6f8';
+        ctx.fillRect(0, 0, viewW, viewH);
+
+        ctx.fillStyle = settings.mode === 'mode1' ? '#f2849e' : '#7ecaf6';
+        for (const p of particles) {
+            ctx.beginPath();
+            ctx.arc(p.x * viewW, p.y * viewH, settings.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (settings.showLabels) {
+            // Text size in CSS px with a clamp: readable on phones, not huge on large screens.
+            const fontPx = Math.max(11, Math.min(15, viewW / 60));
+            ctx.font = `${fontPx}px "Source Sans Pro", Helvetica, sans-serif`;
+            ctx.fillStyle = dark ? '#e0e0e0' : '#585858';
+            ctx.textBaseline = 'top';
+            ctx.textAlign = 'right'; // Right-aligned at a fixed x: changing digits don't shift the label
+            ctx.fillText(`t = ${simTime.toFixed(1)} s`, viewW - 10, 10);
+            ctx.textAlign = 'left';
+        }
+    }
+
+    // --- Readouts (fixed-width formatting to match --chars in the HTML) ---
+    function averageSpeedPx() {
+        if (particles.length === 0) return 0;
+        let sum = 0;
+        for (const p of particles) sum += Math.hypot(p.vx * viewW, p.vy * viewW);
+        return sum / particles.length;
+    }
+
+    function updateReadouts() {
+        if (stat1El) stat1El.textContent = Math.min(999.9, averageSpeedPx()).toFixed(1);
+        if (stat2El) stat2El.textContent = String(particles.length);
+    }
+
+    // --- Canvas sizing: drawing buffer = CSS size x devicePixelRatio ---
+    function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        const w = Math.max(1, Math.round(rect.width));
+        const h = Math.max(1, Math.round(rect.height));
+        const newDpr = Math.min(2, window.devicePixelRatio || 1); // Capped at 2 to limit fill cost
+        if (w === viewW && h === viewH && newDpr === dpr) return;
+        viewW = w;
+        viewH = h;
+        dpr = newDpr;
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        render(); // Resizing clears the canvas: redraw at once rather than waiting for the next frame
+    }
+
+    if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(resizeCanvas).observe(canvas);
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // --- Pointer input (mouse, pen and touch) ---
+    // TODO: replace with the simulation's interaction. The canvas has touch-action: none (shared CSS), so drags
+    // don't scroll the page; set touch-action: auto on the canvas in page CSS if it takes no drags.
+    canvas.addEventListener('pointerdown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const p = randomParticle();
+        p.x = (e.clientX - rect.left) / rect.width;
+        p.y = (e.clientY - rect.top) / rect.height;
+        if (particles.length < 300) particles.push(p);
+        updateReadouts();
+    });
+
+    // --- Charts (optional; needs Chart.js in the head) ---
+    let charts = null;
+    let lastChartSample = 0;
+
+    function chartColors() {
+        const dark = isDarkMode();
+        return { text: dark ? '#e0e0e0' : '#585858', grid: dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' };
+    }
+
+    function makeChart(canvasId, label, color) {
+        const el = $(canvasId);
+        if (!el || typeof Chart === 'undefined') return null;
+        const c = chartColors();
+        return new Chart(el, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label, data: [], borderColor: color, borderWidth: 2, pointRadius: 0, tension: 0.2 }] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { labels: { color: c.text } } },
+                scales: {
+                    x: { ticks: { color: c.text, maxTicksLimit: 6 }, grid: { color: c.grid }, title: { display: true, text: 'Time (s)', color: c.text } },
+                    y: { ticks: { color: c.text }, grid: { color: c.grid } },
+                },
+            },
         });
     }
-    startSimulation(); // Start the simulation once the DOM is fully loaded
-});
+
+    function setChartsVisible(visible) {
+        if (!chartsContainer) return;
+        chartsContainer.style.display = visible ? 'block' : 'none';
+        document.body.classList.toggle('charts-visible', visible);
+        if (visible && !charts) {
+            charts = [makeChart('chart1', 'Avg. speed (px/s)', '#f2849e'), makeChart('chart2', 'Particles', '#7ecaf6')];
+        }
+    }
+
+    function resetCharts() {
+        lastChartSample = 0;
+        if (!charts) return;
+        charts.forEach((chart) => {
+            if (!chart) return;
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update('none');
+        });
+    }
+
+    function sampleCharts() {
+        if (!charts || !chartsContainer || chartsContainer.style.display === 'none') return;
+        if (simTime - lastChartSample < 0.5) return;
+        lastChartSample = simTime;
+        const values = [averageSpeedPx(), particles.length];
+        charts.forEach((chart, i) => {
+            if (!chart) return;
+            chart.data.labels.push(simTime.toFixed(1));
+            chart.data.datasets[0].data.push(values[i]);
+            if (chart.data.labels.length > 120) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+            chart.update('none');
+        });
+    }
+
+    // Recolour the charts when the light/dark theme changes.
+    new MutationObserver(() => {
+        if (!charts) return;
+        const c = chartColors();
+        charts.forEach((chart) => {
+            if (!chart) return;
+            chart.options.plugins.legend.labels.color = c.text;
+            ['x', 'y'].forEach((axis) => {
+                chart.options.scales[axis].ticks.color = c.text;
+                chart.options.scales[axis].grid.color = c.grid;
+                if (chart.options.scales[axis].title) chart.options.scales[axis].title.color = c.text;
+            });
+            chart.update('none');
+        });
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    // --- Control wiring ---
+    function bindSlider(slider, output, apply, format) {
+        if (!slider) return;
+        const update = () => {
+            const value = parseFloat(slider.value);
+            apply(value);
+            if (output) output.textContent = format(value);
+        };
+        slider.addEventListener('input', update);
+        update();
+    }
+
+    bindSlider(speedSlider, speedVal, (v) => { settings.speed = v; }, (v) => v.toFixed(1));
+    bindSlider(param1Slider, param1Val, (v) => {
+        settings.count = Math.round(v);
+        while (particles.length < settings.count) particles.push(randomParticle());
+        particles.length = settings.count;
+    }, (v) => String(Math.round(v)));
+    bindSlider(param2Slider, param2Val, (v) => { settings.radius = v; }, (v) => String(Math.round(v)));
+
+    if (modeSelector) modeSelector.addEventListener('change', () => { settings.mode = modeSelector.value; });
+    if (showLabelsToggle) showLabelsToggle.addEventListener('change', () => { settings.showLabels = showLabelsToggle.checked; });
+    if (showChartsToggle) {
+        showChartsToggle.addEventListener('change', () => setChartsVisible(showChartsToggle.checked));
+        setChartsVisible(showChartsToggle.checked);
+    }
+
+    // --- Main loop (exactly one) ---
+    const MAX_FRAME_DT = 0.1; // s; avoids a huge step after the tab was hidden
+    let lastTimestamp = 0;
+    let fpsFrames = 0;
+    let fpsTime = 0;
+
+    function frame(timestamp) {
+        const dt = lastTimestamp ? Math.min(MAX_FRAME_DT, (timestamp - lastTimestamp) / 1000) : 0;
+        lastTimestamp = timestamp;
+
+        step(dt * settings.speed);
+        render();
+        updateReadouts();
+        sampleCharts();
+
+        if (fpsDisplay) {
+            fpsFrames++;
+            fpsTime += dt;
+            if (fpsTime >= 0.5) {
+                fpsDisplay.textContent = `FPS: ${Math.round(fpsFrames / fpsTime)}`;
+                fpsFrames = 0;
+                fpsTime = 0;
+            }
+        }
+        requestAnimationFrame(frame);
+    }
+
+    // --- Public API (used by the reset button; handy for testing) ---
+    window.simulationTemplate = {
+        reset() {
+            initializeSimulationState();
+            lastTimestamp = 0;
+            render();
+            updateReadouts();
+        },
+    };
+
+    if (resetButton) resetButton.addEventListener('click', () => window.simulationTemplate.reset());
+
+    // --- Start ---
+    resizeCanvas();
+    initializeSimulationState();
+    updateReadouts();
+    requestAnimationFrame(frame);
+})();
