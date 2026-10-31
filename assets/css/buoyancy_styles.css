@@ -2,7 +2,9 @@
 
 .buoyancy-sim {
     --buoy-btn: 34px;                                   /* tool button size */
-    --buoy-side-w: calc(4 * var(--buoy-btn) + 23px);    /* tool column beside the canvas */
+    --buoy-cols: 4;                                     /* buttons per row in the tool column */
+    /* tool column beside the canvas: buttons, 3px gaps, padding and border */
+    --buoy-side-w: calc(var(--buoy-cols) * (var(--buoy-btn) + 3px) + 11px);
     --buoy-side-gap: 8px;
 }
 
@@ -260,16 +262,27 @@
         grid-area: info;
     }
 
+    /* As tall as the canvas beside it, never taller; if the tools need more room they scroll,
+       with soft shadows at the edges that show there is more. */
     .buoy-toolbar {
         grid-area: tools;
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(var(--buoy-cols), minmax(0, 1fr));
         align-content: start;
         gap: 8px 3px;
         margin-top: 0;
         min-height: 0;
-        overflow: hidden;
-        contain: size;          /* as tall as the canvas beside it, never taller */
+        contain: size;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        background:
+            linear-gradient(var(--color-bg-alt) 40%, transparent) center top / 100% 22px no-repeat local,
+            linear-gradient(transparent, var(--color-bg-alt) 60%) center bottom / 100% 22px no-repeat local,
+            radial-gradient(farthest-side at 50% 0, rgba(128, 128, 128, 0.55), transparent) center top / 100% 9px no-repeat scroll,
+            radial-gradient(farthest-side at 50% 100%, rgba(128, 128, 128, 0.55), transparent) center bottom / 100% 9px no-repeat scroll;
+        background-color: var(--color-bg-alt);
     }
 
     .buoy-mode,
@@ -282,7 +295,7 @@
     .buoy-mats,
     .buoy-tools {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(var(--buoy-cols), minmax(0, 1fr));
         gap: 3px;
     }
 
@@ -339,6 +352,33 @@
     @media (max-height: 540px) {
         .buoy-hint {
             display: none;
+        }
+
+        /* ...and with the settings docked beside the tank too, a two-wide column leaves the tank
+           more width (it scrolls if it is taller than the tank) */
+        body.sim-panel-side.sim-panel-active .buoyancy-sim {
+            --buoy-cols: 2;
+        }
+
+        body.sim-panel-side.sim-panel-active .buoy-mode {
+            flex-direction: column;
+        }
+
+        body.sim-panel-side.sim-panel-active .buoy-toolbar .buoy-mode-btn {
+            flex: 0 0 auto;
+        }
+
+        body.sim-panel-side.sim-panel-active .buoy-toolbar .buoy-mode-btn:first-child {
+            border-radius: 4px 4px 0 0;
+        }
+
+        body.sim-panel-side.sim-panel-active .buoy-toolbar .buoy-mode-btn:last-child {
+            border-radius: 0 0 4px 4px;
+        }
+
+        body.sim-panel-side.sim-panel-active .buoy-size,
+        body.sim-panel-side.sim-panel-active .buoy-edit {
+            grid-column: 1 / -1;
         }
     }
 
