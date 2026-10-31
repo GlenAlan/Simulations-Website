@@ -1,0 +1,822 @@
+/* --- Orbits & Gravity simulation page styles (loaded after simulation_styles.css) --- */
+
+.orbits-sim {
+    --orb-chip-w: 66px;                                 /* body chips in the palette */
+    --orb-chip-h: 50px;
+    --orb-cols: 2;                                      /* chips per row in the column beside the canvas */
+    /* tool column beside the canvas: chips, 4px gaps, padding and border */
+    --orb-side-w: calc(var(--orb-cols) * (var(--orb-chip-w) + 4px) + 10px);
+    --orb-side-gap: 8px;
+    --orb-force: #f2849e;
+    --orb-velocity: #7bd0c1;
+}
+
+html:not(.dark-mode) .orbits-sim {
+    --orb-force: #e0607e;
+    --orb-velocity: #2a9d8f;
+}
+
+@media (pointer: coarse) {
+    .orbits-sim {
+        --orb-chip-h: 54px;
+    }
+}
+
+/* ---------- Palette of bodies ----------
+   Portrait / narrow: under the canvas, the chips in rows, then the hint and the fit button.
+   Landscape: a column beside the canvas (see the media query further down), so the canvas keeps
+   the full height of the screen. */
+.orb-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    margin-top: 0.5em;
+    padding: 5px 6px;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius, 6px);
+    font-size: 0.85em;
+    line-height: 1.3;
+}
+
+.orb-toolbar-label {
+    display: none;
+    margin: 0;
+    font-size: 0.78em;
+    font-weight: 900;
+    line-height: 1.3;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.75;
+}
+
+.orb-palette {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1 1 100%;
+}
+
+.orb-toolbar button {
+    -webkit-appearance: none;
+    appearance: none;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    font-size: 1em;
+    font-weight: 400;
+    line-height: 1.2;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text) !important;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    background-color: var(--color-bg);
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+    .orb-toolbar button:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+.orb-toolbar button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.orb-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* A body chip: a disc in the body's colour over its name. Drag it onto the canvas (a click or tap
+   adds it at a free spot). */
+.orb-toolbar .orb-chip {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex: 1 1 var(--orb-chip-w);
+    min-width: 0;
+    max-width: 84px;
+    height: var(--orb-chip-h);
+    padding: 3px 2px 2px;
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;             /* a drag from a chip carries the body, it doesn't scroll the page */
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.orb-toolbar .orb-chip.is-dragging {
+    cursor: grabbing;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+    background-color: var(--color-bg-button-active-overlay);
+}
+
+.orb-chip-disc {
+    display: block;
+    flex: 0 0 auto;
+    border-radius: 50%;
+}
+
+html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
+    outline: 1px solid rgba(0, 0, 0, 0.22);
+}
+
+.orb-chip-disc.is-custom {
+    box-sizing: border-box;
+    border: 2px dashed var(--color-text);
+    opacity: 0.8;
+    position: relative;
+}
+
+.orb-chip-disc.is-custom::after {
+    content: '+';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.orb-chip-name {
+    display: block;
+    max-width: 100%;
+    font-size: 0.82em;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.orb-toolbar .orb-fit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45em;
+    order: 3;
+    flex: 0 0 auto;
+    height: 36px;
+    padding: 0 0.8em;
+    white-space: nowrap;
+}
+
+.orb-hint {
+    order: 2;
+    flex: 1 1 0%;
+    min-width: 0;
+    margin: 0;
+    padding: 0 0.15em;
+    font-size: 0.95em;
+    line-height: 1.35;
+    opacity: 0.85;
+    /* two fixed lines, so a longer hint never changes the toolbar's height */
+    height: 2.7em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+
+.orb-hint strong {
+    font-weight: 700;
+}
+
+/* The dragged body follows the pointer outside the canvas too. */
+.orb-drag-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 9500;
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Phones: hide the "Fit view" text, keep the icon. */
+@media (max-width: 480px) {
+    .orb-fit-text {
+        display: none;
+    }
+
+    .orb-toolbar .orb-fit {
+        width: 40px;
+        padding: 0;
+    }
+
+    .orb-toolbar .orb-chip {
+        max-width: none;
+    }
+}
+
+/* ---------- Landscape: the palette in a column beside the canvas ----------
+   The column has a fixed width, so the display container is made that much wider than the
+   canvas (which the shared layout sizes from the screen height). */
+@media (orientation: landscape) and (min-width: 640px) {
+    .orbits-sim .simulation-display-container {
+        display: grid;
+        grid-template-columns: var(--orb-side-w) minmax(0, 1fr);
+        grid-template-areas: "tools canvas" "info info";
+        column-gap: var(--orb-side-gap);
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--orb-side-w) + var(--orb-side-gap)));
+    }
+
+    .orbits-sim .sim-canvas-wrapper {
+        grid-area: canvas;
+        min-width: 0;
+    }
+
+    .orbits-sim .sim-info-bar {
+        grid-area: info;
+    }
+
+    /* As tall as the canvas beside it, never taller; if the chips need more room they scroll,
+       with soft shadows at the edges that show there is more. */
+    .orb-toolbar {
+        grid-area: tools;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        flex-wrap: nowrap;
+        gap: 8px;
+        margin-top: 0;
+        min-height: 0;
+        contain: size;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        background:
+            linear-gradient(var(--color-bg-alt) 40%, transparent) center top / 100% 22px no-repeat local,
+            linear-gradient(transparent, var(--color-bg-alt) 60%) center bottom / 100% 22px no-repeat local,
+            radial-gradient(farthest-side at 50% 0, rgba(128, 128, 128, 0.55), transparent) center top / 100% 9px no-repeat scroll,
+            radial-gradient(farthest-side at 50% 100%, rgba(128, 128, 128, 0.55), transparent) center bottom / 100% 9px no-repeat scroll;
+        background-color: var(--color-bg-alt);
+    }
+
+    .orb-toolbar-label {
+        display: block;
+        padding: 2px 2px 0;
+    }
+
+    .orb-palette {
+        display: grid;
+        grid-template-columns: repeat(var(--orb-cols), minmax(0, 1fr));
+        flex: 0 0 auto;
+    }
+
+    .orb-toolbar .orb-chip {
+        max-width: none;
+        width: 100%;
+    }
+
+    .orb-toolbar .orb-fit {
+        order: 0;
+        width: 100%;
+    }
+
+    .orb-hint {
+        order: 0;
+        flex: 0 0 auto;
+        height: auto;
+        display: block;
+        font-size: 0.9em;
+        line-height: 1.4;
+        padding: 2px 2px 0;
+    }
+
+    /* Phones held sideways: no room for the hint; slim chips (disc beside the name) so the whole
+       palette fits beside the canvas */
+    @media (max-height: 540px) {
+        .orb-hint,
+        .orb-toolbar-label,
+        .orb-subject-around {
+            display: none;
+        }
+
+        .orbits-sim {
+            --orb-chip-w: 80px;
+        }
+
+        .orb-toolbar {
+            gap: 6px;
+        }
+
+        .orb-toolbar .orb-chip {
+            flex-direction: row;
+            justify-content: flex-start;
+            gap: 5px;
+            height: 32px;
+            padding: 0 5px;
+        }
+
+        .orb-toolbar .orb-chip .orb-chip-name {
+            font-size: 0.78em;
+        }
+
+        .orb-toolbar .orb-chip .orb-chip-disc {
+            width: 12px !important;
+            height: 12px !important;
+        }
+
+        .orb-chip-disc.is-custom {
+            border-width: 1.5px;
+        }
+
+        .orb-chip-disc.is-custom::after {
+            font-size: 9px;
+        }
+
+        .orb-toolbar .orb-fit {
+            height: 32px;
+        }
+    }
+
+    /* Fullscreen: the grid fills the space above the fixed info bar */
+    body.sim-fullscreen-active .orbits-sim .simulation-display-container {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "tools canvas";
+        width: 100%;
+    }
+
+    body.sim-fullscreen-active .orbits-sim .sim-canvas-wrapper {
+        height: 100%;
+    }
+}
+
+/* Fullscreen: space has no shape, so the canvas fills all the room it is given (the simulation
+   draws at any size) rather than keeping its aspect ratio. */
+body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
+    width: 100%;
+    height: 100%;
+}
+
+/* ---------- Info bar: which body the readouts are for ---------- */
+.orb-subject {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.4em;
+    min-width: 0;
+    max-width: 15em;
+    padding: 0.3em 0.2em 0.3em 0.1em;
+    font-size: 0.8em;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    color: var(--color-text);
+}
+
+.orb-subject-dot {
+    align-self: center;
+    flex: 0 0 auto;
+    width: 0.8em;
+    height: 0.8em;
+    border-radius: 50%;
+    background: #7ecaf6;
+}
+
+.orb-subject-name {
+    font-weight: 700;
+    color: var(--sim-value-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.orb-subject-around {
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#pauseBtn[aria-pressed="true"] {
+    color: var(--color-accent) !important;
+    background-color: var(--color-bg-button-active-overlay);
+}
+
+/* ---------- On-canvas overlays ---------- */
+.sim-canvas-wrapper {
+    position: relative;
+}
+
+/* "Viewed from Earth  x": shown while the view is locked on a body. */
+.orb-frame-chip {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 6;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    max-width: calc(100% - 16px);
+    height: auto;
+    min-height: 32px;
+    margin: 0;
+    padding: 0.3em 0.75em;
+    font-size: 0.78em;
+    font-weight: 400;
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg-header-nav);
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-frame-chip[hidden] {
+    display: none;
+}
+
+.orb-frame-chip strong {
+    font-weight: 700;
+}
+
+.orb-frame-chip .icon {
+    color: var(--color-accent);
+}
+
+.orb-frame-chip .orb-frame-chip-x {
+    color: var(--color-text);
+    opacity: 0.7;
+}
+
+@media (hover: hover) {
+    .orb-frame-chip:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .orb-frame-chip:hover .orb-frame-chip-x {
+        color: var(--color-accent);
+        opacity: 1;
+    }
+}
+
+@media (pointer: coarse) {
+    .orb-frame-chip {
+        min-height: 40px;
+    }
+}
+
+/* ---------- Body popover (double-click or double-tap a body) ---------- */
+.orb-popover {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 30;
+    box-sizing: border-box;
+    width: 272px;
+    max-width: calc(100vw - 12px);
+    max-height: calc(100vh - 12px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px 10px 10px;
+    font-size: 14px;
+    line-height: 1.35;
+    color: var(--color-text);
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.orb-popover[hidden] {
+    display: none;
+}
+
+/* Phones in portrait: a sheet along the bottom of the screen, like the settings */
+.orb-popover.is-sheet {
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 9100;
+    width: auto;
+    max-width: 40rem;
+    max-height: 62vh;
+    margin: 0 auto;
+    padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+    font-size: 15px;
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: var(--sim-sheet-shadow);
+}
+
+.orb-popover *,
+.orb-popover *::before,
+.orb-popover *::after {
+    box-sizing: border-box;
+}
+
+.orb-pop-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.orb-pop-dot {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+}
+
+.orb-popover input.orb-pop-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 32px;
+    padding: 0 2px;
+    font-size: 1.05em;
+    font-weight: 700;
+    color: var(--color-text);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    border-radius: 0;
+}
+
+.orb-popover input.orb-pop-name:hover {
+    border-bottom-color: var(--color-border);
+}
+
+.orb-popover input.orb-pop-name:focus {
+    border-bottom-color: var(--color-accent);
+    box-shadow: inset 0 -1px 0 0 var(--color-accent);
+}
+
+.orb-popover button {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45em;
+    height: 34px;
+    margin: 0;
+    padding: 0 0.7em;
+    font-size: 0.9em;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+    .orb-popover button:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+.orb-popover button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.orb-popover button[aria-pressed="true"] {
+    color: #ffffff !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+.orb-popover .orb-pop-close {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.orb-pop-actions {
+    display: flex;
+    gap: 6px;
+    margin: 6px 0 4px;
+}
+
+.orb-pop-actions button {
+    flex: 1 1 auto;
+}
+
+.orb-pop-actions .orb-pop-delete {
+    flex: 0 0 34px;
+    padding: 0;
+}
+
+@media (hover: hover) {
+    .orb-pop-actions .orb-pop-delete:hover {
+        color: #ff5f5f !important;
+        box-shadow: inset 0 0 0 1px #ff5f5f;
+    }
+}
+
+.orb-pop-fields label {
+    display: block;
+    margin: 6px 0 0;
+    font-size: 0.9em;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--color-text);
+}
+
+.orb-pop-val {
+    font-weight: 700;
+    color: var(--color-accent);
+    font-variant-numeric: tabular-nums;
+}
+
+.orb-pop-note {
+    margin: -2px 0 0;
+    font-size: 0.78em;
+    line-height: 1.3;
+    opacity: 0.75;
+    font-variant-numeric: tabular-nums;
+}
+
+.orb-pop-info {
+    margin: 8px 0 0;
+    padding-top: 7px;
+    border-top: 1px solid var(--color-border);
+    font-size: 0.8em;
+    line-height: 1.45;
+    opacity: 0.9;
+    font-variant-numeric: tabular-nums;
+}
+
+.orb-pop-info strong {
+    font-weight: 700;
+}
+
+.orb-pop-colours {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 5px;
+    margin-top: 10px;
+}
+
+.orb-popover .orb-swatch {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.orb-popover.is-sheet .orb-swatch {
+    width: 26px;
+    height: 26px;
+}
+
+.orb-popover .orb-swatch[aria-checked="true"] {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+/* Sliders in the popover (the shared slider styles only cover the settings panel). */
+.orb-popover input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+}
+
+.orb-popover input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--sim-track);
+}
+
+.orb-popover input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    margin-top: -6px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.orb-popover input[type="range"]::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--sim-track);
+}
+
+.orb-popover input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.orb-popover input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+@media (pointer: coarse) {
+    .orb-popover input[type="range"] {
+        height: 32px;
+    }
+
+    .orb-popover input[type="range"]::-webkit-slider-thumb {
+        width: 22px;
+        height: 22px;
+        margin-top: -9px;
+    }
+
+    .orb-popover button {
+        height: 38px;
+    }
+}
+
+/* ---------- Controls panel ---------- */
+.sim-controls-content label .orb-sub {
+    margin-left: 0.15em;
+    opacity: 0.75;
+    font-weight: 400;
+    color: var(--color-text);
+}
+
+.sim-controls-content .orb-note {
+    margin-top: -0.35em;
+    font-size: 0.8em;
+    opacity: 0.75;
+}
+
+/* Arrow keys beside the "Show" switches */
+.orb-key {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 1.3em;
+    height: 2px;
+    margin-right: 0.1em;
+    border-radius: 1px;
+}
+
+.orb-key::after {
+    content: '';
+    position: absolute;
+    right: -2px;
+    top: -4px;
+    border-left: 6px solid currentColor;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+.orb-key-force {
+    background: var(--orb-force);
+    color: var(--orb-force);
+}
+
+.orb-key-velocity {
+    background: var(--orb-velocity);
+    color: var(--orb-velocity);
+}
+
+/* Canvas cursor hints */
+#simulationCanvas.orb-can-grab {
+    cursor: grab;
+}
+
+#simulationCanvas.orb-grabbing {
+    cursor: grabbing;
+}
+
+#simulationCanvas.orb-can-aim {
+    cursor: crosshair;
+}
