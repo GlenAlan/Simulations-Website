@@ -34,6 +34,8 @@ const resetButton = document.getElementById('resetSimulationBtn');
 const fpsDisplay = document.getElementById('fpsDisplay');
 const hintEl = document.getElementById('demonHint');
 const demonModeNote = document.getElementById('demonModeNote');
+const leftLabelEl = document.getElementById('leftLabel');
+const rightLabelEl = document.getElementById('rightLabel');
 
 // --- Simulation Constants ---
 // The physics runs in a fixed 750 x 375 "world" (matching the 2:1 canvas),
@@ -112,6 +114,8 @@ let viewScale = 1;    // canvas pixels per world unit (the same in x and y)
 let viewOffsetX = 0;  // canvas pixels; non-zero only if the canvas isn't exactly 2:1 (the world is centred)
 let viewOffsetY = 0;
 let renderDpr = 1;    // canvas pixels per CSS pixel
+let vertical = false; // chambers stacked (left chamber drawn on top) on tall, narrow screens
+let orientationSet = false;
 let currentDpr = window.devicePixelRatio || 1;
 let palette = null;
 let leftTempRatio = 1, rightTempRatio = 1; // latest chamber temperatures relative to the start
@@ -669,26 +673,29 @@ function updateReadouts() {
 }
 
 // Faint red / blue shading of a chamber that is hotter / colder than at the start.
-function drawChamberTint(x, width, tint) {
+// `chamber` is 0 (left / top) or 1 (right / bottom).
+function drawChamberTint(chamber, tint) {
     const strength = Math.min(0.1, Math.abs(tint - 1) * 0.25);
     if (strength < 0.01) return;
+    const half = CENTER_X * viewScale, across = WORLD_HEIGHT * viewScale;
     ctx.globalAlpha = strength;
     ctx.fillStyle = tint > 1 ? palette.red : palette.blue;
-    ctx.fillRect(x, viewOffsetY, width, WORLD_HEIGHT * viewScale);
+    if (vertical) ctx.fillRect(viewOffsetX, viewOffsetY + chamber * half, across, half);
+    else ctx.fillRect(viewOffsetX + chamber * half, viewOffsetY, half, across);
     ctx.globalAlpha = 1;
 }
 
-// The demon: a small horned face sitting on the wall just above the gate. Sizes are
-// in CSS pixels so it stays readable on a phone without growing huge on a big screen.
-function drawDemon(cx, gateTopY, cssHeight) {
+// The demon: a small horned face sitting on the wall just before the gate (above it, or
+// to its left when the chambers are stacked). Sizes are in CSS pixels so it stays
+// readable on a phone without growing huge on a big screen.
+function drawDemon(wallPos, gateStart, alongMin, cssSize) {
     const k = renderDpr;
-    const r = Math.max(8, Math.min(18, cssHeight * 0.034)) * k;
-    let cy = gateTopY - r - 5 * k;
-    cy = Math.max(cy, viewOffsetY + 1.5 * r);
+    const r = Math.max(8, Math.min(18, cssSize * 0.034)) * k;
+    const along = Math.max(gateStart - r - 5 * k, alongMin + 1.5 * r);
     const awake = demonMode === 'automatic';
 
     ctx.save();
-    ctx.translate(cx, cy);
+    if (vertical) ctx.translate(along, wallPos); else ctx.translate(wallPos, along);
     // Head and horns, with a thin halo in the background colour so the demon
     // stands out from particles passing behind it
     const parts = [new Path2D(), new Path2D(), new Path2D()]; // filled separately so overlaps never cancel out
@@ -728,13 +735,16 @@ function drawDemon(cx, gateTopY, cssHeight) {
     ctx.restore();
 }
 
+// Draws the world either as is (left / right chambers) or transposed (world x runs
+// down the screen, so the left chamber is on top) for tall screens. Below, "along"
+// is the screen coordinate along the dividing wall and "across" the one through it.
 function renderSimulation() {
     if (!ctx) return;
     if (!palette) refreshPalette();
     const [gateTop, gateBottom] = gateBounds();
     const s = viewScale, ox = viewOffsetX, oy = viewOffsetY;
     const k = renderDpr;
-    const cssHeight = canvas.height / k;
+    const cssSize = Math.min(canvas.width, canvas.height) / k;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -742,11 +752,11 @@ function renderSimulation() {
     // Chambers shaded by how much hotter / colder they are than at the start
     leftTint += (leftTempRatio - leftTint) * 0.08;
     rightTint += (rightTempRatio - rightTint) * 0.08;
-    drawChamberTint(ox, CENTER_X * s, leftTint);
-    drawChamberTint(ox + CENTER_X * s, CENTER_X * s, rightTint);
+    drawChamberTint(0, leftTint);
+    drawChamberTint(1, rightTint);
 
     // Particles, in world units. One path per colour keeps this cheap even with 1000 particles.
-    ctx.setTransform(s, 0, 0, s, ox, oy);
+    if (vertical) ctx.setTransform(0, s, s, 0, ox, oy); else ctx.setTransform(s, 0, 0, s, ox, oy);
     const redPath = new Path2D();
     const bluePath = new Path2D();
     const twoPi = Math.PI * 2;
@@ -763,60 +773,60 @@ function renderSimulation() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     // Wall and gate, with line widths in CSS pixels
-    const wallWidth = (cssHeight > 500 ? 3 : 2) * k;
-    const wallX = Math.round(ox + CENTER_X * s) + ((Math.round(wallWidth) % 2) ? 0.5 : 0);
-    const top = oy, bottom = oy + WORLD_HEIGHT * s;
-    const gateTopY = oy + gateTop * s, gateBottomY = oy + gateBottom * s;
+    const wallWidth = (cssSize > 500 ? 3 : 2) * k;
+    const acrossOrigin = vertical ? oy : ox, alongOrigin = vertical ? ox : oy;
+    const wallPos = Math.round(acrossOrigin + CENTER_X * s) + ((Math.round(wallWidth) % 2) ? 0.5 : 0);
+    const wallStart = alongOrigin, wallEnd = alongOrigin + WORLD_HEIGHT * s;
+    const gateStart = alongOrigin + gateTop * s, gateEnd = alongOrigin + gateBottom * s;
+    const segment = (path, a0, a1, c0, c1) => {
+        if (vertical) { path.moveTo(a0, c0); path.lineTo(a1, c1); }
+        else { path.moveTo(c0, a0); path.lineTo(c1, a1); }
+    };
+
     ctx.lineCap = 'butt';
     ctx.lineWidth = wallWidth;
     ctx.strokeStyle = palette.wall;
-    ctx.beginPath();
-    ctx.moveTo(wallX, top);
-    ctx.lineTo(wallX, gateTopY);
-    ctx.moveTo(wallX, gateBottomY);
-    ctx.lineTo(wallX, bottom);
-    ctx.stroke();
+    const wall = new Path2D();
+    segment(wall, wallStart, gateStart, wallPos, wallPos);
+    segment(wall, gateEnd, wallEnd, wallPos, wallPos);
+    ctx.stroke(wall);
 
     // Door frame: short ticks at both ends of the gap, so the doorway is visible when open
     const tick = 5 * k;
+    const frame = new Path2D();
+    segment(frame, gateStart, gateStart, wallPos - tick, wallPos + tick);
+    segment(frame, gateEnd, gateEnd, wallPos - tick, wallPos + tick);
     ctx.strokeStyle = palette.gate;
-    ctx.lineWidth = wallWidth;
-    ctx.beginPath();
-    ctx.moveTo(wallX - tick, gateTopY); ctx.lineTo(wallX + tick, gateTopY);
-    ctx.moveTo(wallX - tick, gateBottomY); ctx.lineTo(wallX + tick, gateBottomY);
-    ctx.stroke();
+    ctx.stroke(frame);
 
+    const door = new Path2D();
+    segment(door, gateStart, gateEnd, wallPos, wallPos);
     if (gateOpen) {
         // Open: a faint dashed line marks the doorway
         ctx.globalAlpha = 0.45;
         ctx.lineWidth = Math.max(1, k);
         ctx.setLineDash([3 * k, 4 * k]);
-        ctx.beginPath();
-        ctx.moveTo(wallX, gateTopY);
-        ctx.lineTo(wallX, gateBottomY);
-        ctx.stroke();
+        ctx.stroke(door);
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
     } else {
         // Closed: a solid bar, thicker than the wall, with a thin halo to separate it from particles
-        const bar = new Path2D();
-        bar.moveTo(wallX, gateTopY);
-        bar.lineTo(wallX, gateBottomY);
         ctx.lineWidth = wallWidth + 4 * k;
         ctx.strokeStyle = palette.halo;
-        ctx.stroke(bar);
+        ctx.stroke(door);
         ctx.lineWidth = wallWidth + 2 * k;
         ctx.strokeStyle = palette.gate;
-        ctx.stroke(bar);
+        ctx.stroke(door);
     }
 
-    drawDemon(wallX, gateTopY, cssHeight);
+    drawDemon(wallPos, gateStart, wallStart, cssSize);
 
     // If the canvas isn't exactly the world's shape, outline the world
     if (ox > 1 || oy > 1) {
+        const w = (vertical ? WORLD_HEIGHT : WORLD_WIDTH) * s, h = (vertical ? WORLD_WIDTH : WORLD_HEIGHT) * s;
         ctx.lineWidth = k;
         ctx.strokeStyle = palette.wall;
-        ctx.strokeRect(ox + 0.5, oy + 0.5, WORLD_WIDTH * s - 1, WORLD_HEIGHT * s - 1);
+        ctx.strokeRect(ox + 0.5, oy + 0.5, w - 1, h - 1);
     }
 }
 
@@ -864,11 +874,58 @@ function handleSimulationResize() {
     const pixelHeight = Math.max(1, Math.round(rect.height * renderDpr));
     if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
-    // One scale for both axes; if the box isn't exactly 2:1 the world is centred in it.
-    viewScale = Math.min(pixelWidth / WORLD_WIDTH, pixelHeight / WORLD_HEIGHT);
-    viewOffsetX = (pixelWidth - WORLD_WIDTH * viewScale) / 2;
-    viewOffsetY = (pixelHeight - WORLD_HEIGHT * viewScale) / 2;
+    // One scale for both axes; if the box isn't exactly the world's shape the world is centred in it.
+    const worldW = vertical ? WORLD_HEIGHT : WORLD_WIDTH, worldH = vertical ? WORLD_WIDTH : WORLD_HEIGHT;
+    viewScale = Math.min(pixelWidth / worldW, pixelHeight / worldH);
+    viewOffsetX = (pixelWidth - worldW * viewScale) / 2;
+    viewOffsetY = (pixelHeight - worldH * viewScale) / 2;
     renderSimulation();
+}
+
+// Phones held upright: a 2:1 box would use a thin strip of the screen, so stack the
+// chambers instead (the same world drawn transposed in a 1:2 box, left chamber on top).
+function wantsVertical() {
+    const w = window.innerWidth, h = window.innerHeight;
+    return w <= 600 && h > 1.2 * w;
+}
+
+function chamberNames() {
+    return vertical ? ['Top', 'Bottom'] : ['Left', 'Right'];
+}
+
+function demonNoteText() {
+    if (demonMode === 'manual') return 'You are the demon: press and hold on the simulation (or hold Space) to open the gate.';
+    return vertical
+        ? 'Lets fast particles through to the bottom and slow ones to the top.'
+        : 'Lets fast particles through to the right and slow ones to the left.';
+}
+
+function applyOrientation() {
+    const v = wantsVertical();
+    if (orientationSet && v === vertical) return;
+    vertical = v;
+    orientationSet = true;
+    const box = canvas.parentElement; // .sim-aspect-ratio-box (simulation_ui.js mirrors the ratio for fullscreen)
+    if (box) box.style.setProperty('--aspect-ratio', v ? '1/2' : '2/1');
+    const [first, second] = chamberNames();
+    setText(leftLabelEl, first);
+    setText(rightLabelEl, second);
+    [[leftLabelEl, first], [rightLabelEl, second]].forEach(([el, name]) => {
+        const boxEl = el ? el.closest('.stats-box') : null;
+        if (boxEl) boxEl.title = `${name} chamber: number of fast and slow particles, and temperature relative to the start`;
+    });
+    setText(demonModeNote, demonNoteText());
+    [[leftChart, first], [rightChart, second]].forEach(([chart, name]) => {
+        if (!chart) return;
+        chart.options.plugins.title.text = `${name} chamber`;
+        chart.canvas.setAttribute('aria-label', `Chart: fast and slow particles in the ${name.toLowerCase()} chamber over time`);
+        chart.update('none');
+    });
+}
+
+function handleWindowResize() {
+    applyOrientation();
+    handleSimulationResize();
 }
 
 function fullResetAndRestart() {
@@ -908,6 +965,7 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshPalette();
     setupCharts();
     initializeSimulationState();
+    applyOrientation();
     handleSimulationResize();
     updateReadouts();
 
@@ -951,9 +1009,7 @@ document.addEventListener('DOMContentLoaded', () => {
         canvas.classList.toggle('mx-manual', manual);
         heldPointers.clear();
         spaceHeld = false;
-        setText(demonModeNote, manual
-            ? 'You are the demon: press and hold on the simulation (or hold Space) to open the gate.'
-            : 'Lets fast particles through to the right and slow ones to the left.');
+        setText(demonModeNote, demonNoteText());
         if (manual) {
             manualHintDismissed = false;
             showHint(HINT_MANUAL);
@@ -1022,7 +1078,7 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('blur', () => { spaceHeld = false; });
 
     // Resize: window resizes, fullscreen / panel changes (simulation_ui.js) and layout shifts
-    window.addEventListener('resize', handleSimulationResize);
+    window.addEventListener('resize', handleWindowResize);
     if (typeof ResizeObserver !== 'undefined') {
         const resizeObserver = new ResizeObserver(() => handleSimulationResize());
         resizeObserver.observe(canvas);

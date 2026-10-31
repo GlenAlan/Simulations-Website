@@ -222,13 +222,13 @@
 										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container">
 												<div class="stats-box mx-chamber" title="Left chamber: number of fast and slow particles, and temperature relative to the start">
-													<strong>Left</strong>
+													<strong id="leftLabel">Left</strong>
 													<span class="mx-count mx-fast"><span class="sim-value" style="--chars: 3" id="leftRed">0</span><span class="mx-sr"> fast</span></span>
 													<span class="mx-count mx-slow"><span class="sim-value" style="--chars: 3" id="leftBlue">0</span><span class="mx-sr"> slow</span></span>
 													<span class="mx-temp"><span class="icon solid fa-thermometer-half" aria-hidden="true"></span><span class="mx-sr">temperature </span><span class="sim-value" style="--chars: 4" id="leftTemp">1.00</span></span>
 												</div>
 												<div class="stats-box mx-chamber" title="Right chamber: number of fast and slow particles, and temperature relative to the start">
-													<strong>Right</strong>
+													<strong id="rightLabel">Right</strong>
 													<span class="mx-count mx-fast"><span class="sim-value" style="--chars: 3" id="rightRed">0</span><span class="mx-sr"> fast</span></span>
 													<span class="mx-count mx-slow"><span class="sim-value" style="--chars: 3" id="rightBlue">0</span><span class="mx-sr"> slow</span></span>
 													<span class="mx-temp"><span class="icon solid fa-thermometer-half" aria-hidden="true"></span><span class="mx-sr">temperature </span><span class="sim-value" style="--chars: 4" id="rightTemp">1.00</span></span>
@@ -276,11 +276,11 @@
 											<h4>What you're seeing</h4>
 											<ul>
 												<li>Gas particles collide elastically. <strong class="mx-fast">Red</strong> ones are faster than the starting median speed, <strong class="mx-slow">blue</strong> ones slower; collisions keep changing their speeds and colours.</li>
-												<li>The demon opens the gate for fast particles heading right and slow ones heading left.</li>
+												<li>The demon opens the gate only for fast particles going one way and slow ones going the other.</li>
 												<li><span class="icon solid fa-thermometer-half"></span> shows each chamber's temperature (average kinetic energy) relative to the start.</li>
 											</ul>
 											<h4>The key idea</h4>
-											<p>Sorting by speed lowers the gas's entropy: the right side warms and the left cools. But to sort, the demon has to measure each particle and remember the result. Erasing that memory costs at least <em>kT</em>&nbsp;ln&nbsp;2 of energy per bit (Landauer's principle), which creates more entropy than the sorting removed, so the second law survives.</p>
+											<p>Sorting by speed lowers the gas's entropy: one side warms and the other cools. But to sort, the demon has to measure each particle and remember the result. Erasing that memory costs at least <em>kT</em>&nbsp;ln&nbsp;2 of energy per bit (Landauer's principle), which creates more entropy than the sorting removed, so the second law survives.</p>
 											<h4>Things to try</h4>
 											<ul>
 												<li>Watch the temperatures drift apart, or open the charts (<span class="icon solid fa-chart-bar"></span>).</li>
