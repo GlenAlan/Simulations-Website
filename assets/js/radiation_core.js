@@ -1182,7 +1182,8 @@
 
     // Caption above the heater, shown with "Labels" (temperature) and/or "Energy flow" (power).
     function drawSourceCaption(thermal) {
-        if (!state.showLabels && !state.showEnergy) return;
+        const energy = state.showEnergy && !thermal; // like the block captions, no power figures on the thermal image
+        if (!state.showLabels && !energy) return;
         const narrow = cssW < 600;
         const f = fontPx, sub = fontPx * 0.88, lh = fontPx * 1.2;
         const pad = Math.max(4, fontPx * 0.45);
@@ -1191,7 +1192,7 @@
             value: narrow ? fmtC(state.Ts, 0) : `${fmtC(state.Ts, 0)} (${Math.round(state.Ts)} K)`,
             tmpl: narrow ? '8888 °C' : '8888 °C (8888 K)'
         }];
-        if (state.showEnergy) {
+        if (energy) {
             rows.push({ label: 'emits', value: fmtPower(flux.srcEmit), tmpl: '88.88 kW' });
             rows.push({
                 label: narrow ? 'input' : 'electrical input',
