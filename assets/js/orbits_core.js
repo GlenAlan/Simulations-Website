@@ -1957,7 +1957,8 @@
         if (!(v > 0)) return { x, y, vx, vy, len: 0 };
         return { x: x + (vx / v) * (r + L), y: y - (vy / v) * (r + L), vx, vy, len: L };
     }
-    // The handle sits on the arrow's tip, or a little way out if the arrow is too short to grab
+    // Where an arrow is grabbed: its tip, or a little way out from the disc if the arrow is too short
+    // to grab (nothing is drawn there)
     function handlePos(b) {
         const tip = velocityTip(b);
         const x = sx(b.dx), y = sy(b.dy);
@@ -1968,7 +1969,7 @@
         if (len >= min) return { x: tip.x, y: tip.y };
         let ux, uy;
         if (len > 0.5) { ux = dx / len; uy = dy / len; } else {
-            // Hardly moving in this view: put the handle at right angles to the name label
+            // Hardly moving in this view: grab it at right angles to the name label
             const l = labelDirection(b);
             ux = -l.y; uy = l.x;
         }
@@ -2009,24 +2010,25 @@
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
             }
         }
-        // Velocities only when they are switched on (or while one is being aimed); the chosen body's
-        // arrow has a handle to drag.
+        // Velocities only when they are switched on (or while one is being aimed): plain arrows, like
+        // the forces. An arrow's tip is dragged to aim it (an invisible grab area round the tip); the
+        // arrow under the pointer, or being aimed, is drawn thicker and brighter. A body hardly moving
+        // has no arrow to grab, so hovering just off its disc shows a faint stub that can be pulled out.
+        const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         for (const b of bodies) {
             if (!(settings.velocities || b.aim) || (b.held && !b.aim) || (b.grp && b !== subj)) continue;
             const tip = velocityTip(b);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
             const len = Math.hypot(dx, dy);
-            if (tip.len > 2.5) arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, C.velocity, w);
-            if (((b === subj && !b.held && bodies.length > 1) || b.aim) && !cleanRender) {
-                const h = handlePos(b);
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = C.velocity;
-                ctx.fillStyle = hexA(C.dark ? '#16181c' : '#f4f6f8', 0.6);
-                ctx.beginPath();
-                ctx.arc(h.x, h.y, 6, 0, TAU);
-                ctx.fill();
-                ctx.stroke();
+            const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
+            if (tip.len > 2.5) {
+                arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+            } else if (hot && !b.aim) {
+                const h = handlePos(b), hl = Math.hypot(h.x - x, h.y - y) || 1;
+                ctx.globalAlpha = 0.6;
+                arrow(x + ((h.x - x) / hl) * r, y + ((h.y - y) / hl) * r, h.x, h.y, hotColour, w);
+                ctx.globalAlpha = 1;
             }
         }
     }
@@ -3277,7 +3279,7 @@
     // Canvas input: mouse, pen and touch through pointer events
     //   body: drag = move (held in place while dragged); right-click or long-press = its menu;
     //   double-click / double-tap = view from it (again: back to the centre of mass)
-    //   arrow tip (a handle on the chosen body's): drag = aim the velocity (Shift: ten times finer;
+    //   velocity arrow's tip (grabbed within a few px of it): drag = aim it (Shift: ten times finer;
     //   it snaps to the exact circular and escape speeds)
     //   empty space: drag = pan; two fingers = pinch zoom and pan; wheel = zoom
     //   tap/click = choose the body the readouts and Kepler's laws are about
@@ -3286,6 +3288,9 @@
     let pinch = null;
     let lastTap = { t: 0, x: 0, y: 0, id: null };
     let longPressTimer = 0;
+    // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
+    const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
+    let hoverAim = null;   // id of the body whose arrow tip the mouse is over
 
     function canvasPoint(e) {
         const r = canvas.getBoundingClientRect();
@@ -3301,7 +3306,7 @@
         return best;
     }
 
-    // The chosen body's velocity handle at (x, y)? (Only when velocities are shown.)
+    // The tip of the chosen body's velocity arrow at (x, y)? (Only when velocities are shown.)
     function onHandle(x, y, tol) {
         const b = bodyById(selectedId);
         if (!settings.velocities || !b || b.held || bodies.length < 2) return null;
@@ -3347,8 +3352,8 @@
         }
         const base = ref ? { x: ref.vx, y: ref.vy } : fv;
         b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
-        // Keep the grabbed point on the arrow. A body at rest has no arrow: its handle stands out from
-        // the edge of its disc, so the arrow grows from there as soon as the handle moves.
+        // Keep the grabbed point on the arrow. A body at rest has no arrow: it is grabbed just off the
+        // edge of its disc, and the arrow grows from there as soon as the pointer moves.
         let tip = velocityTip(b);
         if (tip.len < 1) {
             const h = handlePos(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -3507,9 +3512,9 @@
         const tol = touch ? 16 : 5;
         const right = e.button === 2;
         // The chosen body's handle first, then a body, then another body's arrow tip
-        let handleBody = right ? null : onHandle(pt.x, pt.y, touch ? 22 : 11);
+        let handleBody = right ? null : onHandle(pt.x, pt.y, touch ? GRAB_TOUCH : GRAB_MOUSE);
         const b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
-        if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? 16 : 8);
+        if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button };
         if (handleBody) {
             d.mode = 'aim';
@@ -3641,17 +3646,20 @@
         }
     }
 
+    // The cursor shows what a press would do; an arrow tip under the mouse is also drawn highlighted.
     function updateCursor(x, y) {
         canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim');
+        hoverAim = null;
         if (drags.size) {
             const d = [...drags.values()][0];
             canvas.classList.add(d.mode === 'aim' ? 'orb-can-aim' : 'orb-grabbing');
             return;
         }
         updateDrawnPositions();
-        if (onHandle(x, y, 11)) canvas.classList.add('orb-can-aim');
-        else if (bodyAt(x, y, 5)) canvas.classList.add('orb-can-grab');
-        else if (onArrowTip(x, y, 8)) canvas.classList.add('orb-can-aim');
+        let tipOf = onHandle(x, y, GRAB_MOUSE);
+        if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
+        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1);
+        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
     }
 
     function onWheel(e) {
@@ -3955,7 +3963,7 @@
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
         canvas.addEventListener('pointerleave', (e) => {
-            if (!drags.has(e.pointerId)) canvas.classList.remove('orb-can-grab', 'orb-can-aim');
+            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim'); hoverAim = null; }
         });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('wheel', onWheel, { passive: false });
