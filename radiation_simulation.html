@@ -184,6 +184,11 @@
                                         <h3 id="simulationControlsPanelLabel">Controls</h3>
                                     </div>
                                     <div class="sim-controls-content">
+                                        <div class="sim-control-group sim-speed-control">
+                                            <label>Simulation speed: <span id="speedVal" class="sim-value" style="--chars: 3">20</span>&times;
+                                                <input type="range" id="speedSlider" min="1" max="200" step="1" value="20">
+                                            </label>
+                                        </div>
                                         <div class="sim-control-group">
                                             <p class="sim-control-group-label">Heater</p>
                                             <label>Temperature <span id="heaterTempVal" class="sim-value" style="--chars: 4">1000</span> K <span class="rad-sub">(<span id="heaterTempC">727</span> °C)</span>
@@ -252,12 +257,6 @@
                                                 <label for="showWallRadiation">Radiation from the walls</label>
                                             </div>
                                         </div>
-                                        <details class="sim-controls-more">
-                                            <summary>More options</summary>
-                                            <label>Simulation speed <span id="speedVal" class="sim-value" style="--chars: 3">20</span>&times;
-                                                <input type="range" id="speedSlider" min="1" max="200" step="1" value="20">
-                                            </label>
-                                        </details>
                                     </div>
                                 </div>
 
