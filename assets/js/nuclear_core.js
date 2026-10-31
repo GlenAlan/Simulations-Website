@@ -1238,7 +1238,6 @@
 
     function updateBodies(dt, clockDt) {
         const wr = workRect();
-        const labelH = fontPx * 2.3;
         const obstacles = [];
         if (S.showChart && layout) obstacles.push(layout.inset);
         panelRects.forEach((r) => obstacles.push(r));
@@ -1258,14 +1257,15 @@
             const speed = Math.hypot(b.vx, b.vy);
             if (b.transient && !S.keepParticles) {
                 // emitted particles fly straight off the canvas (or bounce off neutron mirrors)
-                if (S.mirrorWalls && b.Z === 0) bounceWalls(b, wr, 0, 1);
+                if (S.mirrorWalls && b.Z === 0) bounceWalls(b, wr, 1);
                 const m = b.R + 4;
                 if (b.x < -m || b.y < -m || b.x > viewW + m || b.y > viewH + m || realTime - b.born > 6) { removeBody(b); continue; }
             } else {
                 const damp = Math.exp(-dt / (b.transient ? 0.35 : 0.55));
                 b.vx *= damp; b.vy *= damp;
-                if (b.transient && speed < 40) { b.transient = false; b.emitted = false; }
-                bounceWalls(b, wr, labelH, 0.45);
+                // a kept particle comes to rest and joins the rest (a free neutron starts its clock)
+                if (b.transient && speed < 40) { b.transient = false; b.emitted = false; afterFormed(b, 0); }
+                bounceWalls(b, wr, 0.45);
             }
         }
         // Resting bodies keep their nuclei and labels apart: overlapping boxes are pushed apart along the
@@ -1312,12 +1312,15 @@
         }
     }
 
-    function bounceWalls(b, wr, labelH, rest) {
-        const r = b.R;
-        if (b.x < wr.x0 + r) { b.x = wr.x0 + r; b.vx = Math.abs(b.vx) * rest; }
-        if (b.x > wr.x1 - r) { b.x = wr.x1 - r; b.vx = -Math.abs(b.vx) * rest; }
-        if (b.y < wr.y0 + r) { b.y = wr.y0 + r; b.vy = Math.abs(b.vy) * rest; }
-        if (b.y > wr.y1 - r - labelH) { b.y = wr.y1 - r - labelH; b.vy = -Math.abs(b.vy) * rest; }
+    // Keep a body inside the canvas: a resting nucleus with its whole label, a flying particle by its radius.
+    function bounceWalls(b, wr, rest) {
+        const bx = b.transient ? { hw: b.R, top: b.R, bottom: b.R } : bodyBox(b);
+        const left = wr.x0 + bx.hw, right = Math.max(left, wr.x1 - bx.hw);
+        const top = wr.y0 + bx.top, bottom = Math.max(top, wr.y1 - bx.bottom);
+        if (b.x < left) { b.x = left; b.vx = Math.abs(b.vx) * rest; }
+        if (b.x > right) { b.x = right; b.vx = -Math.abs(b.vx) * rest; }
+        if (b.y < top) { b.y = top; b.vy = Math.abs(b.vy) * rest; }
+        if (b.y > bottom) { b.y = bottom; b.vy = -Math.abs(b.vy) * rest; }
     }
 
     // Keep a resting body (with its label) out of an overlay rectangle: the chart inset or a text panel.
@@ -1325,18 +1328,19 @@
         const bx = bodyBox(b);
         const x0 = r.x - bx.hw, x1 = r.x + r.w + bx.hw, y0 = r.y - bx.bottom, y1 = r.y + r.h + bx.top;
         if (b.x <= x0 || b.x >= x1 || b.y <= y0 || b.y >= y1) return;
-        const dl = b.x - x0, dr = x1 - b.x, dtp = b.y - y0, db = y1 - b.y;
-        const m = Math.min(dl, dr, dtp, db);
-        // never into a wall: pick the side that has room
+        // Leave by the nearest side that has room for the body beyond it (never into a wall, where it would
+        // stay stuck under the rectangle); if none has, by the side with the most space.
         const wr = workRect();
-        const roomL = x0 - wr.x0 > b.R, roomR = wr.x1 - x1 > b.R, roomT = y0 - wr.y0 > b.R, roomB = wr.y1 - y1 > bx.bottom;
-        if (m === dl && roomL) b.x -= dl * k;
-        else if (m === dr && roomR) b.x += dr * k;
-        else if (m === dtp && roomT) b.y -= dtp * k;
-        else if (m === db && roomB) b.y += db * k;
-        else if (roomB) b.y += db * k;
-        else if (roomL) b.x -= dl * k;
-        else b.x += dr * k;
+        const sides = [
+            { d: b.x - x0, room: x0 - wr.x0 - b.R, dx: -1, dy: 0 },
+            { d: x1 - b.x, room: wr.x1 - x1 - b.R, dx: 1, dy: 0 },
+            { d: b.y - y0, room: y0 - wr.y0 - bx.top, dx: 0, dy: -1 },
+            { d: y1 - b.y, room: wr.y1 - y1 - bx.bottom, dx: 0, dy: 1 },
+        ];
+        const fits = sides.filter((sd) => sd.room >= 0).sort((a, c) => a.d - c.d);
+        const sd = fits.length ? fits[0] : sides.sort((a, c) => c.room - a.room)[0];
+        b.x += sd.dx * sd.d * k;
+        b.y += sd.dy * sd.d * k;
     }
 
     // ------------------------------------------------------------------
@@ -2649,7 +2653,7 @@
         const h = Math.max(1, Math.round(rect.height));
         const newDpr = Math.min(2, window.devicePixelRatio || 1);
         if (w === viewW && h === viewH && newDpr === dpr) return false;
-        const oldW = viewW, oldH = viewH;
+        const oldW = viewW, oldH = viewH, wasTall = layout ? layout.tall : null;
         viewW = w; viewH = h; dpr = newDpr;
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
@@ -2660,9 +2664,38 @@
         if (oldW > 0) {
             bodies.forEach((b) => { b.x *= viewW / oldW; b.y *= viewH / oldH; buildSprite(b); });
             sparks.forEach((s) => { s.x *= viewW / oldW; s.y *= viewH / oldH; });
+            // a phone turned between portrait and landscape: once the layout has settled, spread out again
+            if (wasTall !== null && wasTall !== layout.tall) {
+                clearTimeout(spreadTimer);
+                spreadTimer = setTimeout(spreadOut, 250);
+            }
         }
         render();
         return true;
+    }
+
+    // After the canvas turns between tall and wide (a phone rotated), the chart moves to another corner:
+    // lay the nuclei out again in the free space, in their old reading order.
+    let spreadTimer = 0;
+    function spreadOut() {
+        const list = bodies.filter((b) => !b.transient);
+        if (!list.length) return;
+        const pad = layout.pad, inset = layout.inset;
+        const free = { x: pad, y: pad, w: viewW - 2 * pad, h: viewH - 2 * pad };
+        if (S.showChart) {
+            if (layout.tall) free.h = inset.y - 2 * pad; else free.w = inset.x - 2 * pad;
+        }
+        const n = list.length;
+        const cols = Math.max(1, Math.round(Math.sqrt(n * free.w / Math.max(1, free.h))));
+        const rows = Math.ceil(n / cols);
+        list.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+        list.forEach((b, i) => {
+            const r = Math.floor(i / cols), c = i % cols;
+            const inRow = r === rows - 1 ? n - r * cols : cols;
+            b.x = free.x + free.w * (c + 0.5) / inRow + (r % 2 ? 6 : -6);
+            b.y = free.y + free.h * (r + 0.4) / rows;
+            b.vx = 0; b.vy = 0;
+        });
     }
 
     // ------------------------------------------------------------------
