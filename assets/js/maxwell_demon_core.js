@@ -1,13 +1,19 @@
 // Maxwell's Demon simulation.
 //
-// A 2D hard-disk gas in a box divided by a wall with a gate. All collisions
-// (particle-particle and particle-wall) are elastic, so total kinetic energy is
-// conserved and the speeds settle into a Maxwell-Boltzmann distribution.
-// Colour shows speed: red particles are faster than the median speed of the
-// starting gas, blue ones slower, so a particle changes colour when a
-// collision speeds it up or slows it down. In automatic mode the demon opens
+// A 2D gas in a box divided by a wall with a gate. The starting speeds follow
+// a Maxwell-Boltzmann distribution: half the particles come from above its
+// median speed (fast, red) and half from below it (slow, blue). Colour always
+// shows the current speed against that fixed median, and the demon uses the
+// same test, so what you see is what it sorts by. In automatic mode it opens
 // the gate only for fast particles moving left -> right and slow particles
 // moving right -> left, so the right chamber heats up and the left cools.
+//
+// Bounces off the walls are elastic and keep each particle's speed, so by
+// default (particles pass through each other) every particle keeps its colour
+// and the sorting is plain to see. With "Particles collide" on, elastic
+// particle-particle collisions share energy out: speeds and colours keep
+// changing and each chamber relaxes to its own Maxwell-Boltzmann distribution,
+// but the chamber temperatures still drift apart.
 
 // --- DOM Element References ---
 const canvas = document.getElementById('simulationCanvas');
@@ -20,6 +26,7 @@ const speedValEl = document.getElementById('speedVal');
 const gateSizeSlider = document.getElementById('gateSizeSlider');
 const gateSizeValEl = document.getElementById('gateSizeVal');
 const demonModeSelector = document.getElementById('demonModeSelector');
+const collisionsCheckbox = document.getElementById('particleCollisions');
 const showChartsCheckbox = document.getElementById('showCharts');
 const chartsContainer = document.getElementById('charts-container');
 
@@ -73,7 +80,7 @@ const INITIAL_SAMPLE_INTERVAL = 2;          // simulated seconds between chart s
 
 // --- Parameters from the controls ---
 function speedFromSlider() {
-    if (!speedSlider) return 50;
+    if (!speedSlider) return 100;
     const index = Math.max(0, Math.min(SPEED_STOPS.length - 1, Math.round(+speedSlider.value)));
     return SPEED_STOPS[index];
 }
@@ -84,6 +91,7 @@ let nPerColor = perColourFromSlider();
 let speedMultiplier = speedFromSlider();
 let gateSizePercent = gateSizeSlider ? +gateSizeSlider.value : 25;
 let demonMode = demonModeSelector ? demonModeSelector.value : 'automatic';
+let particlesCollide = collisionsCheckbox ? collisionsCheckbox.checked : false; // off: every particle keeps its speed and colour
 
 // --- Simulation State (struct of arrays for speed) ---
 let particleCount = 0;
@@ -334,9 +342,25 @@ function deflectFromGateEdge(i, tipY) {
     posY[i] = tipY + ny * radius;
 }
 
-// Specular reflection from the box walls and the central wall / gate. A
-// particle can only change chamber through the open gate, so nothing can
-// tunnel through the wall whatever the speed setting.
+// The walls are rigid but rough: a particle bounces off with its speed unchanged
+// (an elastic collision with a wall that doesn't move) in a random direction,
+// spread by Lambert's cosine law so an evenly mixed gas stays evenly mixed. With
+// mirror-smooth walls and no particle collisions some particles would retrace
+// the same path for ever (e.g. one moving straight across, level with the wall
+// rather than the gate) and the demon could never sort them.
+// (nx, ny) is the wall's unit normal, pointing into the chamber.
+function bounceOffWall(i, nx, ny) {
+    if (velX[i] * nx + velY[i] * ny >= 0) return; // already moving away
+    const speed = Math.sqrt(velX[i] * velX[i] + velY[i] * velY[i]);
+    const sin = 2 * Math.random() - 1; // sine of the angle from the normal
+    const cos = Math.sqrt(1 - sin * sin);
+    velX[i] = speed * (cos * nx - sin * ny);
+    velY[i] = speed * (cos * ny + sin * nx);
+}
+
+// Bounces off the box walls and the central wall / gate. A particle can only
+// change chamber through the open gate, so nothing can tunnel through the wall
+// whatever the speed setting.
 function enforceBoundaries(gateTop, gateBottom) {
     const minX = radius, maxX = WORLD_WIDTH - radius;
     const minY = radius, maxY = WORLD_HEIGHT - radius;
@@ -344,10 +368,10 @@ function enforceBoundaries(gateTop, gateBottom) {
     let vmax2 = 0;
     for (let i = 0; i < particleCount; i++) {
         let x = posX[i], y = posY[i];
-        if (x < minX) { x = 2 * minX - x; if (velX[i] < 0) velX[i] = -velX[i]; }
-        else if (x > maxX) { x = 2 * maxX - x; if (velX[i] > 0) velX[i] = -velX[i]; }
-        if (y < minY) { y = 2 * minY - y; if (velY[i] < 0) velY[i] = -velY[i]; }
-        else if (y > maxY) { y = 2 * maxY - y; if (velY[i] > 0) velY[i] = -velY[i]; }
+        if (x < minX) { x = 2 * minX - x; bounceOffWall(i, 1, 0); }
+        else if (x > maxX) { x = 2 * maxX - x; bounceOffWall(i, -1, 0); }
+        if (y < minY) { y = 2 * minY - y; bounceOffWall(i, 0, 1); }
+        else if (y > maxY) { y = 2 * maxY - y; bounceOffWall(i, 0, -1); }
         // Safety clamp (only matters after a very deep overlap correction)
         if (x < minX) x = minX; else if (x > maxX) x = maxX;
         if (y < minY) y = minY; else if (y > maxY) y = maxY;
@@ -362,7 +386,7 @@ function enforceBoundaries(gateTop, gateBottom) {
                     if (posX[i] >= CENTER_X) side[i] = 1;
                 } else {
                     posX[i] = leftLimit;
-                    if (velX[i] > 0) velX[i] = -velX[i];
+                    bounceOffWall(i, -1, 0);
                 }
             }
         } else if (x < rightLimit) {
@@ -372,7 +396,7 @@ function enforceBoundaries(gateTop, gateBottom) {
                 if (posX[i] < CENTER_X) side[i] = 0;
             } else {
                 posX[i] = rightLimit;
-                if (velX[i] < 0) velX[i] = -velX[i];
+                bounceOffWall(i, 1, 0);
             }
         }
         const v2 = velX[i] * velX[i] + velY[i] * velY[i];
@@ -424,8 +448,10 @@ function runSinglePhysicsStep(dt) {
         posX[i] += velX[i] * dt;
         posY[i] += velY[i] * dt;
     }
-    buildGrid();
-    resolveCollisions(gateTop, gateBottom);
+    if (particlesCollide) {
+        buildGrid();
+        resolveCollisions(gateTop, gateBottom);
+    }
     enforceBoundaries(gateTop, gateBottom);
     currentSimulationTime += dt;
     observeGate();
@@ -1024,6 +1050,13 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     if (demonModeSelector) demonModeSelector.addEventListener('change', () => applyDemonMode(true));
     applyDemonMode(false);
+
+    // Collisions can be switched mid-run: the gas carries on from where it is
+    if (collisionsCheckbox) {
+        collisionsCheckbox.addEventListener('change', () => {
+            particlesCollide = collisionsCheckbox.checked;
+        });
+    }
 
     if (showChartsCheckbox && chartsContainer) {
         showChartsCheckbox.addEventListener('change', () => applyChartsVisibility(true));
