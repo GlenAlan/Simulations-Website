@@ -4,12 +4,20 @@
  * Units: distances in AU, times in (Julian) years, masses in solar masses, so G = 4 pi^2 and a planet
  * 1 AU from a 1 M_sun star takes one year per orbit. Readouts convert to km, km/s, kg and N.
  *
- * Integration: kick-drift-kick leapfrog (symplectic and time-reversible) with one adaptive step for all
- *   bodies, dt = ETA * min over pairs of sqrt(r^3 / G(m_i + m_j)), so a close pass is taken in many
- *   small steps. Leftover frame time carries over to the next frame (no step is ever cut short), and the
- *   bodies are drawn extrapolated by that leftover so the motion stays smooth. If a close pass needs more
- *   steps than a frame allows, the simulation slows down for a moment instead of losing accuracy.
- *   Bodies whose real radii touch (checked along each step) merge, conserving mass and momentum.
+ * Integration: Yoshida's 4th-order composition of three kick-drift-kick leapfrog steps (symplectic and
+ *   time-reversible for a fixed step), with one adaptive step for all bodies, dt = ETA * min over pairs of
+ *   sqrt(r^3 / G(m_i + m_j)), so a close pass is taken in many small steps. That is accurate enough for
+ *   chaotic three-body encounters (the Pythagorean problem ends as published). Leftover frame time carries
+ *   over to the next frame (no step is ever cut short), and the bodies are drawn extrapolated by that
+ *   leftover so the motion stays smooth. If a close pass needs more steps than a frame allows, the
+ *   simulation slows down for a moment instead of losing accuracy.
+ *   Bodies whose real radii touch (checked along each step) merge, conserving mass and momentum; a black
+ *   hole swallows whatever crosses its event horizon.
+ *
+ * Realistic physics (off by default) draws every body at its true size (with a small marker so it can be
+ *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
+ *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
+ *   Roche limit of a much denser body.
  *
  * Frames: the view follows the centre of mass (an inertial frame) or is locked on a body. Trails are
  *   stored in inertial coordinates at shared sample times, so they can be redrawn relative to any body.
@@ -36,6 +44,7 @@
         orbitGroupLabel: byId('orbitGroupLabel'), ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
         eccNote: byId('eccNote'),
         forces: byId('forceToggle'), velocities: byId('velocityToggle'), labels: byId('labelsToggle'),
+        realistic: byId('realisticToggle'),
         k1: byId('kepler1Toggle'), k2: byId('kepler2Toggle'), k3: byId('kepler3Toggle'),
         frame: byId('frameSelect'), trail: byId('trailSlider'), trailVal: byId('trailVal'),
         placement: byId('placementSelect'), com: byId('comToggle'), preview: byId('previewToggle'), merge: byId('mergeToggle'),
@@ -52,7 +61,7 @@
         popLock: byId('popLock'), popLockText: byId('popLockText'), popCircular: byId('popCircular'), popDelete: byId('popDelete'),
         popMass: byId('popMass'), popMassVal: byId('popMassVal'),
         popSpeed: byId('popSpeed'), popSpeedVal: byId('popSpeedVal'), popSpeedNote: byId('popSpeedNote'),
-        popRadius: byId('popRadius'), popRadiusVal: byId('popRadiusVal'),
+        popRadius: byId('popRadius'), popRadiusVal: byId('popRadiusVal'), popRadiusLabel: byId('popRadiusLabel'),
         popColours: byId('popColours'), popInfo: byId('popInfo')
     };
 
@@ -71,9 +80,15 @@
     const G_SI = 6.6743e-11;
     const AUYR_KMS = AU_KM / YEAR_S;      // 4.74 km/s per AU/yr
     const ENERGY_J = MSUN_KG * (AU_M / YEAR_S) * (AU_M / YEAR_S); // J per M_sun AU^2 / yr^2
+    const C_LIGHT = 299792.458 / AUYR_KMS; // speed of light, AU/yr (63,241)
+    const C2 = C_LIGHT * C_LIGHT;
+    const NS_MAX_MASS = 2.3;              // M_sun: a heavier neutron star collapses into a black hole
+    // Event horizon (Schwarzschild radius 2GM/c^2) of mass m, in km: 2.95 km per solar mass
+    const horizonKm = (m) => (2 * G * m / C2) * AU_KM;
 
-    const ETA = 0.006;                    // step = ETA x the shortest pair free-fall time (~1000 steps per circular orbit)
-    const MAX_STEPS_PER_FRAME = 4000;
+    const ETA = 0.004;                    // step = ETA x the shortest pair free-fall time (~1600 steps per circular orbit)
+    const MAX_PAIRS_PER_FRAME = 1.2e6;    // force evaluations per frame (x pairs) before the simulation slows down
+    const YOSHIDA_W1 = 1 / (2 - Math.cbrt(2)), YOSHIDA_W0 = 1 - 2 * YOSHIDA_W1;
     const MAX_BODIES = 30;
     const SECONDS_PER_TREF = 6;           // real seconds per reference period of the scene at 1x
     const TRAIL_PER_TREF = 300;           // trail samples per reference period
@@ -82,43 +97,59 @@
     const K2_SECTORS = 12;                // Kepler's 2nd law: sectors per orbit
     const STAR_MASS = 0.07;               // M_sun: heavier bodies are drawn as stars
 
-    // Sample bodies for the palette (and the scenes). Radii are real (km); the drawn size is compressed.
+    // Sample bodies for the palette (and the scenes). Masses and radii are real (radii in km); the drawn
+    // size is compressed unless realistic physics is on. The star remnants are drawn by their kind (a
+    // black hole stays a black hole whatever its mass). info: the palette chip's tooltip.
     const KINDS = {
-        sun: { name: 'Sun', m: 1, R: 696000, color: '#ffd166' },
-        dwarf: { name: 'Red dwarf', m: 0.3, R: 210000, color: '#ff8a5c' },
-        jupiter: { name: 'Jupiter', m: MJUP, R: 69911, color: '#e0b48a' },
-        earth: { name: 'Earth', m: MEARTH, R: 6371, color: '#7ecaf6' },
-        mars: { name: 'Mars', m: 0.10745 * MEARTH, R: 3390, color: '#e8825e' },
-        moon: { name: 'Moon', m: 0.0123 * MEARTH, R: 1737, color: '#c9ccd3' },
-        comet: { name: 'Comet', m: 1.1e-16, R: 6, color: '#a5e8ff' },
-        asteroid: { name: 'Asteroid', m: 4.7e-10, R: 470, color: '#a89f91' },
+        sun: { name: 'Sun', m: 1, R: 696000, color: '#ffd166', info: 'our star' },
+        dwarf: { name: 'Red dwarf', m: 0.3, R: 210000, color: '#ff8a5c', info: 'the most common kind of star' },
+        redgiant: { name: 'Red giant', m: 1.2, R: 3.0e7, color: '#ff6a48', info: 'an old star swollen to 43 times the Sun\'s size' },
+        bluegiant: { name: 'Blue giant', m: 15, R: 4.6e6, color: '#9cc3ff', info: 'a hot, heavy, short-lived star' },
+        browndwarf: { name: 'Brown dwarf', m: 0.05, R: 70000, color: '#b86b7f', info: 'too light to shine like a star: 52 Jupiters' },
+        whitedwarf: { name: 'White dwarf', m: 0.6, R: 8700, color: '#e9f0ff', info: 'the Earth-sized core left by a star like the Sun' },
+        neutron: { name: 'Neutron star', m: 1.4, R: 12, color: '#a9d4ff', info: 'a city-sized core left by a supernova' },
+        blackhole: { name: 'Black hole', m: 10, R: horizonKm(10), color: '#ffab5e', info: 'nothing that crosses its event horizon gets out' },
+        jupiter: { name: 'Jupiter', m: MJUP, R: 69911, color: '#e0b48a', info: 'the largest planet' },
+        earth: { name: 'Earth', m: MEARTH, R: 6371, color: '#7ecaf6', info: 'our planet' },
+        mars: { name: 'Mars', m: 0.10745 * MEARTH, R: 3390, color: '#e8825e', info: 'a small rocky planet' },
+        moon: { name: 'Moon', m: 0.0123 * MEARTH, R: 1737, color: '#c9ccd3', info: 'Earth\'s moon' },
+        comet: { name: 'Comet', m: 1.1e-16, R: 6, color: '#a5e8ff', info: 'a 12 km ball of ice and dust' },
+        asteroid: { name: 'Asteroid', m: 4.7e-10, R: 470, color: '#a89f91', info: 'Ceres, the largest asteroid' },
         custom: { name: 'Planet', m: MEARTH, R: 6371, color: '#ae85ca' },
         mercury: { name: 'Mercury', m: 0.0553 * MEARTH, R: 2440, color: '#b5aca3' },
         venus: { name: 'Venus', m: 0.815 * MEARTH, R: 6052, color: '#f0d9a0' },
-        probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#e8e8e8' }
+        probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
-    const PALETTE = ['sun', 'dwarf', 'jupiter', 'earth', 'mars', 'moon', 'comet', 'asteroid', 'custom'];
+    const PALETTE = [
+        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
+        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
+        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
+        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
+    ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
     // Values the mass and radius sliders snap to
-    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.3, 1];
-    const RADIUS_SNAPS = [1737, 3390, 6371, 69911, 210000, 696000];
+    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15];
+    const RADIUS_SNAPS = [12, 1737, 3390, 6371, 8700, 69911, 210000, 696000, 4.6e6, 3.0e7];
 
     // ------------------------------------------------------------------
     // Scenes. Bodies are given directly or by orbit elements around an earlier body
     // (a in AU, e, w = direction of the closest point in degrees, nu = start angle from it).
-    // Every scene starts with the centre of mass at rest at the origin.
+    // Every scene starts with the centre of mass at rest at the origin. Tref: the scene's reference
+    // period (6 s on screen at 1x); vref: the speed drawn as a medium arrow (default: the subject's
+    // average orbital speed); tip: a line for the hint bar when the scene opens.
     // ------------------------------------------------------------------
     const SCENES = {
         'sun-earth': {
-            units: 'au', Tref: 1, arrow: 0.05, subject: 1, box: [-1.2, 1.2, -1.2, 1.2],
+            units: 'au', Tref: 1, subject: 1, box: [-1.2, 1.2, -1.2, 1.2],
             bodies: [{ kind: 'sun' }, { kind: 'earth', orbit: { around: 0, a: 1, e: 0, nu: 0 } }]
         },
         ellipse: {
-            units: 'au', Tref: 1, arrow: 0.05, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
+            units: 'au', Tref: 1, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
+            tip: 'Turn on Kepler\'s 2nd law: the planet speeds up near the Sun, yet the shaded areas stay equal.',
             bodies: [{ kind: 'sun' }, { kind: 'earth', name: 'Planet', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }]
         },
         inner: {
-            units: 'au', Tref: 1, arrow: 0.03, subject: 3, box: [-1.7, 1.7, -1.7, 1.7],
+            units: 'au', Tref: 1, subject: 3, box: [-1.7, 1.7, -1.7, 1.7],
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387, e: 0.2056, w: 77, nu: 40 } },
@@ -128,7 +159,7 @@
             ]
         },
         comet: {
-            units: 'au', Tref: 1, arrow: 0.06, subject: 2, forceBody: 1, trail: 6, box: [-3.85, 1.15, -1.2, 1.2],
+            units: 'au', Tref: 1, subject: 2, forceBody: 1, trail: 6, box: [-3.85, 1.15, -1.2, 1.2],
             bodies: [
                 { kind: 'sun' },
                 { kind: 'earth', orbit: { around: 0, a: 1, e: 0.0167, nu: 200 } },
@@ -136,11 +167,12 @@
             ]
         },
         'earth-moon': {
-            units: 'km', Tref: 27.32 / DAYS_PER_YEAR, arrow: 0.08, subject: 1, box: [-0.0031, 0.0031, -0.0031, 0.0031],
+            units: 'km', Tref: 27.32 / DAYS_PER_YEAR, subject: 1, box: [-0.0031, 0.0031, -0.0031, 0.0031],
             bodies: [{ kind: 'earth' }, { kind: 'moon', orbit: { around: 0, a: 384400 / AU_KM, e: 0.0549, nu: 0 } }]
         },
         moon: {
-            units: 'au', Tref: 1, arrow: 0.03, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
+            units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
+            tip: 'Double-click the giant planet to view from it: then the star circles the planet, as the Sun seems to circle Earth.',
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -150,14 +182,15 @@
             ]
         },
         binary: {
-            units: 'au', Tref: 2.31, arrow: 0.06, subject: 1, com: true, box: [-1.9, 1.9, -1.3, 1.3],
+            units: 'au', Tref: 2.31, subject: 1, com: true, box: [-1.9, 1.9, -1.3, 1.3],
             bodies: [
                 { kind: 'sun', name: 'Star A' },
                 { kind: 'dwarf', name: 'Star B', m: 0.5, R: 400000, orbit: { around: 0, a: 2, e: 0.4, w: 0, nu: 0 } }
             ]
         },
         figure8: {
-            units: 'au', Tref: 1.0067, arrow: 0.05, subject: 0, trail: 4, box: [-1.1, 1.1, -0.45, 0.45],
+            units: 'au', Tref: 1.0067, subject: 0, trail: 4, vref: 5.5, box: [-1.1, 1.1, -0.45, 0.45],
+            tip: 'A rare stable dance: three equal stars chase each other round a figure of eight. Compare it with "Three stars: chaos".',
             bodies: (function () {
                 // Chenciner & Montgomery's figure-of-eight orbit (G = m = 1), scaled to 1 AU and 1 M_sun.
                 const vs = Math.sqrt(G);           // velocity unit: AU/yr
@@ -169,18 +202,57 @@
                 ];
             })()
         },
-        // A probe leaves Earth's distance on a bound orbit (41.6 km/s), passes 0.021 AU behind Jupiter
-        // after 1.17 years and is flung out of the solar system at 8 km/s.
+        // Burrau's Pythagorean three-body problem: masses 3, 4 and 5 at rest at the corners of a 3-4-5
+        // triangle, each opposite the side of its own length (here in units of 100 AU, so the stars, at
+        // their real sizes, never touch). They fall together, swing through close encounters, and after
+        // about 60 time units (9,500 years) the 4 and 5 leave as a tight binary and the 3 is flung out
+        // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
+        pythagorean: {
+            units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
+            tip: 'Three stars start at rest. Who gets thrown out? It\'s chaos: nudge one star a hair and the dance ends differently.',
+            bodies: [
+                { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
+                { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#f2849e', at: [-200, -100] },
+                { kind: 'sun', name: 'Star C', m: 5, R: 2.3e6, color: '#8fb8ff', at: [100, -100] }
+            ]
+        },
+        // A probe leaves Earth's orbit at 39 km/s, a little faster than the cheapest route to Jupiter, and
+        // passes 5 Jupiter radii behind it after 1.8 years (Voyager 1 passed at 4.9). Jupiter turns it
+        // through more than 100 degrees, which doubles its speed relative to the Sun: it leaves the solar
+        // system for good.
         slingshot: {
-            units: 'au', Tref: 2, arrow: 0.06, subject: 2, forceBody: 1, trail: 6, box: [-6.2, 6.2, -5.6, 5.6],
+            units: 'au', Tref: 1.4, subject: 2, forceBody: 1, trail: 7, vref: 2.75, box: [-7.4, 1.8, -3.2, 3.6],
+            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun, and the close-up from Jupiter.',
             bodies: [
                 { kind: 'sun' },
-                { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 95.8 } },
-                { kind: 'probe', at: [1, 0], v: [0, 8.77] }
+                { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 103.14 } },
+                { kind: 'probe', orbit: { around: 0, a: 3.50210, e: 0.714457, w: 0, nu: 0 } }
+            ]
+        },
+        // A neutron star on an elliptical orbit 750 to 2,250 km from a black hole, once every 0.3 s. With
+        // realistic physics, general relativity turns the ellipse by 16 degrees an orbit.
+        blackhole: {
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            tip: 'Turn on Realistic physics in the settings: relativity makes the orbit swing round, a rosette instead of an ellipse.',
+            bodies: [
+                { kind: 'blackhole' },
+                { kind: 'neutron', orbit: { around: 0, a: 1500 / AU_KM, e: 0.5, w: 0, nu: 180 } }
+            ]
+        },
+        // A Sun-like star on an elliptical orbit round a 1,000-solar-mass black hole, coming within 9 million
+        // km of it every 2.2 days: half its own Roche limit. With realistic physics the black hole's tides
+        // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
+        // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
+        tde: {
+            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, box: [-0.64, 0.11, -0.23, 0.23],
+            tip: 'Turn on Realistic physics in the settings: the star dips inside its Roche limit and the black hole\'s tides tear it apart.',
+            bodies: [
+                { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
+                { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
             ]
         },
         empty: {
-            units: 'au', Tref: 1, arrow: 0.08, subject: 0, box: [-1.5, 1.5, -1.5, 1.5],
+            units: 'au', Tref: 1, subject: 0, vref: TAU, box: [-1.5, 1.5, -1.5, 1.5],
             bodies: [{ kind: 'sun' }]
         }
     };
@@ -199,7 +271,8 @@
         placement: 'circular',
         com: false,
         preview: true,
-        merge: true
+        merge: true,
+        realistic: false     // true sizes, relativity (1PN) and tidal break-up
     };
 
     let scene = SCENES['sun-earth'];
@@ -223,7 +296,9 @@
     let sampleDt = 1 / TRAIL_PER_TREF;
     let sampleCount = 0;
     let nextSampleT = 0;
+    let lastSampleT = 0;
     const comTrail = new Float64Array(TRAIL_CAP * 2);
+    const sampleTimes = new Float64Array(TRAIL_CAP);
 
     // View: px per AU = zoom * min(canvas width, height), so the scene scales with the canvas
     const view = { zoom: 0.4, panX: 0, panY: 0, anim: null };
@@ -242,10 +317,13 @@
     // ------------------------------------------------------------------
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
     const isDark = () => document.documentElement.classList.contains('dark-mode');
-    const isStar = (b) => b.m >= STAR_MASS;
+    const COMPACT = { whitedwarf: 1, neutron: 1, blackhole: 1 };
+    const isCompact = (b) => !!COMPACT[b.kind];
+    const isStar = (b) => b.m >= STAR_MASS && !isCompact(b);
+    // How a body is drawn: a star remnant by its kind, otherwise a star (it shines) or a planet
+    const lookOf = (b) => (isCompact(b) ? b.kind : b.m >= STAR_MASS ? 'star' : b.kind === 'browndwarf' ? 'browndwarf' : 'planet');
     const bodyById = (id) => { for (const b of bodies) if (b.id === id) return b; return null; };
     const rate = () => scene.Tref / SECONDS_PER_TREF;           // simulated years per real second at 1x
-    const arrowTime = () => scene.arrow * scene.Tref;           // a velocity arrow shows the path over this time
     const trailYears = () => TRAIL_STEPS[settings.trailIndex] * scene.Tref;
 
     const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
@@ -263,8 +341,8 @@
         if (ax === 0) return '0';
         if (ax >= 1e6 || ax < 1e-3) return fmtSci(x, 2);
         if (ax >= 1000) return Math.round(x).toLocaleString('en-US');
-        if (ax >= 100) return x.toFixed(1);
-        if (ax >= 10) return x.toFixed(2);
+        if (ax >= 99.95) return x.toFixed(0);
+        if (ax >= 9.995) return x.toFixed(1);
         if (ax >= 1) return x.toFixed(2);
         return x.toPrecision(3);
     }
@@ -285,26 +363,44 @@
         if (au < 1000) return { v: au.toFixed(1), u: 'AU' };
         return { v: fmtSci(au, 2), u: 'AU' };
     }
+    // Scenes count time in years, days (scene.time 'd', or scene.units 'km') or seconds (scene.time 's':
+    // orbits round a black hole)
+    const timeUnit = () => scene.time || (scene.units === 'km' ? 'd' : 'yr');
+    const timeInSeconds = () => timeUnit() === 's';
     function fmtTime(yr) {
-        if (scene.units === 'km') {
+        if (timeInSeconds()) {
+            const s = yr * YEAR_S;
+            return { v: s < 100 ? s.toFixed(2) : s < 1000 ? s.toFixed(1) : Math.round(s).toLocaleString('en-US'), u: 's' };
+        }
+        if (timeUnit() === 'd') {
             const d = yr * DAYS_PER_YEAR;
             return { v: d < 1000 ? d.toFixed(1) : Math.round(d).toLocaleString('en-US'), u: 'days' };
         }
-        return { v: yr < 100 ? yr.toFixed(2) : yr < 1000 ? yr.toFixed(1) : Math.round(yr).toString(), u: 'yr' };
+        return { v: yr < 100 ? yr.toFixed(2) : yr < 1000 ? yr.toFixed(1) : Math.round(yr).toLocaleString('en-US'), u: 'yr' };
     }
-    // A duration in days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
+    // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
-        if (scene.units === 'km' || yr < 0.1) {
+        if (timeInSeconds() || yr * YEAR_S < 600) {
+            const s = yr * YEAR_S;
+            if (s < 1) return `${precise ? s.toFixed(3) : +s.toFixed(3)} s`;
+            return `${precise ? s.toFixed(s < 100 ? 2 : 0) : +s.toFixed(s < 10 ? 2 : 0)} s`;
+        }
+        if (timeUnit() === 'd' || yr < 0.1) {
             const d = yr * DAYS_PER_YEAR;
             if (precise) return `${d < 100 ? d.toFixed(1) : Math.round(d)} days`;
             return `${d < 10 ? d.toFixed(1) : Math.round(d)} ${d < 1.5 && d >= 0.5 ? 'day' : 'days'}`;
         }
-        if (precise) return `${yr < 100 ? yr.toFixed(2) : Math.round(yr)} yr`;
-        return `${yr < 10 ? +yr.toFixed(2) : Math.round(yr)} yr`;
+        if (precise) return `${yr < 100 ? yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
+        return `${yr < 10 ? +yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
     }
     function fmtSpeedKms(kms) {
         if (kms < 0.1) return { v: (kms * 1000).toFixed(kms < 0.01 ? 2 : 1), u: 'm/s' };
-        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : Math.round(kms).toString(), u: 'km/s' };
+        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : Math.round(kms).toLocaleString('en-US'), u: 'km/s' };
+    }
+    // " (0.24c)" for speeds of at least 1% of the speed of light
+    function lightFraction(kms) {
+        const f = kms / 299792.458;
+        return f >= 0.01 ? ` (${f < 0.995 ? f.toFixed(2) : '1.00'}c)` : '';
     }
     // Apsis names: perihelion around the Sun, perigee around Earth, periastron around other stars
     function apsisNames(p) {
@@ -329,6 +425,7 @@
             trail: new Float64Array(TRAIL_CAP * 2),
             trailStart: sampleCount,      // first valid sample
             primary: null, bound: false, hill: Infinity,
+            grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
             track: null                   // period measurement (Kepler's 3rd law)
         };
@@ -379,14 +476,25 @@
     // Physics
     // ------------------------------------------------------------------
     // Accelerations of the free bodies, net forces for the arrows, and the next adaptive step.
-    function computeForces() {
-        const n = bodies.length;
-        for (const b of bodies) { b.ax = 0; b.ay = 0; }
+    // Accelerations of every body in a list (the bodies, or a copy of them for a prediction), and the
+    // shortest pair free-fall time squared, r^3 / G(m_i + m_j), for the step size.
+    // With realistic physics each pair also gets the first post-Newtonian (1PN) correction of general
+    // relativity (the usual harmonic-coordinate form for the relative motion of two bodies), shared
+    // between the two bodies in inverse proportion to their masses:
+    //   a = GM/(c^2 r^2) { [(4 + 2 eta) GM/r - (1 + 3 eta) v^2 + 1.5 eta rdot^2] n + (4 - 2 eta) rdot v }
+    // where M = m1 + m2, eta = m1 m2 / M^2, n points from body 2 to body 1 and v = v1 - v2. It turns an
+    // orbit's ellipse by 6 pi GM / (c^2 a (1 - e^2)) each time round: 43" a century for Mercury,
+    // degrees per orbit close to a neutron star or black hole.
+    function gravity(list) {
+        const n = list.length;
+        const pn = settings.realistic;
+        for (const b of list) { b.ax = 0; b.ay = 0; }
         let tmin = Infinity;
         for (let i = 0; i < n; i++) {
-            const bi = bodies[i];
+            const bi = list[i];
             for (let j = i + 1; j < n; j++) {
-                const bj = bodies[j];
+                const bj = list[j];
+                if (bi.grp && bi.grp === bj.grp) continue;   // pieces of one torn-apart body
                 const dx = bj.x - bi.x, dy = bj.y - bi.y;
                 const r2 = dx * dx + dy * dy;
                 if (r2 === 0) continue;
@@ -399,28 +507,68 @@
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
                     if (t < tmin) tmin = t;
+                    if (pn) {
+                        const gm = G * msum, eta = (bi.m * bj.m) / (msum * msum);
+                        const nx = -dx / r, ny = -dy / r;
+                        const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy;
+                        const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy;
+                        const f = gm / (C2 * r2);
+                        const A = f * ((4 + 2 * eta) * gm / r - (1 + 3 * eta) * v2 + 1.5 * eta * rd * rd);
+                        const B = f * (4 - 2 * eta) * rd;
+                        const ax = A * nx + B * vx, ay = A * ny + B * vy;
+                        bi.ax += (bj.m / msum) * ax; bi.ay += (bj.m / msum) * ay;
+                        bj.ax -= (bi.m / msum) * ax; bj.ay -= (bi.m / msum) * ay;
+                    }
                 }
             }
         }
+        return tmin;
+    }
+
+    // Accelerations of the bodies, net forces for the arrows, and the next adaptive step.
+    function computeForces() {
+        const tmin = gravity(bodies);
         for (const b of bodies) { b.fx = b.m * b.ax; b.fy = b.m * b.ay; }
         nextDt = Math.min(ETA * Math.sqrt(tmin), sampleDt);
         forcesDirty = false;
     }
 
-    // One kick-drift-kick leapfrog step for every body that isn't held.
-    function leapfrog(dt) {
+    // One kick-drift-kick leapfrog step for every body in the list that isn't held. The 1PN force
+    // depends on the velocities too, so with realistic physics the second kick is done twice: with the
+    // forces at the half-step velocities, then again with those at the velocities that gave.
+    function leapfrog(list, dt, forces) {
         const h = 0.5 * dt;
-        for (const b of bodies) {
-            b.px = b.x; b.py = b.y;
+        for (const b of list) {
             if (b.held) continue;
             b.vx += h * b.ax; b.vy += h * b.ay;
             b.x += dt * b.vx; b.y += dt * b.vy;
         }
-        computeForces();
-        for (const b of bodies) {
+        let tmin = forces();
+        for (const b of list) {
             if (b.held) continue;
+            b.hx = b.vx; b.hy = b.vy;
             b.vx += h * b.ax; b.vy += h * b.ay;
         }
+        if (settings.realistic) {
+            tmin = forces();
+            for (const b of list) {
+                if (b.held) continue;
+                b.vx = b.hx + h * b.ax; b.vy = b.hy + h * b.ay;
+            }
+        }
+        return tmin;
+    }
+
+    // One 4th-order step: leapfrog steps of w1 dt, w0 dt (backwards: w0 < 0) and w1 dt.
+    function yoshida(list, dt, forces) {
+        leapfrog(list, YOSHIDA_W1 * dt, forces);
+        leapfrog(list, YOSHIDA_W0 * dt, forces);
+        return leapfrog(list, YOSHIDA_W1 * dt, forces);
+    }
+
+    function step(dt) {
+        for (const b of bodies) { b.px = b.x; b.py = b.y; }
+        yoshida(bodies, dt, computeForces);
     }
 
     // Bodies whose real radii touched during the last step (closest approach along the straight
@@ -435,7 +583,7 @@
             for (let i = 0; i < bodies.length; i++) {
                 for (let j = i + 1; j < bodies.length; j++) {
                     const a = bodies[i], b = bodies[j];
-                    if (a.held || b.held) continue;
+                    if (a.held || b.held || (a.grp && a.grp === b.grp)) continue;
                     const reach = (a.R + b.R) / AU_KM;
                     const x0 = b.px - a.px, y0 = b.py - a.py;
                     const x1 = b.x - a.x, y1 = b.y - a.y;
@@ -455,8 +603,11 @@
         return merged;
     }
 
+    // The survivor is the heavier body, or the black hole if there is one (it swallows the other from
+    // the inside, whatever their masses).
     function mergeBodies(a, b) {
-        const big = a.m >= b.m ? a : b, small = big === a ? b : a;
+        const bh = (q) => q.kind === 'blackhole';
+        const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big) });
@@ -464,9 +615,74 @@
         big.vy = M > 0 ? (a.m * a.vy + b.m * b.vy) / M : big.vy;
         big.x = fx; big.y = fy;
         big.m = M;
-        big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);   // same density
+        // A black hole's horizon grows with its mass; a white dwarf or neutron star keeps its size (they
+        // are held up by pressure, not by being big); anything else keeps its density.
+        if (!isCompact(big)) big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);
         big.track = null;
         removeBody(small, big);
+        collapseIfTooHeavy(big);
+    }
+
+    // ------------------------------------------------------------------
+    // Tidal disruption (realistic physics). A star, planet, moon or comet that strays inside the Roche
+    // limit of a body at least five times heavier, d = 2.44 R (M / m)^(1/3) (the limit for a fluid body
+    // held together only by its own gravity), before their surfaces touch, is torn apart. It becomes a
+    // line of fragments along the line to the heavy body, all moving as it did; the inner ones are more
+    // tightly bound than the outer ones, so they spread out along the orbit into a stream, and if the
+    // pass was close enough about half escape. The fragments then move on their own orbits (they don't
+    // pull on each other or merge again), the usual "frozen-in" picture of a tidal disruption.
+    // ------------------------------------------------------------------
+    const ROCHE = 2.44;
+    const FRAGMENTS = 9;
+
+    function checkTides() {
+        if (!settings.realistic) return false;
+        for (const L of bodies) {
+            if (L.grp || L.held || isCompact(L) || L.m < 1e-17) continue;   // not probes: they are held together by their structure
+            for (const H of bodies) {
+                if (H === L || H.held || H.m < 5 * L.m) continue;
+                const d = Math.hypot(L.x - H.x, L.y - H.y);
+                const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
+                if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
+            }
+        }
+        return false;
+    }
+
+    function disrupt(L, H) {
+        const n = Math.min(FRAGMENTS, MAX_BODIES - bodies.length + 1);
+        if (n < 3) return false;   // no room for the pieces: it stays whole
+        const d = Math.hypot(L.x - H.x, L.y - H.y);
+        const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
+        const span = L.R / AU_KM;
+        const parts = [];
+        for (let i = 0; i < n; i++) {
+            const s = -1 + (2 * i) / (n - 1);
+            const f = newBody({ name: uniqueName('Fragment'), kind: L.kind, m: L.m / n, R: L.R / Math.cbrt(n), color: L.color });
+            f.grp = L.id;
+            f.x = L.x + ux * s * span; f.y = L.y + uy * s * span;
+            f.vx = L.vx; f.vy = L.vy;
+            f.px = f.x; f.py = f.y;
+            parts.push(f);
+        }
+        flashes.push({ x: L.x, y: L.y, t: performance.now(), color: L.color, r0: drawRadius(L) });
+        bodies.push(...parts);
+        removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
+        computeForces();
+        return true;
+    }
+
+    // A neutron star over about 2.3 solar masses can't hold itself up: it becomes a black hole.
+    // A black hole's radius is always its event horizon.
+    function collapseIfTooHeavy(b) {
+        if (b.kind === 'neutron' && b.m > NS_MAX_MASS) {
+            b.kind = 'blackhole';
+            b.color = KINDS.blackhole.color;
+            if (/^Neutron star/.test(b.name)) b.name = uniqueName('Black hole');
+            flashes.push({ x: b.x, y: b.y, t: performance.now(), color: '#ffffff', r0: drawRadius(b) });
+            refreshBodyLists();
+        }
+        if (b.kind === 'blackhole') b.R = horizonKm(b.m);
     }
 
     // Advance the simulation by simDt years (as many whole adaptive steps as fit).
@@ -474,20 +690,23 @@
         if (forcesDirty) computeForces();
         acc += simDt;
         let steps = 0;
-        const limit = maxSteps || MAX_STEPS_PER_FRAME;
+        const pairs = Math.max(1, (bodies.length * (bodies.length - 1)) / 2);
+        const limit = maxSteps || clamp(Math.round(MAX_PAIRS_PER_FRAME / (3 * pairs)), 300, 4000);
         while (steps < limit) {
             const dt = nextDt;
             if (!(dt > 0) || acc < dt) break;
-            leapfrog(dt);
+            step(dt);
             simTime += dt;
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
+            if (checkTides()) { refreshBodyLists(); }
             trackPeriods(simTime);
             k2Step(simTime);
-            while (simTime >= nextSampleT) {
+            flybyStep();
+            if (simTime >= nextSampleT || (simTime - lastSampleT > sampleDt / 32 && trailBending())) {
                 recordSample();
-                nextSampleT += sampleDt;
+                while (nextSampleT <= simTime) nextSampleT += sampleDt;
             }
         }
         slowedDown = steps >= limit;
@@ -533,6 +752,7 @@
             let best = null, bestA = Infinity, pull = null, pullMax = -1;
             for (let j = 0; j < i; j++) {
                 const p = order[j];
+                if (b.grp && b.grp === p.grp) continue;   // pieces of one body don't pull on each other
                 const rx = b.x - p.x, ry = b.y - p.y;
                 const r2 = rx * rx + ry * ry;
                 if (r2 === 0) continue;
@@ -598,19 +818,26 @@
         return L < 0 ? -1 : 1;
     }
 
-    // Launch b on a circular orbit around p. The pair keeps its centre of mass and momentum (a new
-    // body comes in at rest in the view), so both go round their centre of mass.
-    function launchCircular(b, p, sense) {
+    // Launch b on a circular orbit around p: relative speed sqrt(G(M + m)/r) at right angles to the line
+    // between them. The pair keeps its centre of mass and momentum, so both go round their centre of
+    // mass. With inherit, b first takes on p's velocity: a body dropped beside a planet then joins the
+    // planet's motion, and the pair carries on round the star together (even a heavy "moon" that would
+    // otherwise rob the planet of half its orbital speed).
+    function launchCircular(b, p, sense, inherit) {
         const rx = b.x - p.x, ry = b.y - p.y;
         const r = Math.hypot(rx, ry);
         if (r === 0) return;
         const v = Math.sqrt((G * (b.m + p.m)) / r);
         const s = sense || 1;
         const M = b.m + p.m;
+        const bvx = inherit ? p.vx : b.vx, bvy = inherit ? p.vy : b.vy;
         const cx = (b.m * b.x + p.m * p.x) / M, cy = (b.m * b.y + p.m * p.y) / M;
-        const cvx = (b.m * b.vx + p.m * p.vx) / M, cvy = (b.m * b.vy + p.m * p.vy) / M;
+        const cvx = (b.m * bvx + p.m * p.vx) / M, cvy = (b.m * bvy + p.m * p.vy) / M;
         setPairRelative(b, p, rx, ry, (-s * ry / r) * v, (s * rx / r) * v, cx, cy, cvx, cvy);
     }
+
+    // Does p itself orbit something heavier (a planet or a moon, not the star at the centre)?
+    const isSatellite = (p) => !!(p.primary && p.bound && p.primary.m > p.m);
 
     // ------------------------------------------------------------------
     // Kepler's 3rd law: measured periods (time for a full turn around the primary) and
@@ -703,17 +930,107 @@
     }
 
     // ------------------------------------------------------------------
+    // Flybys (gravity assists). When the chosen body, much lighter than a planet, passes through the
+    // planet's Hill sphere without being captured, its speed relative to the planet's star is noted on
+    // the way in and out, and its path relative to the planet is kept (every step) for a close-up. Seen
+    // from the planet it leaves as fast as it came, only turned; seen from the star the turn adds the
+    // planet's own motion, so it can gain (passing behind the planet) or lose a lot of speed.
+    // ------------------------------------------------------------------
+    const flyby = { bid: null, pid: null, sid: null, active: false, done: false, hill: 0, vIn: 0, vOut: 0, vNow: 0, relIn: 0, relOut: 0, rmin: 0, rp: 0, pts: [], el0: null };
+
+    function resetFlyby() {
+        flyby.bid = null; flyby.active = false; flyby.done = false; flyby.pts = []; flyby.el0 = null;
+    }
+
+    function flybyStep() {
+        const b = bodyById(selectedId);
+        if (!b || b.held || (flyby.bid !== null && flyby.bid !== b.id)) { if (flyby.bid !== null) resetFlyby(); return; }
+        if (flyby.active) {
+            const q = bodyById(flyby.pid), s = bodyById(flyby.sid);
+            if (!q || !s || q.held) { resetFlyby(); return; }
+            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
+            flyby.vNow = Math.hypot(b.vx - s.vx, b.vy - s.vy);
+            if (r < flyby.rmin) {
+                // On the way in, the closest approach of the hyperbola it is on now (the star's pull
+                // shifts it as it goes); after it, the measured one. The close-up is scaled by it.
+                flyby.rmin = r;
+                const el = relElements(dx, dy, b.vx - q.vx, b.vy - q.vy, G * (b.m + q.m));
+                flyby.rp = Math.max(Math.min(el.p / (1 + el.e), r), (q.R + b.R) / AU_KM);
+            } else {
+                flyby.rp = flyby.rmin;
+            }
+            // points closer together near the planet (where the close-up shows them)
+            const n = flyby.pts.length;
+            if (Math.hypot(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
+            if (r > flyby.hill) {
+                flyby.active = false; flyby.done = true;
+                flyby.vOut = flyby.vNow;
+                flyby.relOut = Math.hypot(b.vx - q.vx, b.vy - q.vy);
+                flyby.pts.push(dx, dy);
+            }
+            return;
+        }
+        if (flyby.done) return;
+        for (const q of bodies) {
+            const s = q.primary;
+            if (q === b || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
+            if (q.m < 10 * b.m || q.m > 0.1 * s.m) continue;   // a light body passing a planet
+            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
+            if (r >= q.hill) continue;
+            const el = relElements(dx, dy, b.vx - q.vx, b.vy - q.vy, G * (b.m + q.m));
+            if (el.bound) continue;   // captured: an orbit, not a flyby
+            Object.assign(flyby, {
+                bid: b.id, pid: q.id, sid: s.id, active: true, done: false, hill: q.hill, rmin: r,
+                vIn: Math.hypot(b.vx - s.vx, b.vy - s.vy), relIn: el.v,
+                rp: Math.max(el.p / (1 + el.e), (q.R + b.R) / AU_KM),
+                el0: relElements(b.x - s.x, b.y - s.y, b.vx - s.vx, b.vy - s.vy, G * (b.m + s.m)),
+                pts: [dx, dy]
+            });
+            flyby.vNow = flyby.vIn;
+            return;
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Trails
     // ------------------------------------------------------------------
+    // Samples are taken at regular times, and in between whenever a body has turned noticeably round
+    // the body it orbits (so a fast swing past the closest point stays a smooth curve).
     function recordSample() {
         const k = sampleCount % TRAIL_CAP;
         const c = totals(bodies);
         comTrail[2 * k] = c.x; comTrail[2 * k + 1] = c.y;
+        sampleTimes[k] = simTime;
         for (const b of bodies) {
             b.trail[2 * k] = b.x;
             b.trail[2 * k + 1] = b.y;
         }
         sampleCount++;
+        lastSampleT = simTime;
+    }
+
+    function trailBending() {
+        if (!sampleCount) return false;
+        const k = 2 * ((sampleCount - 1) % TRAIL_CAP);
+        for (const b of bodies) {
+            const p = b.primary;
+            if (!p || b.held || p.held || b.trailStart >= sampleCount) continue;
+            const rx = b.x - p.x, ry = b.y - p.y;
+            const ox = b.trail[k] - p.trail[k], oy = b.trail[k + 1] - p.trail[k + 1];
+            if (Math.hypot(rx - ox, ry - oy) > 0.035 * Math.hypot(rx, ry)) return true;
+        }
+        return false;
+    }
+
+    // The first sample at or after time t (binary search over the kept samples)
+    function sampleAtTime(t) {
+        let lo = Math.max(0, sampleCount - TRAIL_CAP + 1), hi = sampleCount - 1;
+        if (hi < lo || sampleTimes[hi % TRAIL_CAP] < t) return sampleCount;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (sampleTimes[mid % TRAIL_CAP] < t) lo = mid + 1; else hi = mid;
+        }
+        return lo;
     }
 
     function clearTrail(b) { b.trailStart = sampleCount; }
@@ -759,10 +1076,14 @@
         if (ui.com) ui.com.checked = settings.com;
         computeForces();
         computePrimaries();
-        // Arrow scale: the subject's pull (or the scene's chosen one) reads as a medium-length arrow
+        // Arrow scales: the subject's pull (or the scene's chosen one) and its average orbital speed
+        // read as medium-length arrows
         const subj = bodies[def.forceBody !== undefined ? def.forceBody : def.subject] || null;
         const fs = subj ? Math.hypot(subj.fx, subj.fy) : 0;
         forceRef = fs > 0 ? fs : 1;
+        const vs = bodies[def.subject];
+        const el = vs && orbitingBody(vs) ? elementsOf(vs, vs.primary) : null;
+        vRef = def.vref || (el ? (el.bound ? Math.sqrt(el.mu / el.a) : el.v) : TAU);
         let pe = 0;
         for (let i = 0; i < bodies.length; i++) {
             for (let j = i + 1; j < bodies.length; j++) {
@@ -777,6 +1098,8 @@
         updateTrailLabel();
         resetCharts();
         syncEccentricity(true);
+        resetFlyby();
+        setHint(null, def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
     }
 
     // ------------------------------------------------------------------
@@ -829,18 +1152,39 @@
     }
 
     // Drawn radius (CSS px) from the real radius: compressed, so a star is about twice a giant
-    // planet and a giant planet about one and a half times Earth.
+    // planet and a giant planet about one and a half times Earth (a red giant is the largest).
     function symbolicRadius(Rkm) {
-        return clamp(2.5 * Math.pow(1.5, Math.log10(Math.max(1, Rkm)) - 1), 3, 18);
+        return clamp(2.5 * Math.pow(1.5, Math.log10(Math.max(1, Rkm)) - 1), 3, 30);
     }
+    // Star remnants are far too small for that: a black hole is drawn the size of a planet (a little
+    // larger as it grows), a white dwarf or neutron star as a bright spark.
+    function symbolicSize(kind, m, Rkm) {
+        if (kind === 'blackhole') return clamp(13 * Math.pow(m / 10, 1 / 6), 9, 19);
+        if (kind === 'neutron') return 4.5;
+        if (kind === 'whitedwarf') return 5.5;
+        return symbolicRadius(Rkm);
+    }
+    const MARKER_R = 7;   // px: the ring that marks a body drawn at its true (tiny) size
+
+    // The radius that arrows, names and clicks keep clear of (the disc, or the marker ring around it)
     function drawRadius(b) {
-        return b.rd || Math.max(symbolicRadius(b.R) * sizeScale, (b.R / AU_KM) * scale);
+        return b.rh || Math.max(bodySize(b) * sizeScale, (b.R / AU_KM) * scale);
     }
+    // A torn-apart body's pieces are small
+    const bodySize = (b) => (b.grp ? 3.5 : symbolicSize(b.kind, b.m, b.R));
 
     // Drawn radii for this frame. A moon close to its planet on screen shrinks both discs (down to
     // 3 px) so they never overlap; zoomed in far enough, bodies are drawn at their true size.
+    // With realistic physics every body is drawn at its true size (rd), inside a marker ring (rh).
     function computeDrawRadii() {
-        for (const b of bodies) b.rmax = symbolicRadius(b.R) * sizeScale;
+        if (settings.realistic) {
+            for (const b of bodies) {
+                b.rd = (b.R / AU_KM) * scale;
+                b.rh = Math.max(b.rd, MARKER_R);
+            }
+            return;
+        }
+        for (const b of bodies) b.rmax = bodySize(b) * sizeScale;
         for (const b of bodies) {
             const p = b.primary;
             if (!p || !b.bound || b.m >= p.m) continue;
@@ -848,7 +1192,7 @@
             p.rmax = Math.min(p.rmax, 0.45 * d);
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
-        for (const b of bodies) b.rd = Math.max(3, b.rmax, (b.R / AU_KM) * scale);
+        for (const b of bodies) b.rd = b.rh = Math.max(3, b.rmax, (b.R / AU_KM) * scale);
     }
 
     // Change the view so a world box (relative to the frame origin) fits the canvas.
@@ -941,7 +1285,7 @@
         if (frameId !== null && !bodyById(frameId)) frameId = null;
         if (selectedId !== null && !bodyById(selectedId)) selectedId = defaultSubject();
         if (ui.frame) {
-            const opts = [['com', 'Centre of mass (no body)']].concat(bodies.map((b) => [String(b.id), b.name]));
+            const opts = [['com', 'Centre of mass (no body)']].concat(bodies.filter((b) => !b.grp || b.id === frameId).map((b) => [String(b.id), b.name]));
             const same = ui.frame.options.length === opts.length && opts.every((o, i) => ui.frame.options[i].value === o[0] && ui.frame.options[i].textContent === o[1]);
             if (!same) {
                 ui.frame.textContent = '';
@@ -1055,7 +1399,7 @@
     function launch(b, isNew) {
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
-            if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : senseAround(b, p));
+            if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
         } else if (settings.placement === 'rest' || isNew) {
             const fv = frameVelocity();
             b.vx = fv.x; b.vy = fv.y;
@@ -1197,7 +1541,8 @@
         if (!s) {
             const n = parseInt(color.slice(1), 16);
             const f = 0.68;
-            s = `rgb(${Math.round(((n >> 16) & 255) * f)},${Math.round(((n >> 8) & 255) * f)},${Math.round((n & 255) * f)})`;
+            const ch = (sh) => Math.round(((n >> sh) & 255) * f).toString(16).padStart(2, '0');
+            s = `#${ch(16)}${ch(8)}${ch(0)}`;   // hex, so hexA() can fade it
             shadeCache.set(color, s);
         }
         return s;
@@ -1217,13 +1562,15 @@
         ctx.lineJoin = 'round';
 
         computeDrawRadii();
+        placeCloseUp();
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
         drawTrails(C);
+        drawFlybyGhost(C);
         if (settings.k1) drawEllipseLaw(C, subj);
         drawDragPreviews(C);
-        if (settings.com) drawCentreOfMass(C);
         drawBodies(C);
+        if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
         drawLabels(C);
         drawOffscreen(C);
@@ -1237,7 +1584,7 @@
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
-        const n = Math.min(TRAIL_CAP - 1, Math.round(years / sampleDt));
+        const first = sampleAtTime(simTime - years);
         const L = frameId !== null ? bodyById(frameId) : null;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
         const live = freeze ? liveFrameOrigin() : F;
@@ -1247,7 +1594,7 @@
         const oT = L ? L.trail : comTrail;
         for (const b of bodies) {
             if (b.held) continue;
-            let k0 = Math.max(b.trailStart, sampleCount - n, sampleCount - TRAIL_CAP + 1);
+            let k0 = Math.max(b.trailStart, first, sampleCount - TRAIL_CAP + 1);
             if (L) k0 = Math.max(k0, L.trailStart);
             const count = sampleCount - k0;
             if (count < 1) continue;
@@ -1278,31 +1625,141 @@
         ctx.globalAlpha = 1;
     }
 
+    // During and after a flyby: the orbit round the star the body was on before it met the planet
+    // (faint and dashed), to compare with where it actually goes.
+    function drawFlybyGhost(C) {
+        const b = bodyById(selectedId);
+        if (!b || flyby.bid !== b.id || !flyby.el0) return;
+        const s = bodyById(flyby.sid), q = bodyById(flyby.pid);
+        if (!s || !q) return;
+        const el = flyby.el0;
+        const cx = sx(s.dx), cy = sy(s.dy);
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 5]);
+        traceConic(cx, cy, el, 3 * Math.max(viewW, viewH) / scale);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        if (!el.bound || cleanRender) return;
+        // Named at its far end, unless a body (and so its name) is there
+        const ra = el.a * (1 + el.e) * scale;
+        const ux = -Math.cos(el.w), uy = Math.sin(el.w);
+        const at = { x: cx + ux * ra, y: cy + uy * ra };
+        if (bodies.some((o) => Math.hypot(sx(o.dx) - at.x, sy(o.dy) - at.y) < 70)) return;
+        if (closeUp && Math.hypot(at.x - closeUp.x, at.y - closeUp.y) < closeUp.R + 90) return;
+        ctx.font = font(clamp(Math.min(viewW, viewH) / 48, 10, 12));
+        ctx.fillStyle = C.subtle;
+        ctx.textBaseline = 'middle';
+        labelOutward(`orbit without ${q.name}`, at, ux, uy, 8);
+    }
+
+    // A soft glow around a body (light, not size)
+    function glow(x, y, r0, r1, color, a) {
+        const g = ctx.createRadialGradient(x, y, r0, x, y, r1);
+        g.addColorStop(0, hexA(color, a));
+        g.addColorStop(1, hexA(color, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x, y, r1, 0, TAU);
+        ctx.fill();
+    }
+
+    // A lit sphere: lighter towards the top left
+    function disc(x, y, r, color, light, C) {
+        const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+        g.addColorStop(0, mix(color, '#ffffff', light));
+        g.addColorStop(1, color);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, TAU);
+        ctx.fill();
+        if (!C.dark && r > 2) {
+            ctx.strokeStyle = C.outline;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+    }
+
+    // A black hole: a disc darker than space, edged by a thin bright photon ring and a faint glow of
+    // bent light. Light from the side moving towards us is brighter, so the ring is lopsided.
+    function drawBlackHole(x, y, r, b, C) {
+        const ring = b.color;
+        if (r > 1.5) glow(x, y, r * 0.95, r * 2.7, ring, C.dark ? 0.3 : 0.4);
+        if (r < 2.5) {
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.arc(x, y, Math.max(r, 1.2), 0, TAU);
+            ctx.fill();
+            return;
+        }
+        // Photon ring: brighter on the left, where the light comes towards us (on a light page, deeper
+        // colours rather than white, which wouldn't show)
+        const lw = clamp(r * 0.22, 1.5, 3.5);
+        const g = ctx.createLinearGradient(x - r, y - r * 0.4, x + r, y + r * 0.4);
+        g.addColorStop(0, C.dark ? mix(ring, '#ffffff', 0.75) : ring);
+        g.addColorStop(0.45, C.dark ? ring : bodyStroke(ring, false));
+        g.addColorStop(1, hexA(ring, 0.45));
+        ctx.strokeStyle = g;
+        ctx.lineWidth = lw;
+        ctx.beginPath();
+        ctx.arc(x, y, r - lw / 2, 0, TAU);
+        ctx.stroke();
+        // The shadow: darker than space
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(x, y, r - lw * 0.85, 0, TAU);
+        ctx.fill();
+    }
+
+    function drawBody(b, x, y, r, C) {
+        const look = lookOf(b);
+        if (b.grp) {
+            // A piece of a torn-apart body: a glowing clump
+            glow(x, y, 0, Math.max(r * 2.4, 5), b.color, C.dark ? 0.55 : 0.6);
+            disc(x, y, Math.max(r * 0.8, 0.9), b.color, 0.5, C);
+            return;
+        }
+        if (look === 'blackhole') { drawBlackHole(x, y, r, b, C); return; }
+        // White on a light background needs a deeper glow to show
+        const halo = C.dark ? b.color : bodyStroke(b.color, false);
+        if (look === 'neutron') {
+            // A tiny, intensely hot star: a white spark in a blue-white glow
+            glow(x, y, r * 0.5, Math.max(r * 3.4, 8), halo, C.dark ? 0.75 : 0.7);
+            disc(x, y, Math.max(r, 0.9), '#e4f1ff', 0.8, C);
+            return;
+        }
+        if (look === 'whitedwarf') {
+            glow(x, y, r * 0.6, Math.max(r * 2.8, 7), halo, C.dark ? 0.5 : 0.6);
+            disc(x, y, Math.max(r, 0.9), b.color, 0.6, C);
+            return;
+        }
+        if (look === 'star') glow(x, y, r * 0.6, r * 2.6, b.color, C.dark ? 0.45 : 0.35);
+        else if (look === 'browndwarf' && r > 2) glow(x, y, r * 0.8, r * 1.8, b.color, 0.2);   // a dull infrared glow
+        disc(x, y, Math.max(r, 0.9), b.color, look === 'star' ? 0.55 : 0.35, C);
+    }
+
     function drawBodies(C) {
+        const real = settings.realistic && !cleanRender;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy);
             const r = drawRadius(b);
             if (x < -r - 60 || x > viewW + r + 60 || y < -r - 60 || y > viewH + r + 60) continue;
-            if (isStar(b)) {
-                const g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 2.6);
-                g.addColorStop(0, hexA(b.color, C.dark ? 0.45 : 0.35));
-                g.addColorStop(1, hexA(b.color, 0));
-                ctx.fillStyle = g;
-                ctx.beginPath();
-                ctx.arc(x, y, r * 2.6, 0, TAU);
-                ctx.fill();
-            }
-            const g2 = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
-            g2.addColorStop(0, mix(b.color, '#ffffff', isStar(b) ? 0.55 : 0.35));
-            g2.addColorStop(1, b.color);
-            ctx.fillStyle = g2;
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, TAU);
-            ctx.fill();
-            if (!C.dark) {
-                ctx.strokeStyle = C.outline;
-                ctx.lineWidth = 1;
-                ctx.stroke();
+            if (settings.realistic) {
+                // True size, so stars shine as small points of light; a ring marks anything too small to see
+                const rd = b.rd;
+                if (isStar(b) && rd < 4) glow(x, y, 0, 5, b.color, C.dark ? 0.6 : 0.5);
+                drawBody(b, x, y, rd, C);
+                if (rd < MARKER_R && real && !b.grp) {
+                    ctx.strokeStyle = C.dark ? hexA(b.color, 0.6) : bodyStroke(b.color, false);
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.arc(x, y, MARKER_R, 0, TAU);
+                    ctx.stroke();
+                }
+            } else {
+                drawBody(b, x, y, r, C);
             }
             if ((b.id === selectedId || b === popBody) && !cleanRender) {
                 ctx.strokeStyle = b === popBody ? colours().text : C.subtle;
@@ -1318,23 +1775,86 @@
 
     // Names go on top of the arrows and trails, with a halo in the background colour so lines
     // crossing them don't make them hard to read.
+    // Each name goes on the side away from the pull (outwards from what it orbits, clear of the arrows
+    // and trail) unless that would cover another name or body; then the next free side round. A name
+    // with no free side is left out (the chosen body's never is). Pieces of a torn-apart body aren't
+    // named unless chosen.
     function drawLabels(C) {
         if (!settings.labels) return;
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
         ctx.font = font(fs);
         ctx.lineWidth = 3;
         ctx.strokeStyle = hexA(C.bg, 0.8);
-        for (const b of bodies) {
-            const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        const placed = [];
+        const discs = bodies.map((b) => ({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b), b }));
+        // the flyby close-up and its caption
+        if (closeUp) placed.push({ l: closeUp.x - closeUp.R, r: closeUp.x + closeUp.R, t: closeUp.y - closeUp.R - 18, b: closeUp.y + closeUp.R });
+        const order = discs.slice().sort((p, q) => (q.b.id === selectedId) - (p.b.id === selectedId) || q.b.m - p.b.m);
+        for (const { x, y, r, b } of order) {
             if (x < -60 || x > viewW + 60 || y < -60 || y > viewH + 60) continue;
-            // On the side away from the pull (outwards from what it orbits), clear of the arrows and trail
-            const u = labelDirection(b);
-            const gap = r + (b.id === selectedId || b === popBody ? 9 : 5);
+            const chosen = b.id === selectedId || b === popBody;
+            if (b.grp && !chosen) continue;
+            const w = ctx.measureText(b.name).width;
+            const gap = r + (chosen ? 9 : 5);
+            const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
+            let best = null;
+            for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
+                const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
+                const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
+                // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
+                const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
+                    || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
+                if (!hit) { best = { box, ux, uy }; break; }
+                if (!best && chosen) best = { box, ux, uy, forced: true };
+            }
+            if (!best) continue;
+            placed.push(best.box);
             ctx.fillStyle = C.label;
-            ctx.textAlign = u.x > 0.38 ? 'left' : u.x < -0.38 ? 'right' : 'center';
-            ctx.textBaseline = u.y > 0.38 ? 'top' : u.y < -0.38 ? 'bottom' : 'middle';
-            fillTextInside(b.name, x + u.x * gap, y + u.y * gap, true);
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.strokeText(b.name, best.box.l, best.box.t);
+            ctx.fillText(b.name, best.box.l, best.box.t);
         }
+        // Last, the centre of mass's own label, in the first free spot round its marker (if the
+        // marker is on a star, over the star's glow rather than not at all)
+        if (settings.com && bodies.length) {
+            const c = drawnCentreOfMass();
+            ctx.font = font(clamp(Math.min(viewW, viewH) / 46, 10, 12));
+            const w = ctx.measureText('centre of mass').width, h = 12;
+            const spots = [[11, -16], [11, 4], [-11 - w, -16], [-11 - w, 4], [-w / 2, -26], [-w / 2, 14]];
+            let at = null;
+            for (const strict of [true, false]) {
+                for (const [dx, dy] of spots) {
+                    const box = { l: c.x + dx, t: c.y + dy, r: c.x + dx + w, b: c.y + dy + h };
+                    if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
+                    if (placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)) continue;
+                    if (strict && discs.some((d) => d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b)) continue;
+                    at = box;
+                    break;
+                }
+                if (at) break;
+            }
+            if (at) {
+                ctx.fillStyle = C.subtle;
+                ctx.strokeText('centre of mass', at.l, at.t);
+                ctx.fillText('centre of mass', at.l, at.t);
+            }
+        }
+    }
+
+    function drawnCentreOfMass() {
+        let M = 0, X = 0, Y = 0;
+        for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
+        return M > 0 ? { x: sx(X / M), y: sy(Y / M) } : { x: viewW / 2, y: viewH / 2 };
+    }
+
+    // The box of a name anchored at (x, y) on the side (ux, uy) of its body, kept inside the canvas
+    function labelBox(x, y, ux, uy, w, fs) {
+        let l = ux > 0.38 ? x : ux < -0.38 ? x - w : x - w / 2;
+        let t = uy > 0.38 ? y : uy < -0.38 ? y - fs : y - fs / 2;
+        l = clamp(l, 4, Math.max(4, viewW - 4 - w));
+        t = clamp(t, 2, viewH - fs - 4);
+        return { l, t, r: l + w, b: t + fs };
     }
 
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
@@ -1344,7 +1864,7 @@
         const inset = 12;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (x > -r && x < viewW + r && y > -r && y < viewH + r) continue;
+            if (b.grp || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
             const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             const ex = cx + dx * k, ey = cy + dy * k;
@@ -1406,14 +1926,39 @@
         return Lmax * (1 - Math.exp(-Math.LN2 * f / forceRef));   // the reference force is half the maximum
     }
 
-    // Where the velocity handle of the selected body is drawn (screen px), and the arrow tip.
-    function velocityTip(b) {
-        const fv = frameVelocity();
-        const tau = arrowTime();
-        const vx = b.aim ? b.aim.vx : b.vx - fv.x, vy = b.aim ? b.aim.vy : b.vy - fv.y;
-        const x = sx(b.dx), y = sy(b.dy);
-        return { x: x + vx * tau * scale, y: y - vy * tau * scale, vx, vy };
+    // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
+    // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
+    // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
+    // ARROW_PX long; arrows over three times that are squeezed.
+    const ARROW_PX = 60;
+    let vRef = TAU;   // AU/yr (Earth's orbital speed until a scene sets it)
+    const arrowUnit = () => ARROW_PX * sizeScale;
+    const pxPerSpeed = () => arrowUnit() / vRef;
+    function arrowLength(v) {
+        const L = v * pxPerSpeed(), L0 = arrowUnit();
+        return L <= 3 * L0 ? L : 3 * L0 + L0 * (1 - Math.exp(-(L - 3 * L0) / L0));
     }
+
+    // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
+    // velocity it shows: relative to the view, or while it is being aimed, relative to the aim's
+    // reference at the aim's own scale (k px per AU/yr, never squeezed).
+    function velocityTip(b) {
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        let vx, vy, L;
+        if (b.aim) {
+            vx = b.aim.vx; vy = b.aim.vy;
+            L = Math.hypot(vx, vy) * b.aim.k;
+        } else {
+            const fv = frameVelocity();
+            vx = b.vx - fv.x; vy = b.vy - fv.y;
+            L = arrowLength(Math.hypot(vx, vy));
+        }
+        const v = Math.hypot(vx, vy);
+        if (!(v > 0)) return { x, y, vx, vy, len: 0 };
+        return { x: x + (vx / v) * (r + L), y: y - (vy / v) * (r + L), vx, vy, len: L };
+    }
+    // Where an arrow is grabbed: its tip, or a little way out from the disc if the arrow is too short
+    // to grab (nothing is drawn there)
     function handlePos(b) {
         const tip = velocityTip(b);
         const x = sx(b.dx), y = sy(b.dy);
@@ -1424,7 +1969,7 @@
         if (len >= min) return { x: tip.x, y: tip.y };
         let ux, uy;
         if (len > 0.5) { ux = dx / len; uy = dy / len; } else {
-            // Hardly moving in this view: put the handle at right angles to the name label
+            // Hardly moving in this view: grab it at right angles to the name label
             const l = labelDirection(b);
             ux = -l.y; uy = l.x;
         }
@@ -1453,10 +1998,11 @@
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        // (a torn-apart body's pieces only get arrows when one is chosen)
         if (settings.forces) {
             for (const b of bodies) {
                 const Fm = Math.hypot(b.fx, b.fy);
-                if (!(Fm > 0)) continue;
+                if (!(Fm > 0) || (b.grp && b !== subj)) continue;
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -1464,32 +2010,33 @@
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
             }
         }
+        // Velocities only when they are switched on (or while one is being aimed): plain arrows, like
+        // the forces. An arrow's tip is dragged to aim it (an invisible grab area round the tip); the
+        // arrow under the pointer, or being aimed, is drawn thicker and brighter. A body hardly moving
+        // has no arrow to grab, so hovering just off its disc shows a faint stub that can be pulled out.
+        const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         for (const b of bodies) {
-            const showV = settings.velocities || b === subj || b.aim;
-            if (!showV || (b.held && !b.aim)) continue;
+            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || (b.grp && b !== subj)) continue;
             const tip = velocityTip(b);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
             const len = Math.hypot(dx, dy);
-            if (len > r + 3) arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, C.velocity, w);
-            if (((b === subj && !b.held && bodies.length > 1) || b.aim) && !cleanRender) {
-                const h = handlePos(b);
-                ctx.lineWidth = 1.5;
-                ctx.strokeStyle = C.velocity;
-                ctx.fillStyle = hexA(C.dark ? '#16181c' : '#f4f6f8', 0.6);
-                ctx.beginPath();
-                ctx.arc(h.x, h.y, 6, 0, TAU);
-                ctx.fill();
-                ctx.stroke();
+            const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
+            if (tip.len > 2.5) {
+                arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+            } else if (hot && !b.aim) {
+                const h = handlePos(b), hl = Math.hypot(h.x - x, h.y - y) || 1;
+                ctx.globalAlpha = 0.6;
+                arrow(x + ((h.x - x) / hl) * r, y + ((h.y - y) / hl) * r, h.x, h.y, hotColour, w);
+                ctx.globalAlpha = 1;
             }
         }
     }
 
+    // The centre-of-mass marker (its label is placed with the bodies' names)
     function drawCentreOfMass(C) {
-        let M = 0, X = 0, Y = 0;
-        for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
-        if (!(M > 0)) return;
-        const x = sx(X / M), y = sy(Y / M);
+        if (!bodies.length) return;
+        const { x, y } = drawnCentreOfMass();
         const r = 6;
         ctx.lineWidth = 1.4;
         ctx.strokeStyle = C.text;
@@ -1501,13 +2048,6 @@
         ctx.moveTo(x, y); ctx.arc(x, y, r, -Math.PI / 2, 0); ctx.closePath(); ctx.fill();
         ctx.beginPath();
         ctx.moveTo(x, y); ctx.arc(x, y, r, Math.PI / 2, Math.PI); ctx.closePath(); ctx.fill();
-        if (settings.labels) {
-            ctx.font = font(clamp(Math.min(viewW, viewH) / 46, 10, 12));
-            ctx.fillStyle = C.subtle;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('centre of mass', x + r + 5, y - r - 4);
-        }
     }
 
     // A conic (relative orbit) around the primary at screen point (cx, cy).
@@ -1693,7 +2233,9 @@
         ctx.textBaseline = 'bottom';
         ctx.fillText(scaleLabel(nice), x0 + len + 6, y0 + 2);
         ctx.textAlign = 'right';
-        ctx.fillText('Sizes not to scale', viewW - pad - 2, y0 + 2);
+        ctx.fillText(settings.realistic ? 'Sizes to scale' : 'Sizes not to scale', viewW - pad - 2, y0 + 2);
+
+        drawFlybyCloseUp(C);
 
         // Pause / slow-down notice: top left, under the "Viewed from" chip if it is showing
         if (paused || slowedDown) {
@@ -1715,9 +2257,107 @@
         const cfs = compact ? clamp(fs - 0.5, 10, 12) : fs;
         let y = pad;
         if (frameId !== null && viewW < 520) y = 48;
+        const fl = flybyLines(compact);
+        if (fl) y = drawCard(C, fl, y, cfs) + 5;
         if (settings.k1) y = drawCard(C, kepler1Lines(subj, compact), y, cfs) + 5;
         if (settings.k2) y = drawCard(C, kepler2Lines(subj, compact), y, cfs) + 5;
         if (settings.k3) drawKepler3Card(C, subj, y, cfs, compact);
+    }
+
+    // The flyby card: the chosen body's speed relative to the star before and after it passed the
+    // planet, and relative to the planet (the same both ways).
+    function flybyLines(compact) {
+        const b = bodyById(selectedId);
+        if (!b || flyby.bid !== b.id || !(flyby.active || flyby.done)) return null;
+        const q = bodyById(flyby.pid), s = bodyById(flyby.sid);
+        if (!q || !s) return null;
+        const C = colours();
+        const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
+        const now = flyby.done ? flyby.vOut : flyby.vNow;
+        const vIn = kms(flyby.vIn), vNow = kms(now);
+        const title = !flyby.done ? `Passing ${q.name}…` : now >= flyby.vIn ? `Gravity assist from ${q.name}` : `Slowed down by ${q.name}`;
+        const head = [[title, true, C.velocity]];
+        const speeds = [`${vIn.v} → ${vNow.v} ${vNow.u}`, true];
+        const lines = [head, [[`Speed relative to ${theName(s)}: `], speeds]];
+        if (compact) return lines;
+        // (to two figures: the star's pull across the planet's Hill sphere makes them differ a little)
+        const rel = (v) => (v * AUYR_KMS).toPrecision(2);
+        lines.push([[flyby.done ? `Relative to ${q.name}: ${rel(flyby.relIn)} km/s in, ${rel(flyby.relOut)} out` : `Relative to ${q.name}: ${rel(flyby.relIn)} km/s in`]]);
+        return lines;
+    }
+
+    // A round close-up in the bottom-right corner: the flyby seen from the planet (drawn at its true
+    // size there), so the hairpin turn that is far too small to see in the main view shows.
+    // Where the flyby close-up goes this frame (worked out before the names, which keep clear of it):
+    // the bottom-right corner, or the bottom-left or top-left one if fewer bodies are near it.
+    let closeUp = null;
+    function placeCloseUp() {
+        closeUp = null;
+        const b = bodyById(selectedId);
+        if (cleanRender || !b || flyby.bid !== b.id || !(flyby.active || flyby.done) || flyby.pts.length < 4 || !bodyById(flyby.pid)) return;
+        const R = clamp(Math.min(viewW, viewH) * 0.15, 44, 80);
+        const top = (frameId !== null ? 48 : 8) + (paused || slowedDown ? 32 : 0) + 18 + R;
+        const corners = [[viewW - 10 - R, viewH - 30 - R], [10 + R, viewH - 34 - R], [10 + R, top]];
+        const crowd = (c) => bodies.reduce((n, o) => n + Math.max(0, R + 60 - Math.hypot(sx(o.dx) - c[0], sy(o.dy) - c[1])), 0);
+        let best = corners[0], least = crowd(best);
+        for (const c of corners.slice(1)) { const n = crowd(c); if (n < least - 1) { least = n; best = c; } }
+        closeUp = { x: best[0], y: best[1], R };
+    }
+
+    function drawFlybyCloseUp(C) {
+        if (!closeUp) return;
+        const b = bodyById(selectedId), q = bodyById(flyby.pid);
+        const { x: cx, y: cy, R } = closeUp;
+        const k = R / (7 * flyby.rp);   // px per AU: the closest approach is a seventh of the way out
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, TAU);
+        ctx.fillStyle = C.card;
+        ctx.fill();
+        ctx.strokeStyle = C.cardLine;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.clip();
+        const qr = Math.max(2.5, (q.R / AU_KM) * k);
+        // Which way the planet is going (relative to its star): the body swings round behind it to gain speed
+        const s = bodyById(flyby.sid);
+        if (s) {
+            const vx = q.vx - s.vx, vy = q.vy - s.vy, v = Math.hypot(vx, vy);
+            if (v > 0) arrow(cx + (vx / v) * (qr + 2), cy - (vy / v) * (qr + 2), cx + (vx / v) * (qr + 0.42 * R), cy - (vy / v) * (qr + 0.42 * R), hexA(q.color, 0.8), 1.6);
+        }
+        drawBody(q, cx, cy, qr, C);
+        const P = flyby.pts;
+        const col = C.dark ? b.color : bodyStroke(b.color, false);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        let ex = 0, ey = 0, px = 0, py = 0;
+        for (let i = 0; i < P.length; i += 2) {
+            const x = cx + P[i] * k, y = cy - P[i + 1] * k;
+            if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+            // the last point still inside the close-up, and one a little before it (for the arrowhead)
+            if (Math.hypot(x - cx, y - cy) < R - 8) {
+                if (Math.hypot(x - ex, y - ey) > 6) { px = ex; py = ey; }
+                ex = x; ey = y;
+            }
+        }
+        const bx = cx + (b.x - q.x) * k, by = cy - (b.y - q.y) * k;
+        if (flyby.active) ctx.lineTo(bx, by);
+        ctx.stroke();
+        if (flyby.active) {
+            ctx.fillStyle = col;
+            ctx.beginPath();
+            ctx.arc(bx, by, 3, 0, TAU);
+            ctx.fill();
+        } else if (Math.hypot(ex - px, ey - py) > 2) {
+            arrow(px, py, ex, ey, col, 1.6);
+        }
+        ctx.restore();
+        ctx.font = font(clamp(Math.min(viewW, viewH) / 50, 10, 12));
+        ctx.fillStyle = C.subtle;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`Seen from ${q.name}`, cx, cy - R - 4);
     }
 
     function scaleLabel(au) {
@@ -1830,7 +2470,7 @@
         if (!P) return { P: null, rows: [] };
         const rows = [];
         for (const c of bodies) {
-            if (c === P || c.primary !== P || !c.bound) continue;
+            if (c === P || c.primary !== P || !c.bound || c.grp) continue;
             const tr = c.track;
             const row = { body: c, a: 0, T: 0, ratio: 0, progress: 0, measured: false };
             if (tr && tr.done > 0) {
@@ -1849,24 +2489,28 @@
     function drawKepler3Card(C, subj, y, fs, compact) {
         const { P, rows } = kepler3Rows(subj);
         const lh = Math.round(fs * 1.4);
+        // In the scene's own units: AU or km, and years, days or seconds
         const km = scene.units === 'km';
+        const tu = timeUnit(), tf = tu === 's' ? YEAR_S : tu === 'd' ? DAYS_PER_YEAR : 1, af = km ? AU_KM : 1;
+        const plain = !km && tu === 'yr';
         const title = compact || !P ? '3rd law' : `3rd law: orbits of ${P.name}`;
-        const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', km ? 'T (days)' : 'T (yr)', 'T²/a³'];
+        const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
         const cells = rows.slice(0, compact ? 5 : 8).map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
+            const Tv = r.T * tf;
             const a = km ? fmtKm(r.a * AU_KM) : r.a.toFixed(3);
-            const T = km ? (r.T * DAYS_PER_YEAR).toFixed(2) : r.T.toFixed(3);
-            const ratio = km ? fmtSci(Math.pow(r.T * DAYS_PER_YEAR, 2) / Math.pow(r.a * AU_KM, 3), 2) : r.ratio.toFixed(3);
+            const T = plain ? r.T.toFixed(3) : Tv >= 100 ? Tv.toFixed(1) : Tv >= 1 ? Tv.toFixed(2) : Tv.toPrecision(3);
+            const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
             const pred = (4 * Math.PI * Math.PI) / (G * (P.m + rows[0].body.m));
-            const v = km ? fmtSci(pred * Math.pow(DAYS_PER_YEAR, 2) / Math.pow(AU_KM, 3), 2) : pred.toFixed(3);
-            note = compact ? `Newton: 4π²/GM = ${v}` : `Newton: 4π²/GM = ${v} ${km ? 'd²/km³' : 'yr²/AU³'}`;
+            const v = plain ? pred.toFixed(3) : fmtSci((pred * tf * tf) / (af * af * af), 2);
+            note = compact ? `Newton: 4π²/GM = ${v}` : `Newton: 4π²/GM = ${v} ${tu === 'yr' ? 'yr' : tu}²/${km ? 'km' : 'AU'}³`;
         }
         // Column widths (the "measuring" text spans the three number columns)
         const gap = compact ? 9 : 12, dot = 10;
@@ -1933,109 +2577,167 @@
         return y + h;
     }
 
-    // While dragging: the orbit the body would follow, and the speed guide while aiming its velocity.
+    // ------------------------------------------------------------------
+    // Predicted path while a body is moved or aimed. Not just the two-body ellipse: a copy of the whole
+    // system is run forward (coarser steps, a fixed budget of force evaluations) until the body has gone
+    // once round, left the view far behind or hit something, so Jupiter's pull on a probe, or the star's
+    // on a moon, is included. The path is drawn relative to the body it orbits (or to the body the view
+    // is locked on), which is how an orbit is usually pictured.
+    // ------------------------------------------------------------------
+    const PREDICT_ETA = 0.012;
+    const PREDICT_PAIRS = 4e5;
+    const pred = { key: '', t: 0, pts: null, end: null, refId: null };
+
+    // The velocities a circular launch of b around p would give them (see launchCircular)
+    function circularLaunch(b, p, sense, inherit) {
+        const save = { bx: b.vx, by: b.vy, px: p.vx, py: p.vy };
+        launchCircular(b, p, sense, inherit);
+        const out = { b: [b.vx, b.vy], p: [p.vx, p.vy] };
+        b.vx = save.bx; b.vy = save.by; p.vx = save.px; p.vy = save.py;
+        return out;
+    }
+
+    // The world velocity a dragged body will have when it is let go, and that of its primary.
+    function releaseVelocity(b, d) {
+        if (b.aim) {
+            const base = aimBase(b);
+            return { v: [base.x + b.aim.vx, base.y + b.aim.vy] };
+        }
+        if (settings.placement === 'circular') {
+            const p = placementPrimary(b.x, b.y, b.m, b);
+            if (p) {
+                const c = circularLaunch(b, p, d && d.isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
+                return { v: c.b, p, pv: c.p };
+            }
+        }
+        if (settings.placement === 'rest') { const fv = frameVelocity(); return { v: [fv.x, fv.y] }; }
+        return { v: [b.vx, b.vy] };
+    }
+
+    function predictPath(b, d) {
+        const rel = releaseVelocity(b, d);
+        const p = placementPrimary(b.x, b.y, b.m, b);
+        const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
+        const ref = L || (p && p.m >= b.m ? p : null);
+        // Worked out again when anything changes, but at most 20 times a second while the others move
+        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : 'c', settings.realistic, settings.merge, bodies.length].join('|');
+        const now = performance.now();
+        if (pred.pts && (key === pred.key || (!paused && now - pred.t < 50 && pred.key.split('|')[0] === String(b.id)))) return pred;
+        pred.key = key; pred.t = now; pred.refId = ref ? ref.id : null;
+        // The copy
+        const list = bodies.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
+        const me = list[bodies.indexOf(b)];
+        me.vx = rel.v[0]; me.vy = rel.v[1];
+        if (rel.p) { const pc = list[bodies.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
+        const rc = ref ? list[bodies.indexOf(ref)] : null;
+        const origin = () => {
+            if (rc) return [rc.x, rc.y];
+            let M = 0, X = 0, Y = 0;
+            for (const q of list) { M += q.m; X += q.m * q.x; Y += q.m * q.y; }
+            return [X / M, Y / M];
+        };
+        // How long to look ahead: about one orbit if it is bound (two-body estimate), otherwise until it
+        // is well out of view
+        const pr = predictLaunch(b);
+        const tMax = pr && pr.el.bound ? 1.6 * pr.el.T : 6 * scene.Tref;
+        const rMax = 2.5 * Math.max(viewW, viewH) / scale;
+        const pairs = Math.max(1, (list.length * (list.length - 1)) / 2);
+        const budget = Math.min(20000, Math.floor(PREDICT_PAIRS / (3 * pairs)));
+        const pts = [];
+        let o = origin();
+        let lx = me.x - o[0], ly = me.y - o[1];
+        pts.push(lx, ly);
+        let ang = Math.atan2(ly, lx), swept = 0, t = 0, end = null;
+        let tmin = gravity(list);
+        const px = 1.5 / scale;   // keep points about 1.5 px apart
+        for (let k = 0; k < budget && t < tMax; k++) {
+            const dt = PREDICT_ETA * Math.sqrt(tmin);
+            const x0 = me.x, y0 = me.y;
+            tmin = yoshida(list, dt, () => gravity(list));
+            t += dt;
+            // Hit something? (closest approach along the step, as in checkMerges)
+            let hit = null;
+            for (const q of list) {
+                if (!settings.merge) break;
+                if (q === me) continue;
+                const reach = (q.R + me.R) / AU_KM;
+                const ex = me.x - x0, ey = me.y - y0;
+                const ee = ex * ex + ey * ey;
+                const qx = q.x - x0, qy = q.y - y0;
+                const s = ee > 0 ? clamp((qx * ex + qy * ey) / ee, 0, 1) : 1;
+                if (Math.hypot(qx - s * ex, qy - s * ey) < reach) { hit = q; break; }
+            }
+            o = origin();
+            const x = me.x - o[0], y = me.y - o[1];
+            const a = Math.atan2(y, x);
+            let da = a - ang;
+            if (da > Math.PI) da -= TAU; else if (da < -Math.PI) da += TAU;
+            swept += da; ang = a;
+            if (hit) { pts.push(x, y); end = 'hit'; break; }
+            if (Math.abs(x - lx) + Math.abs(y - ly) > px) { pts.push(x, y); lx = x; ly = y; }
+            if (Math.abs(swept) > TAU * 1.02) { end = 'closed'; break; }
+            if (Math.hypot(x, y) > rMax && !(pr && pr.el.bound)) { end = 'away'; break; }
+        }
+        pts.push(me.x - o[0], me.y - o[1]);
+        pred.pts = pts;
+        pred.end = end || 'open';
+        return pred;
+    }
+
+    // While dragging: the path the body would follow if let go now.
     function drawDragPreviews(C) {
         for (const d of drags.values()) {
             const b = d.body;
             if (!b || (d.mode !== 'move' && d.mode !== 'aim')) continue;
             if (!settings.preview && d.mode === 'move') continue;
-            const pr = predictLaunch(b);
-            if (!pr) continue;
-            const p = pr.p;
-            const cx = sx(p.dx), cy = sy(p.dy);
-            if (settings.preview || d.mode === 'aim') {
-                ctx.lineWidth = 1.4;
-                ctx.strokeStyle = hexA(b.color, 0.75);
-                ctx.setLineDash([5, 5]);
-                if (Math.abs(pr.el.h) < 1e-9 * pr.el.r * Math.max(pr.el.v, 1e-9) || pr.el.p * scale < 0.5) {
-                    ctx.beginPath();
-                    ctx.moveTo(sx(b.dx), sy(b.dy));
-                    ctx.lineTo(cx, cy);
-                } else {
-                    traceConic(cx, cy, pr.el, 3 * Math.max(viewW, viewH) / scale);
-                }
+            if (bodies.length < 2) continue;
+            const pp = predictPath(b, d);
+            const ref = pp.refId !== null ? bodyById(pp.refId) : null;
+            const o = ref ? { x: ref.dx, y: ref.dy } : liveFrameOrigin();
+            const pts = pp.pts;
+            const col = C.dark ? hexA(b.color, 0.8) : bodyStroke(b.color, false);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = col;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            for (let i = 0; i < pts.length; i += 2) {
+                const x = sx(o.x + pts[i]), y = sy(o.y + pts[i + 1]);
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // Where it ends: a cross if it hits something, an arrowhead if it is heading off
+            const n = pts.length;
+            if (n < 6) continue;
+            const ex = sx(o.x + pts[n - 2]), ey = sy(o.y + pts[n - 1]);
+            if (pp.end === 'hit') {
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(ex - 5, ey - 5); ctx.lineTo(ex + 5, ey + 5);
+                ctx.moveTo(ex - 5, ey + 5); ctx.lineTo(ex + 5, ey - 5);
                 ctx.stroke();
-                ctx.setLineDash([]);
-            }
-            if (d.mode === 'aim') {
-                // Speed guide: circles for the circular and escape speeds around the primary's velocity
-                const fv = frameVelocity();
-                const tau = arrowTime();
-                const ox = sx(b.dx) + (p.vx - fv.x) * tau * scale, oy = sy(b.dy) - (p.vy - fv.y) * tau * scale;
-                const rings = [[pr.vc * tau * scale, 'circular speed'], [pr.ve * tau * scale, 'escape speed']];
-                ctx.lineWidth = 1;
-                ctx.setLineDash([3, 4]);
-                ctx.strokeStyle = hexA(C.velocity, 0.55);
-                for (const [rr] of rings) {
-                    if (rr < 6) continue;
+            } else if (pp.end !== 'closed') {
+                let j = n - 4;
+                while (j > 0 && Math.hypot(sx(o.x + pts[j]) - ex, sy(o.y + pts[j + 1]) - ey) < 8) j -= 2;
+                const bx = sx(o.x + pts[j]), by = sy(o.y + pts[j + 1]);
+                const len = Math.hypot(ex - bx, ey - by);
+                if (len > 1 && ex > 0 && ex < viewW && ey > 0 && ey < viewH) {
+                    const ux = (ex - bx) / len, uy = (ey - by) / len;
+                    ctx.fillStyle = col;
                     ctx.beginPath();
-                    ctx.arc(ox, oy, rr, 0, TAU);
-                    ctx.stroke();
+                    ctx.moveTo(ex + ux * 3, ey + uy * 3);
+                    ctx.lineTo(ex - ux * 6 - uy * 4, ey - uy * 6 + ux * 4);
+                    ctx.lineTo(ex - ux * 6 + uy * 4, ey - uy * 6 - ux * 4);
+                    ctx.closePath();
+                    ctx.fill();
                 }
-                ctx.setLineDash([]);
-                drawRingLabels(C, b, ox, oy, rings, cx, cy);
             }
         }
     }
 
-    // The speed rings' labels, each sitting on its own ring at the clearest angle: away from the aimed
-    // arrow and its handle, the line to the body being orbited, the body and its name, inside the
-    // canvas and never on top of each other. A ring too small for that gets its label just outside it.
-    function drawRingLabels(C, b, ox, oy, rings, px, py) {
-        const fs = clamp(Math.min(viewW, viewH) / 48, 10, 12);
-        const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
-        const h = handlePos(b);
-        const angle = (x, y) => Math.atan2(y - oy, x - ox);
-        const avoid = [angle(h.x, h.y), angle(h.x, h.y) + Math.PI, angle(px, py)];
-        // The body's name, as drawLabels places it
-        const nfs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
-        ctx.font = font(nfs);
-        const nu = labelDirection(b), ngap = r + 9, nw = ctx.measureText(b.name).width;
-        const nx = bx + nu.x * ngap, ny = by + nu.y * ngap;
-        const nl = nu.x > 0.38 ? nx : nu.x < -0.38 ? nx - nw : nx - nw / 2;
-        const nt = nu.y > 0.38 ? ny : nu.y < -0.38 ? ny - nfs : ny - nfs / 2;
-        const keepOut = [{ l: nl - 2, r: nl + nw + 2, t: nt - 2, b: nt + nfs + 2 }];
-        // ...and the canvas's own notes: the scale bar row, and the pause / "Viewed from" notices
-        keepOut.push({ l: 0, r: viewW, t: viewH - 24, b: viewH });
-        if (paused || slowedDown || frameId !== null) keepOut.push({ l: 0, r: 240, t: 0, b: frameId !== null ? 84 : 40 });
-        const overlaps = (a, q) => a.l < q.r && a.r > q.l && a.t < q.b && a.b > q.t;
-        const nearPoint = (a, x, y, d) => x > a.l - d && x < a.r + d && y > a.t - d && y < a.b + d;
-        const angDist = (a1, a2) => { const d = Math.abs(((a1 - a2) % TAU + TAU) % TAU); return Math.min(d, TAU - d); };
-        ctx.font = font(fs);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = hexA(C.bg, 0.9);
-        ctx.fillStyle = C.velocity;
-        let first = null;
-        for (const [rr, text] of rings) {
-            if (rr < 6) continue;
-            const w = ctx.measureText(text).width;
-            let best = null, bestScore = -Infinity;
-            for (const rad of [rr, rr + fs / 2 + 6]) {
-                for (let k = 0; k < 72; k++) {
-                    const a = (k / 72) * TAU;
-                    const x = ox + Math.cos(a) * rad, y = oy + Math.sin(a) * rad;
-                    const box = { l: x - w / 2 - 3, r: x + w / 2 + 3, t: y - fs / 2 - 2, b: y + fs / 2 + 2 };
-                    if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
-                    if (keepOut.some((q) => overlaps(box, q))) continue;
-                    if (nearPoint(box, bx, by, r + 4) || nearPoint(box, h.x, h.y, 9)) continue;
-                    let score = Math.min(...avoid.map((v) => angDist(a, v)));
-                    if (first) score -= 0.25 * angDist(a, first.a);   // keep the pair together where possible
-                    if (rad !== rr) score -= 1;                         // on the ring is better than beside it
-                    if (score > bestScore) { bestScore = score; best = { a, x, y, box }; }
-                }
-                if (best && rad === rr) break;
-            }
-            if (!best) continue;
-            keepOut.push(best.box);
-            if (!first) first = best;
-            ctx.strokeText(text, best.x, best.y);
-            ctx.fillText(text, best.x, best.y);
-        }
-    }
-
-    // The orbit a held or aimed body would have on release.
+    // The two-body orbit a held or aimed body would have around its primary on release (for the hint
+    // and the readouts): relative speed, and the circular and escape speeds sqrt(G(M + m)/r) and
+    // sqrt(2G(M + m)/r) there.
     function predictLaunch(b) {
         const p = placementPrimary(b.x, b.y, b.m, b);
         if (!p) return null;
@@ -2044,15 +2746,9 @@
         if (!(r > 0)) return null;
         const mu = G * (b.m + p.m);
         const vc = Math.sqrt(mu / r), ve = Math.SQRT2 * vc;
-        let vx, vy;
-        const fv = frameVelocity();
-        if (b.aim) { vx = fv.x + b.aim.vx - p.vx; vy = fv.y + b.aim.vy - p.vy; }
-        else if (settings.placement === 'circular') {
-            const s = senseAround(b, p);
-            vx = (-s * ry / r) * vc; vy = (s * rx / r) * vc;
-        } else if (settings.placement === 'rest') { vx = fv.x - p.vx; vy = fv.y - p.vy; }
-        else { vx = b.vx - p.vx; vy = b.vy - p.vy; }
-        return { p, el: relElements(rx, ry, vx, vy, mu), vc, ve };
+        const rel = releaseVelocity(b, null);
+        const pv = rel.p === p ? rel.pv : [p.vx, p.vy];
+        return { p, el: relElements(rx, ry, rel.v[0] - pv[0], rel.v[1] - pv[1], mu), vc, ve };
     }
 
     // A body being dragged from the palette, drawn where it would land.
@@ -2060,12 +2756,9 @@
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
         const x = paletteDrag.cx, y = paletteDrag.cy;
-        const r = Math.max(symbolicRadius(k.R) * sizeScale, 4);
+        const r = Math.max(symbolicSize(paletteDrag.kind, k.m, k.R) * sizeScale, 4);
         ctx.globalAlpha = 0.85;
-        ctx.fillStyle = paletteDrag.kind === 'custom' ? '#ae85ca' : k.color;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, TAU);
-        ctx.fill();
+        drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
         ctx.globalAlpha = 1;
         if (settings.placement === 'circular' && settings.preview) {
             const X = wx(x), Y = wy(y);
@@ -2147,7 +2840,7 @@
     function theName(b) { return ['Sun', 'Moon'].includes(b.name) ? `the ${b.name}` : b.name; }
 
     // ------------------------------------------------------------------
-    // Popover: double-click (or double-tap / long-press) a body
+    // Popover (the body's menu): right-click or long-press a body
     // ------------------------------------------------------------------
     let popBody = null;
     let popSpeedMax = 1;
@@ -2255,23 +2948,28 @@
             ui.popRadius.value = String(Math.log10(Math.max(1, b.R)));
         }
         setText(ui.popMassVal, fmtMass(b.m));
+        // A black hole's size is its event horizon, fixed by its mass
+        const hole = b.kind === 'blackhole';
+        ui.popRadius.disabled = hole;
+        setText(ui.popRadiusLabel, hole ? 'Event horizon' : 'Radius');
         setText(ui.popRadiusVal, `${fmtKm(b.R)} km`);
         // Speed relative to the primary, on a slider up to 1.6x the escape speed
         const sr = speedRelative(b);
         const v = Math.hypot(sr.vx, sr.vy);
         let note = '';
         if (sr.p) {
-            const r = Math.hypot(b.x - sr.p.x, b.y - sr.p.y);
-            const vc = Math.sqrt((G * (b.m + sr.p.m)) / r), ve = Math.SQRT2 * vc;
+            const { vc, ve } = speedsAround(b, sr.p);
             if (!popSpeedMax || force && !recent) popSpeedMax = Math.max(1.6 * ve, 1.15 * v);
-            note = `Circular ${fmtSpeedKms(vc * AUYR_KMS).v} · escape ${fmtSpeedKms(ve * AUYR_KMS).v} ${fmtSpeedKms(ve * AUYR_KMS).u}, relative to ${theName(sr.p)}`;
+            const kms = (s) => fmtSpeedKms(s * AUYR_KMS);
+            note = `Circular ${kms(vc).v} · escape ${kms(ve).v} ${kms(ve).u}, relative to ${theName(sr.p)}`;
         } else {
-            if (!popSpeedMax) popSpeedMax = Math.max(1.15 * v, 1e-6);
+            // (the heaviest body barely moves: let its slider reach the scene's typical speed)
+            if (!popSpeedMax) popSpeedMax = Math.max(1.15 * v, vRef);
             note = 'Relative to the centre of mass';
         }
         if (!recent) ui.popSpeed.value = String(Math.round(clamp(v / popSpeedMax, 0, 1) * 1000));
         const sp = fmtSpeedKms(v * AUYR_KMS);
-        setText(ui.popSpeedVal, `${sp.v} ${sp.u}`);
+        setText(ui.popSpeedVal, `${sp.v} ${sp.u}${lightFraction(v * AUYR_KMS)}`);
         setText(ui.popSpeedNote, note);
         ui.popCircular.disabled = !sr.p;
         // Colour swatches
@@ -2293,7 +2991,21 @@
             info = '<strong>On its own:</strong> nothing to pull on it.';
         }
         info += `<br><strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
+        // How hard it is to leave its surface: sqrt(2GM/R), the speed of light at a black hole's horizon
+        if (hole) info += '<br><strong>Escape speed</strong> at the event horizon: the speed of light';
+        else if (b.R > 0.1) {
+            const vs = Math.sqrt((2 * G * b.m) / (b.R / AU_KM)) * AUYR_KMS;
+            const f = fmtSpeedKms(vs);
+            info += `<br><strong>Escape speed</strong> from its surface: ${f.v} ${f.u}${lightFraction(vs)}`;
+        }
         if (ui.popInfo.innerHTML !== info) ui.popInfo.innerHTML = info;
+    }
+
+    // Circular and escape speeds of b relative to p where it is now: sqrt(G(M + m)/r) and sqrt(2) times that
+    function speedsAround(b, p) {
+        const r = Math.max(Math.hypot(b.x - p.x, b.y - p.y), 1e-15);
+        const vc = Math.sqrt((G * (b.m + p.m)) / r);
+        return { r, vc, ve: Math.SQRT2 * vc };
     }
 
     function escapeHtml(s) {
@@ -2340,7 +3052,7 @@
             if (!b) return;
             popLastInput = performance.now();
             const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH));
-            keepView(() => { b.m = Math.pow(10, lg) * MEARTH; });
+            keepView(() => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); });
             resetTracking(b);
             computeForces();
             computePrimaries();
@@ -2358,7 +3070,12 @@
             if (!b) return;
             popLastInput = performance.now();
             const sr = speedRelative(b);
-            const vNew = (parseFloat(ui.popSpeed.value) / 1000) * popSpeedMax;
+            let vNew = (parseFloat(ui.popSpeed.value) / 1000) * popSpeedMax;
+            // Snap to the exact circular or escape speed within a step of the slider
+            if (sr.p) {
+                const { vc, ve } = speedsAround(b, sr.p);
+                for (const s of [vc, ve]) if (Math.abs(vNew - s) < 0.006 * popSpeedMax) vNew = s;
+            }
             let ux, uy;
             const v = Math.hypot(sr.vx, sr.vy);
             if (v > 1e-12) { ux = sr.vx / v; uy = sr.vy / v; } else if (sr.p) {
@@ -2384,44 +3101,68 @@
     let paletteDrag = null;
     let ghostEl = null;
 
+    // The chips come in groups (stars, dead stars, planets, small bodies): headed groups in the column
+    // beside the canvas, one flowing set of chips under it on narrow screens.
     function buildPalette() {
         if (!ui.palette) return;
         ui.palette.textContent = '';
-        for (const kind of PALETTE) {
-            const k = KINDS[kind];
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'orb-chip';
-            btn.dataset.kind = kind;
-            const label = kind === 'custom' ? 'Custom' : k.name;
-            btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
-                : `${k.name} (${fmtMass(k.m)}): drag it into space, or click to add it`;
-            btn.title = btn.dataset.title;
-            btn.setAttribute('aria-label', kind === 'custom' ? 'Add a custom body' : `Add ${k.name}`);
-            const disc = document.createElement('span');
-            disc.className = 'orb-chip-disc' + (kind === 'custom' ? ' is-custom' : '');
-            const d = kind === 'custom' ? 18 : Math.round(clamp(6 + symbolicRadius(k.R) * 0.75, 9, 20));
-            disc.style.width = `${d}px`;
-            disc.style.height = `${d}px`;
-            if (kind !== 'custom') {
-                disc.style.background = `radial-gradient(circle at 35% 35%, ${mix(k.color, '#ffffff', 0.4)}, ${k.color})`;
-                if (k.m >= STAR_MASS) disc.style.boxShadow = `0 0 8px ${hexA(k.color, 0.55)}`;
-            }
-            const name = document.createElement('span');
-            name.className = 'orb-chip-name';
-            name.textContent = label;
-            btn.append(disc, name);
-            btn.addEventListener('pointerdown', (e) => onChipDown(e, btn));
-            btn.addEventListener('pointermove', onChipMove);
-            btn.addEventListener('pointerup', onChipUp);
-            btn.addEventListener('pointercancel', onChipCancel);
-            btn.addEventListener('click', () => {
-                if (btn.dataset.dragged === '1') { btn.dataset.dragged = ''; return; }
-                const b = addBodyAuto(kind);
-                if (b && kind === 'custom') openPopover(b);
-            });
-            ui.palette.appendChild(btn);
+        for (const group of PALETTE) {
+            const box = document.createElement('div');
+            box.className = 'orb-group';
+            box.setAttribute('role', 'group');
+            const head = document.createElement('p');
+            head.className = 'orb-group-label';
+            head.id = `orbGroup${group.label.replace(/\W/g, '')}`;
+            head.textContent = group.label;
+            box.setAttribute('aria-labelledby', head.id);
+            const chips = document.createElement('div');
+            chips.className = 'orb-group-chips';
+            for (const kind of group.kinds) chips.appendChild(paletteChip(kind));
+            box.append(head, chips);
+            ui.palette.appendChild(box);
         }
+    }
+
+    function paletteChip(kind) {
+        const k = KINDS[kind];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'orb-chip';
+        btn.dataset.kind = kind;
+        const label = kind === 'custom' ? 'Custom' : k.name;
+        btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
+            : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
+        btn.title = btn.dataset.title;
+        const common = k.name.toLowerCase();
+        const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
+        btn.setAttribute('aria-label', kind === 'custom' ? 'Add a custom body' : proper ? `Add ${k.name}` : `Add ${/^[aeiou]/.test(common) ? 'an' : 'a'} ${common}`);
+        const disc = document.createElement('span');
+        disc.className = 'orb-chip-disc' + (kind === 'custom' ? ' is-custom' : '');
+        const d = kind === 'custom' ? 18 : Math.round(clamp(6 + symbolicSize(kind, k.m, k.R) * 0.6, 9, 22));
+        disc.style.width = `${d}px`;
+        disc.style.height = `${d}px`;
+        if (kind === 'blackhole') {
+            disc.classList.add('is-hole');
+            disc.style.background = `radial-gradient(circle, #000 0 54%, #fff3e2 60%, ${k.color} 66%, ${hexA(k.color, 0)} 74%)`;
+            disc.style.boxShadow = `0 0 7px ${hexA(k.color, 0.55)}`;
+        } else if (kind !== 'custom') {
+            disc.style.background = `radial-gradient(circle at 35% 35%, ${mix(k.color, '#ffffff', 0.4)}, ${k.color})`;
+            if (k.m >= STAR_MASS || COMPACT[kind]) disc.style.boxShadow = `0 0 ${kind === 'neutron' ? 9 : 8}px ${hexA(k.color, kind === 'neutron' ? 0.9 : 0.55)}`;
+        }
+        const name = document.createElement('span');
+        name.className = 'orb-chip-name';
+        name.textContent = label;
+        btn.append(disc, name);
+        btn.addEventListener('pointerdown', (e) => onChipDown(e, btn));
+        btn.addEventListener('pointermove', onChipMove);
+        btn.addEventListener('pointerup', onChipUp);
+        btn.addEventListener('pointercancel', onChipCancel);
+        btn.addEventListener('click', () => {
+            if (btn.dataset.dragged === '1') { btn.dataset.dragged = ''; return; }
+            const b = addBodyAuto(kind);
+            if (b && kind === 'custom') openPopover(b);
+        });
+        return btn;
     }
 
     function onChipDown(e, btn) {
@@ -2491,9 +3232,15 @@
         if (!ui.hint) return;
         let h = html;
         if (!h) {
+            const v = settings.velocities;
             if (kind === 'drop') h = '<strong>Drop it in space</strong> to add it.';
-            else if (coarse()) h = '<strong>Drag</strong> a body into space. Tap a body, then drag its arrow tip to set its velocity. <strong>Double-tap</strong> a body for options.';
-            else h = '<strong>Drag</strong> a body into space. Drag bodies to move them, <strong>right-drag</strong> to set their velocity, <strong>double-click</strong> for options.';
+            else if (coarse()) {
+                h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong> to set its velocity. <strong>Hold</strong> a body for options.'
+                    : '<strong>Drag</strong> a body into space or around it. <strong>Hold</strong> a body to set its speed and more; <strong>double-tap</strong> to view from it.';
+            } else {
+                h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body for options; <strong>double-click</strong> to view from it.'
+                    : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body to set its speed and more; <strong>double-click</strong> to view from it.';
+            }
         }
         if (h === hintKey) return;
         hintKey = h;
@@ -2510,24 +3257,40 @@
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : 'keeps its velocity';
             setHint(null, `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.`);
+        } else if (pr && pr.p.m < b.m) {
+            // The heaviest body orbits nothing: just its speed in this view
+            const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
+            const base = aimBase(b), v = fmtSpeedKms(Math.hypot(b.aim.vx + base.x - (L ? L.vx : totals(bodies).vx), b.aim.vy + base.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
+            setHint(null, `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
         } else if (pr) {
-            const v = fmtSpeedKms(Math.hypot(pr.el.v) * AUYR_KMS);
-            const fate = pr.el.bound ? (pr.el.e < 0.02 ? 'a circle' : `an ellipse, e = ${pr.el.e.toFixed(2)}`) : 'escapes';
-            setHint(null, `<strong>${v.v} ${v.u}</strong> relative to ${escapeHtml(theName(pr.p))}: ${fate}. Circular ${fmtSpeedKms(pr.vc * AUYR_KMS).v}, escape ${fmtSpeedKms(pr.ve * AUYR_KMS).v} ${fmtSpeedKms(pr.ve * AUYR_KMS).u}.`);
+            const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
+            const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
+            const fate = snap === 'circular' ? 'exactly the circular speed, a circle'
+                : snap === 'escape' ? 'exactly the escape speed, so it just escapes (a parabola)'
+                    : pr.el.bound ? (pr.el.e < 0.01 ? 'a circle' : `an ellipse, e = ${pr.el.e.toFixed(2)}`) : `it escapes (e = ${pr.el.e.toFixed(2)})`;
+            let h = `<strong>${v.v} ${v.u}</strong> relative to ${escapeHtml(theName(pr.p))}: ${fate}.`;
+            if (!snap) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
+            if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
+            setHint(null, h);
         }
     }
 
     // ------------------------------------------------------------------
     // Canvas input: mouse, pen and touch through pointer events
-    //   body: drag = move (held in place while dragged), right-drag = aim its velocity
-    //   velocity handle of the selected body: drag = change its velocity
+    //   body: drag = move (held in place while dragged); right-click or long-press = its menu;
+    //   double-click / double-tap = view from it (again: back to the centre of mass)
+    //   velocity arrow's tip (grabbed within a few px of it): drag = aim it (Shift: ten times finer;
+    //   it snaps to the exact circular and escape speeds)
     //   empty space: drag = pan; two fingers = pinch zoom and pan; wheel = zoom
-    //   tap/click = select; double-click / double-tap / long-press = popover
+    //   tap/click = choose the body the readouts and Kepler's laws are about
     // ------------------------------------------------------------------
     const drags = new Map();   // pointerId -> drag state
     let pinch = null;
     let lastTap = { t: 0, x: 0, y: 0, id: null };
     let longPressTimer = 0;
+    // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
+    const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
+    let hoverAim = null;   // id of the body whose arrow tip the mouse is over
 
     function canvasPoint(e) {
         const r = canvas.getBoundingClientRect();
@@ -2543,14 +3306,120 @@
         return best;
     }
 
+    // The tip of the chosen body's velocity arrow at (x, y)? (Only when velocities are shown.)
     function onHandle(x, y, tol) {
         const b = bodyById(selectedId);
-        if (!b || b.held || bodies.length < 2) return null;
+        if (!settings.velocities || !b || b.held || bodies.length < 2) return null;
         const h = handlePos(b);
         if (Math.hypot(h.x - x, h.y - y) > tol) return null;
         // the body itself wins inside its disc
         if (Math.hypot(sx(b.dx) - x, sy(b.dy) - y) < drawRadius(b)) return null;
         return b;
+    }
+    // ...or the tip of another body's arrow (long enough to tell apart from the body)
+    function onArrowTip(x, y, tol) {
+        if (!settings.velocities || bodies.length < 2) return null;
+        let best = null, bestD = tol;
+        for (const b of bodies) {
+            if (b.held || b.id === selectedId) continue;
+            const tip = velocityTip(b);
+            if (tip.len < 14) continue;
+            const dd = Math.hypot(tip.x - x, tip.y - y);
+            if (dd < bestD) { bestD = dd; best = b; }
+        }
+        return best;
+    }
+
+    // ------------------------------------------------------------------
+    // Aiming a velocity. The arrow tip follows the pointer (at the arrows' zoom-free scale, so a pixel
+    // is the same speed at any zoom); Shift makes it ten times finer. Near the exact circular or escape
+    // speed relative to the body it orbits, it snaps to it. If that body moves fast through the view
+    // (a moon seen from the star) or the arrow would be tiny, the velocity is aimed relative to that body
+    // instead, with the circular speed as the arrow's unit.
+    // ------------------------------------------------------------------
+    const FINE = 0.1;
+    const SNAP_PX = 6;
+
+    function beginAim(b, d, pt) {
+        startHold(b, d);
+        const fv = d.frameV;
+        let ref = null, k = pxPerSpeed();
+        const p = placementPrimary(b.x, b.y, b.m, b);
+        if (p && p.m >= b.m && frameId !== p.id) {
+            const vc = Math.sqrt((G * (b.m + p.m)) / Math.max(Math.hypot(b.x - p.x, b.y - p.y), 1e-15));
+            const drift = Math.hypot(p.vx - fv.x, p.vy - fv.y);
+            if (vc * k < 24 || drift > 1.5 * vc) { ref = p; k = arrowUnit() / vc; }
+        }
+        const base = ref ? { x: ref.vx, y: ref.vy } : fv;
+        b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
+        // Keep the grabbed point on the arrow. A body at rest has no arrow: it is grabbed just off the
+        // edge of its disc, and the arrow grows from there as soon as the pointer moves.
+        let tip = velocityTip(b);
+        if (tip.len < 1) {
+            const h = handlePos(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+            const l = Math.hypot(h.x - x, h.y - y) || 1;
+            tip = { x: x + ((h.x - x) / l) * r, y: y + ((h.y - y) / l) * r };
+        }
+        d.grabX = pt.x - tip.x; d.grabY = pt.y - tip.y;
+        d.fine = null;
+        d.start = { x: pt.x, y: pt.y, vx: b.aim.vx, vy: b.aim.vy, coarse: false };
+    }
+
+    // The world velocity the aimed velocity is measured from
+    function aimBase(b) {
+        const a = b.aim;
+        if (a.ref && bodies.includes(a.ref)) return { x: a.ref.vx, y: a.ref.vy };
+        return frameId !== null && frameId !== b.id ? frameVelocity() : a.frameV;
+    }
+
+    function moveAim(d, pt, shift) {
+        const b = d.body, a = b.aim;
+        if (shift) {
+            // Fine: a tenth of the pointer's movement, from where Shift was pressed (or from where the
+            // drag began, if Shift was down from the start)
+            if (!d.fine) d.fine = d.start.coarse ? { x: pt.x, y: pt.y, vx: a.vx, vy: a.vy } : d.start;
+            a.vx = d.fine.vx + ((pt.x - d.fine.x) * FINE) / a.k;
+            a.vy = d.fine.vy - ((pt.y - d.fine.y) * FINE) / a.k;
+            a.snap = null;
+            return;
+        }
+        if (d.fine) {
+            // Shift let go: carry on from here without a jump
+            const tip = velocityTip(b);
+            d.grabX = pt.x - tip.x; d.grabY = pt.y - tip.y;
+            d.fine = null;
+        }
+        d.start.coarse = true;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        const tx = pt.x - d.grabX - x, ty = pt.y - d.grabY - y;
+        const len = Math.hypot(tx, ty);
+        const L = Math.max(0, len - r);   // the arrow starts at the disc's edge
+        a.vx = len > 0 ? ((tx / len) * L) / a.k : 0;
+        a.vy = len > 0 ? (-(ty / len) * L) / a.k : 0;
+        snapAim(b);
+    }
+
+    // Snap to the circular velocity (either way round) within SNAP_PX of it, or to the escape speed
+    // (any direction) within a little less.
+    function snapAim(b) {
+        const a = b.aim;
+        a.snap = null;
+        const p = placementPrimary(b.x, b.y, b.m, b);
+        if (!p || p.m < b.m) return;
+        const rx = b.x - p.x, ry = b.y - p.y, r = Math.hypot(rx, ry);
+        if (!(r > 0)) return;
+        const base = aimBase(b);
+        const vc = Math.sqrt((G * (b.m + p.m)) / r), ve = Math.SQRT2 * vc;
+        const ux = base.x + a.vx - p.vx, uy = base.y + a.vy - p.vy;
+        const tol = SNAP_PX / a.k;
+        let to = null;
+        for (const s of [1, -1]) {
+            const cx = (-s * ry / r) * vc, cy = (s * rx / r) * vc;
+            if (Math.hypot(ux - cx, uy - cy) < tol) { to = [cx, cy]; a.snap = 'circular'; break; }
+        }
+        const u = Math.hypot(ux, uy);
+        if (!to && u > 0 && Math.abs(u - ve) < 0.7 * tol) { to = [(ux * ve) / u, (uy * ve) / u]; a.snap = 'escape'; }
+        if (to) { a.vx = to[0] + p.vx - base.x; a.vy = to[1] + p.vy - base.y; }
     }
 
     function startHold(b, d) {
@@ -2569,8 +3438,9 @@
         updateDrawnPositions();
         if (apply) {
             if (d.mode === 'aim' && b.aim) {
-                const fv = frameId !== null && frameId !== b.id ? frameVelocity() : d.frameV;
-                b.vx = fv.x + b.aim.vx; b.vy = fv.y + b.aim.vy;
+                if (b.aim.snap) snapAim(b);   // exact, even if the body it orbits has moved on since
+                const base = aimBase(b);
+                b.vx = base.x + b.aim.vx; b.vy = base.y + b.aim.vy;
                 resetTracking(b);
                 k2.bid = null;
             } else if (d.mode === 'move' && d.moved) {
@@ -2640,26 +3510,23 @@
         }
         if (drags.size > 0) return;
         const tol = touch ? 16 : 5;
-        const handleBody = onHandle(pt.x, pt.y, touch ? 22 : 11);
+        const right = e.button === 2;
+        // The chosen body's handle first, then a body, then another body's arrow tip
+        let handleBody = right ? null : onHandle(pt.x, pt.y, touch ? GRAB_TOUCH : GRAB_MOUSE);
         const b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
+        if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button };
         if (handleBody) {
-            d.mode = 'handle';
-            d.body = handleBody;
-            const tip = velocityTip(handleBody);
-            d.v0 = { x: tip.vx, y: tip.vy };
-            startHold(handleBody, d);
-            handleBody.aim = { vx: d.v0.x, vy: d.v0.y };
             d.mode = 'aim';
-            d.relative = true;
+            d.body = handleBody;
+            if (handleBody.id !== selectedId) selectBody(handleBody.id);
+            beginAim(handleBody, d, pt);
         } else if (b) {
             d.body = b;
-            if (e.button === 2) {
-                d.mode = 'aim';
-                d.relative = false;
-                startHold(b, d);
-                const tip = velocityTip(b);
-                b.aim = { vx: tip.vx, vy: tip.vy };
+            if (right) {
+                // Right-click: the body's menu
+                d.mode = 'done';
+                openPopover(b);
             } else {
                 d.mode = 'press';
                 if (touch) {
@@ -2729,17 +3596,9 @@
             dragHint(d);
             return;
         }
-        if (d.mode === 'aim' && d.body) {
-            const b = d.body;
-            const tau = arrowTime();
-            if (d.relative) {
-                b.aim.vx = d.v0.x + (pt.x - d.x0) / (scale * tau);
-                b.aim.vy = d.v0.y - (pt.y - d.y0) / (scale * tau);
-            } else if (far || d.moved) {
-                b.aim.vx = (pt.x - sx(b.dx)) / (scale * tau);
-                b.aim.vy = -(pt.y - sy(b.dy)) / (scale * tau);
-            }
+        if (d.mode === 'aim' && d.body && d.body.aim) {
             if (far) d.moved = true;
+            if (d.moved) moveAim(d, pt, e.shiftKey);
             dragHint(d);
         }
     }
@@ -2758,22 +3617,26 @@
             return;
         }
         if (d.mode === 'move' || d.mode === 'aim') {
-            endHold(d, !cancelled && (d.mode === 'move' || d.moved || !d.relative));
+            endHold(d, !cancelled && (d.mode === 'move' || d.moved));
             return;
         }
         if (cancelled || d.mode === 'done') return;
+        if (d.button === 2) {
+            // Right-click on empty space just closes the menu
+            if (d.mode === 'pending' && popBody) closePopover();
+            return;
+        }
         if (d.mode === 'press' || d.mode === 'pending') {
-            // A tap or click
+            // A tap or click; a double one views the motion from that body (or, on empty space, from
+            // the centre of mass again)
             const now = performance.now();
             const b = d.body;
             const dbl = now - lastTap.t < 380 && Math.hypot(d.x0 - lastTap.x, d.y0 - lastTap.y) < (d.type === 'mouse' ? 8 : 26) && lastTap.id === (b ? b.id : null);
             lastTap = { t: dbl ? 0 : now, x: d.x0, y: d.y0, id: b ? b.id : null };
             if (b) {
-                if (dbl) openPopover(b);
-                else {
-                    if (popBody && popBody !== b) closePopover();
-                    selectBody(b.id);
-                }
+                if (popBody && popBody !== b) closePopover();
+                selectBody(b.id);
+                if (dbl) setFrame(frameId === b.id ? null : b.id);
             } else if (dbl) {
                 closePopover();
                 if (frameId !== null) setFrame(null);
@@ -2783,16 +3646,20 @@
         }
     }
 
+    // The cursor shows what a press would do; an arrow tip under the mouse is also drawn highlighted.
     function updateCursor(x, y) {
         canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim');
+        hoverAim = null;
         if (drags.size) {
             const d = [...drags.values()][0];
             canvas.classList.add(d.mode === 'aim' ? 'orb-can-aim' : 'orb-grabbing');
             return;
         }
         updateDrawnPositions();
-        if (onHandle(x, y, 11)) canvas.classList.add('orb-can-aim');
-        else if (bodyAt(x, y, 5)) canvas.classList.add('orb-can-grab');
+        let tipOf = onHandle(x, y, GRAB_MOUSE);
+        if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
+        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1);
+        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
     }
 
     function onWheel(e) {
@@ -2893,14 +3760,30 @@
         ch.update('none');
     }
 
+    // Kinetic, potential and total energy. With realistic physics the first post-Newtonian terms of
+    // each pair's energy are added (the v^4 one to the kinetic energy, the rest to the potential):
+    // E/mu = (3/8)(1 - 3 eta) v^4/c^2 + GM/(2rc^2) [(3 + eta) v^2 + eta rdot^2 + GM/r]. Then the total
+    // stays level round a black hole, where the Newtonian energy alone swings by tens of per cent each
+    // orbit (to within the size of the next, 2PN, terms: about 2% for the neutron star at 0.24c).
     function systemEnergy() {
         const c = totals(bodies);
         let ke = 0, pe = 0;
         for (const b of bodies) ke += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
         for (let i = 0; i < bodies.length; i++) {
+            const bi = bodies[i];
             for (let j = i + 1; j < bodies.length; j++) {
-                const r = Math.hypot(bodies[i].x - bodies[j].x, bodies[i].y - bodies[j].y);
-                if (r > 0) pe -= (G * bodies[i].m * bodies[j].m) / r;
+                const bj = bodies[j];
+                if (bi.grp && bi.grp === bj.grp) continue;
+                const rx = bi.x - bj.x, ry = bi.y - bj.y, r = Math.hypot(rx, ry);
+                if (!(r > 0)) continue;
+                pe -= (G * bi.m * bj.m) / r;
+                if (settings.realistic) {
+                    const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
+                    const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
+                    const rd = (rx * vx + ry * vy) / r;
+                    ke += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
+                    pe += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
+                }
             }
         }
         return { ke, pe, total: ke + pe };
@@ -3013,8 +3896,9 @@
             el.addEventListener('change', () => { settings[key] = el.checked; if (after) after(); });
         };
         bindCheck(ui.forces, 'forces');
-        bindCheck(ui.velocities, 'velocities');
+        bindCheck(ui.velocities, 'velocities', () => setHint());
         bindCheck(ui.labels, 'labels');
+        bindCheck(ui.realistic, 'realistic', () => { forcesDirty = true; pred.key = ''; });
         bindCheck(ui.k1, 'k1');
         bindCheck(ui.k2, 'k2', () => { k2.bid = null; });
         bindCheck(ui.k3, 'k3');
@@ -3079,7 +3963,7 @@
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
         canvas.addEventListener('pointerleave', (e) => {
-            if (!drags.has(e.pointerId)) canvas.classList.remove('orb-can-grab', 'orb-can-aim');
+            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim'); hoverAim = null; }
         });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -3139,7 +4023,7 @@
         updatePopover(false);
         sampleCharts();
         if (ts > eccNext) { syncEccentricity(false); eccNext = ts + 200; }
-        for (const d of drags.values()) if (d.mode === 'move' && d.body && !paused) dragHint(d);
+        for (const d of drags.values()) if ((d.mode === 'move' || (d.mode === 'aim' && d.moved)) && d.body && !paused) dragHint(d);
 
         if (ui.fps) {
             fpsFrames++;
@@ -3163,7 +4047,8 @@
             x: b.x, y: b.y, vx: b.vx, vy: b.vy, held: !!b.held,
             screen: { x: sx(b.dx), y: sy(b.dy), r: drawRadius(b) },
             primary: p ? p.name : null, bound: b.bound,
-            elements: el ? { a: el.a, e: el.e, T: el.T, r: el.r, v: el.v } : null,
+            elements: el ? { a: el.a, e: el.e, T: el.T, r: el.r, v: el.v, w: el.w } : null,
+            kind: b.kind, piece: !!b.grp,
             measured: b.track && b.track.done ? { T: b.track.T, a: b.track.a, revs: b.track.done } : null
         };
     }
@@ -3221,6 +4106,37 @@
         fit: fitAll,
         fitBox(box) { fitBox(box, false); },
         setCleanRender(v) { cleanRender = !!v; },
+        setRealistic(v) { if (ui.realistic) ui.realistic.checked = !!v; settings.realistic = !!v; forcesDirty = true; },
+        flyby() { return Object.assign({}, flyby, { pts: flyby.pts.length / 2 }); },
+        // The path predicted for a body if it were launched now with world velocity (vx, vy): points
+        // relative to the reference body (or the centre of mass), and how the path ends
+        predict(name, vx, vy) {
+            const b = bodies.find((q) => q.name === name);
+            if (!b) return null;
+            const fv = frameVelocity();
+            b.aim = { vx: vx - fv.x, vy: vy - fv.y, k: 1, ref: null, frameV: fv, snap: null };
+            pred.key = '';
+            const pp = predictPath(b, null);
+            b.aim = null;
+            const ref = pp.refId !== null ? bodyById(pp.refId) : null;
+            return { ref: ref ? ref.name : null, end: pp.end, pts: pp.pts.slice() };
+        },
+        // Where the velocity handle of a body is on the canvas (CSS px), and its arrow's length
+        handle(name) {
+            const b = bodies.find((q) => q.name === name);
+            if (!b) return null;
+            updateDrawnPositions();
+            computeDrawRadii();
+            const h = handlePos(b), t = velocityTip(b);
+            return { x: h.x, y: h.y, len: t.len };
+        },
+        speeds(name) {
+            const b = bodies.find((q) => q.name === name);
+            const p = b && placementPrimary(b.x, b.y, b.m, b);
+            if (!p) return null;
+            const s = speedsAround(b, p);
+            return { primary: p.name, r: s.r, vc: s.vc, ve: s.ve, vrel: Math.hypot(b.vx - p.vx, b.vy - p.vy) };
+        },
         trailPoints(name) {
             const b = bodies.find((q) => q.name === name);
             if (!b) return [];

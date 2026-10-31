@@ -9,8 +9,8 @@
 		<title>Orbits &amp; Gravity Simulation | Newton's Law &amp; Kepler's Laws | Simulations.Science</title>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-		<meta name="description" content="Interactive orbit simulation: drag stars, planets and moons, set their velocities and see Newton's law of gravitation and all three of Kepler's laws at work." />
-		<meta name="keywords" content="orbits, gravity, Newton's law of universal gravitation, Kepler's laws, planetary motion, elliptical orbits, equal areas in equal times, orbital period, escape velocity, centre of mass, n-body simulation, physics simulation, interactive physics" />
+		<meta name="description" content="Interactive orbit simulation: drag stars, planets, moons and black holes, set their velocities and see Newton's law of gravitation and all three of Kepler's laws at work, then turn on general relativity." />
+		<meta name="keywords" content="orbits, gravity, Newton's law of universal gravitation, Kepler's laws, planetary motion, elliptical orbits, equal areas in equal times, orbital period, escape velocity, gravity assist, three-body problem, black hole, neutron star, general relativity, centre of mass, n-body simulation, physics simulation, interactive physics" />
 		<meta name="author" content="Simulations.Science" />
 		<meta name="robots" content="index, follow" />
 
@@ -18,14 +18,14 @@
 		<meta property="og:type" content="website" />
 		<meta property="og:url" content="https://simulations.science/orbits_simulation.html" />
 		<meta property="og:title" content="Orbits &amp; Gravity Simulation | Simulations.Science" />
-		<meta property="og:description" content="Drag stars and planets, set their velocities and watch Newton's gravity and Kepler's laws at work." />
+		<meta property="og:description" content="Drag stars, planets and black holes, set their velocities and watch Newton's gravity, Kepler's laws and Einstein's corrections at work." />
 		<meta property="og:image" content="https://simulations.science/images/orbits.png" />
 
 		<!-- Twitter -->
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:url" content="https://simulations.science/orbits_simulation.html" />
 		<meta name="twitter:title" content="Orbits &amp; Gravity Simulation | Simulations.Science" />
-		<meta name="twitter:description" content="Drag stars and planets, set their velocities and watch Newton's gravity and Kepler's laws at work." />
+		<meta name="twitter:description" content="Drag stars, planets and black holes, set their velocities and watch Newton's gravity, Kepler's laws and Einstein's corrections at work." />
 		<meta name="twitter:image" content="https://simulations.science/images/orbits.png" />
 
 		<!-- Canonical URL -->
@@ -37,7 +37,7 @@
 			"@context": "https://schema.org",
 			"@type": "LearningResource",
 			"name": "Orbits & Gravity Simulation",
-			"description": "An interactive n-body gravity simulation in real units (AU, years, solar masses): drag stars, planets, moons and comets into place, set their velocities, view the motion from any body, and see Newton's law of universal gravitation and Kepler's three laws of planetary motion measured live.",
+			"description": "An interactive n-body gravity simulation in real units (AU, years, solar masses): drag stars, planets, moons, comets, neutron stars and black holes into place, set their velocities, view the motion from any body, and see Newton's law of universal gravitation and Kepler's three laws of planetary motion measured live, with gravity assists, the chaotic three-body problem and, optionally, general relativity and tidal disruption.",
 			"provider": {
 				"@type": "Organization",
 				"name": "Simulations.Science",
@@ -69,6 +69,11 @@
 					"@type": "Thing",
 					"name": "Frames of Reference",
 					"description": "How the same motion looks when viewed from the centre of mass or from one of the moving bodies"
+				},
+				{
+					"@type": "Thing",
+					"name": "General Relativity and Compact Objects",
+					"description": "Black holes, neutron stars and white dwarfs; the precession of orbits close to a compact mass; event horizons and tidal disruption"
 				}
 			],
 			"educationalLevel": "High School and Above",
@@ -198,9 +203,20 @@
 												<option value="moon">Planet with a moon</option>
 												<option value="binary">Binary stars</option>
 												<option value="figure8">Three stars: figure of eight</option>
+												<option value="pythagorean">Three stars: chaos</option>
 												<option value="slingshot">Slingshot (gravity assist)</option>
+												<option value="blackhole">Neutron star and black hole</option>
+												<option value="tde">Star and black hole</option>
 												<option value="empty">A lone star (build your own)</option>
 											</select>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Physics</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
+												<label for="realisticToggle">Realistic physics</label>
+											</div>
+											<p class="orb-note" id="realisticNote">True sizes, Einstein's correction to gravity near black holes and neutron stars, and tides that tear stars apart.</p>
 										</div>
 										<div class="sim-control-group" id="orbitGroup">
 											<p class="sim-control-group-label" id="orbitGroupLabel">Orbit of Earth</p>
@@ -256,14 +272,14 @@
 													<input type="checkbox" id="comToggle">
 													<label for="comToggle">Centre of mass</label>
 													<input type="checkbox" id="previewToggle" checked>
-													<label for="previewToggle">Predicted orbit while dragging</label>
+													<label for="previewToggle">Predicted path while moving a body</label>
 												</div>
 											</div>
 											<div class="sim-control-group">
 												<p class="sim-control-group-label">Collisions</p>
 												<div class="sim-checkbox-group">
 													<input type="checkbox" id="mergeToggle" checked>
-													<label for="mergeToggle">Bodies merge when they touch</label>
+													<label for="mergeToggle">Bodies merge when their surfaces touch</label>
 												</div>
 											</div>
 										</details>
@@ -292,14 +308,14 @@
 												</div>
 												<div class="orb-pop-fields">
 													<label>Mass: <span class="orb-pop-val" id="popMassVal">1.00 M⊕</span>
-														<input type="range" id="popMass" min="-14" max="6.6" step="0.01" value="0">
+														<input type="range" id="popMass" min="-14" max="7" step="0.01" value="0">
 													</label>
 													<label>Speed: <span class="orb-pop-val" id="popSpeedVal">29.8 km/s</span>
 														<input type="range" id="popSpeed" min="0" max="1000" step="1" value="500" aria-describedby="popSpeedNote">
 													</label>
 													<p class="orb-pop-note" id="popSpeedNote">&nbsp;</p>
-													<label>Radius: <span class="orb-pop-val" id="popRadiusVal">6,371 km</span>
-														<input type="range" id="popRadius" min="0" max="6.3" step="0.01" value="3.8">
+													<label><span id="popRadiusLabel">Radius</span>: <span class="orb-pop-val" id="popRadiusVal">6,371 km</span>
+														<input type="range" id="popRadius" min="0" max="8" step="0.01" value="3.8">
 													</label>
 													<div class="orb-pop-colours" id="popColours" role="radiogroup" aria-label="Colour"></div>
 												</div>
@@ -319,13 +335,13 @@
 													<span class="orb-subject-dot" id="statSubjectDot" aria-hidden="true"></span><span class="orb-subject-name" id="statSubjectName">Earth</span><span class="orb-subject-around" id="statSubjectAround">around the Sun</span>
 												</div>
 												<div class="stats-box" title="Time since the start">
-													<strong>Time:</strong> <span id="statTime" class="sim-value" style="--chars: 5">0.00</span> <span id="statTimeUnit">yr</span>
+													<strong>Time:</strong> <span id="statTime" class="sim-value" style="--chars: 6">0.00</span> <span id="statTimeUnit">yr</span>
 												</div>
 												<div class="stats-box" title="Distance from the body it orbits">
 													<strong>Distance:</strong> <span id="statDist" class="sim-value" style="--chars: 7">&ndash;</span> <span id="statDistUnit">AU</span>
 												</div>
 												<div class="stats-box" title="Speed relative to the body it orbits">
-													<strong>Speed:</strong> <span id="statSpeed" class="sim-value" style="--chars: 5">&ndash;</span> km/s
+													<strong>Speed:</strong> <span id="statSpeed" class="sim-value" style="--chars: 6">&ndash;</span> km/s
 												</div>
 												<div class="stats-box" title="Gravitational pull of the body it orbits: F = Gm₁m₂/r²">
 													<strong>Gravity:</strong> <span id="statForce" class="sim-value" style="--chars: 8">&ndash;</span> N
@@ -367,27 +383,31 @@
 									<details class="description-area">
 										<summary>About this simulation</summary>
 										<div class="description-content">
-											<p>Every mass pulls on every other mass. This simulation adds up those pulls for every pair of bodies, many times per orbit, in real units: distances in AU (Earth to Sun), times in years, masses in Suns and Earths.</p>
+											<p>Every mass pulls on every other mass. This simulation adds up those pulls for every pair of bodies, thousands of times per orbit, in real units: distances in AU (Earth to Sun), times in years, masses in Suns and Earths.</p>
 
 											<h4>What you're seeing</h4>
 											<ul>
 												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun. <strong>Teal arrows:</strong> velocities.</li>
-												<li><strong>Trails</strong> show recent paths. Body sizes are not to scale; otherwise the planets would be invisible dots.</li>
+												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless realistic physics is on).</li>
 											</ul>
 
 											<h4>The key idea</h4>
 											<p>Newton's law of gravitation, <em>F</em> = <em>G</em><em>m</em><sub>1</sub><em>m</em><sub>2</sub>/<em>r</em><sup>2</sup>: twice the distance, a quarter of the pull. A planet is always falling towards the Sun, but it moves sideways so fast that it keeps missing. That gives Kepler's laws: orbits are ellipses with the Sun at one focus (1st), a planet sweeps out equal areas in equal times (2nd), and <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> is the same for every planet of a star (3rd).</p>
 
+											<h4>Realistic physics</h4>
+											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
+
 											<h4>Things to try</h4>
 											<ul>
 												<li>Raise the eccentricity and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
 												<li>Drop more planets and turn on the 3rd law to compare their periods.</li>
-												<li>In "Planet with a moon", view from the planet: the star circles it, as the Sun seems to circle Earth.</li>
-												<li>Drag a velocity past the escape circle to fling a body away.</li>
+												<li>In "Slingshot", Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
+												<li>Run "Three stars: chaos", then nudge one star and run it again.</li>
+												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>
 											</ul>
 
 											<h4>How to use it</h4>
-											<p>Drag bodies from the strip into space. Drag a body to move it; right-drag it (or drag its arrow tip) to set its velocity. Double-click or double-tap a body to edit it or view from it. Drag empty space to pan; scroll or pinch to zoom. Space pauses. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-chart-bar"></span> shows energy graphs and <span class="icon solid fa-sync-alt"></span> restarts.</p>
+											<p>Drag bodies from the strip into space, and drag bodies to move them. Drag the tip of a velocity arrow to aim it (hold Shift for fine control); it snaps to the exact circular and escape speeds. Right-click or long-press a body for its menu, where you can also set its speed when arrows are hidden; double-click or double-tap it to view the motion from it. Drag empty space to pan; scroll or pinch to zoom. Space pauses. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-chart-bar"></span> shows energy graphs and <span class="icon solid fa-sync-alt"></span> restarts.</p>
 										</div>
 									</details>
 								</div>
