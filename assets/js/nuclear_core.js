@@ -2080,9 +2080,10 @@
         if (!bodies.length && !dragGhost) drawEmptyHint();
         if (reflector && S.mirrorWalls) drawReflector();
         drawBin();
+        drawEffects(true);
         drawBodies();
         drawSparks();
-        drawEffects();
+        drawEffects(false);
         drawPanels();
         drawGhost();
         drawToast();
@@ -2411,8 +2412,11 @@
         ctx.globalAlpha = 1;
     }
 
-    function drawEffects() {
+    // under: the glow round a nucleus that is taking things in (drawn beneath it, so it is not washed out);
+    // otherwise everything else, on top.
+    function drawEffects(under) {
         for (const e of effects) {
+            if (under !== (e.kind === 'flash' && !!e.body)) continue;
             const u = e.age / e.life;
             if (e.kind === 'flash') {
                 const r = e.r * (0.6 + 0.8 * u);
