@@ -282,48 +282,30 @@
                                         </button>
                                     </div>
 
-                                    <div class="description-area">
-                                        <h3>About this Simulation</h3>
-                                        <p>Thermal radiation is energy carried by electromagnetic waves &ndash; mostly <strong>infrared</strong>, which our eyes cannot see. Unlike conduction and convection it needs no particles, so it is the only way heat can cross empty space; that is how the Sun warms the Earth. Here a heater (a hot ball) sits in the middle of a <strong>vacuum chamber</strong> with a metal block on each side. Give the blocks different surfaces and watch which one warms up fastest.</p>
-                                        <p><strong>What you are seeing:</strong></p>
-                                        <ul>
-                                            <li><strong>Radiation packets:</strong> each wavy line is a packet of radiation. Every packet carries the same amount of energy, so the number of packets an object sends out each second is proportional to the power it radiates. Infrared is drawn pink (in reality it is invisible); visible light is drawn in its real colour, and longer wavelengths are drawn as longer, lazier waves. The packets are slowed down enormously so you can follow them &ndash; real radiation crosses the gap at the speed of light in about a billionth of a second.</li>
-                                            <li><strong>Absorbed or reflected:</strong> when a packet reaches a surface it is either absorbed &ndash; it vanishes with a small flash and its energy heats the object &ndash; or reflected. Shiny metal reflects like a mirror; paint and dull metal scatter reflected radiation in random directions.</li>
-                                            <li><strong>Spreading out:</strong> the picture is a thin slice through 3D space. Radiation also travels towards you and away from you, so packets fade out as they leave the slice. That is why fewer packets reach a block that is further away.</li>
-                                            <li><strong>Thermometers and energy bars:</strong> below each block, the <em>in</em> bar is the power it absorbs (orange from the heater, grey from the 20&nbsp;°C chamber walls) and the <em>out</em> bar is the power it emits. A block warms up while in &gt; out and stays at a steady temperature when in = out.</li>
-                                        </ul>
-                                        <p><strong>Key ideas:</strong></p>
-                                        <ul>
-                                            <li><strong>Every object emits thermal radiation</strong> &ndash; the cold blocks and the chamber walls too. The power emitted is <em>P</em>&nbsp;=&nbsp;<em>&epsilon;&sigma;AT</em><sup>4</sup> (Stefan&ndash;Boltzmann law, with <em>T</em> in kelvin), so doubling the temperature makes an object emit 16 times as much. Watch the packet rate as you change the heater temperature.</li>
-                                            <li><strong>Hotter objects emit shorter wavelengths.</strong> The peak wavelength is <em>&lambda;</em><sub>max</sub>&nbsp;=&nbsp;2898&nbsp;&micro;m&middot;K&nbsp;&divide;&nbsp;<em>T</em> (Wien's law): about 10&nbsp;&micro;m at room temperature and 2.9&nbsp;&micro;m at 1000&nbsp;K. Above about 800&nbsp;K a tiny fraction is visible light, so the heater glows dull red, then orange, then yellow-white near 2000&nbsp;K &ndash; but even then most of its energy is infrared. Open the charts to see the spectrum.</li>
-                                            <li><strong>No medium is needed.</strong> There is nothing in the gaps, yet energy still reaches the blocks.</li>
-                                            <li><strong>Good absorbers are good emitters.</strong> A surface's emissivity <em>&epsilon;</em> equals the fraction of radiation it absorbs (Kirchhoff's law). Matte black absorbs about 97% and emits strongly; polished silver reflects about 98%, absorbs only 2% and emits only 2% as much as a black surface at the same temperature. White paint reflects most visible and near-infrared radiation, so it absorbs less from a very hot heater, but at the long infrared wavelengths that warm objects give out it is almost black, so it is a good emitter &ndash; this is why white paint keeps buildings cool in sunshine.</li>
-                                            <li><strong>The net flow is from hot to cold.</strong> The blocks radiate too, and some of their radiation reaches the heater, but the hotter object always emits more, so the net flow of energy is from hotter to colder. As a block warms up it emits more, until it emits as much as it absorbs and its temperature stops rising. Switch the heater off and everything cools towards the temperature of the walls.</li>
-                                            <li><strong>Distance matters.</strong> Radiation spreads out in all directions, so its intensity falls with the square of the distance (inverse-square law): moving a block from 20&nbsp;cm to 40&nbsp;cm cuts the power it receives from the heater to about a quarter.</li>
-                                        </ul>
-                                        <p><strong>Things to try:</strong></p>
-                                        <ul>
-                                            <li>Compare matte black with polished silver at the same distance. The black block warms quickly; the silver one barely changes. At high speed you will see that, in a vacuum, the silver block slowly creeps up towards the same final temperature: it absorbs little, but it also emits little, so it takes hours rather than minutes. In air, conduction and convection also cool both blocks, so the black one ends up hotter.</li>
-                                            <li>Make both blocks matte black and put one at 10&nbsp;cm and the other at 20&nbsp;cm, then compare the <em>in</em> bars.</li>
-                                            <li>Choose <em>Visible light only</em>: at 1000&nbsp;K the heater glows, yet you can see almost none of the radiation that is heating the blocks.</li>
-                                            <li>Choose <em>Thermal camera</em>: a thermal camera detects emitted infrared, so a hot polished-silver block looks almost as cold as the walls &ndash; it emits very little and mostly reflects the walls' radiation.</li>
-                                            <li>Turn the heater off and watch the in and out bars as everything cools.</li>
-                                        </ul>
-                                        <p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) restarts the simulation with the current settings, and the chart icon (<span class="icon solid fa-chart-bar"></span>) shows or hides the graphs. You can also drag the blocks left and right on the canvas.</p>
-                                        <p><strong>Controls:</strong></p>
-                                        <ul>
-                                            <li><strong>Speed:</strong> how fast simulated time passes (20x means 20 simulated seconds every real second). It speeds up the heating and cooling, not the radiation packets.</li>
-                                            <li><strong>Heater Temperature:</strong> the temperature the heater's thermostat holds it at, from 300&nbsp;K (27&nbsp;°C) to 2000&nbsp;K (1727&nbsp;°C).</li>
-                                            <li><strong>Heater On:</strong> when switched off, the heater gets no electrical power and cools down by radiating.</li>
-                                            <li><strong>Left / Right Block Surface:</strong> the surface finish of each block: matte black paint, dull grey metal, white paint, shiny aluminium or polished silver.</li>
-                                            <li><strong>Left / Right Block Distance:</strong> the distance from the centre of the heater to the face of each block (10&ndash;50&nbsp;cm).</li>
-                                            <li><strong>View:</strong> <em>Infrared + visible light</em> draws all the radiation; <em>Visible light only</em> shows only what your eyes would see; <em>Thermal camera</em> colours each object by the temperature a thermal camera would measure from its infrared emission (the colour scale adjusts itself to the hottest block, as on a real camera, so the heater shows white).</li>
-                                            <li><strong>Show Radiation from Walls:</strong> also draws the infrared given out by the room-temperature chamber walls. It is always included in the calculations.</li>
-                                            <li><strong>Charts:</strong> temperatures against time, and the heater's spectrum (power at each wavelength) with the visible band and the Wien peak marked.</li>
-                                            <li><strong>Info bar:</strong> the temperatures of the heater and both blocks, and the simulated time.</li>
-                                        </ul>
-                                        <p><strong>Model details:</strong> the heater is an 8&nbsp;cm ball with emissivity 0.95 and a heat capacity of 300&nbsp;J/K; its thermostat can supply up to 25&nbsp;kW. Each block is a hollow 8&nbsp;cm metal cube with a heat capacity of 100&nbsp;J/K, starting at 20&nbsp;°C. Temperatures follow from conservation of energy: rate of temperature rise = (power absorbed &minus; power emitted) &divide; heat capacity. Surfaces absorb the same fraction at all wavelengths, except white paint, which absorbs 25% below 3&nbsp;&micro;m and 90% above. Radiation reflected by one object and then absorbed by another is left out of the energy calculation (it is a very small effect).</p>
-                                    </div>
+                                    <details class="description-area">
+                                        <summary>About this simulation</summary>
+                                        <div class="description-content">
+                                            <p>Thermal radiation is energy carried by electromagnetic waves, mostly <strong>infrared</strong>, which we cannot see. It needs no particles, so it can cross empty space &ndash; that is how the Sun warms the Earth. Here a hot heater in a <strong>vacuum chamber</strong> radiates to two metal blocks.</p>
+                                            <p><strong>What you are seeing:</strong></p>
+                                            <ul>
+                                                <li>Each wavy line is a <strong>packet of radiation</strong>, slowed down enormously. Each carries the same energy; infrared is drawn pink, visible light in its real colour.</li>
+                                                <li>A packet that reaches a surface is either <strong>absorbed</strong> (a small flash: its energy heats the object) or <strong>reflected</strong>.</li>
+                                            </ul>
+                                            <p><strong>Key ideas:</strong></p>
+                                            <ul>
+                                                <li><strong>Everything emits radiation:</strong> <em>P</em>&nbsp;=&nbsp;<em>&epsilon;&sigma;AT</em><sup>4</sup> (<em>T</em> in kelvin), so hotter objects emit far more, and at shorter wavelengths.</li>
+                                                <li><strong>Good absorbers are good emitters:</strong> matte black absorbs 97% of incoming radiation; polished silver reflects 98%.</li>
+                                                <li>A block warms up until it emits as much as it absorbs. Radiation spreads out, so doubling the distance cuts the power received to a quarter.</li>
+                                            </ul>
+                                            <p><strong>Things to try:</strong></p>
+                                            <ul>
+                                                <li>Turn on <em>Energy flow</em> and compare the black and silver blocks. In a vacuum the silver one does reach the same final temperature &ndash; after hours, not minutes.</li>
+                                                <li>Try the <em>Visible light only</em> and <em>Thermal camera</em> views, or switch the heater off.</li>
+                                            </ul>
+                                            <p><strong>How to interact:</strong> drag a block sideways (mouse or finger) to move it. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-chart-bar"></span> shows temperature and spectrum charts, <span class="icon solid fa-sync-alt"></span> restarts and <span class="icon solid fa-expand"></span> goes fullscreen.</p>
+                                            <p><em>Model:</em> a thermostat holds the 8&nbsp;cm heater ball at its set temperature; each hollow 8&nbsp;cm block warms at (power absorbed &minus; power emitted) &divide; heat capacity. The chamber walls stay at 20&nbsp;&deg;C.</p>
+                                        </div>
+                                    </details>
                                 </div>
 							</div>
 						</div>
