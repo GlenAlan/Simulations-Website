@@ -5182,9 +5182,10 @@
         if (e.defaultPrevented || e.isComposing || e.altKey || typingIn(e.target)) return;
         const mod = e.ctrlKey || e.metaKey;
         const key = e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key;
-        // R and Delete act only while the simulation is in use (last pressed or focused, its menu open,
-        // or fullscreen), as the arrow keys do: Backspace pressed while reading the page mustn't delete a body
-        const inUse = !!popBody || edit.engaged || document.body.classList.contains('sim-fullscreen-active');
+        // R and Delete act only while the simulation is in use (it or its settings were last pressed or
+        // focused, its menu is open, or it is fullscreen): Backspace pressed while reading the page
+        // mustn't delete a body
+        const inUse = !!popBody || hist.inUse || document.body.classList.contains('sim-fullscreen-active');
         if (mod && key === 'z') { if (e.shiftKey) redoStep(); else undoStep(); }
         else if (mod && key === 'y' && !e.shiftKey) redoStep();
         else if (!mod && key === 'r' && inUse) { if (!e.repeat) runAgain(); }
@@ -5212,6 +5213,9 @@
             });
         }
         document.addEventListener('keydown', onHistoryKey);
+        const inSim = (el) => !!(el && el.closest && el.closest('.simulation-area-wrapper'));
+        window.addEventListener('pointerdown', (e) => { hist.inUse = inSim(e.target); }, true);
+        document.addEventListener('focusin', (e) => { if (e.target !== document.body) hist.inUse = inSim(e.target); });
         hist.ready = true;
         updateHistoryUi();
     }
