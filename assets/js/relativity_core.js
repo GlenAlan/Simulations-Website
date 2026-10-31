@@ -2066,9 +2066,11 @@
         ctx.fillStyle = pal.muted;
         const starName = 'Proxima Centauri';
         const snw = textW(starName, f * 0.95, 700);
+        // Where both labels actually sit (each is kept inside the canvas)
         const ew = craftLabelWidth(f, 'Earth twin', 'yr', ageTemplate);
-        const crowded = Math.abs(xS - xE) < ew / 2 + snw / 2 + 12;
-        ctx.fillText(starName, clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6), crowded ? y - lay.rE - f * 0.9 : y + lay.rE + f * 1.5);
+        const xEl = clamp(xE, ew / 2 + 6, viewW - ew / 2 - 6), xSl = clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6);
+        const crowded = Math.abs(xSl - xEl) < ew / 2 + snw / 2 + 12;
+        ctx.fillText(starName, xSl, crowded ? y - lay.rE - f * 0.9 : y + lay.rE + f * 1.5);
 
         // Earth and the star move together when measured from the ship: one arrow on the route between them
         const arrowLen = clamp(0.06 * viewW, 26, 60);
