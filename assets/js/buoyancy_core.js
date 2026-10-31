@@ -660,7 +660,8 @@
                 if (airIn) {
                     if (airOut) vented = true;
                     else {
-                        const a = z1 - (hin > z0 ? hin : z0);
+                        // depth of the air under this opening's top edge (it bubbles out through it)
+                        const a = Math.min(z1 - hin, 0.05);
                         bub += CELL * Math.sqrt(a);
                         if (a > bubA) { bubA = a; bubX = X; bubY = z1; }
                     }
@@ -840,7 +841,7 @@
         accY += ((st.vy - prevVY) / dtF - accY) * a;
         prevVX = st.vx; prevVY = st.vy;
         const liq = LIQUIDS[settings.liquid];
-        const zeta = clamp(0.04 + 0.03 * liq.damp, 0.05, 0.3);
+        const zeta = clamp(0.06 + 0.03 * liq.damp, 0.08, 0.3);
         // in a frame moving with the hull the liquid feels gravity minus the hull's acceleration
         const eq = clamp(Math.atan2(-accX, Math.max(0.2 * g, g + accY)), -0.3, 0.3);
         const ripDecay = Math.exp(-dtF / 0.7);
@@ -1605,12 +1606,12 @@
         { key: 'ball', label: 'Hollow steel ball (sealed)', build() { fillShape('ring', 95, 62, 144, 111, 1, MAT_ID.steel); } },
         { key: 'boat', label: 'Steel boat (open hull)', build() {
             const S = MAT_ID.steel;
-            fillRect(90, 62, 60, 1, S); fillRect(90, 63, 1, 18, S); fillRect(149, 63, 1, 18, S);
+            fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
         } },
         { key: 'leaky', label: 'Steel boat with a hole', build() {
             const S = MAT_ID.steel;
-            fillRect(90, 62, 60, 1, S); fillRect(90, 63, 1, 18, S); fillRect(149, 63, 1, 18, S);
-            setCell(119, 62, 0);
+            fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
+            setCell(119, 48, 0);
         } },
         { key: 'canoe', label: 'Aluminium canoe', build() {
             fillShape('ring', 88, 66, 151, 109, 1, MAT_ID.aluminium, (c, r) => r < 88);
@@ -1960,7 +1961,8 @@
         B.imgKey = key;
     }
 
-    // outline of a cavity (body frame, CSS px, y down) as row runs of its cells
+    // outline of a cavity (body frame, CSS px, y down) as row runs of its cells; the runs overlap by
+    // half a pixel so no seams show between rows when the body is rotated
     function cavityPath(B, cv) {
         const key = scale.toFixed(4);
         if (cv.path && cv.pathKey === key) return cv.path;
@@ -1975,7 +1977,7 @@
                 if (!mask[lr * LW + lc]) { lc++; continue; }
                 let e = lc + 1;
                 while (e < LW && mask[lr * LW + e]) e++;
-                p.rect((lc * CELL - B.comLX) * scale, -((lr + 1) * CELL - B.comLY) * scale, (e - lc) * cs, cs);
+                p.rect((lc * CELL - B.comLX) * scale - 0.5, -((lr + 1) * CELL - B.comLY) * scale - 0.5, (e - lc) * cs + 1, cs + 1);
                 lc = e;
             }
         }
@@ -2058,7 +2060,7 @@
         const ya = cv.cY0 + pad, yb = cv.cY1 + pad;
         const la = cavityLevelAt(cv, xa), lb = cavityLevelAt(cv, xb);
         if (la > ya - pad && lb > yb - pad) return;   // the inside has risen to the opening
-        const strength = clamp(cv.sQ / 0.02, 0.3, 1);
+        const strength = clamp(cv.sQ / 0.02, 0.5, 1);
         const sheet = new Path2D();
         sheet.moveTo(wx(xa), wy(ya));
         sheet.lineTo(wx(xb), wy(yb));
@@ -2069,14 +2071,14 @@
         ctx.clip(sheet);
         const yTop = wy(Math.max(ya, yb)), yBot = wy(Math.min(la, lb) - 0.5 * CELL);
         const grad = ctx.createLinearGradient(0, yTop, 0, yBot);
-        grad.addColorStop(0, 'rgba(' + liq.top.join(',') + ',' + (0.75 * strength) + ')');
-        grad.addColorStop(1, 'rgba(' + liq.top.join(',') + ',' + (0.3 * strength) + ')');
+        grad.addColorStop(0, 'rgba(' + liq.top.join(',') + ',' + (0.9 * strength) + ')');
+        grad.addColorStop(1, 'rgba(' + liq.top.join(',') + ',' + (0.5 * strength) + ')');
         ctx.fillStyle = grad;
         ctx.fill(sheet);
         // streaks running down
         ctx.strokeStyle = liq.surface;
         ctx.lineWidth = Math.max(1, 0.002 * scale);
-        ctx.globalAlpha = 0.45 * strength;
+        ctx.globalAlpha = 0.55 * strength;
         const L = 0.035 * scale;
         ctx.setLineDash([L, 0.6 * L]);
         ctx.lineDashOffset = -simTime * Math.max(0.6, cv.sV + 0.6) * scale;
@@ -2313,17 +2315,62 @@
         return [st.x + c * dx - s * dy, st.y + s * dx + c * dy];
     }
 
+    // Weight and buoyancy as shown. Held liquid that sits below the outside surface is counted as
+    // part of the tank: its weight and the buoyancy on it cancel exactly (same size, same point),
+    // so leaving both out changes no force or torque. A flooded hull then shows the weight of its
+    // material and a buoyancy that has dropped, while liquid held up above the surface (a boat
+    // lifted out full) adds to the weight. The physics itself uses the full mass and buoyancy.
+    const fv = { W: 0, cx: 0, cy: 0, fbX: 0, fbY: 0, bx: 0, by: 0, carried: 0 };
+    function forceView() {
+        const B = body;
+        const g = settings.gravity, rhoL = LIQUIDS[settings.liquid].rho;
+        let As = 0, ax = 0, ay = 0;
+        if (B.cavs.length && B.waterMass > 0) {
+            const c = Math.cos(st.th), s = Math.sin(st.th);
+            setCellGeometry(c, s);
+            setCorners(c, s);
+            for (const cv of B.cavs) {
+                if (cv.V <= 0) continue;
+                const lim = Math.min(cv.h, surfaceAt(cv.xs));
+                const top = lim + gExt, Y = cv.Y;
+                for (let k = 0; k < cv.nc; k++) {
+                    const tt = top - Y[k];
+                    if (tt <= 0) continue;
+                    const bi = cv.cells[k];
+                    let px = st.x + c * B.ox[bi] - s * B.oy[bi], py = Y[k], a;
+                    if (tt >= gE2) a = CELL_A;
+                    else { clipCell(lim - Y[k], 0); a = clipA; px += clipCX; py += clipCY; }
+                    As += a; ax += a * px; ay += a * py;
+                }
+            }
+        }
+        const m = B.mass + B.waterMass;
+        const mw = Math.min(rhoL * DEPTH * As, B.waterMass);
+        const [cx, cy] = comWorld();
+        const ms = m - mw;
+        fv.W = ms * g;
+        fv.cx = mw > 0 ? (m * cx - mw * ax / As) / ms : cx;
+        fv.cy = mw > 0 ? (m * cy - mw * ay / As) / ms : cy;
+        fv.fbX = disp.fbX;
+        fv.fbY = disp.fbY - mw * g;
+        const sa = phys.subA - mw / (rhoL * DEPTH);
+        if (mw > 0 && sa > 1e-6) {
+            fv.bx = (phys.subA * phys.cobX - ax) / sa;
+            fv.by = (phys.subA * phys.cobY - ay) / sa;
+        } else { fv.bx = phys.cobX; fv.by = phys.cobY; }
+        fv.carried = B.waterMass - mw;
+    }
+
     function drawForces() {
         const B = body;
-        const g = settings.gravity;
-        const weight = (B.mass + B.waterMass) * g;
-        const kPx = (0.17 * cssH) / Math.max(weight, 1e-6);
+        forceView();
+        const weight = fv.W;
+        const kPx = (0.17 * cssH) / Math.max((B.mass + B.waterMass) * settings.gravity, 1e-6);
         const maxLen = 0.42 * cssH;
-        const [cxw, cyw] = comWorld();
-        const cx = wx(cxw), cy = wy(cyw);
+        const cx = wx(fv.cx), cy = wy(fv.cy);
         const A = settings.arrows;
         if (A.buoyancy && disp.sub > 0) {
-            drawArrow(wx(phys.cobX), wy(phys.cobY), disp.fbX, disp.fbY, ARROWS.buoyancy.color, kPx, maxLen);
+            drawArrow(wx(fv.bx), wy(fv.by), fv.fbX, fv.fbY, ARROWS.buoyancy.color, kPx, maxLen);
         }
         if (A.weight) drawArrow(cx, cy, 0, -weight, ARROWS.weight.color, kPx, maxLen);
         if (A.drag) drawArrow(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color, kPx, maxLen);
@@ -2332,12 +2379,12 @@
         const rows = [];
         const N = (v) => fmtAuto(v) + ' N';
         if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(weight)]);
-        if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(Math.hypot(disp.fbX, disp.fbY))]);
+        if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(Math.hypot(fv.fbX, fv.fbY))]);
         if (A.net) rows.push([ARROWS.net.color, 'Net force', N(Math.hypot(disp.netX, disp.netY))]);
         if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(Math.hypot(disp.fdX, disp.fdY))]);
         if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(Math.hypot(disp.fcX, disp.fcY))]);
-        if (B.cavs.length && B.waterMass > 0.01) {
-            rows.push(['liquid', LIQUIDS[settings.liquid].name.replace('Fresh water', 'Water') + ' inside', fmtAuto(B.waterMass) + ' kg']);
+        if (B.cavs.length && fv.carried > 0.01) {
+            rows.push(['liquid', LIQUIDS[settings.liquid].name.replace('Fresh water', 'Water') + ' held up', fmtAuto(fv.carried) + ' kg']);
         }
 
         if (settings.markers) {
@@ -2351,7 +2398,7 @@
             ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, Math.PI, Math.PI * 1.5); ctx.closePath(); ctx.fill();
             ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
             if (disp.sub > 0) {
-                const bx = wx(phys.cobX), by = wy(phys.cobY);
+                const bx = wx(fv.bx), by = wy(fv.by);
                 ctx.strokeStyle = pal.halo; ctx.lineWidth = 4;
                 ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI * 2); ctx.stroke();
                 ctx.strokeStyle = ARROWS.buoyancy.color; ctx.lineWidth = 2;
@@ -2364,7 +2411,7 @@
 
     // A small key in the top-left corner: [swatch] label ... value (values right-aligned in a
     // column as wide as `valueTemplate`, so changing numbers never shift anything)
-    function drawInfoBox(rows, valueTemplate) {
+    function drawInfoBox(rows, valueTemplate, right) {
         const fs = clamp(cssW / 70, 10, 13);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
         const lineH = Math.round(fs * 1.4);
@@ -2375,7 +2422,7 @@
         }
         const pad = 7, sw = r0Swatch(rows) ? 18 : 0, gap = vw > 0 ? 10 : 0;
         const bw = pad * 2 + (sw ? sw + pad : 0) + lw + gap + vw, bh = rows.length * lineH + pad;
-        const x0 = 8, y0 = 8;
+        const x0 = right ? Math.max(8, Math.floor(cssW - 8 - bw)) : 8, y0 = 8;
         ctx.fillStyle = pal.panel;
         ctx.strokeStyle = pal.panelBorder;
         ctx.lineWidth = 1;
@@ -2417,7 +2464,7 @@
     // draw mode: will the drawing float?
     function drawPrediction() {
         if (!predictionLines.length) return;
-        drawInfoBox(predictionLines.map((t) => [null, t, '']), '');
+        drawInfoBox(predictionLines.map((t) => [null, t, '']), '', true);
     }
 
     function drawGrabLine() {
@@ -2562,15 +2609,16 @@
         const rho = M / V;
         predictionLines = predictionText(P, liq, rho, V, M, g);
         if (!el.mass) return;
-        const held = mode === 'sim' ? P.waterMass : 0;
         setText(el.mass, fmtR(M));
         setText(el.volume, fmtR(V * 1000));
         setText(el.density, rho.toFixed(0));
-        setText(el.weight, fmtR((M + held) * g));
         if (mode === 'sim') {
+            forceView();
+            setText(el.weight, fmtR(fv.W));
             setText(el.submerged, (100 * clamp(disp.sub, 0, 1)).toFixed(0));
-            setText(el.buoyancy, fmtR(Math.hypot(disp.fbX, disp.fbY)));
+            setText(el.buoyancy, fmtR(Math.hypot(fv.fbX, fv.fbY)));
         } else {
+            setText(el.weight, fmtR(M * g));
             setText(el.submerged, '-');
             setText(el.buoyancy, '-');
         }
@@ -3098,6 +3146,8 @@
                 out.submergedVolume = phys.subA * DEPTH;
                 out.buoyancy = phys.fbY; out.weight = phys.weight;
                 out.waterInside = body.waterMass;
+                forceView();
+                out.weightShown = fv.W; out.buoyancyShown = Math.hypot(fv.fbX, fv.fbY); out.waterHeldUp = fv.carried;
                 out.contactForce = [phys.fcX, phys.fcY];
                 out.dragForce = [phys.fdX, phys.fdY];
                 out.cob = [phys.cobX, phys.cobY];
@@ -3107,7 +3157,7 @@
         getPerf() {
             return { fps: perf.fps, frameMs: perf.frameMs, physMs: perf.physMs, renderMs: perf.renderMs, substepsPerFrame: perf.substeps, frames: perf.frames };
         },
-        _internals: { settings, MATERIALS, LIQUIDS, grid, GW, GH, CELL }
+        _internals: { settings, MATERIALS, LIQUIDS, grid, GW, GH, CELL, body: () => body, surfaceAt }
     };
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
