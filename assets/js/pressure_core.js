@@ -51,7 +51,6 @@
     const WORLD_W = 200, WORLD_H = 100;
     const REGION_W = 140;            // particles / containers live in x < REGION_W
     const INSTR_X = 143;             // instrument panel (gauge, legend) on the right
-    const REGION_SHIFT = WORLD_W - (INSTR_X - 1);   // region offset when the layout is mirrored
     const KB = 3;                    // energy units per kelvin
     const A_REF = 4096;              // area that reads as 1.00 L
     const N_REF = 120;               // particles that read 1 atm in 1.00 L at 300 K (default amount of gas)
@@ -866,14 +865,11 @@
     // Rendering
     // ------------------------------------------------------------------
     let cssW = 0, cssH = 0, dpr = 1, scale = 1, offX = 0, offY = 0;
-    // Layouts. 'Wide' (2:1 canvas): the instruments sit in a column beside the containers. When
-    // simulation_ui.js puts its buttons over the top-right of the canvas (it marks the body with
-    // sim-buttons-over-canvas) the wide layout is mirrored: instruments left, containers right.
-    // 'Stacked' (narrow portrait screens, nearly square canvas): the instruments sit in a strip
-    // below the containers, which are then drawn much bigger.
-    const STRIP_H = 38;
+    // Layouts. 'Wide' (2:1 canvas): the instruments sit in a column right of the containers.
+    // 'Stacked' (portrait screens, nearly square canvas): the instruments sit in a strip below
+    // the containers, which are then drawn much bigger.
     const INSTR_W = WORLD_W - 1.5 - INSTR_X;
-    const LY = { stacked: false, flip: false, W: WORLD_W, H: WORLD_H, regionX: 0, ix: INSTR_X, iy: 1.5, iw: INSTR_W, ih: WORLD_H - 3 };
+    const LY = { stacked: false, W: WORLD_W, H: WORLD_H, ix: INSTR_X, iy: 1.5, iw: INSTR_W, ih: WORLD_H - 3 };
     const aspectBox = canvas.parentElement;
     // Line widths, dot sizes and text are given in CSS px and converted to world units (u per px),
     // so they stay crisp and readable on any canvas size.
@@ -894,32 +890,37 @@
     const tw = { num: 1, unit: 1, rowNeed: 1, rowNum: 1, rowUnit: 1, key: 1 };
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
+    // Portrait phones and tablets: a 2:1 canvas would leave most of the screen empty.
     function wantStacked() {
         const vw = window.innerWidth, vh = window.innerHeight;
-        return vw < 640 && vh > vw * 1.2;
+        return vw < 1000 && vh > vw * 1.15;
     }
-    function applyLayout(stacked, flipped) {
+    // Height of the instrument strip (stacked layout): taller on phones, where the details are
+    // listed in one column instead of two.
+    let stripH = 38;
+    function wantStripH() { return window.innerWidth < 520 ? 52 : 38; }
+    function applyLayout(stacked) {
         LY.stacked = stacked;
-        LY.flip = !stacked && flipped;
         if (stacked) {
-            LY.W = REGION_W; LY.H = WORLD_H + STRIP_H; LY.regionX = 0;
-            LY.ix = 1.5; LY.iy = WORLD_H + 0.5; LY.iw = REGION_W - 3; LY.ih = STRIP_H - 2;
+            LY.W = REGION_W; LY.H = WORLD_H + stripH;
+            LY.ix = 1.5; LY.iy = WORLD_H + 0.5; LY.iw = REGION_W - 3; LY.ih = stripH - 2;
         } else {
-            LY.W = WORLD_W; LY.H = WORLD_H; LY.regionX = LY.flip ? REGION_SHIFT : 0;
-            LY.ix = LY.flip ? 1.5 : INSTR_X; LY.iy = 1.5; LY.iw = INSTR_W; LY.ih = WORLD_H - 3;
+            LY.W = WORLD_W; LY.H = WORLD_H;
+            LY.ix = INSTR_X; LY.iy = 1.5; LY.iw = INSTR_W; LY.ih = WORLD_H - 3;
         }
     }
 
     function resizeCanvas() {
         if (!aspectBox) return false;
         const stacked = wantStacked();
-        const ratio = stacked ? REGION_W + '/' + (WORLD_H + STRIP_H) : '2/1';
+        const newStripH = wantStripH();
+        const ratio = stacked ? REGION_W + '/' + (WORLD_H + newStripH) : '2/1';
         if (aspectBox.style.getPropertyValue('--aspect-ratio').trim() !== ratio) {
             aspectBox.style.setProperty('--aspect-ratio', ratio);
         }
-        const flipped = document.body.classList.contains('sim-buttons-over-canvas') && !document.body.classList.contains('sim-fullscreen-active');
-        const layoutChanged = stacked !== LY.stacked || (!stacked && flipped !== LY.flip);
-        applyLayout(stacked, flipped);
+        const layoutChanged = stacked !== LY.stacked || (stacked && newStripH !== stripH);
+        stripH = newStripH;
+        applyLayout(stacked);
         const w = aspectBox.clientWidth, h = aspectBox.clientHeight;
         if (!w || !h) return layoutChanged;
         // Sharp on high-DPI screens, but keep the buffer under ~4 megapixels on very big canvases.
@@ -956,7 +957,7 @@
         let lw = 0;
         for (let i = 0; i < ROW_LABELS.length; i++) lw = Math.max(lw, ctx.measureText(ROW_LABELS[i]).width);
         tw.key = fSmall * 0.9;
-        tw.rowNeed = tw.key + lw + fSmall * 0.6 + tw.rowNum + tw.rowUnit;
+        tw.rowNeed = tw.key + lw + fSmall * 0.9 + tw.rowNum + tw.rowUnit;
     }
 
     function roundRectPath(x, y, w, h, r) {
@@ -1422,7 +1423,8 @@
 
     // Detail rows (label, value, unit) in a grid of `cols` columns, values right-aligned per cell.
     function drawRows(x, y, w, cols, lh) {
-        const cw = w / cols;
+        const gap = cols > 1 ? fSmall * 1.2 : 0;
+        const cw = (w - gap * (cols - 1)) / cols;
         const fit = Math.min(1, cw / tw.rowNeed);
         const fs = Math.max(fSmall * fit, 8.5 * u);
         const k = fs / fSmall;
@@ -1430,7 +1432,7 @@
         ctx.textBaseline = 'alphabetic';
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            const cx0 = x + (i % cols) * cw, by = y + Math.floor(i / cols) * lh + fs * 0.8;
+            const cx0 = x + (i % cols) * (cw + gap), by = y + Math.floor(i / cols) * lh + fs * 0.8;
             const kx = cx0 + tw.key * 0.35 * k;
             if (row.key === 'ideal') {
                 const s = fs * 0.28;
@@ -1544,7 +1546,7 @@
         const x0 = LY.ix, y0 = LY.iy, w = LY.iw, h = LY.ih;
         panelBox(x0, y0, w, h);
         const pad = 8 * u, lh = fSmall * 1.45;
-        const gr = clamp(h / 2 - pad, 4, 22);
+        const gr = clamp(h / 2 - pad - (S.details ? 5 * u : 0), 4, 22);
         const gcx = x0 + pad + gr, gcy = y0 + h / 2;
         drawGauge(gcx, gcy, gr);
         const rx = gcx + gr + 10 * u;
@@ -1559,12 +1561,16 @@
             drawHint(right, gcy + fSmall * 0.35, 'right');
             return;
         }
-        const dx = rx + Math.max(tw.num + tw.unit, fSmall * 7) + 12 * u;
-        const dw = right - dx;
-        const nr = Math.ceil(rows.length / 2);
+        // Details block: two columns of rows if they fit, no wider than needed, centred in the
+        // space right of the readout.
+        const dx0 = rx + Math.max(tw.num + tw.unit, fSmall * 7) + 12 * u;
+        const cols = right - dx0 >= 2 * tw.rowNeed + fSmall * 1.2 ? 2 : 1;
+        const dw = Math.min(right - dx0, cols * tw.rowNeed * 1.3 + (cols - 1) * fSmall * 1.2);
+        const dx = dx0 + (right - dx0 - dw) / 2;
+        const nr = Math.ceil(rows.length / cols);
         const blockH = nr * lh + 4 * u + legendHeight();
         const dy = gcy - blockH / 2;
-        drawRows(dx, dy, dw, 2, lh);
+        drawRows(dx, dy, dw, cols, lh);
         drawLegend(dx + 2 * u, dy + nr * lh + 4 * u, dw - 4 * u);
     }
 
@@ -1576,7 +1582,6 @@
         ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offX, dpr * offY);
 
         ctx.save();
-        if (LY.regionX) ctx.translate(LY.regionX, 0);
         ctx.beginPath();
         ctx.rect(0, 0, LY.stacked ? REGION_W : INSTR_X - 1, WORLD_H);
         ctx.clip();
@@ -2035,7 +2040,7 @@
     let dragging = false, dragOffset = 0, dragPointer = null, tapPointer = null;
     function toWorld(e) {
         const rect = canvas.getBoundingClientRect();
-        return { x: (e.clientX - rect.left - offX) / scale - LY.regionX, y: (e.clientY - rect.top - offY) / scale };
+        return { x: (e.clientX - rect.left - offX) / scale, y: (e.clientY - rect.top - offY) / scale };
     }
     function overInstruments(e) {
         const rect = canvas.getBoundingClientRect();
@@ -2125,7 +2130,7 @@
                 R: bal.R, Rdot: bal.Rdot, box: { x0: box.x0, x1: box.x1, y0: box.y0, y1: box.y1 },
                 volumeL: area() / A_REF, gasT: gasTemperature(), KE: currentKE(),
                 window: { valid: win.valid, P_kPa: win.P * KPA, Pideal_kPa: win.Pideal * KPA, V_L: win.A / A_REF, T: win.T, ratio: win.ratio, hitRate: win.hitRate },
-                substeps: lastSubsteps, gaugeRange: GAUGE_RANGES[gaugeIdx], mirroredLayout: LY.flip, stackedLayout: LY.stacked, details: S.details,
+                substeps: lastSubsteps, gaugeRange: GAUGE_RANGES[gaugeIdx], stackedLayout: LY.stacked, details: S.details,
                 canvas: { cssW: cssW, cssH: cssH, dpr: dpr, scale: scale }
             };
         },
@@ -2182,8 +2187,6 @@
             ro.observe(canvas.parentElement);
         }
         window.addEventListener('resize', onResize);
-        // Fullscreen on/off changes where simulation_ui.js puts its buttons (see applyLayout).
-        new MutationObserver(onResize).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
         // Theme changes: main.js swaps dark-mode / light-mode on <html>.
         new MutationObserver(() => {

@@ -282,22 +282,22 @@
 												</div>
 											</div>
 											<div class="sim-info-actions">
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Toggle Charts">
-													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox">
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Graphs">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
 													<span class="icon solid fa-chart-bar"></span>
 												</label>
-												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset Simulation">
+												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart the simulation" title="Restart">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
 											</div>
 										</div>
 									</div>
-									<div id="charts-container" class="pressure-charts" style="display: none;">
-										<div class="sim-charts-row pressure-charts-row">
-											<div class="chart-box pressure-chart-box">
+									<div id="charts-container" style="display: none;">
+										<div class="sim-charts-row">
+											<div class="chart-box">
 												<canvas id="pressureChart"></canvas>
 											</div>
-											<div class="chart-box pressure-chart-box">
+											<div class="chart-box">
 												<canvas id="lawChart"></canvas>
 											</div>
 										</div>
