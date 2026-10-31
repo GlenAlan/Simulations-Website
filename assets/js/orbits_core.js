@@ -1962,28 +1962,76 @@
                 const fv = frameVelocity();
                 const tau = arrowTime();
                 const ox = sx(b.dx) + (p.vx - fv.x) * tau * scale, oy = sy(b.dy) - (p.vy - fv.y) * tau * scale;
-                const rc = pr.vc * tau * scale, re = pr.ve * tau * scale;
-                const fs = clamp(Math.min(viewW, viewH) / 48, 10, 12);
-                // Labels on the far side of the rings from the body being orbited
-                const ax = sx(b.dx) - cx, ay = sy(b.dy) - cy;
-                const al = Math.hypot(ax, ay) || 1;
-                const ux = ax / al, uy = ay / al;
+                const rings = [[pr.vc * tau * scale, 'circular speed'], [pr.ve * tau * scale, 'escape speed']];
                 ctx.lineWidth = 1;
                 ctx.setLineDash([3, 4]);
-                ctx.font = font(fs);
-                ctx.textAlign = ux > 0.4 ? 'left' : ux < -0.4 ? 'right' : 'center';
-                ctx.textBaseline = uy > 0.4 ? 'top' : uy < -0.4 ? 'bottom' : 'middle';
-                [[rc, 'circular speed'], [re, 'escape speed']].forEach(([rr, label]) => {
-                    if (rr < 6) return;
-                    ctx.strokeStyle = hexA(C.velocity, 0.55);
+                ctx.strokeStyle = hexA(C.velocity, 0.55);
+                for (const [rr] of rings) {
+                    if (rr < 6) continue;
                     ctx.beginPath();
                     ctx.arc(ox, oy, rr, 0, TAU);
                     ctx.stroke();
-                    ctx.fillStyle = C.velocity;
-                    fillTextInside(label, ox + ux * (rr + 4), oy + uy * (rr + 4));
-                });
+                }
                 ctx.setLineDash([]);
+                drawRingLabels(C, b, ox, oy, rings, cx, cy);
             }
+        }
+    }
+
+    // The speed rings' labels, each sitting on its own ring at the clearest angle: away from the aimed
+    // arrow and its handle, the line to the body being orbited, the body and its name, inside the
+    // canvas and never on top of each other. A ring too small for that gets its label just outside it.
+    function drawRingLabels(C, b, ox, oy, rings, px, py) {
+        const fs = clamp(Math.min(viewW, viewH) / 48, 10, 12);
+        const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
+        const h = handlePos(b);
+        const angle = (x, y) => Math.atan2(y - oy, x - ox);
+        const avoid = [angle(h.x, h.y), angle(h.x, h.y) + Math.PI, angle(px, py)];
+        // The body's name, as drawLabels places it
+        const nfs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
+        ctx.font = font(nfs);
+        const nu = labelDirection(b), ngap = r + 9, nw = ctx.measureText(b.name).width;
+        const nx = bx + nu.x * ngap, ny = by + nu.y * ngap;
+        const nl = nu.x > 0.38 ? nx : nu.x < -0.38 ? nx - nw : nx - nw / 2;
+        const nt = nu.y > 0.38 ? ny : nu.y < -0.38 ? ny - nfs : ny - nfs / 2;
+        const keepOut = [{ l: nl - 2, r: nl + nw + 2, t: nt - 2, b: nt + nfs + 2 }];
+        // ...and the canvas's own notes: the scale bar row, and the pause / "Viewed from" notices
+        keepOut.push({ l: 0, r: viewW, t: viewH - 24, b: viewH });
+        if (paused || slowedDown || frameId !== null) keepOut.push({ l: 0, r: 240, t: 0, b: frameId !== null ? 84 : 40 });
+        const overlaps = (a, q) => a.l < q.r && a.r > q.l && a.t < q.b && a.b > q.t;
+        const nearPoint = (a, x, y, d) => x > a.l - d && x < a.r + d && y > a.t - d && y < a.b + d;
+        const angDist = (a1, a2) => { const d = Math.abs(((a1 - a2) % TAU + TAU) % TAU); return Math.min(d, TAU - d); };
+        ctx.font = font(fs);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = hexA(C.bg, 0.9);
+        ctx.fillStyle = C.velocity;
+        let first = null;
+        for (const [rr, text] of rings) {
+            if (rr < 6) continue;
+            const w = ctx.measureText(text).width;
+            let best = null, bestScore = -Infinity;
+            for (const rad of [rr, rr + fs / 2 + 6]) {
+                for (let k = 0; k < 72; k++) {
+                    const a = (k / 72) * TAU;
+                    const x = ox + Math.cos(a) * rad, y = oy + Math.sin(a) * rad;
+                    const box = { l: x - w / 2 - 3, r: x + w / 2 + 3, t: y - fs / 2 - 2, b: y + fs / 2 + 2 };
+                    if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
+                    if (keepOut.some((q) => overlaps(box, q))) continue;
+                    if (nearPoint(box, bx, by, r + 4) || nearPoint(box, h.x, h.y, 9)) continue;
+                    let score = Math.min(...avoid.map((v) => angDist(a, v)));
+                    if (first) score -= 0.25 * angDist(a, first.a);   // keep the pair together where possible
+                    if (rad !== rr) score -= 1;                         // on the ring is better than beside it
+                    if (score > bestScore) { bestScore = score; best = { a, x, y, box }; }
+                }
+                if (best && rad === rr) break;
+            }
+            if (!best) continue;
+            keepOut.push(best.box);
+            if (!first) first = best;
+            ctx.strokeText(text, best.x, best.y);
+            ctx.fillText(text, best.x, best.y);
         }
     }
 
