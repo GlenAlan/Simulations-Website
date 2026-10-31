@@ -629,7 +629,7 @@
                     // A hole a centimetre or two across squirts a jet; through anything wider the liquid
                     // inside and outside is one body of liquid with a surface that runs on through it
                     wide: len > 2.5 * CELL, bubCap: clamp(0.5 * len, 0.05, 0.25),
-                    qI: 0, qO: 0, lipMode: false, wA: 0.5,  // this step: flows, over the lips?, lip A's share
+                    qI: 0, qO: 0, lipF: 0, wA: 0.5,        // this step: flows, share over the lips, lip A's share of that
                     qoR: 0, qoA: 0,                         // outflow (face units): in all, and where the outside is air
                     tin: null, tout: null,                  // where it flows through (flow-weighted)
                     // smoothed for drawing: signed flows over lip A / lip B / as a jet (+ in, - out), jet
@@ -667,7 +667,7 @@
             cv.V = 0; cv.h = -1; cv.m = cv.mx = cv.my = cv.I = 0;
             cv.qIn = cv.qOut = 0; cv.vented = true; cv.ventS = 1;
             cv.bubQ = 0; cv.phi = cv.phiV = cv.rip = 0;
-            for (const ch of cv.chains) { ch.qI = ch.qO = ch.qoR = ch.qoA = 0; ch.sA = ch.sB = ch.sJ = ch.sC = 0; ch.lipMode = false; }
+            for (const ch of cv.chains) { ch.qI = ch.qO = ch.qoR = ch.qoA = 0; ch.sA = ch.sB = ch.sJ = ch.sC = 0; ch.lipF = 0; }
         }
         B.waterMass = B.waterMx = B.waterMy = B.waterInertia = B.waterArea = 0;
     }
@@ -898,10 +898,13 @@
                 }
                 // orifice flow through the wetted part of the opening ...
                 let QI = kQ * qi, QO = kQ * qo;
-                ch.lipMode = false;
+                ch.lipF = 0;
                 // ... but through an opening that faces up the liquid has to come over the lips at its
-                // ends: weir flow over each, reduced when the far side is above the lip too
-                if (ch.lips && s * ch.nbx + c * ch.nby > 0.3 && (QI > 0 || QO > 0)) {
+                // ends: weir flow over each, reduced when the far side is above the lip too. Between
+                // facing sideways and facing up the one law turns into the other gradually (lipW), so
+                // the flow does not jump as the body turns.
+                const lipW = ch.lips ? smoothstep(0.15, 0.45, s * ch.nbx + c * ch.nby) : 0;
+                if (lipW > 0 && (QI > 0 || QO > 0)) {
                     const n = ch.px.length - 1;
                     const ax = x0 + c * ch.px[0] - s * ch.py[0], az = y0 + s * ch.px[0] + c * ch.py[0];
                     const bx = x0 + c * ch.px[n] - s * ch.py[n], bz = y0 + s * ch.px[n] + c * ch.py[n];
@@ -910,10 +913,12 @@
                     const inflow = QI >= QO;
                     const wa = inflow ? weirHead(SA - az, hin - az) : weirHead(hin - az, SA - az);
                     const wb = inflow ? weirHead(SB - bz, hin - bz) : weirHead(hin - bz, SB - bz);
-                    const W = kW * (wa + wb);
-                    if (inflow ? W < QI : W < QO) {
-                        if (inflow) QI = W; else QO = W;
-                        ch.lipMode = true;
+                    const W = kW * (wa + wb), Q = inflow ? QI : QO;
+                    if (W < Q) {
+                        const Qb = Q + lipW * (W - Q);
+                        if (inflow) QI = Qb; else QO = Qb;
+                        // the share of it that comes over the lips (drawn as nappes or tongues)
+                        ch.lipF = Qb > 0 ? lipW * W / Qb : 0;
                         ch.wA = wa + wb > 0 ? wa / (wa + wb) : 0.5;
                     }
                 }
@@ -952,12 +957,13 @@
                 const ch = cv.chains[k];
                 const qi = ch.qI * kI, qo = ch.qO * kO;
                 const inflow = qi >= qo, q = inflow ? qi : -qo;
-                let tA = 0, tB = 0, tJ = 0, tC = 0;
-                if (ch.lipMode) { tA = q * ch.wA; tB = q - tA; } else tJ = q;
+                const qLip = q * ch.lipF;
+                const tA = qLip * ch.wA, tB = qLip - tA, tJ = q - qLip;
                 // What a wide opening lets out where the outside is air falls from it as a curtain.
                 // (With no other way in for the air, all of it leaves there: the air comes in through
                 // the same stretch, and the liquid falls out round it.)
-                if (ch.wide && !ch.lipMode && ch.qoR > 0 && ch.qoA > 0) tC = vented ? qo * ch.qoA / ch.qoR : qo;
+                let tC = 0;
+                if (ch.wide && ch.qoR > 0 && ch.qoA > 0) tC = (vented ? qo * ch.qoA / ch.qoR : qo) * (1 - ch.lipF);
                 ch.sA += (tA - ch.sA) * aS; ch.sB += (tB - ch.sB) * aS; ch.sJ += (tJ - ch.sJ) * aS;
                 ch.sC += (tC - ch.sC) * aS;
                 if (tJ === 0 || ch.wide) continue;
@@ -3931,7 +3937,7 @@
                     // drawn streams (smoothed, + in, - out): over the lips, or as a jet
                     stream: cv.chains.reduce((a, ch) => a + ch.sA + ch.sB + ch.sJ, 0),
                     openings: cv.chains.map((ch) => ({
-                        faces: ch.nf, lips: ch.lips, qIn: ch.qI, qOut: ch.qO, overLips: ch.lipMode,
+                        faces: ch.nf, lips: ch.lips, qIn: ch.qI, qOut: ch.qO, overLips: ch.lipF,
                         lipA: ch.sA, lipB: ch.sB, jet: ch.sJ, jetSpeed: ch.jv
                     }))
                 })),
