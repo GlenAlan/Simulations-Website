@@ -142,8 +142,6 @@
     let viewW = 0, viewH = 0, dpr = 1;
     let fontPx = 13;
     let realNow = 0;          // seconds, for flashes and pauses
-    let caption = null;       // { text, until } a short message that replaces the frame caption
-    let callout = null;       // { title, text } a boxed message (twin turnaround, results)
     const hitRects = [];      // craft that can be tapped to ride along: { x0, y0, x1, y1, frame }
     let hoverFrame = null;
     let testPaused = false;   // set by the test API: the loop draws but doesn't advance
@@ -199,7 +197,7 @@
             metal: '#5b6472', metalLo: '#444b57', edge: 'rgba(0,0,0,0.35)', outline: null,
             photon: '#fff4c4', lightRGB: '255,214,92',
             earthOcean: '#3d86c6', ground: '#22332f', groundLine: '#7bd0c1', skyRGB: '126,202,246',
-            muon: '#c9a5e3', calloutBg: 'rgba(30,32,38,0.94)',
+            muon: '#c9a5e3',
             pinkText: '#f2849e', blueText: '#7ecaf6', purpleText: '#c9a5e3'
         } : {
             bg: '#f4f6f8', text: '#2b2b2b', muted: 'rgba(43,43,43,0.62)', faint: 'rgba(43,43,43,0.2)',
@@ -207,7 +205,7 @@
             metal: '#7d8794', metalLo: '#646d79', edge: 'rgba(0,0,0,0.3)', outline: 'rgba(30,40,60,0.22)',
             photon: '#fff4c4', lightRGB: '214,140,0',
             earthOcean: '#3d86c6', ground: '#cfe3d8', groundLine: '#3f9e8f', skyRGB: '90,160,215',
-            muon: '#8a5cb0', calloutBg: 'rgba(255,255,255,0.95)',
+            muon: '#8a5cb0',
             pinkText: '#d4587a', blueText: '#2f84bb', purpleText: '#8a5cb0'
         });
         // Craft: flat tones of the site's pink and blue, a dark clock bay with silver mirrors. The light inside the
@@ -253,12 +251,7 @@
         lc.trailAway.length = 0;
         lc.tickHome = 0;
         lc.tickAway = 0;
-        const first = S.showSync ? 'The middle clocks read zero as the ship passes the station' : 'Both clocks read zero as the ship passes the station';
-        showCaption(first, 4, firstRun ? ['Each tick is one trip of the light down to the lower mirror and back', 5,
-            ['The moving clock\'s light has further to go at the same speed, so it ticks slower', 6]] : undefined);
-        firstRun = false;
     }
-    let firstRun = true;
 
     // Period (ls) after which the moving craft comes round again: the screen width plus just enough room for
     // the craft's back (and labels) to leave one side before its front (and velocity arrow) appears at the other.
@@ -360,9 +353,6 @@
         tw.t = 0;
         tw.stage = 'out';
         tw.pause = 0;
-        callout = null;
-        if (S.v < 0.01) showCaption('Choose a speed for the trip', 4);
-        else showCaption(homeMoves() ? 'The ship stays put: Earth and the star move instead' : 'The ship sets off from Earth', 3.5);
     }
 
     function stepTwins(dt, dtReal) {
@@ -371,7 +361,6 @@
             if (tw.pause <= 0) {
                 if (tw.stage === 'turn') {
                     tw.stage = 'back';
-                    callout = null;
                 } else if (tw.stage === 'done') {
                     resetTwins();
                     resetChartData();
@@ -380,7 +369,7 @@
             return;
         }
         if (S.v < 0.01 || tw.stage === 'done') return;
-        const { g, t1, t2, tau1 } = twinTimes();
+        const { t1, t2, tau1 } = twinTimes();
         const ship = homeMoves();
         const mid = ship ? tau1 : t1;
         const end = ship ? 2 * tau1 : t2;
@@ -391,25 +380,14 @@
                 tw.t = mid;
                 tw.stage = 'turn';
                 tw.pause = tw.pauseLen = TW.TURN_PAUSE;
-                const jump = t2 - 2 * tau1 / g;
-                callout = {
-                    title: 'The ship turns round',
-                    text: `Its idea of "now" on Earth jumps ${fmtNum(jump)} years ahead`
-                };
                 return;
             }
             tw.stage = 'back';
-            showCaption('Turning round at Proxima Centauri', 2.5);
         }
         if (tw.t >= end - 1e-12) {
             tw.t = end;
             tw.stage = 'done';
             tw.pause = TW.END_PAUSE;
-            const diff = t2 - 2 * tau1;
-            callout = {
-                title: `Home again: the traveller is ${fmtNum(diff)} years younger`,
-                text: `Earth twin aged ${fmtNum(t2)} years, the traveller ${fmtNum(2 * tau1)}`
-            };
         }
     }
 
@@ -448,10 +426,6 @@
         mu.stage = 'fall';
         mu.pause = 0;
         mu.decayedAt.fill(-1);
-        callout = null;
-        const g = gammaOf(S.v);
-        if (homeMoves()) showCaption('The muons are at rest; the ground rushes up at them', 4);
-        else showCaption('A cosmic ray makes a burst of muons 15 km up', 3, [`Measured from Earth, their clocks tick ${fmtTimes(g)} times slower`, 6]);
     }
 
     function stepMuons(dt, dtReal) {
@@ -464,7 +438,7 @@
             return;
         }
         if (mu.stage === 'done') return;
-        const { tLand, tauLand, g } = muonTimes();
+        const { tLand, tauLand } = muonTimes();
         const tauBefore = muonClock();
         const end = homeMoves() ? tauLand : tLand;
         mu.t = Math.min(end, mu.t + dt);
@@ -475,35 +449,7 @@
         if (mu.t >= end - 1e-12 || muonsLeft() === 0) {
             mu.stage = 'done';
             mu.pause = MU.END_PAUSE;
-            const left = muonsLeft();
-            const p0 = Math.exp(-tLand / MU.LIFE);   // chance of surviving without time dilation
-            const landed = mu.t >= end - 1e-12;
-            if (!landed) {
-                callout = { title: 'All the muons decayed before reaching the ground', text: ['Try a speed closer to c'] };
-            } else if (homeMoves()) {
-                callout = {
-                    title: `${left} of ${MU.N} muons reached the ground`,
-                    text: [`Measured from the muons the atmosphere is only ${(MU.H / g).toFixed(2)} km thick,`,
-                        `so the ground reached them after just ${fmtNum(tauLand)} µs`]
-                };
-            } else {
-                callout = {
-                    title: `${left} of ${MU.N} muons reached the ground`,
-                    text: [`Their clocks ran ${fmtTimes(g)} times slower: only ${fmtNum(tauLand)} µs passed for them`,
-                        `Without time dilation only about 1 in ${fmtBig(1 / p0)} would make it`]
-                };
-            }
         }
-    }
-
-    function fmtBig(x) {
-        if (!isFinite(x) || x > 1e30) return 'a vast number';
-        if (x < 1000) return String(Math.round(x));
-        if (x < 1e6) return `${Math.round(x / 1000)} thousand`;
-        if (x < 1e9) return `${Math.round(x / 1e6)} million`;
-        if (x < 1e12) return `${Math.round(x / 1e9)} billion`;
-        const e = Math.floor(Math.log10(x));
-        return `${(x / Math.pow(10, e)).toFixed(0)} × 10^${e}`;
     }
 
     // ------------------------------------------------------------------
@@ -512,15 +458,7 @@
     // performance.now() shares its origin with the animation frame timestamps.
     const nowS = () => performance.now() / 1000;
 
-    // A short message in place of the frame caption; `then` is an optional [text, seconds, then] to show after it.
-    function showCaption(text, seconds, then) {
-        const t = nowS();
-        caption = { text, until: t + seconds, from: t, then };
-    }
-
     function resetScenario(freshMuons) {
-        callout = null;
-        caption = null;
         if (S.scenario === 'clocks') resetClocks();
         else if (S.scenario === 'twins') resetTwins();
         else resetMuons(freshMuons);
@@ -802,83 +740,23 @@
         }
     }
 
-    // Caption at the top left: which frame the measurements are made from (or a short message).
+    // Note at the top left: which frame the measurements are made from.
     let captionsOn = true;    // off only for clean captures (test API)
     function drawCaption(f) {
         if (!captionsOn) return;
-        const sc = SCENARIOS[S.scenario];
-        const side = sc[S.frame];
+        const side = SCENARIOS[S.scenario][S.frame];
+        const fs = f * 0.92;
         const pad = Math.max(8, f * 0.7);
-        const y = pad + f * 0.6;
-        let alphaMsg = 0;
-        if (caption) {
-            const left = caption.until - realNow;
-            if (left <= 0 && caption.then) {
-                const next = caption.then;
-                caption = { text: next[0], from: realNow - 1, until: realNow + next[1], then: next[2] };
-                alphaMsg = 1;
-            } else if (left <= 0) {
-                caption = null;
-            } else {
-                alphaMsg = clamp(Math.min(caption.then ? 1 : left / 0.5, (realNow - caption.from) / 0.3), 0, 1);
-            }
-        }
+        const y = pad + fs * 0.6;
+        const lead = 'Measured from ';
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        if (alphaMsg < 1) {
-            ctx.globalAlpha = 1 - alphaMsg;
-            setFont(f, 400);
-            ctx.fillStyle = pal.muted;
-            const lead = 'Measured from ';
-            ctx.fillText(lead, pad, y);
-            setFont(f, 700);
-            ctx.fillStyle = S.frame === 'home' ? pal.blueText : (S.scenario === 'muons' ? pal.purpleText : pal.pinkText);
-            ctx.fillText(side.the, pad + textW(lead, f, 400), y);
-        }
-        if (alphaMsg > 0) {
-            ctx.globalAlpha = alphaMsg;
-            setFont(f, 400);
-            ctx.fillStyle = pal.text;
-            ctx.fillText(caption.text, pad, y);
-        }
-        ctx.globalAlpha = 1;
-    }
-
-    // A boxed message (twin turnaround, results): a bold title and up to a few lines, centred at (cx, cy).
-    // Text shrinks to fit narrow canvases.
-    function drawCallout(cx, cy, f, box) {
-        box = box || callout;
-        if (!box) return;
-        const lines = Array.isArray(box.text) ? box.text : box.text ? [box.text] : [];
-        const maxW = viewW - 20;
-        let f1 = f * 1.12, f2 = f * 0.95;
-        const pad = Math.max(8, f * 0.9);
-        const wTitle = textW(box.title, f1, 700);
-        const wLines = lines.reduce((m, l) => Math.max(m, textW(l, f2, 400)), 0);
-        const need = Math.max(wTitle, wLines) + 2 * pad;
-        let s = 1;
-        if (need > maxW) {
-            s = maxW / need;
-            f1 *= s;
-            f2 *= s;
-        }
-        const w = Math.max(wTitle, wLines) * s + 2 * pad;
-        const h = pad * 1.6 + f1 * 1.2 + lines.length * f2 * 1.4;
-        const x0 = clamp(cx - w / 2, 10, viewW - 10 - w), y0 = cy - h / 2;
-        roundRectPath(x0, y0, w, h, 8);
-        ctx.fillStyle = pal.calloutBg;
-        ctx.fill();
-        ctx.strokeStyle = pal.pink;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        setFont(f1, 700);
-        ctx.fillStyle = pal.text;
-        ctx.fillText(box.title, x0 + w / 2, y0 + pad * 0.8);
-        setFont(f2, 400);
+        setFont(fs, 400);
         ctx.fillStyle = pal.muted;
-        lines.forEach((l, i) => ctx.fillText(l, x0 + w / 2, y0 + pad * 0.8 + f1 * 1.3 + i * f2 * 1.4));
+        ctx.fillText(lead, pad, y);
+        setFont(fs, 700);
+        ctx.fillStyle = S.frame === 'home' ? pal.blueText : (S.scenario === 'muons' ? pal.purpleText : pal.pinkText);
+        ctx.fillText(side.the, pad + textW(lead, fs, 400), y);
     }
 
     // ------------------------------------------------------------------
@@ -1336,7 +1214,6 @@
         }
 
         drawCaption(f);
-        drawCallout(viewW / 2, Math.max(viewH * 0.24, f * 4.2), f);
     }
 
     // ------------------------------------------------------------------
@@ -1495,15 +1372,6 @@
         hitRects.push({ x0: 0, x1: viewW, y0: yGround, y1: viewH, frame: 'home' });
 
         drawCaption(f);
-        // Measured from the muons the fall is over in a flash; a note fills the space the thin atmosphere leaves.
-        const cy = ship ? clamp((lay.yGround + lay.top + MU.H * k / g) / 2 + f * 2, f * 6, viewH - f * 4) : clamp((lay.top + lay.yGround) / 2, f * 5, viewH - f * 5);
-        if (callout) drawCallout(viewW / 2, cy, f);
-        else if (ship && mu.stage === 'fall') {
-            drawCallout(viewW / 2, cy, f, {
-                title: `The atmosphere is squashed to ${(MU.H / g).toFixed(2)} km`,
-                text: [`Earth rushes up at ${fmtV(S.v)} c, so the ground arrives after ${fmtNum(muonTimes().tauLand)} µs`]
-            });
-        }
     }
 
     // ------------------------------------------------------------------
@@ -1919,7 +1787,6 @@
             out.readouts = readoutRows().map((r) => `${r.label} ${r.value} ${r.unit}`);
             out.gammaText = fmtGamma(g);
             out.hitRects = hitRects.map((r) => Object.assign({}, r));
-            out.callout = callout ? Object.assign({}, callout) : null;
             return out;
         }
     };
