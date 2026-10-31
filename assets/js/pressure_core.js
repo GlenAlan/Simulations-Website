@@ -63,7 +63,7 @@
     const R_DRAW = 0.6;              // particle radius used to offset the drawn walls from the physics boundary
     const R_COLL = 0.45;             // particle-particle collision radius (small: dilute gas)
     const D_COLL2 = (2 * R_COLL) * (2 * R_COLL);
-    const WALL_T = 2.4;              // drawn wall thickness
+    const WALL_T = 2.4;              // drawn wall thickness (at most 11 CSS px, see wallT)
     const MAX_STEP_DIST = 0.4;       // max distance a particle moves per substep
     const MAX_SUBSTEPS = 60;
     const MAX_FRAME_DT = 0.05;       // clamp long frames (tab switches)
@@ -878,6 +878,7 @@
     // Line widths, dot sizes and text are given in CSS px and converted to world units (u per px),
     // so they stay crisp and readable on any canvas size.
     let u = 1;
+    let wallT = WALL_T;                         // drawn wall thickness: thinner on big canvases
     let fSmall = 3, fBig = 4.6;
     let gaugeDisplay = 101.3;
     let meanSpeed = 0;
@@ -933,6 +934,7 @@
         offX = (w - LY.W * scale) / 2;
         offY = (h - LY.H * scale) / 2;
         u = 1 / scale;
+        wallT = Math.min(WALL_T, 11 * u);
         fSmall = clamp(w / 68, 10.5, 14) * u;
         fBig = clamp(w / 38, 16, 30) * u;
         legendGradient = null;
@@ -1114,18 +1116,18 @@
 
     // pathFn(o) adds the wall outline offset by `o` outwards from the physics boundary.
     function strokeWalls(pathFn) {
-        ctx.lineWidth = WALL_T;
+        ctx.lineWidth = wallT;
         ctx.strokeStyle = wallColor();
         ctx.lineJoin = 'miter';
         ctx.beginPath();
-        pathFn(R_DRAW + WALL_T / 2);
+        pathFn(R_DRAW + wallT / 2);
         ctx.stroke();
         if (S.insulated) {
             ctx.lineWidth = 1.1;
             ctx.strokeStyle = pal.foam;
             ctx.setLineDash(DASH_FOAM);
             ctx.beginPath();
-            pathFn(R_DRAW + WALL_T + 0.75);
+            pathFn(R_DRAW + wallT + 0.75);
             ctx.stroke();
             ctx.setLineDash(DASH_NONE);
         }
@@ -1138,7 +1140,7 @@
         });
         // inlet pipe on the left wall
         const yc = 0.5 * (y0 + y1);
-        const xOut = x0 - R_DRAW - WALL_T - (S.insulated ? 1.4 : 0);
+        const xOut = x0 - R_DRAW - wallT - (S.insulated ? 1.4 : 0);
         ctx.fillStyle = pal.metal;
         ctx.fillRect(xOut - 7, yc - 1.2, 7, 2.4);
         drawValve(xOut - 4, yc, true);
@@ -1158,12 +1160,12 @@
         });
         // finger flanges
         ctx.fillStyle = wallColor();
-        const fe = R_DRAW + WALL_T;
-        ctx.fillRect(end - 0.5, y0 - fe - 6, 2.2, 6 + WALL_T);
-        ctx.fillRect(end - 0.5, y1 + fe - WALL_T, 2.2, 6 + WALL_T);
+        const fe = R_DRAW + wallT;
+        ctx.fillRect(end - 0.5, y0 - fe - 6, 2.2, 6 + wallT);
+        ctx.fillRect(end - 0.5, y1 + fe - wallT, 2.2, 6 + wallT);
         // nozzle + valve (inlet)
         const yc = 0.5 * (y0 + y1);
-        const xOut = x0 - R_DRAW - WALL_T - (S.insulated ? 1.4 : 0);
+        const xOut = x0 - R_DRAW - wallT - (S.insulated ? 1.4 : 0);
         ctx.fillStyle = pal.metal;
         ctx.fillRect(xOut - 6, yc - 1.4, 6, 2.8);
         drawValve(xOut - 3.5, yc, true);
@@ -1174,7 +1176,7 @@
         ctx.font = fontSmall;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'alphabetic';
-        const yTick = y1 + R_DRAW + WALL_T + (S.insulated ? 1.6 : 0);
+        const yTick = y1 + R_DRAW + wallT + (S.insulated ? 1.6 : 0);
         ctx.beginPath();
         for (let v = 3; v <= 9; v++) {
             const xv = syringeXForVolume(v / 10);
@@ -1240,7 +1242,7 @@
         }
         ctx.textBaseline = 'alphabetic';
         // inlet at the bottom
-        const yOut = y1 + R_DRAW + WALL_T + (S.insulated ? 1.4 : 0);
+        const yOut = y1 + R_DRAW + wallT + (S.insulated ? 1.4 : 0);
         ctx.fillStyle = pal.metal;
         ctx.fillRect(cx - 1.2, yOut, 2.4, WORLD_H - yOut + 1);
         drawValve(cx, Math.min(WORLD_H - 2, yOut + 3.2), false);
