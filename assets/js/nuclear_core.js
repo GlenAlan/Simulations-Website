@@ -584,6 +584,8 @@
         };
     }
     const modeColor = (code) => C.modes[chartCodeClass(code)] || C.modes.unknown;
+    // Coloured text: the colour itself on the dark background, a deeper shade of it on the light one.
+    const ink = (col) => (C.dark || col[0] !== '#' ? col : shadeColor(col, 0.72));
     function chartCodeClass(code) {
         if (!code) return 'unknown';
         if (code === 'b' || code === 'B' || code[0] === 'b') return 'b';
@@ -987,7 +989,7 @@
         if (!b.pendingEq) return;
         eqLog.push({ eq: b.pendingEq, color: modeColor(b.pendingCode), t: realTime, w: 0, fs: 0 });
         if (eqLog.length > 30) eqLog.shift();
-        if (S.showTags) addTag(b.x, b.y - b.R - 10, b.pendingTag, modeColor(b.pendingCode));
+        if (S.showTags) addTag(b.x, b.y - b.R - 10, b.pendingTag, b.pendingCode === 'capture' ? C.accent : modeColor(b.pendingCode), b);
         b.pendingEq = null;
     }
 
@@ -1174,10 +1176,11 @@
         sparks.push(s);
     }
     function addFlash(x, y, r, color) { effects.push({ kind: 'flash', x, y, r, color, age: 0, life: 0.45 }); }
-    function addTag(x, y, text, color) {
-        // one tag per spot: nudge it up if another fresh tag is close
-        for (const e of effects) if (e.kind === 'tag' && Math.abs(e.x - x) < 60 && Math.abs(e.y - y) < 16 && e.age < 0.6) y -= 16;
-        effects.push({ kind: 'tag', x, y, text, color, age: 0, life: 1.9 });
+    // A short label over a nucleus that has just decayed ("alpha decay"); it rises, fades and follows the nucleus.
+    function addTag(x, y, text, color, body) {
+        let stack = 0;
+        for (const e of effects) if (e.kind === 'tag' && e.age < 1 && (body ? e.body === body : Math.hypot(e.x - x, e.y - y) < 40)) stack += 1;
+        effects.push({ kind: 'tag', x, y, text, color, body: body || null, stack, rise: 0, age: 0, life: 1.9 });
     }
     function showToast(text) { toast = { text, age: 0, life: 2.8 }; }
 
@@ -1205,7 +1208,10 @@
         for (let i = effects.length - 1; i >= 0; i--) {
             const e = effects[i];
             e.age += dt;
-            if (e.kind === 'tag') e.y -= 9 * dt;
+            if (e.kind === 'tag') {
+                e.rise += 9 * dt;
+                if (e.body && bodies.indexOf(e.body) >= 0) { e.x = e.body.x; e.y = e.body.y - e.body.R - 10; }
+            }
             if (e.age >= e.life) effects.splice(i, 1);
         }
         if (toast) { toast.age += dt; if (toast.age > toast.life) toast = null; }
@@ -1224,7 +1230,7 @@
         const lw = b.labelW || b.info.name.length * fontPx * 0.55;
         const lines = b.info.stable || b.clock || b.needsClock ? 2 : 1;
         return {
-            hw: Math.max(b.R + 6, lw / 2 + 5),
+            hw: Math.max(b.R + 6, lw / 2 + 9),
             top: b.R + 7,
             bottom: b.R + 8 + fontPx * (1.25 * lines + (b.id === selectedId ? 1.2 : 0)),
         };
@@ -1260,7 +1266,6 @@
                 b.vx *= damp; b.vy *= damp;
                 if (b.transient && speed < 40) { b.transient = false; b.emitted = false; }
                 bounceWalls(b, wr, labelH, 0.45);
-                if (!b.held) obstacles.forEach((r) => pushOutOfRect(b, r, dt));
             }
         }
         // Resting bodies keep their nuclei and labels apart: overlapping boxes are pushed apart along the
@@ -1287,6 +1292,10 @@
                 }
             }
         }
+        // ...but never under the chart or a text panel (these win over the spacing above).
+        for (const b of bodies) {
+            if (!b.transient && !b.held) obstacles.forEach((r) => pushOutOfRect(b, r, 1));
+        }
         // Fast things hit what is in their way: neutrons are captured by any nucleus (no charge, no barrier); a
         // thrown nucleus fuses with what it hits.
         for (const p of bodies) {
@@ -1312,13 +1321,12 @@
     }
 
     // Keep a resting body (with its label) out of an overlay rectangle: the chart inset or a text panel.
-    function pushOutOfRect(b, r, dt) {
+    function pushOutOfRect(b, r, k) {
         const bx = bodyBox(b);
         const x0 = r.x - bx.hw, x1 = r.x + r.w + bx.hw, y0 = r.y - bx.bottom, y1 = r.y + r.h + bx.top;
         if (b.x <= x0 || b.x >= x1 || b.y <= y0 || b.y >= y1) return;
         const dl = b.x - x0, dr = x1 - b.x, dtp = b.y - y0, db = y1 - b.y;
         const m = Math.min(dl, dr, dtp, db);
-        const k = Math.min(1, dt * 8);
         // never into a wall: pick the side that has room
         const wr = workRect();
         const roomL = x0 - wr.x0 > b.R, roomR = wr.x1 - x1 > b.R, roomT = y0 - wr.y0 > b.R, roomB = wr.y1 - y1 > bx.bottom;
@@ -1839,7 +1847,7 @@
                 const ang = st.dir + u * 5;
                 const ex = x + Math.cos(ang) * rr, ey = y + Math.sin(ang) * rr;
                 drawDot(ex, ey, Math.max(2.4, rN * 0.62), C.electron);
-                ctx.font = font(700, Math.max(10, fontPx * 0.85)); ctx.fillStyle = C.electron;
+                ctx.font = font(700, Math.max(10, fontPx * 0.85)); ctx.fillStyle = ink(C.electron);
                 ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                 ctx.fillText('e\u207b', ex + 5, ey - 8);
             }
@@ -1962,7 +1970,7 @@
         ctx.strokeStyle = g; ctx.lineWidth = Math.max(2, b.R * 0.8); ctx.lineCap = 'round';
         ctx.beginPath(); ctx.moveTo(x - ux * b.R * 0.5, y - uy * b.R * 0.5); ctx.lineTo(x - ux * len, y - uy * len); ctx.stroke();
         ctx.lineCap = 'butt';
-        ctx.font = font(700, Math.max(11, fontPx * 0.95)); ctx.fillStyle = b.trail.color;
+        ctx.font = font(700, Math.max(11, fontPx * 0.95)); ctx.fillStyle = ink(b.trail.color);
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.fillText(b.trail.text, x + b.R + 4, y - b.R - 4);
     }
@@ -2008,7 +2016,7 @@
                 }
                 ctx.stroke();
                 if (S.showDetails && s.energy > 0 && s.age < 0.9) {
-                    ctx.font = font(700, fsSmall); ctx.fillStyle = C.gamma; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                    ctx.font = font(700, fsSmall); ctx.fillStyle = ink(C.gamma); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                     ctx.fillText(formatEnergy(s.energy), s.x + 6, s.y - 10);
                 }
                 continue;
@@ -2035,7 +2043,7 @@
             }
             drawDot(s.x, s.y, Math.max(2.4, rN * 0.62), col);
             if (s.age < 0.8) {
-                ctx.font = font(700, fsSmall); ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                ctx.font = font(700, fsSmall); ctx.fillStyle = ink(col); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                 ctx.fillText(s.kind === 'e-' ? 'e⁻' : 'e⁺', s.x + 6, s.y - 9);
             }
         }
@@ -2058,10 +2066,10 @@
                 ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
                 const w = ctx.measureText(e.text).width;
                 const x = Math.max(w / 2 + 4, Math.min(viewW - w / 2 - 4, e.x));
-                const y = Math.max(fontPx + 4, e.y);
+                const y = Math.max(fontPx + 4, e.y - e.rise - e.stack * fontPx * 1.3);
                 ctx.lineWidth = 3; ctx.strokeStyle = C.bg; ctx.lineJoin = 'round';
                 ctx.strokeText(e.text, x, y);
-                ctx.fillStyle = e.color;
+                ctx.fillStyle = ink(e.color);
                 ctx.fillText(e.text, x, y);
                 ctx.globalAlpha = 1;
             }
@@ -2181,17 +2189,31 @@
         ctx.stroke();
     }
 
+    // What a drag will do when it ends: a ring around the nucleus it would combine with, and for something
+    // coming from the tray, the item itself in a soft halo (so a neutron shows up even over a big nucleus).
+    function drawTargetRing(t) {
+        ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath(); ctx.arc(t.x, t.y, t.R + 9, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+    }
     function drawGhost() {
+        drags.forEach((d) => {
+            if (!d.body || !d.moved) return;
+            const t = findDropTarget(d.body.x, d.body.y, d.body, d.body.R);
+            if (t) drawTargetRing(t);
+        });
         if (!dragGhost || !dragGhost.over) return;
-        ctx.globalAlpha = 0.75;
         const b = dragGhost.body;
-        ctx.drawImage(b.sprite, dragGhost.x - b.sw / 2, dragGhost.y - b.sw / 2, b.sw, b.sw);
-        ctx.globalAlpha = 1;
         const t = findDropTarget(dragGhost.x, dragGhost.y, null, b.R);
-        if (t) {
-            ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.arc(t.x, t.y, t.R + 8, 0, TAU); ctx.stroke();
-        }
+        if (t) drawTargetRing(t);
+        const x = dragGhost.x, y = dragGhost.y;
+        const ring = Math.max(b.R + 4, 11);
+        ctx.fillStyle = C.dark ? 'rgba(22,24,28,0.85)' : 'rgba(255,255,255,0.9)';
+        ctx.beginPath(); ctx.arc(x, y, ring, 0, TAU); ctx.fill();
+        ctx.drawImage(b.sprite, x - b.sw / 2, y - b.sw / 2, b.sw, b.sw);
+        ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x, y, ring, 0, TAU); ctx.stroke();
     }
 
     function drawToast() {
@@ -2483,7 +2505,9 @@
             }
             if (dragGhost) {
                 const p = canvasPoint(e);
-                dragGhost.x = p.x; dragGhost.y = p.y; dragGhost.over = p.inside && !chartView.open;
+                // a finger would hide the item: carry it just above the fingertip
+                const lift = e.pointerType === 'mouse' ? 0 : dragGhost.body.R + 26;
+                dragGhost.x = p.x; dragGhost.y = p.y - lift; dragGhost.over = p.inside && !chartView.open;
                 samples.push([performance.now(), p.x, p.y]);
                 if (samples.length > 6) samples.shift();
             }
