@@ -20,6 +20,7 @@
     const speedVal = byId('speedVal');
     const heaterTempSlider = byId('heaterTemp');
     const heaterTempVal = byId('heaterTempVal');
+    const heaterTempC = byId('heaterTempC');
     const heaterOnCheckbox = byId('heaterOn');
     const leftSurfaceSelect = byId('leftSurface');
     const rightSurfaceSelect = byId('rightSurface');
@@ -29,6 +30,8 @@
     const rightDistanceVal = byId('rightDistanceVal');
     const viewModeSelect = byId('viewMode');
     const wallRadiationCheckbox = byId('showWallRadiation');
+    const showLabelsCheckbox = byId('showLabels');
+    const showEnergyCheckbox = byId('showEnergy');
     const showChartsCheckbox = byId('showCharts');
     const chartsContainer = byId('charts-container');
     const resetButton = byId('resetSimulationBtn');
@@ -67,12 +70,12 @@
 
     // --- Visual / numerical parameters ---
     const PACKET_SPEED = 40;         // cm per real second (light slowed down enormously)
-    const PACKETS_PER_WATT = 0.4;    // packets per real second per watt radiated
+    const PACKETS_PER_WATT = 0.3;    // packets per real second per watt radiated
     const MAX_PACKETS = 2600;
     const MAX_FLASHES = 240;
     const FLASH_LIFE = 0.28;         // s
     const MAX_SUBSTEP = 0.2;         // s simulated per thermal integration step
-    const THERMO_MAX_C = 250;        // thermometer full scale (degC)
+    const THERMO_MAX_C = 200;        // thermometer full scale (degC)
     const CHART_MAX_POINTS = 600;
 
     // Surfaces: absorptivity (= emissivity, Kirchhoff) below and above LAMBDA_SPLIT.
@@ -149,6 +152,8 @@
         simTime: 0,         // simulated seconds
         view: 'all',        // 'all' | 'visible' | 'thermal'
         showWalls: false,
+        showLabels: false,  // surface details, heater caption, distances, legend
+        showEnergy: false,  // power in / out bars and net power
         blocks: [
             { side: -1, surface: 'black', dist: 20, T: T_AMB },
             { side: 1, surface: 'silver', dist: 20, T: T_AMB }
@@ -578,18 +583,18 @@
         pal = dark ? {
             dark: true,
             chamber: '#141519', wall: '#4b4e58', text: '#ececec', muted: 'rgba(236,236,236,0.66)',
-            faint: 'rgba(236,236,236,0.42)', panel: 'rgba(20,21,25,0.72)', ir: '#ff6ec7', lead: '#7c818b', glass: 'rgba(255,255,255,0.10)',
+            faint: 'rgba(236,236,236,0.42)', panel: 'rgba(20,21,25,0.8)', ir: '#ff6ec7', lead: '#7c818b', glass: 'rgba(255,255,255,0.10)',
             glassEdge: 'rgba(255,255,255,0.65)', liquid: '#ff4d4f', barIn: '#ffa94d', barWalls: '#868e96',
             barOut: '#ff6ec7', barTrack: 'rgba(255,255,255,0.08)', warm: '#ff8787', cool: '#74c0fc',
-            steady: '#8ce99a', outline: 'rgba(255,255,255,0.55)',
+            steady: '#8ce99a', outline: 'rgba(255,255,255,0.55)', highlight: 'rgba(255,255,255,0.8)',
             chartText: '#d0d0d0', chartGrid: 'rgba(255,255,255,0.10)', left: '#4dabf7', right: '#ffa94d', heaterLine: '#bfbfbf'
         } : {
             dark: false,
             chamber: '#f5f6f8', wall: '#b4b8c1', text: '#2b2b2b', muted: 'rgba(43,43,43,0.85)',
-            faint: 'rgba(43,43,43,0.6)', panel: 'rgba(245,246,248,0.82)', ir: '#c2187a', lead: '#8b9099', glass: 'rgba(0,0,0,0.05)',
+            faint: 'rgba(43,43,43,0.6)', panel: 'rgba(245,246,248,0.86)', ir: '#c2187a', lead: '#8b9099', glass: 'rgba(0,0,0,0.05)',
             glassEdge: 'rgba(0,0,0,0.55)', liquid: '#e03131', barIn: '#f08c00', barWalls: '#adb5bd',
             barOut: '#c2187a', barTrack: 'rgba(0,0,0,0.06)', warm: '#e03131', cool: '#1c7ed6',
-            steady: '#2b8a3e', outline: 'rgba(0,0,0,0.55)',
+            steady: '#2b8a3e', outline: 'rgba(0,0,0,0.55)', highlight: 'rgba(0,0,0,0.7)',
             chartText: '#585858', chartGrid: 'rgba(0,0,0,0.10)', left: '#1c7ed6', right: '#e8590c', heaterLine: '#777777'
         };
         styleColors[0] = pal.ir;
@@ -604,37 +609,16 @@
 
     // --- Canvas sizing ---
     let cssW = 0, cssH = 0, dpr = 1, scale = 1;
+    // The shared stylesheet sizes the 2:1 aspect-ratio box (normal and fullscreen); the drawing
+    // buffer just follows the canvas's displayed size and the device pixel ratio.
     function handleResize() {
         if (!canvas || !ctx) return;
-        const box = canvas.parentElement;
-        if (!box) return;
-        const isFullscreen = document.body.classList.contains('sim-fullscreen-active');
-        let ratio = 2;
-        const ratioStr = getComputedStyle(box).getPropertyValue('--aspect-ratio').trim();
-        if (ratioStr) {
-            const parts = ratioStr.split('/');
-            const r = parts.length === 2 ? parseFloat(parts[0]) / parseFloat(parts[1]) : parseFloat(ratioStr);
-            if (isFinite(r) && r > 0) ratio = r;
-        }
-        let w, h;
-        if (isFullscreen) {
-            const wrapper = box.parentElement;
-            if (!wrapper) return;
-            const aw = wrapper.clientWidth, ah = wrapper.clientHeight;
-            if (aw <= 0 || ah <= 0) return;
-            if (aw / ah > ratio) { h = ah; w = h * ratio; } else { w = aw; h = w / ratio; }
-            box.style.width = `${w}px`;
-            box.style.height = `${h}px`;
-        } else {
-            box.style.width = '';
-            box.style.height = '';
-        }
         // Measure the canvas itself: the box has a border, so its outer size is 2px larger.
         const rect = canvas.getBoundingClientRect();
-        w = rect.width; h = rect.height;
-        w = Math.max(1, Math.round(w));
-        h = Math.max(1, Math.round(h));
-        const newDpr = window.devicePixelRatio || 1;
+        if (rect.width < 1 || rect.height < 1) return;
+        const w = Math.max(1, Math.round(rect.width));
+        const h = Math.max(1, Math.round(rect.height));
+        const newDpr = Math.min(2, window.devicePixelRatio || 1); // 3x phones gain little; keeps the fill rate down
         if (w === cssW && h === cssH && newDpr === dpr) return;
         cssW = w; cssH = h; dpr = newDpr;
         canvas.width = Math.round(cssW * dpr);
@@ -647,6 +631,12 @@
     let fontPx = 12;
     const X = (x) => x * scale;
 
+    // Block dragging (see bindControls): the block being dragged / under the mouse, and each
+    // block's grab areas in CSS px (block + thermometer, and its caption), updated every frame.
+    let drag = null;
+    let hoverBlock = -1;
+    const hitRects = [[], []];
+
     function fmtPower(p) {
         const a = Math.abs(p);
         if (a >= 1000) return `${(p / 1000).toFixed(a >= 10000 ? 1 : 2)} kW`;
@@ -657,11 +647,17 @@
     function fmtC(Tk, digits) {
         return `${(Tk - 273.15).toFixed(digits)} °C`;
     }
+    // Block temperature in °C, at most 5 characters (one decimal below 1000 °C).
+    function fmtBlockC(Tk) {
+        const c = Tk - 273.15;
+        return Math.abs(c) < 999.95 ? c.toFixed(1) : c.toFixed(0);
+    }
+    // Always h:mm:ss so the readout keeps its width.
     function fmtTime(sec) {
         const s = Math.floor(sec);
         const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
         const two = (v) => (v < 10 ? '0' : '') + v;
-        return h > 0 ? `${h}:${two(m)}:${two(ss)}` : `${m}:${two(ss)}`;
+        return `${h}:${two(m)}:${two(ss)}`;
     }
 
     function setFont(sizePx, weight) {
@@ -674,54 +670,65 @@
         ctx.strokeStyle = thermal ? 'rgba(255,255,255,0.35)' : pal.wall;
         ctx.lineWidth = 2;
         ctx.strokeRect(1, 1, cssW - 2, cssH - 2);
+    }
 
-        const small = Math.max(9, fontPx * 0.9);
+    // "Vacuum chamber" title (Labels only; no room for it beside the captions on small canvases).
+    function drawChamberTitle(thermal) {
+        if (!state.showLabels || cssW < 560) return;
+        const small = fontPx * 0.9;
         setFont(small, 600);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         ctx.fillStyle = thermal ? 'rgba(255,255,255,0.85)' : pal.muted;
-        ctx.fillText(thermal ? 'THERMAL CAMERA VIEW' : 'VACUUM CHAMBER', 8, 7);
+        ctx.fillText('VACUUM CHAMBER', 9, 8);
         setFont(small, 400);
         ctx.fillStyle = thermal ? 'rgba(255,255,255,0.7)' : pal.faint;
-        ctx.fillText(thermal ? 'colours show the temperature the camera measures (auto range)' : 'no air - walls at 20 °C', 8, 7 + small * 1.25);
+        ctx.fillText('no air · walls at 20 °C', 9, 8 + small * 1.25);
+    }
 
-        if (!thermal) {
-            // Label the empty gaps: a faint dimension line from the heater centre to each block face
-            const ay = X(AXIS_Y);
-            const tick = Math.max(3, fontPx * 0.35);
-            ctx.strokeStyle = pal.faint;
+    // Dimension line from the heater to each block face with the distance and the word "vacuum".
+    // Drawn for both blocks when labels are on, and for a block while it is being dragged.
+    function drawDistances(thermal) {
+        const ay = X(AXIS_Y);
+        const tick = Math.max(3, fontPx * 0.35);
+        for (let j = 0; j < state.blocks.length; j++) {
+            const b = state.blocks[j];
+            const dragging = drag !== null && drag.i === j;
+            if (!state.showLabels && !dragging) continue;
+            const face = X(b.side < 0 ? b.x1 : b.x0);
+            ctx.strokeStyle = thermal ? 'rgba(255,255,255,0.6)' : (dragging ? pal.muted : pal.faint);
             ctx.lineWidth = 1;
             ctx.setLineDash([3, 4]);
             ctx.beginPath();
-            for (const b of state.blocks) {
-                const face = X(b.side < 0 ? b.x1 : b.x0);
-                ctx.moveTo(X(SRC_X + b.side * SRC_R), ay);
-                ctx.lineTo(face, ay);
-            }
+            ctx.moveTo(X(SRC_X + b.side * SRC_R), ay);
+            ctx.lineTo(face, ay);
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();
-            for (const b of state.blocks) {
-                const face = X(b.side < 0 ? b.x1 : b.x0);
-                ctx.moveTo(face, ay - tick);
-                ctx.lineTo(face, ay + tick);
-            }
+            ctx.moveTo(face, ay - tick);
+            ctx.lineTo(face, ay + tick);
             ctx.stroke();
+            const gapStart = b.side < 0 ? b.x1 : SRC_X + SRC_R;
+            const gapEnd = b.side < 0 ? SRC_X - SRC_R : b.x0;
+            const roomy = X(gapEnd - gapStart) >= fontPx * 3.6;
+            if (!roomy && !dragging) continue;
+            const mx = X((gapStart + gapEnd) / 2);
             ctx.textAlign = 'center';
-            for (const b of state.blocks) {
-                const gapStart = b.side < 0 ? b.x1 : SRC_X + SRC_R;
-                const gapEnd = b.side < 0 ? SRC_X - SRC_R : b.x0;
-                if (X(gapEnd - gapStart) < fontPx * 3.4) continue;
-                const mx = X((gapStart + gapEnd) / 2);
-                setFont(Math.max(9, fontPx * 0.9), 400);
-                ctx.fillStyle = pal.muted;
+            if (state.showLabels && roomy) {
+                setFont(fontPx * 0.9, 400);
+                ctx.fillStyle = thermal ? 'rgba(255,255,255,0.85)' : pal.muted;
                 ctx.textBaseline = 'bottom';
                 ctx.fillText('vacuum', mx, ay - 3);
-                setFont(Math.max(9, fontPx * 0.85), 400);
-                ctx.fillStyle = pal.faint;
-                ctx.textBaseline = 'top';
-                ctx.fillText(`${b.dist} cm`, mx, ay + 3);
             }
+            const text = `${b.dist} cm`;
+            setFont(dragging ? fontPx : fontPx * 0.85, dragging ? 700 : 400);
+            ctx.textBaseline = 'top';
+            if (dragging) {
+                const w = ctx.measureText(text).width + 8;
+                drawPanel(mx - w / 2, ay + 2, w, fontPx * 1.3, thermal);
+            }
+            ctx.fillStyle = thermal ? '#ffffff' : (dragging ? pal.text : pal.faint);
+            ctx.fillText(text, mx, ay + 3 + (dragging ? fontPx * 0.12 : 0));
         }
     }
 
@@ -765,10 +772,11 @@
             order[bucketFill[bk]++] = i;
         }
 
-        const len = clamp(X(2.6), 9, 20);
-        const amp = clamp(X(0.4), 1.6, 3.2);
-        const lwIR = clamp(X(0.22), 1.1, 1.8);
-        const lwVis = clamp(X(0.3), 1.4, 2.4);
+        // Packet glyphs grow with the canvas, but more slowly than the scene so big screens stay calm.
+        const len = clamp(X(2.6), 9, 32);
+        const amp = clamp(X(0.4), 1.6, 4.6);
+        const lwIR = clamp(X(0.2), 1.1, 2.4);
+        const lwVis = clamp(X(0.28), 1.4, 3);
         ctx.lineCap = 'butt';
         ctx.lineJoin = 'bevel';
         for (let bk = 0; bk < BUCKETS; bk++) {
@@ -800,7 +808,7 @@
     function drawFlashes() {
         if (state.view === 'thermal' || flashCount === 0) return;
         const visibleOnly = state.view === 'visible';
-        const r0 = clamp(X(0.35), 1.5, 3), r1 = clamp(X(1.3), 5, 10);
+        const r0 = clamp(X(0.35), 1.5, 4), r1 = clamp(X(1.3), 5, 15);
         for (let i = 0; i < flashCount; i++) {
             if (visibleOnly && fStyle[i] < 2) continue;
             const t = fAge[i] / FLASH_LIFE;
@@ -866,6 +874,16 @@
         ctx.stroke();
     }
 
+    // Outline around a block that is hovered or being dragged.
+    function drawBlockHighlight(b, thermal) {
+        const gap = 3.5;
+        ctx.strokeStyle = thermal ? '#ffffff' : pal.highlight;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(X(b.x0) - gap, X(b.y0) - gap, X(BLOCK_SIDE) + 2 * gap, X(BLOCK_SIDE) + 2 * gap);
+        ctx.setLineDash([]);
+    }
+
     function drawBlockBody(b, thermal) {
         const x = X(b.x0), y = X(b.y0), w = X(BLOCK_SIDE), h = X(BLOCK_SIDE);
         if (thermal) {
@@ -922,8 +940,8 @@
     }
 
     function drawThermometer(cx, bulbY, topY, T, thermal) {
-        const tw = clamp(X(0.9), 4, 8);
-        const br = clamp(X(1.0), 4, 8.5);
+        const tw = clamp(X(0.9), 4, 12);
+        const br = clamp(X(1.0), 4, 13);
         const tubeTop = topY + tw / 2;
         const tubeBottom = bulbY;
         // Glass
@@ -954,7 +972,7 @@
         for (let c = 50; c <= THERMO_MAX_C; c += 50) {
             const ty = tubeBottom - usable * (c / THERMO_MAX_C);
             ctx.moveTo(cx + tw / 2, ty);
-            ctx.lineTo(cx + tw / 2 + 3, ty);
+            ctx.lineTo(cx + tw / 2 + 2 + tw * 0.25, ty);
         }
         ctx.stroke();
     }
@@ -973,173 +991,293 @@
         ctx.fill();
     }
 
+    let barScale = 30; // W at full bar length (smoothed)
+
     function textWidth(text, sizePx, weight) {
         setFont(sizePx, weight);
         return ctx.measureText(text).width;
     }
 
+    const NET_WORDS = ['warming up', 'cooling down', 'steady'];
     function netInfo(b) {
         const tol = Math.max(0.01, 0.01 * b.absorbed);
-        let word, col;
-        if (b.net > tol) { word = 'warming up'; col = pal.warm; }
-        else if (b.net < -tol) { word = 'cooling down'; col = pal.cool; }
-        else { word = 'steady: in = out'; col = pal.steady; }
-        return { text: `net ${b.net >= 0 ? '+' : '−'}${fmtPower(Math.abs(b.net))} · ${word}`, col };
+        if (b.net > tol) return { word: NET_WORDS[0], col: pal.warm };
+        if (b.net < -tol) return { word: NET_WORDS[1], col: pal.cool };
+        return { word: NET_WORDS[2], col: pal.steady };
+    }
+    function fmtSignedPower(p) {
+        return `${p >= 0 ? '+' : '−'}${fmtPower(Math.abs(p))}`;
     }
 
-    let barScale = 30; // W at full bar length (smoothed)
-    function drawBlockLabels(b, thermal) {
-        const s = SURFACES[b.surface];
+    // Temperature reading above a block's thermometer. The number is right-aligned in a box sized
+    // for the widest value, so the reading never jiggles as the digits change.
+    function drawReading(b, j, thermal) {
         const cx = X((b.x0 + b.x1) / 2);
+        const f = fontPx * 1.05;
+        setFont(f, 700);
+        const numW = ctx.measureText('888.8').width;
+        const unitW = ctx.measureText(' °C').width;
+        const pad = Math.max(4, fontPx * 0.45);
+        const w = numW + unitW + 2 * pad;
+        const h = f * 1.45;
+        const x = clamp(cx - w / 2, 4, cssW - 4 - w);
+        const base = X(b.y0 - 13) - fontPx * 0.5;
+        const top = base - f * 1.08;
+        drawPanel(x, top, w, h, thermal);
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = thermal ? '#ffffff' : pal.text;
+        ctx.textAlign = 'right';
+        ctx.fillText(fmtBlockC(b.T), x + pad + numW, base);
+        ctx.textAlign = 'left';
+        ctx.fillText(' °C', x + pad + numW, base);
+        // Grab area: the reading, thermometer and block (at least 44 px wide for fingers)
+        const gw = Math.max(X(BLOCK_SIDE) + 6, 44);
+        hitRects[j].length = 0;
+        hitRects[j].push({ x0: Math.min(x, cx - gw / 2), y0: top, x1: Math.max(x + w, cx + gw / 2), y1: X(b.y1) + 3 });
+    }
+
+    // Caption under a block: its surface name between two quiet ‹ › drag hints, plus optional
+    // lines for "Labels" (absorption / emissivity) and "Energy flow" (power in, out and net).
+    // Every width comes from a fixed template so changing numbers never move anything.
+    function captionLayout(b, thermal) {
+        const L = {
+            pad: Math.max(4, fontPx * 0.45),
+            nameFont: fontPx, subFont: fontPx * 0.88, rowFont: fontPx * 0.85,
+            nameH: fontPx * 1.3, subH: fontPx * 1.15
+        };
+        const s = SURFACES[b.surface];
+        let w = textWidth(s.name, L.nameFont, 700) + fontPx * 2.4;
+        let h = L.nameH;
+        L.showSub = state.showLabels;
+        if (L.showSub) {
+            const tmpl = thermal ? 'camera reads 888 °C' : 'absorbs 100% · emissivity 0.00';
+            w = Math.max(w, textWidth(tmpl, L.subFont, 400));
+            h += L.subH;
+        }
+        L.showEnergy = state.showEnergy && !thermal;
+        if (L.showEnergy) {
+            L.showBars = cssW >= 430;
+            L.labelW = textWidth('out', L.rowFont, 700) + fontPx * 0.5;
+            L.valueW = textWidth('+88.88 kW', L.rowFont, 400);
+            L.barW = clamp(X(11), 44, 150);
+            let wordW = 0;
+            for (const word of NET_WORDS) wordW = Math.max(wordW, textWidth(word, L.rowFont, 700));
+            L.midW = Math.max(L.barW, wordW);
+            L.rowW = L.labelW + L.midW + fontPx * 0.4 + L.valueW;
+            L.barH = Math.max(4, fontPx * 0.55);
+            L.rowH = fontPx * 1.15;
+            w = Math.max(w, L.rowW);
+            h += fontPx * 0.3 + (L.showBars ? 3 : 1) * L.rowH;
+        }
+        L.w = w + 2 * L.pad;
+        L.h = h + 2 * L.pad;
+        L.x = clamp(X((b.x0 + b.x1) / 2) - L.w / 2, 4, cssW - 4 - L.w);
+        L.top = X(b.y1) + Math.max(5, fontPx * 0.45);
+        return L;
+    }
+
+    function drawChevrons(cx, cy, dx, size, active, thermal) {
+        ctx.strokeStyle = active ? (thermal ? '#ffffff' : pal.text) : (thermal ? 'rgba(255,255,255,0.55)' : pal.faint);
+        ctx.lineWidth = active ? 2 : 1.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - dx, cy - size);
+        ctx.lineTo(cx - dx - size * 0.75, cy);
+        ctx.lineTo(cx - dx, cy + size);
+        ctx.moveTo(cx + dx, cy - size);
+        ctx.lineTo(cx + dx + size * 0.75, cy);
+        ctx.lineTo(cx + dx, cy + size);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'miter';
+    }
+
+    function drawBlockCaption(b, j, L, thermal) {
+        const s = SURFACES[b.surface];
         const textColor = thermal ? '#ffffff' : pal.text;
         const mutedColor = thermal ? 'rgba(255,255,255,0.88)' : pal.muted;
-        const pad = Math.max(4, fontPx * 0.45);
-
-        // Thermometer reading above the thermometer
-        const tText = fmtC(b.T, 1);
-        const tFont = fontPx * 1.05;
-        const tW = textWidth(tText, tFont, 700);
-        const tCx = clamp(cx, tW / 2 + pad + 2, cssW - tW / 2 - pad - 2);
-        const tBase = X(b.y0 - 13) - fontPx * 0.5;
-        drawPanel(tCx - tW / 2 - pad, tBase - tFont * 1.05, tW + 2 * pad, tFont * 1.4, thermal);
+        const active = (drag !== null && drag.i === j) || hoverBlock === j;
+        drawPanel(L.x, L.top, L.w, L.h, thermal);
+        hitRects[j].push({ x0: L.x, y0: L.top, x1: L.x + L.w, y1: L.top + L.h });
+        const mx = L.x + L.w / 2;
+        let y = L.top + L.pad;
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
+        ctx.textBaseline = 'middle';
+        setFont(L.nameFont, 700);
         ctx.fillStyle = textColor;
-        ctx.fillText(tText, tCx, tBase);
-
-        // Caption below the block: name, absorption/emission, energy bars, net power
-        const nameFont = fontPx, subFont = fontPx * 0.88, smallFont = fontPx * 0.85, netFont = fontPx * 0.9;
-        const subText = thermal
-            ? `camera reads ${fmtC(apparentTemperature(b.T, b.eps), 0)}`
-            : `absorbs ${Math.round(b.aSrc * 100)}% · emissivity ${b.eps.toFixed(2)}`;
-        const showBars = !thermal && cssW >= 430;
-        const net = thermal ? null : netInfo(b);
-        const barMax = clamp(X(11), 40, 120);
-        const barH = Math.max(4, fontPx * 0.55);
-        const labelW = fontPx * 1.8;
-        const valueW = textWidth('000.0 W', smallFont, 400);
-        const rowW = labelW + barMax + 6 + valueW;
-        let contentW = Math.max(textWidth(s.name, nameFont, 700), textWidth(subText, subFont, 400));
-        if (net) contentW = Math.max(contentW, textWidth(net.text, netFont, 700));
-        if (showBars) contentW = Math.max(contentW, rowW);
-        const lh = fontPx * 1.22;
-        const barGap = fontPx * 0.5;
-        let panelH = pad + fontPx * 0.95 + lh;
-        if (showBars) panelH += fontPx * 0.55 + 2 * (barH + barGap);
-        if (net) panelH += showBars ? fontPx * 0.95 : lh;
-        panelH += pad;
-        const panelW = contentW + 2 * pad;
-        const px = clamp(cx - panelW / 2, 4, cssW - 4 - panelW);
-        const top = X(b.y1) + Math.max(4, fontPx * 0.4);
-        drawPanel(px, top, panelW, panelH, thermal);
-        const mx = px + panelW / 2;
-        let y = top + pad + fontPx * 0.95;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        setFont(nameFont, 700);
-        ctx.fillStyle = textColor;
-        ctx.fillText(s.name, mx, y);
-        y += lh;
-        setFont(subFont, 400);
-        ctx.fillStyle = mutedColor;
-        ctx.fillText(subText, mx, y);
-        if (showBars) {
-            // Energy bars: in (absorbed: heater + walls) and out (emitted)
-            const left = mx - rowW / 2;
-            y += fontPx * 0.55;
-            const rows = [
-                { label: 'in', parts: [[b.fromHeater, pal.barIn], [b.fromWalls, pal.barWalls]], total: b.absorbed },
-                { label: 'out', parts: [[b.emitted, pal.barOut]], total: b.emitted }
-            ];
-            ctx.textAlign = 'left';
+        const nameY = y + L.nameH / 2;
+        ctx.fillText(s.name, mx, nameY);
+        const half = ctx.measureText(s.name).width / 2;
+        drawChevrons(mx, nameY, half + fontPx * 0.55, fontPx * 0.32, active, thermal);
+        y += L.nameH;
+        if (L.showSub) {
+            setFont(L.subFont, 400);
+            ctx.fillStyle = mutedColor;
+            const sub = thermal
+                ? `camera reads ${fmtC(apparentTemperature(b.T, b.eps), 0)}`
+                : `absorbs ${Math.round(b.aSrc * 100)}% · emissivity ${b.eps.toFixed(2)}`;
+            ctx.fillText(sub, mx, y + L.subH / 2);
+            y += L.subH;
+        }
+        if (!L.showEnergy) return;
+        // Rows: in (absorbed: from the heater + from the walls), out (emitted), net.
+        y += fontPx * 0.3;
+        const left = mx - L.rowW / 2;
+        const midX = left + L.labelW;
+        const valueRight = left + L.rowW;
+        const rows = [];
+        if (L.showBars) {
+            rows.push({ label: 'in', parts: [[b.fromHeater, pal.barIn], [b.fromWalls, pal.barWalls]], value: fmtPower(b.absorbed), col: textColor });
+            rows.push({ label: 'out', parts: [[b.emitted, pal.barOut]], value: fmtPower(b.emitted), col: textColor });
+        }
+        const net = netInfo(b);
+        rows.push({ label: 'net', word: net.word, value: fmtSignedPower(b.net), col: net.col });
+        for (const row of rows) {
+            const cy = y + L.rowH / 2;
             ctx.textBaseline = 'middle';
-            for (const row of rows) {
-                setFont(smallFont, 700);
-                ctx.fillStyle = mutedColor;
-                ctx.fillText(row.label, left, y + barH / 2);
-                const bx = left + labelW;
+            ctx.textAlign = 'left';
+            setFont(L.rowFont, 700);
+            ctx.fillStyle = mutedColor;
+            ctx.fillText(row.label, left, cy);
+            if (row.parts) {
                 ctx.fillStyle = pal.barTrack;
-                ctx.fillRect(bx, y, barMax, barH);
-                let bxx = bx;
+                ctx.fillRect(midX, cy - L.barH / 2, L.barW, L.barH);
+                let bx = midX;
                 for (const [v, col] of row.parts) {
-                    const w = Math.min(barMax - (bxx - bx), Math.max(0, v / barScale * barMax));
+                    const w = Math.min(L.barW - (bx - midX), Math.max(0, v / barScale * L.barW));
                     if (w <= 0) continue;
                     ctx.fillStyle = col;
-                    ctx.fillRect(bxx, y, w, barH);
-                    bxx += w;
+                    ctx.fillRect(bx, cy - L.barH / 2, w, L.barH);
+                    bx += w;
                 }
-                setFont(smallFont, 400);
-                ctx.fillStyle = textColor;
-                ctx.fillText(fmtPower(row.total), bx + barMax + 6, y + barH / 2);
-                y += barH + barGap;
+            } else {
+                ctx.fillStyle = row.col;
+                ctx.fillText(row.word, midX, cy);
             }
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'alphabetic';
-            if (net) y += fontPx * 0.95 - lh;
-        }
-        if (net) {
-            y += lh;
-            setFont(netFont, 700);
-            ctx.fillStyle = net.col;
-            ctx.fillText(net.text, mx, y);
+            ctx.textAlign = 'right';
+            setFont(L.rowFont, row.parts ? 400 : 700);
+            ctx.fillStyle = row.col;
+            ctx.fillText(row.value, valueRight, cy);
+            y += L.rowH;
         }
     }
 
-    function drawSourceLabels(thermal) {
-        const cx = X(SRC_X);
-        const lh = fontPx * 1.2;
+    function drawBlockCaptions(thermal) {
+        const layouts = state.blocks.map((b) => captionLayout(b, thermal));
+        // Keep the two captions apart when the blocks are close together on a small canvas
+        const a = layouts[0], c = layouts[1];
+        const overlap = a.x + a.w + 6 - c.x;
+        if (overlap > 0) {
+            a.x -= overlap / 2;
+            c.x += overlap / 2;
+            if (a.x < 4) { c.x += 4 - a.x; a.x = 4; }
+            if (c.x + c.w > cssW - 4) { a.x -= c.x + c.w - (cssW - 4); c.x = cssW - 4 - c.w; }
+        }
+        state.blocks.forEach((b, j) => {
+            drawReading(b, j, thermal);
+            drawBlockCaption(b, j, layouts[j], thermal);
+        });
+    }
+
+    // Caption above the heater, shown with "Labels" (temperature) and/or "Energy flow" (power).
+    function drawSourceCaption(thermal) {
+        const energy = state.showEnergy && !thermal; // like the block captions, no power figures on the thermal image
+        if (!state.showLabels && !energy) return;
+        const narrow = cssW < 600;
+        const f = fontPx, sub = fontPx * 0.88, lh = fontPx * 1.2;
         const pad = Math.max(4, fontPx * 0.45);
-        const titleFont = fontPx, subFont = fontPx * 0.88;
-        const title = `Heater ${fmtC(state.Ts, 0)} (${Math.round(state.Ts)} K)`;
-        const line2 = `emits ${fmtPower(flux.srcEmit)}`;
-        const line3 = state.heaterOn ? `electrical input ${fmtPower(flux.heater)}` : 'heater switched off';
-        const w = Math.max(textWidth(title, titleFont, 700), textWidth(line2, subFont, 400), textWidth(line3, subFont, 400));
-        const h = 2 * pad + fontPx * 0.9 + 2 * lh;
-        const bottom = X(AXIS_Y - SRC_R) - Math.max(5, fontPx * 0.5);
-        const top = bottom - h;
-        drawPanel(cx - w / 2 - pad, top, w + 2 * pad, h, thermal);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        let y = top + pad + fontPx * 0.9;
-        setFont(titleFont, 700);
-        ctx.fillStyle = thermal ? '#ffffff' : pal.text;
-        ctx.fillText(title, cx, y);
-        y += lh;
-        setFont(subFont, 400);
-        ctx.fillStyle = thermal ? 'rgba(255,255,255,0.88)' : pal.muted;
-        ctx.fillText(line2, cx, y);
-        y += lh;
-        ctx.fillText(line3, cx, y);
+        const rows = [{
+            label: 'Heater', bold: true,
+            value: narrow ? fmtC(state.Ts, 0) : `${fmtC(state.Ts, 0)} (${Math.round(state.Ts)} K)`,
+            tmpl: narrow ? '8888 °C' : '8888 °C (8888 K)'
+        }];
+        if (energy) {
+            rows.push({ label: 'emits', value: fmtPower(flux.srcEmit), tmpl: '88.88 kW' });
+            rows.push({
+                label: narrow ? 'input' : 'electrical input',
+                value: state.heaterOn ? fmtPower(flux.heater) : 'off', tmpl: '88.88 kW'
+            });
+        }
+        // On small canvases with the blocks close in, the caption can reach a block's thermometer and
+        // reading: drop the power rows, then the kelvin value, and if even that doesn't fit, leave it to the info bar.
+        const colGap = fontPx * 0.7;
+        const cx = X(SRC_X);
+        const bottom = X(AXIS_Y - SRC_R) - Math.max(6, fontPx * 0.5);
+        let w, h, x, top;
+        for (;;) {
+            let labelW = 0, valueW = 0;
+            for (const r of rows) {
+                labelW = Math.max(labelW, textWidth(r.label, r.bold ? f : sub, r.bold ? 700 : 400));
+                valueW = Math.max(valueW, textWidth(r.tmpl, r.bold ? f : sub, r.bold ? 700 : 400));
+            }
+            w = labelW + colGap + valueW + 2 * pad;
+            h = (rows.length - 1) * lh + f + 2 * pad;
+            x = cx - w / 2;
+            top = bottom - h;
+            const hits = hitRects.some((rs) => rs[0] && rs[0].x0 < x + w + 3 && rs[0].x1 > x - 3 && rs[0].y0 < top + h + 3 && rs[0].y1 > top - 3);
+            if (!hits) break;
+            if (rows.length > 1) rows.length = 1;
+            else if (rows[0].tmpl !== '8888 °C') { rows[0].value = fmtC(state.Ts, 0); rows[0].tmpl = '8888 °C'; }
+            else return;
+        }
+        drawPanel(x, top, w, h, thermal);
+        ctx.textBaseline = 'middle';
+        let y = top + pad + f / 2;
+        for (const r of rows) {
+            setFont(r.bold ? f : sub, r.bold ? 700 : 400);
+            ctx.fillStyle = r.bold ? (thermal ? '#ffffff' : pal.text) : (thermal ? 'rgba(255,255,255,0.88)' : pal.muted);
+            ctx.textAlign = 'left';
+            ctx.fillText(r.label, x + pad, y);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = thermal ? '#ffffff' : pal.text;
+            ctx.fillText(r.value, x + w - pad, y);
+            y += lh;
+        }
     }
 
     function drawLegend() {
-        if (cssW < 470) return;
         const thermal = state.view === 'thermal';
-        const x0 = 10, lh = fontPx * 1.3;
-        let y = cssH - 10 - lh * (thermal ? 0.5 : 1.5);
+        const x0 = 10;
         setFont(fontPx * 0.85, 400);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         if (thermal) {
-            // Colour bar
-            const barW = clamp(X(18), 80, 160), barH = Math.max(6, fontPx * 0.6);
+            // The thermal view always shows its colour scale.
+            const barW = clamp(X(18), 90, 170), barH = Math.max(6, fontPx * 0.6);
+            const yBar = cssH - 10 - fontPx * 1.2 - barH;
+            ctx.fillStyle = 'rgba(255,255,255,0.85)';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText('Thermal camera (auto range)', x0, yBar - 3);
             for (let i = 0; i < barW; i++) {
                 ctx.fillStyle = THERMAL_LUT[Math.round(i / (barW - 1) * 255)];
-                ctx.fillRect(x0 + i, y - barH, 1.5, barH);
+                ctx.fillRect(x0 + i, yBar, 1.5, barH);
             }
             ctx.strokeStyle = 'rgba(255,255,255,0.6)';
             ctx.lineWidth = 1;
-            ctx.strokeRect(x0 + 0.5, y - barH + 0.5, barW - 1, barH - 1);
+            ctx.strokeRect(x0 + 0.5, yBar + 0.5, barW - 1, barH - 1);
             ctx.fillStyle = '#ffffff';
             ctx.textBaseline = 'top';
             const top = Math.round(thermalMaxC);
             [[THERMAL_MIN_C, 'left', `${THERMAL_MIN_C}`], [(THERMAL_MIN_C + top) / 2, 'center', `${Math.round((THERMAL_MIN_C + top) / 2)}`], [top, 'right', `${top}+ °C`]]
                 .forEach(([c, align, label]) => {
                     ctx.textAlign = align;
-                    ctx.fillText(label, x0 + (c - THERMAL_MIN_C) / (top - THERMAL_MIN_C) * barW, y + 2);
+                    ctx.fillText(label, x0 + (c - THERMAL_MIN_C) / (top - THERMAL_MIN_C) * barW, yBar + barH + 2);
                 });
             return;
         }
+        if (!state.showLabels) return;
+        const wide = cssW >= 470;
+        const lh = fontPx * 1.3;
+        let y = cssH - 10 - lh * (wide ? 1.5 : 0.5);
+        // Skip the key if a block caption reaches down into its corner (small canvases).
+        const keyW = wide ? textWidth('every packet carries the same energy · flash = absorbed', fontPx * 0.85, 400) : fontPx * 12;
+        const keyTop = y - lh / 2;
+        for (const rects of hitRects) {
+            const r = rects[1];
+            if (r && r.y1 > keyTop && r.x0 < x0 + keyW) return;
+        }
+        setFont(fontPx * 0.85, 400);
         const drawSample = (sx, sy, style, wave) => {
             const S = WAVE_S[wave], W = WAVE_W[wave], len = fontPx * 1.6, amp = Math.max(1.8, fontPx * 0.2);
             ctx.strokeStyle = styleColors[style];
@@ -1153,16 +1291,18 @@
         };
         let x = x0;
         if (state.view === 'all') {
+            const irText = wide ? 'infrared (invisible)' : 'infrared';
             drawSample(x, y, 0, 4);
             ctx.fillStyle = pal.muted;
-            ctx.fillText('infrared (invisible)', x + fontPx * 2, y);
-            x += fontPx * 2 + ctx.measureText('infrared (invisible)').width + fontPx;
+            ctx.fillText(irText, x + fontPx * 2, y);
+            x += fontPx * 2 + ctx.measureText(irText).width + fontPx;
         }
         drawSample(x, y, 7, 1);
         x += fontPx * 2;
         ctx.fillStyle = pal.muted;
-        const visText = state.view === 'visible' ? 'visible light only - infrared hidden' : 'visible light';
+        const visText = state.view === 'visible' ? (wide ? 'visible light only - infrared hidden' : 'visible only') : 'visible light';
         ctx.fillText(visText, x, y);
+        if (!wide) return;
         y += lh;
         ctx.fillStyle = pal.faint;
         ctx.fillText('every packet carries the same energy · flash = absorbed', x0, y);
@@ -1172,26 +1312,31 @@
         if (!ctx || cssW <= 0) return;
         const thermal = state.view === 'thermal';
         if (thermal) updateThermalRange();
-        fontPx = clamp(cssW / 62, 9, 14);
+        // Text is sized in CSS px: readable on phones, not oversized on big screens.
+        fontPx = clamp(cssW / 70, 11, 17);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssW, cssH);
         drawChamber(thermal);
         drawLeads(thermal);
         drawPackets();
         drawSource(thermal);
-        for (const b of state.blocks) {
+        for (let j = 0; j < state.blocks.length; j++) {
+            const b = state.blocks[j];
             drawBlockBody(b, thermal);
+            if ((drag !== null && drag.i === j) || hoverBlock === j) drawBlockHighlight(b, thermal);
             const cx = X((b.x0 + b.x1) / 2);
             drawThermometer(cx, X(b.y0 + 1.2), X(b.y0 - 13), b.T, thermal);
         }
         drawFlashes();
+        drawChamberTitle(thermal);
+        drawDistances(thermal);
         // Smoothly adapt the energy-bar scale to the largest flow
         let maxFlow = 1;
         for (const b of state.blocks) maxFlow = Math.max(maxFlow, b.absorbed, b.emitted);
         const target = maxFlow * 1.15;
         barScale = barScale < target ? target : barScale + (target - barScale) * 0.02;
-        drawSourceLabels(thermal);
-        for (const b of state.blocks) drawBlockLabels(b, thermal);
+        drawBlockCaptions(thermal);
+        drawSourceCaption(thermal);
         drawLegend();
     }
 
@@ -1377,11 +1522,14 @@
     }
 
     // --- Info bar ---
+    function setText(el, text) {
+        if (el && el.textContent !== text) el.textContent = text;
+    }
     function updateInfoBar() {
-        if (sourceTempEl) sourceTempEl.textContent = (state.Ts - 273.15).toFixed(0);
-        if (leftTempEl) leftTempEl.textContent = (state.blocks[0].T - 273.15).toFixed(1);
-        if (rightTempEl) rightTempEl.textContent = (state.blocks[1].T - 273.15).toFixed(1);
-        if (simTimeEl) simTimeEl.textContent = fmtTime(state.simTime);
+        setText(sourceTempEl, (state.Ts - 273.15).toFixed(0));
+        setText(leftTempEl, fmtBlockC(state.blocks[0].T));
+        setText(rightTempEl, fmtBlockC(state.blocks[1].T));
+        setText(simTimeEl, fmtTime(state.simTime));
     }
 
     // --- Reset ---
@@ -1404,8 +1552,9 @@
     }
 
     // --- Controls ---
-    function heaterLabel(T) {
-        return `${Math.round(T)} K (${Math.round(T - 273.15)} °C)`;
+    function showHeaterSetPoint(T) {
+        setText(heaterTempVal, String(Math.round(T)));
+        setText(heaterTempC, String(Math.round(T - 273.15)));
     }
 
     function readControls() {
@@ -1418,8 +1567,10 @@
         if (rightDistanceSlider) state.blocks[1].dist = clamp(parseFloat(rightDistanceSlider.value) || 20, MIN_DIST, MAX_DIST);
         if (viewModeSelect) state.view = viewModeSelect.value;
         if (wallRadiationCheckbox) state.showWalls = wallRadiationCheckbox.checked;
+        if (showLabelsCheckbox) state.showLabels = showLabelsCheckbox.checked;
+        if (showEnergyCheckbox) state.showEnergy = showEnergyCheckbox.checked;
         if (speedVal) speedVal.textContent = state.speed.toFixed(0);
-        if (heaterTempVal) heaterTempVal.textContent = heaterLabel(state.Tset);
+        showHeaterSetPoint(state.Tset);
         if (leftDistanceVal) leftDistanceVal.textContent = state.blocks[0].dist.toFixed(0);
         if (rightDistanceVal) rightDistanceVal.textContent = state.blocks[1].dist.toFixed(0);
         state.blocks.forEach(updateBlockGeometry);
@@ -1442,7 +1593,7 @@
         });
         if (heaterTempSlider) heaterTempSlider.addEventListener('input', () => {
             state.Tset = parseFloat(heaterTempSlider.value) || 1000;
-            if (heaterTempVal) heaterTempVal.textContent = heaterLabel(state.Tset);
+            showHeaterSetPoint(state.Tset);
         });
         if (heaterOnCheckbox) heaterOnCheckbox.addEventListener('change', () => { state.heaterOn = heaterOnCheckbox.checked; });
         if (leftSurfaceSelect) leftSurfaceSelect.addEventListener('change', () => {
@@ -1457,12 +1608,14 @@
         if (rightDistanceSlider) rightDistanceSlider.addEventListener('input', () => setBlockDistance(1, parseFloat(rightDistanceSlider.value)));
         if (viewModeSelect) viewModeSelect.addEventListener('change', () => { state.view = viewModeSelect.value; });
         if (wallRadiationCheckbox) wallRadiationCheckbox.addEventListener('change', () => { state.showWalls = wallRadiationCheckbox.checked; });
+        if (showLabelsCheckbox) showLabelsCheckbox.addEventListener('change', () => { state.showLabels = showLabelsCheckbox.checked; });
+        if (showEnergyCheckbox) showEnergyCheckbox.addEventListener('change', () => { state.showEnergy = showEnergyCheckbox.checked; });
         if (resetButton) resetButton.addEventListener('click', resetSimulation);
 
         if (showChartsCheckbox && chartsContainer) {
             const applyCharts = () => {
                 const on = showChartsCheckbox.checked;
-                chartsContainer.style.display = on ? 'flex' : 'none';
+                chartsContainer.style.display = on ? 'block' : 'none';
                 document.body.classList.toggle('charts-visible', on);
                 if (on) setupCharts();
                 if (document.body.classList.contains('sim-fullscreen-active')) {
@@ -1473,50 +1626,67 @@
             applyCharts();
         }
 
-        // Drag the blocks to change their distance (mouse, pen and touch)
-        let drag = null;
-        const toWorld = (e) => {
+        // Drag the blocks sideways to change their distance (mouse, pen and touch). The grab areas
+        // (block + thermometer + reading, and the caption below) come from the last frame drawn.
+        const toCanvas = (e) => {
             const rect = canvas.getBoundingClientRect();
-            return { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
+            return { x: e.clientX - rect.left, y: e.clientY - rect.top };
         };
-        const blockAt = (p) => {
+        const blockAt = (p, slack) => {
+            let best = -1, bestD = Infinity;
             for (let i = 0; i < state.blocks.length; i++) {
-                const b = state.blocks[i];
-                if (p.x >= b.x0 - 1.5 && p.x <= b.x1 + 1.5 && p.y >= b.y0 - 14 && p.y <= b.y1 + 1.5) return i;
+                for (const r of hitRects[i]) {
+                    if (p.x < r.x0 - slack || p.x > r.x1 + slack || p.y < r.y0 - slack || p.y > r.y1 + slack) continue;
+                    const d = Math.abs(p.x - (r.x0 + r.x1) / 2);
+                    if (d < bestD) { bestD = d; best = i; }
+                }
             }
-            return -1;
+            return best;
         };
         canvas.addEventListener('pointerdown', (e) => {
-            const p = toWorld(e);
-            const i = blockAt(p);
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            const p = toCanvas(e);
+            const i = blockAt(p, e.pointerType === 'mouse' ? 2 : 10);
             if (i < 0) return;
             const b = state.blocks[i];
             const nearFace = b.side < 0 ? b.x1 : b.x0;
-            drag = { i, offset: nearFace - p.x, id: e.pointerId };
+            drag = { i, offset: nearFace - p.x / scale, id: e.pointerId };
+            hoverBlock = -1;
             try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
             canvas.style.cursor = 'grabbing';
             e.preventDefault();
         });
         canvas.addEventListener('pointermove', (e) => {
-            const p = toWorld(e);
+            const p = toCanvas(e);
             if (drag && e.pointerId === drag.id) {
                 const b = state.blocks[drag.i];
-                const nearFace = p.x + drag.offset;
+                const nearFace = p.x / scale + drag.offset;
                 setBlockDistance(drag.i, b.side < 0 ? SRC_X - nearFace : nearFace - SRC_X);
                 e.preventDefault();
-            } else if (e.pointerType === 'mouse') {
-                canvas.style.cursor = blockAt(p) >= 0 ? 'grab' : '';
+            } else if (!drag && e.pointerType === 'mouse') {
+                hoverBlock = blockAt(p, 2);
+                canvas.style.cursor = hoverBlock >= 0 ? 'grab' : '';
             }
         });
         const endDrag = (e) => {
             if (drag && e.pointerId === drag.id) {
                 drag = null;
                 canvas.style.cursor = '';
+                if (e.pointerType === 'mouse' && e.type === 'pointerup') {
+                    hoverBlock = blockAt(toCanvas(e), 2);
+                    if (hoverBlock >= 0) canvas.style.cursor = 'grab';
+                }
             }
         };
         canvas.addEventListener('pointerup', endDrag);
         canvas.addEventListener('pointercancel', endDrag);
         canvas.addEventListener('lostpointercapture', endDrag);
+        canvas.addEventListener('pointerleave', (e) => {
+            if (e.pointerType === 'mouse' && !drag) {
+                hoverBlock = -1;
+                canvas.style.cursor = '';
+            }
+        });
     }
 
     // --- Main loop ---
@@ -1584,9 +1754,8 @@
 
         window.addEventListener('resize', handleResize);
         if (typeof ResizeObserver !== 'undefined') {
-            const ro = new ResizeObserver(() => requestAnimationFrame(handleResize));
-            const wrapper = canvas.closest('.sim-canvas-wrapper');
-            if (wrapper) ro.observe(wrapper);
+            // Watch the canvas itself: the layout can resize it without a window resize.
+            new ResizeObserver(() => handleResize()).observe(canvas);
         }
         // Fullscreen is toggled with a class on <body>; theme with a class on <html>.
         new MutationObserver(() => setTimeout(handleResize, 60)).observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -1603,6 +1772,8 @@
             heaterK: state.Ts, setK: state.Tset, heaterOn: state.heaterOn, simTime: state.simTime, speed: state.speed,
             heaterEmitW: flux.srcEmit, heaterAbsorbW: flux.srcAbs, heaterPowerW: flux.heater,
             packets: packetCount, flashes: flashCount, absorbedPackets: hitCounts.slice(), canvas: { cssW, cssH, dpr, pixelW: canvas.width, pixelH: canvas.height },
+            show: { labels: state.showLabels, energy: state.showEnergy, walls: state.showWalls, view: state.view },
+            dragging: drag ? drag.i : -1, hover: hoverBlock, hitRects: hitRects.map((rs) => rs.map((r) => ({ ...r }))),
             blocks: state.blocks.map((b) => ({
                 surface: b.surface, dist: b.dist, K: b.T, absorbed: b.absorbed, fromHeater: b.fromHeater,
                 fromWalls: b.fromWalls, emitted: b.emitted, net: b.net, eps: b.eps, aSrc: b.aSrc, Fsb: b.Fsb
