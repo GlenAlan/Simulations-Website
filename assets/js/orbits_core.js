@@ -687,6 +687,7 @@
 
     // Advance the simulation by simDt years (as many whole adaptive steps as fit).
     function advance(simDt, maxSteps) {
+        noteRun();   // (edit history: the first run after a change)
         if (forcesDirty) computeForces();
         acc += simDt;
         let steps = 0;
@@ -1040,6 +1041,7 @@
     // Scenes
     // ------------------------------------------------------------------
     function loadScene(key) {
+        noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
         const def = SCENES[key] || SCENES['sun-earth'];
         settings.scene = SCENES[key] ? key : 'sun-earth';
         scene = def;
@@ -1338,6 +1340,7 @@
 
     function deleteBody(b) {
         if (!b) return;
+        noteEdit();   // (edit history: an undo step)
         updateDrawnPositions();
         const before = { x: F.x, y: F.y };
         const wasFrame = frameId === b.id;
@@ -1355,6 +1358,7 @@
     // Keep the view still when something changes the frame origin (e.g. a mass change moves the
     // centre of mass): run fn, then shift the pan by however far the origin moved.
     function keepView(fn) {
+        noteEdit();   // (edit history: every edit made through here is an undo step)
         updateDrawnPositions();
         const before = { x: F.x, y: F.y };
         fn();
@@ -1368,6 +1372,7 @@
     // ------------------------------------------------------------------
     function addBody(kind, x, y) {
         if (bodies.length >= MAX_BODIES) return null;
+        noteEdit();   // (edit history: an undo step, taken before the new body's colour is chosen)
         const k = KINDS[kind] || KINDS.custom;
         const b = newBody({ name: uniqueName(k.name), kind, m: k.m, R: k.R, color: kind === 'custom' ? nextCustomColour() : k.color });
         let added = null;
@@ -3423,6 +3428,7 @@
     }
 
     function startHold(b, d) {
+        beginGesture(b, d.mode);   // (edit history: the whole drag is one step, from before the body is held)
         updateDrawnPositions();
         // A frame that moves with this body must stand still while it is dragged
         if (!freeze && (frameId === null || frameId === b.id)) freeze = { x: F.x, y: F.y };
@@ -3465,6 +3471,7 @@
         computePrimaries();
         syncEccentricity(true);
         setHint();
+        endGesture(d.mode === 'move' || apply);
     }
 
     function endAllDrags() {
@@ -3845,6 +3852,453 @@
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     // ------------------------------------------------------------------
+    // Edit history: undo, redo and "run again"
+    //   Each change the user makes to the system (moving a body or aiming its velocity, adding or
+    //   deleting one, anything set in its popover or by the eccentricity slider, loading or restarting a
+    //   scene) is an undo step: a compact copy of the whole system just before it, numbers and strings
+    //   only (never the trails). A drag, a slider sweep or quick repeated changes to one body make a
+    //   single step. Undo puts everything back as it was at that moment, the simulated time included;
+    //   redo goes forward again. Merges and tidal break-ups are physics, not edits.
+    //   "Run again" goes back to the system as it was at the last change (or at the start of the scene),
+    //   taken the moment the simulation first runs after it. The integrator is deterministic, so the
+    //   same motion plays again, and nothing is lost by going back: it isn't an undo step itself.
+    //   Hooks in the code above: noteEdit() in keepView, addBody and deleteBody (and for any control in
+    //   the popover, see bindHistory), beginGesture / endGesture in startHold / endHold, noteSceneLoad
+    //   in loadScene and noteRun in advance.
+    // ------------------------------------------------------------------
+    const HISTORY_STEPS = 100;        // undo steps kept
+    const HISTORY_BODIES = 60000;     // ...and at most this many bodies in all the kept steps together
+    const MERGE_MS = 700;             // changes of one kind to one body this close together are one step
+    const SNAP_W = 8;                 // numbers kept per body: id, m, R, x, y, vx, vy, grp
+    const KEYS_MOD = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+';
+    const hist = {
+        ready: false,
+        restoring: false,
+        undo: [], redo: [],           // steps: { snap, label, target, key, at }
+        pending: null,                // an edit under way: { snap, gesture } (+ label, target, key for a drag)
+        open: null,                   // the newest step, while more changes of the same kind can join it
+        epoch: 0,                     // counts restarts of the trail samples
+        cleanLoad: true,              // nothing changed since the scene was loaded
+        rw: null,                     // the "run again" state
+        rwStale: true,                // changed since it was taken: take it when the simulation next runs
+        rwFresh: true,                // the system is at it (nothing has run since)
+        rwFromStart: true,            // ...and it is the start of the scene
+        noteTimer: 0
+    };
+
+    // A compact copy of the system: eight numbers and three strings per body, and the globals that go
+    // with them. reuse: an old copy whose storage can be written over (the "run again" state).
+    function snapshot(reuse) {
+        const n = bodies.length;
+        const s = reuse && reuse.num.length >= n * SNAP_W ? reuse
+            : { num: new Float64Array(n * SNAP_W), names: [], kinds: [], colors: [] };
+        const num = s.num;
+        for (let i = 0; i < n; i++) {
+            const b = bodies[i], o = i * SNAP_W;
+            num[o] = b.id; num[o + 1] = b.m; num[o + 2] = b.R;
+            num[o + 3] = b.x; num[o + 4] = b.y; num[o + 5] = b.vx; num[o + 6] = b.vy;
+            num[o + 7] = b.grp || 0;
+            s.names[i] = b.name; s.kinds[i] = b.kind; s.colors[i] = b.color;
+        }
+        s.names.length = s.kinds.length = s.colors.length = n;
+        return Object.assign(s, {
+            n, t: simTime, samples: sampleCount, epoch: hist.epoch, customCount,
+            scene: settings.scene, sel: selectedId, frame: frameId,
+            // The scene's own scales and settings: put back only when a change of scene is undone
+            forceRef, vRef, energyExp, trail: settings.trailIndex, com: settings.com,
+            zoom: view.zoom, panX: view.panX, panY: view.panY
+        });
+    }
+
+    // Put the system back as a snapshot has it. Bodies keep their ids (an existing body is reused, with
+    // its trail buffer). Drags end; trails, period tracking, Kepler's 2nd law, the flyby card, the graphs
+    // and the predicted path start again; and the view doesn't jump. how: 'undo' (or redo) or 'rewind'.
+    function restoreSnapshot(s, how) {
+        hist.restoring = true;
+        endAllDrags();
+        hoverAim = null;
+        updateDrawnPositions();
+        const before = { x: F.x, y: F.y };
+        const pan = view.anim ? { x: view.anim.panX, y: view.anim.panY } : { x: view.panX, y: view.panY };
+        const sameScene = s.scene === settings.scene;
+        const jump = s.t !== simTime;
+        // The trails are still good if no time has passed since the snapshot (an edit undone while paused)
+        const keepTrails = sameScene && !jump && s.epoch === hist.epoch && s.samples === sampleCount;
+        if (!sameScene) sceneFromSnapshot(s);
+        const old = new Map(bodies.map((b) => [b.id, b]));
+        const list = [];
+        let maxId = 0;
+        for (let i = 0; i < s.n; i++) {
+            const num = s.num, o = i * SNAP_W, id = num[o];
+            const x = num[o + 3], y = num[o + 4];
+            let b = old.get(id);
+            // A body that hasn't moved keeps its trail; one that has would get a jump in it
+            const keep = keepTrails && b && Math.hypot(b.x - x, b.y - y) * scale < 0.5;
+            if (!b) {
+                b = newBody({ name: s.names[i], kind: s.kinds[i], m: num[o + 1], R: num[o + 2], color: s.colors[i] });
+                b.id = id;
+            }
+            b.name = s.names[i]; b.kind = s.kinds[i]; b.color = s.colors[i];
+            b.m = num[o + 1]; b.R = num[o + 2];
+            b.x = b.px = b.dx = x; b.y = b.py = b.dy = y;
+            b.vx = num[o + 5]; b.vy = num[o + 6];
+            b.grp = num[o + 7] || null;
+            b.held = null; b.aim = null; b.track = null;
+            if (!keep) b.trailStart = sampleCount;
+            list.push(b);
+            if (id > maxId) maxId = id;
+        }
+        bodies = list;
+        nextId = Math.max(nextId, maxId + 1);   // ids are never used twice
+        customCount = s.customCount;
+        simTime = s.t; acc = 0; lag = 0; slowedDown = false;
+        if (!keepTrails) restartSamples();
+        // The chosen body and the view-from body: undo brings back the choice made before the change;
+        // running again keeps the current ones (if they are still there)
+        const has = (id) => id !== null && bodies.some((b) => b.id === id);
+        if (!sameScene) { selectedId = s.sel; frameId = s.frame; } else {
+            if (how === 'rewind' ? !has(selectedId) : has(s.sel)) selectedId = s.sel;
+            if (!has(frameId)) frameId = s.frame;
+        }
+        freeze = null;
+        k2.bid = null;
+        resetFlyby();
+        flashes.length = 0;
+        pred.key = '';
+        eccDrag = null;
+        forcesDirty = true;
+        computeForces();
+        computePrimaries();
+        refreshBodyLists();
+        if (popBody) {
+            const pb = bodyById(popBody.id);
+            if (pb) { popBody = pb; popSpeedMax = 0; updatePopover(true); } else closePopover();
+        }
+        // Nothing on the screen moves at the moment of the change. After a jump in time the view then
+        // glides back to where it was relative to the frame's origin, so a body you view from stays put.
+        updateDrawnPositions();
+        if (sameScene) {
+            view.panX += before.x - F.x;
+            view.panY += before.y - F.y;
+            if (jump) view.anim = { zoom: view.anim ? view.anim.zoom : view.zoom, panX: pan.x, panY: pan.y };
+        } else {
+            view.zoom = s.zoom; view.panX = s.panX; view.panY = s.panY; view.anim = null;
+        }
+        resetCharts();
+        syncEccentricity(true);
+        updateTrailLabel();
+        hist.restoring = false;
+    }
+
+    // Undoing a change of scene: the scene's scales and settings come back with its bodies
+    function sceneFromSnapshot(s) {
+        settings.scene = s.scene;
+        scene = SCENES[s.scene] || scene;
+        if (ui.scene) ui.scene.value = s.scene;
+        sampleDt = scene.Tref / TRAIL_PER_TREF;
+        forceRef = s.forceRef; vRef = s.vRef; energyExp = s.energyExp;
+        settings.trailIndex = s.trail;
+        if (ui.trail) ui.trail.value = String(s.trail);
+        settings.com = s.com;
+        if (ui.com) ui.com.checked = s.com;
+    }
+
+    // Time has jumped: the trail samples start again from now, as when a scene is loaded (the samples'
+    // times must keep increasing for sampleAtTime).
+    function restartSamples() {
+        sampleCount = 0;
+        for (const b of bodies) b.trailStart = 0;
+        recordSample();
+        nextSampleT = simTime + sampleDt;
+        hist.epoch++;
+    }
+
+    // Called just before the user changes the system. The first call of an edit takes the snapshot, and
+    // the change is looked at when the event handler that made it has finished (so an edit that calls
+    // this several times is still one step). later: the change is made by a later event listener (the
+    // popover's own controls, whose events reach a capture listener first).
+    function noteEdit(later) {
+        if (!hist.ready || hist.restoring || hist.pending) return;
+        hist.pending = { snap: snapshot(), gesture: false };
+        if (later) setTimeout(flushEdit, 0); else queueMicrotask(flushEdit);
+    }
+
+    // Look at the edit under way (not a drag): what changed, if anything, names the step.
+    function flushEdit() {
+        const p = hist.pending;
+        if (!p || p.gesture) return;
+        hist.pending = null;
+        const what = describeEdit(p.snap);
+        if (what) commitStep(p.snap, what, true);
+    }
+
+    // A body picked up to move it, or its arrow grabbed to aim it: the step is the whole drag.
+    function beginGesture(b, mode) {
+        if (!hist.ready || hist.restoring) return;
+        flushEdit();
+        if (dragging() || hist.pending) return;
+        hist.pending = {
+            snap: snapshot(), gesture: true, target: b.id, key: mode,
+            label: mode === 'aim' ? `change ${b.name}'s velocity` : `move ${b.name}`
+        };
+    }
+
+    // The drag is over. changed: false if nothing was changed (an arrow tip pressed and let go).
+    function endGesture(changed) {
+        const p = hist.pending;
+        if (!p || !p.gesture || bodies.some((b) => b.held)) return;
+        hist.pending = null;
+        if (changed) commitStep(p.snap, p, false);
+    }
+
+    // Is a body being dragged? (A drag that ended without endGesture is taken as a finished change.)
+    function dragging() {
+        const p = hist.pending;
+        if (!p || !p.gesture) return false;
+        if (bodies.some((b) => b.held)) return true;
+        hist.pending = null;
+        commitStep(p.snap, p, false);
+        return false;
+    }
+
+    // Loading a scene, or restarting one, can be undone too, so a slip on the Restart button or the scene
+    // list doesn't throw away a system you have built (restarting an untouched scene isn't a step).
+    function noteSceneLoad(key) {
+        if (!hist.ready) return;
+        flushEdit();
+        dragging();
+        if (hist.pending) { const p = hist.pending; hist.pending = null; commitStep(p.snap, p, false); }
+        const same = key === settings.scene;
+        if (bodies.length && !(same && hist.cleanLoad && simTime === 0)) {
+            commitStep(snapshot(), { label: same ? 'restart' : 'change scene', target: null, key: 'scene' }, false);
+        }
+        hist.epoch++;
+        Object.assign(hist, { cleanLoad: true, rwStale: true, rwFresh: false, rwFromStart: true, open: null });
+        updateHistoryUi();
+    }
+
+    // The simulation is about to take a step: finish an edit, and if this is the first run since the
+    // last change, take the "run again" state now.
+    function noteRun() {
+        if (!hist.ready) return;
+        if (hist.pending && !hist.pending.gesture) flushEdit();
+        if (!hist.rwStale && !hist.rwFresh) return;
+        if (bodies.some((b) => b.held)) return;   // a drag isn't over yet
+        if (hist.rwStale) {
+            hist.rw = snapshot(hist.rw);
+            hist.rwStale = false;
+            // The forces from this state, as running again will work them out (with realistic physics
+            // they depend on the velocities too), so it runs exactly the same way each time
+            forcesDirty = true;
+        }
+        hist.rwFresh = false;
+        updateHistoryUi();
+    }
+
+    // Has a vector changed, beyond the rounding of working it out again?
+    const vecDiffers = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by) > 1e-12 * Math.max(Math.hypot(ax, ay), Math.hypot(bx, by)) + 1e-18;
+    const numDiffers = (a, b) => Math.abs(a - b) > 1e-12 * Math.max(Math.abs(a), Math.abs(b));
+
+    // What an edit changed, compared with the snapshot taken before it: { label, target, key }, or null
+    // if nothing did. A change to the chosen body is the one named.
+    function describeEdit(s) {
+        const at = new Map();
+        for (let i = 0; i < s.n; i++) at.set(s.num[i * SNAP_W], i);
+        const added = [];
+        let main = null, kept = 0;
+        for (const b of bodies) {
+            const i = at.get(b.id);
+            if (i === undefined) { added.push(b); continue; }
+            kept++;
+            const key = changeOf(s, i, b);
+            if (key && (!main || b.id === selectedId)) main = { b, i, key };
+        }
+        if (added.length) {
+            return { key: 'add', target: added[0].id, label: added.length > 1 ? `add ${added.length} bodies` : `add ${added[0].name}` };
+        }
+        if (kept < s.n) {
+            const ids = new Set(bodies.map((b) => b.id)), gone = [];
+            for (let i = 0; i < s.n; i++) if (!ids.has(s.num[i * SNAP_W])) gone.push(i);
+            return { key: 'delete', target: s.num[gone[0] * SNAP_W], label: gone.length > 1 ? `delete ${gone.length} bodies` : `delete ${s.names[gone[0]]}` };
+        }
+        if (!main) return null;
+        const n = s.names[main.i];
+        const label = {
+            mass: `change ${n}'s mass`, radius: `change ${n}'s radius`, orbit: `change ${n}'s orbit`, move: `move ${n}`,
+            speed: `change ${n}'s speed`, velocity: `change ${n}'s velocity`, name: `rename ${n}`, colour: `change ${n}'s colour`
+        }[main.key];
+        // (the speed slider and an aimed arrow can follow on from each other as one step)
+        return { key: main.key === 'speed' ? 'velocity' : main.key, target: main.b.id, label };
+    }
+
+    // The main thing that changed about body b (row i of the snapshot): the mass first (a neutron star
+    // that becomes a black hole changes everything), then its radius, where it is and how it moves, and
+    // last its name and colour.
+    function changeOf(s, i, b) {
+        const num = s.num, o = i * SNAP_W;
+        if (numDiffers(num[o + 1], b.m) || s.kinds[i] !== b.kind) return 'mass';
+        if (numDiffers(num[o + 2], b.R)) return 'radius';
+        const vx = num[o + 5], vy = num[o + 6];
+        const moved = vecDiffers(num[o + 3], num[o + 4], b.x, b.y);
+        const sped = vecDiffers(vx, vy, b.vx, b.vy);
+        if (moved) return sped ? 'orbit' : 'move';
+        if (sped) {
+            const cross = vx * b.vy - vy * b.vx, dot = vx * b.vx + vy * b.vy;
+            return dot > 0 && Math.abs(cross) <= 1e-9 * dot ? 'speed' : 'velocity';
+        }
+        if (s.names[i] !== b.name) return 'name';
+        if (s.colors[i] !== b.color) return 'colour';
+        return null;
+    }
+
+    // A new undo step (or more of the newest one: the same kind of change to the same body within
+    // MERGE_MS of the last, or more typing of its name). A new step clears the redo steps.
+    function commitStep(snap, what, mergeable) {
+        const now = performance.now();
+        const top = hist.undo[hist.undo.length - 1];
+        if (mergeable && top && top === hist.open && top.target === what.target && top.key === what.key
+            && (what.key === 'name' || now - top.at < MERGE_MS)) {
+            top.at = now;
+        } else {
+            hist.undo.push({ snap, label: what.label, target: what.target, key: what.key, at: now });
+            hist.redo.length = 0;
+            trimHistory();
+        }
+        hist.open = mergeable ? hist.undo[hist.undo.length - 1] : null;
+        Object.assign(hist, { cleanLoad: false, rwStale: true, rwFresh: false, rwFromStart: false });
+        updateHistoryUi();
+    }
+
+    // At most HISTORY_STEPS steps, and HISTORY_BODIES bodies in all (fewer steps for a big swarm)
+    function trimHistory() {
+        while (hist.undo.length > HISTORY_STEPS) hist.undo.shift();
+        const size = (list) => list.reduce((n, st) => n + st.snap.n, 0);
+        while (hist.undo.length > 1 && size(hist.undo) + size(hist.redo) > HISTORY_BODIES) hist.undo.shift();
+    }
+
+    function undoStep() {
+        flushEdit();
+        if (dragging() || !hist.undo.length) return false;
+        const st = hist.undo.pop();
+        hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
+        restoreSnapshot(st.snap, 'undo');
+        afterUndoRedo(`<strong>Undone:</strong> ${escapeHtml(st.label)}`);
+        return true;
+    }
+
+    function redoStep() {
+        flushEdit();
+        if (dragging() || !hist.redo.length) return false;
+        const st = hist.redo.pop();
+        hist.undo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
+        restoreSnapshot(st.snap, 'undo');
+        afterUndoRedo(`<strong>Redone:</strong> ${escapeHtml(st.label)}`);
+        return true;
+    }
+
+    function afterUndoRedo(note) {
+        Object.assign(hist, { open: null, cleanLoad: false, rwStale: true, rwFresh: false, rwFromStart: false });
+        historyNote(note);
+        updateHistoryUi();
+    }
+
+    const canRunAgain = () => !!hist.rw && !hist.rwStale && !hist.rwFresh;
+
+    // Back to the state at the last change (or the start of the scene), and play
+    function runAgain() {
+        flushEdit();
+        if (dragging() || !canRunAgain()) return false;
+        restoreSnapshot(hist.rw, 'rewind');
+        hist.rwFresh = true;
+        hist.open = null;
+        setPaused(false);
+        historyNote(`<strong>Running again</strong> from ${hist.rwFromStart ? 'the start' : 'your last change'}.`);
+        updateHistoryUi();
+        return true;
+    }
+
+    // Delete or Backspace: delete the chosen body (if another is left)
+    function deleteChosen() {
+        const b = bodyById(selectedId);
+        if (!b || bodies.length < 2 || dragging()) return;
+        const name = b.name;
+        if (popBody === b) closePopover();
+        deleteBody(b);
+        flushEdit();
+        historyNote(`<strong>Deleted ${escapeHtml(name)}.</strong> ${KEYS_MOD}Z brings it back.`);
+    }
+
+    // A short note in the hint line (read out by screen readers too), until the next one or a few seconds
+    function historyNote(html) {
+        setHint(null, html);
+        clearTimeout(hist.noteTimer);
+        hist.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, 4000);
+    }
+
+    function updateHistoryUi() {
+        const u = hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
+        historyButton(ui.undoBtn, 'Undo', u, `${KEYS_MOD}Z`);
+        historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
+        if (ui.rewindBtn) {
+            const t = `Run again from ${hist.rwFromStart ? 'the start' : 'your last change'}`;
+            ui.rewindBtn.disabled = !canRunAgain();
+            ui.rewindBtn.title = `${t} (R)`;
+            ui.rewindBtn.setAttribute('aria-label', t);
+        }
+    }
+
+    // "Undo: move Earth (Ctrl+Z)", or greyed out with "Nothing to undo"
+    function historyButton(btn, verb, step, keys) {
+        if (!btn) return;
+        btn.disabled = !step;
+        btn.title = step ? `${verb}: ${step.label} (${keys})` : `Nothing to ${verb.toLowerCase()}`;
+        btn.setAttribute('aria-label', step ? `${verb}: ${step.label}` : verb);
+    }
+
+    // Keys: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redo, R run again, Delete or Backspace delete
+    // the chosen body. Not while typing in a field, which keeps its own undo.
+    function typingIn(el) {
+        if (!el || !el.tagName) return false;
+        if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+        return el.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color'].includes((el.type || 'text').toLowerCase());
+    }
+
+    function onHistoryKey(e) {
+        if (e.defaultPrevented || e.isComposing || e.altKey || typingIn(e.target)) return;
+        const mod = e.ctrlKey || e.metaKey;
+        const key = e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key;
+        if (mod && key === 'z') { if (e.shiftKey) redoStep(); else undoStep(); }
+        else if (mod && key === 'y' && !e.shiftKey) redoStep();
+        else if (!mod && key === 'r') { if (!e.repeat) runAgain(); }
+        else if (!mod && (key === 'Delete' || key === 'Backspace')) { if (!e.repeat) deleteChosen(); }
+        else return;
+        e.preventDefault();
+    }
+
+    function bindHistory() {
+        Object.assign(ui, { undoBtn: byId('undoBtn'), redoBtn: byId('redoBtn'), rewindBtn: byId('rewindBtn') });
+        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
+        const onClick = (btn, action) => {
+            if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); });
+        };
+        onClick(ui.undoBtn, undoStep);
+        onClick(ui.redoBtn, redoStep);
+        onClick(ui.rewindBtn, runAgain);
+        // Anything changed in the popover is an edit (its radius, name and colour don't go through
+        // keepView): a capture listener takes the snapshot before the control's own listener runs, and a
+        // bubbling one looks at the change after it.
+        if (ui.pop) {
+            ['input', 'change', 'click'].forEach((type) => {
+                ui.pop.addEventListener(type, () => noteEdit(true), true);
+                ui.pop.addEventListener(type, flushEdit);
+            });
+        }
+        document.addEventListener('keydown', onHistoryKey);
+        hist.ready = true;
+        updateHistoryUi();
+    }
+
+    // ------------------------------------------------------------------
     // Canvas sizing: drawing buffer = CSS size x devicePixelRatio
     // ------------------------------------------------------------------
     function resizeCanvas() {
@@ -4152,6 +4606,24 @@
         },
         settings
     };
+
+    // Edit history (undo, redo, run again): each returns whether it did anything
+    Object.assign(window.orbitsSimulation, {
+        undo: () => undoStep(),
+        redo: () => redoStep(),
+        rewind: () => runAgain(),
+        history() {
+            flushEdit();
+            return {
+                undo: hist.undo.length, redo: hist.redo.length,
+                labels: hist.undo.map((st) => st.label), redoLabels: hist.redo.map((st) => st.label),
+                dragging: !!(hist.pending && hist.pending.gesture),
+                canRewind: canRunAgain(), rewindTime: hist.rw && !hist.rwStale ? hist.rw.t : null,
+                rewindFromStart: hist.rwFromStart
+            };
+        }
+    });
+    bindHistory();
 
     // ------------------------------------------------------------------
     // Start

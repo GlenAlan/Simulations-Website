@@ -900,3 +900,63 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 #simulationCanvas.orb-can-aim {
     cursor: crosshair;
 }
+
+/* ---------- Undo, redo and "run again" ----------
+   Undo and redo sit beside "Fit view": icons at the end of the hint's row under the canvas, two
+   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart. */
+.orb-history {
+    display: flex;
+    gap: 6px;
+    order: 3;
+    flex: 0 0 auto;
+}
+
+.orb-toolbar .orb-history-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45em;
+    width: 40px;
+    height: 36px;
+    padding: 0;
+    white-space: nowrap;
+}
+
+.orb-history-text {
+    display: none;
+}
+
+/* A greyed-out button still shows where it is */
+.sim-info-actions .orb-rewind:disabled {
+    opacity: 0.35;
+}
+
+/* Narrow screens: the buttons leave the hint less width, so it gets a third line */
+@media (max-width: 600px) {
+    .orb-hint {
+        height: 4.05em;
+        -webkit-line-clamp: 3;
+        line-clamp: 3;
+    }
+}
+
+@media (orientation: landscape) and (min-width: 640px) {
+    .orb-history {
+        order: 0;
+    }
+
+    .orb-toolbar .orb-history-btn {
+        flex: 1 1 0%;
+        width: auto;
+    }
+
+    .orb-history-text {
+        display: inline;
+    }
+
+    @media (max-height: 540px) {
+        .orb-toolbar .orb-history-btn {
+            height: 32px;
+        }
+    }
+}
