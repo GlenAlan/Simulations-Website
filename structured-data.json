@@ -186,7 +186,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Orbits & Gravity Simulation",
-            "description": "Drag stars, planets and moons into orbit and watch Newton's gravity produce all three of Kepler's laws",
+            "description": "Drag stars, planets and black holes into orbit and watch Newton's gravity produce Kepler's laws, then Einstein's turn the ellipses into rosettes",
             "url": "https://simulations.science/orbits_simulation.html",
             "image": "https://simulations.science/images/orbits.png",
             "learningResourceType": "Simulation",
