@@ -670,7 +670,7 @@
             // trapped air escaping: the liquid flow it lets in, and the stretch of opening it leaves by
             bubQ: 0, bX0: 0, bY0: 0, bX1: 0, bY1: 0, bNX: 0, bNY: 1,
             // visual slosh and ripples of the inside surface; venting eased for drawing
-            phi: 0, phiV: 0, rip: 0, ripT: 0, ventS: 1,
+            phi: 0, phiV: 0, rip: 0, ripT: 0, ventS: 1, ventF: 1,
             // as drawn (stepDrawnLiquid): the surface inside, sampled, and the trapped air bulging out
             drawn: { x0: 0, dx: 1, n: 0, lev: new Float64Array(BLEND_N + 1), bulges: [] }
         };
@@ -679,7 +679,7 @@
     function resetCavities(B) {
         for (const cv of B.cavs) {
             cv.V = 0; cv.h = -1; cv.m = cv.mx = cv.my = cv.I = 0;
-            cv.qIn = cv.qOut = 0; cv.vented = true; cv.ventS = 1;
+            cv.qIn = cv.qOut = 0; cv.vented = true; cv.ventS = cv.ventF = 1;
             cv.drawn.n = 0; cv.drawn.bulges.length = 0;
             cv.bubQ = 0; cv.phi = cv.phiV = cv.rip = 0;
             for (const ch of cv.chains) { ch.qI = ch.qO = ch.qoR = ch.qoA = 0; ch.sA = ch.sB = ch.sJ = ch.sC = 0; ch.lipF = 0; }
@@ -848,7 +848,7 @@
             // ---- exchange with the tank through the openings ----
             const hin = cv.h;
             const full = cv.V >= cv.area * 0.9995, empty = cv.V <= 0;
-            let QIt = 0, QOt = 0, qOutAir = 0, dIn = 0, dOut = 0, bub = 0, bubA = 0, vented = false;
+            let QIt = 0, QOt = 0, qOutAir = 0, dIn = 0, dOut = 0, bub = 0, bubA = 0, ventGap = 0;
             const F = cv.faces;
             // The tank's surface is one curve across the whole tank, so over the object it means
             // nothing: liquid reaches an opening from beyond its ends, so the outside level at a
@@ -878,24 +878,27 @@
                     const S = sHere < sEnds ? sHere : sEnds;
                     const airIn = !full && hin < z1 - AIR_EPS;
                     const airOut = S < z1 - AIR_EPS;
-                    // Over a stretch of a wide opening with air outside, liquid inside cannot hang on
-                    // by suction: it falls through, and air comes up past it (only a hole holds it).
-                    if (airOut && ch.wide && !airIn && hin > z0) vented = true;
-                    if (airIn) {
-                        if (airOut) vented = true;
-                        else {
-                            // depth of the air under this opening's top edge (it bubbles out through it);
-                            // remember the stretch of opening where it is deepest
-                            const a = Math.min(z1 - hin, 0.05);
-                            // (through a wide opening it leaves as big bubbles, which rise as fast as
-                            // their size lets them: a wide air pocket under water cannot last)
-                            bub += CELL * Math.sqrt(ch.wide ? Math.min(z1 - hin, ch.bubCap) : a);
-                            if (a > bubA + 0.003) { bubA = a; cv.bX0 = cv.bX1 = X; cv.bY0 = cv.bY1 = z1; cv.bNX = nwx; cv.bNY = nwy; }
-                            else if (a > bubA - 0.003) {
-                                if (X < cv.bX0) { cv.bX0 = X; cv.bY0 = z1; }
-                                if (X > cv.bX1) { cv.bX1 = X; cv.bY1 = z1; }
-                                if (a > bubA) bubA = a;
-                            }
+                    // The gap this face leaves open to the air on both sides: air gets in or out
+                    // through it (a vent). Over a stretch of a wide opening with air outside, liquid
+                    // inside cannot hang on by suction either: it falls through, and air comes up past
+                    // it (only a hole holds it), half as freely.
+                    if (airOut && (airIn || (ch.wide && hin > z0))) {
+                        const above = airIn ? Math.max(hin, S) : S;
+                        const gap = CELL * clamp((z1 - AIR_EPS - above) / Math.max(z1 - z0, 0.2 * CELL), 0, 1);
+                        ventGap += airIn ? gap : 0.5 * gap;
+                    }
+                    if (airIn && !airOut) {
+                        // depth of the air under this opening's top edge (it bubbles out through it);
+                        // remember the stretch of opening where it is deepest
+                        const a = Math.min(z1 - hin, 0.05);
+                        // (through a wide opening it leaves as big bubbles, which rise as fast as
+                        // their size lets them: a wide air pocket under water cannot last)
+                        bub += CELL * Math.sqrt(ch.wide ? Math.min(z1 - hin, ch.bubCap) : a);
+                        if (a > bubA + 0.003) { bubA = a; cv.bX0 = cv.bX1 = X; cv.bY0 = cv.bY1 = z1; cv.bNX = nwx; cv.bNY = nwy; }
+                        else if (a > bubA - 0.003) {
+                            if (X < cv.bX0) { cv.bX0 = X; cv.bY0 = z1; }
+                            if (X > cv.bX1) { cv.bX1 = X; cv.bY1 = z1; }
+                            if (a > bubA) bubA = a;
                         }
                     }
                     if (S > hin) {
@@ -947,11 +950,17 @@
             const Wc = cv.Ws > CELL ? cv.Ws : CELL;
             // the last sliver of air under a submerged rim leaves as one final bubble
             const sliver = cv.area - cv.V <= 2 * AIR_EPS * Wc;
-            if (!vented) {
-                // air can only leave as bubbles, or enter where the liquid falls out
-                if (!sliver) QI = Math.min(QI, BUBBLE_K * kQ * bub);
-                QO = Math.min(QO, GLUG_K * kQ * qOutAir);
-            }
+            // Liquid gets in only as fast as the air it replaces gets out, and out only as fast as
+            // air gets in: through the vents, driven by the head of liquid between the air inside and
+            // outside (air is light: a millimetre's gap passes a lot), as bubbles, or where the liquid
+            // falls out of an opening with air outside. So a cavity whose rim has only just come up
+            // through the surface floods or drains as fast as its air can follow, not all at once.
+            const vented = ventGap > 0;
+            const ventCap = vented ? ventGap * CD_OPEN * Math.sqrt(2 * g * (rhoD / DEPTH / RHO_AIR) * Math.max(dIn, dOut, 0.005)) : 0;
+            const demand = QI > QO ? QI : QO;
+            if (!sliver) QI = Math.min(QI, ventCap + BUBBLE_K * kQ * bub);
+            QO = Math.min(QO, ventCap + GLUG_K * kQ * qOutAir);
+            cv.ventF = vented ? (demand > ventCap ? ventCap / demand : 1) : 0;
             cv.qIn = QI; cv.qOut = QO; cv.vented = vented;
             cv.bubQ = (!vented && bubA > 0 && QI > QO) ? QI : 0;
             let dV = (QI - QO) * dt;
@@ -1208,7 +1217,7 @@
         for (const cv of B.cavs) {
             cv.ripT += dtF;
             cv.rip *= ripDecay;
-            cv.ventS += ((cv.vented ? 1 : 0) - cv.ventS) * aVent;
+            cv.ventS += (cv.ventF - cv.ventS) * aVent;
             if (cv.V <= 0 || cv.V >= cv.area || cv.Ws < 2 * CELL) { cv.phi *= 0.8; cv.phiV = 0; }
             else {
                 const k = Math.PI / cv.Ws;
@@ -2660,7 +2669,9 @@
             nx /= nl; ny /= nl;
             // (all of these fade in and out as the body turns, so nothing jumps when an opening turns
             // over)
-            const side = 1 - smoothstep(0.35, 0.7, Math.abs(ny));
+            // (and the surface runs on through it only as fast as the air the liquid replaces can follow:
+            // the venting, eased; until then the trapped air bulges out past it: drawAirBulges)
+            const side = (1 - smoothstep(0.35, 0.7, Math.abs(ny))) * cv.ventS;
             const downF = smoothstep(0.35, 0.7, -ny);
             const down = downF * cv.ventS;
             if (side < 1e-3 && downF < 1e-3) continue;
@@ -2685,7 +2696,7 @@
                     const Sc = surfaceAt(xc), Lc = cavityLevelAt(cv, xc);
                     const D = clamp(0.02 + 2 * Math.abs(Sc - Lc), 0.02, 0.3);
                     if (side * fade > 1e-3) ramp(xc, dirIn, D, side * fade, Sc);
-                    const wd = downF * fade * smoothstep(0, 0.005, Lc - Sc);
+                    const wd = downF * cv.ventS * fade * smoothstep(0, 0.005, Lc - Sc);
                     if (wd > 1e-3) {
                         // towards the side under water, and the stretch with air under it (up to
                         // where the opening goes under again, or ends)
