@@ -5,12 +5,6 @@
     display: none !important;
 }
 
-.sim-controls-content .pressure-first-group {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
-}
-
 .sim-controls-content select {
     font-size: 0.9em;
     height: 2.6em;
@@ -32,40 +26,9 @@
     color: var(--color-text-subtle);
 }
 
-/* Checkboxes use the template's own check-box style (main.css: input + label). */
-.pressure-toggles {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15em;
-}
-
-.pressure-toggle {
-    position: relative;
-}
-
-.sim-controls-content .pressure-toggle input[type="checkbox"] + label {
-    display: inline-block;
-    font-size: 0.85em;
-    line-height: 1.8em;
-    padding-left: 2.4em;
-    margin-bottom: 0.2em;
-}
-
-.sim-controls-content .pressure-toggle input[type="checkbox"] + label:before {
-    font-size: 0.75em;
-    height: 2.1em;
-    width: 2.1em;
-    line-height: 2.1em;
-    top: 0.1em;
-}
-
-/* Info bar: keep the stat boxes compact so five of them fit. */
+/* Info bar: keep each stat box on one line. */
 #statsBar .stats-box {
     white-space: nowrap;
-}
-
-#statsBar .stats-box span {
-    font-variant-numeric: tabular-nums;
 }
 
 /* Charts (shown with the chart toggle in the info bar). */
@@ -109,7 +72,11 @@ body:not(.sim-fullscreen-active) .pressure-charts {
     margin-bottom: 1.5em;
 }
 
-/* Plunger dragging cursor hints. */
+/* Canvas cursor hints: drag the plunger; click the gauge panel to show or hide details. */
+#simulationCanvas.pressure-can-click {
+    cursor: pointer;
+}
+
 #simulationCanvas.pressure-can-drag {
     cursor: grab;
 }
