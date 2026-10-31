@@ -339,6 +339,33 @@
             }
         }
 
+        // 3b. The stair-steps of a curved or slanted outline leave notches a cell or two deep inside
+        // the hull. They are part of the outside, not pockets that hold liquid: a group of open cells
+        // that all touch the outside, or only a handful of cells, goes back to the outside.
+        if (nOpen > 0) {
+            const seen = new Uint8Array(NL);
+            for (let li0 = 0; li0 < NL; li0++) {
+                if (ltype[li0] !== T_OPEN || seen[li0]) continue;
+                qh = 0; qt = 0;
+                queue[qt++] = li0; seen[li0] = 1;
+                let inner = false;
+                while (qh < qt) {
+                    const li = queue[qh++];
+                    let edge = false;
+                    for (let q = 0; q < 4; q++) {
+                        const nb = q === 0 ? li - 1 : q === 1 ? li + 1 : q === 2 ? li - LW : li + LW;
+                        if (ltype[nb] === T_EXT) edge = true;
+                        else if (ltype[nb] === T_OPEN && !seen[nb]) { seen[nb] = 1; queue[qt++] = nb; }
+                    }
+                    if (!edge) inner = true;
+                }
+                if (!inner || qt <= 4) {
+                    for (let k = 0; k < qt; k++) ltype[queue[k]] = T_EXT;
+                    nOpen -= qt;
+                }
+            }
+        }
+
         // 4. which open cells hold liquid/air when upright ("basins", used for the hull volume)
         const basin = new Uint8Array(NL);
         if (nOpen > 0) {
