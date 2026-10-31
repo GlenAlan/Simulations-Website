@@ -72,6 +72,8 @@
     const SPEED = { g: 0.22, nu: 0.19, e: 0.15, n: 0.16, p: 0.13, a: 0.1, cluster: 0.09, fragment: 0.32 };
     const FADE_AT = 2.6, FADE_LEN = 1;   // s: emitted radiation fades out over FADE_LEN after FADE_AT
     const MIRROR_LIFE = 12;         // s: neutrons last longer between reflecting walls
+    const CHAIN_NEUTRON_SPEED = 2.5; // x in the chain reaction: a generation takes about a second, so the growth shows
+    const REFLECTOR_ALBEDO = 0.95;  // share of the neutrons reaching the reflector that it sends back (the rest leak out)
     const PROMPT = 5e-22;           // s: nucleon emission from an unbound nucleus
     const LOG_FT = { ee: 4.3, odd: 5.0, oo: 5.4 };   // fitted to the data (see header)
     const EC_K = 20.3;              // K-capture strength, fitted to the measured EC/beta+ ratios
@@ -127,7 +129,7 @@
 
     // Neutron capture on these (Z, N) targets usually splits the nucleus (thermal fission / (fission + capture)).
     const FISSILE = { '92,141': 0.92, '92,143': 0.85, '94,145': 0.73, '94,147': 0.74, '95,147': 0.85, '96,149': 0.87, '98,153': 0.83 };
-    const NEUTRON_CATCH = 0.35;     // chance that another nucleus catches a free neutron that touches it
+    const NEUTRON_CATCH = 0.05;     // chance that another nucleus catches a free neutron that touches it
 
     // ------------------------------------------------------------------
     // Settings & state
@@ -143,6 +145,9 @@
     let simTime = 0;                // s of simulation time (runs at the simulation speed: decays, radiation)
     let batch = null;               // the carbon-dating sample: a shared steady clock and its count
     let reflector = null;           // the chain-reaction core's neutron reflector { x0, y0, x1, y1 } (with the mirror setting)
+    let chainRx = null;             // the chain-reaction setup: { gens: fissions in each neutron generation }
+    let holdClock = null;           // a setup's test for nuclei whose own slow decay would only get in the way
+    let clockK = 1;                 // a setup's faster clock (the decay series)
     let nextId = 1;
     let bodies = [];
     let sparks = [];                // light particles: e-, e+, neutrinos, gammas
@@ -882,6 +887,9 @@
     function startClock(b) {
         const info = b.info;
         if (info.stable) { b.clock = null; return; }
+        // A setup can hold the clocks of nuclei whose own decay is far too slow to matter to it (the uranium in
+        // the chain reaction, the tritium for fusion): on the speeded-up clock they would decay first.
+        if (holdClock && holdClock(b)) { b.clock = null; return; }
         const hl = info.hl;
         const t = -hl / LN2 * Math.log(1 - Math.random());       // 1 - U is in (0, 1]
         const logHalf = Math.log10(hl);
@@ -1087,7 +1095,7 @@
         if (!b.pendingEq) return;
         eqLog.push({ eq: b.pendingEq, color: modeColor(b.pendingCode), t: realTime });
         if (eqLog.length > 30) eqLog.shift();
-        if (S.showTags) addTag(b.x, b.y - b.R - 10, b.pendingTag, b.pendingCode === 'capture' ? C.accent : modeColor(b.pendingCode), b);
+        if (S.showTags && (!chainRx || b.pendingCode === 'f')) addTag(b.x, b.y - b.R - 10, b.pendingTag, b.pendingCode === 'capture' ? C.accent : modeColor(b.pendingCode), b);
         b.pendingEq = null;
     }
 
@@ -1131,6 +1139,7 @@
             p.vx = Math.cos(dir) * sp; p.vy = Math.sin(dir) * sp;
             p.projectileUntil = simTime + MIRROR_LIFE;
             p.ignore = [b.id];
+            p.gen = b.gen || 0;     // a delayed neutron from a fission fragment belongs to that fission's generation
             bodies.push(p);
             const M = b.Z + b.N;
             b.vx -= p.vx * m / Math.max(1, M) * 0.6; b.vy -= p.vy * m / Math.max(1, M) * 0.6;
@@ -1157,12 +1166,14 @@
         }
     }
 
-    // A neutron flying out of a fission or a decay (it ignores the nuclei it came from).
-    function launchNeutron(x, y, angle, ignore) {
+    // A neutron flying out of a fission or a decay (it ignores the nuclei it came from). gen: the generation of
+    // the fission that freed it (0 for the neutron that starts a chain reaction).
+    function launchNeutron(x, y, angle, ignore, gen) {
         const n = makeBody(0, 1, 0, x, y);
         n.transient = true;
         n.emitted = true;
-        const sp = radBase() * SPEED.n;
+        n.gen = gen || 0;
+        const sp = radBase() * SPEED.n * (chainRx ? CHAIN_NEUTRON_SPEED : 1);
         n.vx = Math.cos(angle) * sp; n.vy = Math.sin(angle) * sp;
         n.projectileUntil = simTime + MIRROR_LIFE;
         n.ignore = ignore;
@@ -1191,9 +1202,11 @@
         light.pulse = b.pulse = 1;
         bodies.push(light);
         afterFormed(light, 0.5);
+        b.gen = light.gen = st.gen || 0;
+        if (chainRx && st.gen) chainRx.gens[st.gen - 1] = (chainRx.gens[st.gen - 1] || 0) + 1;
         for (let i = 0; i < st.nu; i++) {
             const a = dir + Math.PI / 2 + (i - (st.nu - 1) / 2) * 0.9 + (Math.random() - 0.5) * 0.5 + (i % 2 ? Math.PI : 0);
-            launchNeutron(cx, cy, a, [b.id, light.id]);
+            launchNeutron(cx, cy, a, [b.id, light.id], st.gen || 0);
         }
         addFlash(cx, cy, (b.R + light.R) * 2.2, C.modes.f);
         for (let i = 0; i < 2; i++) spawnSpark('g', cx, cy, Math.random() * TAU, (b.R + light.R) * 0.5, 0);
@@ -1249,7 +1262,7 @@
             target.pendingTag = 'induced fission';
             target.pendingCode = 'f';
             target.excited = 1;
-            target.steps = [{ kind: 'fission', H: fr.H, L: fr.L, nu: fr.nu, from: [Z, N] }];
+            target.steps = [{ kind: 'fission', H: fr.H, L: fr.L, nu: fr.nu, from: [Z, N], gen: (other.gen || 0) + 1 }];
             target.step = { kind: 'capture', t: 0, dur: 0.35, fired: true, dir: 0 };
             return true;
         }
@@ -1359,13 +1372,16 @@
     // The space a resting body needs: its nucleus, gauge and the label underneath (names are wider than nuclei).
     function bodyBox(b) {
         const lw = b.labelW || b.info.name.length * fontPx * 0.55;
-        const lines = b.info.stable || b.clock || b.needsClock ? 2 : 1;
+        const lines = (chainRx || b.clock && b.clock.shared) && b.id !== selectedId ? 1 : (b.info.stable || b.clock || b.needsClock ? 2 : 1);
         return {
             hw: Math.max(b.R + 6, lw / 2 + 9),
             top: b.R + 7,
             bottom: b.R + 8 + fontPx * (1.25 * lines + (b.id === selectedId ? 1.2 : 0)),
         };
     }
+
+    // A free neutron kept in play by the reflecting walls (not one that has leaked out through the reflector).
+    const mirroredNeutron = (b) => S.mirrorWalls && b.Z === 0 && !b.leaked;
 
     // Something fast that takes in what it hits: a free neutron, or a nucleus that was thrown (or knocked).
     function isProjectile(b) {
@@ -1407,10 +1423,19 @@
             const speed = Math.hypot(b.vx, b.vy);
             if (b.transient && !S.keepParticles) {
                 // emitted particles fly straight off the canvas (or bounce off neutron mirrors), fading as they go
-                const mirrored = S.mirrorWalls && b.Z === 0;
-                // a neutron set free inside the reflector stays in it; any other bounces off the canvas walls
+                const mirrored = mirroredNeutron(b);
+                // a neutron set free inside the reflector is mostly sent back into it (a few get through it and
+                // are lost); any other bounces off the canvas walls
                 if (b.inReflector === undefined) b.inReflector = !!reflector && b.x > reflector.x0 && b.x < reflector.x1 && b.y > reflector.y0 && b.y < reflector.y1;
-                if (mirrored) bounceWalls(b, b.inReflector && reflector ? reflector : wr, 1);
+                if (mirrored && b.inReflector && reflector) {
+                    const r = reflector;
+                    const out = b.x < r.x0 + b.R || b.x > r.x1 - b.R || b.y < r.y0 + b.R || b.y > r.y1 - b.R;
+                    if (out && Math.random() > REFLECTOR_ALBEDO) {
+                        b.leaked = true;
+                        b.projectileUntil = 0;
+                        b.born = simTime - FADE_AT;     // fades out as it leaves
+                    } else bounceWalls(b, r, 1);
+                } else if (mirrored) bounceWalls(b, wr, 1);
                 const m = b.R + 4;
                 const life = mirrored ? MIRROR_LIFE : FADE_AT + FADE_LEN;
                 if (b.x < -m || b.y < -m || b.x > viewW + m || b.y > viewH + m || simTime - b.born > life) { removeBody(b); continue; }
@@ -1465,8 +1490,9 @@
                 const big = p.Z + p.N > t.Z + t.N ? p : t;    // the heavier takes in the lighter
                 const small = big === p ? t : p;
                 // A free neutron is not always caught: most nuclei (fission fragments among them) take in slow
-                // neutrons far less readily than uranium-235 or plutonium-239 does, which keeps a chain going.
-                const caught = !p.emitted || FISSILE[t.Z + ',' + t.N] || Math.random() < NEUTRON_CATCH;
+                // neutrons far less readily than uranium-235 or plutonium-239 does, which keeps a chain going, and
+                // the lightest (deuterium, tritium, helium) hardly ever do.
+                const caught = !p.emitted || FISSILE[t.Z + ',' + t.N] || (t.Z + t.N > 4 && Math.random() < NEUTRON_CATCH);
                 if (caught && combine(big, small, true)) { merged.add(big); merged.add(small); } else (p.ignore || (p.ignore = [])).push(t.id);
                 break;
             }
@@ -2081,11 +2107,12 @@
         ctx.fillRect(0, 0, viewW, viewH);
         if (S.showChart) drawInsetChart();
         if (!bodies.length && !dragGhost) drawEmptyHint();
-        if (reflector && S.mirrorWalls) drawReflector();
+        if (reflector && S.mirrorWalls) drawReflector(false);
         drawBin();
         drawEffects(true);
         drawBodies();
         drawSparks();
+        if (reflector && S.mirrorWalls) drawReflector(true);
         drawEffects(false);
         drawPanels();
         drawGhost();
@@ -2093,20 +2120,39 @@
         if (chartView.open) drawExpandedChart();
     }
 
-    // The chain-reaction core's neutron reflector: a faint dashed wall with its name.
-    function drawReflector() {
+    // The chain-reaction core's neutron reflector: a faint dashed wall with its name and, once the chain has
+    // started, the number of fissions in each generation of neutrons along its foot (1 → 2 → 5 …: the growth).
+    // words: its name and the count (drawn over the nuclei, so they stay readable), else the outline.
+    function drawReflector(words) {
         const r = reflector;
-        ctx.strokeStyle = hexA(C.modes.n, C.dark ? 0.55 : 0.6); ctx.lineWidth = 2;
-        ctx.setLineDash([6, 5]);
-        roundRect(ctx, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, 10);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        if (!words) {
+            ctx.strokeStyle = hexA(C.modes.n, C.dark ? 0.55 : 0.6); ctx.lineWidth = 2;
+            ctx.setLineDash([6, 5]);
+            roundRect(ctx, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, 10);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            return;
+        }
         ctx.font = font(700, Math.max(10, fontPx * 0.8));
         const t = 'neutron reflector', tw = ctx.measureText(t).width;
         ctx.fillStyle = C.bg;
         ctx.fillRect(r.x0 + 12, r.y0 - fontPx * 0.5, tw + 8, fontPx);
         ctx.fillStyle = ink(C.modes.n); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.fillText(t, r.x0 + 16, r.y0);
+        if (!chainRx || !chainRx.gens.length) return;
+        const counts = Array.from(chainRx.gens, (n) => n || 0);
+        // under the reflector if there is room, else along its top after its name
+        const below = r.y1 + fontPx * 1.1 < viewH - fontPx * 0.4;
+        const gx = below ? r.x0 + 16 : r.x0 + 16 + tw + 18, gy = below ? r.y1 + fontPx * 0.9 : r.y0;
+        const room = Math.min(r.x1, viewW - 8) - gx - 8;
+        let from = 0, g = 'fissions per generation: ' + counts.join(' → ');
+        // the latest generations, if they do not all fit
+        while (from < counts.length - 1 && ctx.measureText(g).width > room) g = 'fissions per generation: … ' + counts.slice(++from).join(' → ');
+        if (ctx.measureText(g).width > room) g = counts.slice(-Math.max(1, Math.floor(room / (fontPx * 2)))).join(' → ');
+        ctx.fillStyle = C.bg;
+        ctx.fillRect(gx - 4, gy - fontPx * 0.5, ctx.measureText(g).width + 8, fontPx);
+        ctx.fillStyle = ink(C.modes.f);
+        ctx.fillText(g, gx, gy);
     }
 
     function drawEmptyHint() {
@@ -2126,7 +2172,7 @@
             const x = b.x, y = b.y;
             const st = b.step;
             // emitted particles fade out as they leave
-            const fade = b.transient && b.emitted && !S.keepParticles ? fadeOf(simTime - b.born, S.mirrorWalls && b.Z === 0 ? MIRROR_LIFE : 0) : 1;
+            const fade = b.transient && b.emitted && !S.keepParticles ? fadeOf(simTime - b.born, mirroredNeutron(b) ? MIRROR_LIFE : 0) : 1;
             if (fade <= 0) continue;
             ctx.globalAlpha = fade;
             const scale = 1 + 0.08 * b.pulse;
@@ -2266,6 +2312,8 @@
 
     function drawLabel(b, x, y, selected) {
         const info = b.info;
+        // The chain reaction is crowded: short names ("Ba-143"), and the counting clock only for the selected one.
+        const compact = !!chainRx;
         const ly = y + b.R + (b.clock ? 9 : 5) + fontPx * 0.9;
         ctx.textBaseline = 'alphabetic';
         ctx.fillStyle = selected ? C.accentText : C.text;
@@ -2276,15 +2324,17 @@
             drawNotation(ctx, b.Z, b.N, b.iso, x - w / 2, ly + 1, fs, true);
             b.labelW = w;
         } else {
+            const name = compact ? shortName(b.Z, b.N, b.iso) : info.name;
             ctx.font = font(700, fontPx);
             ctx.textAlign = 'center';
-            ctx.fillText(info.name, x, ly);
-            b.labelW = ctx.measureText(info.name).width;
+            ctx.fillText(name, x, ly);
+            b.labelW = ctx.measureText(name).width;
         }
         const y2 = ly + fontPx * 1.2;
         ctx.font = font(300, Math.max(11, fontPx * 0.92));
         ctx.fillStyle = C.muted;
-        if (b.step || b.needsClock && !info.stable) return;
+        // (the carbon-dating sample's shared clock is in its panel)
+        if (b.step || b.needsClock && !info.stable || (compact || b.clock && b.clock.shared) && !selected) return;
         if (info.stable) {
             ctx.textAlign = 'center';
             ctx.fillText('Stable', x, y2);
@@ -2314,6 +2364,12 @@
                 ctx.fillText(t, x, y2 + fontPx * 1.15);
                 b.labelW = Math.max(b.labelW, ctx.measureText(t).width);
             }
+        } else if (selected) {
+            // a nucleus whose clock is held (the uranium in the chain reaction): just its half-life
+            ctx.textAlign = 'center';
+            const t = 'half-life ' + formatHalfLife(info.hl);
+            ctx.fillText(t, x, y2);
+            b.labelW = Math.max(b.labelW, ctx.measureText(t).width);
         }
     }
 
@@ -2683,7 +2739,10 @@
         const shown = lines.slice(0, 3).map((t) => fitText(t, maxW));
         const w = Math.min(viewW - 20, Math.max(...shown.map((t) => ctx.measureText(t).width)) + fontPx * 2);
         const lh = fontPx * 1.3, h = lh * shown.length + fontPx * 0.9;
-        const x = (viewW - w) / 2, y = viewH - h - layout.pad;
+        const x = (viewW - w) / 2;
+        let y = viewH - h - layout.pad;
+        // clear of the text panels (on a tall canvas the equations run along the bottom)
+        for (const r of panelRects) if (x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y) y = Math.max(layout.pad, r.y - h - 6);
         roundRect(ctx, x, y, w, h, Math.min(h / 2, fontPx * 1.1));
         ctx.fillStyle = C.panelSolid; ctx.fill();
         ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.stroke();
@@ -3099,7 +3158,7 @@
     function slotSize(Z, N) {
         const R = nuclideLook(Z, N).R;
         ctx.font = font(700, fontPx);
-        const lw = ctx.measureText(nuclideName(Z, N, 0)).width;
+        const lw = ctx.measureText(chainRx ? shortName(Z, N, 0) : nuclideName(Z, N, 0)).width;
         return [Math.max(2 * R + 16, lw + 22), 2 * R + 20 + fontPx * 2.6];
     }
     function setToggle(el, on) {
@@ -3118,10 +3177,12 @@
         // U-235 in a box whose walls reflect neutrons; one neutron is fired in
         chain() {
             setupNeeds(ui.mirrorWalls);
+            chainRx = { gens: [] };
+            holdClock = (b) => b.Z >= 90;    // uranium's half-life is hundreds of millions of years
+            // on a tall canvas the core gets the whole width: the chart comes back with the next scene
+            if (layout.tall) setupNeeds(ui.showChart, false);
             const [cw, ch] = slotSize(92, 143);
-            // (on a tall canvas, in the column beside the chart, so the reflector is a plain box)
-            const side = layout.tall && S.showChart;
-            const pts = setupSlots(layout.tall ? 9 : 14, cw, ch, null, side ? { x0: layout.pad, y0: layout.pad, x1: layout.inset.x - 8, y1: (S.showEquations ? layout.eq.top : viewH) - 6 } : null);
+            const pts = setupSlots(layout.tall ? 12 : 14, cw, ch);
             const us = pts.map((p) => addBody(92, 143, 0, p.x, p.y)).filter(Boolean);
             // a reflector round the core keeps the neutrons among the nuclei, as in a reactor
             const m = layout.pad * 0.5;
@@ -3136,26 +3197,29 @@
                 if (!live.length) return;
                 const t = live.reduce((a, b) => (b.x < a.x ? b : a));
                 const x = Math.min(t.x - t.R - radBase() * SPEED.n * 0.6, reflector ? reflector.x0 - 20 : viewW);
-                const n = launchNeutron(Math.max(layout.pad + 6, x), t.y, 0, []);
+                const n = launchNeutron(Math.max(layout.pad + 6, x), t.y, 0, [], 0);
                 n.forceFission = true;
+                n.inReflector = false;      // fired in from outside, so the reflector does not hold it
             });
         },
         // a single U-238, followed on the chart down to lead-206
         series() {
             setupNeeds(ui.showEquations);
+            clockK = 4;     // fourteen decays, most of them slow: the clock runs four times as fast here
             const [cw, ch] = slotSize(92, 146);
             const p = setupSlots(1, cw, ch)[0];
             const b = addBody(92, 146, 0, p.x, p.y);
             if (b) selectedId = b.id;
-            showToast('Uranium-238 decays by 8 α and 6 β⁻ decays to stable lead-206. Raise the speed to see it all', 7);
+            showToast('Uranium-238 decays by 8 α and 6 β⁻ decays to stable lead-206', 7);
         },
         // twenty C-14 nuclei on one steady clock: half are left after each half-life (twenty identical
         // decay labels would only hide the count)
         dating() {
             setupNeeds(ui.showTags, false);
+            if (layout.tall) setupNeeds(ui.showChart, false);
             const fs = Math.max(11, Math.min(14, viewW / 85));
             const [cw, ch] = slotSize(6, 8);
-            const pts = setupSlots(layout.tall ? 12 : 20, cw, ch, { x0: 0, y0: 0, x1: fs * 18, y1: fs * 10.5 });
+            const pts = setupSlots(layout.tall ? 16 : 20, cw, ch, { x0: 0, y0: 0, x1: fs * 18, y1: fs * 10.5 });
             const hl = getInfo(6, 8, 0).hl;
             batch = { Z: 6, N: 8, name: 'Carbon-14', total: 0, ids: new Set(), t: 0, hl, rate: hl / 3, points: [], last: 0 };
             readingOrder(pts).forEach((p) => { const b = addBody(6, 8, 0, p.x, p.y); if (b) batch.ids.add(b.id); });
@@ -3171,6 +3235,9 @@
         },
         // deuterium and tritium in pairs; the first pair is pushed together
         fusion() {
+            holdClock = (b) => b.Z === 1 && b.N === 2;     // tritium's 12-year half-life would beat the user to it
+            setupNeeds(ui.showDetails);     // for the energy released (Q) in the equations
+            if (layout.tall) setupNeeds(ui.showChart, false);
             const [cw, ch] = slotSize(1, 2);
             const pts = readingOrder(setupSlots(3, cw * 2.2, ch));
             const pairs = pts.map((p) => [addBody(1, 1, 0, p.x - cw * 0.55, p.y), addBody(1, 2, 0, p.x + cw * 0.55, p.y)]);
@@ -3187,10 +3254,13 @@
         // fluorine-18, the PET tracer: positrons, then pairs of 511 keV gamma rays
         pet() {
             setupNeeds(ui.showDetails);
+            if (layout.tall) setupNeeds(ui.showChart, false);
             // well spread (each positron needs room to fly and annihilate) and added one after another, so
             // they do not all decay at once
             const [cw, ch] = slotSize(9, 9);
-            const pts = setupSlots(layout.tall ? 3 : 4, cw * 2, ch * 1.4, { x0: 0, y0: 0, x1: 330, y1: 150 });
+            const want = layout.tall ? 3 : 4, details = { x0: 0, y0: 0, x1: Math.min(330, viewW * 0.6), y1: Math.min(150, fontPx * 7.5) };
+            let pts = setupSlots(want, cw * 2, ch * 1.4, details);
+            if (pts.length < want) pts = setupSlots(want, cw * 1.3, ch * 1.15, details);   // a small canvas: closer together
             pts.forEach((p, i) => later(i * 0.8, () => {
                 const b = addBody(9, 9, 0, p.x, p.y);
                 if (b && !i) selectedId = b.id;
@@ -3293,7 +3363,7 @@
     }
 
     function resetScene(withStart) {
-        bodies = []; sparks = []; effects = []; eqLog = []; toast = null; batch = null; scheduled = []; reflector = null;
+        bodies = []; sparks = []; effects = []; eqLog = []; toast = null; batch = null; scheduled = []; reflector = null; chainRx = null; holdClock = null; clockK = 1;
         // settings the last setup turned on for itself go off again
         setupToggles.forEach(([el, was]) => setToggle(el, was));
         setupToggles = [];
@@ -3385,7 +3455,7 @@
             scheduled = scheduled.filter((a) => simTime < a.at);
             due.forEach((a) => a.fn());
         }
-        updateBodies(dtSim, dtSim * DECADES_PER_S, dt);
+        updateBodies(dtSim, dtSim * DECADES_PER_S * clockK, dt);
         updateSparks(dtSim, dt);
         updateInsetView(dt);
     }
