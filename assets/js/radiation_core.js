@@ -71,6 +71,7 @@
     // --- Visual / numerical parameters ---
     const PACKET_SPEED = 40;         // cm per real second (light slowed down enormously)
     const PACKETS_PER_WATT = 0.3;    // packets per real second per watt radiated
+    const PACKET_BUDGET_W = 28000;   // W radiated in all that the packet pool can show (heater near 2250 K)
     const MAX_PACKETS = 2600;
     const MAX_FLASHES = 240;
     const FLASH_LIFE = 0.28;         // s
@@ -396,15 +397,22 @@
     }
 
     const emitAcc = { src: 0, b0: 0, b1: 0, walls: 0 };
+    const WALL_RATE = WALL_RATE_FACES + WALL_RATE_EDGES;
+    let packetScale = 1; // share of PACKETS_PER_WATT drawn: below 1 when there is more radiation than the pool holds
     function emitPackets(dtReal) {
-        const k = PACKETS_PER_WATT * dtReal;
+        const b0 = state.blocks[0], b1 = state.blocks[1];
+        // Above PACKET_BUDGET_W in all, every source gets the same, smaller number of packets per watt, so each
+        // packet still carries the same energy. (Otherwise the heater fills the pool first and the blocks' own
+        // radiation stops being drawn.)
+        const totalW = flux.srcEmit + b0.emitted + b1.emitted + (state.showWalls ? WALL_RATE / PACKETS_PER_WATT : 0);
+        packetScale = Math.min(1, PACKET_BUDGET_W / totalW);
+        const k = PACKETS_PER_WATT * packetScale * dtReal;
         let n;
         emitAcc.src += flux.srcEmit * k;
         n = Math.floor(emitAcc.src); emitAcc.src -= n;
         n = Math.min(n, 600);
         for (let i = 0; i < n; i++) spawnFromSource();
 
-        const b0 = state.blocks[0], b1 = state.blocks[1];
         emitAcc.b0 += b0.emitted * k;
         n = Math.floor(emitAcc.b0); emitAcc.b0 -= n;
         for (let i = 0; i < Math.min(n, 200); i++) spawnFromBlock(b0);
@@ -413,7 +421,7 @@
         for (let i = 0; i < Math.min(n, 200); i++) spawnFromBlock(b1);
 
         if (state.showWalls) {
-            emitAcc.walls += (WALL_RATE_FACES + WALL_RATE_EDGES) * dtReal;
+            emitAcc.walls += WALL_RATE * packetScale * dtReal;
             n = Math.floor(emitAcc.walls); emitAcc.walls -= n;
             for (let i = 0; i < Math.min(n, 100); i++) spawnFromWalls();
         } else {
@@ -1271,7 +1279,7 @@
         const lh = fontPx * 1.3;
         let y = cssH - 10 - lh * (wide ? 1.5 : 0.5);
         // Skip the key if a block caption reaches down into its corner (small canvases).
-        const keyW = wide ? textWidth('every packet carries the same energy · flash = absorbed', fontPx * 0.85, 400) : fontPx * 12;
+        const keyW = wide ? textWidth('each packet now carries 10× as much energy · flash = absorbed', fontPx * 0.85, 400) : fontPx * 12;
         const keyTop = y - lh / 2;
         for (const rects of hitRects) {
             const r = rects[1];
@@ -1305,7 +1313,10 @@
         if (!wide) return;
         y += lh;
         ctx.fillStyle = pal.faint;
-        ctx.fillText('every packet carries the same energy · flash = absorbed', x0, y);
+        const boost = 1 / packetScale; // > 1 when there is too much radiation to draw packet for packet
+        const energyText = boost < 1.05 ? 'every packet carries the same energy'
+            : `each packet now carries ${boost < 9.95 ? boost.toFixed(1) : Math.round(boost)}× as much energy`;
+        ctx.fillText(`${energyText} · flash = absorbed`, x0, y);
     }
 
     function render() {
@@ -1873,7 +1884,7 @@
         getState: () => ({
             heaterK: state.Ts, setK: state.Tset, heaterOn: state.heaterOn, simTime: state.simTime, speed: state.speed,
             heaterEmitW: flux.srcEmit, heaterAbsorbW: flux.srcAbs, heaterPowerW: flux.heater,
-            packets: packetCount, flashes: flashCount, absorbedPackets: hitCounts.slice(), canvas: { cssW, cssH, dpr, pixelW: canvas.width, pixelH: canvas.height },
+            packets: packetCount, packetScale, flashes: flashCount, absorbedPackets: hitCounts.slice(), canvas: { cssW, cssH, dpr, pixelW: canvas.width, pixelH: canvas.height },
             show: { labels: state.showLabels, energy: state.showEnergy, walls: state.showWalls, view: state.view },
             dragging: drag ? drag.i : -1, hover: hoverBlock, hitRects: hitRects.map((rs) => rs.map((r) => ({ ...r }))),
             blocks: state.blocks.map((b) => ({
