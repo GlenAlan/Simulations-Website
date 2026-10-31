@@ -6,21 +6,42 @@
  * (Lorentz transformations). It is not what a camera would photograph: the time light takes to reach
  * an eye, and the distortions that causes, are left out.
  *
- * Units: c = 1 in the light-clock scenario (light-seconds and seconds) and the twin paradox (light-years
- * and years); kilometres and microseconds for the muons. Within a scenario both frames use the same
- * screen scale and playback rate, so light moves at the same speed on screen in both, and the moving
- * object at v in the same units.
+ * Units: c = 1 (light-seconds and seconds; light-years and years in the twin paradox); kilometres and
+ * microseconds for the muons. Within a scenario both frames use the same screen scale and playback rate
+ * (except the muons, below), so light moves at the same speed on screen in both, and the moving object at
+ * v in the same units.
  *
- * Scenarios
+ * Scenarios, in teaching order
+ * - Light speed: a ship passes a station and, as the ship's nose passes the station's front end, each fires a
+ *   flash of light and a probe straight ahead. Both flashes move at c in either frame, so they stay level;
+ *   the probes leave their craft at the same speed u, and the moving craft's probe is measured at
+ *   (u + v)/(1 + uv/c²), never more than c. Strobe marks every 0.25 s show the speeds; "Newton's
+ *   prediction" adds ghosts where the moving craft's flash and probe would be if speeds simply added.
+ * - Lightning (Einstein's train): lightning strikes both ends of the ship just as its middle passes the
+ *   station's middle, at the same moment measured from the station. Each flash runs along the track at c,
+ *   both ways from where its strike happened (measured in the shown frame), to a detector in the middle of
+ *   each craft, whose two lamps light as the flashes from behind and ahead arrive. The station's detector
+ *   gets both at once and the ship's gets the front flash first, in both frames. Measured from the ship the
+ *   front strike happened γvΔx/c² = vL0/c² earlier (Δx = L0/γ, their separation measured from the station),
+ *   so its detector, half way between the strikes, sees them in the order they happened.
  * - Light clocks: a ship and a station with the same rest length, each carrying a light clock (a pulse of
  *   light bouncing between two mirrors 0.5 light-seconds apart, so it ticks once a second). The craft at
  *   rest stays in the middle; the moving one wraps round the edges (as if the track were lined with
  *   identical, synchronised copies of the craft at rest, one per screen width). Both clocks read zero as
  *   the two craft pass each other.
- * - Twin paradox: a return trip to Proxima Centauri (4.24 ly). Measured from the ship (its outbound frame,
- *   then its inbound frame), Earth's clock jumps ahead at the turnaround.
  * - Muons: a batch of muons made 15 km up falls to the ground. Each decays when its own clock reaches a
  *   random lifetime (mean 2.2 µs), so the same muons survive whichever frame the fall is measured from.
+ *   Measured from the muons the atmosphere is only 15/γ km thick, so that view is zoomed in γ times (after a
+ *   moment at Earth's scale) and played γ times slower: the fall takes as long on screen in both frames, the
+ *   muons decay at the same moments, and anything moving at a given speed crosses the screen equally fast.
+ * - Ship in a hangar (the pole-and-barn paradox): at rest the ship is longer than the hangar. Measured from
+ *   the hangar both doors shut at the same moment, for a short while, with the contracted ship inside.
+ *   Measured from the ship the hangar is even shorter, but each door shuts when the hangar's own clock beside
+ *   it reads zero, and those clocks are not synchronised measured from the ship: the exit door shuts and
+ *   reopens ahead of the nose, then the entrance shuts and reopens behind the tail. The run pauses at each
+ *   door's shut moment.
+ * - Twin paradox: a return trip to Proxima Centauri (4.24 ly). Measured from the ship (its outbound frame,
+ *   then its inbound frame), Earth's clock jumps ahead at the turnaround.
  */
 (function () {
     'use strict';
@@ -36,8 +57,9 @@
     const ui = {
         speed: byId('speedSlider'), speedVal: byId('speedVal'),
         scenario: byId('scenarioSelect'), scenarioHint: byId('scenarioHint'),
-        showGroup: byId('showGroup'),
-        paths: byId('pathsToggle'), lengths: byId('lengthsToggle'), sync: byId('syncToggle'),
+        showGroup: byId('showGroup'), probeGroup: byId('probeGroup'),
+        probe: byId('probeSlider'), probeVal: byId('probeVal'),
+        toggles: ['paths', 'newton', 'lengths', 'sync'].map((key) => ({ key, input: byId(`${key}Toggle`), label: byId(`${key}Label`) })),
         velocity: byId('velocitySlider'), velocityVal: byId('velocityVal'),
         frameBtns: Array.from(document.querySelectorAll('.rel-frame-btn')),
         reset: byId('resetSimulationBtn'), fps: byId('fpsDisplay'),
@@ -55,15 +77,55 @@
     const FONT = '"Source Sans Pro", Helvetica, Arial, sans-serif';
     const C_KM_US = 0.299792458;     // speed of light in km per microsecond
 
+    // Light speed (light-seconds and seconds): the ship and the station drawn at 3/4 of their light-clock size
+    const LT = {
+        SIZE: 0.75,       // drawing scale (the light-clock craft are 1.6 ls long)
+        L0: 1.2,          // rest length of each craft (ls); each fires from its front end, L0/2 ahead of its middle
+        HEIGHT: 0.72,     // craft height (ls)
+        DOT: 0.25,        // s between strobe marks
+        PROBE_Y: 0.09,    // the probes fly this far under the flashes (ls), so their marks stay apart
+        LEAD: 1.2,        // s of the shown frame before the flashes, while the moving craft comes up
+        HOLD: 1.6,        // s (real) holding the last picture before starting again
+        MIN_SPAN: 5.5     // narrowest scene (ls)
+    };
+
+    // Half the height of the ship and of the station, fins and solar panels included (ls, at full size)
+    const LT_HALF = 0.47;
+
+    // Lightning (light-seconds and seconds): the light-clock ship and station, without their clocks
+    const LN = {
+        SIZE: 0.75,       // drawing scale (the light-clock craft are 1.6 ls long)
+        L0: 1.2,          // rest length of each craft (ls); the strikes hit the ship's nose and tail
+        GAP: 0.3,         // space between the ship's lane and the station's (ls)
+        LEAD: 1.0,        // s before the first strike
+        AFTER: 0.9,       // s after the last flash reaches a detector
+        HOLD: 1.8,        // s (real) holding the last picture before starting again
+        RATE: 0.5,        // s of the shown frame per second at 1x
+        MIN_SPAN: 4.2     // narrowest scene (ls)
+    };
+
     // Light clocks (light-seconds and seconds)
     const LC = {
         L0: 1.6,          // rest length of the ship and of the station (ls)
         MIRROR: 0.5,      // mirror separation (ls): half a second up, half a second down
         TICK: 1,          // s per tick
         TRAIL: 2,         // seconds of light path left behind each pulse
+        DOT: 0.1,         // seconds between the marks along a light path
         END: 0.62,        // end clocks' distance from the middle, in the craft's own frame (ls)
         HEIGHT: 0.94,     // craft height including fins and solar panels (ls)
         MIN_SPAN: 3.5     // narrowest scene (ls), so a craft at rest never fills more than ~45 % of the width
+    };
+
+    // Ship in a hangar (light-seconds and seconds): the light-clock ship, without its clock
+    const HG = {
+        SHIP: 1.6,        // the ship's rest length (ls)
+        L0: 1.2,          // the hangar's rest length, door to door (ls)
+        IN: 0.52,         // half the hangar's inner height (ls): room for the ship's fins
+        WALL: 0.07,       // roof and floor thickness (ls)
+        SHUT: 0.55,       // the doors are shut for this fraction of the time the contracted ship spends wholly inside
+        HOLD: 1.3,        // s (real) paused at each door's shut moment
+        END_HOLD: 0.8,    // s (real) before starting again
+        MIN_SPAN: 4.6     // narrowest scene (ls)
     };
 
     // Twin paradox (light-years and years)
@@ -79,22 +141,53 @@
         H: 15,            // height where cosmic rays make the muons (km)
         LIFE: 2.197,      // mean lifetime at rest (µs)
         N: 40,            // muons per batch
-        RATE: 6,          // µs of the shown frame per second at 1x
+        RATE: 6,          // µs of Earth's time per second at 1x (and µs of the muons' time / γ, see rate())
+        INTRO: 1.8,       // s (real) before the fall, measured from the muons: the squashed atmosphere, then a zoom
+        INTRO_EARTH: 0.6, // s (real) before the fall, measured from Earth
+        EMPTY_FAST: 8,    // the rest of the fall plays this much faster once every muon has decayed...
+        EMPTY_MAX: 4,     // ...unless that would still take longer than this (s, real): then the run ends there
         END_PAUSE: 5.5    // s (real)
     };
 
+    // Each scenario's two frames, starting speed, which "Show" toggles apply and the hint in the settings panel.
     const SCENARIOS = {
+        light: {
+            home: { name: 'Station', the: 'the station', icon: 'fa-satellite' },
+            away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
+            v: 0.5,
+            show: ['paths', 'newton'], probe: true,
+            hint: 'As the ship passes the station, each fires a flash of light and a probe straight ahead. The probes leave at the speed set here.',
+            aria: 'A spaceship passes a space station; each fires a flash of light and a probe forward, and the two flashes stay level'
+        },
+        lightning: {
+            home: { name: 'Station', the: 'the station', icon: 'fa-satellite' },
+            away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
+            v: 0.6,
+            show: [],
+            hint: 'Lightning strikes both ends of the ship as its middle passes the station\u2019s middle. Lamps in the middle of each craft light as the flashes arrive.',
+            aria: 'Lightning strikes both ends of a spaceship as it passes a space station; light spreads out from each strike to a detector in the middle of each craft'
+        },
         clocks: {
             home: { name: 'Station', the: 'the station', icon: 'fa-satellite' },
             away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
             v: 0.8,
+            show: ['paths', 'lengths', 'sync'],
             hint: 'A ship and a station of the same length each carry a light clock that ticks once a second.',
             aria: 'A spaceship carrying a light clock flies past a space station that carries an identical light clock'
+        },
+        hangar: {
+            home: { name: 'Hangar', the: 'the hangar', icon: 'fa-warehouse' },
+            away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
+            v: 0.8,
+            show: ['sync'],
+            hint: 'At rest the ship is 1.6 ls long and the hangar 1.2 ls. The hangar\u2019s doors both shut for a moment as the ship flies through.',
+            aria: 'A spaceship longer than a hangar flies through it while the hangar doors shut for a moment'
         },
         twins: {
             home: { name: 'Earth', the: 'Earth', icon: 'fa-globe-europe' },
             away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
             v: 0.8,
+            show: [],
             hint: 'One twin flies to Proxima Centauri, 4.24 light-years away, and straight back. Who is older when they meet again?',
             aria: 'A spaceship flies from Earth to the star Proxima Centauri and back, with the ages of the twin at home and the travelling twin'
         },
@@ -102,6 +195,7 @@
             home: { name: 'Earth', the: 'Earth', icon: 'fa-globe-europe' },
             away: { name: 'Muons', the: 'the muons', icon: 'fa-atom' },
             v: 0.995,
+            show: [],
             hint: 'Cosmic rays make muons 15 km up. They live about 2.2 µs, too short to cross 15 km even at light speed. Yet many reach the ground.',
             aria: 'A row of muons made high in the atmosphere falls towards the ground, decaying one by one'
         }
@@ -125,16 +219,27 @@
     const fmtGamma = (g) => (g < 9.9995 ? g.toFixed(3) : g.toFixed(2));
     const fmtNum = (x) => (Math.abs(x) < 999.95 ? x.toFixed(1) : x.toFixed(0));
     const fmtTimes = (g) => (g < 9.995 ? g.toFixed(2) : g.toFixed(1));
+    // A time that can be before zero, to two decimals, with a proper minus sign.
+    const fmtSigned = (x) => (x < -0.005 ? '\u2212' : '') + Math.abs(x).toFixed(2);
+    // A velocity in units of c, with a minus sign when it points backwards.
+    // Above 0.9 it is cut (not rounded) to three decimals, so anything slower than light never shows as 1.000.
+    const fmtU = (u) => {
+        const a = Math.abs(u);
+        const text = a > 0.9 && a < 1 ? (Math.floor(a * 1000 + 1e-9) / 1000).toFixed(3) : fmtV(a);
+        return (u < -0.0005 ? '\u2212' : '') + text;
+    };
 
     // ------------------------------------------------------------------
     // Settings and state
     // ------------------------------------------------------------------
     const S = {
-        scenario: 'clocks',
+        scenario: 'light',
         frame: 'home',        // 'home': the station / Earth is at rest; 'away': the ship / muons are at rest
-        v: 0.8,               // speed of the ship (or muons) relative to home, as a fraction of c
+        v: 0.5,               // speed of the ship (or muons) relative to home, as a fraction of c
         speed: 1,             // playback speed
+        probeU: 0.5,          // light speed: each probe's speed relative to the craft that fires it
         showPaths: true,
+        showNewton: false,
         showLengths: false,
         showSync: false
     };
@@ -142,11 +247,19 @@
     let viewW = 0, viewH = 0, dpr = 1;
     let fontPx = 13;
     let realNow = 0;          // seconds, for flashes and pauses
-    let caption = null;       // { text, until } a short message that replaces the frame caption
-    let callout = null;       // { title, text } a boxed message (twin turnaround, results)
     const hitRects = [];      // craft that can be tapped to ride along: { x0, y0, x1, y1, frame }
     let hoverFrame = null;
     let testPaused = false;   // set by the test API: the loop draws but doesn't advance
+
+    // Light speed
+    const lt = {
+        t: -LT.LEAD,          // time measured in the shown frame (s); the flashes are fired at t = 0
+        hold: 0,              // s (real) left holding the last picture
+        flashAt: -9           // real time the flashes were fired (for the burst at the muzzles)
+    };
+
+    // Lightning
+    const ln = { t: 0, hold: 0, struck: [-9, -9] };   // frame time (s); real time of each strike (rear, front)
 
     // Light clocks
     const lc = {
@@ -159,6 +272,9 @@
         flashHome: -9, flashAway: -9
     };
 
+    // Ship in a hangar
+    const hg = { t: 0, hold: 0, done: false, slam: [-9, -9] };   // frame time (s); real time each door last moved
+
     // Twin paradox
     const tw = { t: 0, stage: 'out', pause: 0, pauseLen: 1 };
 
@@ -168,7 +284,7 @@
         life: new Float64Array(MU.N),           // each muon's lifetime on its own clock (µs)
         x: new Float64Array(MU.N),              // across the sky (0-1)
         decayedAt: new Float64Array(MU.N),      // real time of the decay flash, or -1
-        stage: 'fall', pause: 0
+        stage: 'intro', pause: 0                // 'intro' (before the fall), 'fall' or 'done'
     };
 
     // Background stars (fixed to the home frame), as fractions of the canvas
@@ -201,7 +317,7 @@
             chamber: '#0a0c10', chamberEdge: 'rgba(255,255,255,0.2)', mirror: '#e9eef4',
             photon: '#fff4c4', lightRGB: '255,214,92',
             earthOcean: '#3d86c6', ground: '#22332f', groundLine: '#7bd0c1', skyRGB: '126,202,246',
-            muon: '#c9a5e3', calloutBg: 'rgba(30,32,38,0.94)',
+            muon: '#c9a5e3',
             pinkText: '#f2849e', blueText: '#7ecaf6', purpleText: '#c9a5e3'
         } : {
             bg: '#f4f6f8', text: '#2b2b2b', muted: 'rgba(43,43,43,0.62)', faint: 'rgba(43,43,43,0.2)',
@@ -211,12 +327,126 @@
             chamber: '#1a1f27', chamberEdge: 'rgba(0,0,0,0.25)', mirror: '#e9eef4',
             photon: '#fff4c4', lightRGB: '214,140,0',
             earthOcean: '#3d86c6', ground: '#cfe3d8', groundLine: '#3f9e8f', skyRGB: '90,160,215',
-            muon: '#8a5cb0', calloutBg: 'rgba(255,255,255,0.95)',
+            muon: '#8a5cb0',
             pinkText: '#d4587a', blueText: '#2f84bb', purpleText: '#8a5cb0'
         });
-        // The light inside the dark chambers is always the bright yellow.
+        // The light inside the dark chambers is always the bright yellow; detector panels are the windows' colour.
         pal.chamberLightRGB = '255,214,92';
+        pal.glass = '#2a3140';
         if (charts) recolorCharts();
+    }
+
+    // ------------------------------------------------------------------
+    // Light speed: physics
+    // ------------------------------------------------------------------
+    // Relativistic velocity addition: something moving at u relative to a craft that moves at V is measured at w.
+    const addVelocities = (u, V) => (u + V) / (1 + u * V);
+
+    // The two craft, the flashes and the probes, measured in the shown frame. The craft at rest has its front end
+    // at x = 0, and the moving craft's front passes it at t = 0, when both fire. Positions are of each craft's
+    // middle (ls); u is a velocity (c).
+    function lightState() {
+        const g = gammaOf(S.v);
+        const hm = homeMoves();
+        const V = hm ? -S.v : S.v;                  // velocity of the moving craft
+        const t = lt.t;
+        const rest = { x: -LT.L0 / 2, u: 0, length: LT.L0, moving: false };
+        const move = { x: V * t - LT.L0 / (2 * g), u: V, length: LT.L0 / g, moving: true };
+        const probeRest = S.probeU, probeMove = addVelocities(S.probeU, V);
+        return {
+            t, V, g,
+            home: hm ? move : rest, away: hm ? rest : move,
+            probe: { home: hm ? probeMove : probeRest, away: hm ? probeRest : probeMove },
+            // Where the moving craft's flash and probe would be if speeds simply added (Newton)
+            newton: { light: 1 + V, probe: S.probeU + V },
+            moving: hm ? 'home' : 'away'
+        };
+    }
+
+    // Frame time at which the flashes are about to leave the canvas: the picture is held there, still showing them.
+    function lightEnd() {
+        if (viewW === 0) return 4;
+        const lay = lightLayout();
+        return (viewW - lay.x0 - Math.max(18, lay.f * 1.6)) / lay.k;
+    }
+
+    function resetLight() {
+        lt.t = -LT.LEAD;
+        lt.hold = 0;
+    }
+
+    function stepLight(dt, dtReal) {
+        if (lt.hold > 0) {
+            lt.hold -= dtReal;
+            if (lt.hold <= 0) {
+                resetLight();
+                resetChartData();
+            }
+            return;
+        }
+        const before = lt.t;
+        lt.t += dt;
+        if (before < 0 && lt.t >= 0) lt.flashAt = realNow;
+        const end = lightEnd();
+        if (lt.t >= end) {
+            lt.t = end;
+            lt.hold = LT.HOLD;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Lightning: physics
+    // ------------------------------------------------------------------
+    // The two strikes (rear, front) and the craft, measured in the shown frame. Both middles are at x = 0 at
+    // t = 0, when (measured from the station) lightning hits both ends of the ship. Each strike leaves a mark on
+    // the ship's end and on the station beside it; `own` is where each mark is along its craft, in the craft's own
+    // frame. Each detector (in a craft's middle) gets each flash when the spreading light reaches it.
+    function lightningState() {
+        const v = S.v, g = gammaOf(v);
+        const hm = homeMoves();
+        const L = LN.L0;
+        // Strikes: measured from the station at x = ∓L/(2γ), t = 0; from the ship at x = ∓L/2, t = ±vL/2.
+        const strikes = hm ? [{ x: -L / 2, t: v * L / 2 }, { x: L / 2, t: -v * L / 2 }]
+            : [{ x: -L / (2 * g), t: 0 }, { x: L / (2 * g), t: 0 }];
+        const craft = (u) => ({ u, moving: u !== 0, x0: 0 });
+        const home = craft(hm ? -v : 0), away = craft(hm ? 0 : v);
+        const own = { home: [-L / (2 * g), L / (2 * g)], away: [-L / 2, L / 2] };
+        // When the light from strike s reaches the middle of a craft moving at u (from x = 0 at t = 0)
+        const arrival = (s, u) => {
+            const side = Math.sign(u * s.t - s.x) || 1;     // where the detector is, relative to the strike
+            return side > 0 ? (-s.x + s.t) / (1 - u) : (s.x + s.t) / (1 + u);
+        };
+        const det = {
+            home: strikes.map((s) => arrival(s, home.u)),
+            away: strikes.map((s) => arrival(s, away.u))
+        };
+        const first = Math.min(strikes[0].t, strikes[1].t);
+        const last = Math.max(...det.home, ...det.away);
+        return { v, g, t: ln.t, strikes, home, away, own, det, start: first - LN.LEAD, end: last + LN.AFTER };
+    }
+
+    function resetLightning() {
+        ln.t = lightningState().start;
+        ln.hold = 0;
+        ln.struck = [-9, -9];
+    }
+
+    function stepLightning(dt, dtReal) {
+        if (ln.hold > 0) {
+            ln.hold -= dtReal;
+            if (ln.hold <= 0) {
+                resetLightning();
+                resetChartData();
+            }
+            return;
+        }
+        const st = lightningState();
+        const before = ln.t;
+        ln.t = Math.min(st.end, ln.t + dt);
+        st.strikes.forEach((s, i) => {
+            if (before < s.t && ln.t >= s.t) ln.struck[i] = realNow;
+        });
+        if (ln.t >= st.end) ln.hold = LN.HOLD;
     }
 
     // ------------------------------------------------------------------
@@ -251,12 +481,7 @@
         lc.trailAway.length = 0;
         lc.tickHome = 0;
         lc.tickAway = 0;
-        const first = S.showSync ? 'The middle clocks read zero as the ship passes the station' : 'Both clocks read zero as the ship passes the station';
-        showCaption(first, 4, firstRun ? ['Each tick is one trip of the light down to the lower mirror and back', 5,
-            ['The moving clock\'s light has further to go at the same speed, so it ticks slower', 6]] : undefined);
-        firstRun = false;
     }
-    let firstRun = true;
 
     // Period (ls) after which the moving craft comes round again: the screen width plus just enough room for
     // the craft's back (and labels) to leave one side before its front (and velocity arrow) appears at the other.
@@ -317,6 +542,75 @@
     }
 
     // ------------------------------------------------------------------
+    // Ship in a hangar: physics
+    // ------------------------------------------------------------------
+    // The hangar is centred on x = 0 and the ship's middle passes its middle at t = 0. Each door (own position
+    // ∓L0/2 along the hangar) is shut while the hangar's clock beside it reads between -d and +d; those clocks
+    // are synchronised in the hangar's frame, so measured from the hangar both doors shut at once. d is a fraction
+    // of the time the contracted ship spends wholly inside; if it doesn't fit, the doors stay open.
+    function hangarState() {
+        const v = Math.max(S.v, 1e-6), g = gammaOf(S.v);
+        const hm = homeMoves();
+        const room = (HG.L0 - HG.SHIP / g) / (2 * v);      // hangar time the ship is wholly inside, either side of 0
+        const d = room > 0 ? HG.SHUT * room : 0;
+        const t = hg.t;
+        const hangar = { x: hm ? -v * t : 0, u: hm ? -v : 0, length: HG.L0 / (hm ? g : 1), clock: hm ? t / g : t };
+        const ship = { x: hm ? 0 : v * t, u: hm ? 0 : v, length: HG.SHIP / (hm ? 1 : g) };
+        // Each door's clock now, and whether it is shut ([entrance, exit])
+        const doors = [-1, 1].map((side) => {
+            const own = side * HG.L0 / 2;
+            const clock = hangar.clock - hangar.u * own;
+            return { own, clock, x: hangar.x + own * (hm ? 1 / g : 1), shut: d > 0 && Math.abs(clock) < d };
+        });
+        // Frame times at which each door is in the middle of its shut spell (the clock beside it reads zero)
+        const pauses = d > 0 ? (hm ? [-g * v * HG.L0 / 2, g * v * HG.L0 / 2] : [0]) : [];
+        // From the ship's nose at the left edge (or the hangar coming in from the right) until it has gone
+        const half = (viewW > 0 ? hangarLayout().P : 5) / 2;
+        const reach = half + (hm ? hangar.length : ship.length) / 2 + 0.1;
+        return { v, g, t, d, hangar, ship, doors, pauses, both: doors[0].shut && doors[1].shut,
+            shutFor: hm || d === 0 ? 0 : 2 * d, start: -reach / v, end: reach / v };
+    }
+
+    // Below 0.01c the ship would take far too long to arrive: it is shown at rest across the hangar instead
+    // (too long to fit), until the speed goes up.
+    function resetHangar() {
+        hg.t = S.v < 0.01 ? 0 : hangarState().start;
+        hg.hold = 0;
+        hg.done = false;
+    }
+
+    function stepHangar(dt, dtReal) {
+        if (S.v < 0.01) return;
+        if (hg.hold > 0) {
+            hg.hold -= dtReal;
+            if (hg.hold <= 0 && hg.done) {
+                resetHangar();
+                resetChartData();
+            }
+            return;
+        }
+        const st = hangarState();
+        const before = hg.t;
+        hg.t = Math.min(st.end, hg.t + dt);
+        // Pause at each door's shut moment
+        for (const tp of st.pauses) {
+            if (before < tp && hg.t >= tp) {
+                hg.t = tp;
+                hg.hold = HG.HOLD;
+                break;
+            }
+        }
+        const after = hangarState();
+        after.doors.forEach((door, i) => {
+            if (door.shut !== st.doors[i].shut) hg.slam[i] = realNow;
+        });
+        if (hg.t >= st.end) {
+            hg.done = true;
+            hg.hold = HG.END_HOLD;
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Twin paradox: physics (everything follows from the time measured in the shown frame)
     // ------------------------------------------------------------------
     function twinTimes() {
@@ -358,9 +652,6 @@
         tw.t = 0;
         tw.stage = 'out';
         tw.pause = 0;
-        callout = null;
-        if (S.v < 0.01) showCaption('Choose a speed for the trip', 4);
-        else showCaption(homeMoves() ? 'The ship stays put: Earth and the star move instead' : 'The ship sets off from Earth', 3.5);
     }
 
     function stepTwins(dt, dtReal) {
@@ -369,7 +660,6 @@
             if (tw.pause <= 0) {
                 if (tw.stage === 'turn') {
                     tw.stage = 'back';
-                    callout = null;
                 } else if (tw.stage === 'done') {
                     resetTwins();
                     resetChartData();
@@ -378,7 +668,7 @@
             return;
         }
         if (S.v < 0.01 || tw.stage === 'done') return;
-        const { g, t1, t2, tau1 } = twinTimes();
+        const { t1, t2, tau1 } = twinTimes();
         const ship = homeMoves();
         const mid = ship ? tau1 : t1;
         const end = ship ? 2 * tau1 : t2;
@@ -389,25 +679,14 @@
                 tw.t = mid;
                 tw.stage = 'turn';
                 tw.pause = tw.pauseLen = TW.TURN_PAUSE;
-                const jump = t2 - 2 * tau1 / g;
-                callout = {
-                    title: 'The ship turns round',
-                    text: `Its idea of "now" on Earth jumps ${fmtNum(jump)} years ahead`
-                };
                 return;
             }
             tw.stage = 'back';
-            showCaption('Turning round at Proxima Centauri', 2.5);
         }
         if (tw.t >= end - 1e-12) {
             tw.t = end;
             tw.stage = 'done';
             tw.pause = TW.END_PAUSE;
-            const diff = t2 - 2 * tau1;
-            callout = {
-                title: `Home again: the traveller is ${fmtNum(diff)} years younger`,
-                text: `Earth twin aged ${fmtNum(t2)} years, the traveller ${fmtNum(2 * tau1)}`
-            };
         }
     }
 
@@ -443,85 +722,57 @@
     function resetMuons(fresh) {
         if (fresh) newMuons();
         mu.t = 0;
-        mu.stage = 'fall';
-        mu.pause = 0;
+        mu.stage = 'intro';
+        mu.pause = homeMoves() ? MU.INTRO : MU.INTRO_EARTH;
         mu.decayedAt.fill(-1);
-        callout = null;
+    }
+
+    // Screen zoom of the muons' view: 1 (Earth's scale) for a moment at the start, easing up to γ, at which the
+    // squashed atmosphere fills the same height as the full 15 km does measured from Earth.
+    function muonZoom() {
+        if (!homeMoves()) return 1;
         const g = gammaOf(S.v);
-        if (homeMoves()) showCaption('The muons are at rest; the ground rushes up at them', 4);
-        else showCaption('A cosmic ray makes a burst of muons 15 km up', 3, [`Measured from Earth, their clocks tick ${fmtTimes(g)} times slower`, 6]);
+        if (mu.stage !== 'intro') return g;
+        const p = clamp((1 - mu.pause / MU.INTRO - 0.3) / 0.55, 0, 1);
+        return 1 + (g - 1) * (1 - Math.cos(Math.PI * p)) / 2;
     }
 
     function stepMuons(dt, dtReal) {
         if (mu.pause > 0) {
             mu.pause -= dtReal;
-            if (mu.pause <= 0 && mu.stage === 'done') {
-                resetMuons(true);
-                resetChartData();
+            if (mu.pause <= 0) {
+                if (mu.stage === 'intro') {
+                    mu.stage = 'fall';
+                } else if (mu.stage === 'done') {
+                    resetMuons(true);
+                    resetChartData();
+                }
             }
             return;
         }
         if (mu.stage === 'done') return;
-        const { tLand, tauLand, g } = muonTimes();
+        const { tLand, tauLand } = muonTimes();
         const tauBefore = muonClock();
         const end = homeMoves() ? tauLand : tLand;
-        mu.t = Math.min(end, mu.t + dt);
+        // Once every muon has decayed the rest of the fall plays faster, so the ground still arrives
+        mu.t = Math.min(end, mu.t + (muonsLeft() === 0 ? MU.EMPTY_FAST : 1) * dt);
         const tau = muonClock();
         for (let i = 0; i < MU.N; i++) {
             if (mu.life[i] > tauBefore && mu.life[i] <= tau) mu.decayedAt[i] = realNow;
         }
-        if (mu.t >= end - 1e-12 || muonsLeft() === 0) {
+        // At low speeds even the faster finish would take too long: stop once they have all gone
+        const slowFinish = muonsLeft() === 0 && dtReal > 0 && (end - mu.t) * dtReal / (MU.EMPTY_FAST * dt) > MU.EMPTY_MAX;
+        if (mu.t >= end - 1e-12 || slowFinish) {
             mu.stage = 'done';
             mu.pause = MU.END_PAUSE;
-            const left = muonsLeft();
-            const p0 = Math.exp(-tLand / MU.LIFE);   // chance of surviving without time dilation
-            const landed = mu.t >= end - 1e-12;
-            if (!landed) {
-                callout = { title: 'All the muons decayed before reaching the ground', text: ['Try a speed closer to c'] };
-            } else if (homeMoves()) {
-                callout = {
-                    title: `${left} of ${MU.N} muons reached the ground`,
-                    text: [`Measured from the muons the atmosphere is only ${(MU.H / g).toFixed(2)} km thick,`,
-                        `so the ground reached them after just ${fmtNum(tauLand)} µs`]
-                };
-            } else {
-                callout = {
-                    title: `${left} of ${MU.N} muons reached the ground`,
-                    text: [`Their clocks ran ${fmtTimes(g)} times slower: only ${fmtNum(tauLand)} µs passed for them`,
-                        `Without time dilation only about 1 in ${fmtBig(1 / p0)} would make it`]
-                };
-            }
         }
-    }
-
-    function fmtBig(x) {
-        if (!isFinite(x) || x > 1e30) return 'a vast number';
-        if (x < 1000) return String(Math.round(x));
-        if (x < 1e6) return `${Math.round(x / 1000)} thousand`;
-        if (x < 1e9) return `${Math.round(x / 1e6)} million`;
-        if (x < 1e12) return `${Math.round(x / 1e9)} billion`;
-        const e = Math.floor(Math.log10(x));
-        return `${(x / Math.pow(10, e)).toFixed(0)} × 10^${e}`;
     }
 
     // ------------------------------------------------------------------
     // Shared state changes
     // ------------------------------------------------------------------
-    // performance.now() shares its origin with the animation frame timestamps.
-    const nowS = () => performance.now() / 1000;
-
-    // A short message in place of the frame caption; `then` is an optional [text, seconds, then] to show after it.
-    function showCaption(text, seconds, then) {
-        const t = nowS();
-        caption = { text, until: t + seconds, from: t, then };
-    }
-
     function resetScenario(freshMuons) {
-        callout = null;
-        caption = null;
-        if (S.scenario === 'clocks') resetClocks();
-        else if (S.scenario === 'twins') resetTwins();
-        else resetMuons(freshMuons);
+        SCENE[S.scenario].reset(freshMuons);
         resetChartData();
         updateReadouts(true);
     }
@@ -541,10 +792,11 @@
         S.v = v;
         if (ui.velocity && !fromSlider) ui.velocity.value = String(stepFromSpeed(v));
         syncVelocityUI();
-        // A trip or a fall is planned at one speed: changing it starts again (with the same muons).
-        if (S.scenario === 'twins') resetTwins();
-        else if (S.scenario === 'muons') resetMuons(false);
-        if (S.scenario !== 'clocks') resetChartData();
+        // A trip, a fall or a race is planned at one speed: changing it starts again (with the same muons).
+        if (S.scenario !== 'clocks') {
+            SCENE[S.scenario].reset(false);
+            resetChartData();
+        }
         updateReadouts(true);
         updateGammaChart();
     }
@@ -556,7 +808,14 @@
         const sc = SCENARIOS[name];
         if (ui.scenarioHint) ui.scenarioHint.textContent = sc.hint;
         canvas.setAttribute('aria-label', sc.aria);
-        if (ui.showGroup) ui.showGroup.hidden = name !== 'clocks';
+        // Only the "Show" toggles (and the probe speed) that apply to this scenario
+        ui.toggles.forEach((t) => {
+            const on = sc.show.includes(t.key);
+            if (t.input) t.input.hidden = !on;
+            if (t.label) t.label.hidden = !on;
+        });
+        if (ui.showGroup) ui.showGroup.hidden = sc.show.length === 0;
+        if (ui.probeGroup) ui.probeGroup.hidden = !sc.probe;
         ui.frameBtns.forEach((btn) => {
             const side = sc[btn.dataset.frame];
             const icon = btn.querySelector('.icon');
@@ -626,6 +885,24 @@
     // Rounded rectangle in local coordinates; the corner radius is in px.
     function localRect(x0, y0, x1, y1, rPx) {
         roundRectPath(tx(x0), ty(y0), (x1 - x0) * tkx, (y1 - y0) * tky, rPx);
+    }
+    // The same with the corner radius in local units, so the corners squeeze along with the drawing.
+    function localRectScaled(x0, y0, x1, y1, r) {
+        const a = tx(x0), b = tx(x1);
+        const left = Math.min(a, b), w = Math.abs(b - a);
+        const top = ty(y0), h = (y1 - y0) * tky;
+        const rx = Math.min(r * Math.abs(tkx), w / 2), ry = Math.min(r * tky, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(left + rx, top);
+        ctx.lineTo(left + w - rx, top);
+        ctx.ellipse(left + w - rx, top + ry, rx, ry, 0, -Math.PI / 2, 0);
+        ctx.lineTo(left + w, top + h - ry);
+        ctx.ellipse(left + w - rx, top + h - ry, rx, ry, 0, 0, Math.PI / 2);
+        ctx.lineTo(left + rx, top + h);
+        ctx.ellipse(left + rx, top + h - ry, rx, ry, 0, Math.PI / 2, Math.PI);
+        ctx.lineTo(left, top + ry);
+        ctx.ellipse(left + rx, top + ry, rx, ry, 0, Math.PI, Math.PI * 1.5);
+        ctx.closePath();
     }
 
     // A clock readout: a rounded box with a small clock face (its hand turns once per tick, so you can see
@@ -743,24 +1020,107 @@
         ctx.fillText(`${fmtV(speed)} c`, x0 + dir * len / 2, y - Math.max(4, f * 0.3));
     }
 
-    // Horizontal dimension line from x0 to x1 with its length written under it.
-    function drawDimension(x0, x1, y, text, f, color) {
+    // A craft's name, with its velocity after it when it moves ("Ship → 0.50 c"), centred at cx and kept inside
+    // the canvas. Returns the tag's extent.
+    function drawNameTag(cx, cy, name, color, f, u) {
+        const nameW = textW(name, f, 700);
+        const speed = Math.abs(u) > 0.0005 ? `${fmtV(Math.abs(u))} c` : '';
+        const arrowW = speed ? clamp(f * 2.2, 20, 34) : 0;
+        const speedW = speed ? textW(speed, f * 0.92, 700) : 0;
+        const w = nameW + (speed ? 8 + arrowW + 6 + speedW : 0);
+        const x0 = clamp(cx - w / 2, 6, Math.max(6, viewW - w - 6));
+        setFont(f, 700);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(name, x0, cy + 0.5);
+        if (speed) {
+            const xa = x0 + nameW + 8;
+            const dir = Math.sign(u);
+            drawArrow(dir > 0 ? xa : xa + arrowW, cy, dir > 0 ? xa + arrowW : xa, pal.muted, Math.max(1.5, f * 0.12));
+            setFont(f * 0.92, 700);
+            ctx.fillStyle = pal.muted;
+            ctx.fillText(speed, xa + arrowW + 6, cy + 0.5);
+        }
+        return { x0, x1: x0 + w };
+    }
+
+    // Horizontal dimension line from x0 to x1 with its length written under it, or (inline) in a gap in the
+    // middle of the line when there is room for it.
+    function drawDimension(x0, x1, y, text, f, color, inline) {
         const tick = Math.max(4, f * 0.4);
+        setFont(f * 0.95, 700);
+        const tw = ctx.measureText(text).width;
+        const gap = inline && x1 - x0 > tw + 24 ? tw / 2 + 6 : 0;
+        const xm = (x0 + x1) / 2;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(x0, y);
+        ctx.lineTo(xm - gap, y);
+        ctx.moveTo(xm + gap, y);
         ctx.lineTo(x1, y);
         ctx.moveTo(x0, y - tick);
         ctx.lineTo(x0, y + tick);
         ctx.moveTo(x1, y - tick);
         ctx.lineTo(x1, y + tick);
         ctx.stroke();
-        setFont(f * 0.95, 700);
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
         ctx.fillStyle = color;
-        ctx.fillText(text, (x0 + x1) / 2, y + tick + 2);
+        if (gap) {
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), y + 0.5);
+        } else if (inline) {
+            // Beside the line, on whichever side has room
+            const right = x1 + 6 + tw <= viewW - 4;
+            ctx.textAlign = right ? 'left' : 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, right ? x1 + 6 : x0 - 6, y + 0.5);
+        } else {
+            ctx.textBaseline = 'top';
+            ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), y + tick + 2);
+        }
+    }
+
+    // Scale bar at the bottom left (as on the other simulation pages): a round length, `unit` per `k` px.
+    function niceLength(x) {
+        const e = Math.pow(10, Math.floor(Math.log10(x)));
+        const m = x / e;
+        return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * e;
+    }
+    function drawScaleBar(k, unit, f) {
+        const len = niceLength(clamp(viewW / 9, 60, 140) / k);
+        const px = len * k;
+        const x0 = 12, y0 = viewH - 10;
+        ctx.strokeStyle = pal.muted;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0 - 5);
+        ctx.lineTo(x0, y0);
+        ctx.lineTo(x0 + px, y0);
+        ctx.lineTo(x0 + px, y0 - 5);
+        ctx.stroke();
+        setFont(f * 0.88, 400);
+        ctx.fillStyle = pal.muted;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`${len} ${unit}`, x0 + px + 6, y0 + 2);
+    }
+
+    // A small italic "c" beside a pulse of light: its speed, the same in every frame. Inside a clock bay (dark
+    // in both themes) it is the bright yellow with a dark halo; on the open canvas it follows the theme.
+    function drawLightTag(x, y, f, inBay) {
+        const onDark = inBay || dark;
+        ctx.font = `italic 700 ${Math.round(f * 1.1)}px ${FONT}`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = onDark ? 'rgba(13,16,22,0.85)' : pal.bg;
+        ctx.strokeText('c', x, y);
+        ctx.fillStyle = `rgb(${onDark ? pal.chamberLightRGB : pal.lightRGB})`;
+        ctx.fillText('c', x, y);
+        ctx.lineJoin = 'miter';
     }
 
     // Background stars, fixed to the home frame (period P scene units). Measured from the away frame they
@@ -785,83 +1145,23 @@
         }
     }
 
-    // Caption at the top left: which frame the measurements are made from (or a short message).
+    // Note at the top left: which frame the measurements are made from.
     let captionsOn = true;    // off only for clean captures (test API)
     function drawCaption(f) {
         if (!captionsOn) return;
-        const sc = SCENARIOS[S.scenario];
-        const side = sc[S.frame];
+        const side = SCENARIOS[S.scenario][S.frame];
+        const fs = f * 0.92;
         const pad = Math.max(8, f * 0.7);
-        const y = pad + f * 0.6;
-        let alphaMsg = 0;
-        if (caption) {
-            const left = caption.until - realNow;
-            if (left <= 0 && caption.then) {
-                const next = caption.then;
-                caption = { text: next[0], from: realNow - 1, until: realNow + next[1], then: next[2] };
-                alphaMsg = 1;
-            } else if (left <= 0) {
-                caption = null;
-            } else {
-                alphaMsg = clamp(Math.min(caption.then ? 1 : left / 0.5, (realNow - caption.from) / 0.3), 0, 1);
-            }
-        }
+        const y = pad + fs * 0.6;
+        const lead = 'Measured from ';
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        if (alphaMsg < 1) {
-            ctx.globalAlpha = 1 - alphaMsg;
-            setFont(f, 400);
-            ctx.fillStyle = pal.muted;
-            const lead = 'Measured from ';
-            ctx.fillText(lead, pad, y);
-            setFont(f, 700);
-            ctx.fillStyle = S.frame === 'home' ? pal.blueText : (S.scenario === 'muons' ? pal.purpleText : pal.pinkText);
-            ctx.fillText(side.the, pad + textW(lead, f, 400), y);
-        }
-        if (alphaMsg > 0) {
-            ctx.globalAlpha = alphaMsg;
-            setFont(f, 400);
-            ctx.fillStyle = pal.text;
-            ctx.fillText(caption.text, pad, y);
-        }
-        ctx.globalAlpha = 1;
-    }
-
-    // A boxed message (twin turnaround, results): a bold title and up to a few lines, centred at (cx, cy).
-    // Text shrinks to fit narrow canvases.
-    function drawCallout(cx, cy, f, box) {
-        box = box || callout;
-        if (!box) return;
-        const lines = Array.isArray(box.text) ? box.text : box.text ? [box.text] : [];
-        const maxW = viewW - 20;
-        let f1 = f * 1.12, f2 = f * 0.95;
-        const pad = Math.max(8, f * 0.9);
-        const wTitle = textW(box.title, f1, 700);
-        const wLines = lines.reduce((m, l) => Math.max(m, textW(l, f2, 400)), 0);
-        const need = Math.max(wTitle, wLines) + 2 * pad;
-        let s = 1;
-        if (need > maxW) {
-            s = maxW / need;
-            f1 *= s;
-            f2 *= s;
-        }
-        const w = Math.max(wTitle, wLines) * s + 2 * pad;
-        const h = pad * 1.6 + f1 * 1.2 + lines.length * f2 * 1.4;
-        const x0 = clamp(cx - w / 2, 10, viewW - 10 - w), y0 = cy - h / 2;
-        roundRectPath(x0, y0, w, h, 8);
-        ctx.fillStyle = pal.calloutBg;
-        ctx.fill();
-        ctx.strokeStyle = pal.pink;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        setFont(f1, 700);
-        ctx.fillStyle = pal.text;
-        ctx.fillText(box.title, x0 + w / 2, y0 + pad * 0.8);
-        setFont(f2, 400);
+        setFont(fs, 400);
         ctx.fillStyle = pal.muted;
-        lines.forEach((l, i) => ctx.fillText(l, x0 + w / 2, y0 + pad * 0.8 + f1 * 1.3 + i * f2 * 1.4));
+        ctx.fillText(lead, pad, y);
+        setFont(fs, 700);
+        ctx.fillStyle = S.frame === 'home' ? pal.blueText : (S.scenario === 'muons' ? pal.purpleText : pal.pinkText);
+        ctx.fillText(side.the, pad + textW(lead, fs, 400), y);
     }
 
     // ------------------------------------------------------------------
@@ -910,7 +1210,7 @@
         ctx.stroke();
         // Cockpit window
         ctx.beginPath();
-        ctx.ellipse(tx(0.52), ty(-0.06), Math.max(0.5, 0.075 * tkx), 0.075 * tky, 0, 0, TAU);
+        ctx.ellipse(tx(0.52), ty(-0.06), Math.max(0.5, 0.075 * Math.abs(tkx)), 0.075 * tky, 0, 0, TAU);
         ctx.fillStyle = '#2a3140';
         ctx.fill();
         ctx.strokeStyle = 'rgba(255,255,255,0.55)';
@@ -918,8 +1218,8 @@
         ctx.stroke();
         if (!withChamber) {
             ctx.beginPath();
-            ctx.ellipse(tx(0.2), ty(-0.06), Math.max(0.5, 0.06 * tkx), 0.06 * tky, 0, 0, TAU);
-            ctx.ellipse(tx(-0.08), ty(-0.06), Math.max(0.5, 0.06 * tkx), 0.06 * tky, 0, 0, TAU);
+            ctx.ellipse(tx(0.2), ty(-0.06), Math.max(0.5, 0.06 * Math.abs(tkx)), 0.06 * tky, 0, 0, TAU);
+            ctx.ellipse(tx(-0.08), ty(-0.06), Math.max(0.5, 0.06 * Math.abs(tkx)), 0.06 * tky, 0, 0, TAU);
             ctx.fillStyle = '#2a3140';
             ctx.fill();
         }
@@ -1014,15 +1314,40 @@
         }
     }
 
-    function drawPhoton(x, y, r) {
+    // A detector, drawn over a craft in place of its windows (lightning): a dark panel with two lamps, lit by
+    // light that has arrived from behind (lit[0]) and from ahead (lit[1]).
+    function drawLamps(lit) {
+        localRectScaled(-0.15, -0.22, 0.15, -0.08, 0.035);
+        ctx.fillStyle = pal.glass;
+        ctx.fill();
+        [[-0.125, -0.012], [0.012, 0.125]].forEach((seg, i) => {
+            if (lit[i]) {
+                const x = tx((seg[0] + seg[1]) / 2), y = ty(-0.15), r = 0.16 * tky;
+                const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+                g.addColorStop(0, `rgba(${pal.chamberLightRGB},0.75)`);
+                g.addColorStop(1, `rgba(${pal.chamberLightRGB},0)`);
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, TAU);
+                ctx.fill();
+            }
+            localRectScaled(seg[0], -0.19, seg[1], -0.11, 0.015);
+            ctx.fillStyle = lit[i] ? pal.photon : 'rgba(255,255,255,0.14)';
+            ctx.fill();
+        });
+    }
+
+    // A pulse of light: a pale core in a yellow glow (amber on the light theme's open canvas).
+    function drawPhoton(x, y, r, inBay) {
+        const rgb = inBay || dark ? pal.chamberLightRGB : pal.lightRGB;
         const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.2);
-        g.addColorStop(0, `rgba(${pal.chamberLightRGB},0.9)`);
-        g.addColorStop(1, `rgba(${pal.chamberLightRGB},0)`);
+        g.addColorStop(0, `rgba(${rgb},0.9)`);
+        g.addColorStop(1, `rgba(${rgb},0)`);
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(x, y, r * 3.2, 0, TAU);
         ctx.fill();
-        ctx.fillStyle = pal.photon;
+        ctx.fillStyle = inBay || dark ? pal.photon : '#ffcf4d';
         ctx.beginPath();
         ctx.arc(x, y, r, 0, TAU);
         ctx.fill();
@@ -1056,6 +1381,346 @@
         ctx.lineJoin = 'miter';
     }
 
+    // Marks along a light path at every LC.DOT seconds of the shown frame's time, like a strobe photograph.
+    // Light covers the same distance between marks in both clocks (straight up and down in the clock at rest,
+    // on a slant in the moving one), so the marks are the same distance apart: the same speed, c.
+    function drawStrobe(trail, xShift, k, cx, cy, Tnow, rgb, r) {
+        if (trail.length < 2) return;
+        const m = LC.MIRROR / 2;
+        const dot = LC.DOT * k >= 6 ? LC.DOT : 2 * LC.DOT;
+        let j = 1;
+        for (let n = Math.ceil(Math.max(trail[0].t, Tnow - LC.TRAIL) / dot - 1e-6); n * dot <= Tnow + 1e-6; n++) {
+            const td = n * dot;
+            while (j < trail.length - 1 && trail[j].t < td) j++;
+            const a = trail[j - 1], b = trail[j];
+            const s = b.t > a.t ? clamp((td - a.t) / (b.t - a.t), 0, 1) : 1;
+            const x = cx + (a.x + s * (b.x - a.x) + xShift) * k;
+            const y = cy + (m - (a.h + s * (b.h - a.h)) * LC.MIRROR) * k;
+            const alpha = 0.95 * (1 - clamp((Tnow - td) / LC.TRAIL, 0, 1));
+            ctx.fillStyle = `rgba(${rgb},${alpha.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Scene: light speed
+    // ------------------------------------------------------------------
+    // Two lanes, the ship above and the station below, each with its name over it. x0 is where the craft fire
+    // (the front end of the craft at rest), placed so the craft at rest just fits to its left.
+    function lightLayout() {
+        const f = fontPx;
+        const capH = Math.round(f * 2.3);
+        const labelH = Math.round(f * 1.9);
+        const tagH = Math.round(f * 1.5);       // a probe's speed, under it
+        const botH = Math.round(f * 1.8);       // scale bar
+        const free = viewH - capH - botH - 2 * (labelH + tagH);
+        const k = Math.max(8, Math.min(viewW / LT.MIN_SPAN, free / (2 * LT.HEIGHT)));
+        const laneH = labelH + LT.HEIGHT * k + tagH;
+        const gap = Math.max(f * 0.4, (viewH - capH - botH - 2 * laneH) / 3);
+        const yShip = capH + gap + labelH + LT.HEIGHT * k / 2;
+        const yStation = yShip + LT.HEIGHT * k / 2 + tagH + gap + labelH + LT.HEIGHT * k / 2;
+        const x0 = Math.round(Math.max(f * 1.2, 10) + LT.L0 * k);
+        return { f, k, labelH, yShip, yStation, x0, P: viewW / k };
+    }
+
+    // A probe: a small dart in its craft's colour, nose forward, squeezed by its own γ.
+    function drawProbe(x, y, k, u, color, dark2) {
+        const len = clamp(0.16 * k, 9, 22), h = len * 0.36;
+        const sx = 1 / gammaOf(Math.min(Math.abs(u), 0.9999));
+        const l = len * sx;
+        ctx.beginPath();
+        ctx.moveTo(x + l / 2, y);
+        ctx.quadraticCurveTo(x + l * 0.2, y - h / 2, x - l / 2, y - h / 2);
+        ctx.lineTo(x - l / 2, y + h / 2);
+        ctx.quadraticCurveTo(x + l * 0.2, y + h / 2, x + l / 2, y);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.fillStyle = dark2;
+        ctx.fillRect(x - l / 2, y - h / 2, Math.max(1, l * 0.18), h);
+    }
+
+    // Small text under a probe (its speed), centred at x and kept inside the canvas.
+    function drawSpeedTag(x, y, text, f, color, dashed) {
+        setFont(f * 0.85, 700);
+        const w = ctx.measureText(text).width;
+        const xc = clamp(x, w / 2 + 4, viewW - w / 2 - 4);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.globalAlpha = dashed ? 0.7 : 1;
+        ctx.fillStyle = color;
+        ctx.fillText(text, xc, y);
+        ctx.globalAlpha = 1;
+    }
+
+    function drawLight() {
+        const lay = lightLayout();
+        const st = lightState();
+        const k = lay.k, f = lay.f, t = st.t;
+        const X = (x) => lay.x0 + x * k;
+        const hm = homeMoves();
+        drawStars(k, lay.P, hm ? st.V * (t + LT.LEAD) : 0, hm ? st.g : 1);
+        const pr = Math.max(2.5, k * 0.02);
+        const dy = clamp(LT.PROBE_Y * k, 7, 22);          // the probes fly just under the flashes
+        const lanes = [
+            { which: 'away', c: st.away, y: lay.yShip, color: pal.pink, text: pal.pinkText, dark2: pal.shipShade },
+            { which: 'home', c: st.home, y: lay.yStation, color: pal.blue, text: pal.blueText, dark2: pal.stationShade }
+        ];
+        lanes.forEach((lane) => {
+            lane.w = st.probe[lane.which];
+            lane.moving = lane.which === st.moving;
+        });
+
+        // Under the craft: the strobe marks every LT.DOT seconds (the flashes' are the same distance apart in
+        // both lanes, the probes' closer together) and Newton's ghosts.
+        if (t > 0) {
+            for (const lane of lanes) {
+                const y = lane.y;
+                if (S.showPaths) {
+                    for (let n = 1; n * LT.DOT <= t + 1e-9; n++) {
+                        const tn = n * LT.DOT;
+                        const xl = X(tn);
+                        if (xl < viewW + 4) {
+                            ctx.fillStyle = `rgba(${pal.lightRGB},0.8)`;
+                            ctx.beginPath();
+                            ctx.arc(xl, y, Math.max(1.8, pr * 0.55), 0, TAU);
+                            ctx.fill();
+                        }
+                        const xp = X(lane.w * tn);
+                        if (xp > -4 && xp < viewW + 4) {
+                            ctx.fillStyle = dark ? lane.color : lane.text;
+                            ctx.globalAlpha = 0.65;
+                            ctx.beginPath();
+                            ctx.arc(xp, y + dy, Math.max(1.5, pr * 0.45), 0, TAU);
+                            ctx.fill();
+                            ctx.globalAlpha = 1;
+                        }
+                    }
+                }
+                // Newton's prediction: where the moving craft's flash and probe would be if speeds simply added
+                if (S.showNewton && lane.moving) {
+                    ctx.setLineDash([3, 3]);
+                    ctx.lineWidth = 1.3;
+                    const xn = X(st.newton.light * t);
+                    if (xn < viewW + 20) {
+                        ctx.strokeStyle = `rgba(${pal.lightRGB},0.85)`;
+                        ctx.beginPath();
+                        ctx.arc(xn, y, pr * 1.7, 0, TAU);
+                        ctx.stroke();
+                        drawSpeedTag(xn, y - pr * 1.7 - f * 1.25, `${fmtU(st.newton.light)} c`, f, `rgb(${pal.lightRGB})`, true);
+                    }
+                    const xq = X(st.newton.probe * t);
+                    if (xq > -20 && xq < viewW + 20) {
+                        ctx.strokeStyle = lane.color;
+                        ctx.beginPath();
+                        ctx.arc(xq, y + dy, pr * 1.3, 0, TAU);
+                        ctx.stroke();
+                        drawSpeedTag(xq, y + dy + pr * 1.3 + 3, `${fmtU(st.newton.probe)} c`, f, lane.text, true);
+                    }
+                    ctx.setLineDash([]);
+                }
+            }
+            // The two flashes are always level: a faint line joins them.
+            if (X(t) < viewW + pr) {
+                ctx.setLineDash([3, 5]);
+                ctx.strokeStyle = `rgba(${pal.lightRGB},0.45)`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(X(t), lay.yShip + pr * 2);
+                ctx.lineTo(X(t), lay.yStation - pr * 2 - f * 1.3);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        // The craft, with their names (and the moving one's velocity) over them
+        for (const lane of lanes) {
+            const c = lane.c, y = lane.y;
+            const xs = X(c.x);
+            const s = LT.SIZE;
+            setCraft(xs, y, k * s * (c.moving ? 1 / st.g : 1), k * s);
+            if (lane.which === 'away') drawShipBody(false);
+            else drawStationBody();
+            const labelY = y - (LT.HEIGHT / 2) * k - lay.labelH / 2;
+            const tag = drawNameTag(xs, labelY, SCENARIOS.light[lane.which].name, lane.text, f, c.u);
+            hitRects.push({ x0: Math.min(xs - c.length * k / 2, tag.x0) - 6, x1: Math.max(xs + c.length * k / 2, tag.x1) + 6,
+                y0: labelY - f, y1: y + (LT.HEIGHT / 2) * k, frame: lane.which });
+        }
+
+        // Over the craft: the burst where they fire, the probes with their speeds, and the flashes marked "c"
+        if (t >= 0) {
+            const burst = clamp(1 - (realNow - lt.flashAt) / 0.5, 0, 1);
+            for (const lane of lanes) {
+                const y = lane.y;
+                if (burst > 0 && t < 0.6) {
+                    // At x = 0, where the craft fired: fixed in the shown frame
+                    ctx.strokeStyle = `rgba(${pal.chamberLightRGB},${(0.8 * burst).toFixed(3)})`;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(X(0), y, pr + (1 - burst) * 18, 0, TAU);
+                    ctx.stroke();
+                }
+                const xp = X(lane.w * t);
+                if (xp > -20 && xp < viewW + 20) {
+                    drawProbe(xp, y + dy, k, lane.w, lane.color, lane.dark2);
+                    drawSpeedTag(xp, y + dy + clamp(0.05 * k, 4, 7) + 3, `${fmtU(lane.w)} c`, f, lane.text);
+                }
+                const xl = X(t);
+                if (xl < viewW + pr * 3) {
+                    drawPhoton(xl, y, pr);
+                    drawLightTag(xl - f * 0.28, y - pr * 1.7 - f * 0.6, f);
+                }
+            }
+        }
+        drawScaleBar(k, 'ls', f);
+        drawCaption(f);
+    }
+
+    // ------------------------------------------------------------------
+    // Scene: lightning
+    // ------------------------------------------------------------------
+    // The ship's lane above the station's, each name on the outside. Both lanes share x, so a flash's front is
+    // a vertical line across both.
+    function lightningLayout() {
+        const f = fontPx;
+        const capH = Math.round(f * 2.3);
+        const labelH = Math.round(f * 1.9);
+        const botH = Math.round(f * 1.8);
+        const s = LN.SIZE;
+        const span = 4 * LT_HALF * s + LN.GAP;     // top of the ship's fins to the bottom of the station's panels (ls)
+        const free = viewH - capH - botH - 2 * labelH;
+        const k = Math.max(8, Math.min(viewW / LN.MIN_SPAN, free / span));
+        const spare = Math.max(0, free - span * k);
+        const top = capH + labelH + spare / 2;
+        const yShip = top + LT_HALF * s * k;
+        const yStation = yShip + (2 * LT_HALF * s + LN.GAP) * k;
+        return { f, k, labelH, yShip, yStation, top, bottom: yStation + LT_HALF * s * k, cx: viewW / 2, P: viewW / k };
+    }
+
+    // A lightning bolt from the top of the canvas down to (x, y), fading out.
+    function drawBolt(x, y, top, alpha, seed) {
+        if (alpha <= 0) return;
+        const n = 7;
+        ctx.beginPath();
+        ctx.moveTo(x + (seed % 2 ? 10 : -10), top);
+        for (let i = 1; i < n; i++) {
+            const yy = top + (y - top) * i / n;
+            const jag = ((i * 37 + seed * 11) % 7 - 3) * 4;
+            ctx.lineTo(x + jag, yy);
+        }
+        ctx.lineTo(x, y);
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = `rgba(${pal.chamberLightRGB},${(0.35 * alpha).toFixed(3)})`;
+        ctx.lineWidth = 7;
+        ctx.stroke();
+        ctx.strokeStyle = dark ? `rgba(255,250,225,${alpha.toFixed(3)})` : `rgba(${pal.lightRGB},${alpha.toFixed(3)})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.lineJoin = 'miter';
+    }
+
+    // A small four-pointed mark where a strike hit.
+    function drawScorch(x, y) {
+        ctx.fillStyle = dark ? '#ffe9a8' : '#b8860b';
+        ctx.beginPath();
+        ctx.moveTo(x, y - 5);
+        ctx.lineTo(x + 1.6, y - 1.6);
+        ctx.lineTo(x + 5, y);
+        ctx.lineTo(x + 1.6, y + 1.6);
+        ctx.lineTo(x, y + 5);
+        ctx.lineTo(x - 1.6, y + 1.6);
+        ctx.lineTo(x - 5, y);
+        ctx.lineTo(x - 1.6, y - 1.6);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    function drawLightning() {
+        const lay = lightningLayout();
+        const st = lightningState();
+        const k = lay.k, f = lay.f, t = st.t, g = st.g;
+        const X = (x) => lay.cx + x * k;
+        const hm = homeMoves();
+        drawStars(k, lay.P, hm ? st.home.u * (t - st.start) : 0, hm ? g : 1);
+        const lightRGB = dark ? pal.chamberLightRGB : pal.lightRGB;
+        const y0 = lay.top - 0.04 * k, y1 = lay.bottom + 0.04 * k;
+        const yTag = (lay.yShip + lay.yStation) / 2;   // the gap between the lanes
+
+        // Each flash runs both ways along the track at c from where its strike happened in this frame: a front
+        // across both lanes, fading once it has passed both detectors.
+        st.strikes.forEach((s) => {
+            if (t < s.t) return;
+            const d = t - s.t;
+            const reach = Math.max(Math.abs(st.home.u * t - s.x), Math.abs(st.away.u * t - s.x));
+            const a = clamp(1 - (d - reach - 0.3) / 0.8, 0, 1);
+            if (a <= 0) return;
+            for (const dir of [-1, 1]) {
+                const x = X(s.x + dir * d);
+                if (x < -10 || x > viewW + 10) continue;
+                ctx.strokeStyle = `rgba(${lightRGB},${(0.16 * a).toFixed(3)})`;
+                ctx.lineWidth = 8;
+                ctx.beginPath();
+                ctx.moveTo(x, y0);
+                ctx.lineTo(x, y1);
+                ctx.stroke();
+                ctx.strokeStyle = `rgba(${lightRGB},${(0.9 * a).toFixed(3)})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.globalAlpha = a;
+                drawLightTag(x + (dir > 0 ? 4 : -f * 0.75), yTag, f);
+                ctx.globalAlpha = 1;
+            }
+        });
+
+        // The craft, with a detector in each middle, and the marks the strikes left on them
+        const lanes = [
+            { which: 'away', c: st.away, y: lay.yShip, text: pal.pinkText },
+            { which: 'home', c: st.home, y: lay.yStation, text: pal.blueText }
+        ];
+        for (const lane of lanes) {
+            const c = lane.c;
+            const sx = c.moving ? 1 / g : 1;
+            const xs = X(c.u * t);
+            const lit = st.det[lane.which].map((td) => t >= td - 1e-9);
+            setCraft(xs, lane.y, k * LN.SIZE * sx, k * LN.SIZE);
+            // The ship without its portholes, so the detector takes their place
+            if (lane.which === 'away') drawShipBody(true);
+            else drawStationBody();
+            drawLamps(lit);
+            st.strikes.forEach((s, i) => {
+                if (t >= s.t) drawScorch(xs + st.own[lane.which][i] * sx * k, lane.y);
+            });
+            const ext = LT_HALF * LN.SIZE * k;
+            const labelY = lane.which === 'away' ? lane.y - ext - lay.labelH / 2 : lane.y + ext + lay.labelH / 2;
+            const tag = drawNameTag(xs, labelY, SCENARIOS.lightning[lane.which].name, lane.text, f, c.u);
+            const half = (LN.L0 / 2) * sx * k;
+            hitRects.push({ x0: Math.min(xs - half, tag.x0) - 6, x1: Math.max(xs + half, tag.x1) + 6,
+                y0: Math.min(labelY - f, lane.y - ext), y1: Math.max(labelY + f, lane.y + ext), frame: lane.which });
+        }
+
+        // The strikes themselves: a bolt and a burst at the moment each happens
+        st.strikes.forEach((s, i) => {
+            const age = realNow - ln.struck[i];
+            if (t < s.t || age > 0.45 || age < 0) return;
+            const a = 1 - age / 0.45;
+            const yb = lay.yStation;
+            drawBolt(X(s.x), yb, 0, a, i + 1);
+            for (const yy of [lay.yShip, lay.yStation]) {
+                const glow = ctx.createRadialGradient(X(s.x), yy, 0, X(s.x), yy, 24);
+                glow.addColorStop(0, `rgba(255,248,220,${a.toFixed(3)})`);
+                glow.addColorStop(1, 'rgba(255,248,220,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(X(s.x), yy, 24, 0, TAU);
+                ctx.fill();
+            }
+        });
+        drawScaleBar(k, 'ls', f);
+        drawCaption(f);
+    }
+
     // ------------------------------------------------------------------
     // Scene: light clocks
     // ------------------------------------------------------------------
@@ -1082,6 +1747,7 @@
         drawStars(lay.k, lay.P, st.home.moving ? lc.xTravel : 0, st.home.moving ? g : 1);
         drawCraftLane('away', st.away, lay.yShip, lay, g);
         drawCraftLane('home', st.home, lay.yStation, lay, g);
+        drawScaleBar(lay.k, 'ls', lay.f);
         drawCaption(lay.f);
     }
 
@@ -1118,10 +1784,14 @@
             drawLightClock(lightHeight(c.clock), flash);
             if (S.showPaths) {
                 // A moving clock's path leaves its chamber, so it uses the colour that shows on the background.
-                drawTrail(trail, xShift, k, lay.cx, y, lc.T, c.moving ? pal.lightRGB : pal.chamberLightRGB, Math.max(1.5, k * 0.012));
+                const rgb = c.moving ? pal.lightRGB : pal.chamberLightRGB;
+                drawTrail(trail, xShift, k, lay.cx, y, lc.T, rgb, Math.max(1.2, k * 0.008));
+                drawStrobe(trail, xShift, k, lay.cx, y, lc.T, rgb, Math.max(1.8, k * 0.011));
             }
             const py = y + (LC.MIRROR / 2 - lightHeight(c.clock) * LC.MIRROR) * k;
-            drawPhoton(xs, py, Math.max(2.5, k * 0.022));
+            const pr = Math.max(2.5, k * 0.022);
+            drawPhoton(xs, py, pr, true);
+            drawLightTag(xs + pr * 1.6 + 3, py - pr * 1.6, f, true);
 
             if (c.moving) drawVelocity(xs + dir * (halfLen + 10), y, dir, arrowLen, f, S.v);
 
@@ -1185,6 +1855,112 @@
 
             hitRects.push({ x0: xs - halfLen - 6, x1: xs + halfLen + 6, y0: labelY - lay.ps.h / 2, y1: y + (LC.HEIGHT / 2) * k, frame: which });
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Scene: ship in a hangar
+    // ------------------------------------------------------------------
+    // One lane: the hangar's name and length over it, the ship's under it.
+    function hangarLayout() {
+        const f = fontPx;
+        const capH = Math.round(f * 2.3);
+        const tagH = Math.round(f * 1.7);
+        const dimH = Math.round(f * 1.7);
+        const clockH = S.showSync ? Math.round(f * 2.2) : 0;    // the hangar's door clocks, over the roof
+        const botH = Math.round(f * 1.8);
+        const H = 2 * (HG.IN + HG.WALL);
+        const free = viewH - capH - botH - 2 * (tagH + dimH) - clockH;
+        const k = Math.max(8, Math.min(viewW / HG.MIN_SPAN, free / H));
+        const y = capH + tagH + dimH + clockH + Math.max(0, free - H * k) / 2 + H * k / 2;
+        return { f, k, y, H, tagH, dimH, clockH, cx: viewW / 2, P: viewW / k };
+    }
+
+    // The hangar in its own coordinates (set with setCraft): a dark back wall, a roof and a floor that run a
+    // little past the doors, and a door at each end that drops from the roof when shut.
+    function drawHangar(doors, both, glow) {
+        const L = HG.L0 / 2, o = 0.09, w = HG.WALL;
+        localRectScaled(-L - 0.02, -HG.IN, L + 0.02, HG.IN, 0.02);
+        ctx.fillStyle = dark ? 'rgba(126,202,246,0.07)' : 'rgba(63,136,187,0.08)';
+        ctx.fill();
+        if (both || glow > 0) {
+            ctx.fillStyle = `rgba(123,208,193,${(0.22 * Math.max(both ? 1 : 0, glow)).toFixed(3)})`;
+            ctx.fill();
+        }
+        for (const s of [-1, 1]) {
+            const y0 = s > 0 ? HG.IN : -HG.IN - w;
+            localRectScaled(-L - o, y0, L + o, y0 + w, 0.025);
+            const grad = ctx.createLinearGradient(0, ty(y0), 0, ty(y0 + w));
+            grad.addColorStop(0, '#a6dbfa');
+            grad.addColorStop(0.55, pal.blue);
+            grad.addColorStop(1, '#5fa9d8');
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.strokeStyle = pal.edge;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+        drawDoors(doors, false);
+    }
+
+    // The doors: open ones as a stub under the roof (drawn behind the ship), shut ones from roof to floor (in
+    // front of it), each flashing as it moves.
+    function drawDoors(doors, shut) {
+        doors.forEach((door, i) => {
+            if (door.shut !== shut) return;
+            const side = i === 0 ? -1 : 1;
+            const x0 = side * HG.L0 / 2 - (side < 0 ? 0.035 : 0);
+            localRectScaled(x0, -HG.IN, x0 + 0.035, -HG.IN + (shut ? 2 * HG.IN : 0.06), 0.01);
+            ctx.fillStyle = pal.peri;
+            ctx.fill();
+            if (door.flash > 0) {
+                ctx.fillStyle = `rgba(255,255,255,${(0.6 * door.flash).toFixed(3)})`;
+                ctx.fill();
+            }
+        });
+    }
+
+    function drawHangarScene() {
+        const lay = hangarLayout();
+        const st = hangarState();
+        const k = lay.k, f = lay.f, g = st.g, y = lay.y;
+        const X = (x) => lay.cx + x * k;
+        const hm = homeMoves();
+        drawStars(k, lay.P, hm ? st.hangar.x : 0, hm ? g : 1);
+        const hx = X(st.hangar.x), sx = X(st.ship.x);
+        const hk = k * (hm ? 1 / g : 1);
+        const doors = st.doors.map((d, i) => Object.assign({}, d, { flash: clamp(1 - (realNow - hg.slam[i]) / 0.4, 0, 1) }));
+        // Glow inside while both doors are shut; it lingers a moment through the pause
+        setCraft(hx, y, hk, k);
+        drawHangar(doors, st.both, 0);
+        setCraft(sx, y, k * (hm ? 1 : 1 / g), k);
+        drawShipBody(false);
+        // Shut doors in front (they never overlap the ship: each shuts only while the ship is clear of it)
+        setCraft(hx, y, hk, k);
+        drawDoors(doors, true);
+
+        // Names and measured lengths: the hangar's over it, the ship's under it
+        const top = y - (HG.IN + HG.WALL) * k, bot = y + (HG.IN + HG.WALL) * k;
+        const hl = st.hangar.length * k / 2, sl = st.ship.length * k / 2;
+        const above = top - lay.clockH;
+        drawDimension(hx - hl, hx + hl, above - lay.dimH / 2, `${st.hangar.length.toFixed(2)} ls`, f, hm ? pal.blueText : pal.muted, true);
+        drawDimension(sx - sl, sx + sl, bot + lay.dimH / 2, `${st.ship.length.toFixed(2)} ls`, f, hm ? pal.muted : pal.pinkText, true);
+        const hTag = drawNameTag(hx, above - lay.dimH - lay.tagH / 2, SCENARIOS.hangar.home.name, pal.blueText, f, st.hangar.u);
+        const sTag = drawNameTag(sx, bot + lay.dimH + lay.tagH / 2, SCENARIOS.hangar.away.name, pal.pinkText, f, st.ship.u);
+        hitRects.push({ x0: Math.min(hx - hl, hTag.x0) - 6, x1: Math.max(hx + hl, hTag.x1) + 6, y0: above - lay.dimH - lay.tagH, y1: top + 4, frame: 'home' });
+        hitRects.push({ x0: Math.min(sx - sl, sTag.x0) - 6, x1: Math.max(sx + sl, sTag.x1) + 6, y0: y - LT_HALF * k, y1: bot + lay.dimH + lay.tagH, frame: 'away' });
+
+        // The hangar's clocks beside its doors (synchronised in the hangar's frame)
+        if (S.showSync) {
+            const pw = pillWidth(f, 's', '\u22120.00', true);
+            doors.forEach((door, i) => {
+                // Over the roof at its door, nudged apart if the contracted hangar brings them together
+                const xd = X(door.x) + (i === 0 ? -1 : 1) * Math.max(0, (pw + 6 - (X(doors[1].x) - X(doors[0].x))) / 2);
+                drawPill(clamp(xd, pw / 2 + 4, viewW - pw / 2 - 4), top - lay.clockH / 2, fmtSigned(door.clock), 's',
+                    { f, color: pal.blue, edge: door.shut ? pal.peri : pal.faint, compact: true, template: '\u22120.00' });
+            });
+        }
+        drawScaleBar(k, 'ls', f);
+        drawCaption(f);
     }
 
     // ------------------------------------------------------------------
@@ -1294,7 +2070,11 @@
         ctx.fillStyle = pal.muted;
         const starName = 'Proxima Centauri';
         const snw = textW(starName, f * 0.95, 700);
-        ctx.fillText(starName, clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6), y + lay.rE + f * 1.5);
+        // Where both labels actually sit (each is kept inside the canvas)
+        const ew = craftLabelWidth(f, 'Earth twin', 'yr', ageTemplate);
+        const xEl = clamp(xE, ew / 2 + 6, viewW - ew / 2 - 6), xSl = clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6);
+        const crowded = Math.abs(xSl - xEl) < ew / 2 + snw / 2 + 12;
+        ctx.fillText(starName, xSl, crowded ? y - lay.rE - f * 0.9 : y + lay.rE + f * 1.5);
 
         // Earth and the star move together when measured from the ship: one arrow on the route between them
         const arrowLen = clamp(0.06 * viewW, 26, 60);
@@ -1323,7 +2103,6 @@
         }
 
         drawCaption(f);
-        drawCallout(viewW / 2, Math.max(viewH * 0.24, f * 4.2), f);
     }
 
     // ------------------------------------------------------------------
@@ -1331,46 +2110,75 @@
     // ------------------------------------------------------------------
     function muonsLayout() {
         const f = fontPx;
-        const top = Math.round(f * 5);
-        const yGround = viewH - Math.max(f * 2.6, viewH * 0.12);
-        const k = (yGround - top) / MU.H;      // px per km
-        const axisX = Math.round(textW('15 km', f * 0.9, 400) + f * 1.2);
-        return { f, top, yGround, k, axisX, x0: axisX + f * 1.5, x1: viewW - f * 1.2 };
+        const top = Math.round(f * 4.4);
+        const band = Math.max(f * 2.6, viewH * 0.12);     // ground strip under the full fall
+        const yGround = viewH - band;
+        const k = (yGround - top) / MU.H;      // px per km measured from Earth
+        const dimX = Math.round(f * 1.1);
+        const labelW = textW('15.0 km', f * 0.9, 700);
+        return { f, top, band, yGround, k, dimX, x0: dimX + labelW + f * 1.6, x1: viewW - f * 1.2 };
+    }
+
+    // Vertical dimension line from y0 to y1 at x, with its length written beside it (clamped to the canvas).
+    function drawVDimension(x, y0, y1, text, f, color) {
+        const tick = Math.max(4, f * 0.4);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x, y1);
+        for (const y of [y0, y1]) {
+            if (y < -2 || y > viewH + 2) continue;
+            ctx.moveTo(x - tick, y);
+            ctx.lineTo(x + tick, y);
+        }
+        ctx.stroke();
+        const ym = clamp((Math.max(y0, 0) + Math.min(y1, viewH)) / 2, f * 3.2, viewH - f);
+        setFont(f * 0.9, 700);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = pal.bg;
+        ctx.strokeText(text, x + tick + 3, ym);
+        ctx.fillStyle = color;
+        ctx.fillText(text, x + tick + 3, ym);
+        ctx.lineJoin = 'miter';
     }
 
     function drawMuons() {
         const lay = muonsLayout();
-        const f = lay.f, k = lay.k;
+        const f = lay.f;
         const g = gammaOf(S.v);
         const v = S.v;
         const ship = homeMoves();
         const tau = muonClock();
+        const zoom = muonZoom();
+        const k = lay.k * zoom;                 // px per km in the shown frame
+        const thick = ship ? MU.H / g : MU.H;   // the atmosphere's thickness, measured in the shown frame
         // Where the ground is (px) and how high the muons are, measured in the shown frame
-        let yMu, yGround, kAlt;
+        let yMu, yGround;
         if (!ship) {
             yGround = lay.yGround;
             yMu = lay.top + Math.min(MU.H, v * C_KM_US * mu.t) * k;
-            kAlt = k;
         } else {
             yMu = lay.top;
-            yGround = lay.top + Math.max(0, MU.H / g - v * C_KM_US * mu.t) * k;
-            kAlt = k / g;      // the atmosphere is contracted along the motion
+            yGround = lay.top + Math.max(0, thick - v * C_KM_US * mu.t) * k;
         }
-        const yTopAtm = yGround - MU.H * kAlt;
+        const yTopAtm = yGround - thick * k;
 
-        // Sky: the atmosphere's haze between its top and the ground, then the ground
+        // Sky: the atmosphere's haze between its top and the ground, then a strip of ground fading out below
         const sky = ctx.createLinearGradient(0, yTopAtm, 0, yGround);
         sky.addColorStop(0, `rgba(${pal.skyRGB},0)`);
         sky.addColorStop(1, `rgba(${pal.skyRGB},${dark ? 0.2 : 0.28})`);
         ctx.fillStyle = sky;
         ctx.fillRect(0, yTopAtm, viewW, yGround - yTopAtm);
-        const groundDepth = Math.max(lay.f * 2.6, viewH * 0.12);
-        const soil = ctx.createLinearGradient(0, yGround, 0, yGround + groundDepth * 1.6);
+        const soil = ctx.createLinearGradient(0, yGround, 0, yGround + lay.band * 1.6);
         soil.addColorStop(0, pal.ground);
         soil.addColorStop(0.6, pal.ground);
         soil.addColorStop(1, pal.bg);
         ctx.fillStyle = soil;
-        ctx.fillRect(0, yGround, viewW, viewH - yGround);
+        ctx.fillRect(0, yGround, viewW, lay.band * 1.6);
         ctx.strokeStyle = pal.groundLine;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -1383,35 +2191,13 @@
         ctx.strokeStyle = pal.faint;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.moveTo(lay.axisX, yTopAtm);
+        ctx.moveTo(lay.dimX, yTopAtm);
         ctx.lineTo(viewW, yTopAtm);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Altitude scale, fixed to Earth (so it is squeezed when measured from the muons)
-        ctx.strokeStyle = pal.muted;
-        ctx.fillStyle = pal.muted;
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(lay.axisX, yGround);
-        ctx.lineTo(lay.axisX, yTopAtm);
-        ctx.stroke();
-        // Labels: always the top (15 km); the others only where they have room. "0 km" sits just above the
-        // ground line rather than across it.
-        setFont(f * 0.9, 400);
-        ctx.textAlign = 'right';
-        const gapPx = 5 * kAlt;
-        for (let a = MU.H; a >= 0; a -= 5) {
-            const yy = yGround - a * kAlt;
-            ctx.beginPath();
-            ctx.moveTo(lay.axisX - 5, yy);
-            ctx.lineTo(lay.axisX, yy);
-            ctx.stroke();
-            const room = a === MU.H || (a === 0 ? MU.H * kAlt >= f * 1.6 : gapPx >= f * 1.2);
-            if (!room) continue;
-            ctx.textBaseline = a === 0 ? 'bottom' : 'middle';
-            ctx.fillText(`${a} km`, lay.axisX - 8, a === 0 ? yy - 2 : yy);
-        }
+        // The atmosphere's thickness as measured in this frame: the scale of the view
+        drawVDimension(lay.dimX, yTopAtm, yGround, `${thick < 9.995 ? thick.toFixed(2) : thick.toFixed(1)} km`, f, ship ? pal.blueText : pal.muted);
 
         // The muons
         const r = clamp(f * 0.36, 3, 6);
@@ -1450,47 +2236,46 @@
         const tpl = '00.0';
         const pw = craftLabelWidth(f, 'Muons', 'µs', tpl);
         drawCraftLabel(viewW - f * 0.8 - pw / 2, yMu - r * 2.6 - f * 1.1, 'Muons', pal.purpleText, fmtNum(tau), 'µs', { f, color: pal.purple, phase: tau, template: tpl });
+        const yLabel = yGround + clamp(lay.band / 2, f * 1.3, f * 2);
         if (!ship) {
             const ew = craftLabelWidth(f, 'Earth', 'µs', tpl);
-            drawCraftLabel(lay.x0 + ew / 2, yGround + Math.max(f * 1.3, (viewH - yGround) / 2), 'Earth', pal.blueText, fmtNum(mu.t), 'µs', { f, color: pal.blue, phase: mu.t, template: tpl });
-        } else if (viewH - yGround > f * 1.6) {
+            drawCraftLabel(lay.x0 + ew / 2, yLabel, 'Earth', pal.blueText, fmtNum(mu.t), 'µs', { f, color: pal.blue, phase: mu.t, template: tpl });
+        } else if (yLabel < viewH - f * 0.5) {
             // Earth moves up at v: an arrow and its speed on the ground
-            const ya = yGround + Math.max(f * 1.3, Math.min(f * 2, (viewH - yGround) / 2));
             setFont(f * 0.95, 700);
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = pal.blueText;
-            ctx.fillText('Earth', lay.x0, ya);
+            ctx.fillText('Earth', lay.x0, yLabel);
             const xa = lay.x0 + textW('Earth ', f * 0.95, 700) + 4;
             ctx.strokeStyle = pal.muted;
             ctx.fillStyle = pal.muted;
             ctx.lineWidth = Math.max(1.5, f * 0.13);
             ctx.beginPath();
-            ctx.moveTo(xa, ya + f * 0.55);
-            ctx.lineTo(xa, ya - f * 0.25);
+            ctx.moveTo(xa, yLabel + f * 0.55);
+            ctx.lineTo(xa, yLabel - f * 0.25);
             ctx.stroke();
             ctx.beginPath();
-            ctx.moveTo(xa, ya - f * 0.65);
-            ctx.lineTo(xa - f * 0.3, ya - f * 0.15);
-            ctx.lineTo(xa + f * 0.3, ya - f * 0.15);
+            ctx.moveTo(xa, yLabel - f * 0.65);
+            ctx.lineTo(xa - f * 0.3, yLabel - f * 0.15);
+            ctx.lineTo(xa + f * 0.3, yLabel - f * 0.15);
             ctx.closePath();
             ctx.fill();
             setFont(f * 0.92, 700);
-            ctx.fillText(`${fmtV(S.v)} c`, xa + f * 0.6, ya);
+            ctx.fillText(`${fmtV(S.v)} c`, xa + f * 0.6, yLabel);
         }
         hitRects.push({ x0: lay.x0, x1: lay.x1, y0: yMu - 14, y1: yMu + 14, frame: 'away' });
         hitRects.push({ x0: 0, x1: viewW, y0: yGround, y1: viewH, frame: 'home' });
 
-        drawCaption(f);
-        // Measured from the muons the fall is over in a flash; a note fills the space the thin atmosphere leaves.
-        const cy = ship ? clamp((lay.yGround + lay.top + MU.H * k / g) / 2 + f * 2, f * 6, viewH - f * 4) : clamp((lay.top + lay.yGround) / 2, f * 5, viewH - f * 5);
-        if (callout) drawCallout(viewW / 2, cy, f);
-        else if (ship && mu.stage === 'fall') {
-            drawCallout(viewW / 2, cy, f, {
-                title: `The atmosphere is squashed to ${(MU.H / g).toFixed(2)} km`,
-                text: [`Earth rushes up at ${fmtV(S.v)} c, so the ground arrives after ${fmtNum(muonTimes().tauLand)} µs`]
-            });
+        // Measured from the muons the view is zoomed in and slowed down by γ: say so, quietly
+        if (ship && g > 1.005) {
+            setFont(f * 0.88, 400);
+            ctx.fillStyle = pal.muted;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`Zoom ×${fmtTimes(g)} · time ×${fmtTimes(g)} slower`, viewW - 10, viewH - 8);
         }
+        drawCaption(f);
     }
 
     // ------------------------------------------------------------------
@@ -1502,9 +2287,7 @@
         ctx.fillStyle = pal.bg;
         ctx.fillRect(0, 0, viewW, viewH);
         hitRects.length = 0;
-        if (S.scenario === 'clocks') drawClocks();
-        else if (S.scenario === 'twins') drawTwins();
-        else drawMuons();
+        SCENE[S.scenario].draw();
     }
 
     // ------------------------------------------------------------------
@@ -1519,6 +2302,24 @@
 
     function readoutRows() {
         const g = gammaOf(S.v);
+        if (S.scenario === 'light') {
+            const st = lightState();
+            return [
+                { label: 'Station\u2019s probe:', value: fmtU(st.probe.home), unit: 'c', color: pal.blue },
+                { label: 'Ship\u2019s probe:', value: fmtU(st.probe.away), unit: 'c', color: pal.pink },
+                { label: 'Both flashes:', value: fmtU(1), unit: 'c' }
+            ];
+        }
+        if (S.scenario === 'lightning') {
+            const st = lightningState();
+            // Each craft's clock in its middle reads zero as the middles pass (t = 0)
+            const clock = (c) => (c.moving ? st.t / st.g : st.t);
+            return [
+                { label: 'Station clock:', value: fmtNum(clock(st.home)), unit: 's', color: pal.blue },
+                { label: 'Ship clock:', value: fmtNum(clock(st.away)), unit: 's', color: pal.pink },
+                { label: 'Strikes apart:', value: Math.abs(st.strikes[0].t - st.strikes[1].t).toFixed(2), unit: 's' }
+            ];
+        }
         if (S.scenario === 'clocks') {
             const st = clockState();
             const movingName = st.away.moving ? 'Ship' : 'Station';
@@ -1526,6 +2327,14 @@
                 { label: 'Station clock:', value: fmtNum(st.home.clock), unit: 's', color: pal.blue },
                 { label: 'Ship clock:', value: fmtNum(st.away.clock), unit: 's', color: pal.pink },
                 { label: `${movingName} length:`, value: (LC.L0 / g).toFixed(2), unit: 'ls' }
+            ];
+        }
+        if (S.scenario === 'hangar') {
+            const st = hangarState();
+            return [
+                { label: 'Ship length:', value: st.ship.length.toFixed(2), unit: 'ls', color: pal.pink },
+                { label: 'Hangar length:', value: st.hangar.length.toFixed(2), unit: 'ls', color: pal.blue },
+                { label: 'Both doors shut:', value: st.shutFor > 0 ? st.shutFor.toFixed(2) : 'never', unit: st.shutFor > 0 ? 's' : '' }
             ];
         }
         if (S.scenario === 'twins') {
@@ -1573,10 +2382,22 @@
         return { text: dark ? '#e0e0e0' : '#585858', grid: dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' };
     }
 
-    function chartUnits() {
-        if (S.scenario === 'clocks') return { t: 's', a: 'Station clock', b: 'Ship clock', y: 'Clock reading (s)' };
-        if (S.scenario === 'twins') return { t: 'years', a: 'Earth twin', b: 'Traveller', y: 'Age gained (years)' };
-        return { t: 'µs', a: 'Muons left', b: null, y: 'Muons left' };
+    // The first graph's lines for each scenario (up to four), its time unit and its y-axis title.
+    function chartSpec() {
+        const lightCol = dark ? '#ffd65c' : '#d69b00';
+        if (S.scenario === 'light') {
+            return { t: 's', y: 'Distance travelled (ls)', lines: [
+                { label: 'Station\u2019s flash', color: lightCol },
+                { label: 'Ship\u2019s flash', color: lightCol, dash: [6, 5] },
+                { label: 'Station\u2019s probe', color: '#7ecaf6' },
+                { label: 'Ship\u2019s probe', color: '#f2849e' }
+            ] };
+        }
+        if (S.scenario === 'lightning') return { t: 's', y: 'Clock time since the first strike (s)', lines: [{ label: 'Station clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
+        if (S.scenario === 'clocks') return { t: 's', y: 'Clock reading (s)', lines: [{ label: 'Station clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
+        if (S.scenario === 'hangar') return { t: 's', y: 'Clock reading (s)', lines: [{ label: 'Hangar clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
+        if (S.scenario === 'twins') return { t: 'years', y: 'Age gained (years)', lines: [{ label: 'Earth twin', color: '#7ecaf6' }, { label: 'Traveller', color: '#f2849e' }] };
+        return { t: '\u00b5s', y: 'Muons left', lines: [{ label: 'Muons left', color: '#ae85ca' }] };
     }
 
     function chartsVisible() {
@@ -1596,10 +2417,7 @@
         const clock = clockEl ? new Chart(clockEl, {
             type: 'line',
             data: {
-                datasets: [
-                    { label: 'A', data: [], borderColor: '#7ecaf6', backgroundColor: '#7ecaf6', borderWidth: 2, pointRadius: 0, tension: 0 },
-                    { label: 'B', data: [], borderColor: '#f2849e', backgroundColor: '#f2849e', borderWidth: 2, pointRadius: 0, tension: 0 }
-                ]
+                datasets: [0, 1, 2, 3].map(() => ({ label: '', data: [], borderWidth: 2, pointRadius: 0, tension: 0 }))
             },
             options: {
                 responsive: true, maintainAspectRatio: false, animation: false, parsing: false, normalized: true,
@@ -1634,16 +2452,19 @@
 
     function updateChartLabels() {
         if (!charts || !charts.clock) return;
-        const u = chartUnits();
+        const spec = chartSpec();
         const sc = SCENARIOS[S.scenario];
         const ch = charts.clock;
-        ch.data.datasets[0].label = u.a;
-        ch.data.datasets[0].borderColor = ch.data.datasets[0].backgroundColor = S.scenario === 'muons' ? '#ae85ca' : '#7ecaf6';
-        ch.data.datasets[1].label = u.b || '';
-        ch.data.datasets[1].hidden = !u.b;
+        ch.data.datasets.forEach((d, i) => {
+            const line = spec.lines[i];
+            d.label = line ? line.label : '';
+            d.hidden = !line;
+            d.borderColor = d.backgroundColor = line ? line.color : '#888';
+            d.borderDash = line && line.dash ? line.dash : [];
+        });
         ch.options.plugins.legend.labels.filter = (item) => !!item.text;
-        ch.options.scales.x.title.text = `Time measured from ${sc[S.frame].the} (${u.t})`;
-        ch.options.scales.y.title.text = u.y;
+        ch.options.scales.x.title.text = `Time measured from ${sc[S.frame].the} (${spec.t})`;
+        ch.options.scales.y.title.text = spec.y;
         ch.update('none');
     }
 
@@ -1667,21 +2488,13 @@
         chartTimer -= dtReal;
         if (chartTimer > 0) return;
         chartTimer = 0.2;
-        let t, a, b;
-        if (S.scenario === 'clocks') {
-            const st = clockState();
-            t = lc.T; a = st.home.clock; b = st.away.clock;
-        } else if (S.scenario === 'twins') {
-            const st = twinState();
-            t = tw.t; a = st.earthAge; b = st.shipAge;
-        } else {
-            t = mu.t; a = muonsLeft(); b = null;
-        }
+        const sample = SCENE[S.scenario].chart();
+        if (!sample) return;
+        const t = sample[0], values = sample.slice(1);
         const ds = charts.clock.data.datasets;
         const last = ds[0].data[ds[0].data.length - 1];
-        if (last && last.x === t && last.y === a && (b === null || ds[1].data[ds[1].data.length - 1].y === b)) return;
-        ds[0].data.push({ x: t, y: a });
-        if (b !== null) ds[1].data.push({ x: t, y: b });
+        if (last && last.x === t) return;
+        values.forEach((y, i) => ds[i].data.push({ x: t, y }));
         // Long runs: keep every other point, so the whole history stays on the graph.
         ds.forEach((d) => {
             if (d.data.length > CHART_MAX) d.data = d.data.filter((p, i) => i % 2 === 0 || i === d.data.length - 1);
@@ -1806,9 +2619,18 @@
                 if (after) after();
             });
         };
-        toggle(ui.paths, 'showPaths');
-        toggle(ui.lengths, 'showLengths');
-        toggle(ui.sync, 'showSync');
+        ui.toggles.forEach((t) => toggle(t.input, `show${t.key[0].toUpperCase()}${t.key.slice(1)}`));
+        if (ui.probe) {
+            const apply = () => {
+                S.probeU = clamp(parseFloat(ui.probe.value) || 0, 0, 0.99);
+                setText(ui.probeVal, S.probeU.toFixed(2));
+            };
+            ui.probe.addEventListener('input', () => {
+                apply();
+                updateReadouts();
+            });
+            apply();
+        }
         if (ui.showCharts) {
             ui.showCharts.addEventListener('change', () => setChartsVisible(ui.showCharts.checked));
             setChartsVisible(ui.showCharts.checked);
@@ -1823,23 +2645,57 @@
     let lastTimestamp = 0;
     let fpsFrames = 0, fpsTime = 0;
 
+    // Each scenario's steps: reset, advance by dt (frame time) and dtReal (real seconds), draw, and the first
+    // graph's sample ([time, value per line], or null for none).
+    const SCENE = {
+        light: { reset: resetLight, step: stepLight, draw: drawLight,
+            chart: () => {
+                if (lt.t < 0) return null;
+                const st = lightState();
+                return [lt.t, lt.t, lt.t, st.probe.home * lt.t, st.probe.away * lt.t];
+            } },
+        lightning: { reset: resetLightning, step: stepLightning, draw: drawLightning,
+            chart: () => {
+                // From the first strike: the time passed on each craft's middle clock
+                const st = lightningState();
+                const t0 = Math.min(st.strikes[0].t, st.strikes[1].t);
+                if (ln.t < t0) return null;
+                const dt = ln.t - t0;
+                return [dt, homeMoves() ? dt / st.g : dt, homeMoves() ? dt : dt / st.g];
+            } },
+        clocks: { reset: resetClocks, draw: drawClocks,
+            step: (dt) => {
+                // Small steps keep the light's zig-zag corners exact even at high playback speeds.
+                const n = Math.max(1, Math.ceil(dt / 0.05));
+                for (let i = 0; i < n; i++) stepClocks(dt / n);
+            },
+            chart: () => {
+                const st = clockState();
+                return [lc.T, st.home.clock, st.away.clock];
+            } },
+        hangar: { reset: resetHangar, step: stepHangar, draw: drawHangarScene,
+            chart: () => {
+                // Each middle clock reads zero as the middles pass
+                const st = hangarState();
+                return [hg.t - st.start, homeMoves() ? hg.t / st.g : hg.t, homeMoves() ? hg.t : hg.t / st.g];
+            } },
+        twins: { reset: resetTwins, step: stepTwins, draw: drawTwins,
+            chart: () => {
+                const st = twinState();
+                return [tw.t, st.earthAge, st.shipAge];
+            } },
+        muons: { reset: resetMuons, step: stepMuons, draw: drawMuons, chart: () => [mu.t, muonsLeft()] }
+    };
+
     function rate() {
         if (S.scenario === 'twins') return TW.RATE;
-        if (S.scenario === 'muons') return MU.RATE;
+        if (S.scenario === 'lightning') return LN.RATE;
+        if (S.scenario === 'muons') return MU.RATE / (homeMoves() ? gammaOf(S.v) : 1);
         return 1;
     }
 
     function advance(dtReal) {
-        const dt = dtReal * S.speed * rate();
-        if (S.scenario === 'clocks') {
-            // Small steps keep the light's zig-zag corners exact even at high playback speeds.
-            const n = Math.max(1, Math.ceil(dt / 0.05));
-            for (let i = 0; i < n; i++) stepClocks(dt / n);
-        } else if (S.scenario === 'twins') {
-            stepTwins(dt, dtReal);
-        } else {
-            stepMuons(dt, dtReal);
-        }
+        SCENE[S.scenario].step(dtReal * S.speed * rate(), dtReal);
     }
 
     function frame(timestamp) {
@@ -1885,7 +2741,26 @@
         getState: () => {
             const g = gammaOf(S.v);
             const out = { scenario: S.scenario, frame: S.frame, v: S.v, gamma: g, view: { w: viewW, h: viewH, dpr, fontPx } };
-            if (S.scenario === 'clocks') {
+            if (S.scenario === 'light') {
+                const lay = lightLayout();
+                const st = lightState();
+                // Screen positions (CSS px) of the flashes and probes, so their speeds can be measured
+                const X = (x) => lay.x0 + x * lay.k;
+                Object.assign(out, {
+                    t: lt.t, k: lay.k, x0: lay.x0, light: lightState(),
+                    screen: { flash: X(Math.max(0, lt.t)), probeHome: X(st.probe.home * Math.max(0, lt.t)), probeAway: X(st.probe.away * Math.max(0, lt.t)),
+                        homeX: X(st.home.x), awayX: X(st.away.x) }
+                });
+            } else if (S.scenario === 'hangar') {
+                const lay = hangarLayout();
+                Object.assign(out, { t: hg.t, k: lay.k, cx: lay.cx, hold: hg.hold, hangar: hangarState() });
+            } else if (S.scenario === 'lightning') {
+                const lay = lightningLayout();
+                const st = lightningState();
+                // Screen positions (CSS px) of each flash's two fronts, so their speed can be measured
+                const fronts = st.strikes.map((s) => (ln.t < s.t ? null : [-1, 1].map((d) => lay.cx + (s.x + d * (ln.t - s.t)) * lay.k)));
+                Object.assign(out, { t: ln.t, k: lay.k, cx: lay.cx, lightning: st, fronts });
+            } else if (S.scenario === 'clocks') {
                 const lay = clocksLayout();
                 const st = clockState();
                 // Light pulses in CSS px, with the moving craft not wrapped, so speeds can be measured.
@@ -1901,12 +2776,13 @@
             } else if (S.scenario === 'twins') {
                 Object.assign(out, { t: tw.t, stage: tw.stage, twin: twinState(), times: twinTimes() });
             } else {
-                Object.assign(out, { t: mu.t, stage: mu.stage, muonClock: muonClock(), left: muonsLeft(), times: muonTimes(), lifetimes: Array.from(mu.life) });
+                const lay = muonsLayout();
+                Object.assign(out, { t: mu.t, stage: mu.stage, muonClock: muonClock(), left: muonsLeft(), times: muonTimes(), lifetimes: Array.from(mu.life),
+                    zoom: muonZoom(), kmPx: lay.k * muonZoom(), rate: rate() });
             }
             out.readouts = readoutRows().map((r) => `${r.label} ${r.value} ${r.unit}`);
             out.gammaText = fmtGamma(g);
             out.hitRects = hitRects.map((r) => Object.assign({}, r));
-            out.callout = callout ? Object.assign({}, callout) : null;
             return out;
         }
     };
@@ -1916,7 +2792,7 @@
         refreshPalette();
         bindControls();
         syncFrameButtons();
-        if (ui.scenario) S.scenario = ui.scenario.value || 'clocks';
+        if (ui.scenario) S.scenario = ui.scenario.value || 'light';
         resizeCanvas();
         setScenario(S.scenario);
         if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resizeCanvas).observe(canvas);

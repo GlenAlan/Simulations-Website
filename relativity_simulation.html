@@ -9,8 +9,8 @@
 		<title>Special Relativity Simulation | Time Dilation &amp; Length Contraction | Simulations.Science</title>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-		<meta name="description" content="Interactive special relativity simulation: speed a spaceship towards light speed and watch moving light clocks tick slowly, lengths contract and simultaneity change." />
-		<meta name="keywords" content="special relativity, time dilation, length contraction, Lorentz factor, light clock, relativity of simultaneity, twin paradox, muon decay, speed of light, Einstein, physics simulation, interactive physics" />
+		<meta name="description" content="Interactive special relativity simulation: see light travel at the same speed for every observer, then watch moving clocks tick slowly, lengths contract and simultaneity break down, with Einstein&#39;s lightning, a ship in a hangar, muons and the twin paradox." />
+		<meta name="keywords" content="special relativity, speed of light, time dilation, length contraction, Lorentz factor, light clock, relativity of simultaneity, Einstein&#39;s train, velocity addition, pole and barn paradox, ladder paradox, twin paradox, muon decay, Einstein, physics simulation, interactive physics" />
 		<meta name="author" content="Simulations.Science" />
 		<meta name="robots" content="index, follow" />
 
@@ -18,14 +18,14 @@
 		<meta property="og:type" content="website" />
 		<meta property="og:url" content="https://simulations.science/relativity_simulation.html" />
 		<meta property="og:title" content="Special Relativity Simulation | Simulations.Science" />
-		<meta property="og:description" content="Watch moving clocks tick slowly and moving ships shrink as you near light speed." />
+		<meta property="og:description" content="Light moves at the same speed for everyone. See what follows: slow clocks, shrinking ships and broken simultaneity." />
 		<meta property="og:image" content="https://simulations.science/images/relativity.png" />
 
 		<!-- Twitter -->
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:url" content="https://simulations.science/relativity_simulation.html" />
 		<meta name="twitter:title" content="Special Relativity Simulation | Simulations.Science" />
-		<meta name="twitter:description" content="Watch moving clocks tick slowly and moving ships shrink as you near light speed." />
+		<meta name="twitter:description" content="Light moves at the same speed for everyone. See what follows: slow clocks, shrinking ships and broken simultaneity." />
 		<meta name="twitter:image" content="https://simulations.science/images/relativity.png" />
 
 		<!-- Canonical URL -->
@@ -37,7 +37,7 @@
 			"@context": "https://schema.org",
 			"@type": "LearningResource",
 			"name": "Special Relativity Simulation",
-			"description": "An interactive special relativity simulation: a spaceship and a space station each carry a light clock, and changing the ship's speed or the frame the measurements are made from shows time dilation, length contraction and the relativity of simultaneity, with the twin paradox and cosmic-ray muons as worked examples.",
+			"description": "An interactive special relativity simulation: a spaceship passes a space station, and changing its speed or the frame the measurements are made from shows that light moves at the same speed for both, and how time dilation, length contraction and the relativity of simultaneity follow, with Einstein's lightning strikes, light clocks, cosmic-ray muons, a ship in a hangar and the twin paradox.",
 			"provider": {
 				"@type": "Organization",
 				"name": "Simulations.Science",
@@ -54,6 +54,11 @@
 					"@type": "Thing",
 					"name": "Special Relativity",
 					"description": "Einstein's theory of space and time for observers moving at constant velocity, built on the speed of light being the same for all of them"
+				},
+				{
+					"@type": "Thing",
+					"name": "Constancy of the Speed of Light",
+					"description": "Light travels at the same speed, c, measured from every inertial frame, and speeds combine so that nothing passes it"
 				},
 				{
 					"@type": "Thing",
@@ -80,7 +85,7 @@
 			"image": "https://simulations.science/images/relativity.png",
 			"interactivityType": "active",
 			"isAccessibleForFree": true,
-			"keywords": "special relativity, time dilation, length contraction, Lorentz factor, light clock, relativity of simultaneity, twin paradox, muon decay, physics simulation"
+			"keywords": "special relativity, speed of light, time dilation, length contraction, Lorentz factor, light clock, relativity of simultaneity, velocity addition, pole and barn paradox, twin paradox, muon decay, physics simulation"
 		}
 		</script>
 
@@ -195,17 +200,27 @@
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="scenarioLabel">Scenario</p>
 											<select id="scenarioSelect" aria-labelledby="scenarioLabel" aria-describedby="scenarioHint">
-												<option value="clocks" selected>Light clocks: ship &amp; station</option>
-												<option value="twins">Twin paradox: a trip to a star</option>
+												<option value="light" selected>Light speed is constant</option>
+												<option value="lightning">Lightning strikes: simultaneity</option>
+												<option value="clocks">Light clocks: time dilation</option>
 												<option value="muons">Muons from cosmic rays</option>
+												<option value="hangar">Ship in a hangar: length paradox</option>
+												<option value="twins">Twin paradox: a trip to a star</option>
 											</select>
-											<p class="rel-hint" id="scenarioHint">A ship and a station of the same length each carry a light clock that ticks once a second.</p>
+											<p class="rel-hint" id="scenarioHint">As the ship passes the station, each fires a flash of light and a probe straight ahead. The probes leave at the speed set here.</p>
+										</div>
+										<div class="sim-control-group" id="probeGroup">
+											<label>Probe speed from its craft: <span id="probeVal" class="sim-value" style="--chars: 4">0.50</span>&thinsp;<em>c</em>
+												<input type="range" id="probeSlider" min="0" max="0.95" step="0.05" value="0.5">
+											</label>
 										</div>
 										<div class="sim-control-group" id="showGroup">
 											<p class="sim-control-group-label">Show</p>
 											<div class="sim-checkbox-group">
 												<input type="checkbox" id="pathsToggle" checked>
 												<label for="pathsToggle" id="pathsLabel">Light paths</label>
+												<input type="checkbox" id="newtonToggle">
+												<label for="newtonToggle" id="newtonLabel">Newton&rsquo;s prediction</label>
 												<input type="checkbox" id="lengthsToggle">
 												<label for="lengthsToggle" id="lengthsLabel">Measured lengths</label>
 												<input type="checkbox" id="syncToggle">
@@ -219,7 +234,7 @@
 									<div class="simulation-display-container">
 										<div class="sim-canvas-wrapper">
 											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 4/3;">
-												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="A spaceship carrying a light clock flies past a space station that carries an identical light clock"></canvas>
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="A spaceship passes a space station; each fires a flash of light and a probe forward, and the two flashes stay level"></canvas>
 											</div>
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
@@ -234,23 +249,23 @@
 											</div>
 											<label class="rel-velocity">
 												<span class="rel-toolbar-label" id="velocityLabel">Speed</span>
-												<input type="range" id="velocitySlider" min="0" max="130" step="1" value="80" aria-labelledby="velocityLabel">
-												<span class="rel-velocity-value"><span id="velocityVal" class="sim-value" style="--chars: 5">0.80</span>&thinsp;<em>c</em></span>
+												<input type="range" id="velocitySlider" min="0" max="130" step="1" value="50" aria-labelledby="velocityLabel">
+												<span class="rel-velocity-value"><span id="velocityVal" class="sim-value" style="--chars: 5">0.50</span>&thinsp;<em>c</em></span>
 											</label>
 										</div>
 										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container">
 												<div class="stats-box" title="Lorentz factor: moving clocks tick this many times slower, and moving lengths are this many times shorter">
-													<strong>&gamma;:</strong> <span id="statGamma" class="sim-value" style="--chars: 5">1.667</span>
+													<strong>&gamma;:</strong> <span id="statGamma" class="sim-value" style="--chars: 5">1.155</span>
 												</div>
 												<div class="stats-box" id="statABox">
-													<span class="rel-dot" id="statADot"></span><strong id="statALabel">Station clock:</strong> <span id="statA" class="sim-value" style="--chars: 5">0.0</span> <span id="statAUnit">s</span>
+													<span class="rel-dot" id="statADot"></span><strong id="statALabel">Station&rsquo;s probe:</strong> <span id="statA" class="sim-value" style="--chars: 5">0.50</span> <span id="statAUnit">c</span>
 												</div>
 												<div class="stats-box" id="statBBox">
-													<span class="rel-dot" id="statBDot"></span><strong id="statBLabel">Ship clock:</strong> <span id="statB" class="sim-value" style="--chars: 5">0.0</span> <span id="statBUnit">s</span>
+													<span class="rel-dot" id="statBDot"></span><strong id="statBLabel">Ship&rsquo;s probe:</strong> <span id="statB" class="sim-value" style="--chars: 5">0.80</span> <span id="statBUnit">c</span>
 												</div>
 												<div class="stats-box" id="statCBox">
-													<strong id="statCLabel">Ship length:</strong> <span id="statC" class="sim-value" style="--chars: 4">0.96</span> <span id="statCUnit">ls</span>
+													<strong id="statCLabel">Both flashes:</strong> <span id="statC" class="sim-value" style="--chars: 5">1.000</span> <span id="statCUnit">c</span>
 												</div>
 											</div>
 											<div class="sim-info-actions">
@@ -286,26 +301,26 @@
 									<details class="description-area">
 										<summary>About this simulation</summary>
 										<div class="description-content">
-											<p>Light always travels at the same speed, <em>c</em>, for everyone, however fast they move. Einstein realised this means moving clocks run slow and moving objects shrink.</p>
+											<p>Light always travels at the same speed, <em>c</em>, whoever measures it and however fast they move. Everything else in special relativity follows from that.</p>
 
 											<h4>What you're seeing</h4>
 											<ul>
-												<li>A ship and a station of the same length, each with a <strong>light clock</strong>: light bouncing between two mirrors, one tick per round trip. The mirrors are half a light-second (150,000&nbsp;km) apart, so each clock ticks once a second. Lengths are in light-seconds (ls).</li>
-												<li>Everything is as <em>measured</em> from one frame (the station's or the ship's), not as a camera would see it. The moving craft comes round again after leaving the screen.</li>
+												<li>Six scenarios, in teaching order: the speed of light, lightning strikes (simultaneity), light clocks (time dilation), muons, a ship in a hangar (length contraction) and the twin paradox.</li>
+												<li>Everything is as <em>measured</em> from one frame, not as a camera would see it. Distances are in light-seconds (ls): light covers 1&nbsp;ls in 1&nbsp;s. Dots along a path are a strobe photo: equal spacing, equal speed.</li>
 											</ul>
 
 											<h4>Key idea</h4>
-											<p>In the moving clock the light zig-zags further at the same speed, so it ticks slower: <em>t</em> = <em>&gamma;&tau;</em>, where <em>&tau;</em> is the time the moving clock shows, <em>t</em> the time measured in the frame and <em>&gamma;</em> = 1/&radic;(1 &minus; <em>v</em>&sup2;/<em>c</em>&sup2;). The moving craft is also shorter: <em>L</em> = <em>L</em><sub>0</sub>/<em>&gamma;</em>. At 0.6<em>c</em>, <em>&gamma;</em> = 1.25; at 0.8<em>c</em>, 1.67.</p>
+											<p>A moving clock&rsquo;s light zig-zags further at the same speed, so it ticks slower: <em>t</em> = <em>&gamma;t</em><sub>0</sub>, where <em>t</em><sub>0</sub> is the time on the moving clock and <em>&gamma;</em> = 1/&radic;(1 &minus; <em>v</em>&sup2;/<em>c</em>&sup2;). Moving objects are shorter, <em>L</em> = <em>L</em><sub>0</sub>/<em>&gamma;</em>, and clocks synchronised on one craft are not synchronised measured from the other. At 0.6<em>c</em>, <em>&gamma;</em> = 1.25; at 0.8<em>c</em>, 1.67.</p>
 
 											<h4>Things to try</h4>
 											<ul>
-												<li>Measure from the <strong>ship</strong>: now the station is short and its clock slow. Both views are right. Turn on the clocks at each end to see why: clocks synchronised on one craft aren't, measured from the other.</li>
+												<li>Switch frames in each scenario. Both views are right, and they agree on what actually happens: which lamps light, which muons land, who comes home younger.</li>
+												<li>Turn on <strong>Newton&rsquo;s prediction</strong> to see where the light would be if speeds simply added.</li>
 												<li>Go past 0.99<em>c</em> and the moving clock almost stops.</li>
-												<li>In the <strong>twin paradox</strong> the traveller comes home younger; <strong>muons</strong> made high in the sky reach the ground only thanks to relativity.</li>
 											</ul>
 
 											<h4>How to interact</h4>
-											<p>Drag the speed slider and pick a frame under the simulation, or tap the ship or station to ride along with it. <span class="icon solid fa-cog"></span> opens the settings (scenarios and extras), <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-sync-alt"></span> restarts the clocks and <span class="icon solid fa-chart-bar"></span> shows graphs. Press F to show the frame rate.</p>
+											<p>Drag the speed slider and pick a frame under the simulation, or tap a craft to ride along with it. <span class="icon solid fa-cog"></span> opens the settings (scenarios and extras), <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-sync-alt"></span> restarts and <span class="icon solid fa-chart-bar"></span> shows graphs. Press F to show the frame rate.</p>
 										</div>
 									</details>
 								</div>
