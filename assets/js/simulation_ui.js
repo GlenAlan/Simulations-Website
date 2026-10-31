@@ -8,7 +8,7 @@
     const box = document.querySelector('#main > .inner .sim-aspect-ratio-box');
     const mainContent = document.querySelector('#main > .inner .simulation-main-content');
     if (!box || !mainContent) return;
-    const ratio = box.style.getPropertyValue('--aspect-ratio').trim() || getComputedStyle(box).getPropertyValue('--aspect-ratio').trim();
+    const ratio = getComputedStyle(box).getPropertyValue('--aspect-ratio').trim();
     if (ratio) mainContent.style.setProperty('--aspect-ratio', ratio);
 })();
 
@@ -43,11 +43,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const fullscreenIconExpand = '<span class="icon solid fa-expand"><span class="label">Enter fullscreen</span></span>';
     const fullscreenIconContract = '<span class="icon solid fa-compress"><span class="label">Exit fullscreen</span></span>';
 
-    // Mirror the page's --aspect-ratio (set on .sim-aspect-ratio-box, possibly changed at run time) onto
-    // the canvas wrapper and .simulation-main-content, which size the canvas area from it.
+    // Mirror the page's --aspect-ratio (set on .sim-aspect-ratio-box, possibly changed at run time, or
+    // replaced by --aspect-ratio-portrait on phones in portrait) onto the canvas wrapper and
+    // .simulation-main-content, which size the canvas area from it.
     function syncAspectRatio() {
         if (!aspectRatioBox) return;
-        const ratio = aspectRatioBox.style.getPropertyValue('--aspect-ratio').trim();
+        const ratio = getComputedStyle(aspectRatioBox).getPropertyValue('--aspect-ratio').trim();
         if (!ratio) return;
         [canvasWrapper, simMainContent].forEach((el) => {
             if (el && el.style.getPropertyValue('--aspect-ratio').trim() !== ratio) {
@@ -194,6 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updatePositions() {
+        syncAspectRatio();
         updatePanelMode();
         const isFullscreen = body.classList.contains('sim-fullscreen-active');
 
