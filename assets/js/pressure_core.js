@@ -10,8 +10,9 @@
  *   particle mass m = 1 for the nitrogen-like gas, k_B = KB = 3 energy units per kelvin,
  *   so the 2D thermal speed sqrt(kT/m) = 30 units/s at 300 K.
  *   Display mapping: A_REF = 4096 units^2 <-> 1.00 L, and pressure is scaled so that
- *   300 particles at 300 K in 1.00 L read 101.325 kPa. Speeds are shown in m/s via
- *   SPEED_TO_MS (10 m/s per unit/s), which matches real N2 at the same temperature.
+ *   N_REF = 120 particles at 300 K in 1.00 L read 101.325 kPa (each dot ~ 2e20 molecules).
+ *   Speeds are shown in m/s via SPEED_TO_MS (10 m/s per unit/s), which matches real N2 at
+ *   the same temperature.
  */
 (function () {
     'use strict';
@@ -34,12 +35,13 @@
         speed: byId('speedSlider'), speedVal: byId('speedVal'),
         gas: byId('gasSelect'),
         hitArrows: byId('hitArrowsToggle'), avgArrows: byId('avgArrowsToggle'), tracer: byId('tracerToggle'),
+        details: byId('detailsToggle'),
         collisions: byId('collisionsToggle'), insulated: byId('insulatedToggle'),
         graphMode: byId('graphModeSelect'),
         showCharts: byId('showCharts'), chartsContainer: byId('charts-container'),
         reset: byId('resetSimulationBtn'), fps: byId('fpsDisplay'),
         statP: byId('statPressure'), statV: byId('statVolume'), statT: byId('statTemperature'),
-        statN: byId('statCount'), statZ: byId('statRatio')
+        statN: byId('statCount')
     };
 
     // ------------------------------------------------------------------
@@ -49,32 +51,34 @@
     const WORLD_W = 200, WORLD_H = 100;
     const REGION_W = 140;            // particles / containers live in x < REGION_W
     const INSTR_X = 143;             // instrument panel (gauge, legend) on the right
-    const REGION_SHIFT = WORLD_W - (INSTR_X - 1);   // region offset when the layout is mirrored
     const KB = 3;                    // energy units per kelvin
     const A_REF = 4096;              // area that reads as 1.00 L
-    const P_ATM = 300 * KB * 300 / A_REF;    // 65.92 sim units == 101.325 kPa (1 atm)
+    const N_REF = 120;               // particles that read 1 atm in 1.00 L at 300 K (default amount of gas)
+    const P_ATM = N_REF * KB * 300 / A_REF;  // 26.37 sim units == 101.325 kPa (1 atm)
     const KPA = 101.325 / P_ATM;     // kPa per sim pressure unit
     const SPEED_TO_MS = 10;          // m/s per (unit/s) for the nitrogen-like gas
-    const MAX_N = 1500;
+    const MAX_N = 600;
     const CAP = MAX_N + 16;
-    const R_DRAW = 0.6;              // drawn particle radius
-    const R_COLL = 0.3;              // particle-particle collision radius (kept small: dilute gas)
+    const R_DRAW = 0.6;              // particle radius used to offset the drawn walls from the physics boundary
+    const R_COLL = 0.45;             // particle-particle collision radius (small: dilute gas)
     const D_COLL2 = (2 * R_COLL) * (2 * R_COLL);
-    const WALL_T = 2.4;              // drawn wall thickness
+    const WALL_T = 2.4;              // drawn wall thickness (at most 11 CSS px, see wallT)
     const MAX_STEP_DIST = 0.4;       // max distance a particle moves per substep
     const MAX_SUBSTEPS = 60;
     const MAX_FRAME_DT = 0.05;       // clamp long frames (tab switches)
-    const PUMP_RATE = 300;           // particles per simulated second through the inlet
+    const PUMP_RATE = N_REF;         // particles per simulated second through the inlet
     const WEIGHT_P = 50 / KPA;       // each piston weight adds 50 kPa
     // Colour scale (like the Maxwell's demon page: blue = slower, red = faster than the median particle
     // of the default gas). sqrt(m) * speed / V_COL is the position on the scale; the median speed
     // at 300 K, sqrt(2 ln 2 * kT/m) = 35.3, lands on the violet midpoint (0.42) between blue and red.
     const V_COL = 84;
     const NB = 24;                   // colour buckets
-    const HIT_CAP = 640, HIT_LIFE = 0.3, HIT_SCALE = 0.07, HIT_MAX = 16;
-    const AVG_SCALE = 9 / P_ATM, AVG_MAX = 24;   // 1 atm -> 9 units long
-    const SECTOR_TAU = 1.5;          // averaging time of the per-sector pressure arrows (s)
-    const BIN_DT = 0.1, NBINS = 15;  // 1.5 s sliding window for the measured pressure
+    const HIT_CAP = 256, HIT_LIFE = 0.22, HIT_SCALE = 0.05, HIT_MAX = 9;
+    const AVG_SCALE = 8 / P_ATM, AVG_MAX = 18;   // 1 atm -> 8 units long
+    const SECTOR_TAU = 4;            // averaging time of the per-sector pressure arrows (s)
+    // Sliding window for the measured pressure: 4 s of wall hits (~360 at the default settings)
+    // keeps the gauge within about 5 % with only ~100 particles.
+    const BIN_DT = 0.2, NBINS = 20;
     const GX = REGION_W, GY = WORLD_H;   // collision grid, cell size 1 (>= 2 * R_COLL)
     const GAUGE_RANGES = [200, 400, 800, 1600, 3200, 6400];
 
@@ -84,12 +88,16 @@
         xe: { m: 131.3 / 28, name: 'Xenon' }
     };
 
-    const BALLOON = { cx: 70, cy: 48.5, R0: 20, Rs: 38, k1: 11.8, k3: 8, Rmin: 6, Rmax: 45, M: 120, c: 400 };
+    // The rubber's stiffness scales with the amount of gas that holds the balloon up (so the default
+    // balloon has the same size whatever N_REF is). Membrane/piston damping c sets how much the walls
+    // jiggle under the random hits (mean square ~ 1/c); M is chosen for roughly critical damping.
+    const FS = N_REF / 300;
+    const BALLOON = { cx: 70, cy: 48.5, R0: 20, Rs: 38, k1: 11.8 * FS, k3: 8 * FS, Rmin: 6, Rmax: 45, M: 72, c: 240 };
     const BOX = { x0: 38, x1: 102, y0: 18, y1: 82 };
     const SYRINGE = { x0: 8, y0: 24, y1: 76, barrelEnd: 86, rod: 58, xMin: 28, xMax: 82, uMax: 20, follow: 5 };
-    const PISTON = { x0: 38, x1: 102, y1: 92, yTop: 16, yLow: 86, M: 25, c: 80, slab: 4.5, weightH: 5.5 };
-    const SEGMENTS = { box: [5, 5, 5, 5], syringe: [4, 4, 6, 6], piston: [4, 4, 5, 5] };  // left, right, top, bottom
-    const N_CIRCLE_SECTORS = 24;
+    const PISTON = { x0: 38, x1: 102, y1: 92, yTop: 16, yLow: 86, M: 40, c: 120, slab: 4.5, weightH: 5.5 };
+    const SEGMENTS = { box: [3, 3, 3, 3], syringe: [2, 2, 3, 3], piston: [2, 2, 3, 3] };  // left, right, top, bottom
+    const N_CIRCLE_SECTORS = 12;
 
     // ------------------------------------------------------------------
     // Settings & state
@@ -97,7 +105,8 @@
     const S = {
         container: 'balloon',
         Tset: 300,
-        Ntarget: 300,
+        Ntarget: N_REF,
+        details: false,
         gas: 'n2',
         speed: 1,
         collisions: false,
@@ -142,7 +151,6 @@
     let segCount = [6, 6, 6, 6];
     const segStart = [0, 6, 12, 18];
     const secCos = new Float64Array(MAX_SECTORS), secSin = new Float64Array(MAX_SECTORS);
-    const outCos = new Float64Array(MAX_SECTORS), outSin = new Float64Array(MAX_SECTORS);
     let sectorScale = N_CIRCLE_SECTORS / TAU;
 
     // Collision-arrow ring buffer
@@ -161,7 +169,7 @@
     const win = { valid: false, P: 0, Pideal: 0, A: 0, KE: 0, T: 0, N: 0, hitRate: 0, ratio: 1 };
 
     // Decorative outside air for the balloon
-    const AIR_N = 90;
+    const AIR_N = 45;
     const ax = new Float32Array(AIR_N), ay = new Float32Array(AIR_N);
     const avx = new Float32Array(AIR_N), avy = new Float32Array(AIR_N);
 
@@ -235,10 +243,10 @@
             rod: dark ? 'rgba(200,210,220,0.5)' : 'rgba(100,110,120,0.5)',
             glass: dark ? 'rgba(160,190,220,0.05)' : 'rgba(80,120,160,0.05)',
             hitRGB: dark ? '255,255,255' : '30,30,30',
-            avgArrow: dark ? 'rgba(255,190,60,0.62)' : 'rgba(205,115,0,0.62)',
-            outArrow: dark ? 'rgba(126,202,246,0.75)' : 'rgba(31,120,180,0.75)',
+            avgArrow: dark ? 'rgba(255,190,60,0.6)' : 'rgba(205,115,0,0.62)',
+            outArrow: dark ? 'rgba(126,202,246,0.5)' : 'rgba(31,120,180,0.5)',
             outSolid: dark ? '#7ecaf6' : '#1f78b4',
-            air: dark ? 'rgba(210,210,210,0.32)' : 'rgba(70,70,70,0.30)',
+            air: dark ? 'rgba(210,210,210,0.2)' : 'rgba(70,70,70,0.2)',
             tracer: dark ? '#ffffff' : '#111111',
             trailRGB: dark ? '255,255,255' : '20,20,20',
             gaugeFace: dark ? '#222428' : '#f6f6f6',
@@ -332,8 +340,6 @@
             for (let k = 0; k < nSectors; k++) {
                 const a = -Math.PI + (k + 0.5) * TAU / nSectors;
                 secCos[k] = Math.cos(a); secSin[k] = Math.sin(a);
-                const b = a + 0.5 * TAU / nSectors;
-                outCos[k] = Math.cos(b); outSin[k] = Math.sin(b);
             }
         } else {
             segCount = SEGMENTS[S.container];
@@ -859,50 +865,99 @@
     // Rendering
     // ------------------------------------------------------------------
     let cssW = 0, cssH = 0, dpr = 1, scale = 1, offX = 0, offY = 0;
-    // When simulation_ui.js puts its buttons over the top-right of the canvas (it marks the body
-    // with sim-buttons-over-canvas), the instrument panel moves to the left and the containers to the right.
-    let flip = false;
-    let fSmall = 3, fMed = 3.4, fBig = 4.6;
+    // Layouts. 'Wide' (2:1 canvas): the instruments sit in a column right of the containers.
+    // 'Stacked' (portrait screens, nearly square canvas): the instruments sit in a strip below
+    // the containers, which are then drawn much bigger.
+    const INSTR_W = WORLD_W - 1.5 - INSTR_X;
+    const LY = { stacked: false, W: WORLD_W, H: WORLD_H, ix: INSTR_X, iy: 1.5, iw: INSTR_W, ih: WORLD_H - 3 };
+    const aspectBox = canvas.parentElement;
+    // Line widths, dot sizes and text are given in CSS px and converted to world units (u per px),
+    // so they stay crisp and readable on any canvas size.
+    let u = 1;
+    let wallT = WALL_T;                         // drawn wall thickness: thinner on big canvases
+    let fSmall = 3, fBig = 4.6;
     let gaugeDisplay = 101.3;
     let meanSpeed = 0;
     let gaugeIdx = 0;
     const DASH_FOAM = [1.2, 0.9], DASH_NONE = [];
-    let legendGradient = null;
+    let legendGradient = null, legendGradKey = '';
     let regionLabel = '';
     let regionLabelColor = '#888';
     // Cached instrument strings (refreshed a few times per second)
-    const txt = { gauge: '', ideal: '', outside: '', hits: '', speed: '', legend0: '', legend1: '', legend2: '' };
+    const txt = { gauge: '–', legend0: '', legend1: '', legend2: '' };
+    let rows = [];
+    const ROW_LABELS = ['Ideal gas', 'Outside', 'Piston', 'PV/NkT', 'Wall hits', 'Avg speed'];
+    const tw = { num: 1, unit: 1, rowNeed: 1, rowNum: 1, rowUnit: 1, key: 1 };
+    const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+    // Portrait phones and tablets: a 2:1 canvas would leave most of the screen empty.
+    function wantStacked() {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        return vw < 1000 && vh > vw * 1.15;
+    }
+    // Height of the instrument strip (stacked layout): taller on phones, where the details are
+    // listed in one column instead of two.
+    let stripH = 38;
+    function wantStripH() { return window.innerWidth < 520 ? 56 : 38; }
+    function applyLayout(stacked) {
+        LY.stacked = stacked;
+        if (stacked) {
+            LY.W = REGION_W; LY.H = WORLD_H + stripH;
+            LY.ix = 1.5; LY.iy = WORLD_H + 0.5; LY.iw = REGION_W - 3; LY.ih = stripH - 2;
+        } else {
+            LY.W = WORLD_W; LY.H = WORLD_H;
+            LY.ix = INSTR_X; LY.iy = 1.5; LY.iw = INSTR_W; LY.ih = WORLD_H - 3;
+        }
+    }
 
     function resizeCanvas() {
-        const boxEl = canvas.parentElement;
-        if (!boxEl) return false;
-        const w = boxEl.clientWidth, h = boxEl.clientHeight;
-        if (!w || !h) return false;
-        const newDpr = Math.min(window.devicePixelRatio || 1, 3);
+        if (!aspectBox) return false;
+        const stacked = wantStacked();
+        const newStripH = wantStripH();
+        const ratio = stacked ? REGION_W + '/' + (WORLD_H + newStripH) : '2/1';
+        if (aspectBox.style.getPropertyValue('--aspect-ratio').trim() !== ratio) {
+            aspectBox.style.setProperty('--aspect-ratio', ratio);
+        }
+        const layoutChanged = stacked !== LY.stacked || (stacked && newStripH !== stripH);
+        stripH = newStripH;
+        applyLayout(stacked);
+        const w = aspectBox.clientWidth, h = aspectBox.clientHeight;
+        if (!w || !h) return layoutChanged;
+        // Sharp on high-DPI screens, but keep the buffer under ~4 megapixels on very big canvases.
+        let newDpr = Math.min(window.devicePixelRatio || 1, 3);
+        if (w * h * newDpr * newDpr > 4.2e6) newDpr = Math.max(1, Math.sqrt(4.2e6 / (w * h)));
         const bw = Math.round(w * newDpr), bh = Math.round(h * newDpr);
-        const newFlip = document.body.classList.contains('sim-buttons-over-canvas') && !document.body.classList.contains('sim-fullscreen-active');
-        const flipChanged = newFlip !== flip;
-        flip = newFlip;
-        if (flipChanged) legendGradient = null;
-        if (bw === canvas.width && bh === canvas.height && w === cssW && h === cssH && newDpr === dpr) return flipChanged;
+        if (!layoutChanged && bw === canvas.width && bh === canvas.height && w === cssW && h === cssH && newDpr === dpr) return false;
         dpr = newDpr; cssW = w; cssH = h;
-        canvas.width = bw; canvas.height = bh;
-        scale = Math.min(w / WORLD_W, h / WORLD_H);
-        offX = (w - WORLD_W * scale) / 2;
-        offY = (h - WORLD_H * scale) / 2;
-        fSmall = Math.max(2.9, 9.5 / scale);
-        fMed = Math.max(3.3, 10.5 / scale);
-        fBig = Math.max(4.4, 12.5 / scale);
+        if (canvas.width !== bw) canvas.width = bw;
+        if (canvas.height !== bh) canvas.height = bh;
+        scale = Math.min(w / LY.W, h / LY.H);
+        offX = (w - LY.W * scale) / 2;
+        offY = (h - LY.H * scale) / 2;
+        u = 1 / scale;
+        wallT = Math.min(WALL_T, 11 * u);
+        fSmall = clamp(w / 68, 10.5, 14) * u;
+        fBig = clamp(w / 38, 16, 30) * u;
+        legendGradient = null;
         return true;
     }
     function font(size, bold) {
-        return (bold ? '700 ' : '400 ') + size.toFixed(2) + 'px "Source Sans Pro", Helvetica, Arial, sans-serif';
+        return (bold ? '700 ' : '400 ') + size.toFixed(3) + 'px "Source Sans Pro", Helvetica, Arial, sans-serif';
     }
-    let fontSmall = '', fontSmallBold = '', fontMed = '', fontMedBold = '', fontBig = '';
+    let fontSmall = '', fontSmallBold = '', fontBig = '', fontBigUnit = '';
     function refreshFonts() {
         fontSmall = font(fSmall, false); fontSmallBold = font(fSmall, true);
-        fontMed = font(fMed, false); fontMedBold = font(fMed, true);
-        fontBig = font(fBig, true);
+        fontBig = font(fBig, true); fontBigUnit = font(fBig * 0.8, false);
+        // Widths used to anchor changing numbers (so their neighbours never move).
+        ctx.font = fontBig; tw.num = ctx.measureText('8888').width;
+        ctx.font = fontBigUnit; tw.unit = ctx.measureText(' kPa').width;
+        ctx.font = fontSmall;
+        tw.rowNum = ctx.measureText('8888').width;
+        tw.rowUnit = ctx.measureText(' m/s').width;
+        let lw = 0;
+        for (let i = 0; i < ROW_LABELS.length; i++) lw = Math.max(lw, ctx.measureText(ROW_LABELS[i]).width);
+        tw.key = fSmall * 0.9;
+        tw.rowNeed = tw.key + lw + fSmall * 0.9 + tw.rowNum + tw.rowUnit;
     }
 
     function roundRectPath(x, y, w, h, r) {
@@ -945,7 +1000,7 @@
             pBucket[i] = b;
             bucketCount[b]++;
         }
-        meanSpeed += ((N ? speedSum / N : 0) - meanSpeed) * 0.1;
+        meanSpeed += ((N ? speedSum / N : 0) - meanSpeed) * 0.05;
         let acc = 0;
         for (let b = 0; b < NB; b++) { bucketStart[b] = acc; bucketCursor[b] = acc; acc += bucketCount[b]; }
         for (let i = 0; i < N; i++) order[bucketCursor[pBucket[i]]++] = i;
@@ -966,11 +1021,12 @@
     }
 
     function drawAir() {
+        const r = clamp(0.22 * scale, 1.2, 2) * u;
         ctx.fillStyle = pal.air;
         ctx.beginPath();
         for (let k = 0; k < AIR_N; k++) {
-            ctx.moveTo(ax[k] + 0.45, ay[k]);
-            ctx.arc(ax[k], ay[k], 0.45, 0, TAU);
+            ctx.moveTo(ax[k] + r, ay[k]);
+            ctx.arc(ax[k], ay[k], r, 0, TAU);
         }
         ctx.fill();
     }
@@ -981,7 +1037,7 @@
         trailHead = (trailHead + 1) % TRAIL_N;
         if (trailLen < TRAIL_N) trailLen++;
         if (trailLen > 1) {
-            ctx.lineWidth = Math.max(0.25, 1 / scale);
+            ctx.lineWidth = 1.5 * u;
             const seg = 6;
             for (let s0 = 0; s0 < trailLen - 1; s0 += seg) {
                 const alpha = 0.08 + 0.5 * (s0 + seg) / trailLen;
@@ -996,9 +1052,9 @@
             }
         }
         ctx.strokeStyle = pal.tracer;
-        ctx.lineWidth = Math.max(0.3, 1.2 / scale);
+        ctx.lineWidth = 1.8 * u;
         ctx.beginPath();
-        ctx.arc(px[0], py[0], r + 1.1, 0, TAU);
+        ctx.arc(px[0], py[0], r + 4 * u, 0, TAU);
         ctx.stroke();
         ctx.fillStyle = pal.tracer;
         ctx.beginPath();
@@ -1023,8 +1079,10 @@
         ctx.arc(BALLOON.cx, BALLOON.cy, R, 0, TAU);
         ctx.fill();
     }
+    // The rubber gets thinner as it stretches (at most ~6 px thick on big canvases).
     function balloonLineWidth() {
-        return Math.min(1.5, Math.max(0.55, 1.5 * Math.sqrt(BALLOON.R0 / Math.max(bal.R, 1)) - 0.25));
+        const w = Math.min(1.5, Math.max(0.55, 1.5 * Math.sqrt(BALLOON.R0 / Math.max(bal.R, 1)) - 0.25));
+        return w * Math.min(scale, 4.5) * u;
     }
     function drawBalloonFront() {
         const cx = BALLOON.cx, cy = BALLOON.cy, R = bal.R + R_DRAW;
@@ -1044,7 +1102,7 @@
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = pal.textSub;
-        ctx.lineWidth = Math.max(0.25, 0.9 / scale);
+        ctx.lineWidth = 1.2 * u;
         ctx.beginPath();
         ctx.moveTo(cx, ky + 2.0);
         ctx.quadraticCurveTo(cx + 3, ky + 5, cx + 1, WORLD_H + 1);
@@ -1059,18 +1117,18 @@
 
     // pathFn(o) adds the wall outline offset by `o` outwards from the physics boundary.
     function strokeWalls(pathFn) {
-        ctx.lineWidth = WALL_T;
+        ctx.lineWidth = wallT;
         ctx.strokeStyle = wallColor();
         ctx.lineJoin = 'miter';
         ctx.beginPath();
-        pathFn(R_DRAW + WALL_T / 2);
+        pathFn(R_DRAW + wallT / 2);
         ctx.stroke();
         if (S.insulated) {
             ctx.lineWidth = 1.1;
             ctx.strokeStyle = pal.foam;
             ctx.setLineDash(DASH_FOAM);
             ctx.beginPath();
-            pathFn(R_DRAW + WALL_T + 0.75);
+            pathFn(R_DRAW + wallT + 0.75);
             ctx.stroke();
             ctx.setLineDash(DASH_NONE);
         }
@@ -1083,7 +1141,7 @@
         });
         // inlet pipe on the left wall
         const yc = 0.5 * (y0 + y1);
-        const xOut = x0 - R_DRAW - WALL_T - (S.insulated ? 1.4 : 0);
+        const xOut = x0 - R_DRAW - wallT - (S.insulated ? 1.4 : 0);
         ctx.fillStyle = pal.metal;
         ctx.fillRect(xOut - 7, yc - 1.2, 7, 2.4);
         drawValve(xOut - 4, yc, true);
@@ -1103,23 +1161,23 @@
         });
         // finger flanges
         ctx.fillStyle = wallColor();
-        const fe = R_DRAW + WALL_T;
-        ctx.fillRect(end - 0.5, y0 - fe - 6, 2.2, 6 + WALL_T);
-        ctx.fillRect(end - 0.5, y1 + fe - WALL_T, 2.2, 6 + WALL_T);
+        const fe = R_DRAW + wallT;
+        ctx.fillRect(end - 0.5, y0 - fe - 6, 2.2, 6 + wallT);
+        ctx.fillRect(end - 0.5, y1 + fe - wallT, 2.2, 6 + wallT);
         // nozzle + valve (inlet)
         const yc = 0.5 * (y0 + y1);
-        const xOut = x0 - R_DRAW - WALL_T - (S.insulated ? 1.4 : 0);
+        const xOut = x0 - R_DRAW - wallT - (S.insulated ? 1.4 : 0);
         ctx.fillStyle = pal.metal;
         ctx.fillRect(xOut - 6, yc - 1.4, 6, 2.8);
         drawValve(xOut - 3.5, yc, true);
         // volume graduations
         ctx.strokeStyle = pal.textSub;
-        ctx.lineWidth = Math.max(0.2, 0.8 / scale);
+        ctx.lineWidth = u;
         ctx.fillStyle = pal.textSub;
         ctx.font = fontSmall;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'alphabetic';
-        const yTick = y1 + R_DRAW + WALL_T + (S.insulated ? 1.6 : 0);
+        const yTick = y1 + R_DRAW + wallT + (S.insulated ? 1.6 : 0);
         ctx.beginPath();
         for (let v = 3; v <= 9; v++) {
             const xv = syringeXForVolume(v / 10);
@@ -1137,10 +1195,11 @@
         ctx.fillStyle = pal.stopper;
         ctx.fillRect(thumbX, yc - 13, 2.4, 26);
         if (!hasDragged) {
-            ctx.fillStyle = pal.textSub;
-            ctx.font = fontSmall;
+            // Drag hint, above the rod (not under the corner buttons).
+            ctx.fillStyle = pal.text;
+            ctx.font = fontSmallBold;
             ctx.textAlign = 'center';
-            ctx.fillText('↔ drag', thumbX - 7, yc - 14.5);
+            ctx.fillText('↔ drag the plunger', 0.5 * (sx + thumbX), yc - 3);
         }
     }
 
@@ -1168,7 +1227,7 @@
         ctx.fillRect(x0 - R_DRAW, Y - R_DRAW - 0.8, (x1 - x0) + 2 * R_DRAW, 0.8);
         // weights
         const cx = 0.5 * (x0 + x1);
-        const showText = fSmall * scale >= 9 && fSmall < P.weightH;
+        const showText = fSmall < P.weightH * 0.8;
         for (let k = 0; k < S.weights; k++) {
             const wy = top - (k + 1) * (P.weightH + 0.4);
             ctx.fillStyle = pal.weight;
@@ -1184,7 +1243,7 @@
         }
         ctx.textBaseline = 'alphabetic';
         // inlet at the bottom
-        const yOut = y1 + R_DRAW + WALL_T + (S.insulated ? 1.4 : 0);
+        const yOut = y1 + R_DRAW + wallT + (S.insulated ? 1.4 : 0);
         ctx.fillStyle = pal.metal;
         ctx.fillRect(cx - 1.2, yOut, 2.4, WORLD_H - yOut + 1);
         drawValve(cx, Math.min(WORLD_H - 2, yOut + 3.2), false);
@@ -1193,47 +1252,50 @@
     // Time-averaged pressure on each wall section: arrows inside the gas pressing on the wall.
     // Length is proportional to pressure, capped (the same cap for every wall, so equal
     // pressures always look equal) so that arrows never reach the middle of the container.
+    // Around the balloon the outside air pushes back on the same spokes.
     function drawAvgArrows() {
-        const hl = 1.8;
-        ctx.lineWidth = 1.15;
+        const lw = clamp(0.3 * scale, 1.5, 2.6) * u;
+        const hl = clamp(1.1 * scale, 5, 9) * u;
+        const minL = 4 * u;
+        ctx.lineWidth = lw;
         ctx.lineCap = 'round';
         ctx.strokeStyle = pal.avgArrow;
         ctx.beginPath();
         if (isBalloon()) {
-            const cx = BALLOON.cx, cy = BALLOON.cy, hr = bal.R + R_DRAW * 0.6;
-            const cap = Math.min(AVG_MAX, 0.55 * bal.R);
+            const cx = BALLOON.cx, cy = BALLOON.cy, hr = bal.R + R_DRAW * 0.3;
+            const cap = Math.min(AVG_MAX, 0.5 * bal.R);
             for (let k = 0; k < nSectors; k++) {
                 let L = secP[k] * AVG_SCALE;
                 if (L > cap) L = cap;
-                if (L < 0.5) continue;
+                if (L < minL) continue;
                 arrowPath(cx + secCos[k] * hr, cy + secSin[k] * hr, secCos[k], secSin[k], L, Math.min(hl, 0.45 * L));
             }
             ctx.stroke();
-            // outside air pushing in
-            const ro = bal.R + R_DRAW + balloonLineWidth() + 0.2;
+            const ro = bal.R + R_DRAW + balloonLineWidth() + 0.5 * lw;
             const Lo = Math.min(AVG_MAX, P_ATM * AVG_SCALE);
             ctx.strokeStyle = pal.outArrow;
             ctx.beginPath();
             for (let k = 0; k < nSectors; k++) {
-                arrowPath(cx + outCos[k] * ro, cy + outSin[k] * ro, -outCos[k], -outSin[k], Lo, hl);
+                arrowPath(cx + secCos[k] * ro, cy + secSin[k] * ro, -secCos[k], -secSin[k], Lo, Math.min(hl, 0.45 * Lo));
             }
             ctx.stroke();
         } else {
             const x0 = box.x0, x1 = box.x1, y0 = box.y0, y1 = box.y1;
             const w = x1 - x0, h = y1 - y0;
             const cap = Math.min(AVG_MAX, 0.4 * Math.min(w, h));
+            const e = R_DRAW * 0.3;
             for (let wall = 0; wall < 4; wall++) {
                 const n = segCount[wall], s0 = segStart[wall];
                 for (let s = 0; s < n; s++) {
                     let L = secP[s0 + s] * AVG_SCALE;
                     if (L > cap) L = cap;
-                    if (L < 0.5) continue;
+                    if (L < minL) continue;
                     const f = (s + 0.5) / n;
                     const hh = Math.min(hl, 0.45 * L);
-                    if (wall === 0) arrowPath(x0 - R_DRAW * 0.6, y0 + f * h, -1, 0, L, hh);
-                    else if (wall === 1) arrowPath(x1 + R_DRAW * 0.6, y0 + f * h, 1, 0, L, hh);
-                    else if (wall === 2) arrowPath(x0 + f * w, y0 - R_DRAW * 0.6, 0, -1, L, hh);
-                    else arrowPath(x0 + f * w, y1 + R_DRAW * 0.6, 0, 1, L, hh);
+                    if (wall === 0) arrowPath(x0 - e, y0 + f * h, -1, 0, L, hh);
+                    else if (wall === 1) arrowPath(x1 + e, y0 + f * h, 1, 0, L, hh);
+                    else if (wall === 2) arrowPath(x0 + f * w, y0 - e, 0, -1, L, hh);
+                    else arrowPath(x0 + f * w, y1 + e, 0, 1, L, hh);
                 }
             }
             ctx.stroke();
@@ -1241,13 +1303,15 @@
         ctx.lineCap = 'butt';
     }
 
+    // Short-lived arrow at each wall hit (length ~ impulse); they fade out as they age.
     function drawHitArrows() {
         const now = simTime;
-        ctx.lineWidth = 0.42;
+        ctx.lineWidth = clamp(0.2 * scale, 1.1, 1.7) * u;
         ctx.lineCap = 'round';
+        const hl = 4.5 * u;
         for (let q = 0; q < 4; q++) {
             const aMin = q / 4, aMax = (q + 1) / 4;
-            ctx.strokeStyle = 'rgba(' + pal.hitRGB + ',' + (0.25 + 0.75 * aMax).toFixed(2) + ')';
+            ctx.strokeStyle = 'rgba(' + pal.hitRGB + ',' + (0.12 + 0.6 * aMax).toFixed(2) + ')';
             ctx.beginPath();
             let any = false;
             for (let k = 0; k < HIT_CAP; k++) {
@@ -1256,7 +1320,7 @@
                 const a = 1 - age / HIT_LIFE;
                 if (a <= aMin || a > aMax) continue;
                 const L = hitL[k];
-                arrowPath(hitX[k], hitY[k], hitNX[k], hitNY[k], L, Math.min(1.2, 0.4 * L));
+                arrowPath(hitX[k], hitY[k], hitNX[k], hitNY[k], L, Math.min(hl, 0.4 * L));
                 any = true;
             }
             if (any) ctx.stroke();
@@ -1267,16 +1331,17 @@
     function drawGauge(cx, cy, r) {
         const a0 = 0.75 * Math.PI, sweep = 1.5 * Math.PI;
         const range = GAUGE_RANGES[gaugeIdx];
+        const rPx = r * scale;
         ctx.fillStyle = pal.gaugeFace;
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, TAU);
         ctx.fill();
-        ctx.lineWidth = 0.9;
+        ctx.lineWidth = 1.5 * u;
         ctx.strokeStyle = pal.gaugeRim;
         ctx.stroke();
         // ticks
         ctx.strokeStyle = pal.textSub;
-        ctx.lineWidth = Math.max(0.2, 0.9 / scale);
+        ctx.lineWidth = u;
         ctx.beginPath();
         for (let i = 0; i <= 20; i++) {
             const a = a0 + sweep * i / 20;
@@ -1287,49 +1352,50 @@
             ctx.lineTo(cx + c * r2, cy + s * r2);
         }
         ctx.stroke();
-        // labels
-        ctx.fillStyle = pal.textSub;
-        ctx.font = fontSmall;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const roomy = fSmall < r * 0.2;
-        for (let i = 0; i <= 4; i++) {
-            if (!roomy && (i === 0 || i === 4)) continue;   // small gauge: keep the bottom free for the readout
-            const a = a0 + sweep * i / 4;
-            const rl = r * 0.55;
-            ctx.fillText(String(range * i / 4), cx + Math.cos(a) * rl, cy + Math.sin(a) * rl);
+        // scale numbers, when the dial is big enough for them
+        if (rPx >= 60) {
+            ctx.fillStyle = pal.textSub;
+            ctx.font = fontSmall;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const rl = r * 0.74 - fSmall * 1.1;
+            for (let i = 0; i <= 4; i++) {
+                const a = a0 + sweep * i / 4;
+                ctx.fillText(String(range * i / 4), cx + Math.cos(a) * rl, cy + Math.sin(a) * rl);
+            }
+            ctx.textBaseline = 'alphabetic';
         }
-        // outside / external pressure marker
-        const Pext = externalPressure();
-        if (Pext > 0) {
-            const v = Math.min(1, Pext * KPA / range);
-            const a = a0 + sweep * v;
-            ctx.strokeStyle = pal.outSolid;
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.moveTo(cx + Math.cos(a) * r * 0.93, cy + Math.sin(a) * r * 0.93);
-            ctx.lineTo(cx + Math.cos(a) * r * 1.0, cy + Math.sin(a) * r * 1.0);
-            ctx.stroke();
-        }
-        // ideal-gas prediction marker
-        if (win.valid) {
-            const v = Math.min(1.03, win.Pideal * KPA / range);
-            const a = a0 + sweep * v;
-            const c = Math.cos(a), s = Math.sin(a);
-            const tip = r * 0.9, base = r * 1.12, half = 0.11;
-            ctx.fillStyle = pal.ideal;
-            ctx.beginPath();
-            ctx.moveTo(cx + c * tip, cy + s * tip);
-            ctx.lineTo(cx + Math.cos(a - half) * base, cy + Math.sin(a - half) * base);
-            ctx.lineTo(cx + Math.cos(a + half) * base, cy + Math.sin(a + half) * base);
-            ctx.closePath();
-            ctx.fill();
+        if (S.details) {
+            // outside / applied pressure tick
+            const Pext = externalPressure();
+            if (Pext > 0) {
+                const a = a0 + sweep * Math.min(1, Pext * KPA / range);
+                ctx.strokeStyle = pal.outSolid;
+                ctx.lineWidth = 3 * u;
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(a) * r * 0.9, cy + Math.sin(a) * r * 0.9);
+                ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+                ctx.stroke();
+            }
+            // ideal-gas prediction marker
+            if (win.valid) {
+                const a = a0 + sweep * Math.min(1.03, win.Pideal * KPA / range);
+                const c = Math.cos(a), s = Math.sin(a);
+                const tip = r * 0.9, base = r + 7 * u, half = Math.min(0.2, 5 * u / r);
+                ctx.fillStyle = pal.ideal;
+                ctx.beginPath();
+                ctx.moveTo(cx + c * tip, cy + s * tip);
+                ctx.lineTo(cx + Math.cos(a - half) * base, cy + Math.sin(a - half) * base);
+                ctx.lineTo(cx + Math.cos(a + half) * base, cy + Math.sin(a + half) * base);
+                ctx.closePath();
+                ctx.fill();
+            }
         }
         // needle
         const v = Math.max(0, Math.min(1.04, gaugeDisplay / range));
         const a = a0 + sweep * v;
         ctx.strokeStyle = pal.needle;
-        ctx.lineWidth = 0.85;
+        ctx.lineWidth = (rPx < 40 ? 2 : 3) * u;
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(cx - Math.cos(a) * r * 0.12, cy - Math.sin(a) * r * 0.12);
@@ -1338,88 +1404,174 @@
         ctx.lineCap = 'butt';
         ctx.fillStyle = pal.needle;
         ctx.beginPath();
-        ctx.arc(cx, cy, 1.3, 0, TAU);
+        ctx.arc(cx, cy, Math.max(3.5 * u, r * 0.06), 0, TAU);
         ctx.fill();
-        // digital readout
-        ctx.fillStyle = pal.text;
-        ctx.font = roomy ? fontMedBold : fontSmallBold;
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText(txt.gauge, cx, cy + r * 0.68);
     }
 
+    // Big digital readout: the number is right-aligned at xNumRight so "kPa" never moves.
+    function drawReadout(xNumRight, y) {
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = fontBig;
+        ctx.fillStyle = pal.text;
+        ctx.textAlign = 'right';
+        ctx.fillText(txt.gauge, xNumRight, y);
+        ctx.font = fontBigUnit;
+        ctx.fillStyle = pal.textSub;
+        ctx.textAlign = 'left';
+        ctx.fillText(' kPa', xNumRight, y);
+    }
+
+    // Detail rows (label, value, unit) in a grid of `cols` columns, values right-aligned per cell.
+    function drawRows(x, y, w, cols, lh) {
+        const gap = cols > 1 ? fSmall * 1.2 : 0;
+        const cw = (w - gap * (cols - 1)) / cols;
+        const fit = Math.min(1, cw / tw.rowNeed);
+        const fs = Math.max(fSmall * fit, 8.5 * u);
+        const k = fs / fSmall;
+        ctx.font = fit < 1 ? font(fs, false) : fontSmall;
+        ctx.textBaseline = 'alphabetic';
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const cx0 = x + (i % cols) * (cw + gap), by = y + Math.floor(i / cols) * lh + fs * 0.8;
+            const kx = cx0 + tw.key * 0.35 * k;
+            if (row.key === 'ideal') {
+                const s = fs * 0.28;
+                ctx.fillStyle = pal.ideal;
+                ctx.beginPath();
+                ctx.moveTo(kx - s, by - fs * 0.62); ctx.lineTo(kx + s, by - fs * 0.62); ctx.lineTo(kx, by - fs * 0.1); ctx.closePath();
+                ctx.fill();
+            } else if (row.key === 'out') {
+                ctx.fillStyle = pal.outSolid;
+                ctx.fillRect(kx - fs * 0.1, by - fs * 0.66, fs * 0.2, fs * 0.6);
+            }
+            ctx.fillStyle = pal.textSub;
+            ctx.textAlign = 'left';
+            ctx.fillText(row.label, cx0 + tw.key * k, by);
+            const xr = cx0 + cw - tw.rowUnit * k - fs * 0.2;
+            ctx.fillStyle = pal.text;
+            ctx.textAlign = 'right';
+            ctx.fillText(row.value, xr, by);
+            ctx.fillStyle = pal.textSub;
+            ctx.textAlign = 'left';
+            ctx.fillText(row.unit, xr, by);
+        }
+    }
+
+    function legendHeight() { return fSmall * 2 + 21 * u; }
     function drawLegend(x, y, w) {
-        if (!legendGradient) {
+        const key = x.toFixed(2) + ',' + w.toFixed(2);
+        if (!legendGradient || legendGradKey !== key) {
             legendGradient = ctx.createLinearGradient(x, 0, x + w, 0);
             for (let i = 0; i <= 10; i++) legendGradient.addColorStop(i / 10, rgb(colorAt(i / 10)));
+            legendGradKey = key;
         }
         ctx.fillStyle = pal.textSub;
         ctx.font = fontSmall;
-        ctx.textAlign = 'center';
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText('Particle speed (m/s)', x + w / 2, y - 1.2);
+        ctx.fillText('Particle speed (m/s)', x, y + fSmall * 0.8);
+        const by = y + fSmall + 4 * u, bh = 7 * u;
         ctx.fillStyle = legendGradient;
-        ctx.fillRect(x, y, w, 3.2);
+        ctx.fillRect(x, by, w, bh);
         // mean-speed marker for the current gas temperature
         if (win.valid) {
-            const t = Math.min(1, tempT(win.T));
-            const mx = x + t * w;
+            const mx = x + Math.min(1, tempT(win.T)) * w;
             ctx.fillStyle = pal.text;
             ctx.beginPath();
-            ctx.moveTo(mx, y + 3.4); ctx.lineTo(mx - 1.2, y + 5.4); ctx.lineTo(mx + 1.2, y + 5.4); ctx.closePath();
+            ctx.moveTo(mx, by + bh + u); ctx.lineTo(mx - 4 * u, by + bh + 6 * u); ctx.lineTo(mx + 4 * u, by + bh + 6 * u); ctx.closePath();
             ctx.fill();
         }
         ctx.fillStyle = pal.textSub;
-        const ly = y + 5.6 + fSmall;
+        const ly = by + bh + 7 * u + fSmall * 0.85;
         ctx.textAlign = 'left'; ctx.fillText(txt.legend0, x, ly);
         ctx.textAlign = 'center'; ctx.fillText(txt.legend1, x + w / 2, ly);
         ctx.textAlign = 'right'; ctx.fillText(txt.legend2, x + w, ly);
     }
 
-    function drawInstruments(x0) {
-        const x1 = x0 + (WORLD_W - 1.5 - INSTR_X), w = x1 - x0, cx = x0 + w / 2;
+    function drawHint(x, y, align) {
+        ctx.font = fontSmall;
+        ctx.fillStyle = pal.textSub;
+        ctx.textAlign = align;
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(S.details ? 'Hide details ▴' : 'Show details ▾', x, y);
+    }
+
+    function panelBox(x, y, w, h) {
         ctx.fillStyle = pal.panelBg;
-        roundRectPath(x0, 1.5, w, WORLD_H - 3, 2.5);
+        roundRectPath(x, y, w, h, 6 * u);
         ctx.fill();
         ctx.strokeStyle = pal.panelBorder;
-        ctx.lineWidth = Math.max(0.2, 1 / scale);
+        ctx.lineWidth = u;
         ctx.stroke();
+    }
 
+    // Instrument column (wide layout): title, gauge + readout; details: rows and speed key.
+    function drawColumn() {
+        const x0 = LY.ix, y0 = LY.iy, w = LY.iw, h = LY.ih, cx = x0 + w / 2;
+        panelBox(x0, y0, w, h);
+        const pad = Math.min(10 * u, 3), lh = fSmall * 1.5;
+        const det = S.details;
+        const readH = fBig * 1.15 + 6 * u;
+        const rowsH = det ? rows.length * lh + 4 * u : 0;
+        const legH = det ? legendHeight() + 6 * u : 0;
+        let titleH = fSmall + 8 * u, hintH = lh;
+        const bottom = y0 + h - pad;
+        // Give the dial at least ~32 px of radius: drop the title and hint if space is short.
+        let avail = (bottom - (y0 + pad)) - titleH - hintH - rowsH - legH;
+        if (avail - readH < 64 * u) { titleH = 0; hintH = 0; avail = (bottom - (y0 + pad)) - rowsH - legH; }
+        let y = y0 + pad;
+        if (titleH) {
+            ctx.fillStyle = pal.textSub;
+            ctx.font = fontSmallBold;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillText('GAS PRESSURE', cx, y + fSmall * 0.8);
+            y += titleH;
+        }
+        const gr = clamp(Math.min((avail - readH) / 2 - 4 * u, w / 2 - pad - 2, 22), 4, 22);
+        const blockH = 2 * gr + 8 * u + readH;
+        const gy = y + Math.max(0, (avail - blockH) / 2);
+        drawGauge(cx, gy + gr + 4 * u, gr);
+        drawReadout(cx - (tw.num + tw.unit) / 2 + tw.num, gy + 2 * gr + 8 * u + fBig * 0.95);
+        if (det) {
+            const ry = bottom - hintH - legH - rowsH;
+            drawRows(x0 + pad, ry, w - 2 * pad, 1, lh);
+            drawLegend(x0 + pad + 2 * u, bottom - hintH - legH + 6 * u, w - 2 * pad - 4 * u);
+        }
+        if (hintH) drawHint(cx, bottom - fSmall * 0.25, 'center');
+    }
+
+    // Instrument strip (stacked layout): gauge, readout, then details in a 2-column grid + speed key.
+    function drawStrip() {
+        const x0 = LY.ix, y0 = LY.iy, w = LY.iw, h = LY.ih;
+        panelBox(x0, y0, w, h);
+        const pad = 8 * u, lh = fSmall * 1.45;
+        const gr = clamp(h / 2 - pad - (S.details ? 5 * u : 0), 4, 22);
+        const gcx = x0 + pad + gr, gcy = y0 + h / 2;
+        drawGauge(gcx, gcy, gr);
+        const rx = gcx + gr + 10 * u;
         ctx.fillStyle = pal.textSub;
         ctx.font = fontSmallBold;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText('PRESSURE GAUGE', cx, 4 + fSmall);
-
-        const gr = Math.min(17, w / 2 - 6);
-        const gcy = 8 + fSmall + gr;
-        drawGauge(cx, gcy, gr);
-
-        let y = gcy + gr + 2 + fSmall;
-        const lh = fSmall * 1.35;
-        ctx.font = fontSmall;
         ctx.textAlign = 'left';
-        const tx = x0 + 3;
-        // ideal marker key
-        ctx.fillStyle = pal.ideal;
-        ctx.beginPath();
-        ctx.moveTo(tx, y - fSmall * 0.75); ctx.lineTo(tx + 2.2, y - fSmall * 0.75); ctx.lineTo(tx + 1.1, y - fSmall * 0.1); ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = pal.text;
-        ctx.fillText(txt.ideal, tx + 3.4, y);
-        y += lh;
-        if (externalPressure() > 0) {
-            ctx.fillStyle = pal.outSolid;
-            ctx.fillRect(tx + 0.4, y - fSmall * 0.75, 1.4, fSmall * 0.65);
-            ctx.fillStyle = pal.text;
-            ctx.fillText(txt.outside, tx + 3.4, y);
-            y += lh;
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText('GAS PRESSURE', rx, gcy - fBig * 0.45);
+        drawReadout(rx + tw.num, gcy + fBig * 0.75);
+        const right = x0 + w - pad;
+        if (!S.details) {
+            drawHint(right, gcy + fSmall * 0.35, 'right');
+            return;
         }
-        ctx.fillStyle = pal.textSub;
-        ctx.fillText(txt.hits, tx + 3.4, y);
-        y += lh;
-        ctx.fillText(txt.speed, tx + 3.4, y);
-
-        drawLegend(x0 + 4, WORLD_H - 8.5 - fSmall * 1.8, w - 8);
+        // Details block: two columns of rows if they fit, no wider than needed, centred in the
+        // space right of the readout.
+        const dx0 = rx + Math.max(tw.num + tw.unit, fSmall * 7) + 12 * u;
+        const cols = right - dx0 >= 2 * tw.rowNeed + fSmall * 1.2 ? 2 : 1;
+        const dw = Math.min(right - dx0, cols * tw.rowNeed * 1.3 + (cols - 1) * fSmall * 1.2);
+        const dx = dx0 + (right - dx0 - dw) / 2;
+        const nr = Math.ceil(rows.length / cols);
+        const blockH = nr * lh + 4 * u + legendHeight();
+        const dy = gcy - blockH / 2;
+        drawRows(dx, dy, dw, cols, lh);
+        drawLegend(dx + 2 * u, dy + nr * lh + 4 * u, dw - 4 * u);
     }
 
     function render() {
@@ -1430,14 +1582,13 @@
         ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offX, dpr * offY);
 
         ctx.save();
-        if (flip) ctx.translate(REGION_SHIFT, 0);
         ctx.beginPath();
-        ctx.rect(0, 0, INSTR_X - 1, WORLD_H);
+        ctx.rect(0, 0, LY.stacked ? REGION_W : INSTR_X - 1, WORLD_H);
         ctx.clip();
 
         const c = S.container;
         if (c === 'balloon') { drawAir(); drawBalloonBack(); }
-        const r = Math.max(R_DRAW, 1.15 / scale);
+        const r = clamp(0.7 * scale, 2.2, 6) * u;
         drawParticles(r);
         if (S.tracer) drawTracer(r);
         if (c === 'balloon') drawBalloonFront();
@@ -1454,32 +1605,36 @@
         ctx.fillText(regionLabel, 2, 2 + fSmall);
         ctx.restore();
 
-        drawInstruments(flip ? 1.5 : INSTR_X);
+        if (LY.stacked) drawStrip(); else drawColumn();
     }
 
     // ------------------------------------------------------------------
     // Text readouts (throttled)
     // ------------------------------------------------------------------
-    function formatKpa(p) { return p >= 1000 ? p.toFixed(0) : p >= 100 ? p.toFixed(1) : p.toFixed(1); }
+    // At most 4 characters (matches --chars in the HTML): whole kPa, one decimal below 10 kPa.
+    function formatKpa(p) {
+        if (!(p >= 0)) return '–';
+        if (p >= 9999.5) return '9999';
+        return p < 9.95 ? p.toFixed(1) : p.toFixed(0);
+    }
     function roundNice(v) { return v >= 1000 ? Math.round(v / 50) * 50 : Math.round(v / 10) * 10; }
     function updateReadouts() {
-        const Pk = win.valid ? win.P * KPA : NaN;
-        txt.gauge = win.valid ? formatKpa(gaugeDisplay) + ' kPa' : '– kPa';
-        txt.ideal = 'ideal NkT/V: ' + (win.valid ? formatKpa(win.Pideal * KPA) : '–') + ' kPa';
+        txt.gauge = win.valid ? formatKpa(gaugeDisplay) : '–';
         const Pext = externalPressure();
-        if (S.container === 'balloon') txt.outside = 'outside air: ' + formatKpa(Pext * KPA) + ' kPa';
-        else if (S.container === 'piston') txt.outside = 'atm + weights: ' + formatKpa(Pext * KPA) + ' kPa';
-        txt.hits = 'wall hits: ' + (win.valid ? Math.round(win.hitRate) : '–') + ' /s';
-        txt.speed = 'average speed: ' + Math.round(meanSpeed * SPEED_TO_MS) + ' m/s';
+        const r = [{ key: 'ideal', label: 'Ideal gas', value: win.valid ? formatKpa(win.Pideal * KPA) : '–', unit: ' kPa' }];
+        if (Pext > 0) r.push({ key: 'out', label: S.container === 'piston' ? 'Piston' : 'Outside', value: formatKpa(Pext * KPA), unit: ' kPa' });
+        r.push({ key: null, label: 'PV/NkT', value: win.valid ? Math.min(9.99, win.ratio).toFixed(2) : '–', unit: '' });
+        r.push({ key: null, label: 'Wall hits', value: win.valid ? String(Math.min(9999, Math.round(win.hitRate))) : '–', unit: ' /s' });
+        r.push({ key: null, label: 'Avg speed', value: String(Math.min(9999, Math.round(meanSpeed * SPEED_TO_MS))), unit: ' m/s' });
+        rows = r;
         const vTop = V_COL / Math.sqrt(mass) * SPEED_TO_MS;
         txt.legend0 = '0';
         txt.legend1 = String(roundNice(vTop / 2));
         txt.legend2 = String(roundNice(vTop));
-        if (ui.statP) ui.statP.textContent = win.valid ? formatKpa(Pk) : '–';
+        if (ui.statP) ui.statP.textContent = win.valid ? formatKpa(win.P * KPA) : '–';
         if (ui.statV) ui.statV.textContent = (area() / A_REF).toFixed(2);
-        if (ui.statT) ui.statT.textContent = win.valid ? Math.round(win.T).toString() : '–';
+        if (ui.statT) ui.statT.textContent = win.valid ? String(Math.min(9999, Math.round(win.T))) : '–';
         if (ui.statN) ui.statN.textContent = String(N);
-        if (ui.statZ) ui.statZ.textContent = win.valid ? win.ratio.toFixed(2) : '–';
         if (S.container === 'syringe' && ui.volume && ui.volumeVal && dragging) {
             const V = syringeVolumeForX(syringeTarget);
             ui.volume.value = V.toFixed(2);
@@ -1699,7 +1854,7 @@
 
         if (win.valid) {
             const target = win.P * KPA;
-            gaugeDisplay += (target - gaugeDisplay) * (1 - Math.exp(-realDt / 0.2));
+            gaugeDisplay += (target - gaugeDisplay) * (1 - Math.exp(-realDt / 0.4));
             updateGaugeRange(Math.max(gaugeDisplay, win.Pideal * KPA, externalPressure() * KPA));
         }
         if (t0 - lastReadout > 200) {
@@ -1755,8 +1910,13 @@
         if (ui.container && ui.container.value !== type) ui.container.value = type;
         hasDragged = false;
         syncContainerControls();
+        syncTouchAction();
         initState();
         if (lawChart) lawChart.$mode = null;
+    }
+    // Only the syringe needs drags on the canvas; elsewhere a swipe over the canvas scrolls the page.
+    function syncTouchAction() {
+        canvas.style.touchAction = S.container === 'syringe' ? 'none' : 'manipulation';
     }
     function setTemperature(T) {
         T = Math.max(50, Math.min(1000, Math.round(T)));
@@ -1808,6 +1968,11 @@
         S[key] = !!value;
         if (el && el.checked !== S[key]) el.checked = S[key];
     }
+    function setDetails(v) {
+        setToggle('details', ui.details, v);
+        updateReadouts();
+        render();
+    }
 
     function bindControls() {
         if (ui.container) ui.container.addEventListener('change', () => setContainer(ui.container.value));
@@ -1822,6 +1987,7 @@
             if (S.hitArrows) hitT.fill(-1e9);
         });
         if (ui.avgArrows) ui.avgArrows.addEventListener('change', () => { S.avgArrows = ui.avgArrows.checked; });
+        if (ui.details) ui.details.addEventListener('change', () => setDetails(ui.details.checked));
         if (ui.tracer) ui.tracer.addEventListener('change', () => { S.tracer = ui.tracer.checked; trailLen = 0; });
         if (ui.collisions) ui.collisions.addEventListener('change', () => { S.collisions = ui.collisions.checked; });
         if (ui.insulated) ui.insulated.addEventListener('change', () => {
@@ -1848,13 +2014,14 @@
     function readControls() {
         if (ui.container && AUTO_MODE[ui.container.value]) S.container = ui.container.value;
         if (ui.temp) S.Tset = Math.max(50, Math.min(1000, +ui.temp.value || 300));
-        if (ui.count) S.Ntarget = Math.max(1, Math.min(MAX_N, +ui.count.value || 300));
+        if (ui.count) S.Ntarget = Math.max(1, Math.min(MAX_N, +ui.count.value || N_REF));
         if (ui.volume) S.syringeV = +ui.volume.value || 0.8;
         if (ui.weights) S.weights = Math.max(0, Math.min(4, +ui.weights.value || 0));
         if (ui.speed) S.speed = Math.max(0.1, Math.min(3, +ui.speed.value || 1));
         if (ui.gas && GASES[ui.gas.value]) S.gas = ui.gas.value;
         if (ui.hitArrows) S.hitArrows = ui.hitArrows.checked;
         if (ui.avgArrows) S.avgArrows = ui.avgArrows.checked;
+        if (ui.details) S.details = ui.details.checked;
         if (ui.tracer) S.tracer = ui.tracer.checked;
         if (ui.collisions) S.collisions = ui.collisions.checked;
         if (ui.insulated) S.insulated = ui.insulated.checked;
@@ -1865,13 +2032,20 @@
         if (ui.speedVal) ui.speedVal.textContent = S.speed.toFixed(1);
         syncContainerControls();
         syncInsulatedControls();
+        syncTouchAction();
     }
 
-    // Plunger dragging (mouse, pen and touch via pointer events).
-    let dragging = false, dragOffset = 0, dragPointer = null;
+    // Pointer input (mouse, pen and touch via pointer events): drag the syringe plunger; tap or
+    // click the instrument panel to show or hide the details.
+    let dragging = false, dragOffset = 0, dragPointer = null, tapPointer = null;
     function toWorld(e) {
         const rect = canvas.getBoundingClientRect();
-        return { x: (e.clientX - rect.left - offX) / scale - (flip ? REGION_SHIFT : 0), y: (e.clientY - rect.top - offY) / scale };
+        return { x: (e.clientX - rect.left - offX) / scale, y: (e.clientY - rect.top - offY) / scale };
+    }
+    function overInstruments(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left - offX) / scale, y = (e.clientY - rect.top - offY) / scale;
+        return x >= LY.ix && x <= LY.ix + LY.iw && y >= LY.iy && y <= LY.iy + LY.ih;
     }
     function overPlunger(w) {
         const slack = 10 / scale;
@@ -1881,9 +2055,11 @@
     }
     function bindPointer() {
         canvas.addEventListener('pointerdown', (e) => {
-            if (S.container !== 'syringe' || (e.pointerType === 'mouse' && e.button !== 0)) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            if (overInstruments(e)) { tapPointer = e.pointerId; return; }
+            if (S.container !== 'syringe') return;
             const w = toWorld(e);
-            const inBarrel = w.x > SYRINGE.x0 && w.x < INSTR_X && w.y > SYRINGE.y0 - 6 && w.y < SYRINGE.y1 + 6;
+            const inBarrel = w.x > SYRINGE.x0 && w.x < REGION_W && w.y > SYRINGE.y0 - 6 && w.y < SYRINGE.y1 + 6;
             if (!overPlunger(w) && !inBarrel) return;
             dragging = true;
             hasDragged = true;
@@ -1901,11 +2077,19 @@
                 S.syringeV = syringeVolumeForX(syringeTarget);
                 e.preventDefault();
             } else if (e.pointerType === 'mouse') {
-                const can = S.container === 'syringe' && overPlunger(toWorld(e));
-                canvas.classList.toggle('pressure-can-drag', can);
+                const onPanel = overInstruments(e);
+                canvas.classList.toggle('pressure-can-click', onPanel);
+                canvas.classList.toggle('pressure-can-drag', !onPanel && S.container === 'syringe' && overPlunger(toWorld(e)));
             }
         });
+        canvas.addEventListener('pointerleave', () => {
+            canvas.classList.remove('pressure-can-click', 'pressure-can-drag');
+        });
         const end = (e) => {
+            if (tapPointer !== null && e.pointerId === tapPointer) {
+                tapPointer = null;
+                if (e.type === 'pointerup' && overInstruments(e)) setDetails(!S.details);
+            }
             if (!dragging || e.pointerId !== dragPointer) return;
             dragging = false;
             dragPointer = null;
@@ -1922,7 +2106,6 @@
     function onResize() {
         if (resizeCanvas()) {
             refreshFonts();
-            legendGradient = null;
             render();
         }
     }
@@ -1947,7 +2130,8 @@
                 R: bal.R, Rdot: bal.Rdot, box: { x0: box.x0, x1: box.x1, y0: box.y0, y1: box.y1 },
                 volumeL: area() / A_REF, gasT: gasTemperature(), KE: currentKE(),
                 window: { valid: win.valid, P_kPa: win.P * KPA, Pideal_kPa: win.Pideal * KPA, V_L: win.A / A_REF, T: win.T, ratio: win.ratio, hitRate: win.hitRate },
-                substeps: lastSubsteps, gaugeRange: GAUGE_RANGES[gaugeIdx], mirroredLayout: flip
+                substeps: lastSubsteps, gaugeRange: GAUGE_RANGES[gaugeIdx], stackedLayout: LY.stacked, details: S.details,
+                canvas: { cssW: cssW, cssH: cssH, dpr: dpr, scale: scale }
             };
         },
         setContainer: setContainer,
@@ -1960,6 +2144,7 @@
         setCollisions: (v) => setToggle('collisions', ui.collisions, v),
         setInsulated: (v) => { setToggle('insulated', ui.insulated, v); syncInsulatedControls(); updateRegionLabel(); },
         setArrows: (hit, avg) => { setToggle('hitArrows', ui.hitArrows, hit); setToggle('avgArrows', ui.avgArrows, avg); },
+        setDetails: setDetails,
         setTracer: (v) => setToggle('tracer', ui.tracer, v),
         reset: () => initState(),
         pause: (v) => { S.paused = v === undefined ? !S.paused : !!v; return S.paused; },
@@ -2002,8 +2187,6 @@
             ro.observe(canvas.parentElement);
         }
         window.addEventListener('resize', onResize);
-        // Fullscreen on/off changes where simulation_ui.js puts its buttons (see `flip`).
-        new MutationObserver(onResize).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
         // Theme changes: main.js swaps dark-mode / light-mode on <html>.
         new MutationObserver(() => {

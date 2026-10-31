@@ -128,6 +128,7 @@
 		</script>
 		<link rel="stylesheet" href="assets/css/main.css" />
 		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/maxwell_styles.css" />
 		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
 		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
 	</head>
@@ -183,23 +184,28 @@
 										<h3 id="simulationControlsPanelLabel">Controls</h3>
 									</div>
 									<div class="sim-controls-content">
-										<label>Speed: <span id="speedVal">50</span>x
-										  <input type="range" id="speedSlider" min="1" max="1000" step="1" value="50">
-										</label>
-										<label>Particles per Color: <span id="countVal">100</span>
-										  <input type="range" id="particleCount" min="1" max="500" step="1" value="100">
-										</label>
-										<label>Gate Size: <span id="gateSizeVal">25</span>%
-										  <input type="range" id="gateSizeSlider" min="10" max="90" step="5" value="25">
-										</label>
 										<div class="sim-control-group">
-										    <p class="sim-control-group-label" id="demonModeLabel">Demon Mode:</p>
-										    <div class="sim-select-container">
-										        <select id="demonModeSelector" aria-labelledby="demonModeLabel">
-										            <option value="automatic" selected>Automatic</option>
-										            <option value="manual">Manual</option>
-										        </select>
-										    </div>
+											<p class="sim-control-group-label" id="demonModeLabel">Demon</p>
+											<div class="sim-select-container">
+												<select id="demonModeSelector" aria-labelledby="demonModeLabel" aria-describedby="demonModeNote">
+													<option value="automatic" selected>Automatic</option>
+													<option value="manual">Manual</option>
+												</select>
+											</div>
+											<p class="mx-control-note" id="demonModeNote">Lets fast particles through to the right and slow ones to the left.</p>
+											<label for="gateSizeSlider">Gate size <span class="sim-value" style="--chars: 2" id="gateSizeVal">25</span>% of wall
+												<input type="range" id="gateSizeSlider" min="10" max="90" step="5" value="25">
+											</label>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Gas</p>
+											<label for="particleCount">Particles <span class="sim-value" style="--chars: 4" id="countVal">200</span>
+												<input type="range" id="particleCount" min="10" max="1000" step="10" value="200" aria-describedby="particleCountNote">
+											</label>
+											<p class="mx-control-note" id="particleCountNote">Half start fast, half slow. Changing this restarts.</p>
+											<label for="speedSlider">Speed <span class="sim-value" style="--chars: 4" id="speedVal">50</span>&times;
+												<input type="range" id="speedSlider" min="0" max="17" step="1" value="9">
+											</label>
 										</div>
 									</div>
 								</div>
@@ -207,26 +213,38 @@
 								<div class="simulation-main-content">
 									<div class="simulation-display-container">
 										<div class="sim-canvas-wrapper">
-											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1;">
-												<canvas id="simulationCanvas" class="sim-canvas" aria-label="Maxwell's demon simulation: gas particles in two chambers separated by a wall with a gate"></canvas>
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 1/2;">
+												<canvas id="simulationCanvas" class="sim-canvas" tabindex="0" aria-label="Maxwell's demon simulation: gas particles in two chambers separated by a wall with a gate. In manual mode, press and hold here or hold Space to open the gate." aria-describedby="demonHint"></canvas>
+												<div id="demonHint" class="mx-canvas-hint" role="status" aria-live="polite"></div>
 											</div>
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
 										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container">
-												<div class="stats-box">
-													<strong>Left:</strong> <span id="leftRed">0</span> Red, <span id="leftBlue">0</span> Blue, <span title="Temperature relative to the start">T = <span id="leftTemp">1.00</span></span>
+												<div class="stats-box mx-chamber" title="Left chamber: number of fast and slow particles, and temperature relative to the start">
+													<strong id="leftLabel">Left</strong>
+													<span class="mx-count mx-fast"><span class="sim-value" style="--chars: 3" id="leftRed">0</span><span class="mx-word"> fast</span></span>
+													<span class="mx-count mx-slow"><span class="sim-value" style="--chars: 3" id="leftBlue">0</span><span class="mx-word"> slow</span></span>
+													<span class="mx-temp"><span class="icon solid fa-thermometer-half" aria-hidden="true"></span><span class="mx-sr">temperature </span><span class="sim-value" style="--chars: 4" id="leftTemp">1.00</span></span>
 												</div>
-												<div class="stats-box">
-													<strong>Right:</strong> <span id="rightRed">0</span> Red, <span id="rightBlue">0</span> Blue, <span title="Temperature relative to the start">T = <span id="rightTemp">1.00</span></span>
+												<div class="stats-box mx-chamber" title="Right chamber: number of fast and slow particles, and temperature relative to the start">
+													<strong id="rightLabel">Right</strong>
+													<span class="mx-count mx-fast"><span class="sim-value" style="--chars: 3" id="rightRed">0</span><span class="mx-word"> fast</span></span>
+													<span class="mx-count mx-slow"><span class="sim-value" style="--chars: 3" id="rightBlue">0</span><span class="mx-word"> slow</span></span>
+													<span class="mx-temp"><span class="icon solid fa-thermometer-half" aria-hidden="true"></span><span class="mx-sr">temperature </span><span class="sim-value" style="--chars: 4" id="rightTemp">1.00</span></span>
 												</div>
 											</div>
+											<div class="mx-legend" aria-hidden="true">
+												<span class="mx-fast">fast</span>
+												<span class="mx-slow">slow</span>
+												<span class="mx-legend-t"><span class="icon solid fa-thermometer-half"></span> temperature (start&nbsp;=&nbsp;1)</span>
+											</div>
 											<div class="sim-info-actions">
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Toggle Charts">
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Show charts">
 													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show charts">
 													<span class="icon solid fa-chart-bar"></span>
 												</label>
-												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset Simulation" title="Reset Simulation">
+												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset simulation" title="Reset simulation">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
 											</div>
@@ -235,10 +253,10 @@
 									<div id="charts-container">
 										<div class="sim-charts-row">
 											<div class="chart-box">
-												<canvas id="leftChart"></canvas>
+												<canvas id="leftChart" role="img" aria-label="Chart: fast and slow particles in the left chamber over time"></canvas>
 											</div>
 											<div class="chart-box">
-												<canvas id="rightChart"></canvas>
+												<canvas id="rightChart" role="img" aria-label="Chart: fast and slow particles in the right chamber over time"></canvas>
 											</div>
 										</div>
 									</div>
@@ -251,27 +269,27 @@
 										</button>
 									</div>
 
-									<div class="description-area">
-										<h3>About this Simulation</h3>
-										<p>This simulation demonstrates Maxwell's Demon, a thought experiment that explores the second law of thermodynamics. The "demon" controls a gate between two chambers of gas. By selectively allowing faster (hotter) particles to move to one side and slower (cooler) particles to the other, the demon appears to decrease entropy, creating a temperature difference without doing work.</p>
-										<p>Each particle's color shows its speed: red particles are moving faster than the median speed of the starting gas, blue ones slower. The particles collide elastically, so energy is shared between them and individual particles speed up, slow down and change color all the time. T is the temperature of each chamber (the average kinetic energy per particle) relative to the starting temperature.</p>
-										<p>Observe how the distribution of particles changes over time. In automatic mode, the demon builds up a temperature difference: the right chamber gets hotter and the left colder, even though no energy is added. The charts help visualize this process. This simulation helps explore concepts of statistical mechanics, entropy, and the limits of the second law.</p>
-										<p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) will restart the simulation. The chart icon (<span class="icon solid fa-chart-bar"></span>) toggles the visibility of the graphs.</p>
-										<p><strong>Controls:</strong></p>
-										<ul>
-											<li><strong>Speed:</strong> Controls how fast simulated time runs.</li>
-											<li><strong>Particles per Color:</strong> Sets how many fast (red) and how many slow (blue) particles the simulation starts with. Changing it restarts the simulation.</li>
-											<li><strong>Gate Size:</strong> Adjusts the vertical size of the gate controlled by the demon.</li>
-											<li><strong>Demon Mode:</strong>
-												<ul>
-													<li><em>Automatic:</em> The demon watches the particles approaching the gate and opens it only for red (fast) particles coming from the left or blue (slow) particles coming from the right, so red particles are directed to the right and blue to the left.</li>
-													<li><em>Manual:</em> You control the gate: press and hold on the simulation (mouse or touch) to open it.</li>
-												</ul>
-											</li>
-											<li><strong>Show Charts:</strong> Toggles the display of charts showing the number of red and blue particles on each side over time.</li>
-											<li><strong>Reset Simulation:</strong> Resets all particles to random positions and velocities and clears the charts.</li>
-										</ul>
-									</div>
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>In 1867 James Clerk Maxwell imagined a tiny "demon" guarding a door between two boxes of gas. By letting only fast molecules through one way and slow ones the other, it could make one side hot and the other cold without doing any work, apparently breaking the second law of thermodynamics.</p>
+											<h4>What you're seeing</h4>
+											<ul>
+												<li>Gas particles collide elastically. <strong class="mx-fast">Red</strong> ones are faster than the starting median speed, <strong class="mx-slow">blue</strong> ones slower; collisions keep changing their speeds and colours.</li>
+												<li>The demon opens the gate only for fast particles going one way and slow ones going the other.</li>
+												<li><span class="icon solid fa-thermometer-half"></span> shows each chamber's temperature (average kinetic energy) relative to the start.</li>
+											</ul>
+											<h4>The key idea</h4>
+											<p>Sorting by speed lowers the gas's entropy: one side warms and the other cools. But to sort, the demon has to measure each particle and remember the result. Erasing that memory costs at least <em>kT</em>&nbsp;ln&nbsp;2 of energy per bit (Landauer's principle), which creates more entropy than the sorting removed, so the second law survives.</p>
+											<h4>Things to try</h4>
+											<ul>
+												<li>Watch the temperatures drift apart, or open the charts (<span class="icon solid fa-chart-bar"></span>).</li>
+												<li>Be the demon: choose <em>Manual</em> in the settings (<span class="icon solid fa-cog"></span>), then press and hold on the simulation (mouse, touch or pen), or hold Space, to open the gate. Can you beat the automatic demon?</li>
+												<li>Try a wider gate, more particles or a higher speed.</li>
+											</ul>
+											<p><span class="icon solid fa-expand"></span> toggles fullscreen and <span class="icon solid fa-sync-alt"></span> restarts.</p>
+										</div>
+									</details>
 								</div>
 							</div>
 						</div>
