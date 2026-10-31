@@ -258,13 +258,15 @@
     }
     let firstRun = true;
 
-    // Period (ls) after which the moving craft comes round again: the screen width plus room for the craft,
-    // its arrow and its labels to leave one side completely before they appear at the other.
+    // Period (ls) after which the moving craft comes round again: the screen width plus just enough room for
+    // the craft's back (and labels) to leave one side before its front (and velocity arrow) appears at the other.
     function wrapPeriod(lay) {
         const half = (LC.L0 / 2) * lay.k / gammaOf(S.v);
         const label = craftLabelWidth(lay.f, 'Station', 's') / 2;
         const sync = S.showSync ? label + 10 + pillWidth(lay.f, 's', '00.0', true) : 0;
-        return lay.P + 2 * (Math.max(half + clamp(0.3 * lay.k, 26, 64) + 12, label, sync) + 4) / lay.k;
+        const back = Math.max(half, label, sync);
+        const front = Math.max(half + clamp(0.3 * lay.k, 26, 64) + 12, label, sync);
+        return lay.P + (back + front + 8) / lay.k;
     }
 
     // Add the path of a light pulse from clock reading ca to cb (frame times Ta to Tb, craft centre xa to xb)
@@ -771,16 +773,21 @@
             const y = s.fy * viewH;
             ctx.fillStyle = `rgba(${pal.starRGB},${(s.a * fade * (dark ? 1 : 0.55)).toFixed(3)})`;
             const base = mod(homeX + (s.fx - 0.5) * P / g + P / 2, period) - P / 2;
+            ctx.beginPath();
             for (let j = 0; j < n; j++) {
                 const xs = viewW / 2 + (base + j * period) * k;
                 if (xs > viewW + 2) break;
-                ctx.fillRect(xs - s.r, y - s.r, s.r * 2, s.r * 2);
+                ctx.moveTo(xs + s.r, y);
+                ctx.arc(xs, y, s.r, 0, TAU);
             }
+            ctx.fill();
         }
     }
 
     // Caption at the top left: which frame the measurements are made from (or a short message).
+    let captionsOn = true;    // off only for clean captures (test API)
     function drawCaption(f) {
+        if (!captionsOn) return;
         const sc = SCENARIOS[S.scenario];
         const side = sc[S.frame];
         const pad = Math.max(8, f * 0.7);
@@ -1265,12 +1272,11 @@
         const snw = textW(starName, f * 0.95, 700);
         ctx.fillText(starName, clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6), y + lay.rE + f * 1.5);
 
-        // Earth and the star move when measured from the ship
+        // Earth and the star move together when measured from the ship: one arrow on the route between them
         const arrowLen = clamp(0.06 * viewW, 26, 60);
         if (ship && st.homeU !== 0 && moving) {
             const dir = Math.sign(st.homeU);
-            drawVelocity(xE + dir * (lay.rE * homeSx + 8), y - lay.rE - f * 0.2, dir, arrowLen, f, S.v);
-            drawVelocity(xS + dir * (lay.rE * 0.62 * homeSx + 8), y - lay.rE - f * 0.2, dir, arrowLen, f, S.v);
+            drawVelocity((xE + xS) / 2 - dir * arrowLen / 2, y - f * 0.6, dir, arrowLen, f, S.v);
         }
 
         // The ship, flying just above the route, nose towards where it is heading
@@ -1843,6 +1849,7 @@
         setVelocity: (v) => setVelocity(v, false),
         // Stop (or restart) the clock-driven stepping, and step by hand (in seconds of real time at 1x).
         pause: (on) => { testPaused = on !== false; },
+        showCaptions: (on) => { captionsOn = on !== false; },
         advance: (realSeconds) => {
             const n = Math.max(1, Math.ceil(realSeconds / 0.02));
             for (let i = 0; i < n; i++) advance(realSeconds / n);
