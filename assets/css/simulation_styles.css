@@ -26,12 +26,14 @@
     --sim-button-offset: 5px; /* Kept for page stylesheets that use it */
     --sim-track: #c9c9c9;
     --sim-switch-off: #b4b4b4;
+    --sim-value-color: #2b2b2b; /* Live values in the info bar: stronger than body text */
     --sim-sheet-shadow: 0 -6px 28px rgba(0, 0, 0, 0.22);
 }
 
 html.dark-mode {
     --sim-track: #555555;
     --sim-switch-off: #5c5c5c;
+    --sim-value-color: #ffffff;
     --sim-sheet-shadow: 0 -6px 28px rgba(0, 0, 0, 0.6);
 }
 
@@ -221,13 +223,15 @@ html {
     line-height: 1.4;
 }
 
+/* The readouts share a row with the actions and wrap inside their own box, so the actions stay at the
+   right of the first row (they only drop below when even the widest readout won't fit beside them). */
 .stats-container {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.4em;
-    flex: 1 1 auto;
-    min-width: 0;
+    flex: 1 1 0%;
+    min-width: min-content;
 }
 
 .stats-box {
@@ -242,8 +246,9 @@ html {
     font-variant-numeric: tabular-nums;
 }
 
+/* Readouts: quiet labels, bold values. */
 .stats-box strong {
-    font-weight: 700;
+    font-weight: 300;
 }
 
 .sim-info-item {
@@ -260,6 +265,11 @@ html {
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+}
+
+.sim-info-bar .sim-value {
+    color: var(--sim-value-color);
+    font-weight: 700;
 }
 
 .sim-info-actions {
@@ -619,6 +629,12 @@ details.description-area *::after {
     color: var(--color-accent);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+}
+
+/* Nothing follows a slider's value on its row, so it needn't reserve space (that would leave a gap). */
+.sim-controls-panel .sim-value {
+    min-width: 0;
+    text-align: left;
 }
 
 .sim-controls-content p {
