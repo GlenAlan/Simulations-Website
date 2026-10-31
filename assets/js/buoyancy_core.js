@@ -3861,6 +3861,9 @@
             if (y !== undefined && y !== null) st.y = y;
             if (theta !== undefined && theta !== null) st.th = theta;
             st.vx = vx || 0; st.vy = vy || 0; st.om = omega || 0;
+            // (the held liquid's levels follow the jump at once, no time passing: the waves are made
+            // from them, and a level left at the old pose would be a sudden flood or drain)
+            if (mode === 'sim' && body) updateCavities(0);
         },
         cavityInfo() {
             if (!body || !body.cavs.length) return null;
