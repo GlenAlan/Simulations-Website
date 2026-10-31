@@ -106,7 +106,7 @@
     const START_SCENE = [
         { Z: 92, N: 146, fx: 0.24, fy: 0.42, tx: 0.3, ty: 0.2, select: true },
         { Z: 6, N: 8, fx: 0.47, fy: 0.3, tx: 0.76, ty: 0.12 },
-        { Z: 43, N: 56, iso: 1, fx: 0.5, fy: 0.68, tx: 0.72, ty: 0.4 },
+        { Z: 43, N: 56, iso: 1, fx: 0.5, fy: 0.68, tx: 0.7, ty: 0.34 },
         { Z: 27, N: 33, fx: 0.7, fy: 0.62, tx: 0.26, ty: 0.52 },
         { Z: 26, N: 30, fx: 0.12, fy: 0.75, tx: 0.22, ty: 0.8 },
     ];
@@ -1349,50 +1349,54 @@
     function computeLayout() {
         const tall = viewH > viewW * 0.85;
         const pad = Math.max(6, Math.min(12, viewW / 90));
-        let w = tall ? Math.min(viewW * 0.46, 230) : Math.max(150, Math.min(viewW * 0.27, 300));
-        if (viewW < 520 && !tall) w = Math.max(130, viewW * 0.3);
-        const cw = chartNMax + 3, ch = chartZMax + 3;
-        const h = w * ch / cw;
+        // The chart is taller than it is wide (Z across, N up): beside the nuclei on a wide canvas, in the
+        // lower corner on a tall one.
+        const cw = chartZMax + 3, ch = chartNMax + 3;
+        let w, h;
+        if (tall) { w = Math.min(viewW * 0.38, 170); h = w * ch / cw; }
+        else { h = Math.max(120, Math.min(viewH * 0.56, 330)); w = h * cw / ch; }
         const inset = tall ? { x: viewW - w - pad, y: viewH - h - pad, w, h } : { x: viewW - w - pad, y: pad, w, h };
         layout = { tall, pad, inset };
         insetCache = null;
     }
 
     // ------------------------------------------------------------------
-    // Segre chart (N horizontal, Z vertical)
+    // Chart of nuclides (Segre chart), as in textbooks: protons Z across, neutrons N up. Each element is a
+    // column, and the stable valley climbs above the N = Z line towards N = 1.5 Z.
     // ------------------------------------------------------------------
     let insetCache = null;
-    const chartList = [];            // [N, Z] of every ground state in the table
+    const chartList = [];            // [Z, N] of every ground state in the table
     function buildChartList() {
         chartList.length = 0;
         table.forEach((rec) => {
             if (rec.iso) return;
-            chartList.push([rec.N, rec.Z]);
+            chartList.push([rec.Z, rec.N]);
         });
     }
     function chartColorOf(Z, N) {
         return C.modes[chartClass(getInfo(Z, N, 0))];
     }
 
-    function renderChartCells(g, x0, y0, cell, nFrom, nTo, zFrom, zTo) {
-        // (x0, y0): screen position of the cell (N = nFrom, Z = zTo)'s top-left corner
+    // The cells with zFrom <= Z <= zTo and nFrom <= N <= nTo; (x0, y0) is the top-left corner of the cell
+    // (Z = zFrom, N = nTo).
+    function renderChartCells(g, x0, y0, cell, zFrom, zTo, nFrom, nTo) {
         const gap = cell >= 6 ? Math.min(1.5, cell * 0.08) : 0;
         for (const it of chartList) {
-            const N = it[0], Z = it[1];
-            if (N < nFrom || N > nTo || Z < zFrom || Z > zTo) continue;
+            const Z = it[0], N = it[1];
+            if (Z < zFrom || Z > zTo || N < nFrom || N > nTo) continue;
             g.fillStyle = chartColorOf(Z, N);
-            g.fillRect(x0 + (N - nFrom) * cell, y0 + (zTo - Z) * cell, cell - gap, cell - gap);
+            g.fillRect(x0 + (Z - zFrom) * cell, y0 + (nTo - N) * cell, cell - gap, cell - gap);
         }
     }
 
     function drawInsetChart() {
         const r = layout.inset;
-        const nMax = chartNMax + 2, zMax = chartZMax + 2;
+        const zMax = chartZMax + 2, nMax = chartNMax + 2;
         const inner = 6;
-        const cell = Math.min((r.w - inner * 2) / (nMax + 1), (r.h - inner * 2) / (zMax + 1));
-        const cw = cell * (nMax + 1), chh = cell * (zMax + 1);
+        const cell = Math.min((r.w - inner * 2) / (zMax + 1), (r.h - inner * 2) / (nMax + 1));
+        const cw = cell * (zMax + 1), chh = cell * (nMax + 1);
         const ox = r.x + (r.w - cw) / 2, oy = r.y + (r.h - chh) / 2;
-        if (!insetCache || insetCache.theme !== C.dark || insetCache.w !== r.w || insetCache.dpr !== dpr) {
+        if (!insetCache || insetCache.theme !== C.dark || insetCache.w !== r.w || insetCache.h !== r.h || insetCache.dpr !== dpr) {
             const c = document.createElement('canvas');
             c.width = Math.ceil(r.w * dpr); c.height = Math.ceil(r.h * dpr);
             const g = c.getContext('2d');
@@ -1401,43 +1405,46 @@
             g.fillStyle = C.panel; g.fill();
             g.strokeStyle = C.border; g.lineWidth = 1; g.stroke();
             const lx = ox - r.x, ly = oy - r.y;
-            // magic numbers: faint lines, N = Z dashed
+            // magic numbers: faint lines (Z = m upright, N = m across), N = Z dashed
             g.strokeStyle = C.faint; g.lineWidth = 1;
             MAGIC.forEach((m) => {
-                if (m <= nMax) { g.beginPath(); g.moveTo(lx + (m + 0.5) * cell, ly); g.lineTo(lx + (m + 0.5) * cell, ly + chh); g.stroke(); }
-                if (m <= zMax) { g.beginPath(); g.moveTo(lx, ly + (zMax - m + 0.5) * cell); g.lineTo(lx + cw, ly + (zMax - m + 0.5) * cell); g.stroke(); }
+                if (m <= zMax) { g.beginPath(); g.moveTo(lx + (m + 0.5) * cell, ly); g.lineTo(lx + (m + 0.5) * cell, ly + chh); g.stroke(); }
+                if (m <= nMax) { g.beginPath(); g.moveTo(lx, ly + (nMax - m + 0.5) * cell); g.lineTo(lx + cw, ly + (nMax - m + 0.5) * cell); g.stroke(); }
             });
-            renderChartCells(g, lx, ly, cell, 0, nMax, 0, zMax);
+            renderChartCells(g, lx, ly, cell, 0, zMax, 0, nMax);
+            const k = Math.min(zMax, nMax);
             g.setLineDash([3, 3]);
             g.strokeStyle = C.muted; g.globalAlpha = 0.6;
-            g.beginPath(); g.moveTo(lx + 0.5 * cell, ly + (zMax + 0.5) * cell); g.lineTo(lx + (zMax + 0.5) * cell, ly + 0.5 * cell); g.stroke();
+            g.beginPath(); g.moveTo(lx + 0.5 * cell, ly + (nMax + 0.5) * cell); g.lineTo(lx + (k + 0.5) * cell, ly + (nMax - k + 0.5) * cell); g.stroke();
             g.setLineDash([]); g.globalAlpha = 1;
-            // axis captions
-            const fs = Math.max(9, Math.min(11, r.w / 22));
+            // axis captions, and the hint in the empty corner above the valley
+            const fs = Math.max(9, Math.min(11, r.w / 16));
             g.font = `700 ${fs}px "Source Sans Pro", Helvetica, sans-serif`;
             g.fillStyle = C.muted;
             g.textBaseline = 'bottom'; g.textAlign = 'right';
-            g.fillText('N →', r.w - inner, r.h - inner + 1);
+            g.fillText('Z →', r.w - inner, r.h - inner + 1);
             g.textBaseline = 'top'; g.textAlign = 'left';
-            g.fillText('Z \u2191', inner, inner - 1);
+            g.fillText('N ↑', inner, inner - 1);
             g.font = `300 ${fs}px "Source Sans Pro", Helvetica, sans-serif`;
-            g.fillText('tap to enlarge', inner + fs * 2, inner - 1);
-            insetCache = { canvas: c, theme: C.dark, w: r.w, dpr, cell, ox, oy, nMax, zMax };
+            g.fillText('tap to', inner, inner + fs * 1.25);
+            g.fillText('enlarge', inner, inner + fs * 2.35);
+            insetCache = { canvas: c, theme: C.dark, w: r.w, h: r.h, dpr };
         }
         ctx.drawImage(insetCache.canvas, r.x, r.y, r.w, r.h);
         const sel = selectedBody();
         if (sel) {
-            const toX = (N) => ox + (N + 0.5) * cell, toY = (Z) => oy + (zMax - Z + 0.5) * cell;
-            drawChainPath(sel, toX, toY, Math.max(1.2, cell * 0.7), Math.max(3, cell * 2.2));
-            const x = toX(sel.N), y = toY(sel.Z);
+            const toXY = (Z, N) => [ox + (Z + 0.5) * cell, oy + (nMax - N + 0.5) * cell];
+            drawChainPath(sel, toXY, Math.max(1.2, cell * 0.7), Math.max(3, cell * 2.2));
+            const [x, y] = toXY(sel.Z, sel.N);
             ctx.strokeStyle = C.text; ctx.lineWidth = 1.5;
             ctx.beginPath(); ctx.arc(x, y, Math.max(3.5, cell * 2.4), 0, TAU); ctx.stroke();
         }
     }
 
     // The decay path of a body on a chart: one arrow per step, in the colour of the decay, with a dark (or
-    // light) outline so a yellow alpha arrow still shows over the yellow alpha squares.
-    function drawChainPath(b, toX, toY, lw, head) {
+    // light) outline so a yellow alpha arrow still shows over the yellow alpha squares. toXY(Z, N) -> [x, y]:
+    // a beta- step goes down and right, an alpha step down and left by two.
+    function drawChainPath(b, toXY, lw, head) {
         const ch = b.chain;
         if (ch.length < 2) return;
         const halo = C.dark ? 'rgba(10,11,14,0.85)' : 'rgba(255,255,255,0.9)';
@@ -1447,7 +1454,7 @@
             for (let i = 1; i < ch.length; i++) {
                 const a = ch[i - 1], c = ch[i];
                 if (a.Z === c.Z && a.N === c.N) continue;
-                const x0 = toX(a.N), y0 = toY(a.Z), x1 = toX(c.N), y1 = toY(c.Z);
+                const [x0, y0] = toXY(a.Z, a.N), [x1, y1] = toXY(c.Z, c.N);
                 const col = pass === 0 ? halo : (c.code === 'capture' ? C.accent : modeColor(c.code));
                 ctx.strokeStyle = col; ctx.fillStyle = col;
                 ctx.lineWidth = pass === 0 ? lw + ow * 2 : lw;
@@ -1470,8 +1477,9 @@
         ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
     }
 
-    // Expanded chart: most of the canvas, with zoom, pan, a legend and a nuclide picker.
-    const chartView = { open: false, cN: 60, cZ: 40, cell: 4, pick: null, pointers: new Map(), pinch: null, moved: false };
+    // Expanded chart: most of the canvas, with zoom, pan, a legend and a nuclide picker. The view is the
+    // centre (cZ, cN) and the size of one square in px.
+    const chartView = { open: false, cZ: 40, cN: 60, cell: 4, pick: null, pointers: new Map(), pinch: null, moved: false };
     function chartRects() {
         const m = Math.max(6, layout.pad);
         const panel = { x: m, y: m, w: viewW - 2 * m, h: viewH - 2 * m };
@@ -1479,10 +1487,12 @@
         const head = Math.round(fs * 2.6);
         const legendH = Math.round(fs * 1.9) * (viewW < 560 ? 2 : 1);
         const pickH = chartView.pick ? Math.round(fs * 2.9) : 0;
-        // outer: the chart with its axes; area: the cells (tick numbers and captions go in the margins)
+        // outer: the chart with its axes; area: the cells. Above the cells, the Z = 2, 8, ... magic numbers;
+        // under them, room for two lines (an element's symbol and Z under its column); on the left, the N
+        // numbers (N = 2, 8, ... in bold) and the axis title.
         const outer = { x: panel.x + 8, y: panel.y + head, w: panel.w - 16, h: panel.h - head - legendH - pickH - 8 };
-        const L = Math.round(fs * 3.0), B = Math.round(fs * 1.7);
-        const area = { x: outer.x + L, y: outer.y, w: outer.w - L, h: outer.h - B };
+        const L = Math.round(fs * 3.4), B = Math.round(fs * 2.3), T = Math.round(fs * 1.3);
+        const area = { x: outer.x + L, y: outer.y + T, w: outer.w - L, h: outer.h - B - T };
         const btn = Math.max(30, Math.min(38, fs * 2.5));
         const by = panel.y + (head - btn) / 2;
         const close = { x: panel.x + panel.w - btn - 6, y: by, w: btn, h: btn };
@@ -1493,37 +1503,42 @@
         const add = pick ? { x: pick.x + pick.w - btn * 2.2, y: pick.y + (pick.h - btn) / 2, w: btn * 2.2, h: btn } : null;
         return { panel, outer, area, fs, head, legendH, close, fit, zin, zout, pick, add, btn };
     }
-    function chartFitCell(rr) { return Math.min(rr.area.w / (chartNMax + 4), rr.area.h / (chartZMax + 4)); }
+    function chartFitCell(rr) { return Math.min(rr.area.w / (chartZMax + 4), rr.area.h / (chartNMax + 4)); }
     function openChart() {
         chartView.pick = null;
         const rr = chartRects();
         chartView.open = true;
         const sel = selectedBody();
         if (sel) {
-            let n0 = sel.N, n1 = sel.N, z0 = sel.Z, z1 = sel.Z;
-            sel.chain.forEach((c) => { n0 = Math.min(n0, c.N); n1 = Math.max(n1, c.N); z0 = Math.min(z0, c.Z); z1 = Math.max(z1, c.Z); });
-            const spanN = Math.max(22, n1 - n0 + 10), spanZ = Math.max(14, z1 - z0 + 8);
-            chartView.cell = Math.max(chartFitCell(rr), Math.min(rr.area.w / spanN, rr.area.h / spanZ, 40));
-            chartView.cN = (n0 + n1) / 2; chartView.cZ = (z0 + z1) / 2;
+            // Frame the selected nucleus's decay path, with squares big enough to carry their mass numbers;
+            // if the whole path does not fit at that size, keep the nucleus itself in view.
+            let z0 = sel.Z, z1 = sel.Z, n0 = sel.N, n1 = sel.N;
+            sel.chain.forEach((c) => { z0 = Math.min(z0, c.Z); z1 = Math.max(z1, c.Z); n0 = Math.min(n0, c.N); n1 = Math.max(n1, c.N); });
+            const spanZ = Math.max(12, z1 - z0 + 6), spanN = Math.max(12, n1 - n0 + 6);
+            chartView.cell = Math.min(40, Math.max(20, Math.min(rr.area.w / spanZ, rr.area.h / spanN)));
+            const halfZ = rr.area.w / 2 / chartView.cell - 1.5, halfN = rr.area.h / 2 / chartView.cell - 1.5;
+            chartView.cZ = Math.max(sel.Z - halfZ, Math.min(sel.Z + halfZ, (z0 + z1) / 2));
+            chartView.cN = Math.max(sel.N - halfN, Math.min(sel.N + halfN, (n0 + n1) / 2));
         } else {
             chartView.cell = chartFitCell(rr);
-            chartView.cN = chartNMax / 2; chartView.cZ = chartZMax / 2;
+            chartView.cZ = chartZMax / 2; chartView.cN = chartNMax / 2;
         }
         clampChartView(rr);
     }
     function clampChartView(rr) {
         const fitC = chartFitCell(rr);
         chartView.cell = Math.max(fitC, Math.min(48, chartView.cell));
-        const halfN = rr.area.w / 2 / chartView.cell, halfZ = rr.area.h / 2 / chartView.cell;
-        const nMid = (chartNMax + 1) / 2, zMid = (chartZMax + 1) / 2;
-        chartView.cN = halfN * 2 >= chartNMax + 4 ? nMid : Math.max(halfN - 2, Math.min(chartNMax + 2 - halfN, chartView.cN));
+        const halfZ = rr.area.w / 2 / chartView.cell, halfN = rr.area.h / 2 / chartView.cell;
+        const zMid = (chartZMax + 1) / 2, nMid = (chartNMax + 1) / 2;
         chartView.cZ = halfZ * 2 >= chartZMax + 4 ? zMid : Math.max(halfZ - 2, Math.min(chartZMax + 2 - halfZ, chartView.cZ));
+        chartView.cN = halfN * 2 >= chartNMax + 4 ? nMid : Math.max(halfN - 2, Math.min(chartNMax + 2 - halfN, chartView.cN));
     }
-    function chartToScreen(rr, N, Z) {
-        return [rr.area.x + rr.area.w / 2 + (N - chartView.cN) * chartView.cell, rr.area.y + rr.area.h / 2 - (Z - chartView.cZ) * chartView.cell];
+    // (Z, N) -> canvas px, and back: Z to the right, N up.
+    function chartToScreen(rr, Z, N) {
+        return [rr.area.x + rr.area.w / 2 + (Z - chartView.cZ) * chartView.cell, rr.area.y + rr.area.h / 2 - (N - chartView.cN) * chartView.cell];
     }
     function screenToChart(rr, x, y) {
-        return [chartView.cN + (x - rr.area.x - rr.area.w / 2) / chartView.cell, chartView.cZ - (y - rr.area.y - rr.area.h / 2) / chartView.cell];
+        return [chartView.cZ + (x - rr.area.x - rr.area.w / 2) / chartView.cell, chartView.cN - (y - rr.area.y - rr.area.h / 2) / chartView.cell];
     }
 
     const LEGEND = [['stable', 'Stable'], ['b', 'β⁻'], ['e', 'β⁺ / EC'], ['a', 'α'], ['f', 'Fission'], ['p', 'p emission'], ['n', 'n emission'], ['unknown', 'Unknown']];
@@ -1545,91 +1560,119 @@
         ctx.save();
         ctx.beginPath(); ctx.rect(A.x, A.y, A.w, A.h); ctx.clip();
         const cell = chartView.cell;
-        const [nA, zB] = screenToChart(rr, A.x, A.y + A.h), [nB, zA] = screenToChart(rr, A.x + A.w, A.y);
-        const n0 = Math.floor(nA) - 1, n1 = Math.ceil(nB) + 1, z0 = Math.floor(zB) - 1, z1 = Math.ceil(zA) + 1;
-        // magic numbers
+        const [zA, nA] = screenToChart(rr, A.x, A.y + A.h), [zB, nB] = screenToChart(rr, A.x + A.w, A.y);
+        const z0 = Math.floor(zA) - 1, z1 = Math.ceil(zB) + 1, n0 = Math.floor(nA) - 1, n1 = Math.ceil(nB) + 1;
+        // magic numbers: Z = m is a column line, N = m a row line
         ctx.strokeStyle = C.faint; ctx.lineWidth = Math.max(1, cell * 0.12);
         MAGIC.forEach((m) => {
-            const [x] = chartToScreen(rr, m, 0);
-            const [, y] = chartToScreen(rr, 0, m);
-            ctx.beginPath(); ctx.moveTo(x, A.y); ctx.lineTo(x, A.y + A.h); ctx.stroke();
-            if (m < 126) { ctx.beginPath(); ctx.moveTo(A.x, y); ctx.lineTo(A.x + A.w, y); ctx.stroke(); }
+            const [x, y] = chartToScreen(rr, m, m);
+            if (m < 126) { ctx.beginPath(); ctx.moveTo(x, A.y); ctx.lineTo(x, A.y + A.h); ctx.stroke(); }
+            ctx.beginPath(); ctx.moveTo(A.x, y); ctx.lineTo(A.x + A.w, y); ctx.stroke();
         });
-        const [tlx, tly] = chartToScreen(rr, n0 - 0.5, z1 + 0.5);
-        renderChartCells(ctx, tlx, tly, cell, n0, n1, z0, z1);
+        const [tlx, tly] = chartToScreen(rr, z0 - 0.5, n1 + 0.5);
+        renderChartCells(ctx, tlx, tly, cell, z0, z1, n0, n1);
         // N = Z
         ctx.setLineDash([4, 4]); ctx.strokeStyle = C.muted; ctx.lineWidth = 1; ctx.globalAlpha = 0.7;
         const [ax, ay] = chartToScreen(rr, -1, -1), [bx, by] = chartToScreen(rr, 130, 130);
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
         ctx.setLineDash([]); ctx.globalAlpha = 1;
-        // labels inside the cells when zoomed in: the symbol, and the mass number under it if there is room
+        // labels inside the squares when zoomed in: the symbol over the mass number in big squares, the mass
+        // number alone in middling ones (each column is one element, named under the chart)
         if (cell >= 18) {
             const two = cell >= 28;
-            const f1 = Math.min(cell * (two ? 0.32 : 0.45), 15);
+            const f1 = two ? Math.min(cell * 0.32, 15) : Math.min(cell * 0.42, 13);
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             for (const it of chartList) {
-                const N = it[0], Z = it[1];
-                if (N < n0 || N > n1 || Z < z0 || Z > z1) continue;
-                const [x, y] = chartToScreen(rr, N, Z);
+                const Z = it[0], N = it[1];
+                if (Z < z0 || Z > z1 || N < n0 || N > n1) continue;
+                const [x, y] = chartToScreen(rr, Z, N);
                 const cls = chartClass(getInfo(Z, N, 0));
                 ctx.fillStyle = (cls === 'stable' && C.dark) || cls === 'a' || cls === 'e' || (cls === 'unknown' && !C.dark) ? '#1d1f24' : '#ffffff';
-                ctx.font = font(700, f1);
                 if (two) {
+                    ctx.font = font(700, f1);
                     ctx.fillText(elementSymbol(Z), x, y - f1 * 0.5);
                     ctx.font = font(300, f1 * 0.9);
                     ctx.fillText(String(Z + N), x, y + f1 * 0.6);
                 } else {
-                    ctx.fillText(elementSymbol(Z), x, y);
+                    ctx.font = font(700, f1);
+                    ctx.fillText(String(Z + N), x, y);
                 }
             }
         }
-        // magic-number captions along the edges
-        ctx.font = `700 ${fs * 0.8}px "Source Sans Pro", Helvetica, sans-serif`;
-        ctx.fillStyle = C.muted;
-        MAGIC.forEach((m) => {
-            const [x] = chartToScreen(rr, m, 0);
-            const [, y] = chartToScreen(rr, 0, m);
-            if (x > A.x + 10 && x < A.x + A.w - 10) { ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText('N=' + m, x, A.y + 2); }
-            if (m < 126 && y > A.y + 10 && y < A.y + A.h - 10) { ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText('Z=' + m, A.x + 3, y - 1); }
-        });
-        // chain of the selected nucleus
+        // decay path of the selected nucleus
         const sel = selectedBody();
-        const toX = (N) => chartToScreen(rr, N, 0)[0], toY = (Z) => chartToScreen(rr, 0, Z)[1];
+        const toXY = (Z, N) => chartToScreen(rr, Z, N);
         if (sel) {
-            drawChainPath(sel, toX, toY, Math.max(2, Math.min(4, cell * 0.18)), Math.max(7, Math.min(12, cell * 0.5)));
+            drawChainPath(sel, toXY, Math.max(2, Math.min(4, cell * 0.18)), Math.max(7, Math.min(12, cell * 0.5)));
             ctx.strokeStyle = C.text; ctx.lineWidth = 2;
-            const [x, y] = chartToScreen(rr, sel.N, sel.Z);
+            const [x, y] = toXY(sel.Z, sel.N);
             ctx.beginPath(); ctx.arc(x, y, Math.max(6, cell * 0.85), 0, TAU); ctx.stroke();
         }
         if (chartView.pick) {
-            const [x, y] = chartToScreen(rr, chartView.pick.N, chartView.pick.Z);
+            const [x, y] = toXY(chartView.pick.Z, chartView.pick.N);
             ctx.strokeStyle = C.accent; ctx.lineWidth = 2.5;
             ctx.strokeRect(x - cell / 2 - 1.5, y - cell / 2 - 1.5, cell + 3, cell + 3);
         }
         ctx.restore();
-        // axes: tick numbers along the bottom and the left, captions at the ends
+        // axes: Z along the bottom (each column's element when there is room), N up the left side
         const step = [1, 2, 5, 10, 20, 50].find((v) => v * cell >= fs * 2.4) || 50;
         ctx.fillStyle = C.muted;
         ctx.font = font(700, fs * 0.85);
-        const capN = 'Neutrons N \u2192', capZ = 'Protons Z \u2192';
-        const capNW = ctx.measureText(capN).width, capZW = ctx.measureText(capZ).width;
+        const capZ = 'Protons Z →', capN = 'Neutrons N →';
+        const capZW = ctx.measureText(capZ).width;
+        const by0 = A.y + A.h + 4;
         ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-        ctx.fillText(capN, A.x + A.w, A.y + A.h + 4);
+        ctx.fillText(capZ, A.x + A.w, by0 + (cell >= 16 ? fs * 0.9 : 0));
         ctx.save();
         ctx.translate(rr.outer.x, A.y + A.h); ctx.rotate(-Math.PI / 2);
         ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-        ctx.fillText(capZ, 0, 0);
+        ctx.fillText(capN, 0, 0);
         ctx.restore();
-        ctx.font = font(300, fs * 0.8);
         ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        for (let n = Math.max(0, Math.ceil(nA / step) * step); n <= nB; n += step) {
-            const [x] = chartToScreen(rr, n, 0);
-            if (x > A.x + 6 && x < A.x + A.w - capNW - fs) ctx.fillText(String(n), x, A.y + A.h + 4);
+        const zRight = A.x + A.w - capZW - fs;
+        const zTop = Math.min(chartZMax, zB), nTop = Math.min(chartNMax, nB);   // numbers only where there are nuclides
+        if (cell >= 16) {
+            for (let z = Math.max(0, Math.ceil(zA)); z <= Math.floor(zTop); z++) {
+                const [x] = chartToScreen(rr, z, 0);
+                if (x < A.x + cell * 0.3) continue;
+                ctx.font = font(700, Math.min(fs * 0.85, cell * 0.55));
+                if (x < zRight || cell < 22) ctx.fillText(elementSymbol(z), x, by0);
+                if (cell >= 22 && x < zRight) { ctx.font = font(300, fs * 0.7); ctx.fillText(String(z), x, by0 + fs * 0.95); }
+            }
+        } else {
+            ctx.font = font(300, fs * 0.8);
+            for (let z = Math.max(0, Math.ceil(zA / step) * step); z <= zTop; z += step) {
+                const [x] = chartToScreen(rr, z, 0);
+                if (x > A.x + 6 && x < zRight) ctx.fillText(String(z), x, by0);
+            }
         }
+        // magic numbers: Z = m over its column, N = m (bold, in place of a number) beside its row; a caption that
+        // would run into the one before it is left out
+        ctx.font = font(700, fs * 0.75);
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        let lastRight = -1e9;
+        MAGIC.forEach((m) => {
+            if (m > chartZMax) return;
+            const [x] = chartToScreen(rr, m, 0);
+            const t = 'Z=' + m, w = ctx.measureText(t).width;
+            if (x - w / 2 < A.x - 2 || x + w / 2 > A.x + A.w + 2 || x - w / 2 < lastRight + 4) return;
+            ctx.fillText(t, x, A.y - 2);
+            lastRight = x + w / 2;
+        });
         ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-        for (let z = Math.max(0, Math.ceil(zB / step) * step); z <= zA; z += step) {
-            const [, y] = chartToScreen(rr, 0, z);
-            if (y > A.y + 6 && y < A.y + A.h - capZW - fs * 0.5) ctx.fillText(String(z), A.x - 4, y);
+        const magicRows = [];
+        MAGIC.forEach((m) => {
+            const [, y] = chartToScreen(rr, 0, m);
+            if (y < A.y + 4 || y > A.y + A.h - 2) return;   // (the axis title is further left, clear of these)
+            if (magicRows.some((v) => Math.abs(v - y) < fs * 0.95)) return;
+            ctx.fillText('N=' + m, A.x - 4, y);
+            magicRows.push(y);
+        });
+        ctx.font = font(300, fs * 0.8);
+        for (let n = Math.max(0, Math.ceil(nA / step) * step); n <= nTop; n += step) {
+            const [, y] = chartToScreen(rr, 0, n);
+            if (magicRows.some((v) => Math.abs(v - y) < fs * 0.95)) continue;
+            if (y > A.y + 6 && y < A.y + A.h - 2) ctx.fillText(String(n), A.x - 4, y);
         }
         // legend
         const ly = P.y + P.h - rr.legendH;
@@ -2403,8 +2446,8 @@
             const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
             zoomChartAt(rr, mx, my, chartView.pinch.cell * d / chartView.pinch.d / chartView.cell);
         } else if (chartView.moved) {
-            chartView.cN -= dx / chartView.cell;
-            chartView.cZ += dy / chartView.cell;
+            chartView.cZ -= dx / chartView.cell;
+            chartView.cN += dy / chartView.cell;
             clampChartView(rr);
         }
     }
@@ -2429,18 +2472,18 @@
             return;
         }
         if (inR(rr.area)) {
-            const [n, z] = screenToChart(rr, p.x, p.y);
-            const N = Math.round(n), Z = Math.round(z);
+            const [z, n] = screenToChart(rr, p.x, p.y);
+            const Z = Math.round(z), N = Math.round(n);
             chartView.pick = table.has(key(Z, N, 0)) ? { Z, N } : null;
         }
     }
     function zoomChartAt(rr, x, y, factor) {
-        const [n, z] = screenToChart(rr, x, y);
+        const [z, n] = screenToChart(rr, x, y);
         chartView.cell *= factor;
         clampChartView(rr);
         // keep the point under the fingers / cursor in place
-        const [n2, z2] = screenToChart(rr, x, y);
-        chartView.cN += n - n2; chartView.cZ += z - z2;
+        const [z2, n2] = screenToChart(rr, x, y);
+        chartView.cZ += z - z2; chartView.cN += n - n2;
         clampChartView(rr);
     }
     function onWheel(e) {
@@ -2784,6 +2827,10 @@
         hideLabels: (v) => { S.hideLabels = !!v; },   // for pictures of the canvas (e.g. the home-page tile)
         openChart: (open) => { if (open) openChart(); else chartView.open = false; },
         pickChart: (Z, N) => { chartView.pick = { Z, N }; },
+        // Centre the expanded chart on (Z, N) with squares `cell` px across; where (Z, N) is on the canvas.
+        setChartView: (Z, N, cell) => { chartView.cZ = Z; chartView.cN = N; chartView.cell = cell; clampChartView(chartRects()); },
+        chartPoint: (Z, N) => chartToScreen(chartRects(), Z, N),
+        chartButtons: () => { const r = chartRects(); return { add: r.add, close: r.close, fit: r.fit, area: r.area }; },
         pause: (v) => { paused = v === undefined ? !paused : !!v; return paused; },
         freeze: (v) => { frozen = !!v; },
         // Run the simulation synchronously (no drawing) for `seconds` of real time.
