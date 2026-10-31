@@ -117,9 +117,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Scroll the page so the simulation (and a docked panel's top) is in view. On narrow screens the
     // sheet covers the lower part of the screen, so the simulation goes in the space above it.
     function revealSimulation() {
-        const target = canvasWrapper || displayContainer;
-        if (!target || !controlsPanel) return;
         const sheet = body.classList.contains('sim-panel-sheet');
+        // Under a sheet only the canvas needs to show; beside a docked panel, the info bar too.
+        const target = sheet ? (canvasWrapper || displayContainer) : (displayContainer || canvasWrapper);
+        if (!target || !controlsPanel) return;
         const targetRect = target.getBoundingClientRect();
         const rect = { top: targetRect.top, bottom: targetRect.bottom };
         if (!sheet) {

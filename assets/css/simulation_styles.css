@@ -26,12 +26,14 @@
     --sim-button-offset: 5px; /* Kept for page stylesheets that use it */
     --sim-track: #c9c9c9;
     --sim-switch-off: #b4b4b4;
+    --sim-value-color: #2b2b2b; /* Live values in the info bar: stronger than body text */
     --sim-sheet-shadow: 0 -6px 28px rgba(0, 0, 0, 0.22);
 }
 
 html.dark-mode {
     --sim-track: #555555;
     --sim-switch-off: #5c5c5c;
+    --sim-value-color: #ffffff;
     --sim-sheet-shadow: 0 -6px 28px rgba(0, 0, 0, 0.6);
 }
 
@@ -244,8 +246,9 @@ html {
     font-variant-numeric: tabular-nums;
 }
 
+/* Readouts: quiet labels, bold values. */
 .stats-box strong {
-    font-weight: 700;
+    font-weight: 300;
 }
 
 .sim-info-item {
@@ -262,6 +265,11 @@ html {
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+}
+
+.sim-info-bar .sim-value {
+    color: var(--sim-value-color);
+    font-weight: 700;
 }
 
 .sim-info-actions {
