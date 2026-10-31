@@ -143,6 +143,7 @@
         RATE: 6,          // µs of Earth's time per second at 1x (and µs of the muons' time / γ, see rate())
         INTRO: 1.8,       // s (real) before the fall, measured from the muons: the squashed atmosphere, then a zoom
         INTRO_EARTH: 0.6, // s (real) before the fall, measured from Earth
+        EMPTY_FAST: 8,    // the rest of the fall plays this much faster once every muon has decayed
         END_PAUSE: 5.5    // s (real)
     };
 
@@ -360,11 +361,11 @@
         };
     }
 
-    // Frame time at which the flashes reach the right edge of the canvas: the picture is held there.
+    // Frame time at which the flashes are about to leave the canvas: the picture is held there, still showing them.
     function lightEnd() {
         if (viewW === 0) return 4;
         const lay = lightLayout();
-        return (viewW - lay.x0) / lay.k + 0.15;
+        return (viewW - lay.x0 - Math.max(18, lay.f * 1.6)) / lay.k;
     }
 
     function resetLight() {
@@ -748,12 +749,13 @@
         const { tLand, tauLand } = muonTimes();
         const tauBefore = muonClock();
         const end = homeMoves() ? tauLand : tLand;
-        mu.t = Math.min(end, mu.t + dt);
+        // Once every muon has decayed the rest of the fall plays faster, so the ground still arrives
+        mu.t = Math.min(end, mu.t + (muonsLeft() === 0 ? MU.EMPTY_FAST : 1) * dt);
         const tau = muonClock();
         for (let i = 0; i < MU.N; i++) {
             if (mu.life[i] > tauBefore && mu.life[i] <= tau) mu.decayedAt[i] = realNow;
         }
-        if (mu.t >= end - 1e-12 || muonsLeft() === 0) {
+        if (mu.t >= end - 1e-12) {
             mu.stage = 'done';
             mu.pause = MU.END_PAUSE;
         }
