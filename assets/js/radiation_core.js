@@ -1033,7 +1033,7 @@
         // Grab area: the reading, thermometer and block (at least 44 px wide for fingers)
         const gw = Math.max(X(BLOCK_SIDE) + 6, 44);
         hitRects[j].length = 0;
-        hitRects[j].push({ x0: cx - gw / 2, y0: top, x1: cx + gw / 2, y1: X(b.y1) + 3 });
+        hitRects[j].push({ x0: Math.min(x, cx - gw / 2), y0: top, x1: Math.max(x + w, cx + gw / 2), y1: X(b.y1) + 3 });
     }
 
     // Caption under a block: its surface name between two quiet ‹ › drag hints, plus optional
@@ -1199,17 +1199,28 @@
                 value: state.heaterOn ? fmtPower(flux.heater) : 'off', tmpl: '88.88 kW'
             });
         }
-        let labelW = 0, valueW = 0;
-        for (const r of rows) {
-            labelW = Math.max(labelW, textWidth(r.label, r.bold ? f : sub, r.bold ? 700 : 400));
-            valueW = Math.max(valueW, textWidth(r.tmpl, r.bold ? f : sub, r.bold ? 700 : 400));
-        }
+        // On small canvases with the blocks close in, the caption can reach a block's thermometer and
+        // reading: drop the power rows, then the kelvin value, and if even that doesn't fit, leave it to the info bar.
         const colGap = fontPx * 0.7;
-        const w = labelW + colGap + valueW + 2 * pad;
-        const h = (rows.length - 1) * lh + f + 2 * pad;
         const cx = X(SRC_X);
         const bottom = X(AXIS_Y - SRC_R) - Math.max(6, fontPx * 0.5);
-        const x = cx - w / 2, top = bottom - h;
+        let w, h, x, top;
+        for (;;) {
+            let labelW = 0, valueW = 0;
+            for (const r of rows) {
+                labelW = Math.max(labelW, textWidth(r.label, r.bold ? f : sub, r.bold ? 700 : 400));
+                valueW = Math.max(valueW, textWidth(r.tmpl, r.bold ? f : sub, r.bold ? 700 : 400));
+            }
+            w = labelW + colGap + valueW + 2 * pad;
+            h = (rows.length - 1) * lh + f + 2 * pad;
+            x = cx - w / 2;
+            top = bottom - h;
+            const hits = hitRects.some((rs) => rs[0] && rs[0].x0 < x + w + 3 && rs[0].x1 > x - 3 && rs[0].y0 < top + h + 3 && rs[0].y1 > top - 3);
+            if (!hits) break;
+            if (rows.length > 1) rows.length = 1;
+            else if (rows[0].tmpl !== '8888 °C') { rows[0].value = fmtC(state.Ts, 0); rows[0].tmpl = '8888 °C'; }
+            else return;
+        }
         drawPanel(x, top, w, h, thermal);
         ctx.textBaseline = 'middle';
         let y = top + pad + f / 2;
@@ -1324,8 +1335,8 @@
         for (const b of state.blocks) maxFlow = Math.max(maxFlow, b.absorbed, b.emitted);
         const target = maxFlow * 1.15;
         barScale = barScale < target ? target : barScale + (target - barScale) * 0.02;
-        drawSourceCaption(thermal);
         drawBlockCaptions(thermal);
+        drawSourceCaption(thermal);
         drawLegend();
     }
 
@@ -1604,7 +1615,7 @@
         if (showChartsCheckbox && chartsContainer) {
             const applyCharts = () => {
                 const on = showChartsCheckbox.checked;
-                chartsContainer.style.display = on ? 'flex' : 'none';
+                chartsContainer.style.display = on ? 'block' : 'none';
                 document.body.classList.toggle('charts-visible', on);
                 if (on) setupCharts();
                 if (document.body.classList.contains('sim-fullscreen-active')) {

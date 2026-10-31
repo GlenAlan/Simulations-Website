@@ -184,9 +184,9 @@
                                         <h3 id="simulationControlsPanelLabel">Controls</h3>
                                     </div>
                                     <div class="sim-controls-content">
-                                        <div class="sim-control-group rad-first-group">
+                                        <div class="sim-control-group">
                                             <p class="sim-control-group-label">Heater</p>
-                                            <label>Temperature <span id="heaterTempVal" class="sim-value" style="--chars: 4">1000</span> K <span class="rad-sub">(<span id="heaterTempC" class="sim-value" style="--chars: 4">727</span> °C)</span>
+                                            <label>Temperature <span id="heaterTempVal" class="sim-value" style="--chars: 4">1000</span> K <span class="rad-sub">(<span id="heaterTempC">727</span> °C)</span>
                                                 <input type="range" id="heaterTemp" min="300" max="2000" step="10" value="1000">
                                             </label>
                                             <div class="sim-checkbox-group">
@@ -196,25 +196,29 @@
                                         </div>
                                         <div class="sim-control-group">
                                             <p class="sim-control-group-label">Surfaces</p>
-                                            <label for="leftSurface" class="rad-select-label">Left block</label>
-                                            <div class="sim-select-container">
-                                                <select id="leftSurface">
-                                                    <option value="black" selected>Matte black paint</option>
-                                                    <option value="grey">Dull grey metal</option>
-                                                    <option value="white">White paint</option>
-                                                    <option value="aluminium">Shiny aluminium</option>
-                                                    <option value="silver">Polished silver</option>
-                                                </select>
+                                            <div class="rad-select-field">
+                                                <label for="leftSurface">Left block</label>
+                                                <div class="sim-select-container">
+                                                    <select id="leftSurface">
+                                                        <option value="black" selected>Matte black paint</option>
+                                                        <option value="grey">Dull grey metal</option>
+                                                        <option value="white">White paint</option>
+                                                        <option value="aluminium">Shiny aluminium</option>
+                                                        <option value="silver">Polished silver</option>
+                                                    </select>
+                                                </div>
                                             </div>
-                                            <label for="rightSurface" class="rad-select-label">Right block</label>
-                                            <div class="sim-select-container">
-                                                <select id="rightSurface">
-                                                    <option value="black">Matte black paint</option>
-                                                    <option value="grey">Dull grey metal</option>
-                                                    <option value="white">White paint</option>
-                                                    <option value="aluminium">Shiny aluminium</option>
-                                                    <option value="silver" selected>Polished silver</option>
-                                                </select>
+                                            <div class="rad-select-field">
+                                                <label for="rightSurface">Right block</label>
+                                                <div class="sim-select-container">
+                                                    <select id="rightSurface">
+                                                        <option value="black">Matte black paint</option>
+                                                        <option value="grey">Dull grey metal</option>
+                                                        <option value="white">White paint</option>
+                                                        <option value="aluminium">Shiny aluminium</option>
+                                                        <option value="silver" selected>Polished silver</option>
+                                                    </select>
+                                                </div>
                                             </div>
                                         </div>
                                         <div class="sim-control-group">
@@ -283,12 +287,14 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="charts-container" class="radiation-charts" style="display: none;">
-                                        <div class="chart-box">
-                                            <canvas id="tempChart" role="img" aria-label="Chart of block and heater temperatures against time"></canvas>
-                                        </div>
-                                        <div class="chart-box">
-                                            <canvas id="spectrumChart" role="img" aria-label="Chart of the heater's emission spectrum with the visible band marked"></canvas>
+                                    <div id="charts-container" style="display: none;">
+                                        <div class="sim-charts-row">
+                                            <div class="chart-box">
+                                                <canvas id="tempChart" role="img" aria-label="Chart of block and heater temperatures against time"></canvas>
+                                            </div>
+                                            <div class="chart-box">
+                                                <canvas id="spectrumChart" role="img" aria-label="Chart of the heater's emission spectrum with the visible band marked"></canvas>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="sim-action-buttons-overlay">
