@@ -45,9 +45,13 @@
     align-items: center;
     gap: 0.45em;
     font-size: 0.75em;
-    color: var(--color-text-subtle);
+    color: var(--color-text);
     white-space: nowrap;
     margin-right: 1em;
+}
+
+.thermal-legend > span:not(.thermal-legend-bar) {
+    opacity: 0.75;
 }
 
 .thermal-legend-bar {
