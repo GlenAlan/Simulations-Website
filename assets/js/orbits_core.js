@@ -2061,13 +2061,22 @@
             setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
             return;
         }
+        const pr = b.held && !top ? predictLaunch(b) : null;
         if (top) {
-            // The heaviest body: its motion around the centre of mass
+            // The heaviest body: its motion around the centre of mass (with the aimed velocity while aiming)
             const c = totals(bodies);
+            const fv = b.aim ? frameVelocity() : null;
+            const vx = b.aim ? fv.x + b.aim.vx : b.vx, vy = b.aim ? fv.y + b.aim.vy : b.vy;
             dist = Math.hypot(b.x - c.x, b.y - c.y);
-            speed = Math.hypot(b.vx - c.vx, b.vy - c.vy);
+            speed = Math.hypot(vx - c.vx, vy - c.vy);
             force = Math.hypot(b.fx, b.fy);
             setText(ui.subjectAround, 'around the centre of mass');
+        } else if (pr) {
+            // Being moved or aimed: the orbit it would have if let go now, as the hint and preview show
+            dist = pr.el.r;
+            speed = pr.el.v;
+            force = (G * b.m * pr.p.m) / (dist * dist);
+            setText(ui.subjectAround, pr.el.bound ? `around ${theName(pr.p)}` : `escaping ${theName(pr.p)}`);
         } else {
             dist = Math.hypot(b.x - p.x, b.y - p.y);
             speed = Math.hypot(b.vx - p.vx, b.vy - p.vy);

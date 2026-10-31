@@ -281,6 +281,14 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     .orb-toolbar .orb-chip {
         max-width: none;
         width: 100%;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+
+    /* The column has a fixed width but the page text grows on wide screens: cap the names' size
+       so the longest ("Red dwarf") keeps clear of its button's edges */
+    .orb-chip-name {
+        font-size: min(0.8em, 12px);
     }
 
     .orb-toolbar .orb-fit {
