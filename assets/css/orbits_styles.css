@@ -458,10 +458,10 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     background: #7ecaf6;
 }
 
-/* The name keeps its room; "around the centre of mass" gives way */
+/* The name keeps its room (up to a point); "around the centre of mass" gives way */
 .orb-subject-name {
-    flex: 0 1 auto;
-    min-width: 3.5em;
+    flex: 0 0 auto;
+    max-width: 8.5em;
     font-weight: 700;
     color: var(--sim-value-color);
     overflow: hidden;

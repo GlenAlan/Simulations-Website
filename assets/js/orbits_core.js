@@ -533,8 +533,9 @@
         forcesDirty = false;
     }
 
-    // One kick-drift-kick leapfrog step for every body in the list that isn't held. (The 1PN force
-    // depends on the velocities too: the second kick uses the forces at the half-step velocities.)
+    // One kick-drift-kick leapfrog step for every body in the list that isn't held. The 1PN force
+    // depends on the velocities too, so with realistic physics the second kick is done twice: with the
+    // forces at the half-step velocities, then again with those at the velocities that gave.
     function leapfrog(list, dt, forces) {
         const h = 0.5 * dt;
         for (const b of list) {
@@ -542,10 +543,18 @@
             b.vx += h * b.ax; b.vy += h * b.ay;
             b.x += dt * b.vx; b.y += dt * b.vy;
         }
-        const tmin = forces();
+        let tmin = forces();
         for (const b of list) {
             if (b.held) continue;
+            b.hx = b.vx; b.hy = b.vy;
             b.vx += h * b.ax; b.vy += h * b.ay;
+        }
+        if (settings.realistic) {
+            tmin = forces();
+            for (const b of list) {
+                if (b.held) continue;
+                b.vx = b.hx + h * b.ax; b.vy = b.hy + h * b.ay;
+            }
         }
         return tmin;
     }
@@ -1685,11 +1694,12 @@
             ctx.fill();
             return;
         }
-        // Photon ring: brighter on the left, where the light comes towards us
+        // Photon ring: brighter on the left, where the light comes towards us (on a light page, deeper
+        // colours rather than white, which wouldn't show)
         const lw = clamp(r * 0.22, 1.5, 3.5);
         const g = ctx.createLinearGradient(x - r, y - r * 0.4, x + r, y + r * 0.4);
-        g.addColorStop(0, mix(ring, '#ffffff', 0.75));
-        g.addColorStop(0.45, ring);
+        g.addColorStop(0, C.dark ? mix(ring, '#ffffff', 0.75) : ring);
+        g.addColorStop(0.45, C.dark ? ring : bodyStroke(ring, false));
         g.addColorStop(1, hexA(ring, 0.45));
         ctx.strokeStyle = g;
         ctx.lineWidth = lw;
@@ -1791,8 +1801,9 @@
             for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
                 const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
                 const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
+                // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
                 const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
-                    || discs.some((d) => d.b !== b && d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b);
+                    || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
                 if (!hit) { best = { box, ux, uy }; break; }
                 if (!best && chosen) best = { box, ux, uy, forced: true };
             }
@@ -1804,6 +1815,28 @@
             ctx.strokeText(b.name, best.box.l, best.box.t);
             ctx.fillText(b.name, best.box.l, best.box.t);
         }
+        // Last, the centre of mass's own label, in the first free spot round its marker
+        if (settings.com && bodies.length) {
+            const c = drawnCentreOfMass();
+            ctx.font = font(clamp(Math.min(viewW, viewH) / 46, 10, 12));
+            const w = ctx.measureText('centre of mass').width, h = 12;
+            for (const [dx, dy] of [[11, -16], [11, 4], [-11 - w, -16], [-11 - w, 4]]) {
+                const box = { l: c.x + dx, t: c.y + dy, r: c.x + dx + w, b: c.y + dy + h };
+                if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
+                if (placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)) continue;
+                if (discs.some((d) => d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b)) continue;
+                ctx.fillStyle = C.subtle;
+                ctx.strokeText('centre of mass', box.l, box.t);
+                ctx.fillText('centre of mass', box.l, box.t);
+                break;
+            }
+        }
+    }
+
+    function drawnCentreOfMass() {
+        let M = 0, X = 0, Y = 0;
+        for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
+        return M > 0 ? { x: sx(X / M), y: sy(Y / M) } : { x: viewW / 2, y: viewH / 2 };
     }
 
     // The box of a name anchored at (x, y) on the side (ux, uy) of its body, kept inside the canvas
@@ -1989,11 +2022,10 @@
         }
     }
 
+    // The centre-of-mass marker (its label is placed with the bodies' names)
     function drawCentreOfMass(C) {
-        let M = 0, X = 0, Y = 0;
-        for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
-        if (!(M > 0)) return;
-        const x = sx(X / M), y = sy(Y / M);
+        if (!bodies.length) return;
+        const { x, y } = drawnCentreOfMass();
         const r = 6;
         ctx.lineWidth = 1.4;
         ctx.strokeStyle = C.text;
@@ -2005,13 +2037,6 @@
         ctx.moveTo(x, y); ctx.arc(x, y, r, -Math.PI / 2, 0); ctx.closePath(); ctx.fill();
         ctx.beginPath();
         ctx.moveTo(x, y); ctx.arc(x, y, r, Math.PI / 2, Math.PI); ctx.closePath(); ctx.fill();
-        if (settings.labels) {
-            ctx.font = font(clamp(Math.min(viewW, viewH) / 46, 10, 12));
-            ctx.fillStyle = C.subtle;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('centre of mass', x + r + 5, y - r - 4);
-        }
     }
 
     // A conic (relative orbit) around the primary at screen point (cx, cy).
@@ -2453,24 +2478,28 @@
     function drawKepler3Card(C, subj, y, fs, compact) {
         const { P, rows } = kepler3Rows(subj);
         const lh = Math.round(fs * 1.4);
+        // In the scene's own units: AU or km, and years, days or seconds
         const km = scene.units === 'km';
+        const tu = timeUnit(), tf = tu === 's' ? YEAR_S : tu === 'd' ? DAYS_PER_YEAR : 1, af = km ? AU_KM : 1;
+        const plain = !km && tu === 'yr';
         const title = compact || !P ? '3rd law' : `3rd law: orbits of ${P.name}`;
-        const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', km ? 'T (days)' : 'T (yr)', 'T²/a³'];
+        const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
         const cells = rows.slice(0, compact ? 5 : 8).map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
+            const Tv = r.T * tf;
             const a = km ? fmtKm(r.a * AU_KM) : r.a.toFixed(3);
-            const T = km ? (r.T * DAYS_PER_YEAR).toFixed(2) : r.T.toFixed(3);
-            const ratio = km ? fmtSci(Math.pow(r.T * DAYS_PER_YEAR, 2) / Math.pow(r.a * AU_KM, 3), 2) : r.ratio.toFixed(3);
+            const T = plain ? r.T.toFixed(3) : Tv >= 100 ? Tv.toFixed(1) : Tv >= 1 ? Tv.toFixed(2) : Tv.toPrecision(3);
+            const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
             const pred = (4 * Math.PI * Math.PI) / (G * (P.m + rows[0].body.m));
-            const v = km ? fmtSci(pred * Math.pow(DAYS_PER_YEAR, 2) / Math.pow(AU_KM, 3), 2) : pred.toFixed(3);
-            note = compact ? `Newton: 4π²/GM = ${v}` : `Newton: 4π²/GM = ${v} ${km ? 'd²/km³' : 'yr²/AU³'}`;
+            const v = plain ? pred.toFixed(3) : fmtSci((pred * tf * tf) / (af * af * af), 2);
+            note = compact ? `Newton: 4π²/GM = ${v}` : `Newton: 4π²/GM = ${v} ${tu === 'yr' ? 'yr' : tu}²/${km ? 'km' : 'AU'}³`;
         }
         // Column widths (the "measuring" text spans the three number columns)
         const gap = compact ? 9 : 12, dot = 10;
@@ -3701,14 +3730,30 @@
         ch.update('none');
     }
 
+    // Kinetic, potential and total energy. With realistic physics the first post-Newtonian terms of
+    // each pair's energy are added (the v^4 one to the kinetic energy, the rest to the potential):
+    // E/mu = (3/8)(1 - 3 eta) v^4/c^2 + GM/(2rc^2) [(3 + eta) v^2 + eta rdot^2 + GM/r]. Then the total
+    // stays level round a black hole, where the Newtonian energy alone swings by tens of per cent each
+    // orbit (to within the size of the next, 2PN, terms: about 2% for the neutron star at 0.24c).
     function systemEnergy() {
         const c = totals(bodies);
         let ke = 0, pe = 0;
         for (const b of bodies) ke += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
         for (let i = 0; i < bodies.length; i++) {
+            const bi = bodies[i];
             for (let j = i + 1; j < bodies.length; j++) {
-                const r = Math.hypot(bodies[i].x - bodies[j].x, bodies[i].y - bodies[j].y);
-                if (r > 0) pe -= (G * bodies[i].m * bodies[j].m) / r;
+                const bj = bodies[j];
+                if (bi.grp && bi.grp === bj.grp) continue;
+                const rx = bi.x - bj.x, ry = bi.y - bj.y, r = Math.hypot(rx, ry);
+                if (!(r > 0)) continue;
+                pe -= (G * bi.m * bj.m) / r;
+                if (settings.realistic) {
+                    const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
+                    const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
+                    const rd = (rx * vx + ry * vy) / r;
+                    ke += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
+                    pe += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
+                }
             }
         }
         return { ke, pe, total: ke + pe };
