@@ -198,7 +198,11 @@
     const acc = { n: 0, fbX: 0, fbY: 0, fdX: 0, fdY: 0, fcX: 0, fcY: 0, netX: 0, netY: 0, cpx: 0, cpy: 0, cw: 0 };
     const disp = { fbX: 0, fbY: 0, fdX: 0, fdY: 0, fcX: 0, fcY: 0, netX: 0, netY: 0, cpx: 0, cpy: 0, hasContact: 0, sub: 0 };
 
-    const grab = { active: false, bx: 0, by: 0, tx: 0, ty: 0, pointerId: -1 };
+    // Points where the object is held (one per finger or mouse): anchor (bx, by) in the body frame,
+    // target (tx, ty) in the world. Several fingers can hold it at once, e.g. one at each end to turn it.
+    const MAX_GRABS = 4;
+    const grabs = [];
+    const findGrab = (id) => grabs.find((g) => g.id === id);
     const pointer = { inside: false, x: 0, y: 0, down: false, button: 0, startX: 0, startY: 0, lastX: 0, lastY: 0, id: -1, shift: false, type: 'mouse' };
 
     // canvas metrics
@@ -1498,18 +1502,24 @@
         const Mx = Mtot + Max, My = Mtot + May, Ii = Itot + Ia;
         const Mi = 0.5 * (Mx + My);
 
-        // grab spring (mouse / touch)
+        // grab springs (mouse / touch): one per holding finger, each attached where it touched the
+        // object, so fingers far apart can turn it. Each finger holds as firmly as a single one (so the
+        // object sags no more with two), and the damping is shared so the total damping ratio stays
+        // the same however many fingers are down.
         let gX = 0, gY = 0;
-        if (grab.active) {
-            const ax = c * grab.bx - s * grab.by, ay = s * grab.bx + c * grab.by;
+        if (grabs.length) {
             const om = rotOn ? st.om : 0;
-            const vax = st.vx - om * ay, vay = st.vy + om * ax;
             const wg = 2 * Math.PI * 2.2;
-            const kS = Mi * wg * wg, cS = 2 * 0.85 * Mi * wg;
-            gX = kS * (grab.tx - (x0 + ax)) - cS * vax;
-            gY = kS * (grab.ty - (y0 + ay)) - cS * vay;
+            const kS = Mi * wg * wg, cS = 2 * 0.85 * Mi * wg / Math.sqrt(grabs.length);
+            for (const gr of grabs) {
+                const ax = c * gr.bx - s * gr.by, ay = s * gr.bx + c * gr.by;
+                const vax = st.vx - om * ay, vay = st.vy + om * ax;
+                const fx = kS * (gr.tx - (x0 + ax)) - cS * vax;
+                const fy = kS * (gr.ty - (y0 + ay)) - cS * vay;
+                gX += fx; gY += fy;
+                T += ax * fy - ay * fx;
+            }
             Fx += gX; Fy += gY;
-            T += ax * gY - ay * gX;
         }
 
         // ---- drag on exposed faces (linearised, solved implicitly) ----
@@ -1717,7 +1727,7 @@
         // no real object is released perfectly symmetrically: a tiny nudge lets unstable balance points tip
         st.om = settings.rotation ? 2e-3 : 0;
         st.maValid = false;
-        grab.active = false;
+        grabs.length = 0;
         clearWaves();
         level = drawModeLevel(body);
         for (let it = 0; it < 8; it++) {
@@ -1737,7 +1747,7 @@
     function enterEditMode() {
         mode = 'draw';
         body = null;
-        grab.active = false;
+        grabs.length = 0;
         clearWaves();
         drawDirty = true;
         updateModeUI();
@@ -2704,7 +2714,7 @@
 
         if (mode === 'sim' && body) {
             drawForces();
-            if (grab.active) drawGrabLine();
+            if (grabs.length) drawGrabLines();
         } else {
             drawToolPreview();
             if (!preview) drawEmptyHint();
@@ -2937,18 +2947,20 @@
         drawInfoBox(predictionLines.map((t) => [null, t, '']), '', true);
     }
 
-    function drawGrabLine() {
+    function drawGrabLines() {
         const c = Math.cos(st.th), s = Math.sin(st.th);
-        const ax = st.x + c * grab.bx - s * grab.by, ay = st.y + s * grab.bx + c * grab.by;
-        ctx.strokeStyle = pal.text;
-        ctx.globalAlpha = 0.7;
-        ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(wx(ax), wy(ay)); ctx.lineTo(wx(grab.tx), wy(grab.ty)); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = '#ff7ac6';
-        ctx.beginPath(); ctx.arc(wx(ax), wy(ay), 4, 0, Math.PI * 2); ctx.fill();
+        for (const gr of grabs) {
+            const ax = st.x + c * gr.bx - s * gr.by, ay = st.y + s * gr.bx + c * gr.by;
+            ctx.strokeStyle = pal.text;
+            ctx.globalAlpha = 0.7;
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(wx(ax), wy(ay)); ctx.lineTo(wx(gr.tx), wy(gr.ty)); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#ff7ac6';
+            ctx.beginPath(); ctx.arc(wx(ax), wy(ay), 4, 0, Math.PI * 2); ctx.fill();
+        }
     }
 
     // labels along the bottom edge sit on the liquid, so they are light text with a dark halo in both themes
@@ -3140,7 +3152,9 @@
         let title, body;
         if (mode === 'sim') {
             title = 'Simulating';
-            body = 'Drag the object to lift or throw it; tap the liquid for waves. Pick a tool to draw again.';
+            const touch = pointer.type !== 'mouse' || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+            if (touch && settings.rotation) body = 'Drag the object to lift or throw it; hold it with two fingers to turn it. Tap the liquid for waves.';
+            else body = 'Drag the object to lift or throw it; tap the liquid for waves. Pick a tool to draw again.';
         } else {
             const m = MATERIALS[settings.material];
             const fine = pointer.type === 'mouse';
@@ -3200,19 +3214,17 @@
     }
 
     function onPointerDown(e) {
-        if (pointer.down && e.pointerId !== pointer.id) return;
-        const [x, y] = eventToWorld(e);
-        pointer.type = e.pointerType || 'mouse';
-        pointer.inside = true;
-        pointer.x = x; pointer.y = y;
-        pointer.shift = e.shiftKey;
         if (mode === 'sim') {
+            // Every finger is handled on its own: each one that lands on the object holds it there.
+            const [x, y] = eventToWorld(e);
+            pointer.type = e.pointerType || 'mouse';
+            pointer.inside = true;
+            pointer.x = x; pointer.y = y;
             // grab tolerance in screen pixels: a finger needs more than a mouse
             const tol = (pointer.type === 'mouse' ? 6 : 20) / scale;
-            const hit = hitBody(x, y, tol);
+            const hit = (grabs.length < MAX_GRABS && !findGrab(e.pointerId)) ? hitBody(x, y, tol) : null;
             if (hit) {
-                grab.active = true; grab.bx = hit[0]; grab.by = hit[1]; grab.tx = x; grab.ty = y;
-                pointer.down = true; pointer.id = e.pointerId;
+                grabs.push({ id: e.pointerId, bx: hit[0], by: hit[1], tx: x, ty: y });
                 try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
                 canvas.style.cursor = 'grabbing';
             } else if (y < surfaceAt(x)) {
@@ -3221,6 +3233,12 @@
             e.preventDefault();
             return;
         }
+        if (pointer.down && e.pointerId !== pointer.id) return;
+        const [x, y] = eventToWorld(e);
+        pointer.type = e.pointerType || 'mouse';
+        pointer.inside = true;
+        pointer.x = x; pointer.y = y;
+        pointer.shift = e.shiftKey;
         // draw mode
         pointer.down = true; pointer.id = e.pointerId;
         pointer.button = e.button;
@@ -3245,13 +3263,15 @@
         pointer.type = e.pointerType || 'mouse';
         pointer.inside = true;
         pointer.shift = e.shiftKey;
-        if (pointer.down && e.pointerId !== pointer.id) return;
-        pointer.x = x; pointer.y = y;
         if (mode === 'sim') {
-            if (grab.active) { grab.tx = x; grab.ty = y; }
-            else if (pointer.type === 'mouse') canvas.style.cursor = hitBody(x, y, 6 / scale) ? 'grab' : 'default';
+            const gr = findGrab(e.pointerId);
+            if (gr) { gr.tx = x; gr.ty = y; }
+            else if (pointer.type === 'mouse' && !grabs.length) canvas.style.cursor = hitBody(x, y, 6 / scale) ? 'grab' : 'default';
+            pointer.x = x; pointer.y = y;
             return;
         }
+        if (pointer.down && e.pointerId !== pointer.id) return;
+        pointer.x = x; pointer.y = y;
         canvas.style.cursor = 'crosshair';
         if (!pointer.down) return;
         const tool = settings.tool;
@@ -3264,6 +3284,19 @@
     }
 
     function onPointerUp(e) {
+        if (mode === 'sim') {
+            // A drawing stroke still in progress when the object was dropped ends here.
+            if (pointer.down && e.pointerId === pointer.id && e.type !== 'pointerleave') { pointer.down = false; pointer.id = -1; }
+            const i = grabs.findIndex((g) => g.id === e.pointerId);
+            if (i < 0 || e.type === 'pointerleave') return;  // a held pointer is captured: wait for up/cancel
+            grabs.splice(i, 1);
+            try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+            if (!grabs.length) {
+                canvas.style.cursor = 'default';
+                if ((e.pointerType || 'mouse') !== 'mouse') pointer.inside = false;
+            }
+            return;
+        }
         if (!pointer.down || e.pointerId !== pointer.id) {
             if (e.type === 'pointerleave' && !pointer.down) pointer.inside = false;
             return;
@@ -3273,12 +3306,6 @@
         pointer.down = false;
         pointer.id = -1;
         try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-        if (mode === 'sim') {
-            grab.active = false;
-            canvas.style.cursor = 'default';
-            if (pointer.type !== 'mouse') pointer.inside = false;
-            return;
-        }
         const tool = settings.tool;
         if (isShapeTool(tool) && e.type === 'pointerup') {
             pushUndo();
@@ -3622,7 +3649,8 @@
             const liq = LIQUIDS[settings.liquid];
             const out = {
                 mode, liquid: settings.liquid, rotation: settings.rotation, level, simTime,
-                x: st.x, y: st.y, theta: st.th, vx: st.vx, vy: st.vy, omega: st.om
+                x: st.x, y: st.y, theta: st.th, vx: st.vx, vy: st.vy, omega: st.om,
+                grabs: grabs.length
             };
             if (B) {
                 const V = (B.areaMat + B.areaSealed) * DEPTH;
