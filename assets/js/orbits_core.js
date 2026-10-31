@@ -7,17 +7,28 @@
  * Integration: Yoshida's 4th-order composition of three kick-drift-kick leapfrog steps (symplectic and
  *   time-reversible for a fixed step), with one adaptive step for all bodies, dt = ETA * min over pairs of
  *   sqrt(r^3 / G(m_i + m_j)), so a close pass is taken in many small steps. That is accurate enough for
- *   chaotic three-body encounters (the Pythagorean problem ends as published). Leftover frame time carries
- *   over to the next frame (no step is ever cut short), and the bodies are drawn extrapolated by that
- *   leftover so the motion stays smooth. If a close pass needs more steps than a frame allows, the
- *   simulation slows down for a moment instead of losing accuracy.
- *   Bodies whose real radii touch (checked along each step) merge, conserving mass and momentum; a black
- *   hole swallows whatever crosses its event horizon.
+ *   chaotic three-body encounters (the Pythagorean problem ends as published). Two bodies much closer to
+ *   each other than to anything else (a tight binary, a flyby) instead drift round each other on an exact
+ *   two-body (Kepler) orbit, with the rest acting through the kicks (Wisdom-Holman splitting), so the step
+ *   only has to follow the rest: a close pass costs a few dozen steps however close it gets. Leftover
+ *   frame time carries over to the next frame (no step is ever cut short), and the bodies are drawn
+ *   extrapolated by that leftover so the motion stays smooth. The physics gets a share of each frame's
+ *   time on the clock; if the steps owed don't fit, the simulation slows down for a moment instead of
+ *   losing accuracy.
+ *   Forces: every pair is summed exactly up to DIRECT_MAX bodies (on packed typed arrays); beyond that,
+ *   the heaviest bodies still pull pair by pair and the light ones pull on each other through a
+ *   Barnes-Hut tree with quadrupole moments, up to MAX_BODIES bodies.
+ *   Bodies whose real radii touch (checked along each step, after a sort-and-sweep broad phase) merge,
+ *   conserving mass and momentum; a black hole swallows whatever crosses its event horizon.
  *
  * Realistic physics (off by default) draws every body at its true size (with a small marker so it can be
  *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
- *   Roche limit of a much denser body.
+ *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest.
+ *
+ * Crowded scenes (more than SWARM_N bodies, or made as a swarm) draw their light bodies as plain dots
+ *   with short trails and no names or arrows, unless chosen; drawing gets coarser before the physics
+ *   slows down if a frame runs long.
  *
  * Frames: the view follows the centre of mass (an inertial frame) or is locked on a body. Trails are
  *   stored in inertial coordinates at shared sample times, so they can be redrawn relative to any body.
@@ -87,12 +98,14 @@
     const horizonKm = (m) => (2 * G * m / C2) * AU_KM;
 
     const ETA = 0.004;                    // step = ETA x the shortest pair free-fall time (~1600 steps per circular orbit)
-    const MAX_PAIRS_PER_FRAME = 1.2e6;    // force evaluations per frame (x pairs) before the simulation slows down
+    const PHYSICS_MS = 13;                // at most this many ms per frame for the physics before the simulation slows down
     const YOSHIDA_W1 = 1 / (2 - Math.cbrt(2)), YOSHIDA_W0 = 1 - 2 * YOSHIDA_W1;
-    const MAX_BODIES = 30;
+    const MAX_BODIES = 1000;
+    const SWARM_N = 40;                   // with more bodies than this, the light ones are drawn and named as a swarm
     const SECONDS_PER_TREF = 6;           // real seconds per reference period of the scene at 1x
     const TRAIL_PER_TREF = 300;           // trail samples per reference period
     const TRAIL_CAP = 6144;               // samples kept per body (20 reference periods)
+    const SWARM_TRAIL = 256;              // samples kept for a minor body of a crowded scene (memory stays small)
     const TRAIL_STEPS = [0, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20]; // trail lengths in reference periods
     const K2_SECTORS = 12;                // Kepler's 2nd law: sectors per orbit
     const STAR_MASS = 0.07;               // M_sun: heavier bodies are drawn as stars
@@ -131,12 +144,25 @@
     const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15];
     const RADIUS_SNAPS = [12, 1737, 3390, 6371, 8700, 69911, 210000, 696000, 4.6e6, 3.0e7];
 
+    // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same scene every time)
+    function seeded(seed) {
+        let s = seed;
+        return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+    }
+    // The true anomaly (angle from the closest point) at mean anomaly M on an ellipse of eccentricity e
+    function trueAnomaly(M, e) {
+        let E = M;
+        for (let k = 0; k < 30; k++) E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+        return 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2), Math.sqrt(1 - e) * Math.cos(E / 2));
+    }
+
     // ------------------------------------------------------------------
     // Scenes. Bodies are given directly or by orbit elements around an earlier body
     // (a in AU, e, w = direction of the closest point in degrees, nu = start angle from it).
     // Every scene starts with the centre of mass at rest at the origin. Tref: the scene's reference
     // period (6 s on screen at 1x); vref: the speed drawn as a medium arrow (default: the subject's
-    // average orbital speed); tip: a line for the hint bar when the scene opens.
+    // average orbital speed); tip: a line for the hint bar when the scene opens; swarm: its light bodies
+    // are drawn as a swarm (dots, no names) however few are left.
     // ------------------------------------------------------------------
     const SCENES = {
         'sun-earth': {
@@ -250,6 +276,58 @@
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
             ]
+        },
+        // The Sun, Jupiter and 500 of the asteroids its gravity herds. 150 Trojans gather round each of the
+        // points 60 degrees ahead of and behind Jupiter on its orbit (L4 and L5), swinging slowly about them.
+        // 200 Hildas are in the 3:2 resonance (three orbits for every two of Jupiter's), on orbits lined up so
+        // that each is at its closest to the Sun whenever Jupiter passes it, safely far from Jupiter; at any
+        // moment they trace a triangle, its corners 60 degrees ahead of, behind and opposite Jupiter, that
+        // turns with it. Real orbits (Hildas at 3.97 AU, e = 0.12 to 0.25) and sizes (20 to 60 km); the
+        // asteroids pull on each other and on Jupiter as well, far too weakly to see.
+        trojans: {
+            units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
+            tip: 'Jupiter\'s pull herds 500 asteroids: the Trojans stay 60° ahead of it and 60° behind it, and the Hildas trace a triangle that turns with it.',
+            bodies: (function () {
+                const rnd = seeded(11);
+                const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
+                const rock = (rkm) => ({ R: rkm, m: (4 / 3) * Math.PI * Math.pow(rkm * 1000, 3) * 1500 / MSUN_KG });
+                // Orbit elements from a mean longitude lambda and the direction of the closest point w (degrees)
+                const orbitAt = (a, e, w, lambda) => ({ around: 0, a, e, w, nu: trueAnomaly(((lambda - w) * Math.PI) / 180, e) * 180 / Math.PI });
+                for (let i = 0; i < 300; i++) {
+                    const ahead = i % 2 === 0, w = 360 * rnd();
+                    const lambda = (ahead ? 60 : -60) + 20 * (rnd() - 0.5);
+                    list.push(Object.assign({ kind: 'asteroid', name: `Trojan ${i + 1}`, color: '#c9a27a',
+                        orbit: orbitAt(5.2026 * (1 + 0.012 * (rnd() - 0.5)), 0.08 * rnd(), w, lambda) }, rock(20 + 40 * rnd())));
+                }
+                for (let i = 0; i < 200; i++) {
+                    // 3 lambda_J - 2 lambda - w close to 0, with Jupiter's lambda_J = 0 now
+                    const lambda = 360 * rnd(), w = -2 * lambda - 40 * (rnd() - 0.5);
+                    list.push(Object.assign({ kind: 'asteroid', name: `Hilda ${i + 1}`, color: '#7bd0c1',
+                        orbit: orbitAt(3.97 * (1 + 0.006 * (rnd() - 0.5)), 0.12 + 0.13 * rnd(), w, lambda) }, rock(20 + 40 * rnd())));
+                }
+                return list;
+            })()
+        },
+        // A moon forming, as the Moon probably did after a Mars-sized body hit the young Earth: 400 moonlets
+        // of rock (300 km across, two Moons' worth in all) left in a disc just outside Earth's Roche limit
+        // (2.9 Earth radii, inside which tides would pull a moon apart), 20,000 to 45,000 km out. They
+        // pull on each other, stir each other up, collide and stick; the biggest grow fastest. (In this flat
+        // disc everything is in one plane, so they meet more often than in a real, thicker one.)
+        moondisc: {
+            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
+            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. Turn on Realistic physics to see tides tear apart clumps that stray too close to Earth.',
+            bodies: (function () {
+                const rnd = seeded(5);
+                const n = 400, mass = (2 * KINDS.moon.m) / n;
+                const R = Math.cbrt((3 * mass * MSUN_KG) / (4 * Math.PI * 3300)) / 1000;   // km, at the Moon's density
+                const list = [{ kind: 'earth' }];
+                for (let i = 0; i < n; i++) {
+                    const a = (20000 + 25000 * rnd()) / AU_KM;
+                    list.push({ kind: 'moon', name: `Moonlet ${i + 1}`, m: mass, R, color: i % 3 ? '#b5aca3' : '#c9ccd3',
+                        orbit: { around: 0, a, e: 0.02 * rnd(), w: 360 * rnd(), nu: 360 * rnd() } });
+                }
+                return list;
+            })()
         },
         empty: {
             units: 'au', Tref: 1, subject: 0, vref: TAU, box: [-1.5, 1.5, -1.5, 1.5],
@@ -422,7 +500,7 @@
             x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0,
             dx: 0, dy: 0,                 // drawn position (extrapolated)
             held: null,                   // { offX, offY } while dragged: position relative to the frame origin
-            trail: new Float64Array(TRAIL_CAP * 2),
+            trail: null,                  // samples (allocated at the first one: see recordSample)
             trailStart: sampleCount,      // first valid sample
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
@@ -465,17 +543,18 @@
     }
 
     function uniqueName(base) {
-        if (!bodies.some((b) => b.name === base)) return base;
+        const used = new Set();
+        for (const b of bodies) used.add(b.name);
+        if (!used.has(base)) return base;
         for (let i = 2; ; i++) {
             const n = `${base} ${i}`;
-            if (!bodies.some((b) => b.name === n)) return n;
+            if (!used.has(n)) return n;
         }
     }
 
     // ------------------------------------------------------------------
     // Physics
     // ------------------------------------------------------------------
-    // Accelerations of the free bodies, net forces for the arrows, and the next adaptive step.
     // Accelerations of every body in a list (the bodies, or a copy of them for a prediction), and the
     // shortest pair free-fall time squared, r^3 / G(m_i + m_j), for the step size.
     // With realistic physics each pair also gets the first post-Newtonian (1PN) correction of general
@@ -484,65 +563,597 @@
     //   a = GM/(c^2 r^2) { [(4 + 2 eta) GM/r - (1 + 3 eta) v^2 + 1.5 eta rdot^2] n + (4 - 2 eta) rdot v }
     // where M = m1 + m2, eta = m1 m2 / M^2, n points from body 2 to body 1 and v = v1 - v2. It turns an
     // orbit's ellipse by 6 pi GM / (c^2 a (1 - e^2)) each time round: 43" a century for Mercury,
-    // degrees per orbit close to a neutron star or black hole.
-    function gravity(list) {
+    // degrees per orbit close to a neutron star or black hole. Pairs for which both GM/(rc^2) and v^2/c^2
+    // are under PN_SKIP (a billionth: Earth and a moonlet, two asteroids) skip it: it would turn their
+    // orbits by a few billionths of a radian per turn. The 1PN part is kept apart, so the second kick
+    // (velocities changed, positions not) only works out again the pairs where it matters.
+    //
+    // The sums run on packed copies of the bodies' numbers (one Float64Array per quantity, kept from one
+    // step to the next), which a browser works through far faster than the bodies' own objects; the
+    // bodies stay the record of where everything is. Up to DIRECT_MAX bodies every pair is added up
+    // exactly, in the same order as always, so the small scenes give exactly the same numbers. With more,
+    // the heaviest few (and the members of close pairs, below) still pull and are pulled pair by pair,
+    // with relativity, but the light bodies' pulls on each other come from a Barnes-Hut tree.
+    //
+    // Pieces of one torn-apart body pull on each other too, softened (Plummer): a = G m d / (d^2 + eps^2)^1.5,
+    // with eps the radius of the whole body they came from. Each piece stands for part of the star's gas,
+    // spread through it and held up by its pressure, not a point: softened only at their own size, pieces
+    // released at rest (there is no pressure in the model) would fall together into a clump far smaller
+    // than the star was, which then survives a pass that tears the real star apart. Two pieces passing
+    // through each other feel a gentle pull, not an ever stronger one, and the clump can never force the
+    // step down below about its own free-fall time (eps^3 / G(m_i + m_j)), whatever they do. That pull changes
+    // smoothly (it never grows without limit, as a point mass's does close in), so those pairs need SOFT_STEP
+    // times fewer steps per free-fall time than a point-mass orbit: still about 200 per swing through the
+    // clump. (No relativity between them: GM/(rc^2) for a ninth of a star is a few millionths.)
+    const DIRECT_MAX = 200;               // exact pair sums up to this many bodies (about the measured crossover with the tree)
+    // With the tree, its force errors (a few parts in 10,000 of the swarm's own pull) are the limit on
+    // accuracy, not the steps: ETA_SWARM still gives over 600 steps per orbit at 4th order, whose errors
+    // stay far below them, and lets a big swarm keep up with the clock.
+    const ETA_SWARM = 0.01;
+    const HEAVY_MAX = 8;                  // above it, the heaviest bodies that still pull pair by pair
+    const PN_SKIP = 1e-9;
+    const SOFT_STEP = 8;
+    const SOFT_T2 = SOFT_STEP * SOFT_STEP;   // (the times are kept squared)
+    // A piece's softening length (AU): the radius of the body it came from, cbrt(FRAGMENTS) times its own
+    const softLength = (b) => (b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
+    let scrCap = 0;
+    let SX, SY, SVX, SVY, SM, SEPS, SGRP, SAX, SAY, SA0, SBEST, SSECOND, SPART, SPAIR, SDIR, SDPOS;
+    let PAX, PAY, NAX, NAY;                  // the 1PN part of the accelerations, and the Newtonian part
+    let PNI = new Int32Array(256), PNJ = new Int32Array(256), pnCount = 0, pnList = null, pnN = -1, pnTmin = Infinity;
+    function ensureScratch(n) {
+        if (n <= scrCap) return;
+        scrCap = Math.max(n, 2 * scrCap, 64);
+        const f = () => new Float64Array(scrCap), k = () => new Int32Array(scrCap);
+        SX = f(); SY = f(); SVX = f(); SVY = f(); SM = f(); SEPS = f(); SGRP = f(); SAX = f(); SAY = f(); SA0 = f();
+        SBEST = f(); SSECOND = f(); SPART = k(); SPAIR = k(); SDIR = k(); SDPOS = k();
+        PAX = f(); PAY = f(); NAX = f(); NAY = f();
+        growTreeCache(scrCap);
+    }
+
+    let gravStamp = 0;
+    let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
+    let heavyMax = HEAVY_MAX;
+    const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
+
+    // pairs: close pairs whose own pull is left out (their orbit is followed exactly by the drift);
+    // velOnly: only the velocities changed since the last call (the second kick with relativity).
+    function gravity(list, pairs, velOnly) {
         const n = list.length;
+        ensureScratch(n);
+        const stamp = ++gravStamp;
+        for (let k = 0; k < n; k++) {
+            const b = list[k];
+            SX[k] = b.x; SY[k] = b.y; SVX[k] = b.vx; SVY[k] = b.vy; SM[k] = b.m;
+            SGRP[k] = b.grp || 0;
+            SEPS[k] = b.grp ? softLength(b) : 0;
+            SA0[k] = b.ax || b.ay ? Math.sqrt(b.ax * b.ax + b.ay * b.ay) : 0;
+            SPAIR[k] = -1;
+            b.slot = k; b.stamp = stamp;
+        }
+        if (pairs) {
+            for (const p of pairs) {
+                if (p.a.stamp === stamp && p.b.stamp === stamp) { SPAIR[p.a.slot] = p.b.slot; SPAIR[p.b.slot] = p.a.slot; }
+            }
+        }
         const pn = settings.realistic;
-        for (const b of list) { b.ax = 0; b.ay = 0; }
+        let tmin;
+        if (pn && velOnly && pnList === list && pnN === n) {
+            // Only the velocities changed: the Newtonian part stands, the 1PN pairs are worked out again
+            for (let k = 0; k < n; k++) { PAX[k] = 0; PAY[k] = 0; }
+            for (let q = 0; q < pnCount; q++) pnPair(PNI[q], PNJ[q]);
+            for (let k = 0; k < n; k++) { SAX[k] = NAX[k] + PAX[k]; SAY[k] = NAY[k] + PAY[k]; }
+            tmin = pnTmin;
+        } else {
+            pnCount = 0;
+            if (pn) for (let k = 0; k < n; k++) { PAX[k] = 0; PAY[k] = 0; }
+            const useTree = forceMode === 'tree' || (forceMode === 'auto' && n > DIRECT_MAX);
+            tmin = useTree ? gravityTree(n, pn) : gravityDirect(n, pn);
+            if (pn) {
+                for (let k = 0; k < n; k++) { NAX[k] = SAX[k]; NAY[k] = SAY[k]; SAX[k] += PAX[k]; SAY[k] += PAY[k]; }
+                pnList = list; pnN = n; pnTmin = tmin;
+            }
+        }
+        for (let k = 0; k < n; k++) { const b = list[k]; b.ax = SAX[k]; b.ay = SAY[k]; }
+        return tmin;
+    }
+
+    // The 1PN acceleration of pair i, j (see above), added to PAX, PAY
+    function pnPair(i, j) {
+        const dx = SX[j] - SX[i], dy = SY[j] - SY[i];
+        const r2 = dx * dx + dy * dy, r = Math.sqrt(r2);
+        const mi = SM[i], mj = SM[j], msum = mi + mj;
+        const gm = G * msum, eta = (mi * mj) / (msum * msum);
+        const nx = -dx / r, ny = -dy / r;
+        const vx = SVX[i] - SVX[j], vy = SVY[i] - SVY[j];
+        const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy;
+        const f = gm / (C2 * r2);
+        const A = f * ((4 + 2 * eta) * gm / r - (1 + 3 * eta) * v2 + 1.5 * eta * rd * rd);
+        const B = f * (4 - 2 * eta) * rd;
+        const ax = A * nx + B * vx, ay = A * ny + B * vy;
+        PAX[i] += (mj / msum) * ax; PAY[i] += (mj / msum) * ay;
+        PAX[j] -= (mi / msum) * ax; PAY[j] -= (mi / msum) * ay;
+    }
+
+    // Note a pair that gets the 1PN correction (for the second kick)
+    function notePN(i, j) {
+        if (pnCount >= PNI.length) {
+            const a = new Int32Array(2 * PNI.length), b = new Int32Array(2 * PNJ.length);
+            a.set(PNI); b.set(PNJ); PNI = a; PNJ = b;
+        }
+        PNI[pnCount] = i; PNJ[pnCount] = j; pnCount++;
+    }
+
+    // Every pair, exactly. Besides the accelerations, each body's shortest and second-shortest pair
+    // free-fall times (and the partner of the shortest) are kept, to find close pairs.
+    function gravityDirect(n, pn) {
+        for (let k = 0; k < n; k++) { SAX[k] = 0; SAY[k] = 0; SBEST[k] = Infinity; SSECOND[k] = Infinity; SPART[k] = -1; }
+        work.pairs = (n * (n - 1)) / 2; work.tree = 0;
+        return pairRows(null, n, n, pn);
+    }
+
+    // The exact pull of each pair, added both ways to accelerations already started. Rows: each body i
+    // of rows[0..nRows) with every other body, each pair once (counting the rows in order); with no
+    // rows, every pair i < j. Returns the shortest free-fall time squared of the pairs that set the
+    // step (not the close pairs, which drift exactly).
+    function pairRows(rows, nRows, n, pn) {
+        // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
+        const xs = SX, ys = SY, ms = SM, grp = SGRP, accX = SAX, accY = SAY, best = SBEST, second = SSECOND, part = SPART;
+        const inRows = SINDIR, rowOf = SDPOS;
         let tmin = Infinity;
-        for (let i = 0; i < n; i++) {
-            const bi = list[i];
-            for (let j = i + 1; j < n; j++) {
-                const bj = list[j];
-                if (bi.grp && bi.grp === bj.grp) continue;   // pieces of one torn-apart body
-                const dx = bj.x - bi.x, dy = bj.y - bi.y;
+        for (let a = 0; a < nRows; a++) {
+            const i = rows ? rows[a] : a;
+            const xi = xs[i], yi = ys[i], mi = ms[i], gi = grp[i], pi = SPAIR[i];
+            let axi = accX[i], ayi = accY[i], b1 = best[i], b2 = second[i], p1 = part[i];
+            for (let j = rows ? 0 : i + 1; j < n; j++) {
+                if (rows && (j === i || (inRows[j] && rowOf[j] <= a))) continue;
+                const dx = xs[j] - xi, dy = ys[j] - yi;
                 const r2 = dx * dx + dy * dy;
+                const mj = ms[j], msum = mi + mj;
+                if (gi !== 0 && gi === grp[j]) {
+                    // pieces of one torn-apart body: softened
+                    const e = 0.5 * (SEPS[i] + SEPS[j]);
+                    const s2 = r2 + e * e, s = Math.sqrt(s2), is3 = 1 / (s2 * s);
+                    axi += G * mj * is3 * dx; ayi += G * mj * is3 * dy;
+                    accX[j] -= G * mi * is3 * dx; accY[j] -= G * mi * is3 * dy;
+                    if (msum > 0) {
+                        const t = s2 * s / (G * msum);
+                        if (SOFT_T2 * t < tmin) tmin = SOFT_T2 * t;
+                        if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = -1; } else b2 = t; }
+                        if (t < second[j]) { if (t < best[j]) { second[j] = best[j]; best[j] = t; part[j] = -1; } else second[j] = t; }
+                    }
+                    continue;
+                }
                 if (r2 === 0) continue;
                 const r = Math.sqrt(r2);
                 const ir3 = 1 / (r2 * r);
-                const si = G * bj.m * ir3, sj = G * bi.m * ir3;
-                bi.ax += si * dx; bi.ay += si * dy;
-                bj.ax -= sj * dx; bj.ay -= sj * dy;
-                const msum = bi.m + bj.m;
+                const kep = pi === j;
+                if (!kep) {
+                    const si = G * mj * ir3, sj = G * mi * ir3;
+                    axi += si * dx; ayi += si * dy;
+                    accX[j] -= sj * dx; accY[j] -= sj * dy;
+                }
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
-                    if (t < tmin) tmin = t;
+                    if (t < tmin && !kep) tmin = t;
+                    // each body's two shortest pair times, and the partner of the shortest
+                    if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = j; } else b2 = t; }
+                    if (t < second[j]) { if (t < best[j]) { second[j] = best[j]; best[j] = t; part[j] = i; } else second[j] = t; }
                     if (pn) {
-                        const gm = G * msum, eta = (bi.m * bj.m) / (msum * msum);
-                        const nx = -dx / r, ny = -dy / r;
-                        const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy;
-                        const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy;
-                        const f = gm / (C2 * r2);
-                        const A = f * ((4 + 2 * eta) * gm / r - (1 + 3 * eta) * v2 + 1.5 * eta * rd * rd);
-                        const B = f * (4 - 2 * eta) * rd;
-                        const ax = A * nx + B * vx, ay = A * ny + B * vy;
-                        bi.ax += (bj.m / msum) * ax; bi.ay += (bj.m / msum) * ay;
-                        bj.ax -= (bi.m / msum) * ax; bj.ay -= (bi.m / msum) * ay;
+                        const vx = SVX[i] - SVX[j], vy = SVY[i] - SVY[j];
+                        if ((G * msum) / (C2 * r) > PN_SKIP || (vx * vx + vy * vy) / C2 > PN_SKIP) { pnPair(i, j); notePN(i, j); }
                     }
                 }
             }
+            accX[i] = axi; accY[i] = ayi; best[i] = b1; second[i] = b2; part[i] = p1;
         }
         return tmin;
     }
 
+    // ------------------------------------------------------------------
+    // Barnes-Hut tree (2D quadtree) for many bodies. The light bodies are sorted into square cells, each
+    // split into four until it holds at most LEAF_SIZE bodies; each cell keeps its mass, centre of mass and
+    // quadrupole moment. A body feels a cell as a whole (its mass at its centre of mass, corrected by the
+    // quadrupole for its shape) when the cell looks small from there: farther than its size / THETA plus
+    // the distance between its centre of mass and its middle (so a body is never inside a cell it takes as
+    // a whole); otherwise the cell is opened, down to single bodies, which pull exactly. With THETA = 0.5
+    // and the quadrupole, the median error is a few parts in 10,000 of the swarm's own pull, and the big
+    // pulls (from the heaviest bodies, done pair by pair) are exact.
+    // Once a body's acceleration is known (from the last evaluation), a cell may also be taken whole
+    // from closer (THETA_LOOSE) if its likely error, about G M s^2 / d^4 for a cell of mass M and size s,
+    // is under ALPHA of that acceleration (the "relative" criterion of the GADGET-2 code). Asteroids
+    // round the Sun then feel the rest of the swarm through a handful of cells (their pull on each other is
+    // a billionth of the Sun's), while moonlets that crowd together still feel each other body by body.
+    // The tree is rebuilt for every force evaluation, in flat typed arrays (no objects), and walked
+    // without a stack: the cells are stored depth first, each with the index of the next cell after its
+    // own subtree.
+    // Relativity is left out between two light bodies: its size relative to their (already tiny) pull on
+    // each other is GM/(rc^2) + v^2/c^2, so it changes the motion by a minute fraction of what the 1PN
+    // terms of the heavy bodies (still included) do.
+    // ------------------------------------------------------------------
+    const THETA = 0.5, THETA_LOOSE = 1;
+    const ALPHA = 2e-4;
+    const LEAF_SIZE = 16;
+    let tCap = 0, tCount = 0;
+    let TCX, TCY, TM, TQXX, TQXY, TQYY, TOPEN, TOPEN1, TERR, TNEXT, TSTART, TEND;
+    let BIDX = new Int32Array(0), BX = new Float64Array(0), BY = new Float64Array(0), BM = new Float64Array(0);
+    // The tree's results per body: its pull, and the two largest (m + M) / d^3 with the partner of the first
+    let CAX = new Float64Array(0), CAY = new Float64Array(0), CB1 = new Float64Array(0), CB2 = new Float64Array(0), CP1 = new Int32Array(0);
+    let SINDIR = new Uint8Array(0);
+
+    function growTreeCache(cap) {
+        BIDX = new Int32Array(cap); BX = new Float64Array(cap); BY = new Float64Array(cap); BM = new Float64Array(cap);
+        CAX = new Float64Array(cap); CAY = new Float64Array(cap); CB1 = new Float64Array(cap); CB2 = new Float64Array(cap);
+        CP1 = new Int32Array(cap); SINDIR = new Uint8Array(cap);
+    }
+
+    function growTree() {
+        const cap = Math.max(256, 2 * tCap);
+        const grow = (a, T) => { const b = new T(cap); if (a) b.set(a); return b; };
+        TCX = grow(TCX, Float64Array); TCY = grow(TCY, Float64Array); TM = grow(TM, Float64Array);
+        TQXX = grow(TQXX, Float64Array); TQXY = grow(TQXY, Float64Array); TQYY = grow(TQYY, Float64Array);
+        TOPEN = grow(TOPEN, Float64Array); TOPEN1 = grow(TOPEN1, Float64Array); TERR = grow(TERR, Float64Array);
+        TNEXT = grow(TNEXT, Int32Array); TSTART = grow(TSTART, Int32Array); TEND = grow(TEND, Int32Array);
+        tCap = cap;
+    }
+
+    // Move the bodies BIDX[start..end) with coordinate < c to the front; returns where the rest begin
+    function partitionBodies(start, end, coord, c) {
+        let i = start, j = end - 1;
+        while (i <= j) {
+            if (coord[BIDX[i]] < c) i++;
+            else { const t = BIDX[i]; BIDX[i] = BIDX[j]; BIDX[j] = t; j--; }
+        }
+        return i;
+    }
+
+    // Build the cell for bodies BIDX[start..end) (square of half-width half centred on cx, cy); returns its index
+    function buildCell(start, end, cx, cy, half, depth) {
+        if (tCount >= tCap) growTree();
+        const nd = tCount++;
+        let M = 0, X = 0, Y = 0, qxx = 0, qxy = 0, qyy = 0;
+        if (end - start <= LEAF_SIZE || depth >= 40) {
+            TSTART[nd] = start; TEND[nd] = end;
+            for (let s = start; s < end; s++) { const k = BIDX[s], m = SM[k]; M += m; X += m * SX[k]; Y += m * SY[k]; }
+            if (M > 0) { X /= M; Y /= M; } else { X = cx; Y = cy; }
+            for (let s = start; s < end; s++) {
+                const k = BIDX[s], m = SM[k], dx = SX[k] - X, dy = SY[k] - Y;
+                qxx += m * (2 * dx * dx - dy * dy); qyy += m * (2 * dy * dy - dx * dx); qxy += 3 * m * dx * dy;
+            }
+        } else {
+            TSTART[nd] = start; TEND[nd] = -1;
+            const mx = partitionBodies(start, end, SX, cx);
+            const m1 = partitionBodies(start, mx, SY, cy), m2 = partitionBodies(mx, end, SY, cy);
+            const h = 0.5 * half;
+            if (m1 > start) buildCell(start, m1, cx - h, cy - h, h, depth + 1);
+            if (mx > m1) buildCell(m1, mx, cx - h, cy + h, h, depth + 1);
+            if (m2 > mx) buildCell(mx, m2, cx + h, cy - h, h, depth + 1);
+            if (end > m2) buildCell(m2, end, cx + h, cy + h, h, depth + 1);
+            // The children follow this cell, each followed by its own subtree
+            const stop = tCount;
+            for (let c = nd + 1; c < stop; c = TNEXT[c]) { const m = TM[c]; M += m; X += m * TCX[c]; Y += m * TCY[c]; }
+            if (M > 0) { X /= M; Y /= M; } else { X = cx; Y = cy; }
+            // Quadrupole about the new centre: the children's own plus that of their masses offset by d,
+            // Q = sum m (3 d d - d^2 I) (in the plane: Qxx = m(2dx^2 - dy^2), Qxy = 3 m dx dy)
+            for (let c = nd + 1; c < stop; c = TNEXT[c]) {
+                const m = TM[c], dx = TCX[c] - X, dy = TCY[c] - Y;
+                qxx += TQXX[c] + m * (2 * dx * dx - dy * dy); qyy += TQYY[c] + m * (2 * dy * dy - dx * dx); qxy += TQXY[c] + 3 * m * dx * dy;
+            }
+        }
+        TM[nd] = M; TCX[nd] = X; TCY[nd] = Y; TQXX[nd] = qxx; TQXY[nd] = qxy; TQYY[nd] = qyy;
+        const off = Math.hypot(X - cx, Y - cy), rOpen = (2 * half) / THETA + off, rLoose = (2 * half) / THETA_LOOSE + off;
+        TOPEN[nd] = M > 0 ? rOpen * rOpen : -1;   // (a massless cell is never opened)
+        TOPEN1[nd] = M > 0 ? rLoose * rLoose : -1;
+        TERR[nd] = (G * M * 4 * half * half) / ALPHA;
+        TNEXT[nd] = tCount;
+        return nd;
+    }
+
+    // The pull of the tree on light body k: its acceleration and the two largest (m_k + M) / d^3 (for the
+    // step and for close pairs) into the arrays above; returns the number of interactions.
+    function walkTree(k) {
+        // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
+        const tcx = TCX, tcy = TCY, tm = TM, tqxx = TQXX, tqxy = TQXY, tqyy = TQYY, topen = TOPEN, topen1 = TOPEN1, terr = TERR;
+        const tnext = TNEXT, tstart = TSTART, tend = TEND, bidx = BIDX, bx = BX, by = BY, bm = BM, sgrp = SGRP, seps = SEPS;
+        const xi = SX[k], yi = SY[k], mi = SM[k], gi = SGRP[k], ei = SEPS[k];
+        const aOld = SA0[k];
+        let ax = 0, ay = 0, k1 = 0, k2 = 0, p1 = -1, count = 0;
+        let nd = 0;
+        const end = tCount;
+        while (nd < end) {
+            const dx = tcx[nd] - xi, dy = tcy[nd] - yi;   // from the body to the cell's centre of mass
+            const r2 = dx * dx + dy * dy;
+            if (r2 > topen[nd] || (r2 > topen1[nd] && terr[nd] < aOld * r2 * r2)) {
+                // The cell as a whole: a = G M d / d^3 + G [(5/2)(d.Q.d / d^2) d - Q.d] / d^5
+                const M = tm[nd];
+                if (!(M > 0)) { nd = tnext[nd]; continue; }
+                const ir2 = 1 / r2, ir3 = Math.sqrt(ir2) * ir2, ir5 = ir3 * ir2;
+                const qx = tqxx[nd] * dx + tqxy[nd] * dy, qy = tqxy[nd] * dx + tqyy[nd] * dy;
+                const dqd = 2.5 * (dx * qx + dy * qy) * ir2;
+                ax += G * (M * ir3 * dx + ir5 * (dqd * dx - qx));
+                ay += G * (M * ir3 * dy + ir5 * (dqd * dy - qy));
+                const kk = (mi + M) * ir3;
+                if (kk > k1) { k2 = k1; k1 = kk; p1 = -1; } else if (kk > k2) k2 = kk;
+                count++;
+                nd = tnext[nd];
+            } else if (tend[nd] >= 0) {
+                for (let s = tstart[nd], e = tend[nd]; s < e; s++) {
+                    const j = bidx[s];
+                    if (j === k) continue;
+                    const ddx = bx[s] - xi, ddy = by[s] - yi;
+                    let d2 = ddx * ddx + ddy * ddy;
+                    const soft = gi !== 0 && gi === sgrp[j];
+                    if (soft) { const ee = 0.5 * (ei + seps[j]); d2 += ee * ee; } else if (d2 === 0) continue;
+                    const id3 = 1 / (d2 * Math.sqrt(d2)), mj = bm[s];
+                    ax += G * mj * id3 * ddx; ay += G * mj * id3 * ddy;
+                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : (mi + mj) * id3;
+                    if (kk > k1) { k2 = k1; k1 = kk; p1 = soft ? -1 : j; } else if (kk > k2) k2 = kk;
+                    count++;
+                }
+                nd = tnext[nd];
+            } else {
+                nd++;
+            }
+        }
+        CAX[k] = ax; CAY[k] = ay; CB1[k] = k1; CB2[k] = k2; CP1[k] = p1;
+        return count;
+    }
+
+    function gravityTree(n, pn) {
+        // The direct set: the heaviest bodies, kept in a short list sorted by mass, and close pairs
+        let nd = 0;
+        const hmax = Math.min(heavyMax, n);
+        for (let i = 0; i < n; i++) {
+            const m = SM[i];
+            if (nd < hmax) { let p = nd++; while (p > 0 && SM[SDIR[p - 1]] < m) { SDIR[p] = SDIR[p - 1]; p--; } SDIR[p] = i; } else if (hmax > 0 && m > SM[SDIR[nd - 1]]) {
+                let p = nd - 1;
+                while (p > 0 && SM[SDIR[p - 1]] < m) { SDIR[p] = SDIR[p - 1]; p--; }
+                SDIR[p] = i;
+            }
+        }
+        SINDIR.fill(0, 0, n);
+        for (let a = 0; a < nd; a++) SINDIR[SDIR[a]] = 1;
+        for (let i = 0; i < n; i++) if (SPAIR[i] >= 0 && !SINDIR[i]) { SINDIR[i] = 1; SDIR[nd++] = i; }
+        for (let a = 0; a < nd; a++) SDPOS[SDIR[a]] = a;
+        // The light bodies' pulls on each other, from the tree
+        let treeWork = 0;
+        let nl = 0;
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < n; i++) {
+            if (SINDIR[i]) continue;
+            BIDX[nl++] = i;
+            const x = SX[i], y = SY[i];
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+        tCount = 0;
+        let kmax = 0;
+        if (nl > 0) {
+            const half = 0.5 * Math.max(x1 - x0, y1 - y0) * (1 + 1e-9) + 1e-300;
+            buildCell(0, nl, 0.5 * (x0 + x1), 0.5 * (y0 + y1), half, 0);
+            for (let s = 0; s < nl; s++) { const k = BIDX[s]; BX[s] = SX[k]; BY[s] = SY[k]; BM[s] = SM[k]; }
+            for (let s = 0; s < nl; s++) {
+                const k = BIDX[s];
+                treeWork += walkTree(k);
+                if (CB1[k] > kmax) kmax = CB1[k];
+            }
+        }
+        const treeTmin = kmax > 0 ? 1 / (G * kmax) : Infinity;
+        let tmin = treeTmin;
+        for (let i = 0; i < n; i++) {
+            SBEST[i] = Infinity; SSECOND[i] = Infinity; SPART[i] = -1;
+            if (SINDIR[i]) { SAX[i] = 0; SAY[i] = 0; continue; }
+            SAX[i] = CAX[i]; SAY[i] = CAY[i];
+            if (CB1[i] > 0) { SBEST[i] = 1 / (G * CB1[i]); SPART[i] = CP1[i]; }
+            if (CB2[i] > 0) SSECOND[i] = 1 / (G * CB2[i]);
+        }
+        // Every pair with a body of the direct set, exactly (each direct-direct pair once)
+        work.pairs = nd * n - (nd * (nd + 1)) / 2;
+        work.tree = treeWork;
+        return Math.min(tmin, pairRows(SDIR, nd, n, pn));
+    }
+
+    // ------------------------------------------------------------------
+    // Close pairs. With one step for everyone, a single close pair (a tight binary, a flyby at a few
+    // planet radii, two stars swinging past each other) would force tiny steps on the whole system. So two
+    // bodies that are each other's closest partner (shortest pair free-fall time), and much closer to each
+    // other than to anything else (their pair time squared under KEP_GAMMA times that with any third body:
+    // the others' tides on them are under a few per cent of their own pull), are moved by an exact
+    // two-body (Kepler) drift instead of a straight line, and their own pull is left out of the kicks.
+    // Everything else, including the third bodies' pull on them (and relativity), still acts through the
+    // kicks. This is the Wisdom-Holman splitting, used in planetary and star-cluster codes: still
+    // symplectic, time-reversible and 4th order in the Yoshida composition, but the step now only has to
+    // follow the others (and turn the pair by at most a few degrees per step, KEP_TURN, so trails, the
+    // flyby close-up and the swept areas stay smooth). A flyby therefore takes a few dozen steps however
+    // close it gets. A pair that goes round faster than the trails are sampled (period under a quarter of
+    // a sample) is stepped without that limit: its cost no longer grows with how tight it is.
+    // Pairs where relativity matters (GM/(rc^2) above PN_PAIR_MAX) are left to the ordinary steps, which
+    // follow the 1PN precession closely; so are pieces of one torn-apart body (softened, not Keplerian).
+    // ------------------------------------------------------------------
+    const KEP_GAMMA = 0.02;
+    const KEP_TURN = 0.05;                // step <= KEP_TURN x sqrt(r^3 / GM): about 4 degrees of the pair's turn
+    const KEP_UNRESOLVED = 0.25;          // periods under this many trail samples are not followed turn by turn
+    const PN_PAIR_MAX = 1e-6;
+    const mainPairs = [];                 // { a, b, touch, fast } for the bodies
+    let mainStamp = 0, mainN = 0;
+
+    // Universal-variable Kepler drift (Danby's G-functions): exact for ellipses, parabolas and hyperbolas,
+    // forwards or backwards in time. Results in KX, KY, KVX, KVY; KMIN is the closest the two came.
+    let SC0 = 1, SC1 = 1, SC2 = 0.5, SC3 = 1 / 6;
+    function stumpff(z) {
+        if (Math.abs(z) < 0.5) {
+            SC3 = (1 - z / 20 * (1 - z / 42 * (1 - z / 72 * (1 - z / 110 * (1 - z / 156 * (1 - z / 210 * (1 - z / 272))))))) / 6;
+            SC2 = (1 - z / 12 * (1 - z / 30 * (1 - z / 56 * (1 - z / 90 * (1 - z / 132 * (1 - z / 182 * (1 - z / 240))))))) / 2;
+            SC1 = 1 - z * SC3;
+            SC0 = 1 - z * SC2;
+        } else if (z > 0) {
+            const x = Math.sqrt(z);
+            SC0 = Math.cos(x); SC1 = Math.sin(x) / x;
+            SC2 = (1 - SC0) / z; SC3 = (1 - SC1) / z;
+        } else {
+            const x = Math.sqrt(-z);
+            SC0 = Math.cosh(x); SC1 = Math.sinh(x) / x;
+            SC2 = (1 - SC0) / z; SC3 = (1 - SC1) / z;
+        }
+    }
+
+    let KX = 0, KY = 0, KVX = 0, KVY = 0, KMIN = 0, KR = 0;
+    // Kepler's equation in universal variables, r0 G1(s) + eta G2(s) + mu G3(s) - tau (sets KR = r(s), its slope)
+    function keplerF(s, r0, eta, mu, beta, tau) {
+        stumpff(beta * s * s);
+        const g1 = s * SC1, g2 = s * s * SC2;
+        KR = r0 * SC0 + eta * g1 + mu * g2;
+        return r0 * g1 + eta * g2 + mu * s * s * s * SC3 - tau;
+    }
+
+    function keplerDrift(rx, ry, vx, vy, mu, dt) {
+        const r0 = Math.hypot(rx, ry);
+        const eta = rx * vx + ry * vy;
+        const beta = 2 * mu / r0 - (vx * vx + vy * vy);   // mu / a (negative for a hyperbola)
+        let tau = dt, whole = false, s, lo, hi;
+        if (beta > 0) {
+            // An ellipse is only advanced by the part of dt left over after whole turns; one turn is
+            // s = 2 pi / sqrt(beta), which brackets the answer
+            const P = TAU * mu / (beta * Math.sqrt(beta));
+            if (Math.abs(tau) >= P) { tau -= P * Math.trunc(tau / P); whole = true; }
+            const sMax = TAU / Math.sqrt(beta);
+            lo = tau >= 0 ? 0 : -sMax; hi = tau >= 0 ? sMax : 0;
+            s = tau * beta / mu;
+        } else {
+            // A parabola or hyperbola: start from the shorter of the near and the far-out estimates, then
+            // widen the open end of the bracket until it holds the answer
+            const at = Math.abs(tau);
+            s = at / r0;
+            if (beta < 0) { const nb = Math.sqrt(-beta); s = Math.min(s, Math.log(1 + 2 * at * (-beta) * nb / mu) / nb); } else s = Math.min(s, Math.cbrt(6 * at / mu));
+            if (tau < 0) s = -s;
+            lo = tau >= 0 ? 0 : s; hi = tau >= 0 ? s : 0;
+            if (tau >= 0) { while (!(keplerF(hi, r0, eta, mu, beta, tau) >= 0)) { lo = hi; hi = 2 * hi + 1e-300; } } else { while (!(keplerF(lo, r0, eta, mu, beta, tau) <= 0)) { hi = lo; lo = 2 * lo - 1e-300; } }
+        }
+        if (!(s >= lo && s <= hi)) s = 0.5 * (lo + hi);
+        // Kepler's equation rises steadily with s (its slope is the distance r > 0): Laguerre-Conway
+        // steps (which converge from rough starts in a few steps), falling back on bisection
+        for (let it = 0; it < 60; it++) {
+            const F = keplerF(s, r0, eta, mu, beta, tau);
+            if (F === 0) break;
+            if (F < 0) lo = s; else hi = s;
+            const d2F = eta * SC0 + (mu - beta * r0) * s * SC1;
+            let next = s - 5 * F / (KR + Math.sqrt(Math.abs(16 * KR * KR - 20 * F * d2F)));
+            if (!(next > lo && next < hi)) next = 0.5 * (lo + hi);
+            const ds = next - s;
+            s = next;
+            if (Math.abs(ds) <= 2e-15 * Math.abs(s) || !(hi - lo > 2e-15 * Math.abs(s))) break;
+        }
+        stumpff(beta * s * s);
+        const g1 = s * SC1, g2 = s * s * SC2;
+        const r = r0 * SC0 + eta * g1 + mu * g2;
+        const f = 1 - mu * g2 / r0, g = r0 * g1 + eta * g2;
+        const fd = -mu * g1 / (r0 * r), gd = 1 - mu * g2 / r;
+        KX = f * rx + g * vx; KY = f * ry + g * vy;
+        KVX = fd * rx + gd * vx; KVY = fd * ry + gd * vy;
+        // Closest approach: the pericentre if it was passed, otherwise one of the ends
+        const eta1 = KX * KVX + KY * KVY;
+        KMIN = Math.min(r0, r);
+        if (whole || (dt > 0 ? eta < 0 && eta1 >= 0 : eta > 0 && eta1 <= 0)) {
+            const h = rx * vy - ry * vx, p = h * h / mu;
+            const e = Math.sqrt(Math.max(0, 1 - p * beta / mu));
+            KMIN = Math.min(KMIN, p / (1 + e));
+        }
+    }
+
+    // Move a close pair: its centre of mass in a straight line, the two round each other exactly. The
+    // heavier body is placed from the centre of mass and the lighter one from it by the exact separation
+    // (placing both from the centre of mass would scale their separation by the rounding error of
+    // m1/M + m2/M, which is not quite 1, every step: a slow, steady drift in the pair's energy).
+    function driftPair(p, dt) {
+        const h = p.a.m >= p.b.m ? p.a : p.b, l = h === p.a ? p.b : p.a;
+        const M = h.m + l.m, fl = l.m / M, fh = 1 - fl;
+        const cvx = fh * h.vx + fl * l.vx, cvy = fh * h.vy + fl * l.vy;
+        const cx = fh * h.x + fl * l.x + dt * cvx, cy = fh * h.y + fl * l.y + dt * cvy;
+        keplerDrift(l.x - h.x, l.y - h.y, l.vx - h.vx, l.vy - h.vy, G * M, dt);
+        h.x = cx - fl * KX; h.y = cy - fl * KY; h.vx = cvx - fl * KVX; h.vy = cvy - fl * KVY;
+        l.x = h.x + KX; l.y = h.y + KY; l.vx = h.vx + KVX; l.vy = h.vy + KVY;
+        if (KMIN < (h.R + l.R) / AU_KM) p.touch = true;
+    }
+
+    // Can a and b be followed as a close pair? (gamma: how weakly the others must disturb them; read
+    // from the packed shortest pair times of the last evaluation of the bodies' forces)
+    function pairQualifies(a, b, gamma) {
+        if (a.stamp !== mainStamp || b.stamp !== mainStamp) return false;
+        const i = a.slot, j = b.slot;
+        if (SPART[i] !== j || SPART[j] !== i) return false;
+        if (a.held || b.held || (a.grp && a.grp === b.grp) || !(a.m > 0 && b.m > 0)) return false;
+        if (!(SBEST[i] < gamma * SSECOND[i] && SBEST[j] < gamma * SSECOND[j])) return false;
+        if (settings.realistic && G * (a.m + b.m) / (C2 * Math.hypot(b.x - a.x, b.y - a.y)) > PN_PAIR_MAX) return false;
+        return true;
+    }
+
+    // Update the close pairs from the last force evaluation (at a step boundary). Pairs end with some
+    // hysteresis, so one near the limit doesn't flicker. Returns true if they changed.
+    function choosePairs() {
+        // (refreshed if the packed numbers are a prediction's, or the bodies changed since)
+        if (gravStamp !== mainStamp || bodies.length !== mainN) computeForces();
+        let changed = false;
+        for (let k = mainPairs.length - 1; k >= 0; k--) {
+            const p = mainPairs[k];
+            if (!pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
+        }
+        const n = bodies.length;
+        for (let k = 0; k < n; k++) bodies[k].kep = null;
+        for (const p of mainPairs) { p.a.kep = p; p.b.kep = p; }
+        for (let k = 0; k < n; k++) {
+            const j = SPART[k];
+            if (j <= k || SPART[j] !== k) continue;
+            const a = bodies[k], b = bodies[j];
+            if (a.kep || b.kep || !pairQualifies(a, b, KEP_GAMMA)) continue;
+            const p = { a, b, touch: false, fast: false };
+            mainPairs.push(p);
+            a.kep = p; b.kep = p;
+            changed = true;
+        }
+        return changed;
+    }
+
+    function refreshPairs() {
+        if (choosePairs()) computeForces();
+    }
+
     // Accelerations of the bodies, net forces for the arrows, and the next adaptive step.
-    function computeForces() {
-        const tmin = gravity(bodies);
-        for (const b of bodies) { b.fx = b.m * b.ax; b.fy = b.m * b.ay; }
-        nextDt = Math.min(ETA * Math.sqrt(tmin), sampleDt);
+    function computeForces(velOnly) {
+        const tmin = gravity(bodies, mainPairs, velOnly);
+        mainStamp = gravStamp; mainN = bodies.length;
+        const n = bodies.length;
+        for (let k = 0; k < n; k++) { const b = bodies[k]; b.fx = b.m * b.ax; b.fy = b.m * b.ay; }
+        let dt = (n > DIRECT_MAX ? ETA_SWARM : ETA) * Math.sqrt(tmin);
+        for (const p of mainPairs) dt = Math.min(dt, pairStepLimit(p));
+        nextDt = Math.min(dt, sampleDt);
         forcesDirty = false;
     }
 
-    // One kick-drift-kick leapfrog step for every body in the list that isn't held. The 1PN force
-    // depends on the velocities too, so with realistic physics the second kick is done twice: with the
-    // forces at the half-step velocities, then again with those at the velocities that gave.
-    function leapfrog(list, dt, forces) {
+    // A close pair: add its own pull to the force arrows (it is left out of the accelerations), and the
+    // longest step that keeps its turn per step small (none for one too fast to follow)
+    function pairStepLimit(p) {
+        const a = p.a, b = p.b;
+        if (a.stamp !== mainStamp || b.stamp !== mainStamp) return Infinity;
+        const rx = b.x - a.x, ry = b.y - a.y, r2 = rx * rx + ry * ry, r = Math.sqrt(r2);
+        const f = G * a.m * b.m / (r2 * r);
+        a.fx += f * rx; a.fy += f * ry; b.fx -= f * rx; b.fy -= f * ry;
+        const gm = G * (a.m + b.m);
+        const vx = b.vx - a.vx, vy = b.vy - a.vy;
+        const beta = 2 * gm / r - (vx * vx + vy * vy);
+        p.fast = beta > 0 && TAU * gm / (beta * Math.sqrt(beta)) < KEP_UNRESOLVED * sampleDt;
+        return p.fast ? Infinity : KEP_TURN * Math.sqrt(r2 * r / gm);
+    }
+
+    // One kick-drift-kick leapfrog step for every body in the list that isn't held (close pairs drift
+    // round each other exactly). The 1PN force depends on the velocities too, so with realistic physics
+    // the second kick is done twice: with the forces at the half-step velocities, then again with those
+    // at the velocities that gave.
+    function leapfrog(list, dt, forces, pairs) {
         const h = 0.5 * dt;
         for (const b of list) {
             if (b.held) continue;
             b.vx += h * b.ax; b.vy += h * b.ay;
-            b.x += dt * b.vx; b.y += dt * b.vy;
+            if (!(pairs && b.kep)) { b.x += dt * b.vx; b.y += dt * b.vy; }
         }
+        if (pairs) for (const p of pairs) driftPair(p, dt);
         let tmin = forces();
         for (const b of list) {
             if (b.held) continue;
@@ -550,7 +1161,7 @@
             b.vx += h * b.ax; b.vy += h * b.ay;
         }
         if (settings.realistic) {
-            tmin = forces();
+            tmin = forces(true);
             for (const b of list) {
                 if (b.held) continue;
                 b.vx = b.hx + h * b.ax; b.vy = b.hy + h * b.ay;
@@ -560,44 +1171,100 @@
     }
 
     // One 4th-order step: leapfrog steps of w1 dt, w0 dt (backwards: w0 < 0) and w1 dt.
-    function yoshida(list, dt, forces) {
-        leapfrog(list, YOSHIDA_W1 * dt, forces);
-        leapfrog(list, YOSHIDA_W0 * dt, forces);
-        return leapfrog(list, YOSHIDA_W1 * dt, forces);
+    function yoshida(list, dt, forces, pairs) {
+        leapfrog(list, YOSHIDA_W1 * dt, forces, pairs);
+        leapfrog(list, YOSHIDA_W0 * dt, forces, pairs);
+        return leapfrog(list, YOSHIDA_W1 * dt, forces, pairs);
     }
 
     function step(dt) {
         for (const b of bodies) { b.px = b.x; b.py = b.y; }
-        yoshida(bodies, dt, computeForces);
+        for (const p of mainPairs) p.touch = false;
+        yoshida(bodies, dt, computeForces, mainPairs);
     }
 
     // Bodies whose real radii touched during the last step (closest approach along the straight
-    // path between the old and new positions) merge into one, conserving mass and momentum.
+    // path between the old and new positions, or along their exact orbit for a close pair) merge into
+    // one, conserving mass and momentum. Only pairs whose boxes round their paths overlap are tested
+    // (sort and sweep: the boxes stay sorted by their left edges from step to step, so re-sorting them
+    // takes little more than one pass), and of those touching, the first in the list merges first, as
+    // when every pair was tested in turn.
+    let sweepOrder = new Int32Array(0);
+    let SWLX = new Float64Array(0), SWHX = new Float64Array(0), SWLY = new Float64Array(0), SWHY = new Float64Array(0);
+    let contactA = null, contactB = null;
+
+    function touching(a, b) {
+        if (a.held || b.held || (a.grp && a.grp === b.grp)) return false;
+        if (a.kep && a.kep === b.kep) return a.kep.touch;
+        const reach = (a.R + b.R) / AU_KM;
+        const x0 = b.px - a.px, y0 = b.py - a.py;
+        const x1 = b.x - a.x, y1 = b.y - a.y;
+        const ex = x1 - x0, ey = y1 - y0;
+        const ee = ex * ex + ey * ey;
+        const t = ee > 0 ? clamp(-(x0 * ex + y0 * ey) / ee, 0, 1) : 1;
+        const cx = x0 + t * ex, cy = y0 + t * ey;
+        return cx * cx + cy * cy < reach * reach;
+    }
+
+    function firstContact() {
+        const n = bodies.length;
+        contactA = contactB = null;
+        if (n < 2) return false;
+        if (SWLX.length < n) {
+            const cap = Math.max(64, 2 * n);
+            SWLX = new Float64Array(cap); SWHX = new Float64Array(cap); SWLY = new Float64Array(cap); SWHY = new Float64Array(cap);
+        }
+        for (let k = 0; k < n; k++) {
+            const b = bodies[k], reach = b.R / AU_KM;
+            const x0 = b.px, x1 = b.x, y0 = b.py, y1 = b.y;
+            SWLX[k] = (x0 < x1 ? x0 : x1) - reach; SWHX[k] = (x0 < x1 ? x1 : x0) + reach;
+            SWLY[k] = (y0 < y1 ? y0 : y1) - reach; SWHY[k] = (y0 < y1 ? y1 : y0) + reach;
+        }
+        if (sweepOrder.length !== n) {
+            const order = Array.from({ length: n }, (_, i) => i);
+            order.sort((p, q) => SWLX[p] - SWLX[q]);
+            sweepOrder = Int32Array.from(order);
+        } else {
+            for (let a = 1; a < n; a++) {
+                const i = sweepOrder[a], key = SWLX[i];
+                let c = a - 1;
+                while (c >= 0 && SWLX[sweepOrder[c]] > key) { sweepOrder[c + 1] = sweepOrder[c]; c--; }
+                sweepOrder[c + 1] = i;
+            }
+        }
+        let bi = n, bj = n;
+        for (let a = 0; a < n; a++) {
+            const i = sweepOrder[a], hx = SWHX[i], ly = SWLY[i], hy = SWHY[i];
+            for (let c = a + 1; c < n; c++) {
+                const j = sweepOrder[c];
+                if (SWLX[j] > hx) break;
+                if (SWLY[j] > hy || SWHY[j] < ly) continue;
+                const lo = i < j ? i : j, hi = i < j ? j : i;
+                if (lo > bi || (lo === bi && hi >= bj)) continue;
+                if (touching(bodies[lo], bodies[hi])) { bi = lo; bj = hi; }
+            }
+        }
+        // A close pair can touch at its pericentre between the ends of a step
+        for (const p of mainPairs) {
+            if (!p.touch) continue;
+            const i = bodies.indexOf(p.a), j = bodies.indexOf(p.b);
+            if (i < 0 || j < 0) continue;
+            const lo = Math.min(i, j), hi = Math.max(i, j);
+            if (lo < bi || (lo === bi && hi < bj)) { bi = lo; bj = hi; }
+        }
+        if (bi >= n) return false;
+        contactA = bodies[bi]; contactB = bodies[bj];
+        return true;
+    }
+
     function checkMerges() {
         if (!settings.merge) return false;
         let merged = false;
-        let again = true;
-        while (again) {
-            again = false;
-            scan:
-            for (let i = 0; i < bodies.length; i++) {
-                for (let j = i + 1; j < bodies.length; j++) {
-                    const a = bodies[i], b = bodies[j];
-                    if (a.held || b.held || (a.grp && a.grp === b.grp)) continue;
-                    const reach = (a.R + b.R) / AU_KM;
-                    const x0 = b.px - a.px, y0 = b.py - a.py;
-                    const x1 = b.x - a.x, y1 = b.y - a.y;
-                    const ex = x1 - x0, ey = y1 - y0;
-                    const ee = ex * ex + ey * ey;
-                    const t = ee > 0 ? clamp(-(x0 * ex + y0 * ey) / ee, 0, 1) : 1;
-                    const cx = x0 + t * ex, cy = y0 + t * ey;
-                    if (cx * cx + cy * cy < reach * reach) {
-                        mergeBodies(a, b);
-                        merged = again = true;
-                        break scan;   // the list changed: scan again
-                    }
-                }
-            }
+        while (firstContact()) {
+            const a = contactA, b = contactB;
+            if (a.kep) a.kep.touch = false;
+            mergeBodies(a, b);
+            merged = true;
         }
         if (merged) computeForces();
         return merged;
@@ -610,7 +1277,8 @@
         const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
-        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big) });
+        // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
+        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: big.minor && small.minor ? 8 : 30 });
         big.vx = M > 0 ? (a.m * a.vx + b.m * b.vx) / M : big.vx;
         big.vy = M > 0 ? (a.m * a.vy + b.m * b.vy) / M : big.vy;
         big.x = fx; big.y = fy;
@@ -629,19 +1297,42 @@
     // held together only by its own gravity), before their surfaces touch, is torn apart. It becomes a
     // line of fragments along the line to the heavy body, all moving as it did; the inner ones are more
     // tightly bound than the outer ones, so they spread out along the orbit into a stream, and if the
-    // pass was close enough about half escape. The fragments then move on their own orbits (they don't
-    // pull on each other or merge again), the usual "frozen-in" picture of a tidal disruption.
+    // pass was close enough about half escape. The fragments pull on each other (softened, see above)
+    // and on everything else, so self-gravity can gather some of the stream into clumps, as in
+    // simulations of real disruptions. They don't merge with each other: they start overlapping (parts of
+    // one fluid body), and streams of gas that meet pass through each other rather than sticking like
+    // solid bodies; they can still merge with anything else, or fall into the black hole.
+    // In a crowded scene only the heaviest few bodies are tried as the heavy partner (bodies outside them
+    // are light swarm bodies, whose Roche limits round each other are barely bigger than their own sizes,
+    // so they merge rather than tear).
     // ------------------------------------------------------------------
     const ROCHE = 2.44;
     const FRAGMENTS = 9;
+    const tideHeavy = [];
+    // The pieces' pull on each other at the break-up held the body together: its own binding energy,
+    // which a whole body (a point) doesn't have in the books. It is kept here (by the torn-apart body's
+    // id) and taken off the energy, so the total stays level through a disruption.
+    const groupEnergy = new Map();
 
     function checkTides() {
         if (!settings.realistic) return false;
+        let hs = bodies;
+        if (bodies.length > SWARM_N) {
+            tideHeavy.length = 0;
+            for (const b of bodies) {
+                if (tideHeavy.length < HEAVY_MAX) { tideHeavy.push(b); continue; }
+                let lo = 0;
+                for (let k = 1; k < tideHeavy.length; k++) if (tideHeavy[k].m < tideHeavy[lo].m) lo = k;
+                if (b.m > tideHeavy[lo].m) tideHeavy[lo] = b;
+            }
+            hs = tideHeavy;
+        }
         for (const L of bodies) {
             if (L.grp || L.held || isCompact(L) || L.m < 1e-17) continue;   // not probes: they are held together by their structure
-            for (const H of bodies) {
+            for (const H of hs) {
                 if (H === L || H.held || H.m < 5 * L.m) continue;
-                const d = Math.hypot(L.x - H.x, L.y - H.y);
+                const dx = L.x - H.x, dy = L.y - H.y;
+                const d = Math.hypot(dx, dy);
                 const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
                 if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
             }
@@ -666,6 +1357,14 @@
             parts.push(f);
         }
         flashes.push({ x: L.x, y: L.y, t: performance.now(), color: L.color, r0: drawRadius(L) });
+        let u = 0;
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const a = parts[i], b = parts[j], e = 0.5 * (softLength(a) + softLength(b));
+                u -= (G * a.m * b.m) / Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + e * e);
+            }
+        }
+        groupEnergy.set(L.id, u);
         bodies.push(...parts);
         removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
         computeForces();
@@ -685,16 +1384,28 @@
         if (b.kind === 'blackhole') b.R = horizonKm(b.m);
     }
 
-    // Advance the simulation by simDt years (as many whole adaptive steps as fit).
-    function advance(simDt, maxSteps) {
+    // Advance the simulation by simDt years (as many whole adaptive steps as fit). In the animation the
+    // physics gets a share of each frame's time (budgetMs, checked on the clock every few steps): if the
+    // steps still owed don't fit, the simulation slows down for this frame rather than take bigger steps.
+    // maxSteps (for tests) caps the steps instead, with no clock.
+    let lastAdvance = { steps: 0, timedOut: false };
+    function advance(simDt, maxSteps, budgetMs) {
         if (forcesDirty) computeForces();
         acc += simDt;
         let steps = 0;
-        const pairs = Math.max(1, (bodies.length * (bodies.length - 1)) / 2);
-        const limit = maxSteps || clamp(Math.round(MAX_PAIRS_PER_FRAME / (3 * pairs)), 300, 4000);
-        while (steps < limit) {
+        const t0 = maxSteps ? 0 : performance.now();
+        const budget = budgetMs || PHYSICS_MS;
+        const every = bodies.length > 60 ? 1 : 8;
+        let timedOut = false;
+        while (!maxSteps || steps < maxSteps) {
+            refreshPairs();
             const dt = nextDt;
             if (!(dt > 0) || acc < dt) break;
+            // (stop if the next step, at the average cost so far, would overrun the budget)
+            if (!maxSteps && steps % every === 0 && steps > 0) {
+                const used = performance.now() - t0;
+                if (used + used / steps > budget) { timedOut = true; break; }
+            }
             step(dt);
             simTime += dt;
             acc -= dt;
@@ -709,8 +1420,9 @@
                 while (nextSampleT <= simTime) nextSampleT += sampleDt;
             }
         }
-        slowedDown = steps >= limit;
+        slowedDown = timedOut || (!!maxSteps && steps >= maxSteps);
         if (slowedDown) acc = 0;   // couldn't keep up: slow down rather than take bigger steps
+        lastAdvance.steps = steps; lastAdvance.timedOut = timedOut;
         return steps;
     }
 
@@ -744,24 +1456,45 @@
     // Each body's primary: the most local heavier body it is bound to and inside the Hill sphere of.
     // Bodies bound to nothing heavier get the strongest heavier attractor (bound = false). The heaviest
     // body is paired with its heaviest bound companion if that is at least a tenth of its mass (binaries).
+    // Pieces of one torn-apart body count each other's softened pull (as in gravity), so a clump that
+    // gathers again by its own gravity shows as pieces orbiting each other.
+    // In a crowded scene only the PRIMARY_MAX heaviest bodies are candidates (a light swarm body can't
+    // keep another in orbit for long), which keeps this quick for hundreds of bodies. The light bodies of
+    // a crowded scene (or one made as a swarm) are also marked minor: drawn as simple dots, without
+    // names, arrows or long trails, unless chosen. A body stays a full one if it is among the NAMED_MAX
+    // heaviest and either at least 30 times the typical (median) mass, like a planet among asteroids, or
+    // at least a thousandth of the heaviest, like a moon grown from a disc of moonlets.
+    const PRIMARY_MAX = 32;
+    const NAMED_MAX = 12;
+    const primOrder = [];
     function computePrimaries() {
-        const order = bodies.slice().sort((a, b) => b.m - a.m || a.id - b.id);
-        for (const b of order) { b.primary = null; b.bound = false; b.hill = Infinity; }
+        primOrder.length = 0;
+        for (const b of bodies) primOrder.push(b);
+        const order = primOrder.sort((a, b) => b.m - a.m || a.id - b.id);
+        const crowded = order.length > SWARM_N || !!scene.swarm;
+        const typical = crowded ? 30 * order[order.length >> 1].m : 0, notable = crowded ? 1e-3 * order[0].m : 0;
+        for (let i = 0; i < order.length; i++) {
+            const b = order[i];
+            b.primary = null; b.bound = false; b.hill = Infinity;
+            b.minor = crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable));
+        }
         for (let i = 1; i < order.length; i++) {
             const b = order[i];
             let best = null, bestA = Infinity, pull = null, pullMax = -1;
-            for (let j = 0; j < i; j++) {
+            const jmax = Math.min(i, PRIMARY_MAX);
+            for (let j = 0; j < jmax; j++) {
                 const p = order[j];
-                if (b.grp && b.grp === p.grp) continue;   // pieces of one body don't pull on each other
                 const rx = b.x - p.x, ry = b.y - p.y;
                 const r2 = rx * rx + ry * ry;
                 if (r2 === 0) continue;
-                const g = p.m / r2;
+                let s2 = r2;
+                if (b.grp && b.grp === p.grp) { const e = 0.5 * (softLength(b) + softLength(p)); s2 += e * e; }
+                const g = p.m / s2;
                 if (g > pullMax) { pullMax = g; pull = p; }
                 if (r2 > p.hill * p.hill) continue;
                 const mu = G * (b.m + p.m);
                 const vx = b.vx - p.vx, vy = b.vy - p.vy;
-                const energy = 0.5 * (vx * vx + vy * vy) - mu / Math.sqrt(r2);
+                const energy = 0.5 * (vx * vx + vy * vy) - mu / Math.sqrt(s2);
                 if (energy >= 0) continue;
                 const a = -mu / (2 * energy);
                 if (a < bestA) { bestA = a; best = p; }
@@ -846,7 +1579,7 @@
     function trackPeriods(t) {
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || !b.bound || b.held || p.held) { b.track = null; continue; }
+            if (!p || !b.bound || b.held || p.held || (b.minor && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
             const rx = b.x - p.x, ry = b.y - p.y;
             const r = Math.hypot(rx, ry);
             const phi = Math.atan2(ry, rx);
@@ -892,7 +1625,8 @@
     function k2Step(t) {
         const b = bodyById(selectedId);
         const p = b && b.primary;
-        if (!settings.k2 || !b || !p || b.held || p.held) { k2.bid = null; return; }
+        // (not for a close pair going round faster than the steps: its turns can't be followed)
+        if (!settings.k2 || !b || !p || b.held || p.held || (b.kep && b.kep.fast)) { k2.bid = null; return; }
         const rx = b.x - p.x, ry = b.y - p.y;
         if (k2.bid !== b.id || k2.pid !== p.id) {
             const el = elementsOf(b, p);
@@ -1002,21 +1736,30 @@
         comTrail[2 * k] = c.x; comTrail[2 * k + 1] = c.y;
         sampleTimes[k] = simTime;
         for (const b of bodies) {
-            b.trail[2 * k] = b.x;
-            b.trail[2 * k + 1] = b.y;
+            let T = b.trail;
+            if (!T) T = b.trail = new Float64Array(2 * (b.minor ? SWARM_TRAIL : TRAIL_CAP));
+            const i = 2 * (sampleCount % (T.length >> 1));
+            T[i] = b.x;
+            T[i + 1] = b.y;
         }
         sampleCount++;
         lastSampleT = simTime;
     }
 
+    // Where sample k of a body's trail is kept (trails of different lengths share the sample numbers)
+    const trailIndex = (T, k) => 2 * (k % (T.length >> 1));
+    // The oldest sample still kept in a trail
+    const trailFirst = (b) => (b.trail ? Math.max(b.trailStart, sampleCount - (b.trail.length >> 1) + 1) : sampleCount);
+
     function trailBending() {
         if (!sampleCount) return false;
-        const k = 2 * ((sampleCount - 1) % TRAIL_CAP);
+        const k = sampleCount - 1;
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || b.held || p.held || b.trailStart >= sampleCount) continue;
+            if (!p || b.minor || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
+            const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
-            const ox = b.trail[k] - p.trail[k], oy = b.trail[k + 1] - p.trail[k + 1];
+            const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
             if (Math.hypot(rx - ox, ry - oy) > 0.035 * Math.hypot(rx, ry)) return true;
         }
         return false;
@@ -1044,6 +1787,8 @@
         settings.scene = SCENES[key] ? key : 'sun-earth';
         scene = def;
         bodies = [];
+        mainPairs.length = 0;
+        groupEnergy.clear();
         simTime = 0; acc = 0; sampleCount = 0; nextSampleT = 0;
         sampleDt = scene.Tref / TRAIL_PER_TREF;
         frameId = null; freeze = null;
@@ -1122,7 +1867,12 @@
 
     function updateDrawnPositions() {
         for (const b of bodies) {
-            if (!b.held) { b.dx = b.x + b.vx * lag; b.dy = b.y + b.vy * lag; } else { b.dx = b.x; b.dy = b.y; }
+            if (b.held) { b.dx = b.x; b.dy = b.y; continue; }
+            // (a close pair going round faster than one step is drawn moving with its centre of mass)
+            const p = b.kep && b.kep.fast ? b.kep : null;
+            const M = p ? p.a.m + p.b.m : 0;
+            const vx = p ? (p.a.m * p.a.vx + p.b.m * p.b.vx) / M : b.vx, vy = p ? (p.a.m * p.a.vy + p.b.m * p.b.vy) / M : b.vy;
+            b.dx = b.x + vx * lag; b.dy = b.y + vy * lag;
         }
         F = freeze ? { x: freeze.x, y: freeze.y } : liveFrameOrigin();
         // A held body stays exactly where it is held in the view
@@ -1170,8 +1920,9 @@
     function drawRadius(b) {
         return b.rh || Math.max(bodySize(b) * sizeScale, (b.R / AU_KM) * scale);
     }
-    // A torn-apart body's pieces are small
-    const bodySize = (b) => (b.grp ? 3.5 : symbolicSize(b.kind, b.m, b.R));
+    // A torn-apart body's pieces are small, and so are the light bodies of a swarm
+    const MINOR_SIZE = 2;
+    const bodySize = (b) => (b.grp ? 3.5 : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
 
     // Drawn radii for this frame. A moon close to its planet on screen shrinks both discs (down to
     // 3 px) so they never overlap; zoomed in far enough, bodies are drawn at their true size.
@@ -1187,12 +1938,12 @@
         for (const b of bodies) b.rmax = bodySize(b) * sizeScale;
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || !b.bound || b.m >= p.m) continue;
+            if (!p || !b.bound || b.m >= p.m || b.minor) continue;
             const d = Math.hypot(b.dx - p.dx, b.dy - p.dy) * scale;
             p.rmax = Math.min(p.rmax, 0.45 * d);
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
-        for (const b of bodies) b.rd = b.rh = Math.max(3, b.rmax, (b.R / AU_KM) * scale);
+        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : 3, b.rmax, (b.R / AU_KM) * scale);
     }
 
     // Change the view so a world box (relative to the frame origin) fits the canvas.
@@ -1285,7 +2036,7 @@
         if (frameId !== null && !bodyById(frameId)) frameId = null;
         if (selectedId !== null && !bodyById(selectedId)) selectedId = defaultSubject();
         if (ui.frame) {
-            const opts = [['com', 'Centre of mass (no body)']].concat(bodies.filter((b) => !b.grp || b.id === frameId).map((b) => [String(b.id), b.name]));
+            const opts = [['com', 'Centre of mass (no body)']].concat(bodies.filter((b) => (!b.grp && !b.minor) || b.id === frameId).map((b) => [String(b.id), b.name]));
             const same = ui.frame.options.length === opts.length && opts.every((o, i) => ui.frame.options[i].value === o[0] && ui.frame.options[i].textContent === o[1]);
             if (!same) {
                 ui.frame.textContent = '';
@@ -1554,6 +2305,11 @@
 
     function render() {
         if (viewW === 0 || viewH === 0) return;
+        inRender = true;
+        try { renderFrame(); } finally { inRender = false; }
+    }
+
+    function renderFrame() {
         const C = colours();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = C.bg;
@@ -1580,50 +2336,124 @@
     }
 
     // Each trail point is drawn relative to where the frame's origin (the centre of mass, or the locked
-    // body) was at that sample's time, so a locked view shows paths as seen from that body.
+    // body) was at that sample's time, so a locked view shows paths as seen from that body. A point
+    // closer than about a pixel to the last one drawn is skipped (two or three pixels in the older,
+    // fainter part, and more if drawing is running slow: perf.quality), and stretches off the canvas
+    // aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add extra ones) is read
+    // every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
+    const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, TRAIL_POINTS = 1500;
+    const minorGroups = new Map();
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
         const first = sampleAtTime(simTime - years);
         const L = frameId !== null ? bodyById(frameId) : null;
+        if (L && !L.trail) return;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
         const live = freeze ? liveFrameOrigin() : F;
         const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const lw = clamp(1.6 * sizeScale, 1.2, 2);
-        const CHUNKS = 8;
         const oT = L ? L.trail : comTrail;
+        const oFirst = L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
+        const tr = { T: null, oT, offX, offY, stride: 1 };
+        for (const g of minorGroups.values()) g.length = 0;
         for (const b of bodies) {
-            if (b.held) continue;
-            let k0 = Math.max(b.trailStart, first, sampleCount - TRAIL_CAP + 1);
-            if (L) k0 = Math.max(k0, L.trailStart);
+            if (b.held || !b.trail) continue;
+            if (b.minor && !isChosen(b)) {
+                let g = minorGroups.get(b.color);
+                if (!g) { g = []; minorGroups.set(b.color, g); }
+                g.push(b);
+                continue;
+            }
+            const k0 = Math.max(trailFirst(b), first, oFirst);
             const count = sampleCount - k0;
             if (count < 1) continue;
             ctx.strokeStyle = bodyStroke(b.color, C.dark);
             ctx.lineWidth = lw;
-            const T = b.trail;
-            const chunk = Math.max(1, Math.ceil(count / CHUNKS));
-            for (let c = 0; c < CHUNKS; c++) {
+            tr.T = b.trail;
+            tr.stride = Math.max(1, Math.floor(count / (TRAIL_POINTS * perf.quality)));
+            const chunk = Math.max(1, Math.ceil(count / TRAIL_CHUNKS));
+            for (let c = 0; c < TRAIL_CHUNKS; c++) {
                 const ks = k0 + c * chunk;
                 if (ks >= sampleCount) break;
                 const ke = Math.min(sampleCount, ks + chunk + 1);
-                ctx.globalAlpha = 0.08 + 0.72 * ((c + 1) / CHUNKS);
+                const f = (c + 1) / TRAIL_CHUNKS;
+                ctx.globalAlpha = 0.08 + 0.72 * f;
                 ctx.beginPath();
-                let i = 2 * (ks % TRAIL_CAP);
-                let lx = offX + (T[i] - oT[i]) * scale, ly = offY - (T[i + 1] - oT[i + 1]) * scale;
-                ctx.moveTo(lx, ly);
-                for (let k = ks + 1; k < ke; k++) {
-                    i = 2 * (k % TRAIL_CAP);
-                    const x = offX + (T[i] - oT[i]) * scale, y = offY - (T[i + 1] - oT[i + 1]) * scale;
-                    if (Math.abs(x - lx) + Math.abs(y - ly) < 1.2 && k < ke - 1) continue;
-                    ctx.lineTo(x, y);
-                    lx = x; ly = y;
-                }
+                traceTrail(tr, ks, ke, (1.2 + 2 * (1 - f)) / perf.quality);
                 if (ke === sampleCount) ctx.lineTo(sx(b.dx), sy(b.dy));
                 ctx.stroke();
             }
         }
+        // The swarm: one path per colour for each of a few shades, in thinner lines with plain ends and
+        // corners (round ones take far longer to paint); when drawing runs slow, only their newest part
+        if (perf.quality < 0.3) return;
+        ctx.lineWidth = Math.max(1, 0.6 * lw);
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'miter';
+        for (const [color, g] of minorGroups) {
+            if (!g.length) continue;
+            ctx.strokeStyle = bodyStroke(color, C.dark);
+            for (let c = 0; c < MINOR_CHUNKS; c++) {
+                const f = (c + 1) / MINOR_CHUNKS;
+                ctx.globalAlpha = 0.06 + 0.5 * f;
+                ctx.beginPath();
+                for (const b of g) {
+                    let k0 = Math.max(trailFirst(b), first, oFirst);
+                    k0 = Math.max(k0, sampleCount - Math.ceil((sampleCount - k0) * perf.quality));
+                    const count = sampleCount - k0;
+                    if (count < 1) continue;
+                    const chunk = Math.max(1, Math.ceil(count / MINOR_CHUNKS));
+                    const ks = k0 + c * chunk;
+                    if (ks >= sampleCount) continue;
+                    const ke = Math.min(sampleCount, ks + chunk + 1);
+                    tr.T = b.trail;
+                    tr.stride = 1;
+                    traceTrail(tr, ks, ke, 2 / perf.quality);
+                    if (ke === sampleCount) ctx.lineTo(sx(b.dx), sy(b.dy));
+                }
+                ctx.stroke();
+            }
+        }
         ctx.globalAlpha = 1;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
     }
+
+    // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT; every tr.stride-th, and
+    // the last) to the current path, skipping points within minPx of the last one drawn and stretches
+    // wholly off one side of the canvas
+    function traceTrail(tr, ks, ke, minPx) {
+        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
+        const capT = T.length >> 1, capO = oT.length >> 1;
+        let i = 2 * (ks % capT), io = 2 * (ks % capO);
+        let lx = offX + (T[i] - oT[io]) * scale, ly = offY - (T[i + 1] - oT[io + 1]) * scale;
+        let out = outcode(lx, ly), pen = true;
+        ctx.moveTo(lx, ly);
+        for (let k = ks + 1; k < ke; k += stride) {
+            if (k + stride >= ke) k = ke - 1;
+            i = 2 * (k % capT); io = 2 * (k % capO);
+            const x = offX + (T[i] - oT[io]) * scale, y = offY - (T[i + 1] - oT[io + 1]) * scale;
+            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
+            const o = outcode(x, y);
+            if (o & out) {
+                pen = false;
+            } else {
+                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
+                ctx.lineTo(x, y);
+            }
+            lx = x; ly = y; out = o;
+        }
+        if (!pen) ctx.moveTo(lx, ly);
+    }
+
+    // Which sides of the canvas (with a margin) a point is beyond, as bits
+    function outcode(x, y) {
+        return (x < -20 ? 1 : x > viewW + 20 ? 2 : 0) | (y < -20 ? 4 : y > viewH + 20 ? 8 : 0);
+    }
+
+    // The bodies drawn in full even in a swarm: the one chosen, the one whose menu is open, the one viewed from
+    const isChosen = (b) => b.id === selectedId || b === popBody || b.id === frameId;
 
     // During and after a flyby: the orbit round the star the body was on before it met the planet
     // (faint and dashed), to compare with where it actually goes.
@@ -1655,26 +2485,62 @@
         labelOutward(`orbit without ${q.name}`, at, ux, uy, 8);
     }
 
+    // Glows and small lit discs are drawn from little pictures made once per colour (offscreen canvases),
+    // not a new gradient for every body every frame
+    const sprites = new Map();
+    const SPRITE_PX = 64;
+    function sprite(key, paint) {
+        let s = sprites.get(key);
+        if (!s) {
+            if (sprites.size > 400) sprites.clear();
+            s = document.createElement('canvas');
+            s.width = s.height = 2 * SPRITE_PX;
+            paint(s.getContext('2d'), SPRITE_PX);
+            sprites.set(key, s);
+        }
+        return s;
+    }
+
     // A soft glow around a body (light, not size)
     function glow(x, y, r0, r1, color, a) {
-        const g = ctx.createRadialGradient(x, y, r0, x, y, r1);
-        g.addColorStop(0, hexA(color, a));
-        g.addColorStop(1, hexA(color, 0));
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(x, y, r1, 0, TAU);
-        ctx.fill();
+        if (!(r1 > 0.5)) return;
+        const k = clamp(Math.round((20 * r0) / r1) / 20, 0, 0.95);   // inner radius as a fraction of the outer
+        const img = sprite(`g${color}|${a}|${k}`, (g, R) => {
+            const gr = g.createRadialGradient(R, R, k * R, R, R, R);
+            gr.addColorStop(0, hexA(color, a));
+            gr.addColorStop(1, hexA(color, 0));
+            g.fillStyle = gr;
+            g.beginPath();
+            g.arc(R, R, R, 0, TAU);
+            g.fill();
+        });
+        ctx.drawImage(img, x - r1, y - r1, 2 * r1, 2 * r1);
     }
 
     // A lit sphere: lighter towards the top left
     function disc(x, y, r, color, light, C) {
-        const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
-        g.addColorStop(0, mix(color, '#ffffff', light));
-        g.addColorStop(1, color);
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, TAU);
-        ctx.fill();
+        if (r <= 24) {
+            const img = sprite(`d${color}|${light}`, (g, R) => {
+                const gr = g.createRadialGradient(R * 0.65, R * 0.65, R * 0.1, R, R, R);
+                gr.addColorStop(0, mix(color, '#ffffff', light));
+                gr.addColorStop(1, color);
+                g.fillStyle = gr;
+                g.beginPath();
+                g.arc(R, R, R, 0, TAU);
+                g.fill();
+            });
+            ctx.drawImage(img, x - r, y - r, 2 * r, 2 * r);
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+        } else {
+            const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+            g.addColorStop(0, mix(color, '#ffffff', light));
+            g.addColorStop(1, color);
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+        }
         if (!C.dark && r > 2) {
             ctx.strokeStyle = C.outline;
             ctx.lineWidth = 1;
@@ -1740,9 +2606,36 @@
         disc(x, y, Math.max(r, 0.9), b.color, look === 'star' ? 0.55 : 0.35, C);
     }
 
+    // The minor bodies of a crowded scene: plain dots, one path per colour
+    const dotGroups = new Map();
+    function drawMinorBodies(C) {
+        for (const g of dotGroups.values()) g.length = 0;
+        for (const b of bodies) {
+            if (!b.minor || isChosen(b)) continue;
+            const x = sx(b.dx), y = sy(b.dy);
+            if (x < -10 || x > viewW + 10 || y < -10 || y > viewH + 10) continue;
+            let g = dotGroups.get(b.color);
+            if (!g) { g = []; dotGroups.set(b.color, g); }
+            g.push(b);
+        }
+        for (const [color, g] of dotGroups) {
+            if (!g.length) continue;
+            ctx.fillStyle = C.dark ? color : bodyStroke(color, false);
+            ctx.beginPath();
+            for (const b of g) {
+                const x = sx(b.dx), y = sy(b.dy), r = Math.max(b.rd, 1.2);
+                ctx.moveTo(x + r, y);
+                ctx.arc(x, y, r, 0, TAU);
+            }
+            ctx.fill();
+        }
+    }
+
     function drawBodies(C) {
         const real = settings.realistic && !cleanRender;
+        drawMinorBodies(C);
         for (const b of bodies) {
+            if (b.minor && !isChosen(b)) continue;
             const x = sx(b.dx), y = sy(b.dy);
             const r = drawRadius(b);
             if (x < -r - 60 || x > viewW + r + 60 || y < -r - 60 || y > viewH + r + 60) continue;
@@ -1786,14 +2679,15 @@
         ctx.lineWidth = 3;
         ctx.strokeStyle = hexA(C.bg, 0.8);
         const placed = [];
-        const discs = bodies.map((b) => ({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b), b }));
+        const discs = [];
+        for (const b of bodies) if (!b.minor || isChosen(b)) discs.push({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b), b });
         // the flyby close-up and its caption
         if (closeUp) placed.push({ l: closeUp.x - closeUp.R, r: closeUp.x + closeUp.R, t: closeUp.y - closeUp.R - 18, b: closeUp.y + closeUp.R });
         const order = discs.slice().sort((p, q) => (q.b.id === selectedId) - (p.b.id === selectedId) || q.b.m - p.b.m);
         for (const { x, y, r, b } of order) {
             if (x < -60 || x > viewW + 60 || y < -60 || y > viewH + 60) continue;
             const chosen = b.id === selectedId || b === popBody;
-            if (b.grp && !chosen) continue;
+            if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
@@ -1864,7 +2758,7 @@
         const inset = 12;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
+            if (b.grp || (b.minor && !isChosen(b)) || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
             const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             const ex = cx + dx * k, ey = cy + dy * k;
@@ -1942,14 +2836,14 @@
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
     // velocity it shows: relative to the view, or while it is being aimed, relative to the aim's
     // reference at the aim's own scale (k px per AU/yr, never squeezed).
-    function velocityTip(b) {
+    function velocityTip(b, frameV) {
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
         let vx, vy, L;
         if (b.aim) {
             vx = b.aim.vx; vy = b.aim.vy;
             L = Math.hypot(vx, vy) * b.aim.k;
         } else {
-            const fv = frameVelocity();
+            const fv = frameV || frameVelocity();
             vx = b.vx - fv.x; vy = b.vy - fv.y;
             L = arrowLength(Math.hypot(vx, vy));
         }
@@ -2002,7 +2896,7 @@
         if (settings.forces) {
             for (const b of bodies) {
                 const Fm = Math.hypot(b.fx, b.fy);
-                if (!(Fm > 0) || (b.grp && b !== subj)) continue;
+                if (!(Fm > 0) || ((b.grp || b.minor) && b !== subj)) continue;
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -2015,9 +2909,10 @@
         // arrow under the pointer, or being aimed, is drawn thicker and brighter. A body hardly moving
         // has no arrow to grab, so hovering just off its disc shows a faint stub that can be pulled out.
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
+        const fv = frameVelocity();
         for (const b of bodies) {
-            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || (b.grp && b !== subj)) continue;
-            const tip = velocityTip(b);
+            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor) && b !== subj)) continue;
+            const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
             const len = Math.hypot(dx, dy);
@@ -2205,7 +3100,7 @@
             ctx.strokeStyle = f.color;
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(sx(f.x), sy(f.y), f.r0 + 30 * t, 0, TAU);
+            ctx.arc(sx(f.x), sy(f.y), f.r0 + (f.grow || 30) * t, 0, TAU);
             ctx.stroke();
         }
         ctx.globalAlpha = 1;
@@ -2239,7 +3134,7 @@
 
         // Pause / slow-down notice: top left, under the "Viewed from" chip if it is showing
         if (paused || slowedDown) {
-            const t = paused ? 'Paused' : 'Close pass: slowed down';
+            const t = paused ? 'Paused' : bodies.length > SWARM_N ? 'Many bodies: slowed down' : 'Close pass: slowed down';
             ctx.font = font(fs, true);
             const w = ctx.measureText(t).width + 18;
             const x = pad, y = frameId !== null ? pad + 40 : pad;
@@ -2470,7 +3365,7 @@
         if (!P) return { P: null, rows: [] };
         const rows = [];
         for (const c of bodies) {
-            if (c === P || c.primary !== P || !c.bound || c.grp) continue;
+            if (c === P || c.primary !== P || !c.bound || c.grp || (c.minor && c !== b)) continue;
             const tr = c.track;
             const row = { body: c, a: 0, T: 0, ratio: 0, progress: 0, measured: false };
             if (tr && tr.done > 0) {
@@ -2586,7 +3481,20 @@
     // ------------------------------------------------------------------
     const PREDICT_ETA = 0.012;
     const PREDICT_PAIRS = 4e5;
-    const pred = { key: '', t: 0, pts: null, end: null, refId: null };
+    const PREDICT_MS = 3;                 // while drawing: ms of prediction a frame (it carries on in the next)
+    const PREDICT_ALL = 24, PREDICT_HEAVY = 8;
+    const pred = { key: '', t: 0, pts: null, end: null, refId: null, job: null };
+    let inRender = false;
+
+    // The bodies copied for a prediction: all of them, or in a crowded scene only those whose pull on
+    // the body matters (the heaviest few, with the body itself and those it is measured from): a light
+    // swarm body barely moves it, and leaving the swarm out keeps the prediction long and quick.
+    function predictionBodies(b, p, ref) {
+        if (bodies.length <= PREDICT_ALL) return bodies;
+        const src = bodies.slice().sort((q, r) => r.m - q.m).slice(0, PREDICT_HEAVY);
+        for (const q of [b, p, ref]) if (q && !src.includes(q)) src.push(q);
+        return src;
+    }
 
     // The velocities a circular launch of b around p would give them (see launchCircular)
     function circularLaunch(b, p, sense, inherit) {
@@ -2619,17 +3527,24 @@
         const p = placementPrimary(b.x, b.y, b.m, b);
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
         const ref = L || (p && p.m >= b.m ? p : null);
-        // Worked out again when anything changes, but at most 20 times a second while the others move
+        // Worked out again when anything changes, but at most 20 times a second while the others move.
+        // While drawing, it takes at most PREDICT_MS a frame and carries on in the next ones (the path so
+        // far is shown meanwhile).
         const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : 'c', settings.realistic, settings.merge, bodies.length].join('|');
         const now = performance.now();
-        if (pred.pts && (key === pred.key || (!paused && now - pred.t < 50 && pred.key.split('|')[0] === String(b.id)))) return pred;
+        const same = pred.key.split('|')[0] === String(b.id);
+        if (pred.pts && (key === pred.key || (!paused && same && (now - pred.t < 50 || (pred.job && now - pred.t < 400))))) {
+            if (pred.job) runPrediction(inRender ? PREDICT_MS : Infinity);
+            return pred;
+        }
         pred.key = key; pred.t = now; pred.refId = ref ? ref.id : null;
         // The copy
-        const list = bodies.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
-        const me = list[bodies.indexOf(b)];
+        const src = predictionBodies(b, rel.p, ref);
+        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
+        const me = list[src.indexOf(b)];
         me.vx = rel.v[0]; me.vy = rel.v[1];
-        if (rel.p) { const pc = list[bodies.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
-        const rc = ref ? list[bodies.indexOf(ref)] : null;
+        if (rel.p) { const pc = list[src.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
+        const rc = ref ? list[src.indexOf(ref)] : null;
         const origin = () => {
             if (rc) return [rc.x, rc.y];
             let M = 0, X = 0, Y = 0;
@@ -2644,13 +3559,28 @@
         const pairs = Math.max(1, (list.length * (list.length - 1)) / 2);
         const budget = Math.min(20000, Math.floor(PREDICT_PAIRS / (3 * pairs)));
         const pts = [];
-        let o = origin();
-        let lx = me.x - o[0], ly = me.y - o[1];
-        pts.push(lx, ly);
-        let ang = Math.atan2(ly, lx), swept = 0, t = 0, end = null;
-        let tmin = gravity(list);
+        const o = origin();
+        pts.push(me.x - o[0], me.y - o[1]);
+        pred.pts = pts;
+        pred.end = 'open';
+        pred.job = { list, me, origin, pr, tMax, rMax, budget, k: 0, t: 0, lx: pts[0], ly: pts[1], ang: Math.atan2(pts[1], pts[0]), swept: 0, tmin: gravity(list) };
+        runPrediction(inRender ? PREDICT_MS : Infinity);
+        return pred;
+    }
+
+    // Carry the prediction on for up to ms milliseconds (it ends when the path closes, hits something,
+    // leaves the view or uses up its budget)
+    function runPrediction(ms) {
+        const job = pred.job, list = job.list, me = job.me, pts = pred.pts, pr = job.pr;
+        const t0 = performance.now();
         const px = 1.5 / scale;   // keep points about 1.5 px apart
-        for (let k = 0; k < budget && t < tMax; k++) {
+        let { lx, ly, ang, swept, t, tmin } = job;
+        let o = job.origin(), end = null;
+        for (; job.k < job.budget && t < job.tMax; job.k++) {
+            if ((job.k & 15) === 15 && performance.now() - t0 > ms) {
+                Object.assign(job, { lx, ly, ang, swept, t, tmin });
+                return;
+            }
             const dt = PREDICT_ETA * Math.sqrt(tmin);
             const x0 = me.x, y0 = me.y;
             tmin = yoshida(list, dt, () => gravity(list));
@@ -2667,7 +3597,7 @@
                 const s = ee > 0 ? clamp((qx * ex + qy * ey) / ee, 0, 1) : 1;
                 if (Math.hypot(qx - s * ex, qy - s * ey) < reach) { hit = q; break; }
             }
-            o = origin();
+            o = job.origin();
             const x = me.x - o[0], y = me.y - o[1];
             const a = Math.atan2(y, x);
             let da = a - ang;
@@ -2676,12 +3606,11 @@
             if (hit) { pts.push(x, y); end = 'hit'; break; }
             if (Math.abs(x - lx) + Math.abs(y - ly) > px) { pts.push(x, y); lx = x; ly = y; }
             if (Math.abs(swept) > TAU * 1.02) { end = 'closed'; break; }
-            if (Math.hypot(x, y) > rMax && !(pr && pr.el.bound)) { end = 'away'; break; }
+            if (Math.hypot(x, y) > job.rMax && !(pr && pr.el.bound)) { end = 'away'; break; }
         }
         pts.push(me.x - o[0], me.y - o[1]);
-        pred.pts = pts;
         pred.end = end || 'open';
-        return pred;
+        pred.job = null;
     }
 
     // While dragging: the path the body would follow if let go now.
@@ -3773,8 +4702,14 @@
             const bi = bodies[i];
             for (let j = i + 1; j < bodies.length; j++) {
                 const bj = bodies[j];
-                if (bi.grp && bi.grp === bj.grp) continue;
-                const rx = bi.x - bj.x, ry = bi.y - bj.y, r = Math.hypot(rx, ry);
+                const rx = bi.x - bj.x, ry = bi.y - bj.y;
+                if (bi.grp && bi.grp === bj.grp) {
+                    // pieces of one torn-apart body: the softened potential of their softened pull
+                    const e = 0.5 * (softLength(bi) + softLength(bj));
+                    pe -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
+                    continue;
+                }
+                const r = Math.sqrt(rx * rx + ry * ry);
                 if (!(r > 0)) continue;
                 pe -= (G * bi.m * bj.m) / r;
                 if (settings.realistic) {
@@ -3786,6 +4721,7 @@
                 }
             }
         }
+        for (const u of groupEnergy.values()) pe -= u;
         return { ke, pe, total: ke + pe };
     }
 
@@ -3796,8 +4732,18 @@
         return L;
     }
 
+    // The graphs take a point every 60th of the scene's reference period, but are redrawn at most ten
+    // times a second (at high speeds points come faster than that)
+    let chartsDirty = false, chartsNextDraw = 0;
     function sampleCharts() {
         if (!chartsVisible()) return;
+        const now = performance.now();
+        if (chartsDirty && now >= chartsNextDraw) {
+            charts.energy.update('none');
+            charts.orbit.update('none');
+            chartsDirty = false;
+            chartsNextDraw = now + 100;
+        }
         const every = scene.Tref / 60;
         if (simTime - lastChartSample < every) return;
         lastChartSample = simTime;
@@ -3826,8 +4772,8 @@
                 ch.data.labels.shift();
                 ch.data.datasets.forEach((d) => d.data.shift());
             }
-            ch.update('none');
         }
+        chartsDirty = true;
     }
 
     new MutationObserver(() => {
@@ -3995,41 +4941,76 @@
     }
 
     // ------------------------------------------------------------------
-    // Main loop (exactly one)
+    // Main loop (exactly one). Each frame's time is measured in three parts (physics, drawing and the
+    // rest) and smoothed. The physics gets what is left of 80% of the time between frames (as measured,
+    // so a 120 Hz screen gets half as much per frame) after the other two, between 3 and PHYSICS_MS ms;
+    // if drawing alone takes too long, the trails are drawn more coarsely first
+    // (quality below 1), before the simulation itself has to slow down. Readouts, primaries in a crowded
+    // scene and the graphs are updated about ten times a second rather than every frame.
     // ------------------------------------------------------------------
     let fpsFrames = 0, fpsTime = 0;
-    let eccNext = 0;
+    let eccNext = 0, readoutNext = 0, primNext = 0;
+    const perf = { physics: 0, render: 0, other: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
+    const smooth = (old, v) => old + 0.1 * (v - old);
 
     function frame(ts) {
         requestAnimationFrame(frame);
         const dtReal = lastFrameTs ? Math.min(0.1, (ts - lastFrameTs) / 1000) : 0;
         lastFrameTs = ts;
+        const t0 = performance.now();
         updateScale();
         applyHolds();
+        let steps = 0;
         if (!paused && dtReal > 0) {
-            advance(dtReal * settings.speed * rate());
+            const want = dtReal * settings.speed * rate();
+            const before = simTime + acc;
+            steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));
             applyHolds();
+            perf.req += want;
+            perf.got += simTime + acc - before;
         } else {
             slowedDown = false;
             if (forcesDirty) computeForces();
         }
+        const t1 = performance.now();
         lag = paused ? 0 : clamp(acc, 0, nextDt);
-        computePrimaries();
+        if (bodies.length <= SWARM_N || ts >= primNext) { computePrimaries(); primNext = ts + 100; }
         stepViewAnimation(dtReal);
         updateScale();
         updateDrawnPositions();
+        const t2 = performance.now();
         render();
-        updateReadouts();
+        const t3 = performance.now();
+        if (ts >= readoutNext) { updateReadouts(); readoutNext = ts + 100; }
         updatePopover(false);
         sampleCharts();
         if (ts > eccNext) { syncEccentricity(false); eccNext = ts + 200; }
         for (const d of drags.values()) if ((d.mode === 'move' || (d.mode === 'aim' && d.moved)) && d.body && !paused) dragHint(d);
+        const t4 = performance.now();
+
+        perf.physics = smooth(perf.physics, t1 - t0);
+        perf.render = smooth(perf.render, t3 - t2);
+        perf.other = smooth(perf.other, t2 - t1 + t4 - t3);
+        perf.frame = smooth(perf.frame, t4 - t0);
+        perf.steps = smooth(perf.steps, steps);
+        if (dtReal > 0) perf.interval = smooth(perf.interval, 1000 * dtReal);
+        perf.win += dtReal;
+        if (perf.win >= 0.5) {
+            perf.ratio = perf.req > 0 ? perf.got / perf.req : 1;
+            perf.req = perf.got = perf.win = 0;
+        }
+        // Drawing too slow (its commands, or the painting the browser does after them, which shows as
+        // frames coming late although the script was quick): coarser and shorter trails first, finer
+        // again when there is time to spare
+        const lateFrames = perf.interval > 24 && perf.frame < 0.75 * perf.interval;
+        if ((perf.render > 7 || lateFrames) && perf.quality > 0.2) perf.quality = Math.max(0.2, perf.quality * 0.95);
+        else if (perf.render < 4 && perf.interval < 19 && perf.quality < 1) perf.quality = Math.min(1, perf.quality * 1.02);
 
         if (ui.fps) {
             fpsFrames++;
             fpsTime += dtReal;
             if (fpsTime >= 0.5) {
-                ui.fps.textContent = `FPS: ${Math.round(fpsFrames / fpsTime)} · ${nextDt > 0 ? Math.round(rate() * settings.speed / 60 / nextDt) : 0} steps/frame`;
+                ui.fps.textContent = `FPS: ${Math.round(fpsFrames / fpsTime)} · ${Math.round(perf.steps)} steps/frame`;
                 fpsFrames = 0;
                 fpsTime = 0;
             }
@@ -4142,16 +5123,46 @@
             if (!b) return [];
             const L = frameId !== null ? bodyById(frameId) : null;
             const out = [];
-            const k0 = Math.max(b.trailStart, sampleCount - TRAIL_CAP + 1, L ? L.trailStart : 0);
+            if (!b.trail || (L && !L.trail)) return out;
+            const k0 = Math.max(trailFirst(b), sampleCount - TRAIL_CAP + 1, L ? trailFirst(L) : 0);
             for (let k = k0; k < sampleCount; k++) {
-                const i = 2 * (k % TRAIL_CAP);
-                const ox = L ? L.trail[i] : comTrail[i], oy = L ? L.trail[i + 1] : comTrail[i + 1];
+                const i = trailIndex(b.trail, k), io = L ? trailIndex(L.trail, k) : 2 * (k % TRAIL_CAP);
+                const ox = L ? L.trail[io] : comTrail[io], oy = L ? L.trail[io + 1] : comTrail[io + 1];
                 out.push([b.trail[i] - ox, b.trail[i + 1] - oy]);
             }
             return out;
         },
         settings
     };
+
+    // Many bodies and close pairs: what the integrator is doing (for testing)
+    Object.assign(window.orbitsSimulation, {
+        // The close pairs followed by the exact two-body drift
+        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast })),
+        step: () => ({ dt: nextDt, bodies: bodies.length, direct: bodies.length <= DIRECT_MAX, work: Object.assign({}, work) }),
+        // Milliseconds per force evaluation of the bodies as they are now, by each method
+        timeForces(reps) {
+            const res = {};
+            for (const m of ['direct', 'tree']) {
+                forceMode = m;
+                const t0 = performance.now();
+                for (let k = 0; k < (reps || 20); k++) gravity(bodies, mainPairs);
+                res[m] = (performance.now() - t0) / (reps || 20);
+            }
+            forceMode = 'auto';
+            computeForces();
+            const t0 = performance.now();
+            for (let k = 0; k < (reps || 20); k++) { refreshPairs(); step(nextDt); simTime += nextDt; }
+            res.step = (performance.now() - t0) / (reps || 20);
+            return res;
+        },
+        // Smoothed per-frame milliseconds (physics, drawing, the rest), steps per frame, the simulated
+        // time achieved over the time asked for, and the drawing quality (1 = full)
+        perf: () => ({
+            physics: perf.physics, render: perf.render, other: perf.other, frame: perf.frame,
+            steps: perf.steps, speedRatio: perf.ratio, quality: perf.quality, bodies: bodies.length, slowedDown
+        })
+    });
 
     // ------------------------------------------------------------------
     // Start

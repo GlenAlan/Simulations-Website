@@ -207,6 +207,8 @@
 												<option value="slingshot">Slingshot (gravity assist)</option>
 												<option value="blackhole">Neutron star and black hole</option>
 												<option value="tde">Star and black hole</option>
+												<option value="trojans">Jupiter's Trojans and Hildas</option>
+												<option value="moondisc">A moon forming</option>
 												<option value="empty">A lone star (build your own)</option>
 											</select>
 										</div>
@@ -383,7 +385,7 @@
 									<details class="description-area">
 										<summary>About this simulation</summary>
 										<div class="description-content">
-											<p>Every mass pulls on every other mass. This simulation adds up those pulls for every pair of bodies, thousands of times per orbit, in real units: distances in AU (Earth to Sun), times in years, masses in Suns and Earths.</p>
+											<p>Every mass pulls on every other mass. This simulation adds up those pulls for every pair of bodies, thousands of times per orbit, in real units: distances in AU (Earth to Sun), times in years, masses in Suns and Earths. With hundreds of bodies, the pulls of far-off groups of small bodies are added up together, as if each group were one body (a Barnes&ndash;Hut tree), which keeps it quick. Two bodies passing very close follow their exact two-body orbit for a moment, so a near miss doesn't slow everything else down.</p>
 
 											<h4>What you're seeing</h4>
 											<ul>
@@ -395,7 +397,7 @@
 											<p>Newton's law of gravitation, <em>F</em> = <em>G</em><em>m</em><sub>1</sub><em>m</em><sub>2</sub>/<em>r</em><sup>2</sup>: twice the distance, a quarter of the pull. A planet is always falling towards the Sun, but it moves sideways so fast that it keeps missing. That gives Kepler's laws: orbits are ellipses with the Sun at one focus (1st), a planet sweeps out equal areas in equal times (2nd), and <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> is the same for every planet of a star (3rd).</p>
 
 											<h4>Realistic physics</h4>
-											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
+											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Its pieces still pull on each other, so some may gather into clumps again. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
 
 											<h4>Things to try</h4>
 											<ul>
