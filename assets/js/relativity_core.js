@@ -21,6 +21,9 @@
  *   then its inbound frame), Earth's clock jumps ahead at the turnaround.
  * - Muons: a batch of muons made 15 km up falls to the ground. Each decays when its own clock reaches a
  *   random lifetime (mean 2.2 µs), so the same muons survive whichever frame the fall is measured from.
+ *   Measured from the muons the atmosphere is only 15/γ km thick, so that view is zoomed in γ times (after a
+ *   moment at Earth's scale) and played γ times slower: the fall takes as long on screen in both frames, the
+ *   muons decay at the same moments, and anything moving at a given speed crosses the screen equally fast.
  */
 (function () {
     'use strict';
@@ -80,7 +83,9 @@
         H: 15,            // height where cosmic rays make the muons (km)
         LIFE: 2.197,      // mean lifetime at rest (µs)
         N: 40,            // muons per batch
-        RATE: 6,          // µs of the shown frame per second at 1x
+        RATE: 6,          // µs of Earth's time per second at 1x (and µs of the muons' time / γ, see rate())
+        INTRO: 1.8,       // s (real) before the fall, measured from the muons: the squashed atmosphere, then a zoom
+        INTRO_EARTH: 0.6, // s (real) before the fall, measured from Earth
         END_PAUSE: 5.5    // s (real)
     };
 
@@ -167,7 +172,7 @@
         life: new Float64Array(MU.N),           // each muon's lifetime on its own clock (µs)
         x: new Float64Array(MU.N),              // across the sky (0-1)
         decayedAt: new Float64Array(MU.N),      // real time of the decay flash, or -1
-        stage: 'fall', pause: 0
+        stage: 'intro', pause: 0                // 'intro' (before the fall), 'fall' or 'done'
     };
 
     // Background stars (fixed to the home frame), as fractions of the canvas
@@ -424,17 +429,31 @@
     function resetMuons(fresh) {
         if (fresh) newMuons();
         mu.t = 0;
-        mu.stage = 'fall';
-        mu.pause = 0;
+        mu.stage = 'intro';
+        mu.pause = homeMoves() ? MU.INTRO : MU.INTRO_EARTH;
         mu.decayedAt.fill(-1);
+    }
+
+    // Screen zoom of the muons' view: 1 (Earth's scale) for a moment at the start, easing up to γ, at which the
+    // squashed atmosphere fills the same height as the full 15 km does measured from Earth.
+    function muonZoom() {
+        if (!homeMoves()) return 1;
+        const g = gammaOf(S.v);
+        if (mu.stage !== 'intro') return g;
+        const p = clamp((1 - mu.pause / MU.INTRO - 0.3) / 0.55, 0, 1);
+        return 1 + (g - 1) * (1 - Math.cos(Math.PI * p)) / 2;
     }
 
     function stepMuons(dt, dtReal) {
         if (mu.pause > 0) {
             mu.pause -= dtReal;
-            if (mu.pause <= 0 && mu.stage === 'done') {
-                resetMuons(true);
-                resetChartData();
+            if (mu.pause <= 0) {
+                if (mu.stage === 'intro') {
+                    mu.stage = 'fall';
+                } else if (mu.stage === 'done') {
+                    resetMuons(true);
+                    resetChartData();
+                }
             }
             return;
         }
@@ -1290,46 +1309,75 @@
     // ------------------------------------------------------------------
     function muonsLayout() {
         const f = fontPx;
-        const top = Math.round(f * 5);
-        const yGround = viewH - Math.max(f * 2.6, viewH * 0.12);
-        const k = (yGround - top) / MU.H;      // px per km
-        const axisX = Math.round(textW('15 km', f * 0.9, 400) + f * 1.2);
-        return { f, top, yGround, k, axisX, x0: axisX + f * 1.5, x1: viewW - f * 1.2 };
+        const top = Math.round(f * 4.4);
+        const band = Math.max(f * 2.6, viewH * 0.12);     // ground strip under the full fall
+        const yGround = viewH - band;
+        const k = (yGround - top) / MU.H;      // px per km measured from Earth
+        const dimX = Math.round(f * 1.1);
+        const labelW = textW('15.0 km', f * 0.9, 700);
+        return { f, top, band, yGround, k, dimX, x0: dimX + labelW + f * 1.6, x1: viewW - f * 1.2 };
+    }
+
+    // Vertical dimension line from y0 to y1 at x, with its length written beside it (clamped to the canvas).
+    function drawVDimension(x, y0, y1, text, f, color) {
+        const tick = Math.max(4, f * 0.4);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x, y1);
+        for (const y of [y0, y1]) {
+            if (y < -2 || y > viewH + 2) continue;
+            ctx.moveTo(x - tick, y);
+            ctx.lineTo(x + tick, y);
+        }
+        ctx.stroke();
+        const ym = clamp((Math.max(y0, 0) + Math.min(y1, viewH)) / 2, f * 3.2, viewH - f);
+        setFont(f * 0.9, 700);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = pal.bg;
+        ctx.strokeText(text, x + tick + 3, ym);
+        ctx.fillStyle = color;
+        ctx.fillText(text, x + tick + 3, ym);
+        ctx.lineJoin = 'miter';
     }
 
     function drawMuons() {
         const lay = muonsLayout();
-        const f = lay.f, k = lay.k;
+        const f = lay.f;
         const g = gammaOf(S.v);
         const v = S.v;
         const ship = homeMoves();
         const tau = muonClock();
+        const zoom = muonZoom();
+        const k = lay.k * zoom;                 // px per km in the shown frame
+        const thick = ship ? MU.H / g : MU.H;   // the atmosphere's thickness, measured in the shown frame
         // Where the ground is (px) and how high the muons are, measured in the shown frame
-        let yMu, yGround, kAlt;
+        let yMu, yGround;
         if (!ship) {
             yGround = lay.yGround;
             yMu = lay.top + Math.min(MU.H, v * C_KM_US * mu.t) * k;
-            kAlt = k;
         } else {
             yMu = lay.top;
-            yGround = lay.top + Math.max(0, MU.H / g - v * C_KM_US * mu.t) * k;
-            kAlt = k / g;      // the atmosphere is contracted along the motion
+            yGround = lay.top + Math.max(0, thick - v * C_KM_US * mu.t) * k;
         }
-        const yTopAtm = yGround - MU.H * kAlt;
+        const yTopAtm = yGround - thick * k;
 
-        // Sky: the atmosphere's haze between its top and the ground, then the ground
+        // Sky: the atmosphere's haze between its top and the ground, then a strip of ground fading out below
         const sky = ctx.createLinearGradient(0, yTopAtm, 0, yGround);
         sky.addColorStop(0, `rgba(${pal.skyRGB},0)`);
         sky.addColorStop(1, `rgba(${pal.skyRGB},${dark ? 0.2 : 0.28})`);
         ctx.fillStyle = sky;
         ctx.fillRect(0, yTopAtm, viewW, yGround - yTopAtm);
-        const groundDepth = Math.max(lay.f * 2.6, viewH * 0.12);
-        const soil = ctx.createLinearGradient(0, yGround, 0, yGround + groundDepth * 1.6);
+        const soil = ctx.createLinearGradient(0, yGround, 0, yGround + lay.band * 1.6);
         soil.addColorStop(0, pal.ground);
         soil.addColorStop(0.6, pal.ground);
         soil.addColorStop(1, pal.bg);
         ctx.fillStyle = soil;
-        ctx.fillRect(0, yGround, viewW, viewH - yGround);
+        ctx.fillRect(0, yGround, viewW, lay.band * 1.6);
         ctx.strokeStyle = pal.groundLine;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -1342,35 +1390,13 @@
         ctx.strokeStyle = pal.faint;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.moveTo(lay.axisX, yTopAtm);
+        ctx.moveTo(lay.dimX, yTopAtm);
         ctx.lineTo(viewW, yTopAtm);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Altitude scale, fixed to Earth (so it is squeezed when measured from the muons)
-        ctx.strokeStyle = pal.muted;
-        ctx.fillStyle = pal.muted;
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(lay.axisX, yGround);
-        ctx.lineTo(lay.axisX, yTopAtm);
-        ctx.stroke();
-        // Labels: always the top (15 km); the others only where they have room. "0 km" sits just above the
-        // ground line rather than across it.
-        setFont(f * 0.9, 400);
-        ctx.textAlign = 'right';
-        const gapPx = 5 * kAlt;
-        for (let a = MU.H; a >= 0; a -= 5) {
-            const yy = yGround - a * kAlt;
-            ctx.beginPath();
-            ctx.moveTo(lay.axisX - 5, yy);
-            ctx.lineTo(lay.axisX, yy);
-            ctx.stroke();
-            const room = a === MU.H || (a === 0 ? MU.H * kAlt >= f * 1.6 : gapPx >= f * 1.2);
-            if (!room) continue;
-            ctx.textBaseline = a === 0 ? 'bottom' : 'middle';
-            ctx.fillText(`${a} km`, lay.axisX - 8, a === 0 ? yy - 2 : yy);
-        }
+        // The atmosphere's thickness as measured in this frame: the scale of the view
+        drawVDimension(lay.dimX, yTopAtm, yGround, `${thick < 9.995 ? thick.toFixed(2) : thick.toFixed(1)} km`, f, ship ? pal.blueText : pal.muted);
 
         // The muons
         const r = clamp(f * 0.36, 3, 6);
@@ -1409,37 +1435,45 @@
         const tpl = '00.0';
         const pw = craftLabelWidth(f, 'Muons', 'µs', tpl);
         drawCraftLabel(viewW - f * 0.8 - pw / 2, yMu - r * 2.6 - f * 1.1, 'Muons', pal.purpleText, fmtNum(tau), 'µs', { f, color: pal.purple, phase: tau, template: tpl });
+        const yLabel = yGround + clamp(lay.band / 2, f * 1.3, f * 2);
         if (!ship) {
             const ew = craftLabelWidth(f, 'Earth', 'µs', tpl);
-            drawCraftLabel(lay.x0 + ew / 2, yGround + Math.max(f * 1.3, (viewH - yGround) / 2), 'Earth', pal.blueText, fmtNum(mu.t), 'µs', { f, color: pal.blue, phase: mu.t, template: tpl });
-        } else if (viewH - yGround > f * 1.6) {
+            drawCraftLabel(lay.x0 + ew / 2, yLabel, 'Earth', pal.blueText, fmtNum(mu.t), 'µs', { f, color: pal.blue, phase: mu.t, template: tpl });
+        } else if (yLabel < viewH - f * 0.5) {
             // Earth moves up at v: an arrow and its speed on the ground
-            const ya = yGround + Math.max(f * 1.3, Math.min(f * 2, (viewH - yGround) / 2));
             setFont(f * 0.95, 700);
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = pal.blueText;
-            ctx.fillText('Earth', lay.x0, ya);
+            ctx.fillText('Earth', lay.x0, yLabel);
             const xa = lay.x0 + textW('Earth ', f * 0.95, 700) + 4;
             ctx.strokeStyle = pal.muted;
             ctx.fillStyle = pal.muted;
             ctx.lineWidth = Math.max(1.5, f * 0.13);
             ctx.beginPath();
-            ctx.moveTo(xa, ya + f * 0.55);
-            ctx.lineTo(xa, ya - f * 0.25);
+            ctx.moveTo(xa, yLabel + f * 0.55);
+            ctx.lineTo(xa, yLabel - f * 0.25);
             ctx.stroke();
             ctx.beginPath();
-            ctx.moveTo(xa, ya - f * 0.65);
-            ctx.lineTo(xa - f * 0.3, ya - f * 0.15);
-            ctx.lineTo(xa + f * 0.3, ya - f * 0.15);
+            ctx.moveTo(xa, yLabel - f * 0.65);
+            ctx.lineTo(xa - f * 0.3, yLabel - f * 0.15);
+            ctx.lineTo(xa + f * 0.3, yLabel - f * 0.15);
             ctx.closePath();
             ctx.fill();
             setFont(f * 0.92, 700);
-            ctx.fillText(`${fmtV(S.v)} c`, xa + f * 0.6, ya);
+            ctx.fillText(`${fmtV(S.v)} c`, xa + f * 0.6, yLabel);
         }
         hitRects.push({ x0: lay.x0, x1: lay.x1, y0: yMu - 14, y1: yMu + 14, frame: 'away' });
         hitRects.push({ x0: 0, x1: viewW, y0: yGround, y1: viewH, frame: 'home' });
 
+        // Measured from the muons the view is zoomed in and slowed down by γ: say so, quietly
+        if (ship && g > 1.005) {
+            setFont(f * 0.88, 400);
+            ctx.fillStyle = pal.muted;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`Zoom ×${fmtTimes(g)} · time ×${fmtTimes(g)} slower`, viewW - 10, viewH - 8);
+        }
         drawCaption(f);
     }
 
@@ -1775,7 +1809,7 @@
 
     function rate() {
         if (S.scenario === 'twins') return TW.RATE;
-        if (S.scenario === 'muons') return MU.RATE;
+        if (S.scenario === 'muons') return MU.RATE / (homeMoves() ? gammaOf(S.v) : 1);
         return 1;
     }
 
@@ -1851,7 +1885,9 @@
             } else if (S.scenario === 'twins') {
                 Object.assign(out, { t: tw.t, stage: tw.stage, twin: twinState(), times: twinTimes() });
             } else {
-                Object.assign(out, { t: mu.t, stage: mu.stage, muonClock: muonClock(), left: muonsLeft(), times: muonTimes(), lifetimes: Array.from(mu.life) });
+                const lay = muonsLayout();
+                Object.assign(out, { t: mu.t, stage: mu.stage, muonClock: muonClock(), left: muonsLeft(), times: muonTimes(), lifetimes: Array.from(mu.life),
+                    zoom: muonZoom(), kmPx: lay.k * muonZoom(), rate: rate() });
             }
             out.readouts = readoutRows().map((r) => `${r.label} ${r.value} ${r.unit}`);
             out.gammaText = fmtGamma(g);
