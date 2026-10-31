@@ -175,6 +175,12 @@
         }
     }
 
+    // Chance in the splashes and bubbles comes from a seeded generator, restarted with each drop, so a
+    // run plays out the same every time, whatever is drawn while it runs
+    const RAND_SEED = 20240611;
+    let rand = mulberry32(RAND_SEED);
+    let landTick = 0;                // steps since the streams last landed (streamLandings)
+
     // splash droplets
     const pX = new Float64Array(MAX_PARTICLES), pY = new Float64Array(MAX_PARTICLES);
     const pVX = new Float64Array(MAX_PARTICLES), pVY = new Float64Array(MAX_PARTICLES);
@@ -1114,13 +1120,42 @@
         return n;
     }
 
-    // Streams leaving the object, found while drawing the cavities (start, velocity, flow, width) and
-    // drawn on top of it; where they land in the tank they splash
+    // Streams leaving the object (start, velocity, flow, width): found while drawing the cavities and
+    // drawn on top of it, and found the same way in the simulation step, where they land and splash
     const outStreams = [];
-    const landings = [];
+    const simStreams = [];
 
-    // Per frame: slosh of the inside surfaces (drawn only), ripples, splashes where a stream lands,
-    // trapped air bubbling out
+    // a stream ends where it reaches the tank's liquid (or the floor, or a wall)
+    function landsInTank(x, y) { return y <= Math.max(0, surfaceAt(x)) || x < 0 || x > TANK_W; }
+
+    // Streams leaving the object land in the tank: they stir its surface there and throw up drops.
+    // That is part of the simulation, so it is worked out here, every few steps, from the same
+    // streams the drawing shows (cavityOutflows), with a fixed nominal pixel for the small offsets:
+    // nothing that is drawn, or how often, changes how a run plays out.
+    const SIM_PX = 0.002;
+    function streamLandings(dtL) {
+        const B = body;
+        if (!B || !B.cavs.length) return;
+        const c = Math.cos(st.th), s = Math.sin(st.th);
+        const ext = 0.5 * CELL * (Math.abs(c) + Math.abs(s));
+        simStreams.length = 0;
+        for (const cv of B.cavs) {
+            const x0 = cv.xmin - 3 * SIM_PX, x1 = cv.xmax + 3 * SIM_PX;
+            const np = clamp(Math.ceil((x1 - x0) / (5 * SIM_PX)), 2, 399);
+            cavityBlend(cv, c, s, x0, (x1 - x0) / np, np);
+            const lev = (x) => blendLevel(x, ownLevelAt(cv, x, ext, SIM_PX));
+            cavityOutflows(cv, c, s, lev, (x) => openingSurface(cv, x), SIM_PX, simStreams, null);
+        }
+        for (const [x, y, vx, vy, q, w] of simStreams) {
+            const n = traceStream(x, y, vx, vy, q, w, landsInTank, false);
+            if (n < 2 || rbY[n - 1] > surfaceAt(rbX[n - 1]) + 0.01) continue;
+            const xi = rbX[n - 1];
+            if (rand() < Math.min(1, q * 500 * dtL)) spawnDroplet(xi + (rand() - 0.5) * 0.02, surfaceAt(xi), 0.8 + rand() * 0.8);
+            disturbSurface(xi, -0.15 * q * dtL);
+        }
+    }
+
+    // Per step: slosh of the inside surfaces (drawn only), ripples, trapped air bubbling out
     function stepCavityVisuals(dtF) {
         const B = body;
         if (!B || !B.cavs.length || !(dtF > 0)) return;
@@ -1182,22 +1217,16 @@
             if (cv.bubQ > 0) {
                 let nb = Math.min(40, cv.bubQ / 6e-5) * dtF;
                 while (nb > 0) {
-                    if (nb >= 1 || Math.random() < nb) {
-                        const u = Math.random();
+                    if (nb >= 1 || rand() < nb) {
+                        const u = rand();
                         let x = cv.bX0 + (cv.bX1 - cv.bX0) * u + cv.bNX * 0.006, y = cv.bY0 + (cv.bY1 - cv.bY0) * u + cv.bNY * 0.006;
                         const away = x >= cv.cx ? 1 : -1;
                         for (let k = 0; k < 16 && bodyCellAt(x, y) !== T_EXT; k++) x += away * 0.005;
-                        if (bodyCellAt(x, y) === T_EXT) spawnBubble(x + (Math.random() - 0.5) * 0.008, y);
+                        if (bodyCellAt(x, y) === T_EXT) spawnBubble(x + (rand() - 0.5) * 0.008, y);
                     }
                     nb -= 1;
                 }
             }
-        }
-        // streams pouring out splash where they land
-        for (let i = 0; i < landings.length; i += 2) {
-            const xi = landings[i], q = landings[i + 1];
-            if (Math.random() < Math.min(1, q * 500 * dtF)) spawnDroplet(xi + (Math.random() - 0.5) * 0.02, surfaceAt(xi), 0.8 + Math.random() * 0.8);
-            disturbSurface(xi, -0.15 * q * dtF);
         }
     }
 
@@ -1211,9 +1240,9 @@
         if (nBubbles >= MAX_BUBBLES) return;
         const i = nBubbles++;
         bX[i] = x; bY[i] = y;
-        bR[i] = 0.002 + Math.random() * 0.004;
-        bPh[i] = Math.random() * 6.283;
-        bV[i] = 0.18 + Math.random() * 0.12 + bR[i] * 15;
+        bR[i] = 0.002 + rand() * 0.004;
+        bPh[i] = rand() * 6.283;
+        bV[i] = 0.18 + rand() * 0.12 + bR[i] * 15;
     }
     // is a point in liquid that belongs to the tank or a cavity (not air, not material)?
     function inLiquid(x, y) {
@@ -1243,10 +1272,13 @@
         return settings.liquidDepth * TANK_W - (body ? body.waterArea : 0);
     }
 
+    // (kept up to date by the simulation step as the level moves: see substep)
+    let coefLevel = -1;
     function updateWaveCoefficients() {
         const liq = LIQUIDS[settings.liquid];
         const g = settings.gravity;
         const H = Math.max(0.02, level);
+        coefLevel = level;
         const nu = liq.mu / liq.rho;
         for (let k = 1; k <= NMODE; k++) {
             const kap = k * Math.PI / TANK_W;
@@ -1335,9 +1367,9 @@
                 // splash droplets where the surface is being pushed up fast
                 for (let j = jmin; j <= jmax; j++) {
                     const rate = src[j] / dt;
-                    if (rate > 0.6 && nParticles < MAX_PARTICLES && Math.random() < Math.min(1, (rate - 0.6) * 0.5)) {
+                    if (rate > 0.6 && nParticles < MAX_PARTICLES && rand() < Math.min(1, (rate - 0.6) * 0.5)) {
                         // (not where the surface lies inside the object, e.g. in an upturned cup)
-                        const x = (j + Math.random()) * DXC;
+                        const x = (j + rand()) * DXC;
                         if (bodyCellAt(x, level + eta[j]) === T_EXT) spawnDroplet(x, level + eta[j], rate);
                     }
                 }
@@ -1368,8 +1400,8 @@
         if (nParticles >= MAX_PARTICLES) return;
         const i = nParticles++;
         pX[i] = x; pY[i] = y;
-        const sp = Math.min(3.5, rate * (0.5 + Math.random() * 0.9));
-        pVX[i] = (Math.random() - 0.5) * sp * 1.2;
+        const sp = Math.min(3.5, rate * (0.5 + rand() * 0.9));
+        pVX[i] = (rand() - 0.5) * sp * 1.2;
         pVY[i] = sp;
         pLife[i] = 0;
     }
@@ -1420,7 +1452,7 @@
     function pokeLiquid(x, strength) {
         disturbSurface(x, strength);
         const S = surfaceAt(x);
-        for (let q = 0; q < 6; q++) spawnDroplet(x + (Math.random() - 0.5) * 0.03, S, 1.2 + Math.random());
+        for (let q = 0; q < 6; q++) spawnDroplet(x + (rand() - 0.5) * 0.03, S, 1.2 + rand());
     }
 
     // ------------------------------------------------------------------
@@ -1641,11 +1673,18 @@
 
         // ---- liquid: mean level from volume conservation + waves ----
         level = clamp((liquidArea() + calmTot) / TANK_W, 0.001, TANK_H);
+        if (Math.abs(level - coefLevel) > 1e-4) updateWaveCoefficients();
         stepWaves(dt, true);
         const tmp = bOld; bOld = bNew; bNew = tmp;
 
         // ---- liquid held in open cavities (new pose) ----
         updateCavities(dt);
+
+        // ---- drops, bubbles and the slosh move on with every step; every fourth, streams land ----
+        stepParticles(dt);
+        stepBubbles(dt);
+        stepCavityVisuals(dt);
+        if (++landTick >= 4) { landTick = 0; streamLandings(4 * dt); }
 
         // ---- record for display ----
         phys.subA = sA; phys.subEnv = sAenv;
@@ -1772,6 +1811,10 @@
         st.maValid = false;
         grabs.length = 0;
         clearWaves();
+        // (every drop plays out the same: the splashes' chance starts again, and so does the count
+        // of steps between streams landing)
+        rand = mulberry32(RAND_SEED);
+        landTick = 0;
         level = drawModeLevel(body);
         for (let it = 0; it < 8; it++) {
             const tot = calmDisplacement(bOld);
@@ -1801,16 +1844,11 @@
         if (mode !== 'sim' || !body) return 0;
         let n = 0;
         let acc2 = seconds;
-        let since = 0;
-        updateWaveCoefficients();
         while (acc2 >= DT - 1e-12) {
             substep(DT);
             acc2 -= DT;
             n++;
-            since += DT;
-            if (since >= 1 / 60 - 1e-9) { stepParticles(since); stepBubbles(since); stepCavityVisuals(since); since = 0; }
         }
-        if (since > 0) { stepParticles(since); stepBubbles(since); stepCavityVisuals(since); }
         // show the latest state directly (the frame loop only smooths while time is running)
         disp.fbX = phys.fbX; disp.fbY = phys.fbY; disp.fdX = phys.fdX; disp.fdY = phys.fdY;
         disp.fcX = phys.fcX; disp.fcY = phys.fcY;
@@ -2417,8 +2455,9 @@
 
     // Liquid pouring out over a lip: the pool runs over the opening (the band run r, from the pool's
     // edge to the lip; split: only up to that point) as a tongue whose surface drops to the depth
-    // over the lip, then falls
-    function drawTongue(cv, ch, r, atA, m, q, liq, split, c, s) {
+    // over the lip, then falls. tonguePoints gives the stretch from the lip inwards; tongueStream the
+    // stream it falls as ([x, y, vx, vy, q, w], px: a pixel's size, for the small offsets)
+    function tonguePoints(r, atA, m, split) {
         const xs = [], zs = [];
         if (atA) {
             for (let i = 0, i1 = split >= 0 ? split : r.i1; i <= i1; i++) { xs.push(cpX[i]); zs.push(cpZ[i]); }
@@ -2427,9 +2466,22 @@
             for (let i = m - 1, i0 = split >= 0 ? split : r.i0; i >= i0; i--) { xs.push(cpX[i]); zs.push(cpZ[i]); }
             if (split < 0) { xs.push(r.sx); zs.push(r.sz); }
         }
+        return [xs, zs];
+    }
+    function tongueDepth(cv, lipX, lipZ, px) {
+        return Math.max(0.6 * (cavityLevelAt(cv, lipX) - lipZ), 1.2 * px);
+    }
+    function tongueStream(cv, xs, zs, q, px) {
+        const n = xs.length, lipX = xs[0], lipZ = zs[0], wb = tongueDepth(cv, lipX, lipZ, px);
+        let dir = Math.sign(lipX - xs[n - 1]);
+        if (Math.abs(lipX - xs[n - 1]) < 1e-4) dir = lipX >= cv.cx ? 1 : -1;
+        // (the fall starts just before the lip, over the tongue, so no edge shows between them)
+        return [lipX - dir * 1.5 * px, lipZ + 0.5 * wb, dir * q / wb, 0, q, wb];
+    }
+    function drawTongue(cv, ch, xs, zs, liq, c, s) {
         const n = xs.length;
-        const lipX = xs[0], lipZ = zs[0];
-        const wb = Math.max(0.6 * (cavityLevelAt(cv, lipX) - lipZ), 1.2 / scale);
+        const lipZ = zs[0];
+        const wb = tongueDepth(cv, xs[0], lipZ, 1 / scale);
         // (its bottom reaches 2 px into the pool: a shared edge would leave a faint seam)
         const [kx, ky] = sinkInto(ch, c, s);
         const p = new Path2D(), top = new Path2D();
@@ -2450,10 +2502,6 @@
         ctx.lineWidth = 1.5;
         ctx.stroke(top);
         ctx.globalAlpha = 1;
-        let dir = Math.sign(lipX - xs[n - 1]);
-        if (Math.abs(lipX - xs[n - 1]) < 1e-4) dir = lipX >= cv.cx ? 1 : -1;
-        // (the fall starts just before the lip, over the tongue, so no edge shows between them)
-        outStreams.push([lipX - dir * 1.5 / scale, lipZ + 0.5 * wb, dir * q / wb, 0, q, wb]);
     }
 
     // Where a cavity's liquid meets the tank's through a wide opening. The tank's liquid is drawn up
@@ -2558,18 +2606,17 @@
     }
     // A cavity's own surface for drawing: its level and slosh; when it is empty or full, just past its
     // bottom or top, so no surface line shows along its edge
-    function ownLevelAt(cv, x, ext) {
-        if (cv.V <= 0) return cv.ymin - ext - 3 / scale;
-        if (cv.V >= cv.area) return cv.ymax + ext + 3 / scale;
+    function ownLevelAt(cv, x, ext, px) {
+        if (cv.V <= 0) return cv.ymin - ext - 3 * px;
+        if (cv.V >= cv.area) return cv.ymax + ext + 3 * px;
         return cavityLevelAt(cv, x);
     }
 
     // Curtains: liquid going through stretches of a wide opening (band runs `pick` selects, flow q
     // shared by length and head) as streams that start as wide as the stretch, moving straight
-    // through it, and thin as gravity speeds them up. Out of the cavity into the air they are drawn
-    // later, on top (outStreams); into the cavity they are drawn now and end on the drawn surface
-    // inside (stopIn). hi(x) is the upper of the two surfaces the run lies between.
-    function addCurtains(ch, c, s, q, out, hi, pick, stopIn, liq) {
+    // through it, and thin as gravity speeds them up: emit(x, y, vx, vy, q, w) gets each one's start.
+    // hi(x) is the upper of the two surfaces the run lies between; px a pixel's size.
+    function addCurtains(ch, c, s, q, out, hi, pick, px, emit) {
         const nr = runs.length;
         let nx = c * ch.nbx - s * ch.nby, ny = s * ch.nbx + c * ch.nby;
         let wsum = 0;
@@ -2586,11 +2633,10 @@
             ws.push(w); hs.push(h); wsum += w;
         }
         if (!(wsum > 0)) return;
-        const px1 = 1 / scale;
         for (let k = 0; k < nr; k++) {
             const r = runs[k];
             const L = Math.hypot(r.ex - r.sx, r.ez - r.sz);
-            if (L < px1) continue;
+            if (L < px) continue;
             // through the stretch, perpendicular to it
             let ux = (r.ez - r.sz) / L, uz = -(r.ex - r.sx) / L;
             if ((ux * nx + uz * ny < 0) === out) { ux = -ux; uz = -uz; }
@@ -2600,14 +2646,50 @@
             // away (it starts as wide as the stretch, however little flows).
             const qr = q * ws[k] / wsum;
             const w0 = L * (1 - smoothstep(0.05, 0.4, uz)) * smoothstep(0.5 * Q_MIN, 3 * Q_MIN, qr);
-            if (w0 < 0.5 * px1) continue;
+            if (w0 < 0.5 * px) continue;
             // (no faster than the head over the stretch can drive it: a sliver of a stretch that
             // gets a large flow is then a narrow stream, not a jet)
             const v = Math.min(qr / w0, Math.sqrt(2 * settings.gravity * hs[k]) + 0.05);
             // (starting just upstream, so no edge shows between the stream and where it comes from)
-            const x = 0.5 * (r.sx + r.ex) - ux * 1.5 * px1, z = 0.5 * (r.sz + r.ez) - uz * 1.5 * px1;
-            if (out) outStreams.push([x, z, ux * v, uz * v, qr, w0]);
-            else drawStream(traceStream(x, z, ux * v, uz * v, qr, w0, stopIn, false), liq, v, false);
+            emit(0.5 * (r.sx + r.ex) - ux * 1.5 * px, 0.5 * (r.sz + r.ez) - uz * 1.5 * px, ux * v, uz * v, qr, w0);
+        }
+    }
+
+    // The streams leaving a cavity into the air, as [x, y, vx, vy, q, w] starts pushed onto list: over
+    // its lips (tongues, which onTongue(ch, xs, zs) may draw), out of wide openings (curtains) and
+    // out of holes (jets). lev and sOut are the drawn surfaces inside and outside (cavityBlend must
+    // have been run for this cavity); px is a pixel's size. The drawing and the simulation step both
+    // use it, so the splashes come where the drawn streams land.
+    function cavityOutflows(cv, c, s, lev, sOut, px, list, onTongue) {
+        const push = (x, y, vx, vy, q, w) => { list.push([x, y, vx, vy, q, w]); };
+        for (const ch of cv.chains) {
+            if ((ch.sA < -Q_MIN || ch.sB < -Q_MIN) && cv.V > 0) {
+                const m = chainPoints(ch, c, s);
+                const nr = bandRuns(m, sOut, lev);
+                if (nr) {
+                    const rA = runs[0], rB = runs[nr - 1];
+                    const spillA = ch.sA < -Q_MIN && rA.i0 === 0, spillB = ch.sB < -Q_MIN && rB.i1 === m - 1;
+                    // one run over the whole opening (full to the brim): each lip gets half of it
+                    const split = spillA && spillB && nr === 1 ? (m - 1) >> 1 : -1;
+                    for (let e = 0; e < 2; e++) {
+                        if (!(e ? spillB : spillA)) continue;
+                        const [xs, zs] = tonguePoints(e ? rB : rA, !e, m, split);
+                        list.push(tongueStream(cv, xs, zs, e ? -ch.sB : -ch.sA, px));
+                        if (onTongue) onTongue(ch, xs, zs);
+                    }
+                }
+            }
+            if (ch.wide) {
+                if (ch.sC > 0.5 * Q_MIN && bandRuns(chainPoints(ch, c, s), surfaceAt, lev)) {
+                    addCurtains(ch, c, s, ch.sC, true, lev, () => true, px, push);
+                }
+            } else if (ch.sJ < -Q_MIN) {
+                const q = -ch.sJ, v = Math.max(0.2, ch.jv);
+                const x = st.x + c * ch.jx - s * ch.jy, y = st.y + s * ch.jx + c * ch.jy;
+                let nx = c * ch.jnx - s * ch.jny, ny = s * ch.jnx + c * ch.jny;
+                const nl = Math.hypot(nx, ny) || 1;
+                if (y > surfaceAt(x) + 0.25 * CELL) push(x, y, nx / nl * v, ny / nl * v, q, q / v);
+            }
         }
     }
 
@@ -2630,7 +2712,8 @@
             const bx0 = Math.floor(wx(cv.xmin)) - 3, bx1 = Math.ceil(wx(cv.xmax)) + 3;
             const np = clamp(Math.ceil((bx1 - bx0) / 5), 2, 399);
             cavityBlend(cv, c, s, bx0 / scale, (bx1 - bx0) / np / scale, np);
-            const lev = (x) => blendLevel(x, ownLevelAt(cv, x, ext));
+            const px1 = 1 / scale;
+            const lev = (x) => blendLevel(x, ownLevelAt(cv, x, ext, px1));
             const sOut = (x) => openingSurface(cv, x);
             const sTop = (x) => Math.max(sOut(x), surfaceAt(x));
             const stopIn = (x, y) => y <= lev(x) || y < cv.ymin - CELL || x < cv.xmin - CELL || x > cv.xmax + CELL;
@@ -2643,7 +2726,6 @@
             //    (drawn with the other streams, below).
             const clear = new Path2D(), inClip = new Path2D();
             let nClear = 0;
-            const px1 = 1 / scale;
             const sTopPad = (x) => sTop(x) + pad;
             const nappes = [], curtainsIn = [];
             for (const ch of cv.chains) {
@@ -2688,7 +2770,7 @@
             for (let i = 0; i <= np; i++) {
                 const sx = bx0 + (bx1 - bx0) * i / np;
                 const xw = sx / scale;
-                let own = ownLevelAt(cv, xw, ext);
+                let own = ownLevelAt(cv, xw, ext, px1);
                 if (rip) own += rip * (0.6 * Math.sin(xw * 52 - t * 7.5) + 0.4 * Math.sin(xw * 87 + t * 11));
                 const yw = blendLevel(xw, own);
                 if (yw > cv.ymin - ext) wet = true;
@@ -2719,23 +2801,13 @@
             }
             ctx.restore();
 
-            // 3. Liquid pouring out over a lip runs over it as a tongue, then falls (drawn later, on top)
-            for (const ch of cv.chains) {
-                if (!(ch.sA < -Q_MIN || ch.sB < -Q_MIN) || cv.V <= 0) continue;
-                const m = chainPoints(ch, c, s);
-                const nr = bandRuns(m, sOut, lev);
-                if (!nr) continue;
-                const rA = runs[0], rB = runs[nr - 1];
-                const spillA = ch.sA < -Q_MIN && rA.i0 === 0, spillB = ch.sB < -Q_MIN && rB.i1 === m - 1;
-                // one run over the whole opening (full to the brim): each lip gets half of it
-                const split = spillA && spillB && nr === 1 ? (m - 1) >> 1 : -1;
-                if (spillA) drawTongue(cv, ch, rA, true, m, -ch.sA, liq, split, c, s);
-                if (spillB) drawTongue(cv, ch, rB, false, m, -ch.sB, liq, split, c, s);
-            }
+            // 3. Liquid leaving into the air: over a lip it runs over it as a tongue, then falls; out of a
+            //    wide opening as a curtain, out of a hole as a jet (the streams are drawn later, on top)
+            cavityOutflows(cv, c, s, lev, sOut, px1, outStreams, (ch, xs, zs) => drawTongue(cv, ch, xs, zs, liq, c, s));
 
             // 4. Streams falling into the cavity: over the lips, as curtains through stretches of wide
             //    openings, through holes as jets, or, over a submerged hole, a fountain of what is left
-            //    of the jet when it reaches the surface; and streams leaving it (drawn later, on top)
+            //    of the jet when it reaches the surface
             //    (The nappes are drawn once inside the cavity and once over the cleared stretches.)
             for (let pass = 0; pass < (nClear ? 2 : 1) && nappes.length; pass++) {
                 ctx.save();
@@ -2748,36 +2820,30 @@
             }
             ctx.save();
             ctx.clip(outline);
+            const fall = (x, y, vx, vy, q, w) => drawStream(traceStream(x, y, vx, vy, q, w, stopIn, false), liq, Math.hypot(vx, vy), false);
             // (the tank's liquid falling through a stretch of an opening that does not start at a lip)
             for (const [ch, q] of curtainsIn) {
                 const m = chainPoints(ch, c, s);
-                if (bandRuns(m, lev, sTop)) addCurtains(ch, c, s, q, false, sTop, (r) => r.i0 > 0 && r.i1 < m - 1, stopIn, liq);
+                if (bandRuns(m, lev, sTop)) addCurtains(ch, c, s, q, false, sTop, (r) => r.i0 > 0 && r.i1 < m - 1, px1, fall);
             }
             for (const ch of cv.chains) {
                 // A wide opening has no jet. What flows in through it is the surface running on into
                 // the cavity (cavityBlend), a nappe over a lip, or, through a stretch with air under
                 // it inside, a curtain falling in (not into trapped air: that only creeps in as the air
-                // bubbles out); what flows out into the air falls from it as a curtain.
+                // bubbles out).
                 if (ch.wide) {
-                    if (ch.sC > 0.5 * Q_MIN && bandRuns(chainPoints(ch, c, s), surfaceAt, lev)) {
-                        addCurtains(ch, c, s, ch.sC, true, lev, () => true, stopIn, liq);
-                    }
                     if (ch.sJ * cv.ventS > 0.5 * Q_MIN && bandRuns(chainPoints(ch, c, s), lev, sTop)) {
-                        addCurtains(ch, c, s, ch.sJ * cv.ventS, false, sTop, () => true, stopIn, liq);
+                        addCurtains(ch, c, s, ch.sJ * cv.ventS, false, sTop, () => true, px1, fall);
                     }
                     continue;
                 }
-                if (!(Math.abs(ch.sJ) > Q_MIN)) continue;
-                const q = Math.abs(ch.sJ), v = Math.max(0.2, ch.jv);
+                if (!(ch.sJ > Q_MIN)) continue;
+                const q = ch.sJ, v = Math.max(0.2, ch.jv);
                 const px = st.x + c * ch.jx - s * ch.jy, py = st.y + s * ch.jx + c * ch.jy;
                 let nx = c * ch.jnx - s * ch.jny, ny = s * ch.jnx + c * ch.jny;
                 const nl = Math.hypot(nx, ny) || 1;
                 nx /= nl; ny /= nl;
                 const w0 = q / v;
-                if (ch.sJ < 0) {
-                    if (py > surfaceAt(px) + 0.25 * CELL) outStreams.push([px, py, nx * v, ny * v, q, w0]);
-                    continue;
-                }
                 // (into trapped air the liquid only creeps in as the air bubbles out: no jet)
                 if (!cv.vented) continue;
                 const L = cavityLevelAt(cv, px);
@@ -2799,16 +2865,14 @@
         }
     }
 
-    // streams leaving the object, on top of it, down to where they land
+    // streams leaving the object, on top of it, down to where they land (where they splash is worked
+    // out in the simulation step: streamLandings)
     function drawOutStreams() {
-        landings.length = 0;
         if (!outStreams.length) return;
         const liq = LIQUIDS[settings.liquid];
-        const stop = (x, y) => y <= Math.max(0, surfaceAt(x)) || x < 0 || x > TANK_W;
         for (const [x, y, vx, vy, q, w] of outStreams) {
-            const n = traceStream(x, y, vx, vy, q, w, stop, false);
+            const n = traceStream(x, y, vx, vy, q, w, landsInTank, false);
             drawStream(n, liq, Math.hypot(vx, vy), false);
-            if (n > 1 && rbY[n - 1] <= surfaceAt(rbX[n - 1]) + 0.01) landings.push(rbX[n - 1], q);
         }
     }
 
@@ -3760,18 +3824,12 @@
         let steps = 0;
         if (mode === 'sim' && body) {
             physAcc += dtReal * settings.speed;
-            updateWaveCoefficients();
             while (physAcc >= DT && steps < MAX_SUBSTEPS) {
                 substep(DT);
                 physAcc -= DT;
                 steps++;
             }
             if (steps >= MAX_SUBSTEPS) physAcc = 0;
-            if (steps > 0) {
-                stepParticles(steps * DT);
-                stepBubbles(steps * DT);
-                stepCavityVisuals(steps * DT);
-            }
             // frame averages -> smoothed display values
             if (acc.n > 0) {
                 const inv = 1 / acc.n;
