@@ -356,13 +356,6 @@
 
 }
 
-/* ---------- Info bar: read-outs on the left, buttons on the right of the first row ---------- */
-@media screen and (min-width: 601px) {
-    .buoyancy-sim .stats-container {
-        flex-basis: 0%;
-    }
-}
-
 /* ---------- Controls panel ---------- */
 .buoy-key {
     display: inline-block;
