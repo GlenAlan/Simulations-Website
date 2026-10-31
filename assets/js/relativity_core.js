@@ -1981,8 +1981,10 @@
         ctx.beginPath();
         ctx.ellipse(x, y, rx, r, 0, 0, TAU);
         ctx.clip();
-        // Flat, like the craft: ocean, land, and the night side as a darker crescent
-        ctx.fillStyle = pal.earthOcean;
+        const g = ctx.createRadialGradient(x - rx * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+        g.addColorStop(0, '#9ad6fa');
+        g.addColorStop(1, pal.earthOcean);
+        ctx.fillStyle = g;
         ctx.fillRect(x - rx, y - r, 2 * rx, 2 * r);
         ctx.fillStyle = pal.teal;
         const blobs = [[-0.35, -0.3, 0.42, 0.3], [0.32, 0.12, 0.38, 0.45], [-0.1, 0.55, 0.3, 0.18], [0.45, -0.55, 0.2, 0.14]];
@@ -1991,11 +1993,6 @@
             ctx.ellipse(x + b[0] * rx, y + b[1] * r, b[2] * rx, b[3] * r, 0.4, 0, TAU);
             ctx.fill();
         }
-        ctx.beginPath();
-        ctx.rect(x - rx, y - r, 2 * rx, 2 * r);
-        ctx.ellipse(x - rx * 0.28, y - r * 0.12, rx * 1.02, r * 1.02, 0, 0, TAU, true);
-        ctx.fillStyle = 'rgba(10,20,40,0.28)';
-        ctx.fill('evenodd');
         ctx.restore();
         ctx.beginPath();
         ctx.ellipse(x, y, rx, r, 0, 0, TAU);
