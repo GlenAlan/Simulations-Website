@@ -1932,7 +1932,7 @@
             b.labelW = ctx.measureText(info.name).width;
         }
         const y2 = ly + fontPx * 1.2;
-        ctx.font = font(300, fontPx * 0.92);
+        ctx.font = font(300, Math.max(11, fontPx * 0.92));
         ctx.fillStyle = C.muted;
         if (b.step || b.needsClock && !info.stable) return;
         if (info.stable) {
@@ -1954,7 +1954,7 @@
             b.labelW = Math.max(b.labelW, icon + wNum + wUnit);
             if (selected) {
                 ctx.textAlign = 'center';
-                ctx.font = font(300, fontPx * 0.85);
+                ctx.font = font(300, Math.max(10.5, fontPx * 0.85));
                 const t = 'half-life ' + formatHalfLife(info.hl);
                 ctx.fillText(t, x, y2 + fontPx * 1.15);
                 b.labelW = Math.max(b.labelW, ctx.measureText(t).width);
@@ -2033,7 +2033,7 @@
                 ctx.setLineDash([]);
                 ctx.fillStyle = C.neutrino;
                 ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(2, rN * 0.45), 0, TAU); ctx.fill();
-                if (s.age < 0.8 && !S.hideLabels) {
+                if (s.age > 0.12 && s.age < 0.9 && !S.hideLabels) {
                     ctx.font = font(700, fsSmall); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                     ctx.fillText(s.kind === 'nu' ? 'ν' : 'ν̄', s.x + 5, s.y - 8);
                 }
@@ -2047,7 +2047,7 @@
                 ctx.stroke();
             }
             drawDot(s.x, s.y, Math.max(2.4, rN * 0.62), col);
-            if (s.age < 0.8 && !S.hideLabels) {
+            if (s.age > 0.12 && s.age < 0.9 && !S.hideLabels) {   // once clear of the nucleus's own label
                 ctx.font = font(700, fsSmall); ctx.fillStyle = ink(col); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                 ctx.fillText(s.kind === 'e-' ? 'e⁻' : 'e⁺', s.x + 6, s.y - 9);
             }
@@ -2658,7 +2658,7 @@
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
         rN = Math.max(2.6, Math.min(5.2, Math.min(viewW, viewH * 2) / 180));
-        fontPx = Math.max(11, Math.min(14, viewW / 85));
+        fontPx = Math.max(12, Math.min(14, viewW / 85));
         computeLayout();
         buildNucleonSprites();
         if (oldW > 0) {
