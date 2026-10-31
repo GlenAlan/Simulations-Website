@@ -123,7 +123,9 @@
         { Z: 88, N: 138, note: 'alpha emitter' },
         { Z: 92, N: 143, note: 'add a neutron for fission' },
         { Z: 92, N: 146, note: 'a 14-step decay chain' },
+        { Z: 94, N: 150, note: 'the longest-lived plutonium' },
         { Z: 98, N: 154, note: 'alpha, or spontaneous fission' },
+        { Z: 113, N: 165, note: 'superheavy: made an atom at a time' },
     ];
     // fx, fy: place on a wide canvas; tx, ty: on a tall one (phones in portrait), clear of the chart
     // (on a tall canvas: three across the top, two down the side beside the chart)
@@ -1494,7 +1496,8 @@
         }
         // ...but never under the chart or a text panel (these win over the spacing above).
         for (const b of bodies) {
-            if (!b.transient && !b.held) obstacles.forEach((r) => pushOutOfRect(b, r, 1));
+            // (the chain reaction's uranium stays where it was put, even under a panel)
+            if (!b.transient && !b.held && !isFuel(b)) obstacles.forEach((r) => pushOutOfRect(b, r, 1));
         }
         // Fast things hit what is in their way: a neutron is captured by any nucleus it meets (no charge, no
         // barrier), and a thrown nucleus takes in each lighter one along its path, slowing down as it gains
