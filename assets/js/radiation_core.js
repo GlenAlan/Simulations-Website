@@ -60,7 +60,7 @@
     const SRC_AREA = 4 * Math.PI * SRC_R * SRC_R * 1e-4; // m^2
     const SRC_EPS = 0.95;
     const SRC_HEAT_CAP = 300;                           // J/K
-    const HEATER_MAX_POWER = 25000;                     // W
+    const HEATER_MAX_POWER = 400000;                    // W (holding 4000 K takes about 280 kW)
     const THERMOSTAT_TAU = 2;                           // s (simulated)
     const BLOCK_SIDE = 8;                               // cm (hollow metal cube)
     const BLOCK_AREA = 6 * BLOCK_SIDE * BLOCK_SIDE * 1e-4; // m^2
@@ -519,7 +519,7 @@
     const BB_TABLE = [
         [600, 255, 18, 0], [800, 255, 38, 0], [1000, 255, 56, 0], [1200, 255, 83, 0],
         [1400, 255, 101, 0], [1600, 255, 115, 0], [1800, 255, 126, 0], [2000, 255, 137, 18],
-        [2500, 255, 161, 72], [3000, 255, 180, 107]
+        [2500, 255, 161, 72], [3000, 255, 180, 107], [3500, 255, 196, 137], [4000, 255, 209, 163]
     ];
     function blackbodyRGB(T) {
         if (T <= BB_TABLE[0][0]) return BB_TABLE[0].slice(1);
@@ -1050,7 +1050,7 @@
         let h = L.nameH;
         L.showSub = state.showLabels;
         if (L.showSub) {
-            const tmpl = thermal ? 'camera reads 888 °C' : 'absorbs 100% · emissivity 0.00';
+            const tmpl = thermal ? 'camera reads 8888 °C' : 'absorbs 100% · emissivity 0.00';
             w = Math.max(w, textWidth(tmpl, L.subFont, 400));
             h += L.subH;
         }
@@ -1586,6 +1586,15 @@
         if (label) label.textContent = b.dist.toFixed(0);
     }
 
+    // From the settings or the block's right-click menu; keeps the other in step.
+    function setBlockSurface(i, surface) {
+        if (!SURFACES[surface]) return;
+        state.blocks[i].surface = surface;
+        const select = i === 0 ? leftSurfaceSelect : rightSurfaceSelect;
+        if (select && select.value !== surface) select.value = surface;
+        updateCharts(false);
+    }
+
     function bindControls() {
         if (speedSlider) speedSlider.addEventListener('input', () => {
             state.speed = parseFloat(speedSlider.value) || 1;
@@ -1596,14 +1605,8 @@
             showHeaterSetPoint(state.Tset);
         });
         if (heaterOnCheckbox) heaterOnCheckbox.addEventListener('change', () => { state.heaterOn = heaterOnCheckbox.checked; });
-        if (leftSurfaceSelect) leftSurfaceSelect.addEventListener('change', () => {
-            state.blocks[0].surface = leftSurfaceSelect.value;
-            updateCharts(false);
-        });
-        if (rightSurfaceSelect) rightSurfaceSelect.addEventListener('change', () => {
-            state.blocks[1].surface = rightSurfaceSelect.value;
-            updateCharts(false);
-        });
+        if (leftSurfaceSelect) leftSurfaceSelect.addEventListener('change', () => setBlockSurface(0, leftSurfaceSelect.value));
+        if (rightSurfaceSelect) rightSurfaceSelect.addEventListener('change', () => setBlockSurface(1, rightSurfaceSelect.value));
         if (leftDistanceSlider) leftDistanceSlider.addEventListener('input', () => setBlockDistance(0, parseFloat(leftDistanceSlider.value)));
         if (rightDistanceSlider) rightDistanceSlider.addEventListener('input', () => setBlockDistance(1, parseFloat(rightDistanceSlider.value)));
         if (viewModeSelect) viewModeSelect.addEventListener('change', () => { state.view = viewModeSelect.value; });
@@ -1643,6 +1646,91 @@
             }
             return best;
         };
+        // Right-click a block, or press and hold it on a touch screen, to pick its surface.
+        const surfaceMenu = byId('surfaceMenu');
+        const menuItems = [];
+        let menuBlock = -1;
+        let holdTimer = 0;
+        const HOLD_MS = 500;
+        const HOLD_SLOP = 8; // px a held finger may wander before it counts as a drag
+
+        function closeSurfaceMenu() {
+            if (!surfaceMenu || menuBlock < 0) return;
+            surfaceMenu.hidden = true;
+            menuBlock = -1;
+        }
+
+        function openSurfaceMenu(i, clientX, clientY) {
+            if (!surfaceMenu) return;
+            if (menuBlock === i && !surfaceMenu.hidden) return; // a long press can also fire 'contextmenu'
+            menuBlock = i;
+            const current = state.blocks[i].surface;
+            for (const item of menuItems) item.setAttribute('aria-checked', item.dataset.surface === current ? 'true' : 'false');
+            surfaceMenu.setAttribute('aria-label', `${i === 0 ? 'Left' : 'Right'} block surface`);
+            surfaceMenu.hidden = false;
+            // Beside the pointer, flipped or nudged to stay inside the canvas area.
+            const box = surfaceMenu.offsetParent || surfaceMenu.parentElement;
+            const area = box.getBoundingClientRect();
+            const w = surfaceMenu.offsetWidth, h = surfaceMenu.offsetHeight;
+            let x = clientX - area.left + 4;
+            let y = clientY - area.top + 4;
+            if (x + w > area.width - 4) x = clientX - area.left - w - 4;
+            if (y + h > area.height - 4) y = area.height - h - 4;
+            surfaceMenu.style.left = `${Math.round(clamp(x, 4, Math.max(4, area.width - w - 4)))}px`;
+            surfaceMenu.style.top = `${Math.round(Math.max(4, y))}px`;
+            const checked = menuItems.find((item) => item.dataset.surface === current) || menuItems[0];
+            if (checked) checked.focus({ preventScroll: true });
+        }
+
+        function cancelHold() {
+            if (holdTimer) clearTimeout(holdTimer);
+            holdTimer = 0;
+        }
+
+        if (surfaceMenu) {
+            Object.keys(SURFACES).forEach((key) => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'rad-surface-item';
+                item.setAttribute('role', 'menuitemradio');
+                item.dataset.surface = key;
+                item.innerHTML = `<span class="rad-swatch" data-surface="${key}" aria-hidden="true"></span>${SURFACES[key].name}`;
+                item.addEventListener('click', () => {
+                    if (menuBlock >= 0) setBlockSurface(menuBlock, key);
+                    closeSurfaceMenu();
+                });
+                surfaceMenu.appendChild(item);
+                menuItems.push(item);
+            });
+            surfaceMenu.addEventListener('keydown', (e) => {
+                const k = menuItems.indexOf(document.activeElement);
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    const step = e.key === 'ArrowDown' ? 1 : -1;
+                    menuItems[(k + step + menuItems.length) % menuItems.length].focus();
+                    e.preventDefault();
+                } else if (e.key === 'Escape' || e.key === 'Tab') {
+                    closeSurfaceMenu();
+                    e.stopPropagation(); // Escape closes just the menu, not fullscreen or the settings
+                    if (e.key === 'Escape') e.preventDefault();
+                }
+            });
+            surfaceMenu.addEventListener('contextmenu', (e) => e.preventDefault());
+            document.addEventListener('pointerdown', (e) => {
+                if (menuBlock >= 0 && !surfaceMenu.contains(e.target)) closeSurfaceMenu();
+            }, true);
+            window.addEventListener('resize', closeSurfaceMenu);
+        }
+
+        canvas.addEventListener('contextmenu', (e) => {
+            const i = blockAt(toCanvas(e), e.pointerType === 'mouse' || !e.pointerType ? 2 : 10);
+            if (i < 0) return;
+            e.preventDefault();
+            cancelHold();
+            drag = null;
+            canvas.style.cursor = '';
+            openSurfaceMenu(i, e.clientX, e.clientY);
+        });
+
         canvas.addEventListener('pointerdown', (e) => {
             if (e.pointerType === 'mouse' && e.button !== 0) return;
             const p = toCanvas(e);
@@ -1650,15 +1738,28 @@
             if (i < 0) return;
             const b = state.blocks[i];
             const nearFace = b.side < 0 ? b.x1 : b.x0;
-            drag = { i, offset: nearFace - p.x / scale, id: e.pointerId };
+            drag = { i, offset: nearFace - p.x / scale, id: e.pointerId, startX: e.clientX, startY: e.clientY };
             hoverBlock = -1;
             try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
             canvas.style.cursor = 'grabbing';
             e.preventDefault();
+            if (e.pointerType !== 'mouse') {
+                cancelHold();
+                const { clientX, clientY, pointerId } = e;
+                holdTimer = setTimeout(() => {
+                    holdTimer = 0;
+                    if (!drag || drag.id !== pointerId) return;
+                    drag = null;
+                    try { canvas.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+                    openSurfaceMenu(i, clientX, clientY);
+                }, HOLD_MS);
+            }
         });
         canvas.addEventListener('pointermove', (e) => {
             const p = toCanvas(e);
             if (drag && e.pointerId === drag.id) {
+                if (holdTimer && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) <= HOLD_SLOP) return;
+                cancelHold();
                 const b = state.blocks[drag.i];
                 const nearFace = p.x / scale + drag.offset;
                 setBlockDistance(drag.i, b.side < 0 ? SRC_X - nearFace : nearFace - SRC_X);
@@ -1670,6 +1771,7 @@
         });
         const endDrag = (e) => {
             if (drag && e.pointerId === drag.id) {
+                cancelHold();
                 drag = null;
                 canvas.style.cursor = '';
                 if (e.pointerType === 'mouse' && e.type === 'pointerup') {
