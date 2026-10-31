@@ -352,6 +352,15 @@
     background-color: currentColor;
 }
 
+/* The narrowest phones (320 px): slightly smaller readouts, so "Station's probe: 0.50 c" and the like stay on
+   one line in the two-column grid. */
+@media screen and (max-width: 360px) {
+    .relativity-sim .stats-box {
+        font-size: 0.72em;
+        padding: 0.3em 0.4em;
+    }
+}
+
 /* ---------- Settings panel ---------- */
 .sim-controls-content .rel-hint {
     font-size: 0.8em;

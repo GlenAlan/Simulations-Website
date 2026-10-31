@@ -143,7 +143,8 @@
         RATE: 6,          // µs of Earth's time per second at 1x (and µs of the muons' time / γ, see rate())
         INTRO: 1.8,       // s (real) before the fall, measured from the muons: the squashed atmosphere, then a zoom
         INTRO_EARTH: 0.6, // s (real) before the fall, measured from Earth
-        EMPTY_FAST: 8,    // the rest of the fall plays this much faster once every muon has decayed
+        EMPTY_FAST: 8,    // the rest of the fall plays this much faster once every muon has decayed...
+        EMPTY_MAX: 4,     // ...unless that would still take longer than this (s, real): then the run ends there
         END_PAUSE: 5.5    // s (real)
     };
 
@@ -569,13 +570,16 @@
             shutFor: hm || d === 0 ? 0 : 2 * d, start: -reach / v, end: reach / v };
     }
 
+    // Below 0.01c the ship would take far too long to arrive: it is shown at rest across the hangar instead
+    // (too long to fit), until the speed goes up.
     function resetHangar() {
-        hg.t = hangarState().start;
+        hg.t = S.v < 0.01 ? 0 : hangarState().start;
         hg.hold = 0;
         hg.done = false;
     }
 
     function stepHangar(dt, dtReal) {
+        if (S.v < 0.01) return;
         if (hg.hold > 0) {
             hg.hold -= dtReal;
             if (hg.hold <= 0 && hg.done) {
@@ -755,7 +759,9 @@
         for (let i = 0; i < MU.N; i++) {
             if (mu.life[i] > tauBefore && mu.life[i] <= tau) mu.decayedAt[i] = realNow;
         }
-        if (mu.t >= end - 1e-12) {
+        // At low speeds even the faster finish would take too long: stop once they have all gone
+        const slowFinish = muonsLeft() === 0 && dtReal > 0 && (end - mu.t) * dtReal / (MU.EMPTY_FAST * dt) > MU.EMPTY_MAX;
+        if (mu.t >= end - 1e-12 || slowFinish) {
             mu.stage = 'done';
             mu.pause = MU.END_PAUSE;
         }
