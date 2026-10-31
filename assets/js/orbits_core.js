@@ -2238,8 +2238,8 @@
         drawFlybyCloseUp(C);
 
         // Pause / slow-down notice: top left, under the "Viewed from" chip if it is showing
-        if (paused || slowedDown) {
-            const t = paused ? 'Paused' : 'Close pass: slowed down';
+        const t = timeNotice();
+        if (t) {
             ctx.font = font(fs, true);
             const w = ctx.measureText(t).width + 18;
             const x = pad, y = frameId !== null ? pad + 40 : pad;
@@ -2296,7 +2296,7 @@
         const b = bodyById(selectedId);
         if (cleanRender || !b || flyby.bid !== b.id || !(flyby.active || flyby.done) || flyby.pts.length < 4 || !bodyById(flyby.pid)) return;
         const R = clamp(Math.min(viewW, viewH) * 0.15, 44, 80);
-        const top = (frameId !== null ? 48 : 8) + (paused || slowedDown ? 32 : 0) + 18 + R;
+        const top = (frameId !== null ? 48 : 8) + (timeNotice() ? 32 : 0) + 18 + R;
         const corners = [[viewW - 10 - R, viewH - 30 - R], [10 + R, viewH - 34 - R], [10 + R, top]];
         const crowd = (c) => bodies.reduce((n, o) => n + Math.max(0, R + 60 - Math.hypot(sx(o.dx) - c[0], sy(o.dy) - c[1])), 0);
         let best = corners[0], least = crowd(best);
@@ -2785,6 +2785,8 @@
         const tm = fmtTime(simTime);
         setText(ui.statTime, tm.v);
         setText(ui.statTimeUnit, tm.u);
+        updateTimeControls();
+        updateOrbitReadouts();
         const b = bodyById(selectedId);
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
@@ -2838,6 +2840,221 @@
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
     function theName(b) { return ['Sun', 'Moon'].includes(b.name) ? `the ${b.name}` : b.name; }
+
+    // ------------------------------------------------------------------
+    // The chosen body's orbit in the info bar: its period and eccentricity, and tooltips that name
+    // what the readouts are measured from.
+    // ------------------------------------------------------------------
+    Object.assign(ui, {
+        statPeriod: byId('statPeriod'), statPeriodUnit: byId('statPeriodUnit'), statPeriodMark: byId('statPeriodMark'),
+        statPeriodBox: byId('statPeriodBox'), statEcc: byId('statEcc')
+    });
+    const statBox = (el) => (el ? el.closest('.stats-box') : null);
+    const setTitle = (el, t) => { if (el && el.title !== t) el.title = t; };
+
+    // The period shown is the one measured over the body's last full orbit once it has gone round
+    // (marked with a tick), and until then the period of the two-body orbit it is on now, worked out
+    // from its speed and distance (Kepler's 3rd law). They agree for a lone planet; with other bodies
+    // pulling, the measured one is the true time round. While a body is dragged or aimed it is the
+    // orbit it would have if let go now. The heaviest body orbits nothing, unless it is one of a
+    // binary pair: then both stars share the pair's period.
+    function updateOrbitReadouts() {
+        const b = bodyById(selectedId);
+        let value = '–', unit = '', measured = false, ecc = '–';
+        let tip = 'Time for one orbit', where = 'the body it orbits', pull = 'Gravitational pull of the body it orbits: F = Gm₁m₂/r²';
+        if (b && bodies.length < 2) tip = 'On its own: it has nothing to orbit';
+        else if (b) {
+            const top = !b.primary || (b.primary.primary === b && b.m > b.primary.m);
+            const pr = b.held && !top ? predictLaunch(b) : null;
+            const p = pr ? pr.p : b.primary;
+            where = top ? 'the centre of mass' : theName(p);
+            pull = top ? 'Total gravitational pull of all the other bodies on it' : `Gravitational pull of ${theName(p)} on it: F = Gm₁m₂/r²`;
+            const el = pr ? pr.el : p ? elementsOf(b, p) : null;
+            const bound = el && el.bound && (pr || b.bound);
+            if (el) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
+            if (top && !p) {
+                tip = 'The heaviest body orbits nothing: it only wobbles round the centre of mass';
+            } else if (!bound) {
+                value = 'escaping';
+                tip = `Not bound to ${theName(p)}: it is going fast enough to escape, so it has no period`;
+            } else {
+                const live = fmtDuration(el.T, true);
+                const tr = !pr && b.track;
+                measured = !!(tr && tr.done > 0 && tr.pid === p.id);
+                const shown = measured ? fmtDuration(tr.T, true) : live;
+                const cut = shown.lastIndexOf(' ');
+                value = shown.slice(0, cut); unit = shown.slice(cut + 1);
+                const what = top ? `${b.name} and ${p.name} to go round each other` : `one orbit of ${theName(p)}`;
+                if (pr) tip = `The period it would have round ${theName(p)} if you let go now`;
+                else if (measured) tip = `Time for ${what}, measured over the last one (${tr.done} ${tr.done === 1 ? 'orbit' : 'orbits'} so far). From its present speed and distance: ${live}`;
+                else tip = `Time for ${what}, worked out from its present speed and distance. Measured once it has gone round`;
+                tip += `. Eccentricity ${el.e.toFixed(3)}`;
+            }
+        }
+        setText(ui.statPeriod, value);
+        setText(ui.statPeriodUnit, unit);
+        if (ui.statPeriodMark && ui.statPeriodMark.hidden === measured) ui.statPeriodMark.hidden = !measured;
+        setText(ui.statEcc, ecc);
+        setTitle(ui.statPeriodBox, tip);
+        setTitle(statBox(ui.statDist), `Distance from ${where}`);
+        setTitle(statBox(ui.statSpeed), `Speed relative to ${where}`);
+        setTitle(statBox(ui.statForce), pull);
+    }
+
+    // ------------------------------------------------------------------
+    // Time controls. The speed slider steps through friendly speeds on a log scale, from a hundredth of
+    // normal (to watch a close pass) to a hundred times (to see thousands of years of a three-star
+    // dance), and a caption says what the speed means in the scene's own time. When the computer
+    // can't keep up, the note on the canvas gives the speed actually reached. While paused, the step
+    // button (or the "." key) moves on by a moment.
+    // ------------------------------------------------------------------
+    const SPEED_STOPS = [0.01, 0.02, 0.03, 0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 1, 1.5, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100];
+    const STEP_FRAME = 1 / 60;            // real seconds of motion per step: one 60 fps frame
+    Object.assign(ui, { speedNote: byId('speedNote'), step: byId('stepBtn') });
+    let speedFlash = 0;                   // until when (ms) the canvas shows the speed after a key changed it
+    let captionKey = '';
+
+    // A speed as shown: 0.01, 0.15, 1.5, 20, 100
+    const fmtFactor = (v) => String(v >= 10 ? Math.round(v) : +v.toPrecision(2));
+    // Two significant figures, with thousands separated: 0.05, 4.6, 17, 20,000
+    const fig2 = (x) => (x >= 100 ? Math.round(+x.toPrecision(2)).toLocaleString('en-US') : String(+x.toPrecision(2)));
+
+    // What a speed means in the scene's own time: "1 yr every 6 s", "4.6 days a second", "0.05 s a second"
+    function speedCaption(speed) {
+        const perSecond = speed * rate();   // simulated years per real second
+        if (timeInSeconds()) {
+            const s = perSecond * YEAR_S;
+            return s >= 0.01 ? `${fig2(s)} s a second` : `${fig2(s * 1000)} ms a second`;
+        }
+        const days = timeUnit() === 'd';
+        const v = perSecond * (days ? DAYS_PER_YEAR : 1);
+        if (+v.toPrecision(2) >= 1) return `${fig2(v)} ${!days ? 'yr' : fig2(v) === '1' ? 'day' : 'days'} a second`;
+        // Slower than one a second: how long one year (or day) takes to watch
+        const wait = 1 / v;
+        const every = wait < 99.5 ? `${fig2(wait)} s` : wait < 5400 ? `${fig2(wait / 60)} min` : `${fig2(wait / 3600)} hours`;
+        return `1 ${days ? 'day' : 'yr'} every ${every}`;
+    }
+
+    // The slider stop nearest a speed (on the log scale)
+    function nearestStop(v) {
+        let best = 0;
+        for (let i = 1; i < SPEED_STOPS.length; i++) {
+            if (Math.abs(Math.log(SPEED_STOPS[i] / v)) < Math.abs(Math.log(SPEED_STOPS[best] / v))) best = i;
+        }
+        return best;
+    }
+
+    function showSpeed() {
+        const t = fmtFactor(settings.speed);
+        setText(ui.speedVal, t);
+        if (ui.speed) ui.speed.setAttribute('aria-valuetext', `${t} times`);
+        captionKey = '';
+    }
+
+    // Any speed (the slider shows the nearest stop)
+    function setSpeedValue(v) {
+        v = +v;
+        if (!(v > 0) || !isFinite(v)) return;
+        settings.speed = v;
+        if (ui.speed) ui.speed.value = String(nearestStop(v));
+        showSpeed();
+    }
+
+    // The next stop up (dir 1) or down (-1) from the present speed, which needn't be a stop
+    function stepSpeed(dir) {
+        const v = settings.speed;
+        let next = null;
+        for (const s of SPEED_STOPS) {
+            if (dir > 0 && s > v * 1.0001) { next = s; break; }
+            if (dir < 0 && s < v * 0.9999) next = s;
+        }
+        if (next === null) return;
+        setSpeedValue(next);
+        speedFlash = performance.now() + 1500;
+    }
+
+    // The speed actually reached, measured from outside the integrator: simulated time gained
+    // (counting the time still owed to it) per real second, smoothed over about a third of a second,
+    // as a fraction of the chosen speed. It falls short when a frame can't fit all the steps it needs.
+    // Slow frames count too: a frame moves the simulation on by at most a tenth of a second, so the
+    // real time is taken from the frames' timestamps, not from the time each frame was allowed.
+    const pace = { t: 0, sim: 0, scene: null, ratio: 1, behind: false };
+    function measurePace() {
+        const now = lastFrameTs || performance.now();
+        const sim = simTime + acc;
+        const dReal = (now - pace.t) / 1000, dSim = sim - pace.sim;
+        const want = settings.speed * rate() * dReal;
+        // Start again after a pause, a new scene, a jump back in time or a long gap (a hidden tab)
+        const fresh = paused || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
+        pace.t = now; pace.sim = sim; pace.scene = scene;
+        if (fresh) { pace.ratio = 1; pace.behind = false; return; }
+        pace.ratio += (Math.min(dSim / want, 1.5) - pace.ratio) * (1 - Math.exp(-dReal / 0.35));
+        pace.behind = pace.ratio < (pace.behind ? 0.95 : 0.9);
+    }
+
+    // The note in the canvas's top-left corner: paused, the new speed just after a key changed it, or
+    // the speed actually reached when it falls short of the chosen one
+    function timeNotice() {
+        if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
+        if (paused) return 'Paused';
+        if (pace.behind) return `Slowed down: running at ${fmtFactor(pace.ratio * settings.speed)}×`;
+        return null;
+    }
+
+    // Every frame: the achieved speed, the caption (it changes with the scene) and the step button
+    function updateTimeControls() {
+        measurePace();
+        const key = `${settings.scene}|${settings.speed}`;
+        if (key !== captionKey) { captionKey = key; setText(ui.speedNote, speedCaption(settings.speed)); }
+        if (ui.step && ui.step.disabled === paused) ui.step.disabled = !paused;
+    }
+
+    // One step while paused: a 60 fps frame's worth of time at the chosen speed, in whole integrator
+    // steps (time short of a whole step is owed, as it is between frames). At least one step is taken,
+    // so even at the slowest speeds every press moves things on: if the frame's worth isn't enough,
+    // more time is added (doubling) until a step happens.
+    function stepForward() {
+        if (!paused) return false;
+        const t0 = simTime;
+        let dt = settings.speed * rate() * STEP_FRAME;
+        computePrimaries();
+        for (let i = 0; i < 60 && simTime === t0 && dt > 0; i++) {
+            advance(dt);
+            dt *= 2;
+        }
+        computePrimaries();
+        updateDrawnPositions();
+        return simTime > t0;
+    }
+
+    // [ and ] change the speed; "." steps (pausing first if it is running). Not while typing, nor with
+    // Ctrl or Cmd (browser shortcuts). Alt is allowed: on many keyboards [ and ] are typed with AltGr
+    // or Option (which on Windows also reports Ctrl).
+    function bindTimeControls() {
+        if (ui.step) {
+            ui.step.addEventListener('click', (e) => {
+                stepForward();
+                // After a click or tap (not a key press), Space should play again rather than press
+                // this button once more
+                if (e.detail) ui.step.blur();
+            });
+        }
+        window.addEventListener('keydown', (e) => {
+            const altGr = !!(e.getModifierState && e.getModifierState('AltGraph'));
+            if (e.defaultPrevented || e.metaKey || (e.ctrlKey && !altGr)) return;
+            const t = e.target;
+            const typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
+                (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color'].includes(t.type)));
+            if (typing) return;
+            if (e.key === '[' || e.key === ']') {
+                stepSpeed(e.key === ']' ? 1 : -1);
+                e.preventDefault();
+            } else if (e.key === '.') {
+                if (paused) stepForward(); else setPaused(true);
+                e.preventDefault();
+            }
+        });
+    }
 
     // ------------------------------------------------------------------
     // Popover (the body's menu): right-click or long-press a body
@@ -3907,8 +4124,8 @@
         bindCheck(ui.merge, 'merge');
         if (ui.speed) {
             const upd = () => {
-                settings.speed = parseFloat(ui.speed.value);
-                setText(ui.speedVal, settings.speed.toFixed(1));
+                settings.speed = SPEED_STOPS[clamp(parseInt(ui.speed.value, 10) || 0, 0, SPEED_STOPS.length - 1)];
+                showSpeed();
             };
             ui.speed.addEventListener('input', upd);
             upd();
@@ -4083,7 +4300,7 @@
             return simTime;
         },
         setPaused,
-        setSpeed(v) { settings.speed = v; if (ui.speed) { ui.speed.value = String(v); setText(ui.speedVal, v.toFixed(1)); } },
+        setSpeed(v) { setSpeedValue(v); },
         select(name) { const b = bodies.find((q) => q.name === name); if (b) selectBody(b.id); },
         lock(name) { const b = name ? bodies.find((q) => q.name === name) : null; setFrame(b ? b.id : null); },
         add(kind, x, y) { const b = addBody(kind, x, y); return b ? bodyInfo(b) : null; },
@@ -4152,6 +4369,29 @@
         },
         settings
     };
+
+    // Time controls and the orbit readouts (see "Time controls" above): the speed stops, a step while
+    // paused, the speed actually reached, and what the info bar shows for the chosen body's orbit
+    Object.assign(window.orbitsSimulation, {
+        speedStops: () => SPEED_STOPS.slice(),
+        stepForward,
+        timeInfo() {
+            return {
+                speed: settings.speed, stop: ui.speed ? +ui.speed.value : null, shown: ui.speedVal ? ui.speedVal.textContent : null,
+                caption: speedCaption(settings.speed), achieved: pace.ratio * settings.speed, behind: pace.behind,
+                notice: timeNotice(), stepYears: settings.speed * rate() * STEP_FRAME
+            };
+        },
+        orbitReadout() {
+            updateOrbitReadouts();
+            const txt = (el) => (el ? el.textContent : null);
+            return {
+                period: txt(ui.statPeriod), unit: txt(ui.statPeriodUnit), measured: !!(ui.statPeriodMark && !ui.statPeriodMark.hidden),
+                ecc: txt(ui.statEcc), title: ui.statPeriodBox ? ui.statPeriodBox.title : null
+            };
+        }
+    });
+    bindTimeControls();
 
     // ------------------------------------------------------------------
     // Start
