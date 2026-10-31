@@ -650,14 +650,15 @@
         const w = pillWidth(f, unit, opts.template, compact);
         const x0 = Math.round(cx - w / 2), y0 = Math.round(cy - ps.h / 2);
         const flash = opts.flash || 0;
+        const baseAlpha = ctx.globalAlpha;   // the caller may be fading the whole label
         roundRectPath(x0 + 0.5, y0 + 0.5, w - 1, ps.h - 1, ps.h / 2);
         ctx.fillStyle = pal.pillBg;
         ctx.fill();
         ctx.lineWidth = 1 + flash;
         ctx.strokeStyle = flash > 0.02 ? opts.color : (opts.edge || pal.pillEdge);
-        ctx.globalAlpha = flash > 0.02 ? 0.4 + 0.6 * flash : 1;
+        ctx.globalAlpha = baseAlpha * (flash > 0.02 ? 0.4 + 0.6 * flash : 1);
         ctx.stroke();
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = baseAlpha;
         if (!compact) {
             // Clock face
             const r = ps.h * 0.31;
@@ -1124,32 +1125,55 @@
 
             if (c.moving) drawVelocity(xs + dir * (halfLen + 10), y, dir, arrowLen, f, S.v);
 
-            // Name and clock above the craft
+            // Name and clock above the craft, with the clocks near each end beside them (simultaneity).
+            // While the moving craft crosses an edge the whole group slides along to stay inside the canvas,
+            // and fades out as the craft itself leaves.
             const phase = c.clock / LC.TICK;
-            const lw = drawCraftLabel(xs, labelY, name, textColor, fmtNum(c.clock), 's', { f, color, phase, flash });
-
-            // Simultaneity: clocks near each end, synchronised in the craft's own frame. Measured from a frame
-            // where it moves at u, a clock a distance ξ (own frame) towards the front reads u·ξ/c² less.
+            const lw = labelW;
+            const pw = pillWidth(f, 's', '00.0', true);
+            const endOff = [-1, 1].map((side) => side * Math.max(LC.END * kx, lw / 2 + 8 + pw / 2));
+            const groupHalf = S.showSync ? Math.max(lw / 2, endOff[1] + pw / 2) : lw / 2;
+            let xl = xs;
+            let alpha = 1;
+            if (c.moving) {
+                const margin = 6;
+                xl = 2 * (groupHalf + margin) <= viewW ? clamp(xs, groupHalf + margin, viewW - groupHalf - margin) : viewW / 2;
+                const span = Math.max(1, 2 * halfLen);
+                const seen = clamp((Math.min(xs + halfLen, viewW) - Math.max(xs - halfLen, 0)) / span, 0, 1);
+                alpha = clamp((seen - 0.15) / 0.35, 0, 1);
+            }
+            if (alpha > 0) {
+                ctx.globalAlpha = alpha;
+                drawCraftLabel(xl, labelY, name, textColor, fmtNum(c.clock), 's', { f, color, phase, flash });
+                // Clocks near each end, synchronised in the craft's own frame. Measured from a frame where it
+                // moves at u, a clock a distance ξ (own frame) towards the front reads u·ξ/c² less.
+                if (S.showSync) {
+                    [-1, 1].forEach((side, i) => {
+                        const xi = side * LC.END;
+                        const reading = c.clock - c.u * xi;
+                        const xe = xs + xi * kx;
+                        const xp = xl + endOff[i];
+                        ctx.strokeStyle = pal.faint;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(xp, labelY + lay.ps.h / 2);
+                        ctx.lineTo(xe, y - 0.06 * k);
+                        ctx.stroke();
+                        drawPill(xp, labelY, fmtNum(Math.max(0, reading)), 's', { f, color, edge: pal.faint, compact: true, template: '00.0' });
+                    });
+                }
+                ctx.globalAlpha = 1;
+            }
             if (S.showSync) {
-                const pw = pillWidth(f, 's', '00.0', true);
+                // Where the end clocks are on the craft
                 for (const side of [-1, 1]) {
-                    const xi = side * LC.END;
-                    const reading = c.clock - c.u * xi;
-                    const xe = xs + xi * kx;
-                    const xp = xs + side * Math.max(Math.abs(xi * kx), lw / 2 + 8 + pw / 2);
-                    ctx.strokeStyle = pal.faint;
-                    ctx.lineWidth = 1;
                     ctx.beginPath();
-                    ctx.moveTo(xp, labelY + lay.ps.h / 2);
-                    ctx.lineTo(xe, y - 0.06 * k);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.arc(xe, y, Math.max(2.5, k * 0.018), 0, TAU);
+                    ctx.arc(xs + side * LC.END * kx, y, Math.max(2.5, k * 0.018), 0, TAU);
                     ctx.fillStyle = pal.text;
                     ctx.fill();
                     ctx.strokeStyle = pal.edge;
+                    ctx.lineWidth = 1;
                     ctx.stroke();
-                    drawPill(xp, labelY, fmtNum(Math.max(0, reading)), 's', { f, color, edge: pal.faint, compact: true, template: '00.0' });
                 }
             }
 
