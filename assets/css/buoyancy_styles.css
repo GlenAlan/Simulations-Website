@@ -1,57 +1,70 @@
 /* --- Buoyancy simulation page styles (loaded after simulation_styles.css) --- */
 
-/* ---------- Drawing toolbar under the tank ---------- */
+.buoyancy-sim {
+    --buoy-btn: 34px;                                   /* tool button size */
+    --buoy-side-w: calc(4 * var(--buoy-btn) + 23px);    /* tool column beside the canvas */
+    --buoy-side-gap: 8px;
+}
+
+@media (pointer: coarse) {
+    .buoyancy-sim {
+        --buoy-btn: 40px;
+    }
+}
+
+/* ---------- Drawing toolbar ----------
+   Portrait / narrow: under the tank, [Draw | Drop] size undo clear / materials tools / hint.
+   Landscape: a column of tools beside the tank (see the media query further down), so the tank
+   keeps the full height of the screen. */
 .buoy-toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.35em 0.6em;
+    gap: 6px 10px;
     margin-top: 0.5em;
-    padding: 0.4em 0.5em;
-    background-color: var(--color-bg-subtle);
+    padding: 5px 6px;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: var(--sim-radius, 6px);
     font-size: 0.85em;
     line-height: 1.3;
-    min-height: 3.4em;
-    box-sizing: border-box;
 }
 
 .buoy-group {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 0.25em;
+    gap: 3px;
 }
 
 .buoy-toolbar button {
     -webkit-appearance: none;
     appearance: none;
-    height: 2.3em;
-    min-width: 2.3em;
-    padding: 0 0.55em;
+    height: var(--buoy-btn);
+    min-width: var(--buoy-btn);
+    padding: 0;
     margin: 0;
     line-height: 1;
-    font-size: 0.9em;
+    font-size: 0.95em;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: none;
+    color: var(--color-text) !important;
     border-radius: 4px;
     box-shadow: inset 0 0 0 1px var(--color-border);
     background-color: var(--color-bg);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.35em;
+    gap: 0.45em;
     white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.buoy-toolbar button[hidden] {
-    display: none;
-}
-
-.buoy-toolbar button:hover {
-    box-shadow: inset 0 0 0 1px var(--color-accent);
+@media (hover: hover) {
+    .buoy-toolbar button:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
 }
 
 .buoy-toolbar button.is-active {
@@ -64,182 +77,293 @@
     outline-offset: 1px;
 }
 
-.buoy-toolbar .buoy-primary {
-    background-color: var(--color-accent);
-    color: #ffffff !important;
-    box-shadow: none;
-    padding: 0 0.9em;
-}
-
-.buoy-toolbar .buoy-primary:hover {
-    background-color: var(--color-accent-active);
-    color: #ffffff !important;
-    box-shadow: none;
-}
-
 .buoy-toolbar .icon:before {
     line-height: 1;
 }
 
-/* material swatches */
-.buoy-mat {
-    padding: 0 0.45em 0 0.35em !important;
+/* Draw / Drop: a segmented switch that shows which mode is on */
+.buoy-mode {
+    display: flex;
+    flex: 0 0 auto;
+    order: 1;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.buoy-toolbar .buoy-mode-btn {
+    flex: 1 1 0;
+    padding: 0 0.85em;
+    box-shadow: none;
+    background-color: transparent;
+}
+
+.buoy-toolbar .buoy-mode-btn:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+.buoy-toolbar .buoy-mode-btn:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+.buoy-toolbar .buoy-mode-btn[aria-pressed="true"] {
+    background-color: var(--color-accent);
+    color: #ffffff !important;
+    box-shadow: none;
+}
+
+@media (hover: hover) {
+    .buoy-toolbar .buoy-mode-btn[aria-pressed="true"]:hover {
+        background-color: var(--color-accent-active);
+        box-shadow: none;
+    }
+}
+
+/* Material swatches and drawing tools: dimmed while the object is being simulated (picking one
+   goes back to drawing) */
+.buoy-mats { order: 5; }
+.buoy-tools { order: 6; }
+.buoy-size { order: 2; }
+.buoy-edit { order: 3; margin-left: auto; }
+.buoy-break { order: 4; flex-basis: 100%; height: 0; }
+
+.buoy-toolbar.is-sim .buoy-mats,
+.buoy-toolbar.is-sim .buoy-tools,
+.buoy-toolbar.is-sim .buoy-size,
+.buoy-toolbar.is-sim #undoBtn {
+    opacity: 0.55;
+}
+
+@media (hover: hover) {
+    .buoy-toolbar.is-sim .buoy-mats:hover,
+    .buoy-toolbar.is-sim .buoy-tools:hover,
+    .buoy-toolbar.is-sim .buoy-size:hover {
+        opacity: 1;
+    }
+}
+
+.buoy-toolbar .buoy-mat {
+    padding: 4px;
+}
+
+.buoy-toolbar .buoy-mat.is-active {
+    box-shadow: inset 0 0 0 2px var(--color-accent), inset 0 0 0 4px var(--color-bg);
 }
 
 .buoy-swatch {
-    display: inline-block;
-    width: 1.05em;
-    height: 1.05em;
+    display: block;
+    width: 100%;
+    height: 100%;
     border-radius: 3px;
     border: 1px solid rgba(0, 0, 0, 0.45);
-    flex-shrink: 0;
-    vertical-align: middle;
-}
-
-.buoy-swatch-air {
-    background-color: #e6f0f8;
-    background-image: repeating-linear-gradient(-45deg, rgba(70, 105, 140, 0.45) 0 1.5px, transparent 1.5px 5px);
-}
-
-html.dark-mode .buoy-swatch-air {
-    background-color: #2b3641;
-    background-image: repeating-linear-gradient(-45deg, rgba(170, 205, 235, 0.5) 0 1.5px, transparent 1.5px 5px);
-}
-
-.buoy-mat-rho {
-    display: none;
+    box-sizing: border-box;
 }
 
 .buoy-size {
-    gap: 0.4em;
-    font-weight: 700;
-    font-size: 0.9em;
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
     margin: 0;
+    font-size: 0;                /* the visible label is the select's own "3 cm"; it has an aria-label */
+}
+
+.buoy-toolbar select {
+    -webkit-appearance: none;
+    appearance: none;
+    width: auto;
+    height: var(--buoy-btn);
+    margin: 0;
+    padding: 0 1.9em 0 0.6em;
+    font-size: 0.8rem;
+    font-weight: 400;
+    line-height: normal;
     color: var(--color-text);
-}
-
-.buoy-size input[type="range"] {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 6.5em;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--color-border);
-    outline: none;
-    margin: 0;
-}
-
-.buoy-size input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--color-accent);
-    border: 2px solid var(--color-bg-alt);
+    background-color: var(--color-bg);
+    background-position: calc(100% - 0.55em) center;
+    background-size: 0.85em;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    box-shadow: none;
     cursor: pointer;
 }
 
-.buoy-size input[type="range"]::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--color-accent);
-    border: 2px solid var(--color-bg-alt);
-    cursor: pointer;
-}
-
-#brushSizeVal {
-    min-width: 3.2em;
-    color: var(--color-accent);
-    font-weight: 700;
-}
-
-.buoy-actions {
-    margin-left: auto;
+.buoy-toolbar select:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
 }
 
 .buoy-hint {
-    flex-basis: 100%;
-    margin: 0;
-    font-size: 0.9em;
-    opacity: 0.8;
-    min-height: 1.3em;
-}
-
-/* in simulation mode only the action buttons and the hint remain */
-.buoy-toolbar.is-sim .buoy-draw-only {
-    display: none;
-}
-
-/* ---------- Info bar ---------- */
-.buoyancy-sim .sim-info-bar .stats-container {
-    flex: 1 1 0;
+    order: 7;
+    flex: 1 1 100%;
     min-width: 0;
-}
-
-.buoyancy-sim .stats-box span {
+    margin: 0;
+    padding: 0 0.15em;
+    font-size: 0.95em;
+    line-height: 1.35;
+    opacity: 0.85;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.buoy-prediction {
-    flex-basis: 100%;
-    margin: 0.15em 0 0 0;
-    padding: 0 0.25em;
-    font-size: 0.85em;
-    line-height: 1.45;
+.buoy-hint strong {
+    font-weight: 700;
+}
+
+/* Phones: materials and tools each fill a row */
+@media (max-width: 480px) {
+    .buoy-mats,
+    .buoy-tools {
+        flex: 1 1 100%;
+    }
+
+    .buoy-toolbar .buoy-mats button,
+    .buoy-toolbar .buoy-tools button {
+        flex: 1 1 0;
+        min-width: 0;
+        max-width: 52px;
+    }
+
+    .buoy-mats,
+    .buoy-tools {
+        justify-content: space-between;
+    }
+
+    /* two fixed lines, so a longer hint never changes the toolbar's height */
+    .buoy-hint {
+        white-space: normal;
+        height: 2.7em;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+    }
+}
+
+/* ---------- Landscape: tools in a column beside the tank ----------
+   The column has a fixed width, so the display container is made that much wider than the
+   canvas (which the shared layout sizes from the screen height). */
+@media (orientation: landscape) and (min-width: 640px) {
+    .buoyancy-sim .simulation-display-container {
+        display: grid;
+        grid-template-columns: var(--buoy-side-w) minmax(0, 1fr);
+        grid-template-areas: "tools canvas" "info info";
+        column-gap: var(--buoy-side-gap);
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--buoy-side-w) + var(--buoy-side-gap)));
+    }
+
+    .buoyancy-sim .sim-canvas-wrapper {
+        grid-area: canvas;
+        min-width: 0;
+    }
+
+    .buoyancy-sim .sim-info-bar {
+        grid-area: info;
+    }
+
+    .buoy-toolbar {
+        grid-area: tools;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-content: start;
+        gap: 8px 3px;
+        margin-top: 0;
+        min-height: 0;
+        overflow: hidden;
+        contain: size;          /* as tall as the canvas beside it, never taller */
+    }
+
+    .buoy-mode,
+    .buoy-mats,
+    .buoy-tools,
+    .buoy-hint {
+        grid-column: 1 / -1;
+    }
+
+    .buoy-mats,
+    .buoy-tools {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 3px;
+    }
+
+    .buoy-toolbar .buoy-mats button,
+    .buoy-toolbar .buoy-tools button {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .buoy-toolbar .buoy-mode-btn {
+        min-width: 0;
+        padding: 0 0.4em;
+        gap: 0.35em;
+    }
+
+    .buoy-size {
+        order: 7;
+        grid-column: 1 / span 2;
+    }
+
+    .buoy-size select {
+        width: 100%;
+    }
+
+    .buoy-edit {
+        order: 8;
+        grid-column: 3 / span 2;
+        margin-left: 0;
+    }
+
+    .buoy-edit button {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .buoy-break {
+        display: none;
+    }
+
+    .buoy-hint {
+        order: 9;
+        white-space: normal;
+        font-size: 0.9em;
+        line-height: 1.4;
+        padding: 2px 2px 0;
+        overflow: hidden;
+    }
+
+    .buoy-hint strong {
+        display: block;
+    }
+
+    /* Phones held sideways: no room for the hint beside the tools */
+    @media (max-height: 540px) {
+        .buoy-hint {
+            display: none;
+        }
+    }
+
+    /* Fullscreen: the grid fills the space above the fixed info bar */
+    body.sim-fullscreen-active .buoyancy-sim .simulation-display-container {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "tools canvas";
+        width: 100%;
+    }
+
+    body.sim-fullscreen-active .buoyancy-sim .sim-canvas-wrapper {
+        height: 100%;
+    }
+
 }
 
 /* ---------- Controls panel ---------- */
-.buoyancy-sim .buoy-first-group {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
-}
-
-.buoyancy-sim .sim-control-group > label {
-    display: block;
-    margin-bottom: 0.6em;
-}
-
-.buoyancy-sim .sim-select-container select {
-    font-size: 0.85em;
-    height: 2.6em;
-}
-
-/* toggle buttons: hide main.css's checkbox square inside the button-like labels */
-.buoyancy-sim .buoy-toggle-group {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.4em;
-}
-
-.buoyancy-sim .buoy-toggle-group input[type="checkbox"] + label {
-    padding: 0.4em 0.75em;
-    font-weight: 700;
-    flex: 1 1 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4em;
-    margin: 0;
-    opacity: 0.75;
-}
-
-.buoyancy-sim .buoy-toggle-group input[type="checkbox"] + label:before {
-    display: none;
-}
-
-.buoyancy-sim .buoy-toggle-group input[type="checkbox"]:checked + label {
-    opacity: 1;
-}
-
 .buoy-key {
     display: inline-block;
     width: 0.9em;
     height: 0.9em;
     border-radius: 2px;
     border: 1px solid rgba(0, 0, 0, 0.4);
+    flex: 0 0 auto;
 }
 
 .buoy-key-net {
@@ -250,146 +374,7 @@ html.dark-mode .buoy-key-net {
     background: #ffffff;
 }
 
-/* ---------- Description ---------- */
-.buoyancy-sim .description-area h4 {
-    margin: 1.4em 0 0.4em 0;
-    font-size: 0.85em;
-    letter-spacing: 0.12em;
-}
-
-.buoyancy-sim .description-area ul {
-    font-size: 0.95em;
-}
-
-.buoy-material-list {
-    list-style: none;
-    padding-left: 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(14em, 1fr));
-    gap: 0.2em 1em;
-}
-
-.buoy-material-list li {
-    display: flex;
-    align-items: center;
-    gap: 0.5em;
-    padding-left: 0;
-}
-
-/* ---------- Fullscreen: make room for the toolbar and the taller info bar ----------
-   --sim-fullscreen-info-bar-height is measured by simulation_ui.js, --buoy-toolbar-h by buoyancy_core.js */
-body.sim-fullscreen-active .buoyancy-sim {
-    --buoy-reserved-h: calc(var(--sim-fullscreen-info-bar-height, 110px) + var(--buoy-toolbar-h, 70px) + 34px);
-}
-
-body.sim-fullscreen-active .buoyancy-sim .simulation-main-content {
-    padding-bottom: calc(var(--sim-fullscreen-info-bar-height, 110px) + 8px);
-}
-
-body.sim-fullscreen-active .buoyancy-sim .simulation-display-container {
-    flex-direction: column;
-}
-
-body.sim-fullscreen-active .buoyancy-sim .sim-canvas-wrapper {
-    width: min(calc(100vw - 100px), calc((100vh - var(--buoy-reserved-h)) * 2));
-    max-width: calc(100vw - 50px);
-}
-
-/* The toolbar's width must not depend on the canvas size: the canvas height depends on the
-   toolbar's height, so tying the two together could feed back and squash the canvas. */
-body.sim-fullscreen-active .buoyancy-sim .buoy-toolbar {
-    width: calc(100vw - 100px);
-    max-width: 1100px;
-}
-
-body.sim-fullscreen-active .buoyancy-sim .sim-canvas-wrapper {
-    height: min(calc(100vh - var(--buoy-reserved-h)), calc((100vw - 100px) / 2));
-    max-height: calc(100vh - var(--buoy-reserved-h));
-}
-
-body.sim-fullscreen-active.sim-panel-active .buoyancy-sim .sim-canvas-wrapper {
-    width: min(calc(100vw - 100px - var(--sim-panel-width)), calc((100vh - var(--buoy-reserved-h)) * 2));
-    max-width: calc(100vw - 50px - var(--sim-panel-width));
-}
-
-body.sim-fullscreen-active.sim-panel-active .buoyancy-sim .buoy-toolbar {
-    width: calc(100vw - 100px - var(--sim-panel-width));
-}
-
-body.sim-fullscreen-active.sim-panel-active .buoyancy-sim .sim-canvas-wrapper {
-    height: min(calc(100vh - var(--buoy-reserved-h)), calc((100vw - 100px - var(--sim-panel-width)) / 2));
-}
-
-body.sim-fullscreen-active .buoyancy-sim .buoy-toolbar {
-    flex-shrink: 0;
-}
-
-body.sim-fullscreen-active .buoyancy-sim .sim-info-bar.fullscreen-style {
-    padding: 6px 12px;
-}
-
-/* ---------- Small screens ---------- */
-@media (max-width: 768px) {
-    .buoy-mat-name {
-        display: none;
-    }
-
-    .buoy-toolbar {
-        font-size: 0.8em;
-    }
-
-    .buoy-toolbar button {
-        height: 2.6em;
-        min-width: 2.6em;
-    }
-
-    .buoy-size input[type="range"] {
-        width: 5em;
-    }
-
-    body.sim-fullscreen-active .buoyancy-sim {
-        --buoy-reserved-h: calc(var(--sim-fullscreen-info-bar-height, 140px) + var(--buoy-toolbar-h, 90px) + 20px);
-    }
-
-    body.sim-fullscreen-active .buoyancy-sim .simulation-main-content {
-        padding: 5px 5px calc(var(--sim-fullscreen-info-bar-height, 140px) + 5px) 5px;
-    }
-
-    /* the panel covers the whole width here, so the tank keeps its size behind it */
-    body.sim-fullscreen-active .buoyancy-sim .sim-canvas-wrapper,
-    body.sim-fullscreen-active.sim-panel-active .buoyancy-sim .sim-canvas-wrapper {
-        width: min(calc(100vw - 60px), calc((100vh - var(--buoy-reserved-h)) * 2));
-        max-width: calc(100vw - 60px);
-    }
-
-    body.sim-fullscreen-active .buoyancy-sim .buoy-toolbar,
-    body.sim-fullscreen-active.sim-panel-active .buoyancy-sim .buoy-toolbar {
-        width: calc(100vw - 10px);
-        max-width: none;
-    }
-
-    body.sim-fullscreen-active .buoyancy-sim .sim-canvas-wrapper,
-    body.sim-fullscreen-active.sim-panel-active .buoyancy-sim .sim-canvas-wrapper {
-        height: min(calc(100vh - var(--buoy-reserved-h)), calc((100vw - 60px) / 2));
-        max-height: calc(100vh - var(--buoy-reserved-h));
-    }
-
-    body.sim-fullscreen-active .buoyancy-sim .stats-box {
-        font-size: 0.75em;
-        padding: 0.15em 0.35em;
-    }
-
-    body.sim-fullscreen-active .buoyancy-sim .buoy-prediction {
-        font-size: 0.75em;
-    }
-}
-
-@media (max-width: 480px) {
-    .buoyancy-sim .stats-box {
-        font-size: 0.78em;
-    }
-
-    .buoy-actions {
-        margin-left: 0;
-    }
+.buoy-gravity-name {
+    opacity: 0.75;
+    font-weight: 400;
 }

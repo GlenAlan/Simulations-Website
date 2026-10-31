@@ -2,7 +2,7 @@
  * Buoyancy Simulation - simulations.science
  *
  * The user draws the cross-section of an object on a 1 cm grid using several
- * materials, then drops it into a 2 m x 1 m tank of liquid. The drawing is a
+ * materials, then drops it into a 2.4 m x 1.5 m tank of liquid. The drawing is a
  * slice of a prism 10 cm deep (the tank is 10 cm deep too), so every mass,
  * volume and force is in real SI units.
  *
@@ -16,10 +16,14 @@
  *    slope adds the horizontal part of the pressure force.
  *  - Empty cells fully enclosed by material are sealed air pockets. Empty cells
  *    inside the object's convex hull form "open cavities" (the inside of a boat
- *    or cup). Liquid only enters a cavity cell when it is below the outside
- *    surface, connected to the outside liquid through submerged cells and its
- *    air can escape upwards; liquid drains out downhill. So an open steel hull
- *    floats until it is swamped, and an upside-down cup traps air.
+ *    or cup). Each cavity holds a volume of liquid with a level, world-horizontal
+ *    free surface (solved every sub-step for the current pose), so its mass and
+ *    moving centre of mass feed straight into the rigid-body dynamics. Liquid
+ *    runs in and out through the cavity's openings at a rate set by the head
+ *    difference (orifice flow ~ sqrt(2 g dh), limited to weir flow ~ H^1.5 over
+ *    a rim), but only while air can get out (or in): an upside-down cup keeps its
+ *    trapped air until it tips and the air bubbles out. Volume is conserved: what
+ *    the object holds is missing from the tank.
  *  - Drag on every exposed face: quadratic pressure drag on faces moving into
  *    the fluid, laminar skin friction and a viscous term, integrated implicitly,
  *    plus the added mass / inertia of the liquid that has to be pushed aside.
@@ -43,8 +47,8 @@
     // ------------------------------------------------------------------
     // Constants (SI units; y points up; origin at the bottom-left of the tank)
     // ------------------------------------------------------------------
-    const TANK_W = 2.0;
-    const TANK_H = 1.0;
+    const TANK_W = 2.4;
+    const TANK_H = 1.5;
     const DEPTH = 0.10;
     const CELL = 0.01;
     const GW = Math.round(TANK_W / CELL);
@@ -54,7 +58,7 @@
     const MAX_SUBSTEPS = 48;
     const RHO_AIR = 1.2;
     const MU_AIR = 1.8e-5;
-    const NCOL = 100;
+    const NCOL = 120;
     const DXC = TANK_W / NCOL;
     const NMODE = NCOL - 1;
     const CD_FRONT = 1.1;
@@ -66,10 +70,11 @@
     const SPECULATIVE = 0.002;
     const CONTACT_ITERS = 8;
     const MAX_CONTACTS = 256;
-    const FILL_RATE = 20;
-    const DRAIN_RATE = 8;
-    const SETTLE_RATE = 15;
-    const LEVEL_EPS = 0.02 * CELL;
+    const CD_OPEN = 0.6;          // discharge coefficient of cavity openings
+    const BUBBLE_K = 0.35;        // trapped air escaping through a submerged opening (relative to orifice flow)
+    const GLUG_K = 0.5;           // liquid leaving a cavity that air can only enter through the same opening
+    const AIR_EPS = 0.1 * CELL;   // air must reach this far past an opening's top edge to get through
+    const WATER_SPIN = 0.5;       // share of the held liquid's own moment of inertia that turns with the hull
     const BRUSH_SIZES = [1, 2, 3, 4, 6, 8, 12, 16];
     const T_EXT = 0, T_MAT = 1, T_SEALED = 2, T_OPEN = 3;
     const K_SEALED = 8;
@@ -120,10 +125,10 @@
         rotation: true,
         speed: 1,
         gravity: 9.81,
-        liquidDepth: 0.5,
-        arrows: { weight: true, buoyancy: true, drag: false, contact: false, net: true },
-        markers: true,
-        material: MAT_ID.steel,
+        liquidDepth: 0.6,
+        arrows: { weight: true, buoyancy: true, drag: false, contact: false, net: false },
+        markers: false,
+        material: MAT_ID.pine,
         tool: 'brush',
         brushIndex: 2
     };
@@ -167,6 +172,10 @@
     // scratch for the hot loop (no allocations while stepping)
     const cornX = new Float64Array(4), cornY = new Float64Array(4), cornG = new Float64Array(4);
     const polyX = new Float64Array(8), polyY = new Float64Array(8);
+    let clipA = 0, clipCX = 0, clipCY = 0;                  // result of clipCell()
+    let gExt = 0, gRampA = 0, gWMax = 0, gE2 = 0;           // a rotated cell against a level line
+    let cavW = 0;                                           // d(area)/d(level) from cavArea()
+    let prevVX = 0, prevVY = 0, accX = 0, accY = 0;         // smoothed body acceleration (slosh)
     const cRX = new Float64Array(MAX_CONTACTS), cRY = new Float64Array(MAX_CONTACTS);
     const cNX = new Float64Array(MAX_CONTACTS), cNY = new Float64Array(MAX_CONTACTS);
     const cMN = new Float64Array(MAX_CONTACTS), cMT = new Float64Array(MAX_CONTACTS);
@@ -414,21 +423,29 @@
         const hullX = new Float64Array(nh), hullY = new Float64Array(nh);
         for (let h = 0; h < nh; h++) { hullX[h] = hull[h][0] * CELL - comLX; hullY[h] = hull[h][1] * CELL - comLY; }
 
-        // 8. open-cavity bookkeeping
-        const openCells = [], pairs = [], region = [];
-        const inRegion = new Uint8Array(NL);
-        for (let li = 0; li < NL; li++) {
-            if (ltype[li] !== T_OPEN) continue;
-            openCells.push(lcell[li]);
-            if (!inRegion[li]) { inRegion[li] = 1; region.push(li); }
-            const nbs = [li - 1, li + 1, li - LW, li + LW];
-            for (let q = 0; q < 4; q++) {
-                const nb = nbs[q];
-                if (ltype[nb] === T_EXT) {
-                    pairs.push(li, nb);
-                    if (!inRegion[nb]) { inRegion[nb] = 1; region.push(nb); }
+        // 8. open cavities: 4-connected groups of open cells, and the faces where they meet the outside
+        const cavs = [];
+        const cavOf = new Int32Array(NL).fill(-1);
+        for (let li0 = 0; li0 < NL; li0++) {
+            if (ltype[li0] !== T_OPEN || cavOf[li0] >= 0) continue;
+            const id = cavs.length;
+            qh = 0; qt = 0;
+            queue[qt++] = li0; cavOf[li0] = id;
+            const faces = [];
+            while (qh < qt) {
+                const li = queue[qh++];
+                const bi = lcell[li];
+                for (let q = 0; q < 4; q++) {
+                    const dx = dirs[q][0], dy = dirs[q][1];
+                    const nb = li + dx + dy * LW;
+                    const tn = ltype[nb];
+                    if (tn === T_OPEN) { if (cavOf[nb] < 0) { cavOf[nb] = id; queue[qt++] = nb; } }
+                    else if (tn === T_EXT) faces.push(ox[bi] + dx * CELL * 0.5, oy[bi] + dy * CELL * 0.5, dx, dy);
                 }
             }
+            const cells = new Int32Array(qt);
+            for (let k = 0; k < qt; k++) cells[k] = lcell[queue[k]];
+            cavs.push(makeCavity(cells, Float64Array.from(faces)));
         }
 
         return {
@@ -438,50 +455,486 @@
             areaEnv: areaMat + areaSealed + areaBasin, matCount,
             nf, fox, foy, fnx, fny, nh, hullX, hullY,
             charLen: Math.max(0.02, Math.sqrt(areaMat + areaSealed + areaBasin)),
-            nOpen: openCells.length,
-            openCells: Int32Array.from(openCells),
-            openPairs: Int32Array.from(pairs),
-            cavRegion: Int32Array.from(region),
+            nOpen: areaOpen > 0 ? Math.round(areaOpen / CELL_A) : 0,
+            cavs,
             worldX: gc0 * CELL + comLX, worldY: gr0 * CELL + comLY,
-            // dynamic
-            water: new Float32Array(n),
-            waterShown: new Uint8Array(n),
-            waterMass: 0, waterMx: 0, waterMy: 0, waterInertia: 0, waterArea: 0, waterHeld: 0,
-            cy: null, csub: null, fR: null, fV: null, fD: null, queue: null,
-            img: null, imgKey: '', cavAirImg: null, cavWaterImg: null, cavKey: '', cavDirty: true
+            // liquid held in the cavities (body frame, about the dry centre of mass)
+            waterMass: 0, waterMx: 0, waterMy: 0, waterInertia: 0, waterArea: 0,
+            img: null, imgKey: ''
         };
     }
 
-    function prepareBodyDynamics(B) {
-        B.cy = new Float64Array(B.NL);
-        B.csub = new Uint8Array(B.NL);
-        B.fR = new Uint8Array(B.NL);
-        B.fV = new Uint8Array(B.NL);
-        B.fD = new Uint8Array(B.NL);
-        B.queue = new Int32Array(B.NL);
-        B.pocketMark = new Int32Array(B.NL);
-        B.order = new Int32Array(B.NL);
-        B.pocketGen = 0;
-        B.water.fill(0);
-        B.waterShown.fill(0);
-        updateWaterMass(B);
-        B.cavDirty = true;
+    function makeCavity(cells, faces) {
+        const nc = cells.length;
+        return {
+            cells, nc, area: nc * CELL_A, faces, nf: faces.length / 4,
+            Y: new Float64Array(nc),      // world height of each cell centre (current pose)
+            ymin: 0, ymax: 0, xmin: 0, xmax: 0, iLow: 0,
+            V: 0,                         // liquid held (m^2 of cross-section)
+            h: 0, Ws: 0, xs: 0,           // level, surface width, surface centre (world x)
+            m: 0, mx: 0, my: 0, I: 0,     // mass properties of the held liquid
+            qIn: 0, qOut: 0, vented: true,
+            // pouring stream (smoothed): flow, start point, direction, speed; +1 in, -1 out;
+            // mode 1 curtain (ends cX0,cY0 - cX1,cY1), 2 jet along the normal, 3 spill over a lip
+            sQ: 0, sX: 0, sY: 0, sNX: 0, sNY: -1, sV: 0, sDir: 0, sMode: 0,
+            cX0: 0, cY0: 0, cX1: 0, cY1: 0,
+            bubQ: 0, bubX: 0, bubY: 0,     // trapped air escaping (liquid flow it lets in) and where
+            // visual slosh and ripples of the inside surface
+            phi: 0, phiV: 0, rip: 0, ripT: 0,
+            path: null, pathKey: ''
+        };
     }
 
-    function updateWaterMass(B) {
-        const mCell = LIQUIDS[settings.liquid].rho * CELL_A * DEPTH;
-        let m = 0, mx = 0, my = 0, I = 0, area = 0;
-        const oc = B.openCells;
-        for (let q = 0; q < oc.length; q++) {
-            const i = oc[q];
-            const w = B.water[i];
-            if (w <= 0) continue;
-            const mm = w * mCell;
-            m += mm; mx += mm * B.ox[i]; my += mm * B.oy[i];
-            I += mm * (B.ox[i] * B.ox[i] + B.oy[i] * B.oy[i] + CELL_A / 6);
-            area += w * CELL_A;
+    function resetCavities(B) {
+        for (const cv of B.cavs) {
+            cv.V = 0; cv.h = -1; cv.m = cv.mx = cv.my = cv.I = 0;
+            cv.qIn = cv.qOut = 0; cv.vented = true;
+            cv.sQ = 0; cv.sDir = 0; cv.sMode = 0; cv.bubQ = 0; cv.phi = cv.phiV = cv.rip = 0;
         }
-        B.waterMass = m; B.waterMx = mx; B.waterMy = my; B.waterInertia = I; B.waterArea = area;
+        B.waterMass = B.waterMx = B.waterMy = B.waterInertia = B.waterArea = 0;
+    }
+
+    // ------------------------------------------------------------------
+    // Held liquid: level surface, flow through the openings, mass properties
+    // ------------------------------------------------------------------
+    // geometry of a cell rotated by the body angle, cut by a horizontal line
+    function setCellGeometry(c, s) {
+        const ac = Math.abs(c), as = Math.abs(s);
+        gExt = 0.5 * CELL * (ac + as);
+        gRampA = CELL * Math.min(ac, as);
+        gWMax = CELL / Math.max(ac, as);
+        gE2 = 2 * gExt;
+    }
+    // area of a rotated cell below a horizontal line that is tt above the cell's lowest corner
+    function rampArea(tt) {
+        if (gRampA < 1e-12) return gWMax * tt;
+        if (tt < gRampA) return gWMax * tt * tt / (2 * gRampA);
+        if (tt <= gE2 - gRampA) return gWMax * (tt - 0.5 * gRampA);
+        const u = gE2 - tt;
+        return CELL_A - gWMax * u * u / (2 * gRampA);
+    }
+    function rampWidth(tt) {
+        if (gRampA < 1e-12) return gWMax;
+        if (tt < gRampA) return gWMax * tt / gRampA;
+        if (tt <= gE2 - gRampA) return gWMax;
+        return gWMax * (gE2 - tt) / gRampA;
+    }
+    // Clips the current rotated cell (corners in cornX/cornY, relative to its centre) to the
+    // region below the line y = d + k x; sets clipA and the centroid offset clipCX/clipCY.
+    function clipCell(d, k) {
+        cornG[0] = d + k * cornX[0] - cornY[0];
+        cornG[1] = d + k * cornX[1] - cornY[1];
+        cornG[2] = d + k * cornX[2] - cornY[2];
+        cornG[3] = d + k * cornX[3] - cornY[3];
+        let m = 0;
+        for (let q = 0; q < 4; q++) {
+            const qn = (q + 1) & 3;
+            const gq = cornG[q], gn = cornG[qn];
+            if (gq >= 0) { polyX[m] = cornX[q]; polyY[m] = cornY[q]; m++; }
+            if ((gq >= 0) !== (gn >= 0)) {
+                const tt = gq / (gq - gn);
+                polyX[m] = cornX[q] + tt * (cornX[qn] - cornX[q]);
+                polyY[m] = cornY[q] + tt * (cornY[qn] - cornY[q]);
+                m++;
+            }
+        }
+        let a2 = 0, sx = 0, sy = 0;
+        for (let q = 0; q < m; q++) {
+            const qn = (q + 1 === m) ? 0 : q + 1;
+            const cr = polyX[q] * polyY[qn] - polyX[qn] * polyY[q];
+            a2 += cr;
+            sx += (polyX[q] + polyX[qn]) * cr;
+            sy += (polyY[q] + polyY[qn]) * cr;
+        }
+        if (a2 > 1e-14) { clipA = 0.5 * a2; clipCX = sx / (3 * a2); clipCY = sy / (3 * a2); }
+        else { clipA = 0; clipCX = 0; clipCY = 0; }
+    }
+    function setCorners(c, s) {
+        const hc = 0.5 * CELL;
+        cornX[0] = -hc * c + hc * s; cornY[0] = -hc * s - hc * c;
+        cornX[1] = hc * c + hc * s;  cornY[1] = hc * s - hc * c;
+        cornX[2] = hc * c - hc * s;  cornY[2] = hc * s + hc * c;
+        cornX[3] = -hc * c - hc * s; cornY[3] = -hc * s + hc * c;
+    }
+
+    // area of the cavity below the level h (and its derivative, the surface width, in cavW)
+    function cavArea(cv, h) {
+        const Y = cv.Y, n = cv.nc;
+        const top = h + gExt;
+        let A = 0, W = 0;
+        for (let k = 0; k < n; k++) {
+            const tt = top - Y[k];
+            if (tt <= 0) continue;
+            if (tt >= gE2) { A += CELL_A; continue; }
+            A += rampArea(tt); W += rampWidth(tt);
+        }
+        cavW = W;
+        return A;
+    }
+
+    // level of the held liquid for its volume (safeguarded Newton; starts from the last level)
+    function solveLevel(cv) {
+        const lo0 = cv.ymin - gExt, hi0 = cv.ymax + gExt;
+        if (cv.V <= 0) { cv.h = lo0; cv.Ws = 0; return; }
+        if (cv.V >= cv.area) { cv.h = hi0; cv.Ws = 0; return; }
+        let lo = lo0, hi = hi0;
+        let h = cv.h > lo && cv.h < hi ? cv.h : lo + (hi - lo) * cv.V / cv.area;
+        let W = 0;
+        for (let it = 0; it < 40; it++) {
+            const f = cavArea(cv, h) - cv.V;
+            W = cavW;
+            if (f > -1e-10 && f < 1e-10) break;
+            if (f > 0) hi = h; else lo = h;
+            let hn = W > 1e-9 ? h - f / W : 0.5 * (lo + hi);
+            if (!(hn > lo && hn < hi)) hn = 0.5 * (lo + hi);
+            h = hn;
+            if (hi - lo < 1e-10) break;
+        }
+        cv.h = h; cv.Ws = W;
+    }
+
+    // integral over a face (length CELL, spanning heights z0..z1) of sqrt(hu - max(z, hd)), z < hu
+    function faceFlow(z0, z1, hu, hd) {
+        if (hu <= z0) return 0;
+        const dz = z1 - z0;
+        if (dz < 1e-9) return CELL * Math.sqrt(hu - (z0 > hd ? z0 : hd));
+        const top = z1 < hu ? z1 : hu;
+        const sq = Math.sqrt(hu - hd);
+        // antiderivative of sqrt(hu - max(z, hd)) on z <= hu
+        const G = (z) => (z <= hd ? sq * z : sq * hd + (2 / 3) * (sq * sq * sq - Math.pow(hu - z, 1.5)));
+        return (G(top) - G(z0)) * CELL / dz;
+    }
+
+    // One sub-step for every cavity: level for the pose, exchange through the openings, mass properties
+    function updateCavities(dt) {
+        const B = body;
+        const cavs = B.cavs;
+        if (!cavs.length) return;
+        const c = Math.cos(st.th), s = Math.sin(st.th);
+        setCellGeometry(c, s);
+        setCorners(c, s);
+        const g = settings.gravity;
+        const kQ = CD_OPEN * Math.sqrt(2 * g);
+        const rhoD = LIQUIDS[settings.liquid].rho * DEPTH;
+        const x0 = st.x, y0 = st.y;
+        const OX = B.ox, OY = B.oy;
+        const hc = 0.5 * CELL;
+        const aS = 1 - Math.exp(-dt / 0.06);
+        let mT = 0, mxT = 0, myT = 0, IT = 0;
+        for (let ci = 0; ci < cavs.length; ci++) {
+            const cv = cavs[ci];
+            const cells = cv.cells, Y = cv.Y, n = cv.nc;
+            let ymin = Infinity, ymax = -Infinity, xmin = Infinity, xmax = -Infinity, iLow = 0;
+            for (let k = 0; k < n; k++) {
+                const bi = cells[k];
+                const yy = y0 + s * OX[bi] + c * OY[bi];
+                const xx = x0 + c * OX[bi] - s * OY[bi];
+                Y[k] = yy;
+                if (yy < ymin) { ymin = yy; iLow = k; }
+                if (yy > ymax) ymax = yy;
+                if (xx < xmin) xmin = xx;
+                if (xx > xmax) xmax = xx;
+            }
+            cv.ymin = ymin; cv.ymax = ymax; cv.xmin = xmin - gExt; cv.xmax = xmax + gExt; cv.iLow = iLow;
+            solveLevel(cv);
+
+            // ---- exchange with the tank through the openings ----
+            const hin = cv.h;
+            const full = cv.V >= cv.area * 0.9995, empty = cv.V <= 0;
+            let qIn = 0, qOut = 0, qOutAir = 0, dIn = 0, dOut = 0, bub = 0, bubA = 0, vented = false;
+            let wIX = 0, wIY = 0, wINX = 0, wINY = 0, wID = 0;
+            let wOX = 0, wOY = 0, wONX = 0, wONY = 0, wOD = 0;
+            let inX0 = Infinity, inY0 = 0, inX1 = -Infinity, inY1 = 0;     // ends of the wetted inflow opening
+            let lowZ = Infinity, lowX = 0, lowY = 0;                         // lowest lip the liquid leaves over
+            let bubX = 0, bubY = 0;                                          // where trapped air escapes
+            const F = cv.faces;
+            // The tank's surface is one curve across the whole tank, so over the object it means
+            // nothing: liquid reaches an opening from beyond its ends, so the outside level at a
+            // face is capped by the level just outside the opening's ends.
+            let fx0 = Infinity, fx1 = -Infinity;
+            for (let f = 0; f < cv.nf; f++) {
+                const X = x0 + c * F[4 * f] - s * F[4 * f + 1];
+                if (X < fx0) fx0 = X;
+                if (X > fx1) fx1 = X;
+            }
+            const sL = surfaceAt(fx0 - CELL), sR = surfaceAt(fx1 + CELL);
+            const fspan = fx1 - fx0 > 1e-6 ? fx1 - fx0 : 1;
+            for (let f = 0; f < cv.nf; f++) {
+                const mx = F[4 * f], my = F[4 * f + 1], nx = F[4 * f + 2], ny = F[4 * f + 3];
+                const X = x0 + c * mx - s * my, Yf = y0 + s * mx + c * my;
+                const nwx = c * nx - s * ny, nwy = s * nx + c * ny;
+                const e = (nwx < 0 ? -nwx : nwx) * hc;
+                const z0 = Yf - e, z1 = Yf + e;
+                const sEnds = sL + (sR - sL) * (X - fx0) / fspan;
+                const sHere = surfaceAt(X);
+                const S = sHere < sEnds ? sHere : sEnds;
+                const airIn = !full && hin < z1 - AIR_EPS;
+                const airOut = S < z1 - AIR_EPS;
+                if (airIn) {
+                    if (airOut) vented = true;
+                    else {
+                        // depth of the air under this opening's top edge (it bubbles out through it)
+                        const a = Math.min(z1 - hin, 0.05);
+                        bub += CELL * Math.sqrt(a);
+                        if (a > bubA) { bubA = a; bubX = X; bubY = z1; }
+                    }
+                }
+                if (S > hin) {
+                    if (full || S <= z0) continue;
+                    const fl = faceFlow(z0, z1, S, hin);
+                    if (fl <= 0) continue;
+                    const d = S - (z0 > hin ? z0 : hin);
+                    qIn += fl; if (d > dIn) dIn = d;
+                    wIX += fl * X; wIY += fl * Yf; wINX -= fl * nwx; wINY -= fl * nwy; wID += fl * d;
+                    if (X < inX0) { inX0 = X; inY0 = Yf; }
+                    if (X > inX1) { inX1 = X; inY1 = Yf; }
+                } else if (hin > S) {
+                    if (empty || hin <= z0) continue;
+                    const fl = faceFlow(z0, z1, hin, S);
+                    if (fl <= 0) continue;
+                    const d = hin - (z0 > S ? z0 : S);
+                    qOut += fl; if (airOut) qOutAir += fl; if (d > dOut) dOut = d;
+                    wOX += fl * X; wOY += fl * Yf; wONX += fl * nwx; wONY += fl * nwy; wOD += fl * d;
+                    if (z0 < lowZ) { lowZ = z0; lowX = X; lowY = Yf; }
+                }
+            }
+            // orifice flow through the wetted openings, but no more than weir flow over a rim
+            let QI = Math.min(kQ * qIn, kQ * dIn * Math.sqrt(dIn));
+            let QO = Math.min(kQ * qOut, kQ * dOut * Math.sqrt(dOut));
+            const Wc = cv.Ws > CELL ? cv.Ws : CELL;
+            // the last sliver of air under a submerged rim leaves as one final bubble
+            const sliver = cv.area - cv.V <= 2 * AIR_EPS * Wc;
+            if (!vented) {
+                // air can only leave as bubbles, or enter where the liquid falls out
+                if (!sliver) QI = Math.min(QI, BUBBLE_K * kQ * bub);
+                QO = Math.min(QO, GLUG_K * kQ * qOutAir);
+            }
+            cv.qIn = QI; cv.qOut = QO; cv.vented = vented;
+            cv.bubQ = (!vented && bubA > 0 && QI > QO) ? QI : 0;
+            if (cv.bubQ > 0) { cv.bubX = bubX; cv.bubY = bubY; }
+            let dV = (QI - QO) * dt;
+            if (dV > 0) {
+                let lim = 0.5 * Wc * dIn;
+                if (!vented && !sliver) lim = Math.min(lim, 0.5 * Wc * bubA);
+                dV = Math.min(dV, sliver ? Math.max(lim, 0.25 * (cv.area - cv.V)) : lim, cv.area - cv.V);
+            } else if (dV < 0) {
+                dV = -Math.min(-dV, 0.5 * Wc * dOut, cv.V);
+            }
+            if (dV !== 0) {
+                cv.V += dV;
+                if (cv.V < 1e-9) cv.V = 0;
+                else if (cv.V > cv.area - 1e-9) cv.V = cv.area;
+                cv.h = clamp(cv.h + dV / Wc, ymin - gExt, ymax + gExt);
+            }
+
+            // ---- the pouring stream (for drawing) ----
+            // inflow through an upward-facing opening (over a rim): a falling curtain under the wet
+            // part of the opening; liquid leaving over a rim: a jet from the lowest lip; through a
+            // hole in a wall or floor: a jet along the opening's normal
+            let sQ = 0;
+            if (QI > 0 && QI >= QO) {
+                const w = qIn;
+                sQ = QI;
+                const nl = Math.hypot(wINX, wINY) || 1;
+                cv.sNX = wINX / nl; cv.sNY = wINY / nl;
+                cv.sV = Math.sqrt(2 * g * wID / w);
+                cv.sMode = cv.sNY < -0.6 ? 1 : 2;
+                if (cv.sDir !== 1) { cv.sDir = 1; cv.sQ = 0; }
+                cv.sX = wIX / w;
+                cv.sY = wIY / w;
+                const pad = 0.5 * CELL;
+                cv.cX0 = inX0 - pad; cv.cY0 = inY0; cv.cX1 = inX1 + pad; cv.cY1 = inY1;
+                if (cv.sMode === 1 && inX1 - inX0 < 0.06) {
+                    // only a short stretch of rim is under: the liquid spills over the lip, inwards
+                    const lipLeft = inY0 <= inY1;
+                    const lx = lipLeft ? inX0 : inX1, ly = lipLeft ? inY0 : inY1;
+                    const inward = cv.xs >= lx ? 1 : -1;
+                    cv.sMode = 3;
+                    cv.sX = lx + inward * 0.5 * CELL; cv.sY = ly;
+                    cv.sNX = inward; cv.sNY = 0;
+                    cv.sV = 0.8 * Math.sqrt(2 * g * dIn);
+                }
+            } else if (QO > 0) {
+                const w = qOut;
+                sQ = QO;
+                const nl = Math.hypot(wONX, wONY) || 1;
+                cv.sNX = wONX / nl; cv.sNY = wONY / nl;
+                if (cv.sDir !== -1) { cv.sDir = -1; cv.sQ = 0; }
+                if (cv.sNY > 0.6) {
+                    // spilling over the lowest lip, moving away from the middle of the surface
+                    cv.sMode = 3;
+                    const away = lowX >= cv.xs ? 1 : -1;
+                    cv.sNX = away; cv.sNY = 0;
+                    cv.sV = Math.sqrt(2 * g * Math.max(0, hin - lowZ)) * 0.8;
+                    cv.sX = lowX + away * 0.5 * CELL;
+                    cv.sY = lowY;
+                } else {
+                    cv.sMode = 2;
+                    cv.sV = Math.sqrt(2 * g * wOD / w);
+                    cv.sX = wOX / w;
+                    cv.sY = wOY / w;
+                }
+            }
+            cv.sQ += (sQ - cv.sQ) * aS;
+
+            // ---- mass properties of the held liquid (body frame, about the dry centre of mass) ----
+            if (cv.V <= 0) { cv.m = cv.mx = cv.my = cv.I = 0; cv.Ws = 0; continue; }
+            const top = cv.h + gExt;
+            let A = 0, ax = 0, ay = 0, aI = 0, sw = 0, swx = 0;
+            for (let k = 0; k < n; k++) {
+                const tt = top - Y[k];
+                if (tt <= 0) continue;
+                const bi = cells[k];
+                let px = OX[bi], py = OY[bi], a;
+                if (tt >= gE2) a = CELL_A;
+                else {
+                    clipCell(cv.h - Y[k], 0);
+                    a = clipA;
+                    px += c * clipCX + s * clipCY;
+                    py += -s * clipCX + c * clipCY;
+                    const w = rampWidth(tt);
+                    sw += w; swx += w * (x0 + c * OX[bi] - s * OY[bi]);
+                }
+                A += a; ax += a * px; ay += a * py; aI += a * (px * px + py * py);
+            }
+            if (sw > 0) { cv.xs = swx / sw; cv.Ws = sw; }
+            const m = rhoD * cv.V;
+            let rx, ry, r2;
+            if (A > 1e-14) { rx = ax / A; ry = ay / A; r2 = aI / A; }
+            else { const bi = cells[iLow]; rx = OX[bi]; ry = OY[bi]; r2 = rx * rx + ry * ry; }
+            const rc2 = rx * rx + ry * ry;
+            cv.m = m; cv.mx = m * rx; cv.my = m * ry;
+            cv.I = m * rc2 + WATER_SPIN * m * Math.max(0, r2 - rc2);
+            mT += cv.m; mxT += cv.mx; myT += cv.my; IT += cv.I;
+        }
+        B.waterMass = mT; B.waterMx = mxT; B.waterMy = myT; B.waterInertia = IT;
+        B.waterArea = 0;
+        for (let ci = 0; ci < cavs.length; ci++) B.waterArea += cavs[ci].V;
+    }
+
+    // after a liquid change: the held volume stays, its mass follows the new density
+    function updateWaterMass(B) {
+        const k = LIQUIDS[settings.liquid].rho * DEPTH;
+        let m = 0, mx = 0, my = 0, I = 0;
+        for (const cv of B.cavs) {
+            const old = cv.m;
+            if (old > 0) { const f = k * cv.V / old; cv.m *= f; cv.mx *= f; cv.my *= f; cv.I *= f; }
+            m += cv.m; mx += cv.mx; my += cv.my; I += cv.I;
+        }
+        B.waterMass = m; B.waterMx = mx; B.waterMy = my; B.waterInertia = I;
+    }
+
+    // A stream pouring over a rim or out of a hole, as a falling jet (world coords into jetX/jetY).
+    // Returns the number of points; 0 when the opening is submerged on the receiving side.
+    const JET_MAX = 48;
+    const jetX = new Float64Array(JET_MAX), jetY = new Float64Array(JET_MAX), jetW = new Float64Array(JET_MAX);
+    function cavityLevelAt(cv, x) {
+        return cv.h + Math.tan(cv.phi) * (x - cv.xs);
+    }
+    function traceJet(cv) {
+        if (cv.sQ < 2e-4 || cv.sDir === 0 || cv.sMode === 1 || cv.sMode === 0) return 0;
+        const g = settings.gravity;
+        const inflow = cv.sDir > 0;
+        let x = cv.sX, y = cv.sY;
+        const recv = inflow ? cavityLevelAt(cv, x) : surfaceAt(x);
+        if (recv > y - 0.25 * CELL) return 0;
+        const v = Math.max(0.15, cv.sV);
+        let vx = cv.sNX * v, vy = cv.sNY * v;
+        const step = 0.01;
+        let n = 0;
+        for (let i = 0; i < JET_MAX; i++) {
+            const sp = Math.hypot(vx, vy);
+            jetX[n] = x; jetY[n] = y; jetW[n] = cv.sQ / Math.max(0.7, sp); n++;
+            const r = inflow ? cavityLevelAt(cv, x) : Math.max(0, surfaceAt(x));
+            if (y <= r || x < 0 || x > TANK_W) break;
+            if (inflow && (x < cv.xmin - CELL || x > cv.xmax + CELL || y < cv.ymin - CELL)) break;
+            vy -= g * step;
+            x += vx * step; y += vy * step;
+        }
+        return n;
+    }
+
+    // Per frame: slosh of the inside surfaces (drawn only), ripples, splashes where a stream lands
+    function stepCavityVisuals(dtF) {
+        const B = body;
+        if (!B || !B.cavs.length || !(dtF > 0)) return;
+        const g = settings.gravity;
+        const a = 1 - Math.exp(-dtF / 0.08);
+        accX += ((st.vx - prevVX) / dtF - accX) * a;
+        accY += ((st.vy - prevVY) / dtF - accY) * a;
+        prevVX = st.vx; prevVY = st.vy;
+        const liq = LIQUIDS[settings.liquid];
+        const zeta = clamp(0.06 + 0.03 * liq.damp, 0.08, 0.3);
+        // in a frame moving with the hull the liquid feels gravity minus the hull's acceleration
+        const eq = clamp(Math.atan2(-accX, Math.max(0.2 * g, g + accY)), -0.3, 0.3);
+        const ripDecay = Math.exp(-dtF / 0.7);
+        for (const cv of B.cavs) {
+            cv.ripT += dtF;
+            cv.rip *= ripDecay;
+            if (cv.V <= 0 || cv.V >= cv.area || cv.Ws < 2 * CELL) { cv.phi *= 0.8; cv.phiV = 0; }
+            else {
+                const k = Math.PI / cv.Ws;
+                const d = Math.max(CELL, cv.V / cv.Ws);
+                const w = Math.sqrt(g * k * Math.tanh(k * d));
+                let t = dtF;
+                while (t > 1e-9) {
+                    const hh = Math.min(t, 1 / 120);
+                    cv.phiV += (w * w * (eq - cv.phi) - 2 * zeta * w * cv.phiV) * hh;
+                    cv.phi += cv.phiV * hh;
+                    t -= hh;
+                }
+                if (cv.phi > 0.3) { cv.phi = 0.3; cv.phiV = 0; } else if (cv.phi < -0.3) { cv.phi = -0.3; cv.phiV = 0; }
+            }
+            // a stream landing on the inside surface stirs it; one landing in the tank splashes
+            if (cv.sDir > 0 && cv.sQ > 2e-4 && cv.V > 0 && cv.h < cv.sY - 0.25 * CELL) {
+                const hit = Math.min(0.005, 0.3 * cv.sQ * Math.max(1, cv.sV));
+                if (hit > cv.rip) cv.rip = hit;
+            } else if (cv.sDir < 0) {
+                const n = traceJet(cv);
+                if (n > 1) {
+                    const xi = jetX[n - 1];
+                    if (Math.random() < Math.min(1, cv.sQ * 500 * dtF)) {
+                        spawnDroplet(xi + (Math.random() - 0.5) * 0.02, surfaceAt(xi), 0.8 + Math.random() * 0.8);
+                    }
+                    disturbSurface(xi, -0.15 * cv.sQ * dtF);
+                }
+            }
+            // trapped air leaving as bubbles
+            if (cv.bubQ > 0) {
+                const rate = Math.min(40, cv.bubQ / 6e-5);
+                let nb = rate * dtF;
+                while (nb > 0) {
+                    if (nb >= 1 || Math.random() < nb) spawnBubble(cv.bubX + (Math.random() - 0.5) * 0.015, cv.bubY);
+                    nb -= 1;
+                }
+            }
+        }
+    }
+
+    // air bubbles rising through the liquid
+    const MAX_BUBBLES = 160;
+    const bX = new Float64Array(MAX_BUBBLES), bY = new Float64Array(MAX_BUBBLES);
+    const bR = new Float64Array(MAX_BUBBLES), bPh = new Float64Array(MAX_BUBBLES), bV = new Float64Array(MAX_BUBBLES);
+    let nBubbles = 0;
+    function spawnBubble(x, y) {
+        if (nBubbles >= MAX_BUBBLES) return;
+        const i = nBubbles++;
+        bX[i] = x; bY[i] = y;
+        bR[i] = 0.002 + Math.random() * 0.004;
+        bPh[i] = Math.random() * 6.283;
+        bV[i] = 0.18 + Math.random() * 0.12 + bR[i] * 15;
+    }
+    function stepBubbles(dt) {
+        let i = 0;
+        while (i < nBubbles) {
+            bPh[i] += dt * 9;
+            bY[i] += bV[i] * dt;
+            bX[i] += Math.cos(bPh[i]) * 0.04 * dt;
+            if (bY[i] >= surfaceAt(bX[i]) || bY[i] > TANK_H) {
+                const last = --nBubbles;
+                bX[i] = bX[last]; bY[i] = bY[last]; bR[i] = bR[last]; bPh[i] = bPh[last]; bV[i] = bV[last];
+            } else i++;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -505,7 +958,7 @@
     }
 
     function clearWaves() {
-        amp.fill(0); vel.fill(0); eta.fill(0); nParticles = 0;
+        amp.fill(0); vel.fill(0); eta.fill(0); nParticles = 0; nBubbles = 0;
     }
 
     // displacement below the calm level for an axis-aligned drawing (draw mode)
@@ -637,21 +1090,28 @@
         }
     }
 
-    function pokeLiquid(x, strength) {
-        // a small Gaussian dent in the surface, projected onto the modes
+    // a small Gaussian dent in the surface (negative strength: a bump), projected onto the modes
+    function disturbSurface(x, strength) {
         const f = 2 / NCOL;
+        let j0 = NCOL, j1 = -1;
         for (let j = 0; j < NCOL; j++) {
             const dx = ((j + 0.5) * DXC - x) / 0.035;
-            src[j] = -strength * Math.exp(-dx * dx);
+            const v = dx * dx < 16 ? -strength * Math.exp(-dx * dx) : 0;
+            src[j] = v;
+            if (v !== 0) { if (j < j0) j0 = j; j1 = j; }
         }
-        let mean = 0;
-        for (let j = 0; j < NCOL; j++) mean += src[j];
-        mean /= NCOL;
+        if (j1 < 0) return;
+        // (the mean of the dent only feeds mode 0, the level, which is not a wave)
         for (let k = 1; k <= NMODE; k++) {
             let p = 0;
-            for (let j = 0; j < NCOL; j++) p += (src[j] - mean) * cosKJ[k * NCOL + j];
+            const base = k * NCOL;
+            for (let j = j0; j <= j1; j++) p += src[j] * cosKJ[base + j];
             amp[k] += p * f;
         }
+    }
+
+    function pokeLiquid(x, strength) {
+        disturbSurface(x, strength);
         const S = surfaceAt(x);
         for (let q = 0; q < 6; q++) spawnDroplet(x + (Math.random() - 0.5) * 0.03, S, 1.2 + Math.random());
     }
@@ -666,10 +1126,7 @@
         const rotOn = settings.rotation;
         const c = Math.cos(st.th), s = Math.sin(st.th);
         const hc = 0.5 * CELL;
-        cornX[0] = -hc * c + hc * s; cornY[0] = -hc * s - hc * c;
-        cornX[1] = hc * c + hc * s;  cornY[1] = hc * s - hc * c;
-        cornX[2] = hc * c - hc * s;  cornY[2] = hc * s + hc * c;
-        cornX[3] = -hc * c - hc * s; cornY[3] = -hc * s + hc * c;
+        setCorners(c, s);
         const ac = Math.abs(c), as = Math.abs(s);
         const ext = hc * (ac + as);
         const rampA = CELL * Math.min(ac, as), wMax = CELL / Math.max(ac, as), E2 = 2 * ext;
@@ -697,34 +1154,7 @@
             if (d > -lim) {
                 let A, cx, cy;
                 if (d >= lim) { A = CELL_A; cx = 0; cy = 0; }
-                else {
-                    cornG[0] = d + k * cornX[0] - cornY[0];
-                    cornG[1] = d + k * cornX[1] - cornY[1];
-                    cornG[2] = d + k * cornX[2] - cornY[2];
-                    cornG[3] = d + k * cornX[3] - cornY[3];
-                    let m = 0;
-                    for (let q = 0; q < 4; q++) {
-                        const qn = (q + 1) & 3;
-                        const gq = cornG[q], gn = cornG[qn];
-                        if (gq >= 0) { polyX[m] = cornX[q]; polyY[m] = cornY[q]; m++; }
-                        if ((gq >= 0) !== (gn >= 0)) {
-                            const tt = gq / (gq - gn);
-                            polyX[m] = cornX[q] + tt * (cornX[qn] - cornX[q]);
-                            polyY[m] = cornY[q] + tt * (cornY[qn] - cornY[q]);
-                            m++;
-                        }
-                    }
-                    let a2 = 0, sx = 0, sy = 0;
-                    for (let q = 0; q < m; q++) {
-                        const qn = (q + 1 === m) ? 0 : q + 1;
-                        const cr = polyX[q] * polyY[qn] - polyX[qn] * polyY[q];
-                        a2 += cr;
-                        sx += (polyX[q] + polyX[qn]) * cr;
-                        sy += (polyY[q] + polyY[qn]) * cr;
-                    }
-                    if (a2 > 1e-14) { A = 0.5 * a2; cx = sx / (3 * a2); cy = sy / (3 * a2); }
-                    else { A = 0; cx = 0; cy = 0; }
-                }
+                else { clipCell(d, k); A = clipA; cx = clipCX; cy = clipCY; }
                 if (A > 0) {
                     const px = rx + cx, py = ry + cy;
                     sA += A; sAx += A * px; sAy += A * py;
@@ -892,6 +1322,9 @@
         stepWaves(dt, true);
         const tmp = bOld; bOld = bNew; bNew = tmp;
 
+        // ---- liquid held in open cavities (new pose) ----
+        updateCavities(dt);
+
         // ---- record for display ----
         phys.subA = sA; phys.subEnv = sAenv;
         if (sA > 0) { phys.cobX = x0 + sAx / sA; phys.cobY = y0 + sAy / sA; }
@@ -994,176 +1427,6 @@
     }
 
     // ------------------------------------------------------------------
-    // Open cavities: flooding, venting, draining (once per frame)
-    // ------------------------------------------------------------------
-    function stepCavities(dtF) {
-        const B = body;
-        if (!B || B.nOpen === 0 || dtF <= 0) return;
-        const LW = B.LW, ltype = B.ltype, Y = B.cy, sub = B.csub;
-        const R = B.fR, V = B.fV, D = B.fD, queue = B.queue;
-        const c = Math.cos(st.th), s = Math.sin(st.th);
-        const region = B.cavRegion;
-        for (let q = 0; q < region.length; q++) {
-            const li = region[q];
-            const lc = li % LW, lr = (li - lc) / LW;
-            const ox = (lc + 0.5) * CELL - B.comLX, oy = (lr + 0.5) * CELL - B.comLY;
-            const X = st.x + c * ox - s * oy;
-            const yy = st.y + s * ox + c * oy;
-            Y[li] = yy;
-            sub[li] = yy < surfaceAt(X) ? 1 : 0;
-            R[li] = 0; V[li] = 0; D[li] = 0;
-        }
-        const pairs = B.openPairs;
-        const np = pairs.length;
-        let qh, qt;
-        // R: connected to the outside liquid through submerged cells
-        qh = 0; qt = 0;
-        for (let p = 0; p < np; p += 2) {
-            const o = pairs[p], e = pairs[p + 1];
-            if (sub[e] && sub[o] && !R[o]) { R[o] = 1; queue[qt++] = o; }
-        }
-        while (qh < qt) {
-            const k = queue[qh++];
-            const nb0 = k - 1, nb1 = k + 1, nb2 = k - LW, nb3 = k + LW;
-            if (ltype[nb0] === T_OPEN && !R[nb0] && sub[nb0]) { R[nb0] = 1; queue[qt++] = nb0; }
-            if (ltype[nb1] === T_OPEN && !R[nb1] && sub[nb1]) { R[nb1] = 1; queue[qt++] = nb1; }
-            if (ltype[nb2] === T_OPEN && !R[nb2] && sub[nb2]) { R[nb2] = 1; queue[qt++] = nb2; }
-            if (ltype[nb3] === T_OPEN && !R[nb3] && sub[nb3]) { R[nb3] = 1; queue[qt++] = nb3; }
-        }
-        // V: air can get out - bubbling upwards through anything, or in any direction
-        // through connected air (dry cavity cells and outside air above the liquid)
-        const W = B.water, lcell = B.lcell, oc = B.openCells;
-        qh = 0; qt = 0;
-        for (let p = 0; p < np; p += 2) {
-            const o = pairs[p], e = pairs[p + 1];
-            if (!V[o] && (Y[o] <= Y[e] + LEVEL_EPS || (!sub[e] && W[lcell[o]] < 0.5))) { V[o] = 1; queue[qt++] = o; }
-        }
-        while (qh < qt) {
-            const k = queue[qh++];
-            const yk = Y[k] + LEVEL_EPS;
-            const airK = W[lcell[k]] < 0.5;
-            for (let z = 0; z < 4; z++) {
-                const j = z === 0 ? k - 1 : z === 1 ? k + 1 : z === 2 ? k - LW : k + LW;
-                if (ltype[j] !== T_OPEN || V[j]) continue;
-                if (Y[j] <= yk || (airK && W[lcell[j]] < 0.5)) { V[j] = 1; queue[qt++] = j; }
-            }
-        }
-        // D: liquid can run out (a path to the outside that never goes up)
-        qh = 0; qt = 0;
-        for (let p = 0; p < np; p += 2) {
-            const o = pairs[p], e = pairs[p + 1];
-            if (!D[o] && Y[o] >= Y[e] - LEVEL_EPS) { D[o] = 1; queue[qt++] = o; }
-        }
-        while (qh < qt) {
-            const k = queue[qh++];
-            const yk = Y[k] - LEVEL_EPS;
-            const nb0 = k - 1, nb1 = k + 1, nb2 = k - LW, nb3 = k + LW;
-            if (ltype[nb0] === T_OPEN && !D[nb0] && Y[nb0] >= yk) { D[nb0] = 1; queue[qt++] = nb0; }
-            if (ltype[nb1] === T_OPEN && !D[nb1] && Y[nb1] >= yk) { D[nb1] = 1; queue[qt++] = nb1; }
-            if (ltype[nb2] === T_OPEN && !D[nb2] && Y[nb2] >= yk) { D[nb2] = 1; queue[qt++] = nb2; }
-            if (ltype[nb3] === T_OPEN && !D[nb3] && Y[nb3] >= yk) { D[nb3] = 1; queue[qt++] = nb3; }
-        }
-
-        let changed = false;
-        for (let q = 0; q < oc.length; q++) {
-            const bi = oc[q];
-            const li = B.cellLocal[bi];
-            let w = W[bi];
-            const w0 = w;
-            if (R[li] && V[li]) {
-                if (w < 1) {
-                    let front = false;
-                    const nbs0 = li - 1, nbs1 = li + 1, nbs2 = li - LW, nbs3 = li + LW;
-                    for (let z = 0; z < 4 && !front; z++) {
-                        const nb = z === 0 ? nbs0 : z === 1 ? nbs1 : z === 2 ? nbs2 : nbs3;
-                        const t = ltype[nb];
-                        if (t === T_EXT) { if (sub[nb]) front = true; }
-                        else if (t === T_OPEN && R[nb] && V[nb] && W[lcell[nb]] >= 0.5) front = true;
-                    }
-                    if (front) w = Math.min(1, w + FILL_RATE * dtF);
-                }
-            } else if (D[li] && !sub[li]) {
-                w = Math.max(0, w - DRAIN_RATE * dtF);
-            }
-            if (w !== w0) { W[bi] = w; changed = true; }
-        }
-        // Trapped pockets (air that cannot escape): the air volume is conserved and always
-        // rises to the highest cells of the pocket, so the inside surface stays level.
-        const mark = B.pocketMark, order = B.order;
-        B.pocketGen = (B.pocketGen + 1) & 0x3fffffff || 1;
-        const gen = B.pocketGen;
-        for (let q = 0; q < oc.length; q++) {
-            const start = B.cellLocal[oc[q]];
-            if (V[start] || mark[start] === gen) continue;
-            let n = 0;
-            let ySpill = -Infinity;  // highest point of the pocket's opening: air below it is exposed and escapes
-            mark[start] = gen; order[n++] = start;
-            for (let h = 0; h < n; h++) {
-                const k = order[h];
-                for (let z = 0; z < 4; z++) {
-                    const j = z === 0 ? k - 1 : z === 1 ? k + 1 : z === 2 ? k - LW : k + LW;
-                    const tj = ltype[j];
-                    if (tj === T_OPEN) {
-                        if (!V[j] && mark[j] !== gen) { mark[j] = gen; order[n++] = j; }
-                    } else if (tj === T_EXT) {
-                        const ys = 0.5 * (Y[k] + Y[j]);
-                        if (ys > ySpill) ySpill = ys;
-                    }
-                }
-            }
-            let air = 0, cap = 0;
-            for (let h = 0; h < n; h++) {
-                const k = order[h];
-                air += 1 - W[lcell[k]];
-                const f = (Y[k] - ySpill) / CELL + 0.5;
-                cap += f > 1 ? 1 : (f > 0 ? f : 0);
-            }
-            if (air > cap) air = cap;    // the excess bubbles out under the rim
-            if (air <= 1e-6) air = 0;
-            order.subarray(0, n).sort((a, b) => Y[b] - Y[a]);
-            for (let h = 0; h < n; h++) {
-                const bi = lcell[order[h]];
-                const a = air > 1 ? 1 : (air > 0 ? air : 0);
-                air -= a;
-                const w = 1 - a;
-                if (Math.abs(W[bi] - w) > 1e-9) { W[bi] = w; changed = true; }
-            }
-        }
-        // liquid in vented cavities runs downhill
-        const maxMove = SETTLE_RATE * dtF;
-        for (let q = 0; q < oc.length; q++) {
-            const bi = oc[q];
-            let w = W[bi];
-            if (w <= 0) continue;
-            const li = B.cellLocal[bi];
-            if (!V[li]) continue;
-            let best = -1, bestY = Y[li] - LEVEL_EPS;
-            for (let z = 0; z < 4; z++) {
-                const nb = z === 0 ? li - 1 : z === 1 ? li + 1 : z === 2 ? li - LW : li + LW;
-                if (ltype[nb] === T_OPEN && V[nb] && Y[nb] < bestY && W[lcell[nb]] < 1) { best = nb; bestY = Y[nb]; }
-            }
-            if (best >= 0) {
-                const bj = lcell[best];
-                const mv = Math.min(w, 1 - W[bj], maxMove);
-                if (mv > 0) { W[bi] = w - mv; W[bj] += mv; changed = true; }
-            }
-        }
-        let held = 0;
-        for (let q = 0; q < oc.length; q++) {
-            const bi = oc[q];
-            if (W[bi] > 0 && !(R[B.cellLocal[bi]] && sub[B.cellLocal[bi]])) held += W[bi];
-        }
-        B.waterHeld = held * LIQUIDS[settings.liquid].rho * CELL_A * DEPTH;
-        if (changed) updateWaterMass(B);
-        for (let q = 0; q < oc.length; q++) {
-            const bi = oc[q];
-            const li = B.cellLocal[bi];
-            const shown = W[bi] < 0.5 ? 0 : ((R[li] && sub[li]) ? 2 : 1);
-            if (shown !== B.waterShown[bi]) { B.waterShown[bi] = shown; B.cavDirty = true; }
-        }
-    }
-
-    // ------------------------------------------------------------------
     // Simulation control
     // ------------------------------------------------------------------
     function resetAccumulators() {
@@ -1179,8 +1442,9 @@
         }
         body = P;
         preview = P;
-        prepareBodyDynamics(body);
+        resetCavities(body);
         st.x = body.worldX; st.y = body.worldY; st.th = 0; st.vx = 0; st.vy = 0;
+        prevVX = prevVY = accX = accY = 0;
         // no real object is released perfectly symmetrically: a tiny nudge lets unstable balance points tip
         st.om = settings.rotation ? 2e-3 : 0;
         st.maValid = false;
@@ -1215,16 +1479,16 @@
         if (mode !== 'sim' || !body) return 0;
         let n = 0;
         let acc2 = seconds;
-        let sinceCavity = 0;
+        let since = 0;
         updateWaveCoefficients();
         while (acc2 >= DT - 1e-12) {
             substep(DT);
             acc2 -= DT;
             n++;
-            sinceCavity += DT;
-            if (sinceCavity >= 1 / 60 - 1e-9) { stepCavities(sinceCavity); stepParticles(sinceCavity); sinceCavity = 0; }
+            since += DT;
+            if (since >= 1 / 60 - 1e-9) { stepParticles(since); stepBubbles(since); stepCavityVisuals(since); since = 0; }
         }
-        if (sinceCavity > 0) { stepCavities(sinceCavity); stepParticles(sinceCavity); }
+        if (since > 0) { stepParticles(since); stepBubbles(since); stepCavityVisuals(since); }
         // show the latest state directly (the frame loop only smooths while time is running)
         disp.fbX = phys.fbX; disp.fbY = phys.fbY; disp.fdX = phys.fdX; disp.fdY = phys.fdY;
         disp.fcX = phys.fcX; disp.fcY = phys.fcY;
@@ -1349,46 +1613,53 @@
     function fillShape(tool, cA, rA, cB, rB, thick, m, filter) {
         forEachShapeCell(tool, cA, rA, cB, rB, thick, (c, r) => { if (!filter || filter(c, r)) setCell(c, r, m); });
     }
+    // Positions are in grid cells (1 cm): the tank is 240 x 150 and the liquid starts 60 deep,
+    // so objects are drawn just above the surface around column 120.
     const PRESETS = [
+        { key: 'pine', label: 'Pine block', build() { fillRect(100, 72, 40, 25, MAT_ID.pine); } },
+        { key: 'ice', label: 'Ice block', build() { fillRect(108, 70, 24, 24, MAT_ID.ice); } },
+        { key: 'cork', label: 'Cork slab', build() { fillRect(100, 70, 40, 8, MAT_ID.cork); } },
+        { key: 'steel', label: 'Steel block', build() { fillRect(110, 70, 20, 12, MAT_ID.steel); } },
+        { key: 'nylon', label: 'Nylon block (sinks slowly)', build() { fillRect(110, 70, 20, 15, MAT_ID.nylon); } },
+        { key: 'gold', label: 'Gold bar', build() { fillRect(112, 70, 16, 8, MAT_ID.gold); } },
+        { key: 'plank', label: 'Tall pine plank (stability)', build() { fillRect(117, 66, 6, 38, MAT_ID.pine); } },
+        { key: 'blend', label: 'Cork float with a steel weight', build() {
+            fillRect(90, 73, 60, 10, MAT_ID.cork); fillRect(92, 70, 6, 3, MAT_ID.steel);
+        } },
+        { key: 'ball', label: 'Hollow steel ball (sealed)', build() { fillShape('ring', 95, 62, 144, 111, 1, MAT_ID.steel); } },
+        { key: 'boat', label: 'Steel boat (open hull)', build() {
+            const S = MAT_ID.steel;
+            fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
+        } },
+        { key: 'leaky', label: 'Steel boat with a hole', build() {
+            const S = MAT_ID.steel;
+            fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
+            setCell(119, 48, 0);
+        } },
+        { key: 'canoe', label: 'Aluminium canoe', build() {
+            fillShape('ring', 88, 66, 151, 109, 1, MAT_ID.aluminium, (c, r) => r < 88);
+        } },
+        { key: 'bell', label: 'Upside-down cup (traps air)', build() {
+            const S = MAT_ID.steel;
+            fillRect(100, 88, 40, 1, S); fillRect(100, 70, 1, 18, S); fillRect(139, 70, 1, 18, S);
+        } },
         { key: 'ship', label: 'Steel ship with a wooden cabin', build() {
             const S = MAT_ID.steel, P = MAT_ID.pine;
             // 1 cm steel hull with raked ends (steps kept 4-connected so the hull is watertight)
-            fillRect(66, 51, 68, 1, S);
+            fillRect(86, 61, 68, 1, S);
             for (let r = 0; r < 28; r++) {
                 const k = Math.floor(r / 3), kn = Math.floor((r + 1) / 3);
-                setCell(65 - k, 52 + r, S); setCell(134 + k, 52 + r, S);
-                if (kn !== k && r < 27) { setCell(64 - k, 52 + r, S); setCell(135 + k, 52 + r, S); }
+                setCell(85 - k, 62 + r, S); setCell(154 + k, 62 + r, S);
+                if (kn !== k && r < 27) { setCell(84 - k, 62 + r, S); setCell(155 + k, 62 + r, S); }
             }
-            setCell(65, 51, S); setCell(134, 51, S);
+            setCell(85, 61, S); setCell(154, 61, S);
             // cabin with two sealed windows, a mast with a nylon flag, cork fenders
-            fillRect(88, 52, 22, 11, P);
-            fillRect(91, 56, 5, 4, 0); fillRect(102, 56, 5, 4, 0);
-            fillRect(97, 63, 2, 26, P);
-            fillRect(99, 80, 13, 7, MAT_ID.nylon);
-            fillRect(58, 66, 3, 6, MAT_ID.cork); fillRect(139, 66, 3, 6, MAT_ID.cork);
-        } },
-        { key: 'boat', label: 'Steel boat (open hull)', build() {
-            const S = MAT_ID.steel;
-            fillRect(62, 52, 76, 1, S); fillRect(62, 53, 1, 23, S); fillRect(137, 53, 1, 23, S);
-        } },
-        { key: 'pine', label: 'Pine block', build() { fillRect(85, 60, 30, 20, MAT_ID.pine); } },
-        { key: 'ice', label: 'Ice cube', build() { fillRect(90, 58, 20, 20, MAT_ID.ice); } },
-        { key: 'steel', label: 'Steel block', build() { fillRect(90, 60, 20, 12, MAT_ID.steel); } },
-        { key: 'ball', label: 'Hollow steel ball (sealed)', build() { fillShape('ring', 75, 50, 124, 99, 1, MAT_ID.steel); } },
-        { key: 'canoe', label: 'Aluminium canoe', build() {
-            fillShape('ring', 66, 58, 133, 105, 1, MAT_ID.aluminium, (c, r) => r < 82);
-        } },
-        { key: 'bell', label: 'Upside-down steel cup (traps air)', build() {
-            const S = MAT_ID.steel;
-            fillRect(80, 80, 40, 1, S); fillRect(80, 60, 1, 20, S); fillRect(119, 60, 1, 20, S);
-        } },
-        { key: 'blend', label: 'Cork float with steel weight under one end', build() {
-            fillRect(70, 63, 60, 10, MAT_ID.cork); fillRect(72, 60, 6, 3, MAT_ID.steel);
-        } },
-        { key: 'plank', label: 'Tall pine plank (stability)', build() { fillRect(97, 56, 6, 38, MAT_ID.pine); } },
-        { key: 'nylon', label: 'Nylon block (sinks slowly)', build() { fillRect(90, 60, 20, 15, MAT_ID.nylon); } },
-        { key: 'cork', label: 'Cork slab', build() { fillRect(80, 60, 40, 8, MAT_ID.cork); } },
-        { key: 'gold', label: 'Gold bar', build() { fillRect(92, 60, 16, 8, MAT_ID.gold); } }
+            fillRect(108, 62, 22, 11, P);
+            fillRect(111, 66, 5, 4, 0); fillRect(122, 66, 5, 4, 0);
+            fillRect(117, 73, 2, 26, P);
+            fillRect(119, 90, 13, 7, MAT_ID.nylon);
+            fillRect(78, 76, 3, 6, MAT_ID.cork); fillRect(159, 76, 3, 6, MAT_ID.cork);
+        } }
     ];
     function loadPreset(key, opts) {
         const p = PRESETS.find((q) => q.key === key);
@@ -1412,7 +1683,7 @@
         if (box && (box.style.width || box.style.height)) { box.style.width = ''; box.style.height = ''; }
         const tw = Math.max(1, Math.round(canvas.clientWidth));
         const th = Math.max(1, Math.round(canvas.clientHeight));
-        const ndpr = Math.min(3, window.devicePixelRatio || 1);
+        const ndpr = Math.min(2, window.devicePixelRatio || 1);   // more is not visibly sharper, just slower
         if (tw !== cssW || th !== cssH || ndpr !== dpr) {
             cssW = tw; cssH = th; dpr = ndpr;
             scale = Math.min(cssW / TANK_W, cssH / TANK_H);
@@ -1421,23 +1692,8 @@
             gridLayerDirty = true;
             drawDirty = true;
             gradientKey = '';
-            if (body) { body.imgKey = ''; body.cavKey = ''; }
+            if (body) body.imgKey = '';
         }
-    }
-
-    // Lets the fullscreen layout in buoyancy_styles.css reserve room for the toolbar.
-    function watchToolbarHeight() {
-        const tb = document.getElementById('buoyToolbar');
-        const area = document.querySelector('.buoyancy-sim');
-        if (!tb || !area) return;
-        const upd = () => {
-            const h = Math.ceil(tb.getBoundingClientRect().height);
-            const v = h + 'px';
-            if (area.style.getPropertyValue('--buoy-toolbar-h') !== v) area.style.setProperty('--buoy-toolbar-h', v);
-        };
-        upd();
-        if (typeof ResizeObserver !== 'undefined') new ResizeObserver(upd).observe(tb);
-        window.addEventListener('resize', upd);
     }
 
     function refreshPalette() {
@@ -1451,7 +1707,6 @@
             bgTop: dark ? '#1a1e23' : '#f7f9fb',
             bgBot: dark ? '#22282f' : '#e4eaf0',
             air: dark ? '#2b3641' : '#e6f0f8',
-            openAir: dark ? '#1e2329' : '#eef2f6',
             hatch: dark ? 'rgba(170,205,235,0.45)' : 'rgba(70,105,140,0.4)',
             gridMinor: dark ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.05)',
             gridMajor: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.13)',
@@ -1469,7 +1724,7 @@
         textureKey = '';
         gridLayerDirty = true;
         drawDirty = true;
-        if (body) { body.imgKey = ''; body.cavKey = ''; }
+        if (body) body.imgKey = '';
     }
 
     function makeTexture(mat, pxPerM, seed) {
@@ -1726,41 +1981,168 @@
         }
         B.hasSealed = nSealed > 0;
         B.imgKey = key;
-        B.cavKey = '';
     }
 
-    function renderCavityImages(B) {
-        const cellPx = CELL * scale * dpr;
-        const key = cellPx.toFixed(3) + (pal.dark ? 'd' : 'l') + settings.liquid;
-        if (!B.cavDirty && B.cavKey === key) return;
-        const W = Math.max(1, Math.round(B.LW * cellPx)), H = Math.max(1, Math.round(B.LH * cellPx));
-        if (!B.cavAirImg) { B.cavAirImg = document.createElement('canvas'); B.cavWaterImg = document.createElement('canvas'); }
-        for (const cv of [B.cavAirImg, B.cavWaterImg]) {
-            if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-            cv.getContext('2d').clearRect(0, 0, W, H);
+    // outline of a cavity (body frame, CSS px, y down) as row runs of its cells; the runs overlap by
+    // half a pixel so no seams show between rows when the body is rotated
+    function cavityPath(B, cv) {
+        const key = scale.toFixed(4);
+        if (cv.path && cv.pathKey === key) return cv.path;
+        const LW = B.LW, LH = B.LH;
+        const mask = new Uint8Array(B.NL);
+        for (let k = 0; k < cv.nc; k++) mask[B.cellLocal[cv.cells[k]]] = 1;
+        const p = new Path2D();
+        const cs = CELL * scale;
+        for (let lr = 0; lr < LH; lr++) {
+            let lc = 0;
+            while (lc < LW) {
+                if (!mask[lr * LW + lc]) { lc++; continue; }
+                let e = lc + 1;
+                while (e < LW && mask[lr * LW + e]) e++;
+                p.rect((lc * CELL - B.comLX) * scale - 0.5, -((lr + 1) * CELL - B.comLY) * scale - 0.5, (e - lc) * cs + 1, cs + 1);
+                lc = e;
+            }
         }
-        const air = new Path2D(), water = new Path2D();
-        let nAir = 0, nWater = 0;
-        const oc = B.openCells;
-        for (let q = 0; q < oc.length; q++) {
-            const bi = oc[q];
-            const li = B.cellLocal[bi];
-            const lc = li % B.LW, lr = (li - lc) / B.LW;
-            const x0 = Math.round(lc * cellPx), x1 = Math.round((lc + 1) * cellPx);
-            const y0 = Math.round((B.LH - lr - 1) * cellPx), y1 = Math.round((B.LH - lr) * cellPx);
-            const shown = B.waterShown[bi];
-            if (shown === 1) { water.rect(x0, y0, x1 - x0, y1 - y0); nWater++; }
-            else if (shown === 0) { air.rect(x0, y0, x1 - x0, y1 - y0); nAir++; }
+        cv.path = p; cv.pathKey = key;
+        return p;
+    }
+
+    // liquid held in the cavities: a level (sloshing) surface clipped to each cavity's shape,
+    // filled exactly like the tank's liquid so the two read as the same stuff
+    const surfPts = new Float64Array(2 * 400);
+    function drawCavities() {
+        const B = body;
+        const X = wx(st.x), Y = wy(st.y);
+        const liq = LIQUIDS[settings.liquid];
+        const tint = 'rgba(' + liq.top.join(',') + ',' + (pal.dark ? 0.16 : 0.14) + ')';
+        const ext = 0.5 * CELL * (Math.abs(Math.cos(st.th)) + Math.abs(Math.sin(st.th)));
+        const stack = (path) => {
+            ctx.fillStyle = bgGradient; ctx.fill(path);
+            ctx.fillStyle = liquidGradient; ctx.fill(path);
+            ctx.fillStyle = tint; ctx.fill(path);
+        };
+        for (const cv of B.cavs) {
+            const clipPath = cavityPath(B, cv);
+            ctx.save();
+            ctx.translate(X, Y);
+            ctx.rotate(-st.th);
+            ctx.clip(clipPath);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const bx0 = Math.floor(wx(cv.xmin)) - 3, bx1 = Math.ceil(wx(cv.xmax)) + 3;
+            const by0 = Math.floor(wy(cv.ymax + ext)) - 3, by1 = Math.ceil(wy(cv.ymin - ext)) + 3;
+            const box = new Path2D();
+            box.rect(bx0, by0, bx1 - bx0, by1 - by0);
+            if (cv.V <= 0) {
+                ctx.fillStyle = bgGradient; ctx.fill(box);
+            } else if (cv.V >= cv.area) {
+                stack(box);
+            } else {
+                // surface: level line + slosh tilt + ripples
+                const np = clamp(Math.ceil((bx1 - bx0) / 5), 2, 399);
+                const tp = Math.tan(cv.phi);
+                const t = cv.ripT;
+                for (let i = 0; i <= np; i++) {
+                    const sx = bx0 + (bx1 - bx0) * i / np;
+                    const xw = sx / scale;
+                    let yw = cv.h + tp * (xw - cv.xs);
+                    if (cv.rip > 2e-5) yw += cv.rip * (0.6 * Math.sin(xw * 52 - t * 7.5) + 0.4 * Math.sin(xw * 87 + t * 11));
+                    surfPts[2 * i] = sx; surfPts[2 * i + 1] = wy(yw);
+                }
+                const below = new Path2D(), above = new Path2D(), line = new Path2D();
+                below.moveTo(bx0, by1); above.moveTo(bx0, by0);
+                for (let i = 0; i <= np; i++) {
+                    const sx = surfPts[2 * i], sy = surfPts[2 * i + 1];
+                    below.lineTo(sx, sy); above.lineTo(sx, sy);
+                    if (i === 0) line.moveTo(sx, sy); else line.lineTo(sx, sy);
+                }
+                below.lineTo(bx1, by1); below.closePath();
+                above.lineTo(bx1, by0); above.closePath();
+                ctx.fillStyle = bgGradient; ctx.fill(above);
+                stack(below);
+                ctx.strokeStyle = liq.surface;
+                ctx.globalAlpha = 0.85;
+                ctx.lineWidth = 1.5;
+                ctx.stroke(line);
+                ctx.globalAlpha = 1;
+            }
+            // a stream pouring in falls inside the cavity
+            if (cv.sDir > 0 && cv.sQ >= 2e-4) {
+                if (cv.sMode === 1) drawCurtain(cv, liq);
+                else { const n = traceJet(cv); if (n > 1) drawJet(cv, n, liq); }
+            }
+            ctx.restore();
         }
-        if (nAir) { const g = B.cavAirImg.getContext('2d'); g.fillStyle = pal.openAir; g.fill(air); }
-        if (nWater) {
-            const g = B.cavWaterImg.getContext('2d');
-            const liq = LIQUIDS[settings.liquid];
-            g.fillStyle = 'rgba(' + liq.top.join(',') + ',' + Math.min(1, liq.aTop + 0.15) + ')';
-            g.fill(water);
+    }
+
+    // liquid falling in across the wet part of an opening (e.g. over a submerged rim)
+    function drawCurtain(cv, liq) {
+        const xa = cv.cX0, xb = cv.cX1;
+        if (!(xb > xa)) return;
+        const pad = 0.6 * CELL;   // start just above the opening so the sheet meets the liquid over it
+        const ya = cv.cY0 + pad, yb = cv.cY1 + pad;
+        const la = cavityLevelAt(cv, xa), lb = cavityLevelAt(cv, xb);
+        if (la > ya - pad && lb > yb - pad) return;   // the inside has risen to the opening
+        const strength = clamp(cv.sQ / 0.02, 0.5, 1);
+        const sheet = new Path2D();
+        sheet.moveTo(wx(xa), wy(ya));
+        sheet.lineTo(wx(xb), wy(yb));
+        sheet.lineTo(wx(xb), wy(lb - 0.5 * CELL));
+        sheet.lineTo(wx(xa), wy(la - 0.5 * CELL));
+        sheet.closePath();
+        ctx.save();
+        ctx.clip(sheet);
+        const yTop = wy(Math.max(ya, yb)), yBot = wy(Math.min(la, lb) - 0.5 * CELL);
+        const grad = ctx.createLinearGradient(0, yTop, 0, yBot);
+        grad.addColorStop(0, 'rgba(' + liq.top.join(',') + ',' + (0.9 * strength) + ')');
+        grad.addColorStop(1, 'rgba(' + liq.top.join(',') + ',' + (0.5 * strength) + ')');
+        ctx.fillStyle = grad;
+        ctx.fill(sheet);
+        // streaks running down
+        ctx.strokeStyle = liq.surface;
+        ctx.lineWidth = Math.max(1, 0.002 * scale);
+        ctx.globalAlpha = 0.55 * strength;
+        const L = 0.035 * scale;
+        ctx.setLineDash([L, 0.6 * L]);
+        ctx.lineDashOffset = -simTime * Math.max(0.6, cv.sV + 0.6) * scale;
+        const x0 = wx(xa), span = wx(xb) - x0;
+        const nS = Math.max(1, Math.round(span / Math.max(7, 0.02 * scale)));
+        ctx.beginPath();
+        for (let i = 0; i < nS; i++) {
+            const x = x0 + span * (i + 0.5) / nS;
+            ctx.moveTo(x, yTop - ((i * 37) % 17) / 17 * L);
+            ctx.lineTo(x, yBot);
         }
-        B.cavKey = key;
-        B.cavDirty = false;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+    }
+
+    function drawJet(cv, n, liq) {
+        const maxW = 0.02 * scale;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(' + liq.top.join(',') + ',0.9)';
+        for (let i = 0; i < n - 1; i++) {
+            ctx.lineWidth = clamp(jetW[i] * scale, 1.5, maxW);
+            ctx.beginPath();
+            ctx.moveTo(wx(jetX[i]), wy(jetY[i]));
+            ctx.lineTo(wx(jetX[i + 1]), wy(jetY[i + 1]));
+            ctx.stroke();
+        }
+        // moving highlights so the stream reads as flowing
+        ctx.strokeStyle = liq.surface;
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = Math.max(1, 0.3 * clamp(jetW[0] * scale, 1.5, maxW));
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = -simTime * Math.max(0.3, cv.sV) * scale;
+        ctx.beginPath();
+        ctx.moveTo(wx(jetX[0]), wy(jetY[0]));
+        for (let i = 1; i < n; i++) ctx.lineTo(wx(jetX[i]), wy(jetY[i]));
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'butt';
     }
 
     function ensureGradients() {
@@ -1816,7 +2198,7 @@
             if (drawDirty) { renderDrawLayer(); drawDirty = false; updateStatsDisplay(true); level = drawModeLevel(preview); }
             ctx.drawImage(drawCanvas, 0, 0, cssW, cssH);
         } else if (body) {
-            drawBody(liqPath, 0);
+            drawBody(0);
         }
 
         // translucent liquid over submerged parts + surface line
@@ -1827,7 +2209,7 @@
         ctx.lineWidth = 1.5;
         ctx.stroke(surf);
         ctx.globalAlpha = 1;
-        if (mode === 'sim' && body) drawBody(liqPath, 1);
+        if (mode === 'sim' && body) drawBody(1);
         else if (mode === 'draw') ctx.drawImage(drawTopCanvas, 0, 0, cssW, cssH);
 
         // droplets
@@ -1841,6 +2223,22 @@
                 ctx.arc(x, y, r, 0, Math.PI * 2);
             }
             ctx.fill();
+        }
+        // bubbles
+        if (nBubbles) {
+            ctx.beginPath();
+            for (let i = 0; i < nBubbles; i++) {
+                const x = wx(bX[i]), y = wy(bY[i]), r = Math.max(1.2, bR[i] * scale);
+                ctx.moveTo(x + r, y);
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+            }
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.fill();
+            ctx.strokeStyle = liq.surface;
+            ctx.globalAlpha = 0.8;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
         }
 
         // tank walls
@@ -1859,15 +2257,15 @@
         } else {
             drawToolPreview();
             if (!preview) drawEmptyHint();
+            else if (!pointer.down) drawPrediction();
         }
     }
 
     // pass 0: solid material (drawn before the liquid tint); pass 1: air pockets, liquid held
     // inside open cavities and outlines (drawn after the tint and waterline)
-    function drawBody(liqPath, pass) {
+    function drawBody(pass) {
         const B = body;
         renderBodyImage(B);
-        if (B.nOpen) renderCavityImages(B);
         const ix = -B.comLX * scale, iy = -(B.LH * CELL - B.comLY) * scale;
         const iw = B.LW * CELL * scale, ih = B.LH * CELL * scale;
         const X = wx(st.x), Y = wy(st.y);
@@ -1879,25 +2277,21 @@
             ctx.restore();
             return;
         }
-        if (B.nOpen) {
-            // air held in open cavities only shows where it keeps the liquid out (the clip is
-            // lifted a little so the waterline is not drawn across a dry hull)
-            ctx.save();
-            ctx.translate(0, -2);
-            ctx.clip(liqPath);
-            ctx.translate(0, 2);
-            ctx.translate(X, Y);
-            ctx.rotate(-st.th);
-            ctx.drawImage(B.cavAirImg, ix, iy, iw, ih);
-            ctx.restore();
-        }
+        // open cavities cover the tank's waterline and tint: dry inside, or their own liquid
+        if (B.cavs.length) drawCavities();
         ctx.save();
         ctx.translate(X, Y);
         ctx.rotate(-st.th);
         if (B.hasSealed) ctx.drawImage(B.airImg, ix, iy, iw, ih);
-        if (B.nOpen) ctx.drawImage(B.cavWaterImg, ix, iy, iw, ih);
         ctx.drawImage(B.lineImg, ix, iy, iw, ih);
         ctx.restore();
+        // streams pouring out of the object
+        if (B.cavs.length) {
+            const liq = LIQUIDS[settings.liquid];
+            for (const cv of B.cavs) {
+                if (cv.sDir < 0) { const n = traceJet(cv); if (n > 1) drawJet(cv, n, liq); }
+            }
+        }
     }
 
     function drawArrow(x, y, fx, fy, color, kPx, maxLen) {
@@ -1943,28 +2337,77 @@
         return [st.x + c * dx - s * dy, st.y + s * dx + c * dy];
     }
 
+    // Weight and buoyancy as shown. Held liquid that sits below the outside surface is counted as
+    // part of the tank: its weight and the buoyancy on it cancel exactly (same size, same point),
+    // so leaving both out changes no force or torque. A flooded hull then shows the weight of its
+    // material and a buoyancy that has dropped, while liquid held up above the surface (a boat
+    // lifted out full) adds to the weight. The physics itself uses the full mass and buoyancy.
+    const fv = { W: 0, cx: 0, cy: 0, fbX: 0, fbY: 0, bx: 0, by: 0, carried: 0 };
+    function forceView() {
+        const B = body;
+        const g = settings.gravity, rhoL = LIQUIDS[settings.liquid].rho;
+        let As = 0, ax = 0, ay = 0;
+        if (B.cavs.length && B.waterMass > 0) {
+            const c = Math.cos(st.th), s = Math.sin(st.th);
+            setCellGeometry(c, s);
+            setCorners(c, s);
+            for (const cv of B.cavs) {
+                if (cv.V <= 0) continue;
+                const lim = Math.min(cv.h, surfaceAt(cv.xs));
+                const top = lim + gExt, Y = cv.Y;
+                for (let k = 0; k < cv.nc; k++) {
+                    const tt = top - Y[k];
+                    if (tt <= 0) continue;
+                    const bi = cv.cells[k];
+                    let px = st.x + c * B.ox[bi] - s * B.oy[bi], py = Y[k], a;
+                    if (tt >= gE2) a = CELL_A;
+                    else { clipCell(lim - Y[k], 0); a = clipA; px += clipCX; py += clipCY; }
+                    As += a; ax += a * px; ay += a * py;
+                }
+            }
+        }
+        const m = B.mass + B.waterMass;
+        const mw = Math.min(rhoL * DEPTH * As, B.waterMass);
+        const [cx, cy] = comWorld();
+        const ms = m - mw;
+        fv.W = ms * g;
+        fv.cx = mw > 0 ? (m * cx - mw * ax / As) / ms : cx;
+        fv.cy = mw > 0 ? (m * cy - mw * ay / As) / ms : cy;
+        fv.fbX = disp.fbX;
+        fv.fbY = disp.fbY - mw * g;
+        const sa = phys.subA - mw / (rhoL * DEPTH);
+        if (mw > 0 && sa > 1e-6) {
+            fv.bx = (phys.subA * phys.cobX - ax) / sa;
+            fv.by = (phys.subA * phys.cobY - ay) / sa;
+        } else { fv.bx = phys.cobX; fv.by = phys.cobY; }
+        fv.carried = B.waterMass - mw;
+    }
+
     function drawForces() {
         const B = body;
-        const g = settings.gravity;
-        const weight = (B.mass + B.waterMass) * g;
-        const kPx = (0.17 * cssH) / Math.max(weight, 1e-6);
+        forceView();
+        const weight = fv.W;
+        const kPx = (0.17 * cssH) / Math.max((B.mass + B.waterMass) * settings.gravity, 1e-6);
         const maxLen = 0.42 * cssH;
-        const [cxw, cyw] = comWorld();
-        const cx = wx(cxw), cy = wy(cyw);
+        const cx = wx(fv.cx), cy = wy(fv.cy);
         const A = settings.arrows;
-        const legend = [];
         if (A.buoyancy && disp.sub > 0) {
-            drawArrow(wx(phys.cobX), wy(phys.cobY), disp.fbX, disp.fbY, ARROWS.buoyancy.color, kPx, maxLen);
+            drawArrow(wx(fv.bx), wy(fv.by), fv.fbX, fv.fbY, ARROWS.buoyancy.color, kPx, maxLen);
         }
         if (A.weight) drawArrow(cx, cy, 0, -weight, ARROWS.weight.color, kPx, maxLen);
         if (A.drag) drawArrow(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color, kPx, maxLen);
         if (A.contact && disp.hasContact > 0.05) drawArrow(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color, kPx, maxLen);
         if (A.net) drawArrow(cx, cy, disp.netX, disp.netY, ARROWS.net.color, kPx, maxLen);
-        if (A.weight) legend.push(['weight', weight]);
-        if (A.buoyancy) legend.push(['buoyancy', Math.hypot(disp.fbX, disp.fbY)]);
-        if (A.drag) legend.push(['drag', Math.hypot(disp.fdX, disp.fdY)]);
-        if (A.contact) legend.push(['contact', Math.hypot(disp.fcX, disp.fcY)]);
-        if (A.net) legend.push(['net', Math.hypot(disp.netX, disp.netY)]);
+        const rows = [];
+        const N = (v) => fmtAuto(v) + ' N';
+        if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(weight)]);
+        if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(Math.hypot(fv.fbX, fv.fbY))]);
+        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(Math.hypot(disp.netX, disp.netY))]);
+        if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(Math.hypot(disp.fdX, disp.fdY))]);
+        if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(Math.hypot(disp.fcX, disp.fcY))]);
+        if (B.cavs.length && fv.carried > 0.01) {
+            rows.push(['liquid', LIQUIDS[settings.liquid].name.replace('Fresh water', 'Water') + ' held up', fmtAuto(fv.carried) + ' kg']);
+        }
 
         if (settings.markers) {
             // centre of mass: quartered disc
@@ -1977,52 +2420,73 @@
             ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, Math.PI, Math.PI * 1.5); ctx.closePath(); ctx.fill();
             ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
             if (disp.sub > 0) {
-                const bx = wx(phys.cobX), by = wy(phys.cobY);
+                const bx = wx(fv.bx), by = wy(fv.by);
                 ctx.strokeStyle = pal.halo; ctx.lineWidth = 4;
                 ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI * 2); ctx.stroke();
                 ctx.strokeStyle = ARROWS.buoyancy.color; ctx.lineWidth = 2;
                 ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI * 2); ctx.stroke();
             }
         }
-        if (legend.length || settings.markers) drawLegend(legend);
+        if (settings.markers) rows.push(['markers', 'Centre of mass / buoyancy', '']);
+        if (rows.length) drawInfoBox(rows, '000.0 N');
     }
 
-    function drawLegend(rows) {
-        const fs = clamp(cssW / 62, 9, 13);
+    // A small key in the top-left corner: [swatch] label ... value (values right-aligned in a
+    // column as wide as `valueTemplate`, so changing numbers never shift anything)
+    function drawInfoBox(rows, valueTemplate, right) {
+        const fs = clamp(cssW / 70, 10, 13);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
-        const lineH = fs * 1.35;
-        const items = rows.map(([k, v]) => [ARROWS[k].color, ARROWS[k].label + ': ' + fmtAuto(v) + ' N']);
-        if (settings.markers) items.push(['markers', 'Centre of mass / buoyancy']);
-        let w = 0;
-        for (const it of items) w = Math.max(w, ctx.measureText(it[1]).width);
-        const pad = 6, sw = 18;
-        const bw = w + sw + pad * 3, bh = items.length * lineH + pad * 1.5;
-        const x0 = 8, y0 = 8;
+        const lineH = Math.round(fs * 1.4);
+        let lw = 0, vw = valueTemplate ? ctx.measureText(valueTemplate).width : 0;
+        for (const r of rows) {
+            lw = Math.max(lw, ctx.measureText(r[1]).width);
+            if (r[2]) vw = Math.max(vw, ctx.measureText(r[2]).width);
+        }
+        const pad = 7, sw = r0Swatch(rows) ? 18 : 0, gap = vw > 0 ? 10 : 0;
+        const bw = pad * 2 + (sw ? sw + pad : 0) + lw + gap + vw, bh = rows.length * lineH + pad;
+        const x0 = right ? Math.max(8, Math.floor(cssW - 8 - bw)) : 8, y0 = 8;
         ctx.fillStyle = pal.panel;
         ctx.strokeStyle = pal.panelBorder;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.rect(x0, y0, bw, bh);
+        ctx.rect(x0 + 0.5, y0 + 0.5, Math.ceil(bw), Math.ceil(bh));
         ctx.fill(); ctx.stroke();
         ctx.textBaseline = 'middle';
-        ctx.textAlign = 'left';
-        items.forEach((it, i) => {
-            const yy = y0 + pad * 0.75 + lineH * (i + 0.5);
-            if (it[0] === 'markers') {
+        rows.forEach((r, i) => {
+            const yy = y0 + pad / 2 + lineH * (i + 0.5);
+            const sx = x0 + pad;
+            if (r[0] === 'markers') {
                 ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#111111'; ctx.lineWidth = 1;
-                ctx.beginPath(); ctx.arc(x0 + pad + 4, yy, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(sx + 4, yy, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
                 ctx.fillStyle = '#111111';
-                ctx.beginPath(); ctx.moveTo(x0 + pad + 4, yy); ctx.arc(x0 + pad + 4, yy, 4, 0, Math.PI / 2); ctx.closePath(); ctx.fill();
-                ctx.beginPath(); ctx.moveTo(x0 + pad + 4, yy); ctx.arc(x0 + pad + 4, yy, 4, Math.PI, Math.PI * 1.5); ctx.closePath(); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(sx + 4, yy); ctx.arc(sx + 4, yy, 4, 0, Math.PI / 2); ctx.closePath(); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(sx + 4, yy); ctx.arc(sx + 4, yy, 4, Math.PI, Math.PI * 1.5); ctx.closePath(); ctx.fill();
                 ctx.strokeStyle = ARROWS.buoyancy.color; ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.arc(x0 + pad + 14, yy, 3.5, 0, Math.PI * 2); ctx.stroke();
-            } else {
-                ctx.strokeStyle = it[0]; ctx.lineWidth = 3;
-                ctx.beginPath(); ctx.moveTo(x0 + pad, yy); ctx.lineTo(x0 + pad + sw, yy); ctx.stroke();
+                ctx.beginPath(); ctx.arc(sx + 14, yy, 3.5, 0, Math.PI * 2); ctx.stroke();
+            } else if (r[0] === 'liquid') {
+                const liq = LIQUIDS[settings.liquid];
+                ctx.fillStyle = 'rgb(' + liq.top.join(',') + ')';
+                ctx.fillRect(sx + 3, yy - 4, sw - 6, 8);
+            } else if (r[0]) {
+                ctx.strokeStyle = r[0]; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(sx, yy); ctx.lineTo(sx + sw, yy); ctx.stroke();
             }
             ctx.fillStyle = pal.text;
-            ctx.fillText(it[1], x0 + pad * 2 + sw, yy + 0.5);
+            ctx.textAlign = 'left';
+            ctx.fillText(r[1], sx + (sw ? sw + pad : 0), yy + 0.5);
+            if (r[2]) {
+                ctx.textAlign = 'right';
+                ctx.fillText(r[2], x0 + bw - pad, yy + 0.5);
+            }
         });
+        ctx.textAlign = 'left';
+    }
+    function r0Swatch(rows) { for (const r of rows) if (r[0]) return true; return false; }
+
+    // draw mode: will the drawing float?
+    function drawPrediction() {
+        if (!predictionLines.length) return;
+        drawInfoBox(predictionLines.map((t) => [null, t, '']), '', true);
     }
 
     function drawGrabLine() {
@@ -2135,6 +2599,19 @@
     // ------------------------------------------------------------------
     const el = {};
     let lastStatsT = 0;
+    const lastTxt = new Map();
+    function setText(node, t) {
+        if (!node || lastTxt.get(node) === t) return;
+        lastTxt.set(node, t);
+        node.textContent = t;
+    }
+    // read-out numbers: fixed decimals by size, no thousands separators (the boxes reserve a width)
+    function fmtR(v) {
+        if (!isFinite(v)) return '-';
+        const a = Math.abs(v);
+        return v.toFixed(a < 9.995 ? 2 : (a < 99.95 ? 1 : 0));
+    }
+    let predictionLines = [];
     function updateStatsDisplay(force) {
         const now = performance.now();
         if (!force && now - lastStatsT < 200) return;
@@ -2142,77 +2619,89 @@
         const P = mode === 'sim' ? body : preview;
         const liq = LIQUIDS[settings.liquid];
         const g = settings.gravity;
-        if (!el.mass) return;
         if (!P) {
-            el.mass.textContent = '-'; el.volume.textContent = '-'; el.density.textContent = '-';
-            el.submerged.textContent = '-'; el.weight.textContent = '-'; el.buoyancy.textContent = '-';
-            el.prediction.textContent = 'Draw an object to see whether it will float in ' + liq.name.toLowerCase() + '.';
+            predictionLines = [];
+            if (!el.mass) return;
+            setText(el.mass, '–'); setText(el.volume, '–'); setText(el.density, '–');
+            setText(el.submerged, '–'); setText(el.weight, '–'); setText(el.buoyancy, '–');
             return;
         }
         const V = (P.areaMat + P.areaSealed) * DEPTH;
         const M = P.mass;
         const rho = M / V;
-        let massTxt = fmtAuto(M) + ' kg';
-        if (mode === 'sim' && P.waterHeld > 0.02) massTxt += ' + ' + fmtAuto(P.waterHeld) + ' kg of ' + LIQUIDS[settings.liquid].name.toLowerCase() + ' inside';
-        el.mass.textContent = massTxt;
-        el.volume.textContent = fmtAuto(V * 1000) + ' L';
-        el.density.textContent = fmt(rho, 0) + ' kg/m³';
-        el.weight.textContent = fmtAuto((M + (mode === 'sim' ? P.waterMass : 0)) * g) + ' N';
+        predictionLines = predictionText(P, liq, rho, V, M, g);
+        if (!el.mass) return;
+        setText(el.mass, fmtR(M));
+        setText(el.volume, fmtR(V * 1000));
+        setText(el.density, rho.toFixed(0));
         if (mode === 'sim') {
-            el.submerged.textContent = fmt(100 * clamp(disp.sub, 0, 1), 0) + '%';
-            el.buoyancy.textContent = fmtAuto(Math.hypot(disp.fbX, disp.fbY)) + ' N';
+            forceView();
+            setText(el.weight, fmtR(fv.W));
+            setText(el.submerged, (100 * clamp(disp.sub, 0, 1)).toFixed(0));
+            setText(el.buoyancy, fmtR(Math.hypot(fv.fbX, fv.fbY)));
         } else {
-            el.submerged.textContent = '-';
-            el.buoyancy.textContent = '-';
+            setText(el.weight, fmtR(M * g));
+            setText(el.submerged, '–');
+            setText(el.buoyancy, '–');
         }
-        el.prediction.textContent = predictionText(P, liq, rho, V, M, g);
     }
 
+    // "Will it float?" for the drawing: a few short lines shown on the tank while drawing
     function predictionText(P, liq, rho, V, M, g) {
         const rl = liq.rho;
-        const ln = liq.name.toLowerCase();
         const r0 = fmt(rho, 0), rL = rl.toLocaleString('en-US');
+        const lines = [fmtAuto(M) + ' kg \u00f7 ' + fmtAuto(V * 1000) + ' L = ' + r0 + ' kg/m\u00b3  (' +
+            liq.name.toLowerCase() + ': ' + rL + ')'];
         if (rho < rl) {
-            return 'Average density ' + r0 + ' kg/m³ < ' + rL + ' kg/m³ (' + ln + ') → floats with about ' +
-                fmt(100 * rho / rl, 0) + '% of its volume submerged.';
+            lines.push('\u2192 should float, about ' + fmt(100 * rho / rl, 0) + '% submerged');
+            return lines;
         }
         const Vh = V + P.areaBasin * DEPTH;
         if (P.areaBasin > 0 && M / Vh < rl) {
-            const rh = M / Vh;
-            return 'Solid parts average ' + r0 + ' kg/m³ > ' + rL + ' kg/m³, but counting the air in its open hull it averages ' +
-                fmt(rh, 0) + ' kg/m³ → floats like a boat (about ' + fmt(100 * rh / rl, 0) + '% of the hull submerged) unless ' + ln + ' gets in.';
+            lines.push('With the air in its hull: ' + fmt(M / Vh, 0) + ' kg/m\u00b3');
+            lines.push('\u2192 should float like a boat until liquid gets in');
+            return lines;
         }
-        const net = (M - rl * V) * g;
-        let txt = 'Average density ' + r0 + ' kg/m³ > ' + rL + ' kg/m³ (' + ln + ') → sinks. Fully submerged it still feels a buoyant force of ' +
-            fmtAuto(rl * V * g) + ' N, so its apparent weight is ' + fmtAuto(net) + ' N';
-        if (P.areaOpen - P.areaBasin > 0.15 * (P.areaMat + P.areaSealed)) txt += ' (unless it traps air underneath, like an upside-down cup)';
-        return txt + '.';
+        let t = '\u2192 should sink; in the liquid it weighs ' + fmtAuto((M - rl * V) * g) + ' N, not ' + fmtAuto(M * g) + ' N';
+        lines.push(t);
+        if (P.areaOpen - P.areaBasin > 0.15 * (P.areaMat + P.areaSealed)) lines.push('(unless it traps air underneath)');
+        return lines;
     }
 
     function setHint(text) {
-        if (el.hint) el.hint.textContent = text;
+        if (el.hint) { el.hint.textContent = text; lastTxt.set(el.hint, text); }
         hintHold = performance.now() + 3500;
     }
     let hintHold = 0;
     function refreshHint() {
         if (!el.hint || performance.now() < hintHold) return;
-        let t;
+        let title, body;
         if (mode === 'sim') {
-            t = 'Drag the object to lift or throw it · tap the liquid to make waves · Edit to change the drawing';
+            title = 'Simulating';
+            body = 'Drag the object to lift or throw it; tap the liquid for waves. Pick a tool to draw again.';
         } else {
             const m = MATERIALS[settings.material];
+            const fine = pointer.type === 'mouse';
             const tips = {
-                brush: 'drag to paint (right-click erases)',
-                eraser: 'drag to erase',
-                rect: 'drag to draw a solid rectangle (Shift: square)',
-                box: 'drag for a hollow box; wall = brush size (Shift: square)',
-                ellipse: 'drag to draw a solid ellipse (Shift: circle)',
-                ring: 'drag for a hollow ring; wall = brush size (Shift: circle)',
-                fill: 'click inside a closed outline to fill it'
+                brush: fine ? 'Drag to paint (right-click erases).' : 'Drag to paint.',
+                eraser: 'Drag to erase.',
+                rect: fine ? 'Drag out a solid rectangle (Shift: square).' : 'Drag out a solid rectangle.',
+                box: 'Drag out a hollow box; its wall is the size.',
+                ellipse: fine ? 'Drag out a solid ellipse (Shift: circle).' : 'Drag out a solid ellipse.',
+                ring: 'Drag out a hollow ring; its wall is the size.',
+                fill: 'Tap inside a closed outline to fill it.'
             };
-            t = (settings.tool === 'eraser' ? 'Eraser' : m.name + ' · ' + m.rho.toLocaleString('en-US') + ' kg/m³') + ' — ' + tips[settings.tool];
+            title = settings.tool === 'eraser' ? 'Eraser' : m.name + ', ' + m.rho.toLocaleString('en-US') + ' kg/m\u00b3';
+            body = tips[settings.tool] + ' Then press Drop.';
         }
-        if (el.hint.textContent !== t) el.hint.textContent = t;
+        const key = title + '|' + body;
+        if (lastTxt.get(el.hint) === key) return;
+        lastTxt.set(el.hint, key);
+        el.hint.innerHTML = '';
+        const st = document.createElement('strong');
+        st.textContent = title + ': ';
+        el.hint.appendChild(st);
+        el.hint.appendChild(document.createTextNode(body));
     }
 
     // ------------------------------------------------------------------
@@ -2256,7 +2745,8 @@
         pointer.x = x; pointer.y = y;
         pointer.shift = e.shiftKey;
         if (mode === 'sim') {
-            const tol = pointer.type === 'mouse' ? 0.012 : 0.035;
+            // grab tolerance in screen pixels: a finger needs more than a mouse
+            const tol = (pointer.type === 'mouse' ? 6 : 20) / scale;
             const hit = hitBody(x, y, tol);
             if (hit) {
                 grab.active = true; grab.bx = hit[0]; grab.by = hit[1]; grab.tx = x; grab.ty = y;
@@ -2297,7 +2787,7 @@
         pointer.x = x; pointer.y = y;
         if (mode === 'sim') {
             if (grab.active) { grab.tx = x; grab.ty = y; }
-            else if (pointer.type === 'mouse') canvas.style.cursor = hitBody(x, y, 0.012) ? 'grab' : 'default';
+            else if (pointer.type === 'mouse') canvas.style.cursor = hitBody(x, y, 6 / scale) ? 'grab' : 'default';
             return;
         }
         canvas.style.cursor = 'crosshair';
@@ -2346,10 +2836,11 @@
         if (tb) tb.classList.toggle('is-sim', mode === 'sim');
         const dropBtn = document.getElementById('dropBtn');
         const editBtn = document.getElementById('editBtn');
-        if (dropBtn) dropBtn.hidden = mode === 'sim';
-        if (editBtn) editBtn.hidden = mode !== 'sim';
-        const redrop = document.getElementById('redropBtn');
-        if (redrop) redrop.hidden = mode !== 'sim';
+        if (dropBtn) {
+            dropBtn.setAttribute('aria-pressed', mode === 'sim' ? 'true' : 'false');
+            dropBtn.title = mode === 'sim' ? 'Drop the object again from where it was drawn' : 'Drop the object into the liquid';
+        }
+        if (editBtn) editBtn.setAttribute('aria-pressed', mode === 'sim' ? 'false' : 'true');
         canvas.style.cursor = mode === 'sim' ? 'default' : 'crosshair';
         hintHold = 0;
         refreshHint();
@@ -2377,7 +2868,7 @@
         const sel = document.getElementById('liquidSelector');
         if (sel && sel.value !== key) sel.value = key;
         gradientKey = '';
-        if (body) { updateWaterMass(body); body.cavKey = ''; }
+        if (body) updateWaterMass(body);
         updateWaveCoefficients();
         if (mode === 'draw') level = drawModeLevel(preview);
         updateStatsDisplay(true);
@@ -2390,7 +2881,6 @@
         el.submerged = document.getElementById('statSubmerged');
         el.weight = document.getElementById('statWeight');
         el.buoyancy = document.getElementById('statBuoyancy');
-        el.prediction = document.getElementById('predictionText');
         el.hint = document.getElementById('toolHint');
         el.fps = document.getElementById('fpsDisplay');
 
@@ -2405,10 +2895,9 @@
                 b.className = 'buoy-mat';
                 b.dataset.mat = String(i);
                 b.setAttribute('role', 'radio');
-                b.title = m.name + ' – ' + m.rho.toLocaleString('en-US') + ' kg/m³';
+                b.title = m.name + ' (' + m.rho.toLocaleString('en-US') + ' kg/m³)';
                 b.setAttribute('aria-label', b.title);
-                b.innerHTML = '<span class="buoy-swatch" style="background:' + m.color + '"></span><span class="buoy-mat-name">' +
-                    m.name + '</span><span class="buoy-mat-rho">' + m.rho.toLocaleString('en-US') + '</span>';
+                b.innerHTML = '<span class="buoy-swatch" style="background:' + m.color + '"></span>';
                 b.addEventListener('click', () => {
                     settings.material = i;
                     if (settings.tool === 'eraser') settings.tool = 'brush';
@@ -2425,21 +2914,24 @@
                 syncToolButtons();
             });
         });
-        const sizeEl = document.getElementById('brushSize'), sizeVal = document.getElementById('brushSizeVal');
+        const sizeEl = document.getElementById('brushSize');
         if (sizeEl) {
-            const upd = () => {
-                settings.brushIndex = clamp(parseInt(sizeEl.value, 10) || 0, 0, BRUSH_SIZES.length - 1);
-                if (sizeVal) sizeVal.textContent = BRUSH_SIZES[settings.brushIndex] + ' cm';
-            };
-            sizeEl.addEventListener('input', upd);
+            sizeEl.innerHTML = '';
+            BRUSH_SIZES.forEach((cm, i) => {
+                const o = document.createElement('option');
+                o.value = String(i); o.textContent = cm + ' cm';
+                sizeEl.appendChild(o);
+            });
             sizeEl.value = String(settings.brushIndex);
-            upd();
+            sizeEl.addEventListener('change', () => {
+                settings.brushIndex = clamp(parseInt(sizeEl.value, 10) || 0, 0, BRUSH_SIZES.length - 1);
+                if (mode === 'sim') enterEditMode();
+            });
         }
         const on = (id, fn) => { const n = document.getElementById(id); if (n) n.addEventListener('click', fn); };
         on('dropBtn', () => dropObject());
-        on('editBtn', () => enterEditMode());
-        on('redropBtn', () => dropObject());
-        on('clearBtn', () => { pushUndo(); grid.fill(0); enterEditMode(); });
+        on('editBtn', () => { if (mode === 'sim') enterEditMode(); });
+        on('clearBtn', () => { pushUndo(); grid.fill(0); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
         on('undoBtn', () => undo());
         on('resetSimulationBtn', () => {
             if (mode === 'sim') dropObject();
@@ -2469,10 +2961,7 @@
             n.checked = get();
             n.addEventListener('change', () => set(n.checked));
         };
-        const rotLabel = document.querySelector('label[for="rotationToggle"]');
-        const showRot = () => { if (rotLabel) rotLabel.textContent = 'Rotation: ' + (settings.rotation ? 'on' : 'off'); };
-        bindCheck('rotationToggle', () => settings.rotation, (v) => { settings.rotation = v; if (!v) st.om = 0; showRot(); });
-        showRot();
+        bindCheck('rotationToggle', () => settings.rotation, (v) => { settings.rotation = v; if (!v) st.om = 0; });
         Object.keys(settings.arrows).forEach((k) => {
             bindCheck('arrow_' + k, () => settings.arrows[k], (v) => { settings.arrows[k] = v; });
         });
@@ -2487,15 +2976,19 @@
             if (v) v.textContent = fmtFn(get());
         };
         bindRange('speedSlider', 'speedVal', () => settings.speed, (x) => { settings.speed = x; }, (x) => x.toFixed(2));
+        const gName = document.getElementById('gravityName');
+        const showGravityName = (x) => {
+            let nm = '';
+            for (const [gv, n] of [[1.62, 'Moon'], [3.71, 'Mars'], [9.81, 'Earth'], [24.79, 'Jupiter']]) if (Math.abs(x - gv) < 0.06) nm = n;
+            if (gName && gName.textContent !== nm) gName.textContent = nm;
+        };
         bindRange('gravitySlider', 'gravityVal', () => settings.gravity, (x) => {
+            // snap to the named values so Earth, the Moon etc. are easy to hit
+            for (const gv of [1.62, 3.71, 9.81, 24.79]) if (Math.abs(x - gv) < 0.12) x = gv;
             settings.gravity = x;
             updateWaveCoefficients();
             updateStatsDisplay(true);
-        }, (x) => {
-            const named = [[1.62, 'Moon'], [3.71, 'Mars'], [9.81, 'Earth'], [24.79, 'Jupiter']];
-            for (const [gv, nm] of named) if (Math.abs(x - gv) < 0.06) return x.toFixed(2) + ' (' + nm + ')';
-            return x.toFixed(2);
-        });
+        }, (x) => { showGravityName(x); return x.toFixed(2); });
         bindRange('depthSlider', 'depthVal', () => Math.round(settings.liquidDepth * 100), (x) => {
             settings.liquidDepth = x / 100;
             if (mode === 'draw') level = drawModeLevel(preview);
@@ -2521,7 +3014,6 @@
 
         new MutationObserver(() => refreshPalette()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         window.addEventListener('resize', () => handleResize());
-        watchToolbarHeight();
         syncToolButtons();
         updateModeUI();
     }
@@ -2554,8 +3046,9 @@
             }
             if (steps >= MAX_SUBSTEPS) physAcc = 0;
             if (steps > 0) {
-                stepCavities(steps * DT);
                 stepParticles(steps * DT);
+                stepBubbles(steps * DT);
+                stepCavityVisuals(steps * DT);
             }
             // frame averages -> smoothed display values
             if (acc.n > 0) {
@@ -2577,6 +3070,7 @@
         } else {
             physAcc = 0;
             if (nParticles) stepParticles(dtReal);
+            if (nBubbles) stepBubbles(dtReal);
         }
         const t1 = performance.now();
         render();
@@ -2608,7 +3102,7 @@
         refreshPalette();
         setupUI();
         handleResize();
-        loadPreset('ship');
+        loadPreset('pine');
         undoStack.length = 0;
         requestAnimationFrame(frame);
     }
@@ -2645,13 +3139,15 @@
             st.vx = vx || 0; st.vy = vy || 0; st.om = omega || 0;
         },
         cavityInfo() {
-            if (!body || !body.nOpen) return null;
-            let v = 0, r = 0, d = 0, wsum = 0;
-            for (let q = 0; q < body.openCells.length; q++) {
-                const li = body.cellLocal[body.openCells[q]];
-                v += body.fV[li]; r += body.fR[li]; d += body.fD[li]; wsum += body.water[body.openCells[q]];
-            }
-            return { open: body.nOpen, vented: v, wetConnected: r, drainable: d, waterCells: wsum };
+            if (!body || !body.cavs.length) return null;
+            return {
+                cavities: body.cavs.map((cv) => ({
+                    cells: cv.nc, faces: cv.nf, area: cv.area, held: cv.V, fill: cv.V / cv.area,
+                    level: cv.h, surfaceWidth: cv.Ws, qIn: cv.qIn, qOut: cv.qOut, vented: cv.vented,
+                    stream: cv.sDir * cv.sQ, slosh: cv.phi, sMode: cv.sMode, sX: cv.sX, sY: cv.sY, sV: cv.sV, sN: [cv.sNX, cv.sNY], xs: cv.xs
+                })),
+                heldTotal: body.waterArea, heldMass: body.waterMass
+            };
         },
         getState() {
             const B = mode === 'sim' ? body : preview;
@@ -2672,7 +3168,8 @@
                 out.submergedVolume = phys.subA * DEPTH;
                 out.buoyancy = phys.fbY; out.weight = phys.weight;
                 out.waterInside = body.waterMass;
-                out.waterHeld = body.waterHeld;
+                forceView();
+                out.weightShown = fv.W; out.buoyancyShown = Math.hypot(fv.fbX, fv.fbY); out.waterHeldUp = fv.carried;
                 out.contactForce = [phys.fcX, phys.fcY];
                 out.dragForce = [phys.fdX, phys.fdY];
                 out.cob = [phys.cobX, phys.cobY];
@@ -2682,7 +3179,7 @@
         getPerf() {
             return { fps: perf.fps, frameMs: perf.frameMs, physMs: perf.physMs, renderMs: perf.renderMs, substepsPerFrame: perf.substeps, frames: perf.frames };
         },
-        _internals: { settings, MATERIALS, LIQUIDS, grid, GW, GH, CELL }
+        _internals: { settings, MATERIALS, LIQUIDS, grid, GW, GH, CELL, body: () => body, surfaceAt }
     };
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
