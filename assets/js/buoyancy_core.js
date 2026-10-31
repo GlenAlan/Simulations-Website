@@ -80,7 +80,10 @@
     const CD_OPEN = 0.6;          // discharge coefficient of cavity openings
     const BUBBLE_K = 0.35;        // trapped air escaping through a submerged opening (relative to orifice flow)
     const GLUG_K = 0.5;           // liquid leaving a cavity that air can only enter through the same opening
-    const AIR_EPS = 0.1 * CELL;   // air must reach this far past an opening's top edge to get through
+    // Air must reach this far past an opening's top edge to get through: a bubble cannot break away
+    // from under a rim until the air there is about a capillary length deep (some 2.5 mm for water).
+    // (So an upside-down cup rocking a fraction of a degree keeps its air.)
+    const AIR_EPS = 0.25 * CELL;
     const WATER_SPIN = 0.5;       // share of the held liquid's own moment of inertia that turns with the hull
     const BRUSH_SIZES = [1, 2, 3, 4, 6, 8, 12, 16];
     const T_EXT = 0, T_MAT = 1, T_SEALED = 2, T_OPEN = 3;
@@ -159,8 +162,17 @@
     const gam = new Float64Array(NMODE + 1);
     const cosKJ = new Float64Array((NMODE + 1) * NCOL);    // [k * NCOL + j]
     const cosJK = new Float64Array(NCOL * (NMODE + 1));    // [j * (NMODE + 1) + k]
-    let bOld = new Float64Array(NCOL);
-    let bNew = new Float64Array(NCOL);
+    // What pushes the liquid aside, per column and per band of depth below the calm level. Liquid
+    // pushed aside at depth d raises the surface over a width of about d, not just above itself: a
+    // change of volume there reaches a wave of wavenumber k weakened by cosh(k (H - d)) / cosh(k H)
+    // (H the liquid's depth; about exp(-k d)), the free surface's answer to a source under it. So
+    // something deep in the liquid stirs only long, low waves, and only what is near the surface
+    // makes short ones. Each cell's share goes to the two bands its depth lies between.
+    const DEPTH_BANDS = [0, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8];
+    const NB = DEPTH_BANDS.length;
+    let bOld = new Float64Array(NB * NCOL);
+    let bNew = new Float64Array(NB * NCOL);
+    const bandGain = new Float64Array(NB * (NMODE + 1));    // [b * (NMODE + 1) + k], see updateWaveCoefficients
     const src = new Float64Array(NCOL);
     // An object pushes the liquid aside over a few centimetres, not in 2 cm columns: what it adds to
     // each wave mode is spread like that (a Gaussian 2 cm wide). Otherwise the column steps feed the
@@ -1291,7 +1303,28 @@
             om2[k] = (g * kap + (liq.sigma / liq.rho) * kap * kap * kap) * Math.tanh(kap * H);
             const r = k / NMODE;
             gam[k] = liq.damp + 2 * nu * kap * kap + 12 * r * r * r * r;
+            // cosh(k (H - d)) / cosh(k H) for each band of depth d, written so it cannot overflow
+            const eH = Math.exp(-2 * kap * H);
+            for (let b = 0; b < NB; b++) {
+                const d = Math.min(DEPTH_BANDS[b], H);
+                bandGain[b * (NMODE + 1) + k] = Math.exp(-kap * d) * (1 + Math.exp(-2 * kap * (H - d))) / (1 + eH);
+            }
         }
+    }
+
+    // a cell's share of what pushes the liquid aside (area A, depth d below the calm level, between
+    // columns j and j + 1 at fraction t), added to the banded tally `out`
+    function addDisplacement(out, j, t, d, A) {
+        if (d < 0) d = 0;
+        let b = 0;
+        while (b < NB - 1 && d >= DEPTH_BANDS[b + 1]) b++;
+        const w = A / DXC;
+        let o = b * NCOL;
+        if (b === NB - 1) { out[o + j] += w * (1 - t); out[o + j + 1] += w * t; return; }
+        const u = (d - DEPTH_BANDS[b]) / (DEPTH_BANDS[b + 1] - DEPTH_BANDS[b]);
+        out[o + j] += w * (1 - u) * (1 - t); out[o + j + 1] += w * (1 - u) * t;
+        o += NCOL;
+        out[o + j] += w * u * (1 - t); out[o + j + 1] += w * u * t;
     }
 
     function clearWaves() {
@@ -1348,28 +1381,39 @@
             tot += Ac;
             let fc = X / DXC - 0.5, j, t;
             if (fc <= 0) { j = 0; t = 0; } else if (fc >= NCOL - 1) { j = NCOL - 2; t = 1; } else { j = Math.floor(fc); t = fc - j; }
-            out[j] += Ac / DXC * (1 - t);
-            out[j + 1] += Ac / DXC * t;
+            addDisplacement(out, j, t, dc, Ac);
         }
         return tot;
     }
 
     function stepWaves(dt, sourceOn) {
         if (sourceOn) {
+            // each band of depth stirs the waves through its own gains; what is near the surface
+            // (src, weighted by depth) throws up drops where it pushes the surface up fast
             let jmin = NCOL, jmax = -1;
-            for (let j = 0; j < NCOL; j++) {
-                const sj = bNew[j] - bOld[j];
-                src[j] = sj;
-                if (sj !== 0) { if (j < jmin) jmin = j; jmax = j; }
-            }
-            if (jmax >= 0) {
-                const f = 2 / NCOL;
+            src.fill(0);
+            const f = 2 / NCOL;
+            for (let b = 0; b < NB; b++) {
+                const o = b * NCOL;
+                let j0 = NCOL, j1 = -1;
+                for (let j = 0; j < NCOL; j++) {
+                    const sj = bNew[o + j] - bOld[o + j];
+                    if (sj !== 0) { if (j < j0) j0 = j; j1 = j; }
+                }
+                if (j1 < 0) continue;
+                const gb = b * (NMODE + 1);
                 for (let k = 1; k <= NMODE; k++) {
                     const base = k * NCOL;
                     let p = 0;
-                    for (let j = jmin; j <= jmax; j++) p += src[j] * cosKJ[base + j];
-                    amp[k] += p * f * srcFilter[k];
+                    for (let j = j0; j <= j1; j++) p += (bNew[o + j] - bOld[o + j]) * cosKJ[base + j];
+                    amp[k] += p * f * srcFilter[k] * bandGain[gb + k];
                 }
+                const ws = Math.exp(-DEPTH_BANDS[b] / 0.02);
+                for (let j = j0; j <= j1; j++) src[j] += ws * (bNew[o + j] - bOld[o + j]);
+                if (j0 < jmin) jmin = j0;
+                if (j1 > jmax) jmax = j1;
+            }
+            if (jmax >= 0) {
                 // splash droplets where the surface is being pushed up fast
                 for (let j = jmin; j <= jmax; j++) {
                     const rate = src[j] / dt;
@@ -1537,9 +1581,7 @@
                         if (dh > -ext) Ac -= areaBelow(dh + ext);
                     }
                 }
-                const w1 = Ac / DXC;
-                bNew[j] += w1 * (1 - t);
-                bNew[j + 1] += w1 * t;
+                addDisplacement(bNew, j, t, dc, Ac);
             }
         }
 
