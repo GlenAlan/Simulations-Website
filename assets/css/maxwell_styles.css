@@ -1,0 +1,178 @@
+/* --- Maxwell's demon simulation: page-specific styles (loaded after simulation_styles.css) --- */
+
+/* Particle colours. maxwell_demon_core.js reads these, so the canvas, the readouts,
+   the legend and the charts all use the same red and blue. */
+:root {
+    --mx-fast: #e0242b;
+    --mx-slow: #1f62d6;
+}
+html.dark-mode {
+    --mx-fast: #ff4646;
+    --mx-slow: #3f8cff;
+}
+
+/* --- Canvas --- */
+
+/* Press-and-hold must not select text, start a drag or open the long-press menu.
+   The page can still scroll over the canvas in automatic mode; in manual mode the
+   canvas is a hold-to-open button, so touches go to it instead of scrolling. */
+#simulationCanvas {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: auto;
+}
+#simulationCanvas.mx-manual {
+    touch-action: none;
+    cursor: pointer;
+}
+#simulationCanvas:focus {
+    outline: none;
+}
+#simulationCanvas:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+}
+
+/* Short hint shown over the bottom of the canvas (e.g. "Press and hold to open the gate"). */
+.mx-canvas-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 0.75em;
+    transform: translateX(-50%);
+    max-width: calc(100% - 1.5em);
+    box-sizing: border-box;
+    padding: 0.35em 0.9em;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.62);
+    color: #fff;
+    font-size: 0.8em;
+    line-height: 1.35;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+    z-index: 2;
+}
+.mx-canvas-hint.is-visible {
+    opacity: 1;
+}
+
+/* --- Info bar --- */
+
+/* Readouts, then the colour key, then the buttons pushed to the right. On narrow
+   screens the key and the buttons share a second row. */
+#statsBar {
+    justify-content: flex-start;
+    column-gap: 0.75em;
+    row-gap: 0.25em;
+}
+#statsBar .sim-info-actions {
+    margin-left: auto;
+}
+#statsBar .stats-container {
+    column-gap: 0.5em;
+    row-gap: 0.35em;
+}
+
+.mx-chamber {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.6em;
+    white-space: nowrap;
+}
+
+/* A coloured dot in front of each count doubles as the colour key. */
+.mx-fast::before,
+.mx-slow::before {
+    content: "";
+    display: inline-block;
+    width: 0.62em;
+    height: 0.62em;
+    margin-right: 0.3em;
+    border-radius: 50%;
+    vertical-align: 0.02em;
+}
+.mx-fast::before { background: var(--mx-fast); }
+.mx-slow::before { background: var(--mx-slow); }
+
+.mx-temp .icon {
+    color: var(--color-text-subtle);
+    margin-right: 0.3em;
+}
+
+/* Screen-reader-only words ("fast", "slow") next to the counts. */
+.mx-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Quiet colour key after the readouts. */
+.mx-legend {
+    display: inline-flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    column-gap: 0.9em;
+    padding: 0 0.35em;
+    font-size: 0.78em;
+    color: var(--color-text-subtle);
+    white-space: nowrap;
+}
+.mx-legend .icon {
+    margin-right: 0.15em;
+}
+
+/* Fit the info bar's contents to its width. */
+#statsBar {
+    container-type: inline-size;
+}
+/* Not enough room for the temperature note on one row with everything else
+   (the About text explains it). */
+@container (max-width: 900px) {
+    .mx-legend-t {
+        display: none;
+    }
+}
+/* Small phones: tighten the two chamber boxes so they still share a row. */
+@container (max-width: 335px) {
+    #statsBar .mx-chamber {
+        gap: 0.4em;
+        padding-left: 0.4em;
+        padding-right: 0.4em;
+        font-size: 0.8em;
+    }
+}
+
+/* --- About section: colour words match the particles --- */
+.description-area strong.mx-fast { color: var(--mx-fast); }
+.description-area strong.mx-slow { color: var(--mx-slow); }
+.description-area strong.mx-fast::before,
+.description-area strong.mx-slow::before {
+    content: none;
+}
+
+/* --- Controls panel --- */
+.sim-controls-content .mx-first-group {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.sim-controls-content .sim-select-container {
+    margin-bottom: 0.35em;
+}
+
+.mx-control-note {
+    font-size: 0.78em;
+    line-height: 1.45;
+    margin: 0 0 0.6em 0;
+    color: var(--color-text-subtle);
+}
