@@ -2233,6 +2233,7 @@
         } else {
             drawToolPreview();
             if (!preview) drawEmptyHint();
+            else if (!pointer.down) drawPrediction();
         }
     }
 
@@ -2321,7 +2322,6 @@
         const [cxw, cyw] = comWorld();
         const cx = wx(cxw), cy = wy(cyw);
         const A = settings.arrows;
-        const legend = [];
         if (A.buoyancy && disp.sub > 0) {
             drawArrow(wx(phys.cobX), wy(phys.cobY), disp.fbX, disp.fbY, ARROWS.buoyancy.color, kPx, maxLen);
         }
@@ -2329,11 +2329,16 @@
         if (A.drag) drawArrow(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color, kPx, maxLen);
         if (A.contact && disp.hasContact > 0.05) drawArrow(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color, kPx, maxLen);
         if (A.net) drawArrow(cx, cy, disp.netX, disp.netY, ARROWS.net.color, kPx, maxLen);
-        if (A.weight) legend.push(['weight', weight]);
-        if (A.buoyancy) legend.push(['buoyancy', Math.hypot(disp.fbX, disp.fbY)]);
-        if (A.drag) legend.push(['drag', Math.hypot(disp.fdX, disp.fdY)]);
-        if (A.contact) legend.push(['contact', Math.hypot(disp.fcX, disp.fcY)]);
-        if (A.net) legend.push(['net', Math.hypot(disp.netX, disp.netY)]);
+        const rows = [];
+        const N = (v) => fmtAuto(v) + ' N';
+        if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(weight)]);
+        if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(Math.hypot(disp.fbX, disp.fbY))]);
+        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(Math.hypot(disp.netX, disp.netY))]);
+        if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(Math.hypot(disp.fdX, disp.fdY))]);
+        if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(Math.hypot(disp.fcX, disp.fcY))]);
+        if (B.cavs.length && B.waterMass > 0.01) {
+            rows.push(['liquid', LIQUIDS[settings.liquid].name.replace('Fresh water', 'Water') + ' inside', fmtAuto(B.waterMass) + ' kg']);
+        }
 
         if (settings.markers) {
             // centre of mass: quartered disc
@@ -2353,45 +2358,66 @@
                 ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI * 2); ctx.stroke();
             }
         }
-        if (legend.length || settings.markers) drawLegend(legend);
+        if (settings.markers) rows.push(['markers', 'Centre of mass / buoyancy', '']);
+        if (rows.length) drawInfoBox(rows, '000.0 N');
     }
 
-    function drawLegend(rows) {
-        const fs = clamp(cssW / 62, 9, 13);
+    // A small key in the top-left corner: [swatch] label ... value (values right-aligned in a
+    // column as wide as `valueTemplate`, so changing numbers never shift anything)
+    function drawInfoBox(rows, valueTemplate) {
+        const fs = clamp(cssW / 70, 10, 13);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
-        const lineH = fs * 1.35;
-        const items = rows.map(([k, v]) => [ARROWS[k].color, ARROWS[k].label + ': ' + fmtAuto(v) + ' N']);
-        if (settings.markers) items.push(['markers', 'Centre of mass / buoyancy']);
-        let w = 0;
-        for (const it of items) w = Math.max(w, ctx.measureText(it[1]).width);
-        const pad = 6, sw = 18;
-        const bw = w + sw + pad * 3, bh = items.length * lineH + pad * 1.5;
+        const lineH = Math.round(fs * 1.4);
+        let lw = 0, vw = valueTemplate ? ctx.measureText(valueTemplate).width : 0;
+        for (const r of rows) {
+            lw = Math.max(lw, ctx.measureText(r[1]).width);
+            if (r[2]) vw = Math.max(vw, ctx.measureText(r[2]).width);
+        }
+        const pad = 7, sw = r0Swatch(rows) ? 18 : 0, gap = vw > 0 ? 10 : 0;
+        const bw = pad * 2 + (sw ? sw + pad : 0) + lw + gap + vw, bh = rows.length * lineH + pad;
         const x0 = 8, y0 = 8;
         ctx.fillStyle = pal.panel;
         ctx.strokeStyle = pal.panelBorder;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.rect(x0, y0, bw, bh);
+        ctx.rect(x0 + 0.5, y0 + 0.5, Math.ceil(bw), Math.ceil(bh));
         ctx.fill(); ctx.stroke();
         ctx.textBaseline = 'middle';
-        ctx.textAlign = 'left';
-        items.forEach((it, i) => {
-            const yy = y0 + pad * 0.75 + lineH * (i + 0.5);
-            if (it[0] === 'markers') {
+        rows.forEach((r, i) => {
+            const yy = y0 + pad / 2 + lineH * (i + 0.5);
+            const sx = x0 + pad;
+            if (r[0] === 'markers') {
                 ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#111111'; ctx.lineWidth = 1;
-                ctx.beginPath(); ctx.arc(x0 + pad + 4, yy, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(sx + 4, yy, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
                 ctx.fillStyle = '#111111';
-                ctx.beginPath(); ctx.moveTo(x0 + pad + 4, yy); ctx.arc(x0 + pad + 4, yy, 4, 0, Math.PI / 2); ctx.closePath(); ctx.fill();
-                ctx.beginPath(); ctx.moveTo(x0 + pad + 4, yy); ctx.arc(x0 + pad + 4, yy, 4, Math.PI, Math.PI * 1.5); ctx.closePath(); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(sx + 4, yy); ctx.arc(sx + 4, yy, 4, 0, Math.PI / 2); ctx.closePath(); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(sx + 4, yy); ctx.arc(sx + 4, yy, 4, Math.PI, Math.PI * 1.5); ctx.closePath(); ctx.fill();
                 ctx.strokeStyle = ARROWS.buoyancy.color; ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.arc(x0 + pad + 14, yy, 3.5, 0, Math.PI * 2); ctx.stroke();
-            } else {
-                ctx.strokeStyle = it[0]; ctx.lineWidth = 3;
-                ctx.beginPath(); ctx.moveTo(x0 + pad, yy); ctx.lineTo(x0 + pad + sw, yy); ctx.stroke();
+                ctx.beginPath(); ctx.arc(sx + 14, yy, 3.5, 0, Math.PI * 2); ctx.stroke();
+            } else if (r[0] === 'liquid') {
+                const liq = LIQUIDS[settings.liquid];
+                ctx.fillStyle = 'rgb(' + liq.top.join(',') + ')';
+                ctx.fillRect(sx + 3, yy - 4, sw - 6, 8);
+            } else if (r[0]) {
+                ctx.strokeStyle = r[0]; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(sx, yy); ctx.lineTo(sx + sw, yy); ctx.stroke();
             }
             ctx.fillStyle = pal.text;
-            ctx.fillText(it[1], x0 + pad * 2 + sw, yy + 0.5);
+            ctx.textAlign = 'left';
+            ctx.fillText(r[1], sx + (sw ? sw + pad : 0), yy + 0.5);
+            if (r[2]) {
+                ctx.textAlign = 'right';
+                ctx.fillText(r[2], x0 + bw - pad, yy + 0.5);
+            }
         });
+        ctx.textAlign = 'left';
+    }
+    function r0Swatch(rows) { for (const r of rows) if (r[0]) return true; return false; }
+
+    // draw mode: will the drawing float?
+    function drawPrediction() {
+        if (!predictionLines.length) return;
+        drawInfoBox(predictionLines.map((t) => [null, t, '']), '');
     }
 
     function drawGrabLine() {
@@ -2510,6 +2536,13 @@
         lastTxt.set(node, t);
         node.textContent = t;
     }
+    // read-out numbers: fixed decimals by size, no thousands separators (the boxes reserve a width)
+    function fmtR(v) {
+        if (!isFinite(v)) return '-';
+        const a = Math.abs(v);
+        return v.toFixed(a < 9.995 ? 2 : (a < 99.95 ? 1 : 0));
+    }
+    let predictionLines = [];
     function updateStatsDisplay(force) {
         const now = performance.now();
         if (!force && now - lastStatsT < 200) return;
@@ -2517,79 +2550,88 @@
         const P = mode === 'sim' ? body : preview;
         const liq = LIQUIDS[settings.liquid];
         const g = settings.gravity;
-        if (!el.mass) return;
         if (!P) {
+            predictionLines = [];
+            if (!el.mass) return;
             setText(el.mass, '-'); setText(el.volume, '-'); setText(el.density, '-');
             setText(el.submerged, '-'); setText(el.weight, '-'); setText(el.buoyancy, '-');
-            setText(el.prediction, 'Draw an object to see whether it will float in ' + liq.name.toLowerCase() + '.');
             return;
         }
         const V = (P.areaMat + P.areaSealed) * DEPTH;
         const M = P.mass;
         const rho = M / V;
+        predictionLines = predictionText(P, liq, rho, V, M, g);
+        if (!el.mass) return;
         const held = mode === 'sim' ? P.waterMass : 0;
-        setText(el.mass, fmtAuto(M));
-        setText(el.volume, fmtAuto(V * 1000));
-        setText(el.density, fmt(rho, 0));
-        setText(el.weight, fmtAuto((M + held) * g));
+        setText(el.mass, fmtR(M));
+        setText(el.volume, fmtR(V * 1000));
+        setText(el.density, rho.toFixed(0));
+        setText(el.weight, fmtR((M + held) * g));
         if (mode === 'sim') {
-            setText(el.submerged, fmt(100 * clamp(disp.sub, 0, 1), 0));
-            setText(el.buoyancy, fmtAuto(Math.hypot(disp.fbX, disp.fbY)));
+            setText(el.submerged, (100 * clamp(disp.sub, 0, 1)).toFixed(0));
+            setText(el.buoyancy, fmtR(Math.hypot(disp.fbX, disp.fbY)));
         } else {
             setText(el.submerged, '-');
             setText(el.buoyancy, '-');
         }
-        let txt = predictionText(P, liq, rho, V, M, g);
-        if (held > 0.05) {
-            txt = 'Holding ' + fmtAuto(held) + ' kg of ' + liq.name.toLowerCase().replace('fresh ', '') +
-                ' (counted in its weight). ' + txt;
-        }
-        setText(el.prediction, txt);
-        if (el.prediction && el.prediction.title !== txt) el.prediction.title = txt;
     }
 
+    // "Will it float?" for the drawing: a few short lines shown on the tank while drawing
     function predictionText(P, liq, rho, V, M, g) {
         const rl = liq.rho;
         const r0 = fmt(rho, 0), rL = rl.toLocaleString('en-US');
+        const lines = [fmtAuto(M) + ' kg \u00f7 ' + fmtAuto(V * 1000) + ' L = ' + r0 + ' kg/m\u00b3  (' +
+            liq.name.toLowerCase() + ': ' + rL + ')'];
         if (rho < rl) {
-            return 'Prediction: floats with about ' + fmt(100 * rho / rl, 0) + '% submerged (' + r0 + ' < ' + rL + ' kg/m³).';
+            lines.push('\u2192 should float, about ' + fmt(100 * rho / rl, 0) + '% submerged');
+            return lines;
         }
         const Vh = V + P.areaBasin * DEPTH;
         if (P.areaBasin > 0 && M / Vh < rl) {
-            return 'Prediction: floats like a boat while its hull stays dry (hull average ' + fmt(M / Vh, 0) + ' < ' + rL + ' kg/m³).';
+            lines.push('With the air in its hull: ' + fmt(M / Vh, 0) + ' kg/m\u00b3');
+            lines.push('\u2192 should float like a boat until liquid gets in');
+            return lines;
         }
-        let txt = 'Prediction: sinks (' + r0 + ' > ' + rL + ' kg/m³); under the surface it weighs ' +
-            fmtAuto((M - rl * V) * g) + ' N instead of ' + fmtAuto(M * g) + ' N';
-        if (P.areaOpen - P.areaBasin > 0.15 * (P.areaMat + P.areaSealed)) txt += ', unless it traps air';
-        return txt + '.';
+        let t = '\u2192 should sink; in the liquid it weighs ' + fmtAuto((M - rl * V) * g) + ' N, not ' + fmtAuto(M * g) + ' N';
+        lines.push(t);
+        if (P.areaOpen - P.areaBasin > 0.15 * (P.areaMat + P.areaSealed)) lines.push('(unless it traps air underneath)');
+        return lines;
     }
 
     function setHint(text) {
-        setText(el.hint, text);
+        if (el.hint) { el.hint.textContent = text; lastTxt.set(el.hint, text); }
         hintHold = performance.now() + 3500;
     }
     let hintHold = 0;
     function refreshHint() {
         if (!el.hint || performance.now() < hintHold) return;
-        let t;
+        let title, body;
         if (mode === 'sim') {
-            t = 'Drag the object to lift, push or throw it · tap the liquid for waves · Draw to change it';
+            title = 'Simulating';
+            body = 'Drag the object to lift or throw it; tap the liquid for waves. Pick a tool to draw again.';
         } else {
             const m = MATERIALS[settings.material];
             const fine = pointer.type === 'mouse';
             const tips = {
-                brush: fine ? 'drag to paint (right-click erases)' : 'drag to paint',
-                eraser: 'drag to erase',
-                rect: fine ? 'drag out a solid rectangle (Shift: square)' : 'drag out a solid rectangle',
-                box: 'drag out a hollow box (wall = size)',
-                ellipse: fine ? 'drag out a solid ellipse (Shift: circle)' : 'drag out a solid ellipse',
-                ring: 'drag out a hollow ring (wall = size)',
-                fill: 'tap inside a closed outline to fill it'
+                brush: fine ? 'Drag to paint (right-click erases).' : 'Drag to paint.',
+                eraser: 'Drag to erase.',
+                rect: fine ? 'Drag out a solid rectangle (Shift: square).' : 'Drag out a solid rectangle.',
+                box: 'Drag out a hollow box; its wall is the size.',
+                ellipse: fine ? 'Drag out a solid ellipse (Shift: circle).' : 'Drag out a solid ellipse.',
+                ring: 'Drag out a hollow ring; its wall is the size.',
+                fill: 'Tap inside a closed outline to fill it.'
             };
-            t = (settings.tool === 'eraser' ? 'Eraser' : m.name + ' (' + m.rho.toLocaleString('en-US') + ' kg/m³)') +
-                ': ' + tips[settings.tool] + ' · then press Drop';
+            title = settings.tool === 'eraser' ? 'Eraser' : m.name + ', ' + m.rho.toLocaleString('en-US') + ' kg/m\u00b3';
+            body = tips[settings.tool] + ' Then press Drop.';
         }
-        setText(el.hint, t);
+        const key = title + '|' + body;
+        if (lastTxt.get(el.hint) === key) return;
+        lastTxt.set(el.hint, key);
+        el.hint.innerHTML = '';
+        const st = document.createElement('strong');
+        st.textContent = title + ': ';
+        el.hint.appendChild(st);
+        el.hint.appendChild(document.createTextNode(body));
     }
 
     // ------------------------------------------------------------------
@@ -2769,7 +2811,6 @@
         el.submerged = document.getElementById('statSubmerged');
         el.weight = document.getElementById('statWeight');
         el.buoyancy = document.getElementById('statBuoyancy');
-        el.prediction = document.getElementById('predictionText');
         el.hint = document.getElementById('toolHint');
         el.fps = document.getElementById('fpsDisplay');
 

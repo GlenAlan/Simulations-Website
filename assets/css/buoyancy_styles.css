@@ -1,29 +1,34 @@
 /* --- Buoyancy simulation page styles (loaded after simulation_styles.css) --- */
 
-/* ---------- Drawing toolbar under the tank ----------
-   Wide: [Draw | Drop] materials tools  /  hint ........ size undo clear
-   Narrow (container query): [Draw | Drop] size undo clear / materials tools / hint */
+.buoyancy-sim {
+    --buoy-btn: 34px;                                   /* tool button size */
+    --buoy-side-w: calc(4 * var(--buoy-btn) + 23px);    /* tool column beside the canvas */
+    --buoy-side-gap: 8px;
+}
+
+@media (pointer: coarse) {
+    .buoyancy-sim {
+        --buoy-btn: 40px;
+    }
+}
+
+/* ---------- Drawing toolbar ----------
+   Portrait / narrow: under the tank, [Draw | Drop] size undo clear / materials tools / hint.
+   Landscape: a column of tools beside the tank (see the media query further down), so the tank
+   keeps the full height of the screen. */
 .buoy-toolbar {
-    container-type: inline-size;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.35em 0.75em;
+    gap: 6px 10px;
     margin-top: 0.5em;
-    padding: 0.35em 0.4em;
+    padding: 5px 6px;
     box-sizing: border-box;
     background-color: var(--color-bg-alt);
     border: 1px solid var(--color-border);
     border-radius: var(--sim-radius, 6px);
     font-size: 0.85em;
     line-height: 1.3;
-    --buoy-btn: 34px;
-}
-
-@media (pointer: coarse) {
-    .buoy-toolbar {
-        --buoy-btn: 40px;
-    }
 }
 
 .buoy-group {
@@ -78,15 +83,16 @@
 
 /* Draw / Drop: a segmented switch that shows which mode is on */
 .buoy-mode {
-    display: inline-flex;
+    display: flex;
     flex: 0 0 auto;
+    order: 1;
     border-radius: 4px;
     box-shadow: inset 0 0 0 1px var(--color-border);
 }
 
 .buoy-toolbar .buoy-mode-btn {
-    padding: 0 0.9em;
-    min-width: 5.6em;
+    flex: 1 1 0;
+    padding: 0 0.85em;
     box-shadow: none;
     background-color: transparent;
 }
@@ -114,10 +120,11 @@
 
 /* Material swatches and drawing tools: dimmed while the object is being simulated (picking one
    goes back to drawing) */
-.buoy-mats,
-.buoy-tools {
-    flex: 0 0 auto;
-}
+.buoy-mats { order: 5; }
+.buoy-tools { order: 6; }
+.buoy-size { order: 2; }
+.buoy-edit { order: 3; margin-left: auto; }
+.buoy-break { order: 4; flex-basis: 100%; height: 0; }
 
 .buoy-toolbar.is-sim .buoy-mats,
 .buoy-toolbar.is-sim .buoy-tools,
@@ -154,12 +161,9 @@
 .buoy-size {
     display: inline-flex;
     align-items: center;
-    gap: 0.45em;
     flex: 0 0 auto;
     margin: 0;
-    font-size: 0.95em;
-    font-weight: 700;
-    color: var(--color-text);
+    font-size: 0;                /* the visible label is the select's own "3 cm"; it has an aria-label */
 }
 
 .buoy-toolbar select {
@@ -169,7 +173,7 @@
     height: var(--buoy-btn);
     margin: 0;
     padding: 0 1.9em 0 0.6em;
-    font-size: 1em;
+    font-size: 0.8rem;
     font-weight: 400;
     line-height: normal;
     color: var(--color-text);
@@ -187,13 +191,9 @@
     box-shadow: 0 0 0 1px var(--color-accent);
 }
 
-.buoy-break {
-    flex-basis: 100%;
-    height: 0;
-}
-
 .buoy-hint {
-    flex: 1 1 10em;
+    order: 7;
+    flex: 1 1 100%;
     min-width: 0;
     margin: 0;
     padding: 0 0.15em;
@@ -205,77 +205,165 @@
     text-overflow: ellipsis;
 }
 
-.buoy-edit {
-    flex: 0 0 auto;
+.buoy-hint strong {
+    font-weight: 700;
 }
 
-/* Narrow toolbars (phones, small windows): mode, size and undo/clear on the first row,
-   then the materials, the tools and the hint. */
-@container (max-width: 700px) {
-    .buoy-mode { order: 1; }
-    .buoy-size { order: 2; }
-    .buoy-edit { order: 3; }
-    .buoy-break { order: 4; }
-    .buoy-mats { order: 5; }
-    .buoy-tools { order: 6; }
-    .buoy-hint { order: 7; flex-basis: 100%; }
-
-    .buoy-edit {
-        margin-left: auto;
-    }
-
-    .buoy-size {
-        font-size: 0;            /* hide the word "Size"; the select keeps its accessible name */
-    }
-
-    .buoy-size select {
-        font-size: 0.85rem;
-    }
-}
-
-@container (max-width: 420px) {
-    .buoy-toolbar .buoy-mode-btn {
-        min-width: 0;
-        padding: 0 0.75em;
-    }
-
+/* Phones: materials and tools each fill a row */
+@media (max-width: 480px) {
     .buoy-mats,
     .buoy-tools {
         flex: 1 1 100%;
-        justify-content: space-between;
     }
 
     .buoy-toolbar .buoy-mats button,
     .buoy-toolbar .buoy-tools button {
         flex: 1 1 0;
         min-width: 0;
-        max-width: 48px;
+        max-width: 52px;
     }
-}
 
-/* ---------- Info bar ---------- */
-.buoy-prediction {
-    flex: 1 1 100%;
-    margin: 0.1em 0 0 0;
-    padding: 0 0.2em;
-    font-size: 0.8em;
-    line-height: 1.4;
-    min-height: 1.4em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
+    .buoy-mats,
+    .buoy-tools {
+        justify-content: space-between;
+    }
 
-/* Phones: two fixed lines so a longer prediction never changes the bar's height. */
-@media screen and (max-width: 600px) {
-    .buoy-prediction {
+    /* two fixed lines, so a longer hint never changes the toolbar's height */
+    .buoy-hint {
         white-space: normal;
-        min-height: 2.8em;
-        max-height: 2.8em;
+        height: 2.7em;
         display: -webkit-box;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
         line-clamp: 2;
+    }
+}
+
+/* ---------- Landscape: tools in a column beside the tank ----------
+   The column has a fixed width, so the display container is made that much wider than the
+   canvas (which the shared layout sizes from the screen height). */
+@media (orientation: landscape) and (min-width: 640px) {
+    .buoyancy-sim .simulation-display-container {
+        display: grid;
+        grid-template-columns: var(--buoy-side-w) minmax(0, 1fr);
+        grid-template-areas: "tools canvas" "info info";
+        column-gap: var(--buoy-side-gap);
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--buoy-side-w) + var(--buoy-side-gap)));
+    }
+
+    .buoyancy-sim .sim-canvas-wrapper {
+        grid-area: canvas;
+        min-width: 0;
+    }
+
+    .buoyancy-sim .sim-info-bar {
+        grid-area: info;
+    }
+
+    .buoy-toolbar {
+        grid-area: tools;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-content: start;
+        gap: 8px 3px;
+        margin-top: 0;
+        min-height: 0;
+        overflow: hidden;
+        contain: size;          /* as tall as the canvas beside it, never taller */
+    }
+
+    .buoy-mode,
+    .buoy-mats,
+    .buoy-tools,
+    .buoy-hint {
+        grid-column: 1 / -1;
+    }
+
+    .buoy-mats,
+    .buoy-tools {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 3px;
+    }
+
+    .buoy-toolbar .buoy-mats button,
+    .buoy-toolbar .buoy-tools button {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .buoy-toolbar .buoy-mode-btn {
+        min-width: 0;
+        padding: 0 0.4em;
+        gap: 0.35em;
+    }
+
+    .buoy-size {
+        order: 7;
+        grid-column: 1 / span 2;
+    }
+
+    .buoy-size select {
+        width: 100%;
+    }
+
+    .buoy-edit {
+        order: 8;
+        grid-column: 3 / span 2;
+        margin-left: 0;
+    }
+
+    .buoy-edit button {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .buoy-break {
+        display: none;
+    }
+
+    .buoy-hint {
+        order: 9;
+        white-space: normal;
+        font-size: 0.9em;
+        line-height: 1.4;
+        padding: 2px 2px 0;
+        overflow: hidden;
+    }
+
+    .buoy-hint strong {
+        display: block;
+    }
+
+    /* Phones held sideways: no room for the hint beside the tools */
+    @media (max-height: 540px) {
+        .buoy-hint {
+            display: none;
+        }
+    }
+
+    /* Fullscreen: the grid fills the space above the fixed info bar */
+    body.sim-fullscreen-active .buoyancy-sim .simulation-display-container {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "tools canvas";
+        width: 100%;
+    }
+
+    body.sim-fullscreen-active .buoyancy-sim .sim-canvas-wrapper {
+        height: 100%;
+    }
+
+    body.sim-fullscreen-active .buoy-toolbar {
+        align-self: start;
+        max-height: 100%;
+    }
+}
+
+/* ---------- Info bar: read-outs on the left, buttons on the right of the first row ---------- */
+@media screen and (min-width: 601px) {
+    .buoyancy-sim .stats-container {
+        flex-basis: 0%;
     }
 }
 
