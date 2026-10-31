@@ -604,7 +604,7 @@
                     qI: 0, qO: 0, lipMode: false, wA: 0.5,  // this step: flows, over the lips?, lip A's share
                     tin: null, tout: null,                  // where it flows through (flow-weighted)
                     // smoothed for drawing: signed flows over lip A / lip B / as a jet (+ in, - out), jet geometry
-                    sA: 0, sB: 0, sJ: 0, jx: 0, jy: 0, jnx: 0, jny: 0, jv: 0, jw: CELL
+                    sA: 0, sB: 0, sJ: 0, jx: 0, jy: 0, jnx: 0, jny: 0, jv: 0
                 });
             }
             loops.push({ x: Float64Array.from(ox), y: Float64Array.from(oy), nx: Float64Array.from(onx), ny: Float64Array.from(ony), o: Uint8Array.from(oo) });
