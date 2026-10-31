@@ -123,106 +123,118 @@
 					<div id="main">
 						<div class="inner">
 							<h1 id="simulationTitle">[SIMULATION_TITLE]</h1>
-							
-							<div class="simulation-area-wrapper">
-                                <div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
-                                    <div class="sim-controls-header">
-                                        <h3 id="simulationControlsPanelLabel">Controls</h3>
-                                    </div>
-                                    <div class="sim-controls-content">
-                                        <!-- Simulation-specific controls will go here -->
-                                        <label>Speed: <span id="speedVal">1</span>x
-                                          <input type="range" id="speedSlider" min="0.1" max="10" step="0.1" value="1">
-                                        </label>
-                                        <label>Parameter 1: <span id="param1Val">50</span>
-                                          <input type="range" id="param1Slider" min="1" max="100" step="1" value="50">
-                                        </label>									
-                                        <label>Parameter 2: <span id="param2Val">25</span>
-                                          <input type="range" id="param2Slider" min="10" max="90" step="5" value="25">
-                                        </label>
-                                        <div class="sim-control-group">
-                                            <p class="sim-control-group-label" id="modeLabel">Mode:</p>
-                                            <div class="sim-select-container">
-                                                <select id="modeSelector" aria-labelledby="modeLabel">
-                                                    <option value="mode1" selected>Mode 1</option>
-                                                    <option value="mode2">Mode 2</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <p><em>Add more controls as needed.</em></p>
-                                    </div>
-                                </div>
 
-                                <div class="simulation-main-content">
-                                    <div class="simulation-display-container">
-                                        <div class="sim-canvas-wrapper">
-                                            <div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1;">
-                                                <canvas id="simulationCanvas" class="sim-canvas"></canvas>
-                                            </div>
-                                            <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
-                                        </div>
-                                        <div class="sim-info-bar" id="statsBar">
+							<!-- Layout and classes: see the notes at the top of assets/css/simulation_styles.css -->
+							<div class="simulation-area-wrapper">
+								<!-- Settings panel: docked beside the canvas on wide screens, a bottom sheet on phones.
+								     Most important controls first; short labels with units; rarely used options under "More options". -->
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Simulation</p>
+											<label>Speed: <span id="speedVal">1.0</span>&times;
+												<input type="range" id="speedSlider" min="0.1" max="5" step="0.1" value="1">
+											</label>
+											<label>Particles: <span id="param1Val">40</span>
+												<input type="range" id="param1Slider" min="1" max="200" step="1" value="40">
+											</label>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="modeLabel">Mode</p>
+											<select id="modeSelector" aria-labelledby="modeLabel">
+												<option value="mode1" selected>Mode 1</option>
+												<option value="mode2">Mode 2</option>
+											</select>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Show</p>
+											<!-- On/off toggles render as switches; add "sim-chips" to the group for chip buttons -->
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="showLabelsToggle">
+												<label for="showLabelsToggle">Labels</label>
+											</div>
+										</div>
+										<details class="sim-controls-more">
+											<summary>More options</summary>
+											<label>Particle size: <span id="param2Val">6</span> px
+												<input type="range" id="param2Slider" min="2" max="12" step="1" value="6">
+											</label>
+										</details>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<!-- The canvas keeps this aspect ratio at every size; change it to suit the simulation -->
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="[WHAT_THE_CANVAS_SHOWS]"></canvas>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<!-- Readouts: wrap each live value in .sim-value with --chars = its maximum length, units outside -->
+										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container">
-												<div class="stats-box">
-													<strong>Stat Group 1:</strong> <span id="stat1A">0</span>, <span id="stat1B">0</span>
-												</div>
-												<div class="stats-box">
-													<strong>Stat Group 2:</strong> <span id="stat2A">0</span>, <span id="stat2B">0</span>
-												</div>
+												<div class="stats-box"><strong>Avg. speed:</strong> <span id="stat1" class="sim-value" style="--chars: 5">0.0</span> px/s</div>
+												<div class="stats-box"><strong>Particles:</strong> <span id="stat2" class="sim-value" style="--chars: 3">0</span></div>
 											</div>
 											<div class="sim-info-actions">
-                                                <label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Toggle Charts">
-                                                    <input type="checkbox" id="showCharts" class="visually-hidden-checkbox">
-                                                    <span class="icon solid fa-chart-bar"></span>
-                                                </label>
-                                                <button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset Simulation">
-                                                    <span class="icon solid fa-sync-alt"></span>
-                                                </button>
-                                            </div>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Show charts">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show charts">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset simulation" title="Reset">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+												<!-- simulation_ui.js adds the fullscreen and settings buttons here -->
+											</div>
 										</div>
 									</div>
-									<div id="charts-container" style="display: none; margin-top:10px; max-width: 800px; margin-left:auto; margin-right:auto;">
-										<div style="display: flex; justify-content: space-around; width:100%;">
-											<div class="chart-box" style="width: 48%; height: 200px; position: relative; background: var(--color-background-secondary); padding: 5px; border-radius: 5px;">
-												<canvas id="chart1"></canvas>
+									<!-- Optional charts (remove if unused, along with Chart.js in the head and the chart toggle) -->
+									<div id="charts-container">
+										<div class="sim-charts-row">
+											<div class="chart-box">
+												<canvas id="chart1" role="img" aria-label="[WHAT_CHART_1_SHOWS]"></canvas>
 											</div>
-											<div class="chart-box" style="width: 48%; height: 200px; position: relative; background: var(--color-background-secondary); padding: 5px; border-radius: 5px;">
-												<canvas id="chart2"></canvas>
+											<div class="chart-box">
+												<canvas id="chart2" role="img" aria-label="[WHAT_CHART_2_SHOWS]"></canvas>
 											</div>
 										</div>
 									</div>
 									<div class="sim-action-buttons-overlay">
-										<button class="sim-fullscreen-toggle" aria-label="Toggle Fullscreen View" aria-expanded="false">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
 											<!-- Icon will be managed by simulation_ui.js -->
 										</button>
-										<button class="sim-panel-toggle-button" aria-label="Toggle Controls Panel" aria-expanded="false" aria-controls="simulationControlsPanel">
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
 											<!-- Icon will be managed by simulation_ui.js -->
 										</button>
 									</div>
 
-                                    <div class="description-area">
-                                        <h3>About this Simulation</h3>
-                                        <p>[DETAILED_DESCRIPTION_OF_THE_SIMULATION_CONCEPT_AND_WHAT_IT_DEMONSTRATES]</p>
-                                        <p>Observe how [KEY_OBSERVABLE_PHENOMENON_OR_VARIABLE] changes over time. The charts help visualize [WHAT_THE_CHARTS_SHOW]. This simulation helps explore concepts of [RELEVANT_SCIENTIFIC_OR_MATHEMATICAL_CONCEPTS].</p>
-                                        <p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) will restart the simulation. The chart icon (<span class="icon solid fa-chart-bar"></span>) toggles the visibility of the graphs.</p>
-                                        <p><strong>Controls:</strong></p>
-                                        <ul>
-                                            <li><strong>Speed:</strong> Controls the overall speed of the simulation.</li>
-                                            <li><strong>Parameter 1:</strong> [DESCRIPTION_OF_PARAMETER_1_CONTROL].</li>
-                                            <li><strong>Parameter 2:</strong> [DESCRIPTION_OF_PARAMETER_2_CONTROL].</li>
-                                            <li><strong>Mode:</strong>
-                                                <ul>
-                                                    <li><em>Mode 1:</em> [DESCRIPTION_OF_MODE_1].</li>
-                                                    <li><em>Mode 2:</em> [DESCRIPTION_OF_MODE_2].</li>
-                                                </ul>
-                                            </li>
-                                            <li><strong>Show Charts:</strong> Toggles the display of charts showing [WHAT_DATA_CHARTS_DISPLAY] over time.</li>
-                                            <li><strong>Reset Simulation:</strong> Resets [WHAT_IS_RESET] to initial conditions and clears the charts.</li>
-                                            <!-- Add descriptions for other controls -->
-                                        </ul>
-                                        <p>[INTERACTION_INSTRUCTIONS_IF_ANY_E_G_CLICK_AND_DRAG_MANUAL_CONTROL_ETC]</p>
-                                    </div>
-                                </div>
+									<!-- About: collapsed by default; roughly 120-250 words, scannable -->
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>[ONE_OR_TWO_SENTENCES: WHAT_THE_SIMULATION_SHOWS_AND_WHY_IT_MATTERS]</p>
+											<h4>What you're seeing</h4>
+											<ul>
+												<li>[WHAT_THE_MAIN_VISUAL_ELEMENTS_MEAN]</li>
+												<li>[WHAT_THE_COLOURS_OR_ARROWS_MEAN]</li>
+											</ul>
+											<h4>Key idea</h4>
+											<p>[THE_PHYSICS_IN_A_FEW_SENTENCES]</p>
+											<h4>Things to try</h4>
+											<ul>
+												<li>[EXPERIMENT_1_AND_WHAT_TO_NOTICE]</li>
+												<li>[EXPERIMENT_2_AND_WHAT_TO_NOTICE]</li>
+											</ul>
+											<h4>How to interact</h4>
+											<p>[CLICK_OR_TAP_AND_DRAG_INSTRUCTIONS]. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-sync-alt"></span> resets and <span class="icon solid fa-chart-bar"></span> shows the charts. Press F to show the frame rate.</p>
+										</div>
+									</details>
+								</div>
 							</div>
 						</div>
 					</div>
