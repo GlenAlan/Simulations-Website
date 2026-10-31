@@ -342,9 +342,25 @@ function deflectFromGateEdge(i, tipY) {
     posY[i] = tipY + ny * radius;
 }
 
-// Specular reflection from the box walls and the central wall / gate. A
-// particle can only change chamber through the open gate, so nothing can
-// tunnel through the wall whatever the speed setting.
+// The walls are rigid but rough: a particle bounces off with its speed unchanged
+// (an elastic collision with a wall that doesn't move) in a random direction,
+// spread by Lambert's cosine law so an evenly mixed gas stays evenly mixed. With
+// mirror-smooth walls and no particle collisions some particles would retrace
+// the same path for ever (e.g. one moving straight across, level with the wall
+// rather than the gate) and the demon could never sort them.
+// (nx, ny) is the wall's unit normal, pointing into the chamber.
+function bounceOffWall(i, nx, ny) {
+    if (velX[i] * nx + velY[i] * ny >= 0) return; // already moving away
+    const speed = Math.sqrt(velX[i] * velX[i] + velY[i] * velY[i]);
+    const sin = 2 * Math.random() - 1; // sine of the angle from the normal
+    const cos = Math.sqrt(1 - sin * sin);
+    velX[i] = speed * (cos * nx - sin * ny);
+    velY[i] = speed * (cos * ny + sin * nx);
+}
+
+// Bounces off the box walls and the central wall / gate. A particle can only
+// change chamber through the open gate, so nothing can tunnel through the wall
+// whatever the speed setting.
 function enforceBoundaries(gateTop, gateBottom) {
     const minX = radius, maxX = WORLD_WIDTH - radius;
     const minY = radius, maxY = WORLD_HEIGHT - radius;
@@ -352,10 +368,10 @@ function enforceBoundaries(gateTop, gateBottom) {
     let vmax2 = 0;
     for (let i = 0; i < particleCount; i++) {
         let x = posX[i], y = posY[i];
-        if (x < minX) { x = 2 * minX - x; if (velX[i] < 0) velX[i] = -velX[i]; }
-        else if (x > maxX) { x = 2 * maxX - x; if (velX[i] > 0) velX[i] = -velX[i]; }
-        if (y < minY) { y = 2 * minY - y; if (velY[i] < 0) velY[i] = -velY[i]; }
-        else if (y > maxY) { y = 2 * maxY - y; if (velY[i] > 0) velY[i] = -velY[i]; }
+        if (x < minX) { x = 2 * minX - x; bounceOffWall(i, 1, 0); }
+        else if (x > maxX) { x = 2 * maxX - x; bounceOffWall(i, -1, 0); }
+        if (y < minY) { y = 2 * minY - y; bounceOffWall(i, 0, 1); }
+        else if (y > maxY) { y = 2 * maxY - y; bounceOffWall(i, 0, -1); }
         // Safety clamp (only matters after a very deep overlap correction)
         if (x < minX) x = minX; else if (x > maxX) x = maxX;
         if (y < minY) y = minY; else if (y > maxY) y = maxY;
@@ -370,7 +386,7 @@ function enforceBoundaries(gateTop, gateBottom) {
                     if (posX[i] >= CENTER_X) side[i] = 1;
                 } else {
                     posX[i] = leftLimit;
-                    if (velX[i] > 0) velX[i] = -velX[i];
+                    bounceOffWall(i, -1, 0);
                 }
             }
         } else if (x < rightLimit) {
@@ -380,7 +396,7 @@ function enforceBoundaries(gateTop, gateBottom) {
                 if (posX[i] < CENTER_X) side[i] = 0;
             } else {
                 posX[i] = rightLimit;
-                if (velX[i] < 0) velX[i] = -velX[i];
+                bounceOffWall(i, 1, 0);
             }
         }
         const v2 = velX[i] * velX[i] + velY[i] * velY[i];
