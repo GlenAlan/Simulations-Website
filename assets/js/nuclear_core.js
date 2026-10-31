@@ -964,7 +964,7 @@
         st.t = 0;
         st.dur = STEP_DUR[st.kind];
         st.fired = false;
-        st.dir = Math.random() * TAU;
+        st.dir = b.forceDir != null ? b.forceDir : Math.random() * TAU;
         if (st.kind === 'beta' || st.kind === 'ec') {
             st.idx = [];
             for (let i = 0; i < st.count; i++) {
@@ -1884,7 +1884,7 @@
                 continue;
             }
             drawClockRing(b, x, y);
-            drawLabel(b, x, y, sel === b);
+            if (!S.hideLabels) drawLabel(b, x, y, sel === b);
         }
     }
 
@@ -1970,6 +1970,7 @@
         ctx.strokeStyle = g; ctx.lineWidth = Math.max(2, b.R * 0.8); ctx.lineCap = 'round';
         ctx.beginPath(); ctx.moveTo(x - ux * b.R * 0.5, y - uy * b.R * 0.5); ctx.lineTo(x - ux * len, y - uy * len); ctx.stroke();
         ctx.lineCap = 'butt';
+        if (S.hideLabels) return;
         ctx.font = font(700, Math.max(11, fontPx * 0.95)); ctx.fillStyle = ink(b.trail.color);
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.fillText(b.trail.text, x + b.R + 4, y - b.R - 4);
@@ -2028,7 +2029,7 @@
                 ctx.setLineDash([]);
                 ctx.fillStyle = C.neutrino;
                 ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(2, rN * 0.45), 0, TAU); ctx.fill();
-                if (s.age < 0.8) {
+                if (s.age < 0.8 && !S.hideLabels) {
                     ctx.font = font(700, fsSmall); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                     ctx.fillText(s.kind === 'nu' ? 'ν' : 'ν̄', s.x + 5, s.y - 8);
                 }
@@ -2042,7 +2043,7 @@
                 ctx.stroke();
             }
             drawDot(s.x, s.y, Math.max(2.4, rN * 0.62), col);
-            if (s.age < 0.8) {
+            if (s.age < 0.8 && !S.hideLabels) {
                 ctx.font = font(700, fsSmall); ctx.fillStyle = ink(col); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                 ctx.fillText(s.kind === 'e-' ? 'e⁻' : 'e⁺', s.x + 6, s.y - 9);
             }
@@ -2718,11 +2719,13 @@
                 gammas: i.gam,
             };
         },
-        // Make a body decay now (optionally by a given mode code: b, z, c, a, f, i, p, n ...)
-        forceDecay: (id, code) => {
+        // Make a body decay now (optionally by a given mode code: b, z, c, a, f, i, p, n ..., and in a given
+        // direction in radians, for pictures)
+        forceDecay: (id, code, dir) => {
             const b = bodies.find((o) => o.id === id);
             if (!b || b.info.stable || b.step) return false;
             b.needsClock = false;
+            b.forceDir = dir == null ? null : dir;
             beginDecay(b, code);
             return true;
         },
@@ -2745,6 +2748,7 @@
             const el = { chart: ui.showChart, tags: ui.showTags, neutrinos: ui.showNeutrinos, equations: ui.showEquations, details: ui.showDetails, notation: ui.notation, keep: ui.keepParticles, mirror: ui.mirrorWalls }[name];
             if (el) { el.checked = !!on; el.dispatchEvent(new Event('change')); }
         },
+        hideLabels: (v) => { S.hideLabels = !!v; },   // for pictures of the canvas (e.g. the home-page tile)
         openChart: (open) => { if (open) openChart(); else chartView.open = false; },
         pickChart: (Z, N) => { chartView.pick = { Z, N }; },
         pause: (v) => { paused = v === undefined ? !paused : !!v; return paused; },
