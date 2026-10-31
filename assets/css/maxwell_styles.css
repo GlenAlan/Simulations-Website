@@ -62,26 +62,23 @@ html.dark-mode {
 
 /* --- Info bar --- */
 
-/* Readouts, then the colour key, then the buttons pushed to the right. On narrow
-   screens the key and the buttons share a second row. */
+/* Readouts, then the colour key, then the buttons. On phones the key and the
+   buttons share a second row (simulation_styles.css). */
 #statsBar {
-    justify-content: flex-start;
-    column-gap: 0.75em;
-    row-gap: 0.25em;
-}
-#statsBar .sim-info-actions {
-    margin-left: auto;
-}
-#statsBar .stats-container {
-    column-gap: 0.5em;
-    row-gap: 0.35em;
+    container-type: inline-size; /* lets the rules below fit the readouts to the bar's width */
 }
 
 .mx-chamber {
     display: inline-flex;
     align-items: baseline;
-    gap: 0.6em;
+    gap: 0.5em;
     white-space: nowrap;
+}
+
+/* Counts sit right after their dot; the room reserved for bigger counts (--chars)
+   trails them, so nothing moves as they change. */
+.mx-count .sim-value {
+    text-align: left;
 }
 
 /* A coloured dot in front of each count doubles as the colour key. */
@@ -103,8 +100,10 @@ html.dark-mode {
     margin-right: 0.3em;
 }
 
-/* Screen-reader-only words ("fast", "slow") next to the counts. */
-.mx-sr {
+/* Words next to the values: read out by screen readers, shown only when the
+   colour key is folded into the readouts (narrow bars, below). */
+.mx-sr,
+.mx-word {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -132,24 +131,38 @@ html.dark-mode {
     margin-right: 0.15em;
 }
 
-/* Fit the info bar's contents to its width. */
-#statsBar {
-    container-type: inline-size;
-}
-/* Not enough room for the temperature note on one row with everything else
-   (the About text explains it). */
+/* No room for the temperature note on one row with everything else (the About text explains it). */
 @container (max-width: 900px) {
     .mx-legend-t {
         display: none;
     }
 }
-/* Small phones: tighten the two chamber boxes so they still share a row. */
-@container (max-width: 335px) {
+/* Phones: tighten the chamber boxes so two still share a row... */
+@container (max-width: 360px) {
     #statsBar .mx-chamber {
-        gap: 0.4em;
-        padding-left: 0.4em;
-        padding-right: 0.4em;
-        font-size: 0.8em;
+        gap: 0.35em;
+        padding-left: 0.45em;
+        padding-right: 0.45em;
+        font-size: 0.75em;
+    }
+}
+/* ...and stack them when even that doesn't fit (e.g. a narrow, tall canvas on a small phone).
+   The boxes then have room to say "fast" and "slow", which replaces the separate key. */
+@container (max-width: 290px) {
+    #statsBar .stats-container {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    #statsBar .mx-word {
+        position: static;
+        width: auto;
+        height: auto;
+        margin: 0;
+        overflow: visible;
+        clip: auto;
+        opacity: 0.7;
+    }
+    #statsBar .mx-legend {
+        display: none;
     }
 }
 
@@ -162,16 +175,6 @@ html.dark-mode {
 }
 
 /* --- Controls panel --- */
-.sim-controls-content .mx-first-group {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
-}
-
-.sim-controls-content .sim-select-container {
-    margin-bottom: 0.35em;
-}
-
 .mx-control-note {
     font-size: 0.78em;
     line-height: 1.45;
