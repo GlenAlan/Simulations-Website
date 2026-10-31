@@ -51,6 +51,22 @@ html {
     margin-bottom: 1.1em;
 }
 
+/* The theme and menu buttons scroll away with the header rather than floating over the simulation. */
+#header nav {
+    position: absolute;
+}
+
+/* Short screens (phones in landscape): a slimmer header. */
+@media screen and (max-height: 540px) and (min-width: 737px) {
+    #header {
+        padding-top: 1.25em;
+    }
+
+    #header nav {
+        top: 1em;
+    }
+}
+
 #main > .inner > h1 {
     font-size: 1.75em;
     line-height: 1.2;
@@ -954,6 +970,7 @@ div:where(#charts-container .chart-box) {
 /* ---------- About this simulation ---------- */
 .description-area {
     box-sizing: border-box;
+    overflow-wrap: anywhere;
     width: max(min(100%, 40em), var(--sim-canvas-w));
     max-width: 100%;
     margin: 1.25em auto 0 auto;
