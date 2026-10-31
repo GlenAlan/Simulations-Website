@@ -184,6 +184,11 @@
 										<h3 id="simulationControlsPanelLabel">Controls</h3>
 									</div>
 									<div class="sim-controls-content">
+										<div class="sim-control-group sim-speed-control">
+											<label>Simulation speed: <span class="sim-value" style="--chars: 4" id="speedVal">50</span>&times;
+												<input type="range" id="speedSlider" min="0" max="17" step="1" value="9">
+											</label>
+										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="demonModeLabel">Demon</p>
 											<div class="sim-select-container">
@@ -203,9 +208,6 @@
 												<input type="range" id="particleCount" min="10" max="1000" step="10" value="200" aria-describedby="particleCountNote">
 											</label>
 											<p class="mx-control-note" id="particleCountNote">Half start fast, half slow. Changing this restarts.</p>
-											<label for="speedSlider">Speed <span class="sim-value" style="--chars: 4" id="speedVal">50</span>&times;
-												<input type="range" id="speedSlider" min="0" max="17" step="1" value="9">
-											</label>
 										</div>
 									</div>
 								</div>

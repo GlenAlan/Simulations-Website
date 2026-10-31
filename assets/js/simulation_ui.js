@@ -355,6 +355,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Speed sliders (first in the settings panel): screen readers announce the displayed speed
+    // ("25 times") rather than the raw slider position, which on some pages is a step index.
+    document.querySelectorAll('.sim-speed-control input[type="range"]').forEach((slider) => {
+        const valueEl = slider.closest('label') ? slider.closest('label').querySelector('.sim-value') : null;
+        if (!valueEl) return;
+        // The simulation updates the shown value in its own input handler; read it after that.
+        const sync = () => slider.setAttribute('aria-valuetext', `${valueEl.textContent.trim()} times`);
+        slider.addEventListener('input', () => requestAnimationFrame(sync));
+        sync();
+    });
+
     // Event listener and population for convectionGridSizeSelector
     if (convectionGridSizeSelector && window.convectionSimulation) {
         const availableSizes = window.convectionSimulation.getAvailableGridSizes ? window.convectionSimulation.getAvailableGridSizes() : [48, 64, 96]; // Fallback if function not yet on core
