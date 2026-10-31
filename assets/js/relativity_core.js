@@ -216,7 +216,12 @@
     // A time that can be before zero, to two decimals, with a proper minus sign.
     const fmtSigned = (x) => (x < -0.005 ? '\u2212' : '') + Math.abs(x).toFixed(2);
     // A velocity in units of c, with a minus sign when it points backwards.
-    const fmtU = (u) => (u < -0.0005 ? '\u2212' : '') + fmtV(Math.abs(u));
+    // Above 0.9 it is cut (not rounded) to three decimals, so anything slower than light never shows as 1.000.
+    const fmtU = (u) => {
+        const a = Math.abs(u);
+        const text = a > 0.9 && a < 1 ? (Math.floor(a * 1000 + 1e-9) / 1000).toFixed(3) : fmtV(a);
+        return (u < -0.0005 ? '\u2212' : '') + text;
+    };
 
     // ------------------------------------------------------------------
     // Settings and state
@@ -2734,7 +2739,10 @@
                 Object.assign(out, { t: hg.t, k: lay.k, cx: lay.cx, hold: hg.hold, hangar: hangarState() });
             } else if (S.scenario === 'lightning') {
                 const lay = lightningLayout();
-                Object.assign(out, { t: ln.t, k: lay.k, cx: lay.cx, lightning: lightningState() });
+                const st = lightningState();
+                // Screen positions (CSS px) of each flash's two fronts, so their speed can be measured
+                const fronts = st.strikes.map((s) => (ln.t < s.t ? null : [-1, 1].map((d) => lay.cx + (s.x + d * (ln.t - s.t)) * lay.k)));
+                Object.assign(out, { t: ln.t, k: lay.k, cx: lay.cx, lightning: st, fronts });
             } else if (S.scenario === 'clocks') {
                 const lay = clocksLayout();
                 const st = clockState();
