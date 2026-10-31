@@ -2168,14 +2168,32 @@
         const below = r.y1 + fontPx * 1.1 < viewH - fontPx * 0.4;
         const gx = below ? r.x0 + 16 : r.x0 + 16 + tw + 18, gy = below ? r.y1 + fontPx * 0.9 : r.y0;
         const room = Math.min(r.x1, viewW - 8) - gx - 8;
-        let from = 0, g = 'fissions per generation: ' + counts.join(' → ');
+        let from = 0, head = 'fissions per generation: ';
+        const line = () => head + counts.slice(from).join(' → ');
         // the latest generations, if they do not all fit
-        while (from < counts.length - 1 && ctx.measureText(g).width > room) g = 'fissions per generation: … ' + counts.slice(++from).join(' → ');
-        if (ctx.measureText(g).width > room) g = counts.slice(-Math.max(1, Math.floor(room / (fontPx * 2)))).join(' → ');
+        while (from < counts.length - 1 && ctx.measureText(line()).width > room) { from++; head = 'fissions per generation: … '; }
+        if (ctx.measureText(line()).width > room) { head = ''; from = Math.max(0, counts.length - Math.max(1, Math.floor(room / (fontPx * 2)))); }
         ctx.fillStyle = C.bg;
-        ctx.fillRect(gx - 4, gy - fontPx * 0.5, ctx.measureText(g).width + 8, fontPx);
-        ctx.fillStyle = ink(C.modes.f);
-        ctx.fillText(g, gx, gy);
+        ctx.fillRect(gx - 4, gy - fontPx * 0.5, ctx.measureText(line()).width + 8, fontPx);
+        // the counts that can still grow are grey; each turns green once it is final
+        const open = firstOpenGeneration();
+        let x = gx;
+        const put = (s, col) => { ctx.fillStyle = col; ctx.fillText(s, x, gy); x += ctx.measureText(s).width; };
+        put(head, ink(C.modes.f));
+        for (let i = from; i < counts.length; i++) put((i > from ? ' → ' : '') + counts[i], i + 1 >= open ? C.muted : ink(C.modes.f));
+    }
+
+    // The first generation whose fission count can still grow: a neutron of the generation before it is still
+    // flying (or held), or a nucleus that took one in has yet to split. Every later generation can grow too, as
+    // that fission frees more neutrons. (A fragment's delayed neutron can open a generation again.)
+    function firstOpenGeneration() {
+        let g = Infinity;
+        for (const b of bodies) {
+            if (b.Z === 0 && b.N === 1 && (b.held || isProjectile(b))) g = Math.min(g, (b.gen || 0) + 1);
+            if (b.step && b.step.kind === 'fission' && b.step.gen && !b.step.fired) g = Math.min(g, b.step.gen);
+            b.steps.forEach((s) => { if (s.kind === 'fission' && s.gen) g = Math.min(g, s.gen); });
+        }
+        return g;
     }
 
     function drawEmptyHint() {
