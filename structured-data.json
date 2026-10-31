@@ -150,7 +150,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Nuclear Decay Simulation",
-            "description": "Build nuclei from protons and neutrons and watch unstable isotopes decay by alpha, beta, gamma and fission",
+            "description": "Build nuclei from protons and neutrons, then watch them decay by alpha, beta, gamma or fission with real half-lives",
             "url": "https://simulations.science/nuclear_decay_simulation.html",
             "image": "https://simulations.science/images/nuclear.png",
             "learningResourceType": "Simulation",
@@ -168,7 +168,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Special Relativity Simulation",
-            "description": "A spaceship carrying a light clock races past Earth near light speed, showing time dilation and length contraction",
+            "description": "A spaceship carrying a light clock flies past a station near light speed, showing time dilation and length contraction",
             "url": "https://simulations.science/relativity_simulation.html",
             "image": "https://simulations.science/images/relativity.png",
             "learningResourceType": "Simulation",
@@ -186,7 +186,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Orbits & Gravity Simulation",
-            "description": "Drag stars, planets and moons into orbit to explore Newton's law of universal gravitation and Kepler's laws",
+            "description": "Drag stars, planets and moons into orbit and watch Newton's gravity produce all three of Kepler's laws",
             "url": "https://simulations.science/orbits_simulation.html",
             "image": "https://simulations.science/images/orbits.png",
             "learningResourceType": "Simulation",

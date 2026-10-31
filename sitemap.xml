@@ -86,7 +86,7 @@
     <image:image>
       <image:loc>https://simulations.science/images/nuclear.png</image:loc>
       <image:title>Nuclear Decay Simulation</image:title>
-      <image:caption>Build nuclei from protons and neutrons and watch unstable isotopes decay by alpha, beta, gamma and fission</image:caption>
+      <image:caption>Build nuclei from protons and neutrons, then watch them decay by alpha, beta, gamma or fission with real half-lives</image:caption>
     </image:image>
   </url>
   <url>
@@ -97,7 +97,7 @@
     <image:image>
       <image:loc>https://simulations.science/images/relativity.png</image:loc>
       <image:title>Special Relativity Simulation</image:title>
-      <image:caption>A spaceship carrying a light clock races past Earth near light speed, showing time dilation and length contraction</image:caption>
+      <image:caption>A spaceship carrying a light clock flies past a station near light speed, showing time dilation and length contraction</image:caption>
     </image:image>
   </url>
   <url>
@@ -108,7 +108,7 @@
     <image:image>
       <image:loc>https://simulations.science/images/orbits.png</image:loc>
       <image:title>Orbits &amp; Gravity Simulation</image:title>
-      <image:caption>Drag stars, planets and moons into orbit to explore Newton's law of universal gravitation and Kepler's laws</image:caption>
+      <image:caption>Drag stars, planets and moons into orbit and watch Newton's gravity produce all three of Kepler's laws</image:caption>
     </image:image>
   </url>
   <url>
