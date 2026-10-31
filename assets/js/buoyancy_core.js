@@ -155,6 +155,11 @@
     let bOld = new Float64Array(NCOL);
     let bNew = new Float64Array(NCOL);
     const src = new Float64Array(NCOL);
+    // An object pushes the liquid aside over a few centimetres, not in 2 cm columns: what it adds to
+    // each wave mode is spread like that (a Gaussian 2 cm wide). Otherwise the column steps feed the
+    // shortest waves the grid can hold, and the surface goes jagged.
+    const srcFilter = new Float64Array(NMODE + 1);
+    for (let k = 0; k <= NMODE; k++) { const u = k * Math.PI * 0.02 / TANK_W; srcFilter[k] = Math.exp(-0.5 * u * u); }
     for (let k = 0; k <= NMODE; k++) {
         for (let j = 0; j < NCOL; j++) {
             const v = Math.cos(k * Math.PI * (j + 0.5) / NCOL);
@@ -235,13 +240,24 @@
         if (a < 100) return fmt(v, 1);
         return fmt(v, 0);
     }
+    // The liquid's surface: the level plus the waves, as a Catmull-Rom curve through the column
+    // samples (mirrored at the walls, which the waves meet level). The same curve is drawn, cuts the
+    // object's cells for buoyancy and drag, and is used everywhere else; surfSlope is its slope there.
+    let surfSlope = 0;
     function surfaceAt(x) {
-        let fc = x / DXC - 0.5;
-        if (fc <= 0) return level + eta[0];
-        if (fc >= NCOL - 1) return level + eta[NCOL - 1];
-        const j = Math.floor(fc);
-        const t = fc - j;
-        return level + eta[j] + (eta[j + 1] - eta[j]) * t;
+        const fc = x / DXC - 0.5;
+        let j = Math.floor(fc);
+        if (j < -1) j = -1; else if (j > NCOL - 1) j = NCOL - 1;
+        let t = fc - j;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        const i0 = j - 1, i2 = j + 1, i3 = j + 2;
+        const p0 = eta[i0 < 0 ? -1 - i0 : i0];
+        const p1 = eta[j < 0 ? -1 - j : (j >= NCOL ? 2 * NCOL - 1 - j : j)];
+        const p2 = eta[i2 >= NCOL ? 2 * NCOL - 1 - i2 : i2];
+        const p3 = eta[i3 >= NCOL ? 2 * NCOL - 1 - i3 : i3];
+        const a = p2 - p0, b = 2 * p0 - 5 * p1 + 4 * p2 - p3, cc = 3 * (p1 - p2) + p3 - p0;
+        surfSlope = 0.5 * (a + t * (2 * b + 3 * cc * t)) / DXC;
+        return level + p1 + 0.5 * t * (a + t * (b + t * cc));
     }
 
     // ------------------------------------------------------------------
@@ -1166,7 +1182,7 @@
             const kap = k * Math.PI / TANK_W;
             om2[k] = (g * kap + (liq.sigma / liq.rho) * kap * kap * kap) * Math.tanh(kap * H);
             const r = k / NMODE;
-            gam[k] = liq.damp + 2 * nu * kap * kap + 6 * r * r * r * r;
+            gam[k] = liq.damp + 2 * nu * kap * kap + 12 * r * r * r * r;
         }
     }
 
@@ -1244,7 +1260,7 @@
                     const base = k * NCOL;
                     let p = 0;
                     for (let j = jmin; j <= jmax; j++) p += src[j] * cosKJ[base + j];
-                    amp[k] += p * f;
+                    amp[k] += p * f * srcFilter[k];
                 }
                 // splash droplets where the surface is being pushed up fast
                 for (let j = jmin; j <= jmax; j++) {
@@ -1327,7 +1343,7 @@
             let p = 0;
             const base = k * NCOL;
             for (let j = j0; j <= j1; j++) p += src[j] * cosKJ[base + j];
-            amp[k] += p * f;
+            amp[k] += p * f * srcFilter[k];
         }
     }
 
@@ -1363,12 +1379,11 @@
             const rx = c * ox - s * oy, ry = s * ox + c * oy;
             const X = x0 + rx, Y = y0 + ry;
             const fc = X / DXC - 0.5;
-            let j, t, k;
-            if (fc <= 0) { j = 0; t = 0; k = 0; }
-            else if (fc >= NCOL - 1) { j = NCOL - 2; t = 1; k = 0; }
-            else { j = Math.floor(fc); t = fc - j; k = (eta[j + 1] - eta[j]) / DXC; }
-            const e0 = eta[j];
-            const S = L + e0 + (eta[j + 1] - e0) * t;
+            let j, t;
+            if (fc <= 0) { j = 0; t = 0; }
+            else if (fc >= NCOL - 1) { j = NCOL - 2; t = 1; }
+            else { j = Math.floor(fc); t = fc - j; }
+            const S = surfaceAt(X), k = surfSlope;
             const d = S - Y;
             if (d < dTop) dTop = d;
             const lim = ext * (1 + (k < 0 ? -k : k));
@@ -1471,11 +1486,7 @@
             const rx = c * fox - s * foy, ry = s * fox + c * foy;
             const nx = c * FNX[f] - s * FNY[f], ny = s * FNX[f] + c * FNY[f];
             const X = x0 + rx, Y = y0 + ry;
-            const fc = X / DXC - 0.5;
-            let S;
-            if (fc <= 0) S = L + eta[0];
-            else if (fc >= NCOL - 1) S = L + eta[NCOL - 1];
-            else { const j = Math.floor(fc); S = L + eta[j] + (eta[j + 1] - eta[j]) * (fc - j); }
+            const S = surfaceAt(X);
             const d = S - Y;
             const dyE = (nx < 0 ? -nx : nx) * hc;
             let frac;
@@ -2570,15 +2581,21 @@
         const liq = LIQUIDS[settings.liquid];
         const liqPath = new Path2D();
         const surf = new Path2D();
+        // the surface curve (surfaceAt): Catmull-Rom between the column samples, as Bezier segments
+        const ys = (j) => wy(level + eta[j < 0 ? -1 - j : (j >= NCOL ? 2 * NCOL - 1 - j : j)]);
+        const dx3 = DXC * scale / 3;
         liqPath.moveTo(0, cssH);
-        const y0 = wy(level + eta[0]);
-        liqPath.lineTo(0, y0);
-        surf.moveTo(0, y0);
-        for (let j = 0; j < NCOL; j++) {
-            const x = wx((j + 0.5) * DXC), y = wy(level + eta[j]);
-            liqPath.lineTo(x, y); surf.lineTo(x, y);
+        const yE = wy(surfaceAt(0));
+        liqPath.lineTo(0, yE); surf.moveTo(0, yE);
+        liqPath.lineTo(wx(0.5 * DXC), ys(0)); surf.lineTo(wx(0.5 * DXC), ys(0));
+        for (let j = 0; j < NCOL - 1; j++) {
+            const x1 = wx((j + 0.5) * DXC), x2 = x1 + 3 * dx3;
+            const y1 = ys(j), y2 = ys(j + 1);
+            const c1y = y1 + (y2 - ys(j - 1)) / 6, c2y = y2 - (ys(j + 2) - y1) / 6;
+            liqPath.bezierCurveTo(x1 + dx3, c1y, x2 - dx3, c2y, x2, y2);
+            surf.bezierCurveTo(x1 + dx3, c1y, x2 - dx3, c2y, x2, y2);
         }
-        const yN = wy(level + eta[NCOL - 1]);
+        const yN = wy(surfaceAt(TANK_W));
         liqPath.lineTo(cssW, yN); surf.lineTo(cssW, yN);
         liqPath.lineTo(cssW, cssH);
         liqPath.closePath();
