@@ -900,3 +900,377 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 #simulationCanvas.orb-can-aim {
     cursor: crosshair;
 }
+
+/* ---------- Trajectory editor: the body's menu in tabs (Velocity, Orbit, Body) ----------
+   Typed values with their units and -/+ steppers, the way round, pushes and the step size. The tab
+   panels share one grid cell, so the menu keeps the height of the tallest (it doesn't jump about as
+   the tabs change). */
+.orb-popover {
+    width: 304px;
+}
+
+.orb-pop-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 4px 0 2px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.orb-popover .orb-pop-tabs button {
+    flex: 1 1 0;
+    height: 32px;
+    padding: 0 0.4em;
+    font-size: 0.88em;
+    background: transparent;
+    border-radius: 4px 4px 0 0;
+    box-shadow: none;
+    opacity: 0.75;
+}
+
+.orb-popover .orb-pop-tabs button[aria-selected="true"] {
+    font-weight: 700;
+    opacity: 1;
+    box-shadow: inset 0 -2px 0 0 var(--color-accent);
+}
+
+@media (hover: hover) {
+    .orb-popover .orb-pop-tabs button:hover {
+        opacity: 1;
+        box-shadow: inset 0 -2px 0 0 var(--color-border);
+    }
+
+    .orb-popover .orb-pop-tabs button[aria-selected="true"]:hover {
+        box-shadow: inset 0 -2px 0 0 var(--color-accent);
+    }
+}
+
+.orb-pop-panels {
+    display: grid;
+}
+
+.orb-pop-panel {
+    grid-area: 1 / 1;
+    min-width: 0;
+}
+
+.orb-pop-panel[hidden] {
+    display: block;
+    visibility: hidden;
+}
+
+/* A row: a label on the left, its control on the right */
+.orb-field,
+.orb-pop-step {
+    display: grid;
+    grid-template-columns: 5.4em minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.orb-popover .orb-field-label {
+    display: block;
+    margin: 0;
+    font-size: 0.9em;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--color-text);
+}
+
+.orb-field-sub {
+    display: block;
+    font-size: 0.8em;
+    opacity: 0.7;
+}
+
+.orb-field-sub:empty {
+    display: none;
+}
+
+/* - [ value unit ] + */
+.orb-spin {
+    display: flex;
+    align-items: stretch;
+    height: 34px;
+    min-width: 0;
+    background-color: var(--color-bg);
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.orb-spin:focus-within {
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.orb-popover .orb-spin .orb-spin-btn {
+    flex: 0 0 32px;
+    width: 32px;
+    height: auto;
+    padding: 0;
+    font-size: 0.75em;
+    background: transparent;
+    box-shadow: none;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+@media (hover: hover) {
+    .orb-popover .orb-spin .orb-spin-btn:hover {
+        color: var(--color-accent) !important;
+        box-shadow: none;
+    }
+}
+
+.orb-popover input.orb-spin-input {
+    flex: 1 1 auto;
+    width: 0;
+    min-width: 0;
+    height: auto;
+    margin: 0;
+    padding: 0 4px 0 0;
+    font-size: 1em;
+    font-weight: 700;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-accent);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.orb-popover input.orb-spin-input:focus {
+    box-shadow: none;
+}
+
+.orb-popover input.orb-spin-input::placeholder {
+    font-weight: 400;
+    color: var(--color-text);
+    opacity: 0.55;
+}
+
+.orb-popover input.orb-spin-input:disabled,
+.orb-popover .orb-spin-btn:disabled {
+    opacity: 0.35;
+}
+
+.orb-spin:has(input[aria-invalid="true"]) {
+    box-shadow: inset 0 0 0 2px #ff5f5f;
+}
+
+.orb-spin-unit {
+    align-self: center;
+    flex: 0 0 auto;
+    min-width: 1.4em;
+    padding-right: 2px;
+    font-size: 0.85em;
+    opacity: 0.75;
+}
+
+/* Joined buttons: the way round, the step size */
+.orb-seg,
+.orb-push {
+    display: flex;
+    gap: 3px;
+    min-width: 0;
+}
+
+.orb-popover .orb-seg button,
+.orb-popover .orb-push button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 0.3em;
+    font-size: 0.82em;
+}
+
+.orb-popover .orb-push button {
+    gap: 0.2em;
+    padding: 0 2px;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+/* (the shorter words give the longer ones a little room) */
+.orb-popover .orb-push button[data-push="in"],
+.orb-popover .orb-push button[data-push="out"] {
+    flex-grow: 0.8;
+}
+
+.orb-popover .orb-push .icon {
+    font-size: 1.2em;
+    color: var(--color-accent);
+}
+
+.orb-popover .orb-seg button:disabled,
+.orb-popover .orb-push button:disabled {
+    opacity: 0.35;
+}
+
+/* The speed slider sits under the typed speed */
+.orb-pop-panel > input[type="range"] {
+    margin-top: 2px;
+}
+
+.orb-pop-panel .orb-pop-note {
+    margin: 1px 0 0;
+}
+
+.orb-orbit-shape {
+    margin-top: 8px !important;
+}
+
+.orb-pop-step {
+    padding-top: 7px;
+    margin-top: 8px;
+    border-top: 1px solid var(--color-border);
+}
+
+/* (the Body tab has nothing to step) */
+.orb-pop-step.is-idle {
+    visibility: hidden;
+}
+
+/* The arrow keys only matter with a keyboard */
+@media (hover: none), (pointer: coarse) {
+    .orb-keys-note {
+        display: none;
+    }
+}
+
+/* Phones (a sheet) and touch screens: bigger targets */
+@media (pointer: coarse) {
+    .orb-spin {
+        height: 40px;
+    }
+
+    .orb-popover .orb-spin .orb-spin-btn {
+        flex-basis: 40px;
+        width: 40px;
+    }
+
+    .orb-popover .orb-pop-tabs button {
+        height: 38px;
+    }
+}
+
+.orb-popover.is-sheet .orb-field,
+.orb-popover.is-sheet .orb-pop-step {
+    grid-template-columns: 6em minmax(0, 1fr);
+}
+
+/* Phones held sideways: a little tighter, so more of it fits beside the canvas */
+@media (orientation: landscape) and (max-height: 540px) {
+    .orb-popover:not(.is-sheet) {
+        padding-top: 4px;
+        padding-bottom: 6px;
+    }
+
+    .orb-popover:not(.is-sheet) .orb-field {
+        margin-top: 4px;
+    }
+
+    .orb-popover:not(.is-sheet) .orb-spin {
+        height: 34px;
+    }
+
+    .orb-popover:not(.is-sheet) .orb-pop-tabs button {
+        height: 32px;
+    }
+
+    .orb-popover:not(.is-sheet) .orb-pop-actions {
+        margin: 3px 0 2px;
+    }
+}
+
+/* The stats bar's Edit button, beside the chosen body's name (the row centred on it) */
+.orb-subject {
+    align-items: center;
+    max-width: 21em;
+}
+
+#statSubject .orb-subject-edit {
+    -webkit-appearance: none;
+    appearance: none;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    flex: 0 0 auto;
+    height: 26px;
+    margin: 0 0 0 0.2em;
+    padding: 0 0.6em;
+    font-size: 1em;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+#statSubject .orb-subject-edit .icon {
+    color: var(--color-accent);
+}
+
+#statSubject .orb-subject-edit[aria-expanded="true"] {
+    background-color: var(--color-bg-button-active-overlay);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+@media (hover: hover) {
+    #statSubject .orb-subject-edit:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+#statSubject .orb-subject-edit:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+    #statSubject .orb-subject-edit {
+        height: 32px;
+        padding: 0 0.8em;
+    }
+}
+
+/* The settings' "Orbit of ..." group: its period and distances, and a way into the menu's Orbit tab */
+.sim-controls-content .orb-orbit-facts:empty {
+    display: none;
+}
+
+.sim-controls-content .orb-edit-orbit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    width: 100%;
+    height: 34px;
+    margin: 0.1em 0 0;
+    padding: 0 0.8em;
+    font-size: 0.85em;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    background-color: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.sim-controls-content .orb-edit-orbit .icon {
+    color: var(--color-accent);
+}
+
+@media (hover: hover) {
+    .sim-controls-content .orb-edit-orbit:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}

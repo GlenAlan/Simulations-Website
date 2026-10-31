@@ -223,7 +223,9 @@
 											<label>Eccentricity: <span id="eccVal" class="sim-value" style="--chars: 4">0.00</span> <span class="orb-sub" id="eccName">(circle)</span>
 												<input type="range" id="eccSlider" min="0" max="0.95" step="0.01" value="0" aria-describedby="eccNote">
 											</label>
-											<p class="orb-note" id="eccNote">Relaunches it with the same average distance: 0 is a circle, near 1 a long thin ellipse.</p>
+											<p class="orb-note" id="eccNote">Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.</p>
+											<p class="orb-note orb-orbit-facts" id="orbitFacts"></p>
+											<button type="button" class="orb-edit-orbit" id="editOrbitBtn" aria-haspopup="dialog"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Set its period and distances</button>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Show</p>
@@ -272,7 +274,7 @@
 													<input type="checkbox" id="comToggle">
 													<label for="comToggle">Centre of mass</label>
 													<input type="checkbox" id="previewToggle" checked>
-													<label for="previewToggle">Predicted path while moving a body</label>
+													<label for="previewToggle">Predicted path while moving a body or paused</label>
 												</div>
 											</div>
 											<div class="sim-control-group">
@@ -306,20 +308,104 @@
 													<button type="button" id="popCircular" title="Give it the speed for a circular orbit"><span class="icon fa-circle" aria-hidden="true"></span>Circular</button>
 													<button type="button" id="popDelete" class="orb-pop-delete" title="Delete this body" aria-label="Delete this body"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
 												</div>
-												<div class="orb-pop-fields">
-													<label>Mass: <span class="orb-pop-val" id="popMassVal">1.00 M⊕</span>
-														<input type="range" id="popMass" min="-14" max="7" step="0.01" value="0">
-													</label>
-													<label>Speed: <span class="orb-pop-val" id="popSpeedVal">29.8 km/s</span>
-														<input type="range" id="popSpeed" min="0" max="1000" step="1" value="500" aria-describedby="popSpeedNote">
-													</label>
-													<p class="orb-pop-note" id="popSpeedNote">&nbsp;</p>
-													<label><span id="popRadiusLabel">Radius</span>: <span class="orb-pop-val" id="popRadiusVal">6,371 km</span>
-														<input type="range" id="popRadius" min="0" max="8" step="0.01" value="3.8">
-													</label>
-													<div class="orb-pop-colours" id="popColours" role="radiogroup" aria-label="Colour"></div>
+												<div class="orb-pop-tabs" role="tablist" aria-label="What to change">
+													<button type="button" role="tab" id="popTabVel" aria-controls="popPanelVel" aria-selected="true">Velocity</button>
+													<button type="button" role="tab" id="popTabOrbit" aria-controls="popPanelOrbit" aria-selected="false" tabindex="-1">Orbit</button>
+													<button type="button" role="tab" id="popTabBody" aria-controls="popPanelBody" aria-selected="false" tabindex="-1">Body</button>
 												</div>
-												<p class="orb-pop-info" id="popInfo" aria-live="polite">&nbsp;</p>
+												<div class="orb-pop-panels">
+													<div class="orb-pop-panel" role="tabpanel" id="popPanelVel" aria-labelledby="popTabVel">
+														<div class="orb-field">
+															<label class="orb-field-label" for="popSpeedIn">Speed</label>
+															<div class="orb-spin" data-field="speed">
+																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Slower"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
+																<input type="text" class="orb-spin-input" id="popSpeedIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popSpeedNote">
+																<span class="orb-spin-unit" id="popSpeedUnit">km/s</span>
+																<button type="button" class="orb-spin-btn" data-dir="1" aria-label="Faster"><span class="icon solid fa-plus" aria-hidden="true"></span></button>
+															</div>
+														</div>
+														<input type="range" id="popSpeed" min="0" max="1000" step="1" value="500" aria-label="Speed" aria-describedby="popSpeedNote">
+														<p class="orb-pop-note" id="popSpeedNote">&nbsp;</p>
+														<div class="orb-field">
+															<label class="orb-field-label" for="popAngleIn">Direction</label>
+															<div class="orb-spin" data-field="angle">
+																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Turn inward"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
+																<input type="text" class="orb-spin-input" id="popAngleIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popAngleNote">
+																<span class="orb-spin-unit">°</span>
+																<button type="button" class="orb-spin-btn" data-dir="1" aria-label="Turn outward"><span class="icon solid fa-plus" aria-hidden="true"></span></button>
+															</div>
+														</div>
+														<p class="orb-pop-note" id="popAngleNote">0° is sideways, as in a circle; + is outward, − inward.</p>
+														<div class="orb-field">
+															<span class="orb-field-label" id="popSenseLabel">Goes round<span class="orb-field-sub" id="popSenseSub"></span></span>
+															<div class="orb-seg" role="group" aria-labelledby="popSenseLabel">
+																<button type="button" id="popSenseAcw" data-sense="1" aria-pressed="true">↺ Anticlockwise</button>
+																<button type="button" id="popSenseCw" data-sense="-1" aria-pressed="false">↻ Clockwise</button>
+															</div>
+														</div>
+														<div class="orb-field">
+															<span class="orb-field-label" id="popPushLabel">Push it</span>
+															<div class="orb-push" role="group" aria-labelledby="popPushLabel">
+																<button type="button" data-push="in" title="Push it inward, towards what it orbits (←)"><span class="icon solid fa-caret-left" aria-hidden="true"></span>In</button>
+																<button type="button" data-push="slower" title="Slow it down: push against its motion (↓)"><span class="icon solid fa-caret-down" aria-hidden="true"></span>Slower</button>
+																<button type="button" data-push="faster" title="Speed it up: push along its motion (↑)"><span class="icon solid fa-caret-up" aria-hidden="true"></span>Faster</button>
+																<button type="button" data-push="out" title="Push it outward, away from what it orbits (→)">Out<span class="icon solid fa-caret-right" aria-hidden="true"></span></button>
+															</div>
+														</div>
+														<p class="orb-pop-note orb-keys-note">Arrow keys push it too. Shift: finer, Alt: coarser.</p>
+													</div>
+													<div class="orb-pop-panel" role="tabpanel" id="popPanelOrbit" aria-labelledby="popTabOrbit" hidden>
+														<div class="orb-field">
+															<label class="orb-field-label" for="popPeriodIn">Period</label>
+															<div class="orb-spin" data-field="period">
+																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Shorter period"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
+																<input type="text" class="orb-spin-input" id="popPeriodIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popOrbitRule">
+																<span class="orb-spin-unit" id="popPeriodUnit">yr</span>
+																<button type="button" class="orb-spin-btn" data-dir="1" aria-label="Longer period"><span class="icon solid fa-plus" aria-hidden="true"></span></button>
+															</div>
+														</div>
+														<div class="orb-field">
+															<label class="orb-field-label" for="popPeriIn">Closest<span class="orb-field-sub" id="popPeriName">perihelion</span></label>
+															<div class="orb-spin" data-field="peri">
+																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Closer"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
+																<input type="text" class="orb-spin-input" id="popPeriIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popOrbitRule">
+																<span class="orb-spin-unit" id="popPeriUnit">AU</span>
+																<button type="button" class="orb-spin-btn" data-dir="1" aria-label="Farther"><span class="icon solid fa-plus" aria-hidden="true"></span></button>
+															</div>
+														</div>
+														<div class="orb-field">
+															<label class="orb-field-label" for="popApoIn">Farthest<span class="orb-field-sub" id="popApoName">aphelion</span></label>
+															<div class="orb-spin" data-field="apo">
+																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Closer"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
+																<input type="text" class="orb-spin-input" id="popApoIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popOrbitRule">
+																<span class="orb-spin-unit" id="popApoUnit">AU</span>
+																<button type="button" class="orb-spin-btn" data-dir="1" aria-label="Farther"><span class="icon solid fa-plus" aria-hidden="true"></span></button>
+															</div>
+														</div>
+														<p class="orb-pop-note orb-orbit-shape" id="popOrbitShape">&nbsp;</p>
+														<p class="orb-pop-note" id="popOrbitRule">A new period scales the whole orbit (same shape). New closest or farthest distances keep it where it is.</p>
+													</div>
+													<div class="orb-pop-panel" role="tabpanel" id="popPanelBody" aria-labelledby="popTabBody" hidden>
+														<div class="orb-pop-fields">
+															<label>Mass: <span class="orb-pop-val" id="popMassVal">1.00 M⊕</span>
+																<input type="range" id="popMass" min="-14" max="7" step="0.01" value="0">
+															</label>
+															<label><span id="popRadiusLabel">Radius</span>: <span class="orb-pop-val" id="popRadiusVal">6,371 km</span>
+																<input type="range" id="popRadius" min="0" max="8" step="0.01" value="3.8">
+															</label>
+															<div class="orb-pop-colours" id="popColours" role="radiogroup" aria-label="Colour"></div>
+														</div>
+														<p class="orb-pop-info" id="popInfo" aria-live="polite">&nbsp;</p>
+													</div>
+												</div>
+												<div class="orb-pop-step">
+													<span class="orb-field-label" id="popStepLabel">Step</span>
+													<div class="orb-seg" role="group" aria-labelledby="popStepLabel">
+														<button type="button" data-step="0.1" aria-pressed="false" title="Steps of 10% (10° for the direction)">10%</button>
+														<button type="button" data-step="0.01" aria-pressed="true" title="Steps of 1% (1° for the direction)">1%</button>
+														<button type="button" data-step="0.001" aria-pressed="false" title="Steps of 0.1% (0.1° for the direction)">0.1%</button>
+													</div>
+												</div>
 											</div>
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
@@ -333,6 +419,7 @@
 											<div class="stats-container">
 												<div class="orb-subject" id="statSubject" title="The readouts are for this body (click or tap a body to choose it)">
 													<span class="orb-subject-dot" id="statSubjectDot" aria-hidden="true"></span><span class="orb-subject-name" id="statSubjectName">Earth</span><span class="orb-subject-around" id="statSubjectAround">around the Sun</span>
+													<button type="button" class="orb-subject-edit" id="statSubjectEdit" aria-haspopup="dialog" aria-expanded="false" aria-label="Edit this body: its velocity, orbit, mass and colour" title="Set its velocity, orbit, mass and colour"><span class="icon solid fa-sliders-h" aria-hidden="true"></span><span class="orb-subject-edit-text">Edit</span></button>
 												</div>
 												<div class="stats-box" title="Time since the start">
 													<strong>Time:</strong> <span id="statTime" class="sim-value" style="--chars: 6">0.00</span> <span id="statTimeUnit">yr</span>
