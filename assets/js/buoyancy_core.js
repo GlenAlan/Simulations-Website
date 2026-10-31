@@ -26,6 +26,11 @@
  *    flows only while air can get out (or in): an upside-down cup keeps its
  *    trapped air until it tips and the air bubbles out. Volume is conserved: what
  *    the object holds is missing from the tank.
+ *  - An opening wider than a hole is no wall: across it the liquid inside and the
+ *    tank's are one body of liquid. The held liquid makes no waves of its own (only
+ *    the material and air below the surface push the tank's liquid aside), and the
+ *    drawn surface runs on through such an opening; what leaves it into the air
+ *    falls as a curtain, while through a hole it squirts as a jet.
  *  - Drag on every exposed face: quadratic pressure drag on faces moving into
  *    the fluid, laminar skin friction and a viscous term, integrated implicitly,
  *    plus the added mass / inertia of the liquid that has to be pushed aside.
@@ -226,6 +231,11 @@
     // Small helpers
     // ------------------------------------------------------------------
     function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+    // 0 below a, 1 above b, and a smooth S-curve in between
+    function smoothstep(a, b, x) {
+        const u = clamp((x - a) / (b - a), 0, 1);
+        return u * u * (3 - 2 * u);
+    }
     function mulberry32(seed) {
         let a = seed >>> 0;
         return function () {
@@ -494,9 +504,12 @@
             for (let k = 0; k < qt; k++) cells[k] = lcell[local[k]];
             cavs.push(makeCavity(cells, traceCavity(local, id, cavIdx, ltype, LW, comLX, comLY)));
         }
+        // the cavity each body cell belongs to (-1: material or sealed air)
+        const cellCav = new Int16Array(n);
+        for (let i = 0; i < n; i++) cellCav[i] = cavIdx[cellLocal[i]];
 
         return {
-            n, ox, oy, cmass, kind, env, cellLocal, lcell, ltype, lmat, LW, LH, gc0, gr0, NL, cavIdx,
+            n, ox, oy, cmass, kind, env, cellLocal, lcell, ltype, lmat, LW, LH, gc0, gr0, NL, cavIdx, cellCav,
             comLX, comLY, mass: M, massMat, inertia: I, areaMx, areaMy,
             areaTot: n * CELL_A, areaMat, areaSealed, areaOpen, areaBasin,
             areaEnv: areaMat + areaSealed + areaBasin, matCount,
@@ -597,18 +610,25 @@
                     ex.push(cx[k]); ey.push(cy[k]);
                 }
                 const env = allOpen ? [cx, cy] : [ex, ey];
+                let len = 0;
                 for (let k = 0; k < env[0].length - 1; k++) {
                     const dx = env[0][k + 1] - env[0][k], dy = env[1][k + 1] - env[1][k], l = Math.hypot(dx, dy) || 1;
                     ox.push(env[0][k]); oy.push(env[1][k]); onx.push(dy / l); ony.push(-dx / l); oo.push(1);
+                    len += l;
                 }
                 chains.push({
                     f0, nf, px: Float64Array.from(cx), py: Float64Array.from(cy), lips: !allOpen,
                     ex: Float64Array.from(env[0]), ey: Float64Array.from(env[1]),   // as drawn
                     nbx: nsx / nf, nby: nsy / nf,           // mean outward normal (body frame)
+                    // A hole a centimetre or two across squirts a jet; through anything wider the liquid
+                    // inside and outside is one body of liquid with a surface that runs on through it
+                    wide: len > 2.5 * CELL, bubCap: clamp(0.5 * len, 0.05, 0.25),
                     qI: 0, qO: 0, lipMode: false, wA: 0.5,  // this step: flows, over the lips?, lip A's share
+                    qoR: 0, qoA: 0,                         // outflow (face units): in all, and where the outside is air
                     tin: null, tout: null,                  // where it flows through (flow-weighted)
-                    // smoothed for drawing: signed flows over lip A / lip B / as a jet (+ in, - out), jet geometry
-                    sA: 0, sB: 0, sJ: 0, jx: 0, jy: 0, jnx: 0, jny: 0, jv: 0
+                    // smoothed for drawing: signed flows over lip A / lip B / as a jet (+ in, - out), jet
+                    // geometry, and what a wide opening pours out into the air
+                    sA: 0, sB: 0, sJ: 0, sC: 0, jx: 0, jy: 0, jnx: 0, jny: 0, jv: 0
                 });
             }
             loops.push({ x: Float64Array.from(ox), y: Float64Array.from(oy), nx: Float64Array.from(onx), ny: Float64Array.from(ony), o: Uint8Array.from(oo) });
@@ -631,17 +651,17 @@
             sL: 0, sR: 0, fx0: 0, fspan: 1,  // outside level just beyond the openings' ends
             // trapped air escaping: the liquid flow it lets in, and the stretch of opening it leaves by
             bubQ: 0, bX0: 0, bY0: 0, bX1: 0, bY1: 0, bNX: 0, bNY: 1,
-            // visual slosh and ripples of the inside surface
-            phi: 0, phiV: 0, rip: 0, ripT: 0
+            // visual slosh and ripples of the inside surface; venting eased for drawing
+            phi: 0, phiV: 0, rip: 0, ripT: 0, ventS: 1
         };
     }
 
     function resetCavities(B) {
         for (const cv of B.cavs) {
             cv.V = 0; cv.h = -1; cv.m = cv.mx = cv.my = cv.I = 0;
-            cv.qIn = cv.qOut = 0; cv.vented = true;
+            cv.qIn = cv.qOut = 0; cv.vented = true; cv.ventS = 1;
             cv.bubQ = 0; cv.phi = cv.phiV = cv.rip = 0;
-            for (const ch of cv.chains) { ch.qI = ch.qO = 0; ch.sA = ch.sB = ch.sJ = 0; ch.lipMode = false; }
+            for (const ch of cv.chains) { ch.qI = ch.qO = ch.qoR = ch.qoA = 0; ch.sA = ch.sB = ch.sJ = ch.sC = 0; ch.lipMode = false; }
         }
         B.waterMass = B.waterMx = B.waterMy = B.waterInertia = B.waterArea = 0;
     }
@@ -823,7 +843,7 @@
             cv.sL = sL; cv.sR = sR; cv.fx0 = fx0; cv.fspan = fspan;
             for (let k = 0; k < cv.chains.length; k++) {
                 const ch = cv.chains[k];
-                let qi = 0, qo = 0;
+                let qi = 0, qo = 0, qoa = 0;
                 const ti = ch.tin, to = ch.tout;
                 ti.fill(0); to.fill(0);
                 for (let f = ch.f0, fe = ch.f0 + ch.nf; f < fe; f++) {
@@ -843,7 +863,9 @@
                             // depth of the air under this opening's top edge (it bubbles out through it);
                             // remember the stretch of opening where it is deepest
                             const a = Math.min(z1 - hin, 0.05);
-                            bub += CELL * Math.sqrt(a);
+                            // (through a wide opening it leaves as big bubbles, which rise as fast as
+                            // their size lets them: a wide air pocket under water cannot last)
+                            bub += CELL * Math.sqrt(ch.wide ? Math.min(z1 - hin, ch.bubCap) : a);
                             if (a > bubA + 0.003) { bubA = a; cv.bX0 = cv.bX1 = X; cv.bY0 = cv.bY1 = z1; cv.bNX = nwx; cv.bNY = nwy; }
                             else if (a > bubA - 0.003) {
                                 if (X < cv.bX0) { cv.bX0 = X; cv.bY0 = z1; }
@@ -864,7 +886,7 @@
                         const fl = faceFlow(z0, z1, hin, S);
                         if (fl <= 0) continue;
                         const d = hin - (z0 > S ? z0 : S);
-                        qo += fl; if (airOut) qOutAir += fl; if (d > dOut) dOut = d;
+                        qo += fl; if (airOut) { qOutAir += fl; qoa += fl; } if (d > dOut) dOut = d;
                         to[0] += fl * mx; to[1] += fl * my; to[2] += fl * nx; to[3] += fl * ny; to[4] += fl * d;
                     }
                 }
@@ -889,7 +911,7 @@
                         ch.wA = wa + wb > 0 ? wa / (wa + wb) : 0.5;
                     }
                 }
-                ch.qI = QI; ch.qO = QO;
+                ch.qI = QI; ch.qO = QO; ch.qoR = qo; ch.qoA = qoa;
                 QIt += QI; QOt += QO;
             }
             let QI = QIt, QO = QOt;
@@ -924,10 +946,15 @@
                 const ch = cv.chains[k];
                 const qi = ch.qI * kI, qo = ch.qO * kO;
                 const inflow = qi >= qo, q = inflow ? qi : -qo;
-                let tA = 0, tB = 0, tJ = 0;
+                let tA = 0, tB = 0, tJ = 0, tC = 0;
                 if (ch.lipMode) { tA = q * ch.wA; tB = q - tA; } else tJ = q;
+                // What a wide opening lets out where the outside is air falls from it as a curtain.
+                // (With no other way in for the air, all of it leaves there: the air comes in through
+                // the same stretch, and the liquid falls out round it.)
+                if (ch.wide && !ch.lipMode && ch.qoR > 0 && ch.qoA > 0) tC = vented ? qo * ch.qoA / ch.qoR : qo;
                 ch.sA += (tA - ch.sA) * aS; ch.sB += (tB - ch.sB) * aS; ch.sJ += (tJ - ch.sJ) * aS;
-                if (tJ === 0) continue;
+                ch.sC += (tC - ch.sC) * aS;
+                if (tJ === 0 || ch.wide) continue;
                 // flow-weighted point and normal of the wetted faces (body frame) and the jet's speed
                 const t = inflow ? ch.tin : ch.tout, fl = (inflow ? ch.qI : ch.qO) / kQ;
                 if (!(fl > 0)) continue;
@@ -1107,9 +1134,11 @@
         // in a frame moving with the hull the liquid feels gravity minus the hull's acceleration
         const eq = clamp(Math.atan2(-accX, Math.max(0.2 * g, g + accY)), -0.3, 0.3);
         const ripDecay = Math.exp(-dtF / 0.7);
+        const aVent = 1 - Math.exp(-dtF / 0.08);
         for (const cv of B.cavs) {
             cv.ripT += dtF;
             cv.rip *= ripDecay;
+            cv.ventS += ((cv.vented ? 1 : 0) - cv.ventS) * aVent;
             if (cv.V <= 0 || cv.V >= cv.area || cv.Ws < 2 * CELL) { cv.phi *= 0.8; cv.phiV = 0; }
             else {
                 const k = Math.PI / cv.Ws;
@@ -1410,11 +1439,20 @@
         const rampA = CELL * Math.min(ac, as), wMax = CELL / Math.max(ac, as), E2 = 2 * ext;
         const L = level;
         const x0 = st.x, y0 = st.y;
+        // area of a rotated cell below a level line that is tt above its lowest corner
+        const areaBelow = (tt) => {
+            if (tt >= E2) return CELL_A;
+            if (rampA < 1e-12) return wMax * tt;
+            if (tt < rampA) return wMax * tt * tt / (2 * rampA);
+            if (tt <= E2 - rampA) return wMax * (tt - 0.5 * rampA);
+            const u = E2 - tt;
+            return CELL_A - wMax * u * u / (2 * rampA);
+        };
 
         let sA = 0, sAx = 0, sAy = 0, sAk = 0, sAky = 0, sAenv = 0, calmTot = 0;
         let sxMin = Infinity, sxMax = -Infinity, syMin = Infinity, syMax = -Infinity, dTop = Infinity;
         bNew.fill(0);
-        const n = B.n, OX = B.ox, OY = B.oy, ENV = B.env;
+        const n = B.n, OX = B.ox, OY = B.oy, ENV = B.env, CAV = B.cellCav, cavs = B.cavs;
         for (let i = 0; i < n; i++) {
             const ox = OX[i], oy = OY[i];
             const rx = c * ox - s * oy, ry = s * ox + c * oy;
@@ -1446,16 +1484,21 @@
             // displacement below the calm level (drives the mean level and the waves)
             const dc = L - Y;
             if (dc > -ext) {
-                let Ac;
-                if (dc >= ext) Ac = CELL_A;
-                else {
-                    const tt = dc + ext;
-                    if (rampA < 1e-12) Ac = wMax * tt;
-                    else if (tt < rampA) Ac = wMax * tt * tt / (2 * rampA);
-                    else if (tt <= E2 - rampA) Ac = wMax * (tt - 0.5 * rampA);
-                    else { const u = E2 - tt; Ac = CELL_A - wMax * u * u / (2 * rampA); }
-                }
+                let Ac = areaBelow(dc + ext);
                 calmTot += Ac;
+                // Liquid held in a cavity below the calm level is the tank's own liquid that has
+                // come in: it pushes nothing aside, so only the cavity's air there makes waves. (The
+                // mean level counts it all: the held volume is missing from the tank. Without this a
+                // hook or an arch plunging in raises a crest as if its whole hull were solid, and the
+                // tank's surface stands far above the liquid inside along the open side.)
+                const ci = CAV[i];
+                if (ci >= 0) {
+                    const cv = cavs[ci];
+                    if (cv.V > 0) {
+                        const dh = (cv.h < L ? cv.h : L) - Y;
+                        if (dh > -ext) Ac -= areaBelow(dh + ext);
+                    }
+                }
                 const w1 = Ac / DXC;
                 bNew[j] += w1 * (1 - t);
                 bNew[j + 1] += w1 * t;
@@ -2413,6 +2456,164 @@
         outStreams.push([lipX - dir * 1.5 / scale, lipZ + 0.5 * wb, dir * q / wb, 0, q, wb]);
     }
 
+    // Where a cavity's liquid meets the tank's through a wide opening. The tank's liquid is drawn up
+    // to its own surface and a cavity's up to a level of its own, but an opening is no wall: across it
+    // the two are one body of liquid, and the drawn surface has to run on through it.
+    //  - Where the tank's surface meets an opening that faces sideways, the surface inside rises or
+    //    sinks to that height over a short ramp (as long as the step it smooths, and more): the liquid
+    //    flowing in or out draws the surface up or down towards the opening.
+    //  - Over a stretch of an opening that faces down and lies under the outside level, while air can
+    //    get out of the cavity, the tank's liquid stands up through it at that level. (Inside, the
+    //    pool fills up to it a moment later; with the air trapped it cannot, and the air's lower edge
+    //    stays where it is.) The outside level is the one the opening sees (openingSurface): the
+    //    tank's surface curve runs on under the object, where it means nothing.
+    // An opening that faces up is crossed differently: the liquid pours over its lips (nappes and
+    // tongues). The weights for both are found per drawn sample; blendLevel uses them.
+    const BLEND_N = 400;
+    const blendS = new Float64Array(BLEND_N + 1), blendD = new Float64Array(BLEND_N + 1);
+    const blendSW = new Float64Array(BLEND_N + 1), blendST = new Float64Array(BLEND_N + 1);
+    let blendX0 = 0, blendDX = 1, blendNp = 0, blendCv = null;
+    function cavityBlend(cv, c, s, X0, DX, np) {
+        blendX0 = X0; blendDX = DX; blendNp = np; blendCv = cv;
+        blendS.fill(0, 0, np + 1); blendD.fill(0, 0, np + 1);
+        blendSW.fill(0, 0, np + 1); blendST.fill(0, 0, np + 1);
+        for (const ch of cv.chains) {
+            if (!ch.wide) continue;
+            let nx = c * ch.nbx - s * ch.nby, ny = s * ch.nbx + c * ch.nby;
+            const nl = Math.hypot(nx, ny) || 1;
+            nx /= nl; ny /= nl;
+            // (both fade in and out as the body turns, so nothing jumps when an opening turns over)
+            const side = 1 - smoothstep(0.35, 0.7, Math.abs(ny));
+            const down = smoothstep(0.35, 0.7, -ny) * cv.ventS;
+            if (side < 1e-3 && down < 1e-3) continue;
+            const m = chainPoints(ch, c, s);
+            if (m < 2) continue;
+            let total = 0;
+            for (let i = 1; i < m; i++) total += Math.hypot(cpX[i] - cpX[i - 1], cpZ[i] - cpZ[i - 1]);
+            // near a lip the tank's surface meets the object's material, not the cavity's liquid
+            const lipFade = (along) => ch.lips ? smoothstep(0, 1.5 * CELL, Math.min(along, total - along)) : 1;
+            if (side >= 1e-3) {
+                const dir = nx > 0 ? -1 : 1;             // into the cavity
+                let g0 = cpZ[0] - surfaceAt(cpX[0]), along = 0;
+                for (let i = 1; i < m; i++) {
+                    const g1 = cpZ[i] - surfaceAt(cpX[i]);
+                    const seg = Math.hypot(cpX[i] - cpX[i - 1], cpZ[i] - cpZ[i - 1]);
+                    if ((g0 <= 0) !== (g1 <= 0)) {
+                        const t = g0 / (g0 - g1);
+                        const xc = cpX[i - 1] + (cpX[i] - cpX[i - 1]) * t;
+                        const w0 = side * lipFade(along + seg * t);
+                        if (w0 > 1e-3) {
+                            const Sc = surfaceAt(xc);
+                            const D = clamp(0.02 + 2 * Math.abs(Sc - cavityLevelAt(cv, xc)), 0.02, 0.3);
+                            for (let k = 0; k <= np; k++) {
+                                const u = (X0 + DX * k - xc) * dir;
+                                // (a little way past the opening too: where it slants, the cavity
+                                // reaches beyond the point where the surface meets it)
+                                const w = w0 * (u >= 0 ? 1 - smoothstep(0, D, u) : 1 - smoothstep(0, 0.03, -u));
+                                if (w <= 0) continue;
+                                if (w > blendS[k]) blendS[k] = w;
+                                blendSW[k] += w; blendST[k] += w * Sc;
+                            }
+                        }
+                    }
+                    g0 = g1; along += seg;
+                }
+            }
+            if (down >= 1e-3) {
+                const nr = bandRuns(m, () => -Infinity, (x) => openingSurface(cv, x));
+                for (let q = 0; q < nr; q++) {
+                    const r = runs[q];
+                    const xa = Math.min(r.sx, r.ex), xb = Math.max(r.sx, r.ex);
+                    for (let k = 0; k <= np; k++) {
+                        const x = X0 + DX * k;
+                        const d = x < xa ? xa - x : (x > xb ? x - xb : 0);
+                        const w = down * (1 - smoothstep(0, 0.015, d));
+                        if (w > blendD[k]) blendD[k] = w;
+                    }
+                }
+            }
+        }
+    }
+    // the drawn surface of a cavity's liquid at x, from its own surface `own` there (see cavityBlend)
+    function blendLevel(x, own) {
+        let f = (x - blendX0) / blendDX;
+        if (f < 0) f = 0; else if (f > blendNp) f = blendNp;
+        let i = Math.floor(f);
+        if (i >= blendNp) i = blendNp - 1;
+        f -= i;
+        const ws = blendS[i] + (blendS[i + 1] - blendS[i]) * f;
+        const wd = blendD[i] + (blendD[i + 1] - blendD[i]) * f;
+        let y = own;
+        if (ws > 0) {
+            // towards the height where the tank's surface meets the opening(s) nearby
+            const sw = blendSW[i] + (blendSW[i + 1] - blendSW[i]) * f;
+            const T = (blendST[i] + (blendST[i + 1] - blendST[i]) * f) / sw;
+            y = own + ws * (T - own);
+        }
+        if (wd > 0) {
+            const S = openingSurface(blendCv, x);
+            if (S > own) { const yd = own + wd * (S - own); if (yd > y) y = yd; }
+        }
+        return y;
+    }
+    // A cavity's own surface for drawing: its level and slosh; when it is empty or full, just past its
+    // bottom or top, so no surface line shows along its edge
+    function ownLevelAt(cv, x, ext) {
+        if (cv.V <= 0) return cv.ymin - ext - 3 / scale;
+        if (cv.V >= cv.area) return cv.ymax + ext + 3 / scale;
+        return cavityLevelAt(cv, x);
+    }
+
+    // Curtains: liquid going through stretches of a wide opening (band runs `pick` selects, flow q
+    // shared by length and head) as streams that start as wide as the stretch, moving straight
+    // through it, and thin as gravity speeds them up. Out of the cavity into the air they are drawn
+    // later, on top (outStreams); into the cavity they are drawn now and end on the drawn surface
+    // inside (stopIn). hi(x) is the upper of the two surfaces the run lies between.
+    function addCurtains(ch, c, s, q, out, hi, pick, stopIn, liq) {
+        const nr = runs.length;
+        let nx = c * ch.nbx - s * ch.nby, ny = s * ch.nbx + c * ch.nby;
+        let wsum = 0;
+        const ws = [], hs = [];
+        for (let k = 0; k < nr; k++) {
+            const r = runs[k];
+            let w = 0, h = 0;
+            if (pick(r)) {
+                const L = Math.hypot(r.ex - r.sx, r.ez - r.sz);
+                const xm = 0.5 * (r.sx + r.ex), zm = 0.5 * (r.sz + r.ez);
+                h = Math.max(hi(xm) - zm, 0) + 0.5 * Math.abs(r.ez - r.sz);
+                w = L * Math.sqrt(h);
+            }
+            ws.push(w); hs.push(h); wsum += w;
+        }
+        if (!(wsum > 0)) return;
+        const px1 = 1 / scale;
+        // (copied: drawing a stream inside reuses nothing, but the runs are only valid until the
+        // next bandRuns)
+        const rs = runs.slice();
+        for (let k = 0; k < nr; k++) {
+            const r = rs[k];
+            const L = Math.hypot(r.ex - r.sx, r.ez - r.sz);
+            if (L < px1) continue;
+            // through the stretch, perpendicular to it
+            let ux = (r.ez - r.sz) / L, uz = -(r.ex - r.sx) / L;
+            if ((ux * nx + uz * ny < 0) === out) { ux = -ux; uz = -uz; }
+            // Liquid does not squirt upwards through a wide opening: coming in from below it just
+            // rises with the level (cavityBlend), and going out over an edge it spills sideways. So a
+            // curtain narrows away as the way through the stretch turns upwards, and as its flow dies
+            // away (it starts as wide as the stretch, however little flows).
+            const qr = q * ws[k] / wsum;
+            const w0 = L * (1 - smoothstep(0.05, 0.4, uz)) * smoothstep(0.5 * Q_MIN, 3 * Q_MIN, qr);
+            if (w0 < 0.5 * px1) continue;
+            // (no faster than the head over the stretch can drive it: a sliver of a stretch that
+            // gets a large flow is then a narrow stream, not a jet)
+            const v = Math.min(qr / w0, Math.sqrt(2 * settings.gravity * hs[k]) + 0.05);
+            // (starting just upstream, so no edge shows between the stream and where it comes from)
+            const x = 0.5 * (r.sx + r.ex) - ux * 1.5 * px1, z = 0.5 * (r.sz + r.ez) - uz * 1.5 * px1;
+            if (out) outStreams.push([x, z, ux * v, uz * v, qr, w0]);
+            else drawStream(traceStream(x, z, ux * v, uz * v, qr, w0, stopIn, false), liq, v, false);
+        }
+    }
+
     // Liquid held in the cavities, drawn like the tank's liquid: a level (sloshing) surface clipped to
     // each cavity, and the streams pouring in or out of it
     const surfPts = new Float64Array(2 * 400);
@@ -2428,29 +2629,45 @@
         for (const cv of B.cavs) {
             const outline = new Path2D();
             addCavityOutline(outline, cv, c, s);
-            const lev = (x) => cavityLevelAt(cv, x);
+            // the drawn surface inside: the cavity's own, run on into the tank's across wide openings
+            const bx0 = Math.floor(wx(cv.xmin)) - 3, bx1 = Math.ceil(wx(cv.xmax)) + 3;
+            const np = clamp(Math.ceil((bx1 - bx0) / 5), 2, 399);
+            cavityBlend(cv, c, s, bx0 / scale, (bx1 - bx0) / np / scale, np);
+            const lev = (x) => blendLevel(x, ownLevelAt(cv, x, ext));
             const sOut = (x) => openingSurface(cv, x);
             const sTop = (x) => Math.max(sOut(x), surfaceAt(x));
-            const stopIn = (x, y) => y <= cavityLevelAt(cv, x) || y < cv.ymin - CELL || x < cv.xmin - CELL || x > cv.xmax + CELL;
+            const stopIn = (x, y) => y <= lev(x) || y < cv.ymin - CELL || x < cv.xmin - CELL || x > cv.xmax + CELL;
 
             // 1. Liquid pouring in over a lip. Where there is air under the opening, the tank's liquid
             //    drawn over it is really falling in, so that stretch is cleared (while the cavity is
-            //    vented: over trapped air it stays, and the air bubbles up through it).
+            //    vented: over trapped air it stays, and the air bubbles up through it). That is a
+            //    stretch that starts at a lip: one that starts further along, where the liquid inside
+            //    already stands over the lip, has the tank's liquid falling through it as a curtain
+            //    (drawn with the other streams, below).
             const clear = new Path2D(), inClip = new Path2D();
             let nClear = 0;
             const px1 = 1 / scale;
             const sTopPad = (x) => sTop(x) + pad;
-            const nappes = [];
+            const nappes = [], curtainsIn = [];
             for (const ch of cv.chains) {
                 if (!(ch.sA > Q_MIN || ch.sB > Q_MIN)) continue;
                 const m = chainPoints(ch, c, s);
                 const nr = bandRuns(m, lev, sTopPad);
                 if (!nr) continue;
                 const [kx, ky] = sinkInto(ch, c, s);
-                if (cv.vented) for (const r of runs) { addBand(clear, r, sTop, pad, 0, kx, ky); addBand(inClip, r, sTop, pad, 3 * px1, kx, ky); nClear++; }
+                const atA = runs[0].i0 === 0, atB = runs[nr - 1].i1 === m - 1;
+                const atLip = (r) => (atA && r === runs[0]) || (atB && r === runs[nr - 1]);
+                if (cv.vented) {
+                    for (const r of runs) {
+                        if (!atLip(r)) continue;
+                        addBand(clear, r, sTop, pad, 0, kx, ky); addBand(inClip, r, sTop, pad, 3 * px1, kx, ky); nClear++;
+                    }
+                }
+                const qRest = (atA ? 0 : Math.max(0, ch.sA)) + (atB ? 0 : Math.max(0, ch.sB));
+                if (qRest > 0.5 * Q_MIN) curtainsIn.push([ch, qRest]);
                 for (let e = 0; e < 2; e++) {
                     const q = e ? ch.sB : ch.sA;
-                    if (!(q > Q_MIN)) continue;
+                    if (!(q > Q_MIN) || !(e ? atB : atA)) continue;
                     const r = e ? runs[nr - 1] : runs[0];
                     const x = e ? r.ex : r.sx, z = e ? r.ez : r.sz, xo = e ? r.sx : r.ex;
                     const H = Math.min(sOut(x), sTop(x)) - z;
@@ -2463,29 +2680,29 @@
             }
             if (nClear) { ctx.fillStyle = bgGradient; ctx.fill(clear); }
 
-            // 2. The pool, clipped to the cavity
+            // 2. The pool, clipped to the cavity: its surface (level, slosh tilt and ripples, run on into
+            //    the tank's surface across wide openings), air above it and liquid below
             ctx.save();
             ctx.clip(outline);
-            const bx0 = Math.floor(wx(cv.xmin)) - 3, bx1 = Math.ceil(wx(cv.xmax)) + 3;
             const by0 = -2, by1 = Math.ceil(wy(cv.ymin - ext)) + 3;
-            const box = new Path2D();
-            box.rect(bx0, by0, bx1 - bx0, by1 - by0);
-            if (cv.V <= 0) {
-                ctx.fillStyle = bgGradient; ctx.fill(box);
-            } else if (cv.V >= cv.area) {
-                fillLiquid(box);
+            const t = cv.ripT, rip = cv.V > 0 && cv.V < cv.area && cv.rip > 2e-5 ? cv.rip : 0;
+            const yTop = cv.ymax + ext;
+            let wet = false, dry = false;
+            for (let i = 0; i <= np; i++) {
+                const sx = bx0 + (bx1 - bx0) * i / np;
+                const xw = sx / scale;
+                let own = ownLevelAt(cv, xw, ext);
+                if (rip) own += rip * (0.6 * Math.sin(xw * 52 - t * 7.5) + 0.4 * Math.sin(xw * 87 + t * 11));
+                const yw = blendLevel(xw, own);
+                if (yw > cv.ymin - ext) wet = true;
+                if (yw < yTop) dry = true;
+                surfPts[2 * i] = sx; surfPts[2 * i + 1] = wy(yw);
+            }
+            if (!wet || !dry) {
+                const box = new Path2D();
+                box.rect(bx0, by0, bx1 - bx0, by1 - by0);
+                if (wet) fillLiquid(box); else { ctx.fillStyle = bgGradient; ctx.fill(box); }
             } else {
-                // surface: level line + slosh tilt + ripples
-                const np = clamp(Math.ceil((bx1 - bx0) / 5), 2, 399);
-                const tp = Math.tan(cv.phi);
-                const t = cv.ripT;
-                for (let i = 0; i <= np; i++) {
-                    const sx = bx0 + (bx1 - bx0) * i / np;
-                    const xw = sx / scale;
-                    let yw = cv.h + tp * (xw - cv.xs);
-                    if (cv.rip > 2e-5) yw += cv.rip * (0.6 * Math.sin(xw * 52 - t * 7.5) + 0.4 * Math.sin(xw * 87 + t * 11));
-                    surfPts[2 * i] = sx; surfPts[2 * i + 1] = wy(yw);
-                }
                 const below = new Path2D(), above = new Path2D(), line = new Path2D();
                 below.moveTo(bx0, by1); above.moveTo(bx0, by0);
                 for (let i = 0; i <= np; i++) {
@@ -2533,7 +2750,25 @@
             }
             ctx.save();
             ctx.clip(outline);
+            // (the tank's liquid falling through a stretch of an opening that does not start at a lip)
+            for (const [ch, q] of curtainsIn) {
+                const m = chainPoints(ch, c, s);
+                if (bandRuns(m, lev, sTop)) addCurtains(ch, c, s, q, false, sTop, (r) => r.i0 > 0 && r.i1 < m - 1, stopIn, liq);
+            }
             for (const ch of cv.chains) {
+                // A wide opening has no jet. What flows in through it is the surface running on into
+                // the cavity (cavityBlend), a nappe over a lip, or, through a stretch with air under
+                // it inside, a curtain falling in (not into trapped air: that only creeps in as the air
+                // bubbles out); what flows out into the air falls from it as a curtain.
+                if (ch.wide) {
+                    if (ch.sC > 0.5 * Q_MIN && bandRuns(chainPoints(ch, c, s), surfaceAt, lev)) {
+                        addCurtains(ch, c, s, ch.sC, true, lev, () => true, stopIn, liq);
+                    }
+                    if (ch.sJ * cv.ventS > 0.5 * Q_MIN && bandRuns(chainPoints(ch, c, s), lev, sTop)) {
+                        addCurtains(ch, c, s, ch.sJ * cv.ventS, false, sTop, () => true, stopIn, liq);
+                    }
+                    continue;
+                }
                 if (!(Math.abs(ch.sJ) > Q_MIN)) continue;
                 const q = Math.abs(ch.sJ), v = Math.max(0.2, ch.jv);
                 const px = st.x + c * ch.jx - s * ch.jy, py = st.y + s * ch.jx + c * ch.jy;
@@ -3675,7 +3910,7 @@
         getPerf() {
             return { fps: perf.fps, frameMs: perf.frameMs, physMs: perf.physMs, renderMs: perf.renderMs, substepsPerFrame: perf.substeps, frames: perf.frames };
         },
-        _internals: { settings, MATERIALS, LIQUIDS, grid, GW, GH, CELL, body: () => body, surfaceAt }
+        _internals: { settings, MATERIALS, LIQUIDS, grid, GW, GH, CELL, body: () => body, surfaceAt, outStreams }
     };
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
