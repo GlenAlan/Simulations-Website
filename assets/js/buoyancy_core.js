@@ -191,7 +191,7 @@
     // run plays out the same every time, whatever is drawn while it runs
     const RAND_SEED = 20240611;
     let rand = mulberry32(RAND_SEED);
-    let landTick = 0;                // steps since the streams last landed (streamLandings)
+    let landTick = 0;                // steps since the drawn liquid was last worked out (stepDrawnLiquid)
 
     // splash droplets
     const pX = new Float64Array(MAX_PARTICLES), pY = new Float64Array(MAX_PARTICLES);
@@ -670,7 +670,9 @@
             // trapped air escaping: the liquid flow it lets in, and the stretch of opening it leaves by
             bubQ: 0, bX0: 0, bY0: 0, bX1: 0, bY1: 0, bNX: 0, bNY: 1,
             // visual slosh and ripples of the inside surface; venting eased for drawing
-            phi: 0, phiV: 0, rip: 0, ripT: 0, ventS: 1
+            phi: 0, phiV: 0, rip: 0, ripT: 0, ventS: 1,
+            // as drawn (stepDrawnLiquid): the surface inside, sampled, and the trapped air bulging out
+            drawn: { x0: 0, dx: 1, n: 0, lev: new Float64Array(BLEND_N + 1), bulges: [] }
         };
     }
 
@@ -678,6 +680,7 @@
         for (const cv of B.cavs) {
             cv.V = 0; cv.h = -1; cv.m = cv.mx = cv.my = cv.I = 0;
             cv.qIn = cv.qOut = 0; cv.vented = true; cv.ventS = 1;
+            cv.drawn.n = 0; cv.drawn.bulges.length = 0;
             cv.bubQ = 0; cv.phi = cv.phiV = cv.rip = 0;
             for (const ch of cv.chains) { ch.qI = ch.qO = ch.qoR = ch.qoA = 0; ch.sA = ch.sB = ch.sJ = ch.sC = 0; ch.lipF = 0; }
         }
@@ -1149,12 +1152,15 @@
     // a stream ends where it reaches the tank's liquid (or the floor, or a wall)
     function landsInTank(x, y) { return y <= Math.max(0, surfaceAt(x)) || x < 0 || x > TANK_W; }
 
-    // Streams leaving the object land in the tank: they stir its surface there and throw up drops.
-    // That is part of the simulation, so it is worked out here, every few steps, from the same
-    // streams the drawing shows (cavityOutflows), with a fixed nominal pixel for the small offsets:
-    // nothing that is drawn, or how often, changes how a run plays out.
+    // What is drawn of the held liquid, worked out in the simulation step every few steps, with a
+    // fixed nominal pixel for the small offsets, so nothing that is drawn, or how often, changes how a
+    // run plays out:
+    //  - the surface inside each cavity as drawn, and the trapped air bulging out of it (drawnLevelAt,
+    //    inBulge), which the bubbles and drops go by;
+    //  - the streams leaving the object (cavityOutflows, as the drawing has them), which land in the
+    //    tank, stir its surface there and throw up drops.
     const SIM_PX = 0.002;
-    function streamLandings(dtL) {
+    function stepDrawnLiquid(dtL) {
         const B = body;
         if (!B || !B.cavs.length) return;
         const c = Math.cos(st.th), s = Math.sin(st.th);
@@ -1165,6 +1171,14 @@
             const np = clamp(Math.ceil((x1 - x0) / (5 * SIM_PX)), 2, 399);
             cavityBlend(cv, c, s, x0, (x1 - x0) / np, np);
             const lev = (x) => blendLevel(x, ownLevelAt(cv, x, ext, SIM_PX));
+            const dl = cv.drawn;
+            dl.x0 = x0; dl.dx = (x1 - x0) / np; dl.n = np;
+            for (let k = 0; k <= np; k++) dl.lev[k] = lev(x0 + dl.dx * k);
+            airBulges(cv, c, s, lev, SIM_PX, dl.bulges);
+            for (const b of dl.bulges) {
+                b.bx0 = Math.min(...b.xs, ...b.qx); b.bx1 = Math.max(...b.xs, ...b.qx);
+                b.bz0 = Math.min(...b.zs, ...b.qz); b.bz1 = Math.max(...b.zs, ...b.qz);
+            }
             cavityOutflows(cv, c, s, lev, (x) => openingSurface(cv, x), SIM_PX, simStreams, null);
         }
         for (const [x, y, vx, vy, q, w] of simStreams) {
@@ -1234,13 +1248,20 @@
                 }
             }
             // trapped air leaving as bubbles, from the stretch of opening where it is deepest; they
-            // start just outside the object (past the lip when the opening faces down)
+            // start just outside the object (past the lip when the opening faces down), or, where the
+            // air bulges out past the opening, from the top of the bulge
             if (cv.bubQ > 0) {
+                let top = null;
+                for (const b of cv.drawn.bulges) {
+                    for (let k = 0; k < b.qx.length; k++) if (!top || b.qz[k] > top[1]) top = [b.qx[k], b.qz[k]];
+                }
                 let nb = Math.min(40, cv.bubQ / 6e-5) * dtF;
                 while (nb > 0) {
                     if (nb >= 1 || rand() < nb) {
                         const u = rand();
-                        let x = cv.bX0 + (cv.bX1 - cv.bX0) * u + cv.bNX * 0.006, y = cv.bY0 + (cv.bY1 - cv.bY0) * u + cv.bNY * 0.006;
+                        let x, y;
+                        if (top) { x = top[0] + (u - 0.5) * 0.01; y = top[1] + 0.004; }
+                        else { x = cv.bX0 + (cv.bX1 - cv.bX0) * u + cv.bNX * 0.006; y = cv.bY0 + (cv.bY1 - cv.bY0) * u + cv.bNY * 0.006; }
                         const away = x >= cv.cx ? 1 : -1;
                         for (let k = 0; k < 16 && bodyCellAt(x, y) !== T_EXT; k++) x += away * 0.005;
                         if (bodyCellAt(x, y) === T_EXT) spawnBubble(x + (rand() - 0.5) * 0.008, y);
@@ -1266,12 +1287,40 @@
         bV[i] = 0.18 + rand() * 0.12 + bR[i] * 15;
     }
     // is a point in liquid that belongs to the tank or a cavity (not air, not material)?
+    // (both as drawn: the surface inside run on into the tank's across wide openings, and the air
+    // bulging out of a cavity under water; see stepDrawnLiquid)
     function inLiquid(x, y) {
         const t = bodyCellAt(x, y);
-        if (t === T_EXT) return y < surfaceAt(x);
+        if (t === T_EXT) return y < surfaceAt(x) && !inBulge(x, y);
         if (t !== T_OPEN || hitCav < 0) return false;
-        const cv = body.cavs[hitCav];
-        return cv.V > 0 && y < cavityLevelAt(cv, x);
+        return y < drawnLevelAt(body.cavs[hitCav], x);
+    }
+    function drawnLevelAt(cv, x) {
+        const d = cv.drawn;
+        if (!d.n) return cv.V > 0 ? cavityLevelAt(cv, x) : -Infinity;
+        let f = (x - d.x0) / d.dx;
+        if (f < 0) f = 0; else if (f > d.n) f = d.n;
+        let i = Math.floor(f);
+        if (i >= d.n) i = d.n - 1;
+        f -= i;
+        return d.lev[i] + (d.lev[i + 1] - d.lev[i]) * f;
+    }
+    function inBulge(x, y) {
+        for (const cv of body.cavs) {
+            for (const b of cv.drawn.bulges) {
+                if (x < b.bx0 || x > b.bx1 || y < b.bz0 || y > b.bz1) continue;
+                // (the outline: along the stretch, then back along the air's edge)
+                const n = b.xs.length;
+                let inside = false;
+                for (let k = 0, km = 2 * n - 1; k < 2 * n; km = k++) {
+                    const ax = k < n ? b.xs[k] : b.qx[2 * n - 1 - k], az = k < n ? b.zs[k] : b.qz[2 * n - 1 - k];
+                    const bx = km < n ? b.xs[km] : b.qx[2 * n - 1 - km], bz = km < n ? b.zs[km] : b.qz[2 * n - 1 - km];
+                    if ((az > y) !== (bz > y) && x < ax + (bx - ax) * (y - az) / (bz - az)) inside = !inside;
+                }
+                if (inside) return true;
+            }
+        }
+        return false;
     }
     function stepBubbles(dt) {
         let i = 0;
@@ -1735,7 +1784,7 @@
         stepParticles(dt);
         stepBubbles(dt);
         stepCavityVisuals(dt);
-        if (++landTick >= 4) { landTick = 0; streamLandings(4 * dt); }
+        if (++landTick >= 4) { landTick = 0; stepDrawnLiquid(4 * dt); }
 
         // ---- record for display ----
         phys.subA = sA; phys.subEnv = sAenv;
@@ -2789,12 +2838,13 @@
     // so the air's lower edge is level past it (an opening facing down or sideways), rising round to
     // the rim where it escapes, and over an opening facing up the air rises out of it as a dome. Each
     // point of such a stretch is pushed out along the opening's normal to that edge, and the space
-    // between is drawn as air, outlined like a surface. (It fades as the cavity vents.) own(x) is the
-    // surface drawn inside.
-    function drawAirBulges(cv, c, s, own, liq) {
+    // between is air. (It fades as the cavity vents.) own(x) is the surface drawn inside; px a pixel's
+    // size. Each bulge goes onto out as { xs, zs, qx, qz, nx, ny }: the stretch, and the air's edge
+    // past it, point for point.
+    function airBulges(cv, c, s, own, px, out) {
+        out.length = 0;
         const wt = 1 - cv.ventS;
-        if (wt < 1e-3 || cv.V >= cv.area) return;
-        const px1 = 1 / scale;
+        if (wt < 1e-3 || cv.V >= cv.area) return out;
         for (const ch of cv.chains) {
             if (!ch.wide) continue;
             const m = chainPoints(ch, c, s);
@@ -2811,7 +2861,7 @@
                 const n = xs.length, al = new Float64Array(n);
                 for (let i = 1; i < n; i++) al[i] = al[i - 1] + Math.hypot(xs[i] - xs[i - 1], zs[i] - zs[i - 1]);
                 const L = al[n - 1];
-                if (L < 2 * px1) continue;
+                if (L < 2 * px) continue;
                 const lipA = ch.lips && r.i0 === 0, lipB = ch.lips && r.i1 === m - 1;
                 let aMax = 0;
                 for (let i = 0; i < n; i++) aMax = Math.max(aMax, zs[i] - own(xs[i]));
@@ -2835,24 +2885,33 @@
                     if (ny > 1e-3) d = Math.min(d, Math.max(0, (surfaceAt(xs[i] + nx * d) - 0.002 - zs[i]) / ny));
                     qx[i] = xs[i] + nx * d; qz[i] = zs[i] + ny * d;
                 }
-                // (its inner edge reaches 2 px into the cavity: two fills sharing an edge leave a seam)
-                const p = new Path2D(), edge = new Path2D();
-                const kx = -2 * nx, ky = 2 * ny;
-                p.moveTo(wx(xs[0]) + kx, wy(zs[0]) + ky);
-                for (let i = 1; i < n; i++) p.lineTo(wx(xs[i]) + kx, wy(zs[i]) + ky);
-                for (let i = n - 1; i >= 0; i--) {
-                    p.lineTo(wx(qx[i]), wy(qz[i]));
-                    if (i === n - 1) edge.moveTo(wx(qx[i]), wy(qz[i])); else edge.lineTo(wx(qx[i]), wy(qz[i]));
-                }
-                p.closePath();
-                ctx.fillStyle = bgGradient;
-                ctx.fill(p);
-                ctx.strokeStyle = liq.surface;
-                ctx.globalAlpha = 0.85;
-                ctx.lineWidth = 1.5;
-                ctx.stroke(edge);
-                ctx.globalAlpha = 1;
+                out.push({ xs, zs, qx, qz, nx, ny });
             }
+        }
+        return out;
+    }
+    // ... drawn as air, outlined like a surface
+    const bulgeList = [];
+    function drawAirBulges(cv, c, s, own, liq) {
+        for (const b of airBulges(cv, c, s, own, 1 / scale, bulgeList)) {
+            const { xs, zs, qx, qz, nx, ny } = b, n = xs.length;
+            // (its inner edge reaches 2 px into the cavity: two fills sharing an edge leave a seam)
+            const p = new Path2D(), edge = new Path2D();
+            const kx = -2 * nx, ky = 2 * ny;
+            p.moveTo(wx(xs[0]) + kx, wy(zs[0]) + ky);
+            for (let i = 1; i < n; i++) p.lineTo(wx(xs[i]) + kx, wy(zs[i]) + ky);
+            for (let i = n - 1; i >= 0; i--) {
+                p.lineTo(wx(qx[i]), wy(qz[i]));
+                if (i === n - 1) edge.moveTo(wx(qx[i]), wy(qz[i])); else edge.lineTo(wx(qx[i]), wy(qz[i]));
+            }
+            p.closePath();
+            ctx.fillStyle = bgGradient;
+            ctx.fill(p);
+            ctx.strokeStyle = liq.surface;
+            ctx.globalAlpha = 0.85;
+            ctx.lineWidth = 1.5;
+            ctx.stroke(edge);
+            ctx.globalAlpha = 1;
         }
     }
 
@@ -3032,7 +3091,7 @@
     }
 
     // streams leaving the object, on top of it, down to where they land (where they splash is worked
-    // out in the simulation step: streamLandings)
+    // out in the simulation step: stepDrawnLiquid)
     function drawOutStreams() {
         if (!outStreams.length) return;
         const liq = LIQUIDS[settings.liquid];
