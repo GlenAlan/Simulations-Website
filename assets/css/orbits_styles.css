@@ -1373,3 +1373,67 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         }
     }
 }
+
+/* ---------- The info bar and the tool column with every control in ----------
+   Info bar on wider screens: with the period and the Edit button the readouts no longer fit on one
+   line beside the buttons, so the chosen body heads the bar on a line of its own (as on phones) and
+   the five readouts follow on the next. */
+@media screen and (min-width: 601px) {
+    .orbits-sim .stats-container {
+        flex-wrap: wrap;
+    }
+
+    .orbits-sim .stats-container > .orb-subject {
+        flex: 1 0 100%;
+        max-width: none;
+    }
+}
+
+/* Tool column: undo and redo (icons) share a row with "Fit view", leaving the palette one row more.
+   The hint keeps room for five lines but may grow (to eight) for a scene's longer tip: only the
+   palette above it, which scrolls, gets shorter, so no chip moves. */
+@media (orientation: landscape) and (min-width: 640px) {
+    .orb-toolbar {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, auto) auto auto;
+        grid-template-areas: "label label" "palette palette" "history fit" "hint hint";
+        align-content: start;
+    }
+
+    .orb-toolbar-label {
+        grid-area: label;
+    }
+
+    .orb-palette {
+        grid-area: palette;
+    }
+
+    .orb-history {
+        grid-area: history;
+    }
+
+    .orb-toolbar .orb-history-btn {
+        flex: 0 0 auto;
+        width: 36px;
+    }
+
+    .orb-history-text {
+        display: none;
+    }
+
+    .orb-toolbar .orb-fit {
+        grid-area: fit;
+        width: auto;
+        min-width: 0;
+        padding: 0 0.4em;
+    }
+
+    .orb-hint {
+        grid-area: hint;
+        height: auto;
+        min-height: 7.1em;
+        max-height: 11.3em;
+        overflow-y: auto;
+    }
+}
