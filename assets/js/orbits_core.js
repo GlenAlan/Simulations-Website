@@ -1447,38 +1447,42 @@
     }
 
     // ------------------------------------------------------------------
-    // Orbit shape (eccentricity slider): relaunch the subject with the same semi-major axis,
-    // from the far end of its new orbit (aphelion) in the direction it is now.
+    // Orbit shape (eccentricity slider): the subject stays where it is and only its velocity changes,
+    // as in the menu's orbit editor. The orbit keeps the size (semi-major axis, so the period) it had
+    // when the slider started moving, and only the direction of the velocity turns (the same speed and
+    // size, a different shape: energy sets the size, angular momentum the shape). A rounder orbit of
+    // that size can't pass through where the body is, so below that it sits at the near or far end of
+    // its orbit, which shrinks or grows to fit: at 0 it is the circle through where it is.
     // ------------------------------------------------------------------
-    let eccDrag = null;      // { a, sense } captured when the slider starts moving
+    let eccDrag = null;      // { a, sense, out } captured when the slider starts moving
     let eccLastInput = 0;
 
     function applyEccentricity(e) {
         const b = bodyById(selectedId);
         const p = b && b.primary;
         if (!b || !p || p.primary === b && b.m > p.m) return;
+        const s = velocityParts(b);
+        const r = s.r;
+        if (!(r > 0)) return;
         if (!eccDrag || eccDrag.bid !== b.id) {
             const el = elementsOf(b, p);
-            eccDrag = { bid: b.id, a: el.bound ? el.a : el.r, sense: el.h < 0 ? -1 : 1 };
+            const a0 = el.bound ? el.a : r;
+            // Moving outward or inward as it was (outward when it is at an end of its orbit)
+            eccDrag = { bid: b.id, a: a0, sense: s.sense, out: Math.abs(s.vr) > 1e-3 * s.v ? Math.sign(s.vr) : 1 };
         }
-        const a = eccDrag.a, mu = G * (b.m + p.m);
-        const rx = b.x - p.x, ry = b.y - p.y;
-        const r = Math.hypot(rx, ry) || 1;
-        const ux = rx / r, uy = ry / r;
-        const rAp = a * (1 + e);
-        const vAp = Math.sqrt((mu * (1 - e)) / rAp);
-        const s = eccDrag.sense;
-        keepView(() => {
-            const M = b.m + p.m;
-            const cx = (b.m * b.x + p.m * p.x) / M, cy = (b.m * b.y + p.m * p.y) / M;
-            const cvx = (b.m * b.vx + p.m * p.vx) / M, cvy = (b.m * b.vy + p.m * p.vy) / M;
-            setPairRelative(b, p, ux * rAp, uy * rAp, -s * uy * vAp, s * ux * vAp, cx, cy, cvx, cvy);
-        });
-        clearTrail(b);
+        const mu = G * (b.m + p.m);
+        let a = eccDrag.a;
+        if (r < a * (1 - e)) a = r / (1 - e);         // at its closest point
+        else if (r > a * (1 + e)) a = r / (1 + e);    // at its farthest point
+        const vt = Math.sqrt(mu * a * (1 - e * e)) / r;
+        const vr = eccDrag.out * Math.sqrt(Math.max(0, mu * (2 / r - 1 / a) - vt * vt));
+        const tx = -s.uy * eccDrag.sense, ty = s.ux * eccDrag.sense;
+        keepView(() => setRelative(b, s, s.rx, s.ry, vr * s.ux + vt * tx, vr * s.uy + vt * ty));
         resetTracking(b);
         resetTracking(p);
         k2.bid = null;
         computePrimaries();
+        markPreview();
     }
 
     // Show the subject's current eccentricity on the slider (unless it is being moved).
@@ -1493,10 +1497,11 @@
         }
         ui.ecc.disabled = !usable;
         if (ui.eccNote) {
-            const note = usable ? 'Relaunches it with the same average distance: 0 is a circle, near 1 a long thin ellipse.'
+            const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
                 : (b ? `${b.name} is the heaviest body here. Click or tap a body that orbits it.` : '');
             if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
         }
+        syncOrbitFacts(b, usable);
         if (!usable) {
             if (ui.eccVal) ui.eccVal.textContent = '–';
             if (ui.eccName) ui.eccName.textContent = '';
@@ -1569,6 +1574,7 @@
         drawFlybyGhost(C);
         if (settings.k1) drawEllipseLaw(C, subj);
         drawDragPreviews(C);
+        drawEditPreview(C);
         drawBodies(C);
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
@@ -2587,6 +2593,7 @@
     const PREDICT_ETA = 0.012;
     const PREDICT_PAIRS = 4e5;
     const pred = { key: '', t: 0, pts: null, end: null, refId: null };
+    let predictDeadline = Infinity;   // performance.now() time a prediction stops at (end 'cut'): see previewPath
 
     // The velocities a circular launch of b around p would give them (see launchCircular)
     function circularLaunch(b, p, sense, inherit) {
@@ -2651,6 +2658,7 @@
         let tmin = gravity(list);
         const px = 1.5 / scale;   // keep points about 1.5 px apart
         for (let k = 0; k < budget && t < tMax; k++) {
+            if (predictDeadline < Infinity && (k & 7) === 7 && performance.now() > predictDeadline) { end = 'cut'; break; }
             const dt = PREDICT_ETA * Math.sqrt(tmin);
             const x0 = me.x, y0 = me.y;
             tmin = yoshida(list, dt, () => gravity(list));
@@ -2691,46 +2699,51 @@
             if (!b || (d.mode !== 'move' && d.mode !== 'aim')) continue;
             if (!settings.preview && d.mode === 'move') continue;
             if (bodies.length < 2) continue;
-            const pp = predictPath(b, d);
-            const ref = pp.refId !== null ? bodyById(pp.refId) : null;
-            const o = ref ? { x: ref.dx, y: ref.dy } : liveFrameOrigin();
-            const pts = pp.pts;
-            const col = C.dark ? hexA(b.color, 0.8) : bodyStroke(b.color, false);
-            ctx.lineWidth = 1.5;
-            ctx.strokeStyle = col;
-            ctx.setLineDash([5, 5]);
+            drawPredictedPath(C, b, predictPath(b, d));
+        }
+    }
+
+    // A predicted path { pts, end, refId } (points relative to the reference body, or the centre of
+    // mass), dashed in the body's colour.
+    function drawPredictedPath(C, b, pp) {
+        const ref = pp.refId !== null ? bodyById(pp.refId) : null;
+        const o = ref ? { x: ref.dx, y: ref.dy } : liveFrameOrigin();
+        const pts = pp.pts;
+        const col = C.dark ? hexA(b.color, 0.8) : bodyStroke(b.color, false);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = col;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i += 2) {
+            const x = sx(o.x + pts[i]), y = sy(o.y + pts[i + 1]);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Where it ends: a cross if it hits something, an arrowhead if it is heading off
+        const n = pts.length;
+        if (n < 6) return;
+        const ex = sx(o.x + pts[n - 2]), ey = sy(o.y + pts[n - 1]);
+        if (pp.end === 'hit') {
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            for (let i = 0; i < pts.length; i += 2) {
-                const x = sx(o.x + pts[i]), y = sy(o.y + pts[i + 1]);
-                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            }
+            ctx.moveTo(ex - 5, ey - 5); ctx.lineTo(ex + 5, ey + 5);
+            ctx.moveTo(ex - 5, ey + 5); ctx.lineTo(ex + 5, ey - 5);
             ctx.stroke();
-            ctx.setLineDash([]);
-            // Where it ends: a cross if it hits something, an arrowhead if it is heading off
-            const n = pts.length;
-            if (n < 6) continue;
-            const ex = sx(o.x + pts[n - 2]), ey = sy(o.y + pts[n - 1]);
-            if (pp.end === 'hit') {
-                ctx.lineWidth = 2;
+        } else if (pp.end !== 'closed' && pp.end !== 'cut') {
+            let j = n - 4;
+            while (j > 0 && Math.hypot(sx(o.x + pts[j]) - ex, sy(o.y + pts[j + 1]) - ey) < 8) j -= 2;
+            const bx = sx(o.x + pts[j]), by = sy(o.y + pts[j + 1]);
+            const len = Math.hypot(ex - bx, ey - by);
+            if (len > 1 && ex > 0 && ex < viewW && ey > 0 && ey < viewH) {
+                const ux = (ex - bx) / len, uy = (ey - by) / len;
+                ctx.fillStyle = col;
                 ctx.beginPath();
-                ctx.moveTo(ex - 5, ey - 5); ctx.lineTo(ex + 5, ey + 5);
-                ctx.moveTo(ex - 5, ey + 5); ctx.lineTo(ex + 5, ey - 5);
-                ctx.stroke();
-            } else if (pp.end !== 'closed') {
-                let j = n - 4;
-                while (j > 0 && Math.hypot(sx(o.x + pts[j]) - ex, sy(o.y + pts[j + 1]) - ey) < 8) j -= 2;
-                const bx = sx(o.x + pts[j]), by = sy(o.y + pts[j + 1]);
-                const len = Math.hypot(ex - bx, ey - by);
-                if (len > 1 && ex > 0 && ex < viewW && ey > 0 && ey < viewH) {
-                    const ux = (ex - bx) / len, uy = (ey - by) / len;
-                    ctx.fillStyle = col;
-                    ctx.beginPath();
-                    ctx.moveTo(ex + ux * 3, ey + uy * 3);
-                    ctx.lineTo(ex - ux * 6 - uy * 4, ey - uy * 6 + ux * 4);
-                    ctx.lineTo(ex - ux * 6 + uy * 4, ey - uy * 6 - ux * 4);
-                    ctx.closePath();
-                    ctx.fill();
-                }
+                ctx.moveTo(ex + ux * 3, ey + uy * 3);
+                ctx.lineTo(ex - ux * 6 - uy * 4, ey - uy * 6 + ux * 4);
+                ctx.lineTo(ex - ux * 6 + uy * 4, ey - uy * 6 - ux * 4);
+                ctx.closePath();
+                ctx.fill();
             }
         }
     }
@@ -3131,7 +3144,10 @@
         const fits = ph <= cr.height - 12;
         const minY = fits ? 6 : 6 - cr.top, maxY = fits ? cr.height - 6 : window.innerHeight - cr.top - 6;
         let left = x + r + 18;
-        if (left + pw > Math.min(cr.width, maxX) && x - r - 18 - pw > minX) left = x - r - 18 - pw;
+        // (on the side away from what it orbits if there is room, so its orbit and predicted path stay in view)
+        const leftSide = x - r - 18 - pw;
+        const awayIsLeft = orbitingBody(b) && sx(b.primary.dx) > x + r;
+        if (leftSide > minX && (awayIsLeft || left + pw > Math.min(cr.width, maxX))) left = leftSide;
         let top = y - ph / 2;
         left = clamp(left, minX, Math.max(minX, maxX - pw));
         top = clamp(top, minY, Math.max(minY, maxY - ph));
@@ -3185,9 +3201,9 @@
             note = 'Relative to the centre of mass';
         }
         if (!recent) ui.popSpeed.value = String(Math.round(clamp(v / popSpeedMax, 0, 1) * 1000));
-        const sp = fmtSpeedKms(v * AUYR_KMS);
-        setText(ui.popSpeedVal, `${sp.v} ${sp.u}${lightFraction(v * AUYR_KMS)}`);
-        setText(ui.popSpeedNote, note);
+        // (the speed itself is in the typed field above the slider; as a fraction of c here, if it is that fast)
+        const lf = lightFraction(v * AUYR_KMS);
+        setText(ui.popSpeedNote, lf ? `${lf.slice(2, -1)} · ${note}` : note);
         ui.popCircular.disabled = !sr.p;
         // Colour swatches
         ui.popColours.querySelectorAll('.orb-swatch').forEach((s) => s.setAttribute('aria-checked', s.dataset.color === b.color ? 'true' : 'false'));
@@ -3216,6 +3232,7 @@
             info += `<br><strong>Escape speed</strong> from its surface: ${f.v} ${f.u}${lightFraction(vs)}`;
         }
         if (ui.popInfo.innerHTML !== info) ui.popInfo.innerHTML = info;
+        updateEditor(force);
     }
 
     // Circular and escape speeds of b relative to p where it is now: sqrt(G(M + m)/r) and sqrt(2) times that
@@ -3310,6 +3327,683 @@
         });
         // Keep clicks and drags in the popover away from the canvas handlers and the page
         ['pointerdown', 'dblclick', 'wheel'].forEach((t) => ui.pop.addEventListener(t, (e) => e.stopPropagation()));
+        bindEditor();
+    }
+
+    // ------------------------------------------------------------------
+    // Trajectory editor: the menu's Velocity and Orbit tabs, the arrow keys, and the predicted path of
+    // the body being edited.
+    //   Velocities are relative to the body it orbits (the heaviest body's to the centre of mass). The
+    //   direction is the angle away from sideways: 0 degrees is at right angles to the line to the body
+    //   it orbits, as in a circular orbit; + leans outward, - inward. (The heaviest body orbits nothing,
+    //   so its direction is simply measured anticlockwise from the right of the screen.)
+    //   A new period scales the whole orbit about what it orbits: the same shape and direction, the body
+    //   at the same point along it, and Kepler's 3rd law gives the new size. New closest or farthest
+    //   distances keep the body where it is and change only its velocity, as a rocket burn would; if it
+    //   is outside the new orbit, it moves along the line to what it orbits, onto the near or far end.
+    //   Pushes (and the speed's steppers) add a step (10%, 1% or 0.1%) of its speed: along its motion,
+    //   against it, or straight out or in.
+    //   Every edit goes through keepView and keeps the pair's centre of mass and momentum, as the
+    //   Circular button does (so a binary doesn't start to drift).
+    // ------------------------------------------------------------------
+    Object.assign(ui, {
+        popTabs: ui.pop ? Array.from(ui.pop.querySelectorAll('[role="tab"]')) : [],
+        popSpeedIn: byId('popSpeedIn'), popSpeedUnit: byId('popSpeedUnit'),
+        popAngleIn: byId('popAngleIn'), popAngleNote: byId('popAngleNote'),
+        popSenseSub: byId('popSenseSub'), popSenseAcw: byId('popSenseAcw'), popSenseCw: byId('popSenseCw'),
+        popPeriodIn: byId('popPeriodIn'), popPeriodUnit: byId('popPeriodUnit'),
+        popPeriIn: byId('popPeriIn'), popPeriUnit: byId('popPeriUnit'), popPeriName: byId('popPeriName'),
+        popApoIn: byId('popApoIn'), popApoUnit: byId('popApoUnit'), popApoName: byId('popApoName'),
+        popOrbitShape: byId('popOrbitShape'),
+        popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
+        subjectEdit: byId('statSubjectEdit'),
+        orbitFacts: byId('orbitFacts'), editOrbit: byId('editOrbitBtn')
+    });
+
+    const edit = {
+        tab: 'vel',          // the menu's open tab: vel, orbit or body
+        step: 0.01,          // steppers and pushes: a fraction of the value (10%, 1% or 0.1%)
+        sense: 1, senseBid: null,   // the way round chosen for a body at rest
+        shown: {},           // field -> the text last written into it (a field is applied only if that changed)
+        units: {},           // field -> the unit it is shown in, { label, f } (f: internal units per shown unit)
+        forceField: null,    // a field to rewrite even though it has focus (just applied or stepped)
+        usual: { bid: null, t: 0, sense: 0 },
+        engaged: false,      // the arrow keys act on the chosen body (the simulation was last pressed or focused)
+        downAt: new Map(),   // pointerId -> when it went down (for fine aiming on touch screens)
+        previewUntil: 0,     // after a push from the keyboard with the menu closed, show the path until then
+        preview: null,       // the path last worked out for the preview
+        previewDirty: true,
+        sum: 0, sumNext: 0,  // a checksum of the bodies (while paused: has anything else changed them?)
+        menuShown: null,     // the Edit button's state last shown
+        velEls: [], orbitEls: []   // the Velocity and Orbit tabs' controls (to disable)
+    };
+    const TAB_OF = { popTabVel: 'vel', popTabOrbit: 'orbit', popTabBody: 'body' };
+    const DEG = Math.PI / 180;
+    const SPEED_UNITS = { 'km/s': 1 / AUYR_KMS, kms: 1 / AUYR_KMS, 'm/s': 1 / (1000 * AUYR_KMS), 'au/yr': 1 };
+    const DIST_UNITS = { au: 1, km: 1 / AU_KM, m: 1 / AU_M };
+    const TIME_UNITS = {
+        s: 1 / YEAR_S, min: 60 / YEAR_S, h: 3600 / YEAR_S, hr: 3600 / YEAR_S, hours: 3600 / YEAR_S,
+        d: 1 / DAYS_PER_YEAR, day: 1 / DAYS_PER_YEAR, days: 1 / DAYS_PER_YEAR, yr: 1, y: 1, year: 1, years: 1
+    };
+    const ANGLE_UNITS = { '°': DEG, deg: DEG, degrees: DEG };
+
+    // What b's velocity is measured from: the body it orbits, or for the heaviest body the centre of mass
+    function relState(b) {
+        const p = orbitingBody(b) ? b.primary : null;
+        const o = p || totals(bodies);
+        const rx = b.x - o.x, ry = b.y - o.y;
+        return { p, rx, ry, vx: b.vx - o.vx, vy: b.vy - o.vy, r: Math.hypot(rx, ry) };
+    }
+
+    // Its speed, direction (radians) and way round (1 anticlockwise, -1 clockwise), with the unit vector
+    // out from what it orbits (ux, uy) and the velocity's parts along it (vr) and sideways (vt)
+    function velocityParts(b) {
+        const s = relState(b);
+        const v = Math.hypot(s.vx, s.vy);
+        if (!s.p || !(s.r > 0)) return Object.assign(s, { v, screen: true, sense: 0, angle: v > 0 ? Math.atan2(s.vy, s.vx) : 0 });
+        const ux = s.rx / s.r, uy = s.ry / s.r;
+        const vr = s.vx * ux + s.vy * uy, vt = s.vy * ux - s.vx * uy;
+        const sense = vt > 0 ? 1 : vt < 0 ? -1 : (edit.senseBid === b.id ? edit.sense : orbitSense(s.p, b));
+        return Object.assign(s, { v, ux, uy, vr, vt, sense, screen: false, angle: v > 0 ? Math.atan2(vr, Math.abs(vt)) : 0 });
+    }
+
+    // Give b the velocity (ux, uy) relative to what it is measured from, and put it at (rx, ry) from it.
+    // With a primary, the pair keeps its centre of mass and momentum (as in launchCircular). The heaviest
+    // body is set so that its velocity relative to the new centre of mass is the one asked for.
+    function setRelative(b, s, rx, ry, ux, uy) {
+        const p = s.p;
+        if (p) {
+            const M = b.m + p.m;
+            const cx = (b.m * b.x + p.m * p.x) / M, cy = (b.m * b.y + p.m * p.y) / M;
+            const cvx = (b.m * b.vx + p.m * p.vx) / M, cvy = (b.m * b.vy + p.m * p.vy) / M;
+            setPairRelative(b, p, rx, ry, ux, uy, cx, cy, cvx, cvy);
+            return;
+        }
+        const c = totals(bodies);
+        const f = c.M > 0 ? b.m / c.M : 1;
+        if (f >= 1) return;    // on its own, it is the centre of mass
+        b.vx = (ux + c.vx - f * b.vx) / (1 - f);
+        b.vy = (uy + c.vy - f * b.vy) / (1 - f);
+    }
+
+    // Every edit: through keepView (the view stays put, and it can be undone), then the measurements
+    // start again as after the other edits. A body that moved (a new period) starts a new trail.
+    function applyEdit(b, fn) {
+        const p = orbitingBody(b) ? b.primary : null;
+        const x0 = b.x, y0 = b.y, r0 = p ? Math.hypot(b.x - p.x, b.y - p.y) : 1;
+        keepView(fn);
+        if (Math.hypot(b.x - x0, b.y - y0) > 1e-9 * r0) {
+            clearTrail(b);
+            if (p) clearTrail(p);
+            if (frameId === b.id || (p && frameId === p.id)) clearAllTrails();
+        }
+        resetTracking(b);
+        if (p) resetTracking(p);
+        k2.bid = null;
+        computePrimaries();
+        syncEccentricity(true);
+        markPreview();
+        updatePopover(true);
+    }
+
+    // Speed (AU/yr), direction (radians) and way round, as in velocityParts
+    function setVelocity(b, speed, angle, sense) {
+        const s = velocityParts(b);
+        if (!(speed >= 0) || !isFinite(angle) || bodies.length < 2) return;
+        let ux, uy;
+        if (s.screen) {
+            ux = speed * Math.cos(angle); uy = speed * Math.sin(angle);
+        } else {
+            const tx = -s.uy * sense, ty = s.ux * sense;
+            const c = Math.cos(angle), sn = Math.sin(angle);
+            ux = speed * (c * tx + sn * s.ux); uy = speed * (c * ty + sn * s.uy);
+            edit.sense = sense; edit.senseBid = b.id;
+        }
+        applyEdit(b, () => setRelative(b, s, s.rx, s.ry, ux, uy));
+    }
+
+    // A push (a rocket burn): a change of velocity of step x its speed (x the circular speed if it is
+    // hardly moving): along its motion (faster), against it (slower: never so far that it turns round),
+    // or straight out from or in towards what it orbits.
+    function nudge(b, kind, step) {
+        const s = velocityParts(b);
+        if (bodies.length < 2 || !(step > 0)) return;
+        const vc = s.p ? Math.sqrt((G * (b.m + s.p.m)) / Math.max(s.r, 1e-15)) : vRef;
+        const moving = s.v > 1e-3 * vc;
+        const dv = step * (moving ? s.v : vc);
+        let ux = s.vx, uy = s.vy;
+        if (kind === 'faster' || kind === 'slower') {
+            let dx = 1, dy = 0;
+            if (moving) { dx = s.vx / s.v; dy = s.vy / s.v; } else if (!s.screen) { dx = -s.uy * s.sense; dy = s.ux * s.sense; }
+            const v = kind === 'faster' ? (moving ? s.v : 0) + dv : Math.max(0, s.v - dv);
+            ux = dx * v; uy = dy * v;
+        } else if (kind === 'out' || kind === 'in') {
+            if (!(s.r > 0)) return;
+            const k = (kind === 'out' ? dv : -dv) / s.r;
+            ux += s.rx * k; uy += s.ry * k;
+        } else return;
+        applyEdit(b, () => setRelative(b, s, s.rx, s.ry, ux, uy));
+    }
+
+    // Its orbit around what it orbits: period, closest and farthest distances (Infinity if escaping)
+    function orbitOf(b) {
+        const s = relState(b);
+        if (!s.p || !(s.r > 0)) return null;
+        const el = relElements(s.rx, s.ry, s.vx, s.vy, G * (b.m + s.p.m));
+        return { p: s.p, el, T: el.T, rp: el.p / (1 + el.e), ra: el.bound ? el.a * (1 + el.e) : Infinity };
+    }
+
+    // A new period: Kepler's 3rd law gives the size, a = (G(M + m) T^2 / 4 pi^2)^(1/3). A bound orbit is
+    // scaled about what it orbits (distances x k, velocities / sqrt(k): the same shape, direction and
+    // point along it). An escaping one can't be scaled into an orbit: it keeps its place and direction
+    // and gets the speed for that size (vis-viva), or if even that can't reach, a circular orbit of
+    // that size on the same line.
+    function setPeriod(b, T) {
+        const s = velocityParts(b);
+        if (s.screen || !(T > 0)) return;
+        const mu = G * (b.m + s.p.m);
+        const el = relElements(s.rx, s.ry, s.vx, s.vy, mu);
+        const a = Math.cbrt((mu * T * T) / (4 * Math.PI * Math.PI));
+        let rx = s.rx, ry = s.ry, ux = s.vx, uy = s.vy;
+        if (el.bound) {
+            const k = a / el.a, q = 1 / Math.sqrt(k);
+            rx *= k; ry *= k; ux *= q; uy *= q;
+        } else if (a > 0.5 * s.r) {
+            const f = Math.sqrt(mu * (2 / s.r - 1 / a)) / s.v;
+            ux *= f; uy *= f;
+        } else {
+            const k = a / s.r, v = Math.sqrt(mu / a);
+            rx *= k; ry *= k;
+            ux = -s.uy * s.sense * v; uy = s.ux * s.sense * v;
+        }
+        applyEdit(b, () => setRelative(b, s, rx, ry, ux, uy));
+    }
+
+    // New closest and farthest distances (rp <= ra; ra = Infinity: an escaping orbit that keeps its
+    // energy). The body stays where it is if the new orbit passes through its distance, still moving
+    // outward or inward as it was; otherwise it moves along the line to what it orbits, onto the near or
+    // far end. It keeps its way round.
+    function setApsides(b, rp, ra) {
+        const s = velocityParts(b);
+        if (s.screen || !(rp > 0) || !(ra >= rp)) return;
+        const mu = G * (b.m + s.p.m);
+        let a, pl;   // semi-major axis and semi-latus rectum
+        if (isFinite(ra)) {
+            a = 0.5 * (rp + ra);
+            pl = (2 * rp * ra) / (rp + ra);
+        } else {
+            const el = relElements(s.rx, s.ry, s.vx, s.vy, mu);
+            if (el.bound) return;
+            a = el.a;                    // negative (-Infinity for a parabola)
+            pl = rp * (2 - rp / a);      // p = rp (1 + e), with e = 1 - rp / a
+        }
+        const r = Math.min(Math.max(s.r, rp), ra);
+        const vt = Math.sqrt(mu * pl) / r;
+        const vr = (s.vr < 0 ? -1 : 1) * Math.sqrt(Math.max(0, mu * (2 / r - 1 / a) - vt * vt));
+        const k = r / s.r, tx = -s.uy * s.sense, ty = s.ux * s.sense;
+        applyEdit(b, () => setRelative(b, s, s.rx * k, s.ry * k, vr * s.ux + vt * tx, vr * s.uy + vt * ty));
+    }
+
+    // The way the other bodies go round p (or p round its own primary): 1 anticlockwise, -1 clockwise,
+    // 0 if there is nothing to compare with (worked out once a second for the menu)
+    function usualSense(p, b) {
+        const now = performance.now();
+        const u = edit.usual;
+        if (u.bid === b.id && u.pid === p.id && now - u.t < 1000) return u.sense;
+        let L = 0;
+        for (const c of bodies) {
+            if (c === b || c === p || c.primary !== p) continue;
+            L += c.m * ((c.x - p.x) * (c.vy - p.vy) - (c.y - p.y) * (c.vx - p.vx));
+        }
+        if (L === 0 && p.primary && p.primary !== b) {
+            const q = p.primary;
+            L = (p.x - q.x) * (p.vy - q.vy) - (p.y - q.y) * (p.vx - q.vx);
+        }
+        Object.assign(u, { bid: b.id, pid: p.id, t: now, sense: Math.sign(L) });
+        return u.sense;
+    }
+
+    // ---- The fields ----
+    // Units the fields are shown in: km/s (m/s if slow), AU (km in the km scenes, or if small), and
+    // years, days or seconds as the scene counts time (days or seconds if short). Any of them can be typed.
+    const speedUnit = (v) => (v * AUYR_KMS < 0.1 ? { label: 'm/s', f: SPEED_UNITS['m/s'] } : { label: 'km/s', f: SPEED_UNITS['km/s'] });
+    const distUnit = (au) => (scene.units === 'km' || au < 0.01 ? { label: 'km', f: DIST_UNITS.km } : { label: 'AU', f: 1 });
+    function periodUnit(yr) {
+        if (timeInSeconds() || yr * YEAR_S < 600) return { label: 's', f: TIME_UNITS.s };
+        if (timeUnit() === 'd' || yr < 0.1) return { label: 'days', f: TIME_UNITS.d };
+        return { label: 'yr', f: 1 };
+    }
+
+    // Four significant figures (whole numbers with commas when large), easy to type over
+    function fieldText(x) {
+        const ax = Math.abs(x);
+        if (ax === 0) return '0';
+        if (ax >= 9999.5 && ax < 1e15) return Math.round(x).toLocaleString('en-US');
+        if (ax < 1e-3 || ax >= 1e15) return x.toExponential(3);
+        return x.toPrecision(4);
+    }
+
+    // A typed value with an optional unit ("2", "2 yr", "730 days", "1,000 m/s"), in internal units
+    function parseField(text, units, unit) {
+        const m = String(text).trim().replace(/[−–]/g, '-').replace(/,/g, '')
+            .match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*(.*)$/i);
+        if (!m) return NaN;
+        const u = m[2].toLowerCase().replace(/\s+/g, '');
+        const f = u ? units[u] : unit && unit.f;
+        return f === undefined ? NaN : parseFloat(m[1]) * f;
+    }
+
+    const FIELDS = {
+        speed: {
+            input: ui.popSpeedIn, unitEl: ui.popSpeedUnit, units: SPEED_UNITS, ok: (v) => v >= 0,
+            apply: (b, v) => { const s = velocityParts(b); setVelocity(b, v, s.angle, s.sense); },
+            step: (b, dir, k) => nudge(b, dir > 0 ? 'faster' : 'slower', k)
+        },
+        angle: {
+            input: ui.popAngleIn, units: ANGLE_UNITS, ok: (v) => isFinite(v),
+            apply: (b, v) => { const s = velocityParts(b); setVelocity(b, s.v, s.screen ? v : clamp(v, -Math.PI / 2, Math.PI / 2), s.sense); },
+            // (10, 1 or 0.1 degrees)
+            step: (b, dir, k) => FIELDS.angle.apply(b, velocityParts(b).angle + dir * k * 100 * DEG)
+        },
+        period: {
+            input: ui.popPeriodIn, unitEl: ui.popPeriodUnit, units: TIME_UNITS, ok: (v) => v > 0,
+            apply: (b, v) => setPeriod(b, v),
+            step: (b, dir, k) => { const o = orbitOf(b); if (o && o.el.bound) setPeriod(b, o.T * (1 + dir * k)); }
+        },
+        peri: {
+            input: ui.popPeriIn, unitEl: ui.popPeriUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, v, Math.max(v, o.ra)); },
+            step: (b, dir, k) => { const o = orbitOf(b); if (o) FIELDS.peri.apply(b, o.rp * (1 + dir * k)); }
+        },
+        apo: {
+            input: ui.popApoIn, unitEl: ui.popApoUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, Math.min(v, o.rp), v); },
+            step: (b, dir, k) => { const o = orbitOf(b); if (o && isFinite(o.ra)) FIELDS.apo.apply(b, o.ra * (1 + dir * k)); }
+        }
+    };
+
+    // Show a value in a field, unless it is being typed in
+    function showField(name, value, unit) {
+        const F = FIELDS[name], input = F.input;
+        if (!input || (document.activeElement === input && edit.forceField !== name)) return;
+        edit.units[name] = unit;
+        if (F.unitEl) setText(F.unitEl, unit.label);
+        let t = '';
+        if (isFinite(value)) {
+            t = name === 'angle' ? (value / unit.f).toFixed(1) : fieldText(value / unit.f);
+            if (t === '-0.0') t = '0.0';
+        }
+        edit.shown[name] = t;
+        if (input.value !== t) input.value = t;
+    }
+
+    // Apply what was typed in a field, if it changed. Something that can't be read is marked (and, when
+    // the field is left, put back).
+    function commitField(name, keepBad) {
+        const F = FIELDS[name], input = F.input, b = popBody;
+        if (!b || !input || input.value.trim() === (edit.shown[name] || '')) return;
+        const v = parseField(input.value, F.units, edit.units[name]);
+        if (!(isFinite(v) && F.ok(v))) {
+            if (keepBad) { input.setAttribute('aria-invalid', 'true'); return; }
+            input.value = edit.shown[name] || '';
+            input.removeAttribute('aria-invalid');
+            return;
+        }
+        input.removeAttribute('aria-invalid');
+        edit.forceField = name;
+        F.apply(b, v);
+        updateEditor(true);
+        edit.forceField = null;
+    }
+
+    // A stepper (or the up and down keys in a field)
+    function stepField(name, dir, e) {
+        if (!popBody) return;
+        edit.forceField = name;
+        FIELDS[name].step(popBody, dir, stepFor(e));
+        updateEditor(true);
+        edit.forceField = null;
+    }
+
+    // The step for a press: Shift ten times finer, Alt ten times coarser
+    function stepFor(e) {
+        return edit.step * (e && e.shiftKey ? 0.1 : 1) * (e && e.altKey ? 10 : 1);
+    }
+
+    function setStep(step) {
+        if (!(step > 0)) return;
+        edit.step = step;
+        if (ui.pop) ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.setAttribute('aria-pressed', parseFloat(btn.dataset.step) === step ? 'true' : 'false'));
+    }
+
+    // The fields follow the body as it moves (from updatePopover, a few times a second)
+    function updateEditor(force) {
+        if (!popBody || !ui.pop || ui.pop.hidden || !ui.popSpeedIn) return;
+        if (force) markPreview();
+        const b = popBody;
+        const alone = bodies.length < 2;
+        const s = velocityParts(b);
+        // Velocity
+        const vc = s.p ? Math.sqrt((G * (b.m + s.p.m)) / Math.max(s.r, 1e-15)) : s.v;
+        showField('speed', s.v, speedUnit(vc));
+        showField('angle', s.angle, { label: '°', f: DEG });
+        setText(ui.popAngleNote, s.screen ? 'Relative to the centre of mass: 0° points right, 90° up.'
+            : '0° is sideways, as in a circle; + is outward, − inward.');
+        ui.popSenseAcw.setAttribute('aria-pressed', !s.screen && s.sense > 0 ? 'true' : 'false');
+        ui.popSenseCw.setAttribute('aria-pressed', !s.screen && s.sense < 0 ? 'true' : 'false');
+        const usual = s.screen ? 0 : usualSense(s.p, b);
+        setText(ui.popSenseSub, usual ? (usual === s.sense ? 'prograde' : 'retrograde') : '');
+        ui.popSenseSub.title = usual ? `Prograde: the same way round as the others go round ${theName(s.p)}` : '';
+        for (const el of edit.velEls) el.disabled = alone || (s.screen && (el === ui.popSenseAcw || el === ui.popSenseCw));
+        // Orbit
+        const o = orbitOf(b);
+        const names = apsisNames(o ? o.p : null);
+        setText(ui.popPeriName, names[0]);
+        setText(ui.popApoName, names[1]);
+        let shape;
+        if (o) {
+            const du = distUnit(o.el.bound ? o.el.a : o.rp);
+            showField('period', o.T, periodUnit(o.el.bound ? o.T : 1));
+            showField('peri', o.rp, du);
+            showField('apo', o.ra, du);
+            ui.popPeriodIn.placeholder = 'escaping';
+            ui.popApoIn.placeholder = 'never';
+            const d = fmtDistance(o.el.a);
+            const e = o.el.e;
+            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}, e = ${e.toFixed(3)}: ${e < 0.005 ? 'a circle' : e < 0.995 ? 'an ellipse' : 'a very thin ellipse'}.`
+                : `Escaping (e = ${e.toFixed(2)}). Set a farthest distance to make it orbit.`;
+        } else {
+            showField('period', NaN, periodUnit(scene.Tref));
+            for (const n of ['peri', 'apo']) showField(n, NaN, distUnit(scene.units === 'km' ? 0 : 1));
+            ui.popPeriodIn.placeholder = ui.popApoIn.placeholder = '';
+            // (the heavier of a pair that orbit each other: their orbit is set from the lighter one)
+            const partner = b.primary && b.primary.primary === b ? b.primary : null;
+            shape = alone ? 'It is on its own: there is nothing to orbit.'
+                : partner ? `${b.name} and ${partner.name} orbit each other: set their orbit from ${partner.name}'s menu.`
+                    : `${b.name} is the heaviest body here: it doesn't orbit another. Choose one that orbits it.`;
+        }
+        setText(ui.popOrbitShape, shape);
+        // (an escaping orbit's period and farthest distance can be typed, not stepped)
+        for (const el of edit.orbitEls) el.disabled = !o || (!o.el.bound && el.tagName === 'BUTTON' && el.dataset.dir !== undefined && !el.closest('[data-field="peri"]'));
+    }
+
+    function selectTab(name, focus) {
+        edit.tab = name;
+        for (const t of ui.popTabs) {
+            const on = TAB_OF[t.id] === name;
+            t.setAttribute('aria-selected', on ? 'true' : 'false');
+            t.tabIndex = on ? 0 : -1;
+            const panel = byId(t.getAttribute('aria-controls'));
+            if (panel) panel.hidden = !on;
+            if (on && focus) t.focus();
+        }
+        // (the steps don't apply to the Body tab)
+        if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body');
+    }
+
+    function openEditor(b, tab, focus) {
+        if (!b) return;
+        if (tab) selectTab(tab);
+        openPopover(b);
+        if (focus) {
+            const t = ui.popTabs.find((q) => q.getAttribute('aria-selected') === 'true');
+            if (t) t.focus({ preventScroll: true });
+        }
+    }
+
+    // The sidebar's "Orbit of ..." group: its period and closest and farthest distances
+    function syncOrbitFacts(b, usable) {
+        if (ui.editOrbit) ui.editOrbit.disabled = !usable;
+        if (!ui.orbitFacts) return;
+        let t = '';
+        const o = usable ? orbitOf(b) : null;
+        if (o) {
+            const names = apsisNames(o.p);
+            const d = (x) => { const f = fmtDistance(x); return `${f.v} ${f.u}`; };
+            t = o.el.bound ? `Period ${fmtDuration(o.T, true)}; ${names[0]} ${d(o.rp)}, ${names[1]} ${d(o.ra)}.`
+                : `Escaping; ${names[0]} ${d(o.rp)}.`;
+        }
+        setText(ui.orbitFacts, t);
+    }
+
+    // A button that acts once when pressed and, held down, again and again (steppers and pushes)
+    function holdRepeat(btn, fn) {
+        let timer = 0, viaPointer = false;
+        const stop = () => { clearTimeout(timer); timer = 0; };
+        btn.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || btn.disabled) return;
+            viaPointer = true;
+            const mods = { shiftKey: e.shiftKey, altKey: e.altKey };
+            fn(mods);
+            const again = (delay) => { timer = setTimeout(() => { if (!btn.disabled && popBody) { fn(mods); again(70); } }, delay); };
+            stop();
+            again(450);
+        });
+        ['pointerup', 'pointercancel'].forEach((t) => btn.addEventListener(t, () => { stop(); setTimeout(() => { viaPointer = false; }, 0); }));
+        ['pointerleave', 'blur'].forEach((t) => btn.addEventListener(t, stop));
+        btn.addEventListener('contextmenu', (e) => e.preventDefault());
+        // Keyboard (Enter or Space): once
+        btn.addEventListener('click', (e) => { if (viaPointer) { viaPointer = false; return; } fn(e); });
+    }
+
+    // ---- Arrow keys: push the chosen body ----
+    // up faster, down slower, right outward, left inward (Shift finer, Alt coarser). Only while the
+    // simulation was the last thing pressed or focused (or it is fullscreen, or the menu is open), so
+    // the arrow keys still scroll the page; never while typing, in a list, slider, tab or colour choice.
+    const ARROW_PUSH = { ArrowUp: 'faster', ArrowDown: 'slower', ArrowRight: 'out', ArrowLeft: 'in' };
+
+    function takesArrows(t) {
+        if (!t || !t.tagName) return false;
+        if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
+        if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"]'));
+    }
+
+    function onEditorKey(e) {
+        const t = e.target;
+        if (e.key === 'Escape') {
+            // In a field with something typed: put it back (a second Escape closes the menu)
+            const name = t && t.classList && t.classList.contains('orb-spin-input') ? Object.keys(FIELDS).find((n) => FIELDS[n].input === t) : null;
+            if (name && t.value.trim() !== (edit.shown[name] || '')) {
+                t.value = edit.shown[name] || '';
+                t.removeAttribute('aria-invalid');
+                e.stopImmediatePropagation();
+                e.preventDefault();
+            }
+            return;
+        }
+        const kind = ARROW_PUSH[e.key];
+        if (!kind || e.ctrlKey || e.metaKey || takesArrows(t)) return;
+        if (!popBody && !edit.engaged && !document.body.classList.contains('sim-fullscreen-active')) return;
+        const b = popBody || (selectedId !== null ? bodyById(selectedId) : null);
+        if (!b || b.held || bodies.length < 2) return;
+        e.preventDefault();
+        nudge(b, kind, stepFor(e));
+        if (!popBody) edit.previewUntil = performance.now() + 2000;
+    }
+
+    // ---- Fine aiming on a touch screen (there is no Shift key) ----
+    // Hold the arrow's tip still for half a second before dragging it (a ring shows), and for the rest of
+    // that drag it moves a tenth as far as the finger. Decided when the finger first moves.
+    const FINE_HOLD_MS = 500;
+    function aimFineReady(d) {
+        const t0 = edit.downAt.get(d.id);
+        return t0 !== undefined && performance.now() - t0 >= FINE_HOLD_MS;
+    }
+    function aimFine(d) {
+        if (d.type === 'mouse') return false;
+        if (d.fineTouch === undefined) d.fineTouch = aimFineReady(d);
+        return d.fineTouch;
+    }
+    // Fine now, or will be when it moves (for the hint and the ring)
+    function aimFineTouch(d) {
+        if (d.type === 'mouse' || d.mode !== 'aim') return false;
+        return d.fineTouch !== undefined ? d.fineTouch : !d.moved && aimFineReady(d);
+    }
+
+    // ---- Live preview ----
+    // The predicted path (predictPath's, drawn as while aiming) of the body in the menu, of the chosen
+    // body for two seconds after a push from the keyboard, and of the chosen body while paused (if
+    // predicted paths are on). While paused it is worked out only when something has changed (in full:
+    // predictPath's own budget bounds it). While running it is worked out ten times a second at most,
+    // and each time stops after 3 ms, so it may cover only the next part of the orbit; it costs well
+    // under a millisecond a frame on average.
+    const PREVIEW_MS = 3;
+    const PREVIEW_EVERY_MS = 100;
+    function markPreview() { edit.previewDirty = true; }
+
+    function previewBody() {
+        if (bodies.length < 2 || cleanRender) return null;
+        for (const d of drags.values()) if (d.body && (d.mode === 'move' || d.mode === 'aim')) return null;   // its own preview shows
+        if (popBody) return popBody.held ? null : popBody;
+        const b = selectedId !== null && (paused && settings.preview || performance.now() < edit.previewUntil) ? bodyById(selectedId) : null;
+        return b && !b.held ? b : null;
+    }
+
+    // A checksum of the bodies (a few multiply-adds each, at most four times a second while paused):
+    // has something else (another body moved, a mass changed, an undo) changed them?
+    function bodiesSum() {
+        let s = bodies.length;
+        for (const q of bodies) s = s * 1.000001 + q.m * 7 + q.x * 3 + q.y * 5 + q.vx * 11 + q.vy * 13;
+        return s;
+    }
+
+    function previewPath(b) {
+        const now = performance.now();
+        if (paused && now >= edit.sumNext) {
+            edit.sumNext = now + 250;
+            const s = bodiesSum();
+            if (s !== edit.sum) { edit.sum = s; edit.previewDirty = true; }
+        }
+        const P = edit.preview;
+        if (P && P.bid === b.id && (paused ? P.paused && !edit.previewDirty : now - P.t < PREVIEW_EVERY_MS)) return P;
+        // The body's own velocity, given to predictPath as an aim (which it reads) for this call only
+        const fv = frameVelocity();
+        b.aim = { vx: b.vx - fv.x, vy: b.vy - fv.y, k: 1, ref: null, frameV: fv, snap: null };
+        if (edit.previewDirty || !P || P.bid !== b.id) pred.key = '';
+        predictDeadline = paused ? Infinity : now + PREVIEW_MS;
+        let pp;
+        try { pp = predictPath(b, null); } finally { b.aim = null; predictDeadline = Infinity; }
+        // (a path cut short must not be taken for a whole one by a drag's preview)
+        if (pp.end === 'cut') pred.key = '';
+        edit.preview = { bid: b.id, pts: pp.pts, end: pp.end, refId: pp.refId, t: now, cost: performance.now() - now, paused };
+        edit.previewDirty = false;
+        return edit.preview;
+    }
+
+    function drawEditPreview(C) {
+        syncEditButton();
+        if (cleanRender) return;
+        // The ring round an arrow's tip that is ready for fine aiming
+        for (const d of drags.values()) {
+            if (!d.body || !d.body.aim || !aimFineTouch(d)) continue;
+            const h = handlePos(d.body);
+            ctx.strokeStyle = C.velocity;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(h.x, h.y, 16, 0, TAU);
+            ctx.stroke();
+            if (!d.fineHinted) { d.fineHinted = true; dragHint(d); }
+        }
+        const b = previewBody();
+        if (b) drawPredictedPath(C, b, previewPath(b));
+    }
+
+    // The stats bar's Edit button: pressed while the menu is open
+    function syncEditButton() {
+        const btn = ui.subjectEdit;
+        if (!btn) return;
+        const state = `${!!popBody}|${selectedId !== null}`;
+        if (state === edit.menuShown) return;
+        edit.menuShown = state;
+        btn.setAttribute('aria-expanded', popBody ? 'true' : 'false');
+        btn.disabled = selectedId === null;
+    }
+
+    function bindEditor() {
+        if (!ui.popSpeedIn) return;
+        edit.velEls = Array.from(ui.pop.querySelectorAll('#popPanelVel input, #popPanelVel button'));
+        edit.orbitEls = Array.from(ui.pop.querySelectorAll('#popPanelOrbit input, #popPanelOrbit button'));
+        // Tabs: click, or the arrow keys, Home and End along them
+        ui.popTabs.forEach((t) => t.addEventListener('click', () => selectTab(TAB_OF[t.id])));
+        const list = ui.popTabs.length ? ui.popTabs[0].parentElement : null;
+        if (list) {
+            list.addEventListener('keydown', (e) => {
+                const i = ui.popTabs.indexOf(document.activeElement), n = ui.popTabs.length;
+                if (i < 0) return;
+                const j = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+                if (j < 0) return;
+                e.preventDefault();
+                selectTab(TAB_OF[ui.popTabs[j].id], true);
+            });
+        }
+        // Typed fields: Enter or leaving the field applies; up and down step it
+        for (const name of Object.keys(FIELDS)) {
+            const input = FIELDS[name].input;
+            if (!input) continue;
+            input.addEventListener('blur', () => commitField(name, false));
+            input.addEventListener('focus', () => input.select());
+            input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitField(name, true);
+                    if (coarse()) input.blur(); else input.select();
+                } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    commitField(name, true);
+                    stepField(name, e.key === 'ArrowUp' ? 1 : -1, e);
+                }
+            });
+        }
+        ui.pop.querySelectorAll('.orb-spin').forEach((spin) => {
+            const name = spin.dataset.field;
+            spin.querySelectorAll('.orb-spin-btn').forEach((btn) => {
+                const dir = parseFloat(btn.dataset.dir);
+                holdRepeat(btn, (e) => { commitField(name, false); stepField(name, dir, e); });
+            });
+        });
+        // Way round
+        [ui.popSenseAcw, ui.popSenseCw].forEach((btn) => btn.addEventListener('click', () => {
+            const b = popBody;
+            if (!b) return;
+            const s = velocityParts(b), sense = parseInt(btn.dataset.sense, 10);
+            if (s.screen) return;
+            if (s.v > 0 && sense !== s.sense) setVelocity(b, s.v, s.angle, sense);
+            edit.sense = sense; edit.senseBid = b.id;
+            updateEditor(true);
+        }));
+        ui.pop.querySelectorAll('[data-push]').forEach((btn) => holdRepeat(btn, (e) => { if (popBody) nudge(popBody, btn.dataset.push, stepFor(e)); }));
+        ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.addEventListener('click', () => setStep(parseFloat(btn.dataset.step))));
+        // The stats bar's Edit button opens (or closes) the menu of the chosen body
+        if (ui.subjectEdit) {
+            ui.subjectEdit.addEventListener('click', () => {
+                const b = selectedId !== null ? bodyById(selectedId) : null;
+                if (popBody && popBody === b) closePopover();
+                else openEditor(b, null, true);
+                syncEditButton();
+            });
+        }
+        // The sidebar's button: the Orbit tab (on a phone, the settings sheet closes first)
+        if (ui.editOrbit) {
+            ui.editOrbit.addEventListener('click', () => {
+                const b = selectedId !== null ? bodyById(selectedId) : null;
+                const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
+                if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
+                openEditor(b, 'orbit', true);
+            });
+        }
+        // Keys (before the page's own Escape handler, so Escape in a field only puts it back)
+        window.addEventListener('keydown', onEditorKey, true);
+        const inSim = (el) => !!(el && el.closest && el.closest('.simulation-display-container'));
+        window.addEventListener('pointerdown', (e) => {
+            edit.engaged = inSim(e.target);
+            edit.downAt.set(e.pointerId, performance.now());
+        }, true);
+        ['pointerup', 'pointercancel'].forEach((t) => window.addEventListener(t, (e) => edit.downAt.delete(e.pointerId), true));
+        document.addEventListener('focusin', (e) => { if (e.target !== document.body) edit.engaged = inSim(e.target); });
+        selectTab(edit.tab);
+        setStep(edit.step);
     }
 
     // ------------------------------------------------------------------
@@ -3452,11 +4146,11 @@
             const v = settings.velocities;
             if (kind === 'drop') h = '<strong>Drop it in space</strong> to add it.';
             else if (coarse()) {
-                h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong> to set its velocity. <strong>Hold</strong> a body for options.'
-                    : '<strong>Drag</strong> a body into space or around it. <strong>Hold</strong> a body to set its speed and more; <strong>double-tap</strong> to view from it.';
+                h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong>, or tap <strong>Edit</strong> to set its orbit.'
+                    : '<strong>Drag</strong> a body into space or around it. Tap a body, then <strong>Edit</strong> to set its speed and orbit.';
             } else {
-                h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body for options; <strong>double-click</strong> to view from it.'
-                    : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body to set its speed and more; <strong>double-click</strong> to view from it.';
+                h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to set its orbit; <strong>arrow keys</strong> push it.'
+                    : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to set its speed and orbit; <strong>arrow keys</strong> push it.';
             }
         }
         if (h === hintKey) return;
@@ -3486,8 +4180,11 @@
                 : snap === 'escape' ? 'exactly the escape speed, so it just escapes (a parabola)'
                     : pr.el.bound ? (pr.el.e < 0.01 ? 'a circle' : `an ellipse, e = ${pr.el.e.toFixed(2)}`) : `it escapes (e = ${pr.el.e.toFixed(2)})`;
             let h = `<strong>${v.v} ${v.u}</strong> relative to ${escapeHtml(theName(pr.p))}: ${fate}.`;
-            if (!snap) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
+            // (on a touch screen, fine control comes from holding the tip still before dragging it)
+            const fineTouch = coarse() && aimFineTouch(d);
+            if (!snap && !fineTouch) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
             if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
+            else if (fineTouch) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
             setHint(null, h);
         }
     }
@@ -3496,8 +4193,9 @@
     // Canvas input: mouse, pen and touch through pointer events
     //   body: drag = move (held in place while dragged); right-click or long-press = its menu;
     //   double-click / double-tap = view from it (again: back to the centre of mass)
-    //   velocity arrow's tip (grabbed within a few px of it): drag = aim it (Shift: ten times finer;
-    //   it snaps to the exact circular and escape speeds)
+    //   velocity arrow's tip (grabbed within a few px of it): drag = aim it (Shift, or on a touch screen
+    //   holding the tip still for half a second first: ten times finer; it snaps to the exact circular
+    //   and escape speeds)
     //   empty space: drag = pan; two fingers = pinch zoom and pan; wheel = zoom
     //   tap/click = choose the body the readouts and Kepler's laws are about
     // ------------------------------------------------------------------
@@ -3815,7 +4513,7 @@
         }
         if (d.mode === 'aim' && d.body && d.body.aim) {
             if (far) d.moved = true;
-            if (d.moved) moveAim(d, pt, e.shiftKey);
+            if (d.moved) moveAim(d, pt, e.shiftKey || aimFine(d));
             dragHint(d);
         }
     }
@@ -4392,6 +5090,81 @@
         }
     });
     bindTimeControls();
+
+    // Trajectory editor (speeds in AU/yr or km/s, angles in degrees from sideways, + outward; times in
+    // years; distances in AU)
+    (function () {
+        const api = window.orbitsSimulation;
+        const named = (name) => bodies.find((q) => q.name === name) || null;
+        const PUSH_NAMES = { prograde: 'faster', retrograde: 'slower', outward: 'out', inward: 'in' };
+        Object.assign(api, {
+            // Velocity relative to what it orbits (the heaviest body's: to the centre of mass)
+            velocity(name) {
+                const b = named(name);
+                if (!b) return null;
+                const s = velocityParts(b);
+                return { speed: s.v, kms: s.v * AUYR_KMS, angle: s.angle / DEG, sense: s.sense, relativeTo: s.p ? s.p.name : 'centre of mass' };
+            },
+            // { speed (AU/yr) or kms, angle, sense (1 anticlockwise, -1 clockwise) or retro (against the
+            // usual way round) }; anything left out stays as it is
+            setVelocity(name, o) {
+                const b = named(name);
+                if (!b) return null;
+                const s = velocityParts(b);
+                const speed = o.kms !== undefined ? o.kms / AUYR_KMS : o.speed !== undefined ? o.speed : s.v;
+                const angle = o.angle !== undefined ? o.angle * DEG : s.angle;
+                let sense = o.sense || s.sense;
+                if (o.retro !== undefined && s.p) {
+                    const u = usualSense(s.p, b) || orbitSense(s.p, b);
+                    sense = o.retro ? -u : u;
+                }
+                setVelocity(b, speed, s.screen ? angle : clamp(angle, -Math.PI / 2, Math.PI / 2), sense);
+                return api.velocity(name);
+            },
+            orbit(name) {
+                const b = named(name);
+                const o = b ? orbitOf(b) : null;
+                return o ? { primary: o.p.name, T: o.T, rp: o.rp, ra: o.ra, a: o.el.a, e: o.el.e, bound: o.el.bound } : null;
+            },
+            // { T } and/or { rp, ra } (T first, then the distances, by the menu's rules)
+            setOrbit(name, o) {
+                const b = named(name);
+                if (!b) return null;
+                if (o.T !== undefined) setPeriod(b, o.T);
+                if (o.rp !== undefined || o.ra !== undefined) {
+                    const c = orbitOf(b);
+                    if (c) {
+                        const rp = o.rp !== undefined ? o.rp : c.rp, ra = o.ra !== undefined ? o.ra : c.ra;
+                        setApsides(b, Math.min(rp, ra), Math.max(rp, ra));
+                    }
+                }
+                return api.orbit(name);
+            },
+            // kind: faster, slower, out or in (or prograde, retrograde, outward, inward); step: a
+            // fraction of its speed (default: the menu's step)
+            nudge(name, kind, step) {
+                const b = named(name);
+                if (!b) return null;
+                nudge(b, PUSH_NAMES[kind] || kind, step !== undefined ? step : edit.step);
+                return api.velocity(name);
+            },
+            openEditor(name, tab) { openEditor(name ? named(name) : bodyById(selectedId), tab || null); },
+            setStep,
+            editor() {
+                const fields = {}, units = {};
+                for (const n of Object.keys(FIELDS)) {
+                    fields[n] = FIELDS[n].input ? FIELDS[n].input.value : null;
+                    units[n] = edit.units[n] ? edit.units[n].label : null;
+                }
+                const P = edit.preview;
+                return {
+                    open: !!popBody, body: popBody ? popBody.name : null, tab: edit.tab, step: edit.step, fields, units,
+                    preview: P ? { body: bodyById(P.bid) ? bodyById(P.bid).name : null, points: P.pts.length / 2, end: P.end, age: performance.now() - P.t, cost: P.cost } : null,
+                    previewing: previewBody() ? previewBody().name : null
+                };
+            }
+        });
+    })();
 
     // ------------------------------------------------------------------
     // Start
