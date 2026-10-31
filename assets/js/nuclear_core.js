@@ -1095,7 +1095,7 @@
         if (!b.pendingEq) return;
         eqLog.push({ eq: b.pendingEq, color: modeColor(b.pendingCode), t: realTime });
         if (eqLog.length > 30) eqLog.shift();
-        if (S.showTags && (!chainRx || b.pendingCode === 'f')) addTag(b.x, b.y - b.R - 10, b.pendingTag, b.pendingCode === 'capture' ? C.accent : modeColor(b.pendingCode), b);
+        if (S.showTags && (!chainRx || b.pendingCode === 'f' || b.pendingCode === 'n')) addTag(b.x, b.y - b.R - 10, b.pendingTag, b.pendingCode === 'capture' ? C.accent : modeColor(b.pendingCode), b);
         b.pendingEq = null;
     }
 
@@ -1244,7 +1244,7 @@
         if (wasSelected) selectedId = target.id;
         // something thrown keeps flying (and taking in what it meets) as part of the new nucleus
         if (other.thrown && !other.emitted) target.thrown = true;
-        target.x = x; target.y = y; target.vx = vx; target.vy = vy;
+        if (!isFuel(target)) { target.x = x; target.y = y; target.vx = vx; target.vy = vy; }
         target.clock = null;
         target.needsClock = false;
         setComposition(target, Z, N, 0, 'capture');
@@ -1270,7 +1270,8 @@
         const gamma = (Q > 0 || impact) && !unbound;
         if (gamma) eq.rhs.push({ t: 'g', k: 1 });
         target.pendingEq = eq;
-        target.pendingTag = isNeutron ? 'neutron capture' : (other.Z === 1 && other.N === 0 ? 'proton capture' : 'fusion');
+        // (U-235 does this about 15% of the times it takes in a slow neutron: U-236 + gamma, no fission)
+        target.pendingTag = isNeutron ? (fissile ? 'absorbed, no fission' : 'neutron capture') : (other.Z === 1 && other.N === 0 ? 'proton capture' : 'fusion');
         target.pendingCode = isNeutron ? 'n' : 'capture';
         logEquation(target);
         if (gamma) {
@@ -1380,6 +1381,9 @@
         };
     }
 
+    // The chain reaction's uranium: it stays in the core, where it was put (fission fragments are pushed aside).
+    const isFuel = (b) => !!chainRx && b.Z >= 90 && !b.held && !b.transient;
+
     // A free neutron kept in play by the reflecting walls (not one that has leaked out through the reflector).
     const mirroredNeutron = (b) => S.mirrorWalls && b.Z === 0 && !b.leaked;
 
@@ -1463,12 +1467,16 @@
                 if (ox <= 0) continue;
                 const oy = Math.min(a.y + ba.bottom, c.y + bc.bottom) - Math.max(a.y - ba.top, c.y - bc.top);
                 if (oy <= 0) continue;
+                // (the chain reaction's fuel stays where it was put, so the other one moves out of the way)
+                const fa = isFuel(a), fc = isFuel(c);
+                if (fa && fc) continue;
+                const ka = fa ? 0 : (fc ? 1 : 0.5), kc = fc ? 0 : (fa ? 1 : 0.5);
                 if (ox < oy) {
                     const sx = dx >= 0 ? 1 : -1;
-                    a.x -= sx * ox * k * 0.5; c.x += sx * ox * k * 0.5;
+                    a.x -= sx * ox * k * ka; c.x += sx * ox * k * kc;
                 } else {
                     const sy = (c.y + (bc.bottom - bc.top) / 2) >= (a.y + (ba.bottom - ba.top) / 2) ? 1 : -1;
-                    a.y -= sy * oy * k * 0.5; c.y += sy * oy * k * 0.5;
+                    a.y -= sy * oy * k * ka; c.y += sy * oy * k * kc;
                 }
             }
         }
@@ -2324,7 +2332,9 @@
             drawNotation(ctx, b.Z, b.N, b.iso, x - w / 2, ly + 1, fs, true);
             b.labelW = w;
         } else {
-            const name = compact ? shortName(b.Z, b.N, b.iso) : info.name;
+            // the excited compound nucleus about to split (n + U-235 -> U-236*) is starred
+            const star = b.steps.some((s) => s.kind === 'fission' && s.gen) || (b.step && b.step.kind === 'fission' && b.step.gen) ? '*' : '';
+            const name = (compact ? shortName(b.Z, b.N, b.iso) : info.name) + star;
             ctx.font = font(700, fontPx);
             ctx.textAlign = 'center';
             ctx.fillText(name, x, ly);
