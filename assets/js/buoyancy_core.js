@@ -474,8 +474,11 @@
             h: 0, Ws: 0, xs: 0,           // level, surface width, surface centre (world x)
             m: 0, mx: 0, my: 0, I: 0,     // mass properties of the held liquid
             qIn: 0, qOut: 0, vented: true,
-            // pouring stream (smoothed): flow, start point, direction, speed; +1 in, -1 out
-            sQ: 0, sX: 0, sY: 0, sNX: 0, sNY: -1, sV: 0, sDir: 0,
+            // pouring stream (smoothed): flow, start point, direction, speed; +1 in, -1 out;
+            // mode 1 curtain (ends cX0,cY0 - cX1,cY1), 2 jet along the normal, 3 spill over a lip
+            sQ: 0, sX: 0, sY: 0, sNX: 0, sNY: -1, sV: 0, sDir: 0, sMode: 0,
+            cX0: 0, cY0: 0, cX1: 0, cY1: 0,
+            bubQ: 0, bubX: 0, bubY: 0,     // trapped air escaping (liquid flow it lets in) and where
             // visual slosh and ripples of the inside surface
             phi: 0, phiV: 0, rip: 0, ripT: 0,
             path: null, pathKey: ''
@@ -486,7 +489,7 @@
         for (const cv of B.cavs) {
             cv.V = 0; cv.h = -1; cv.m = cv.mx = cv.my = cv.I = 0;
             cv.qIn = cv.qOut = 0; cv.vented = true;
-            cv.sQ = 0; cv.sDir = 0; cv.phi = cv.phiV = cv.rip = 0;
+            cv.sQ = 0; cv.sDir = 0; cv.sMode = 0; cv.bubQ = 0; cv.phi = cv.phiV = cv.rip = 0;
         }
         B.waterMass = B.waterMx = B.waterMy = B.waterInertia = B.waterArea = 0;
     }
@@ -641,6 +644,9 @@
             let qIn = 0, qOut = 0, qOutAir = 0, dIn = 0, dOut = 0, bub = 0, bubA = 0, vented = false;
             let wIX = 0, wIY = 0, wINX = 0, wINY = 0, wID = 0;
             let wOX = 0, wOY = 0, wONX = 0, wONY = 0, wOD = 0;
+            let inX0 = Infinity, inY0 = 0, inX1 = -Infinity, inY1 = 0;     // ends of the wetted inflow opening
+            let lowZ = Infinity, lowX = 0, lowY = 0;                         // lowest lip the liquid leaves over
+            let bubX = 0, bubY = 0;                                          // where trapped air escapes
             const F = cv.faces;
             for (let f = 0; f < cv.nf; f++) {
                 const mx = F[4 * f], my = F[4 * f + 1], nx = F[4 * f + 2], ny = F[4 * f + 3];
@@ -653,7 +659,11 @@
                 const airOut = S < z1 - AIR_EPS;
                 if (airIn) {
                     if (airOut) vented = true;
-                    else { const a = z1 - (hin > z0 ? hin : z0); bub += CELL * Math.sqrt(a); if (a > bubA) bubA = a; }
+                    else {
+                        const a = z1 - (hin > z0 ? hin : z0);
+                        bub += CELL * Math.sqrt(a);
+                        if (a > bubA) { bubA = a; bubX = X; bubY = z1; }
+                    }
                 }
                 if (S > hin) {
                     if (full || S <= z0) continue;
@@ -662,6 +672,8 @@
                     const d = S - (z0 > hin ? z0 : hin);
                     qIn += fl; if (d > dIn) dIn = d;
                     wIX += fl * X; wIY += fl * Yf; wINX -= fl * nwx; wINY -= fl * nwy; wID += fl * d;
+                    if (X < inX0) { inX0 = X; inY0 = Yf; }
+                    if (X > inX1) { inX1 = X; inY1 = Yf; }
                 } else if (hin > S) {
                     if (empty || hin <= z0) continue;
                     const fl = faceFlow(z0, z1, hin, S);
@@ -669,6 +681,7 @@
                     const d = hin - (z0 > S ? z0 : S);
                     qOut += fl; if (airOut) qOutAir += fl; if (d > dOut) dOut = d;
                     wOX += fl * X; wOY += fl * Yf; wONX += fl * nwx; wONY += fl * nwy; wOD += fl * d;
+                    if (z0 < lowZ) { lowZ = z0; lowX = X; lowY = Yf; }
                 }
             }
             // orifice flow through the wetted openings, but no more than weir flow over a rim
@@ -683,6 +696,8 @@
                 QO = Math.min(QO, GLUG_K * kQ * qOutAir);
             }
             cv.qIn = QI; cv.qOut = QO; cv.vented = vented;
+            cv.bubQ = (!vented && bubA > 0 && QI > QO) ? QI : 0;
+            if (cv.bubQ > 0) { cv.bubX = bubX; cv.bubY = bubY; }
             let dV = (QI - QO) * dt;
             if (dV > 0) {
                 let lim = 0.5 * Wc * dIn;
@@ -699,23 +714,42 @@
             }
 
             // ---- the pouring stream (for drawing) ----
+            // inflow through an upward-facing opening (over a rim): a falling curtain under the wet
+            // part of the opening; liquid leaving over a rim: a jet from the lowest lip; through a
+            // hole in a wall or floor: a jet along the opening's normal
             let sQ = 0;
             if (QI > 0 && QI >= QO) {
                 const w = qIn;
-                cv.sDir = 1; sQ = QI;
-                cv.sX += (wIX / w - cv.sX) * (cv.sQ > 0 ? aS : 1);
-                cv.sY += (wIY / w - cv.sY) * (cv.sQ > 0 ? aS : 1);
+                sQ = QI;
                 const nl = Math.hypot(wINX, wINY) || 1;
                 cv.sNX = wINX / nl; cv.sNY = wINY / nl;
                 cv.sV = Math.sqrt(2 * g * wID / w);
+                cv.sMode = cv.sNY < -0.6 ? 1 : 2;
+                if (cv.sDir !== 1) { cv.sDir = 1; cv.sQ = 0; }
+                cv.sX = wIX / w;
+                cv.sY = wIY / w;
+                const pad = 0.5 * CELL;
+                cv.cX0 = inX0 - pad; cv.cY0 = inY0; cv.cX1 = inX1 + pad; cv.cY1 = inY1;
             } else if (QO > 0) {
                 const w = qOut;
-                cv.sDir = -1; sQ = QO;
-                cv.sX += (wOX / w - cv.sX) * (cv.sQ > 0 ? aS : 1);
-                cv.sY += (wOY / w - cv.sY) * (cv.sQ > 0 ? aS : 1);
+                sQ = QO;
                 const nl = Math.hypot(wONX, wONY) || 1;
                 cv.sNX = wONX / nl; cv.sNY = wONY / nl;
-                cv.sV = Math.sqrt(2 * g * wOD / w);
+                if (cv.sDir !== -1) { cv.sDir = -1; cv.sQ = 0; }
+                if (cv.sNY > 0.6) {
+                    // spilling over the lowest lip, moving away from the middle of the surface
+                    cv.sMode = 3;
+                    const away = lowX >= cv.xs ? 1 : -1;
+                    cv.sNX = away; cv.sNY = 0;
+                    cv.sV = Math.sqrt(2 * g * Math.max(0, hin - lowZ)) * 0.8;
+                    cv.sX = lowX + away * 0.5 * CELL;
+                    cv.sY = lowY;
+                } else {
+                    cv.sMode = 2;
+                    cv.sV = Math.sqrt(2 * g * wOD / w);
+                    cv.sX = wOX / w;
+                    cv.sY = wOY / w;
+                }
             }
             cv.sQ += (sQ - cv.sQ) * aS;
 
@@ -774,18 +808,14 @@
         return cv.h + Math.tan(cv.phi) * (x - cv.xs);
     }
     function traceJet(cv) {
-        if (cv.sQ < 2e-4 || cv.sDir === 0) return 0;
+        if (cv.sQ < 2e-4 || cv.sDir === 0 || cv.sMode === 1 || cv.sMode === 0) return 0;
         const g = settings.gravity;
         const inflow = cv.sDir > 0;
         let x = cv.sX, y = cv.sY;
         const recv = inflow ? cavityLevelAt(cv, x) : surfaceAt(x);
         if (recv > y - 0.25 * CELL) return 0;
         const v = Math.max(0.15, cv.sV);
-        let vx = cv.sNX * v, vy = Math.min(cv.sNY, 0) * v;
-        if (cv.sNY > 0 && Math.abs(cv.sNX) < 0.3) {
-            const mid = 0.5 * (cv.xmin + cv.xmax);
-            vx = (x >= mid ? 1 : -1) * 0.5 * v;
-        }
+        let vx = cv.sNX * v, vy = cv.sNY * v;
         const step = 0.01;
         let n = 0;
         for (let i = 0; i < JET_MAX; i++) {
@@ -832,18 +862,54 @@
                 if (cv.phi > 0.3) { cv.phi = 0.3; cv.phiV = 0; } else if (cv.phi < -0.3) { cv.phi = -0.3; cv.phiV = 0; }
             }
             // a stream landing on the inside surface stirs it; one landing in the tank splashes
-            const n = traceJet(cv);
-            if (n > 1) {
-                const hit = Math.min(0.006, 0.4 * cv.sQ * Math.max(1, cv.sV));
-                if (cv.sDir > 0) { if (hit > cv.rip) cv.rip = hit; }
-                else {
+            if (cv.sDir > 0 && cv.sQ > 2e-4 && cv.V > 0 && cv.h < cv.sY - 0.25 * CELL) {
+                const hit = Math.min(0.005, 0.3 * cv.sQ * Math.max(1, cv.sV));
+                if (hit > cv.rip) cv.rip = hit;
+            } else if (cv.sDir < 0) {
+                const n = traceJet(cv);
+                if (n > 1) {
                     const xi = jetX[n - 1];
-                    if (Math.random() < Math.min(1, cv.sQ * 120 * dtF * 4)) {
+                    if (Math.random() < Math.min(1, cv.sQ * 500 * dtF)) {
                         spawnDroplet(xi + (Math.random() - 0.5) * 0.02, surfaceAt(xi), 0.8 + Math.random() * 0.8);
                     }
                     disturbSurface(xi, -0.15 * cv.sQ * dtF);
                 }
             }
+            // trapped air leaving as bubbles
+            if (cv.bubQ > 0) {
+                const rate = Math.min(40, cv.bubQ / 6e-5);
+                let nb = rate * dtF;
+                while (nb > 0) {
+                    if (nb >= 1 || Math.random() < nb) spawnBubble(cv.bubX + (Math.random() - 0.5) * 0.015, cv.bubY);
+                    nb -= 1;
+                }
+            }
+        }
+    }
+
+    // air bubbles rising through the liquid
+    const MAX_BUBBLES = 160;
+    const bX = new Float64Array(MAX_BUBBLES), bY = new Float64Array(MAX_BUBBLES);
+    const bR = new Float64Array(MAX_BUBBLES), bPh = new Float64Array(MAX_BUBBLES), bV = new Float64Array(MAX_BUBBLES);
+    let nBubbles = 0;
+    function spawnBubble(x, y) {
+        if (nBubbles >= MAX_BUBBLES) return;
+        const i = nBubbles++;
+        bX[i] = x; bY[i] = y;
+        bR[i] = 0.002 + Math.random() * 0.004;
+        bPh[i] = Math.random() * 6.283;
+        bV[i] = 0.18 + Math.random() * 0.12 + bR[i] * 15;
+    }
+    function stepBubbles(dt) {
+        let i = 0;
+        while (i < nBubbles) {
+            bPh[i] += dt * 9;
+            bY[i] += bV[i] * dt;
+            bX[i] += Math.cos(bPh[i]) * 0.04 * dt;
+            if (bY[i] >= surfaceAt(bX[i]) || bY[i] > TANK_H) {
+                const last = --nBubbles;
+                bX[i] = bX[last]; bY[i] = bY[last]; bR[i] = bR[last]; bPh[i] = bPh[last]; bV[i] = bV[last];
+            } else i++;
         }
     }
 
@@ -868,7 +934,7 @@
     }
 
     function clearWaves() {
-        amp.fill(0); vel.fill(0); eta.fill(0); nParticles = 0;
+        amp.fill(0); vel.fill(0); eta.fill(0); nParticles = 0; nBubbles = 0;
     }
 
     // displacement below the calm level for an axis-aligned drawing (draw mode)
@@ -1396,9 +1462,9 @@
             acc2 -= DT;
             n++;
             since += DT;
-            if (since >= 1 / 60 - 1e-9) { stepParticles(since); stepCavityVisuals(since); since = 0; }
+            if (since >= 1 / 60 - 1e-9) { stepParticles(since); stepBubbles(since); stepCavityVisuals(since); since = 0; }
         }
-        if (since > 0) { stepParticles(since); stepCavityVisuals(since); }
+        if (since > 0) { stepParticles(since); stepBubbles(since); stepCavityVisuals(since); }
         // show the latest state directly (the frame loop only smooths while time is running)
         disp.fbX = phys.fbX; disp.fbY = phys.fbY; disp.fdX = phys.fdX; disp.fdY = phys.fdY;
         disp.fcX = phys.fcX; disp.fcY = phys.fcY;
@@ -1593,7 +1659,7 @@
         if (box && (box.style.width || box.style.height)) { box.style.width = ''; box.style.height = ''; }
         const tw = Math.max(1, Math.round(canvas.clientWidth));
         const th = Math.max(1, Math.round(canvas.clientHeight));
-        const ndpr = Math.min(3, window.devicePixelRatio || 1);
+        const ndpr = Math.min(2, window.devicePixelRatio || 1);   // more is not visibly sharper, just slower
         if (tw !== cssW || th !== cssH || ndpr !== dpr) {
             cssW = tw; cssH = th; dpr = ndpr;
             scale = Math.min(cssW / TANK_W, cssH / TANK_H);
@@ -1604,21 +1670,6 @@
             gradientKey = '';
             if (body) { body.imgKey = ''; body.cavKey = ''; }
         }
-    }
-
-    // Lets the fullscreen layout in buoyancy_styles.css reserve room for the toolbar.
-    function watchToolbarHeight() {
-        const tb = document.getElementById('buoyToolbar');
-        const area = document.querySelector('.buoyancy-sim');
-        if (!tb || !area) return;
-        const upd = () => {
-            const h = Math.ceil(tb.getBoundingClientRect().height);
-            const v = h + 'px';
-            if (area.style.getPropertyValue('--buoy-toolbar-h') !== v) area.style.setProperty('--buoy-toolbar-h', v);
-        };
-        upd();
-        if (typeof ResizeObserver !== 'undefined') new ResizeObserver(upd).observe(tb);
-        window.addEventListener('resize', upd);
     }
 
     function refreshPalette() {
@@ -1991,9 +2042,56 @@
                 ctx.globalAlpha = 1;
             }
             // a stream pouring in falls inside the cavity
-            if (cv.sDir > 0) { const n = traceJet(cv); if (n > 1) drawJet(cv, n, liq); }
+            if (cv.sDir > 0 && cv.sQ >= 2e-4) {
+                if (cv.sMode === 1) drawCurtain(cv, liq);
+                else { const n = traceJet(cv); if (n > 1) drawJet(cv, n, liq); }
+            }
             ctx.restore();
         }
+    }
+
+    // liquid falling in across the wet part of an opening (e.g. over a submerged rim)
+    function drawCurtain(cv, liq) {
+        const xa = cv.cX0, xb = cv.cX1;
+        if (!(xb > xa)) return;
+        const pad = 0.6 * CELL;   // start just above the opening so the sheet meets the liquid over it
+        const ya = cv.cY0 + pad, yb = cv.cY1 + pad;
+        const la = cavityLevelAt(cv, xa), lb = cavityLevelAt(cv, xb);
+        if (la > ya - pad && lb > yb - pad) return;   // the inside has risen to the opening
+        const strength = clamp(cv.sQ / 0.02, 0.3, 1);
+        const sheet = new Path2D();
+        sheet.moveTo(wx(xa), wy(ya));
+        sheet.lineTo(wx(xb), wy(yb));
+        sheet.lineTo(wx(xb), wy(lb - 0.5 * CELL));
+        sheet.lineTo(wx(xa), wy(la - 0.5 * CELL));
+        sheet.closePath();
+        ctx.save();
+        ctx.clip(sheet);
+        const yTop = wy(Math.max(ya, yb)), yBot = wy(Math.min(la, lb) - 0.5 * CELL);
+        const grad = ctx.createLinearGradient(0, yTop, 0, yBot);
+        grad.addColorStop(0, 'rgba(' + liq.top.join(',') + ',' + (0.75 * strength) + ')');
+        grad.addColorStop(1, 'rgba(' + liq.top.join(',') + ',' + (0.3 * strength) + ')');
+        ctx.fillStyle = grad;
+        ctx.fill(sheet);
+        // streaks running down
+        ctx.strokeStyle = liq.surface;
+        ctx.lineWidth = Math.max(1, 0.002 * scale);
+        ctx.globalAlpha = 0.45 * strength;
+        const L = 0.035 * scale;
+        ctx.setLineDash([L, 0.6 * L]);
+        ctx.lineDashOffset = -simTime * Math.max(0.6, cv.sV + 0.6) * scale;
+        const x0 = wx(xa), span = wx(xb) - x0;
+        const nS = Math.max(1, Math.round(span / Math.max(7, 0.02 * scale)));
+        ctx.beginPath();
+        for (let i = 0; i < nS; i++) {
+            const x = x0 + span * (i + 0.5) / nS;
+            ctx.moveTo(x, yTop - ((i * 37) % 17) / 17 * L);
+            ctx.lineTo(x, yBot);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.restore();
     }
 
     function drawJet(cv, n, liq) {
@@ -2010,9 +2108,9 @@
         }
         // moving highlights so the stream reads as flowing
         ctx.strokeStyle = liq.surface;
-        ctx.globalAlpha = 0.55;
-        ctx.lineWidth = Math.max(1, 0.35 * clamp(jetW[0] * scale, 1.5, maxW));
-        ctx.setLineDash([4, 10]);
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = Math.max(1, 0.3 * clamp(jetW[0] * scale, 1.5, maxW));
+        ctx.setLineDash([10, 8]);
         ctx.lineDashOffset = -simTime * Math.max(0.3, cv.sV) * scale;
         ctx.beginPath();
         ctx.moveTo(wx(jetX[0]), wy(jetY[0]));
@@ -2101,6 +2199,22 @@
                 ctx.arc(x, y, r, 0, Math.PI * 2);
             }
             ctx.fill();
+        }
+        // bubbles
+        if (nBubbles) {
+            ctx.beginPath();
+            for (let i = 0; i < nBubbles; i++) {
+                const x = wx(bX[i]), y = wy(bY[i]), r = Math.max(1.2, bR[i] * scale);
+                ctx.moveTo(x + r, y);
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+            }
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.fill();
+            ctx.strokeStyle = liq.surface;
+            ctx.globalAlpha = 0.8;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
         }
 
         // tank walls
@@ -2390,6 +2504,12 @@
     // ------------------------------------------------------------------
     const el = {};
     let lastStatsT = 0;
+    const lastTxt = new Map();
+    function setText(node, t) {
+        if (!node || lastTxt.get(node) === t) return;
+        lastTxt.set(node, t);
+        node.textContent = t;
+    }
     function updateStatsDisplay(force) {
         const now = performance.now();
         if (!force && now - lastStatsT < 200) return;
@@ -2399,53 +2519,53 @@
         const g = settings.gravity;
         if (!el.mass) return;
         if (!P) {
-            el.mass.textContent = '-'; el.volume.textContent = '-'; el.density.textContent = '-';
-            el.submerged.textContent = '-'; el.weight.textContent = '-'; el.buoyancy.textContent = '-';
-            el.prediction.textContent = 'Draw an object to see whether it will float in ' + liq.name.toLowerCase() + '.';
+            setText(el.mass, '-'); setText(el.volume, '-'); setText(el.density, '-');
+            setText(el.submerged, '-'); setText(el.weight, '-'); setText(el.buoyancy, '-');
+            setText(el.prediction, 'Draw an object to see whether it will float in ' + liq.name.toLowerCase() + '.');
             return;
         }
         const V = (P.areaMat + P.areaSealed) * DEPTH;
         const M = P.mass;
         const rho = M / V;
-        let massTxt = fmtAuto(M) + ' kg';
-        if (mode === 'sim' && P.waterMass > 0.02) massTxt += ' + ' + fmtAuto(P.waterMass) + ' kg of ' + LIQUIDS[settings.liquid].name.toLowerCase() + ' inside';
-        el.mass.textContent = massTxt;
-        el.volume.textContent = fmtAuto(V * 1000) + ' L';
-        el.density.textContent = fmt(rho, 0) + ' kg/m³';
-        el.weight.textContent = fmtAuto((M + (mode === 'sim' ? P.waterMass : 0)) * g) + ' N';
+        const held = mode === 'sim' ? P.waterMass : 0;
+        setText(el.mass, fmtAuto(M));
+        setText(el.volume, fmtAuto(V * 1000));
+        setText(el.density, fmt(rho, 0));
+        setText(el.weight, fmtAuto((M + held) * g));
         if (mode === 'sim') {
-            el.submerged.textContent = fmt(100 * clamp(disp.sub, 0, 1), 0) + '%';
-            el.buoyancy.textContent = fmtAuto(Math.hypot(disp.fbX, disp.fbY)) + ' N';
+            setText(el.submerged, fmt(100 * clamp(disp.sub, 0, 1), 0));
+            setText(el.buoyancy, fmtAuto(Math.hypot(disp.fbX, disp.fbY)));
         } else {
-            el.submerged.textContent = '-';
-            el.buoyancy.textContent = '-';
+            setText(el.submerged, '-');
+            setText(el.buoyancy, '-');
         }
-        el.prediction.textContent = predictionText(P, liq, rho, V, M, g);
+        let txt = predictionText(P, liq, rho, V, M, g);
+        if (held > 0.05) {
+            txt = 'Holding ' + fmtAuto(held) + ' kg of ' + liq.name.toLowerCase().replace('fresh ', '') +
+                ' (counted in its weight). ' + txt;
+        }
+        setText(el.prediction, txt);
+        if (el.prediction && el.prediction.title !== txt) el.prediction.title = txt;
     }
 
     function predictionText(P, liq, rho, V, M, g) {
         const rl = liq.rho;
-        const ln = liq.name.toLowerCase();
         const r0 = fmt(rho, 0), rL = rl.toLocaleString('en-US');
         if (rho < rl) {
-            return 'Average density ' + r0 + ' kg/m³ < ' + rL + ' kg/m³ (' + ln + ') → floats with about ' +
-                fmt(100 * rho / rl, 0) + '% of its volume submerged.';
+            return 'Prediction: floats with about ' + fmt(100 * rho / rl, 0) + '% submerged (' + r0 + ' < ' + rL + ' kg/m³).';
         }
         const Vh = V + P.areaBasin * DEPTH;
         if (P.areaBasin > 0 && M / Vh < rl) {
-            const rh = M / Vh;
-            return 'Solid parts average ' + r0 + ' kg/m³ > ' + rL + ' kg/m³, but counting the air in its open hull it averages ' +
-                fmt(rh, 0) + ' kg/m³ → floats like a boat (about ' + fmt(100 * rh / rl, 0) + '% of the hull submerged) unless ' + ln + ' gets in.';
+            return 'Prediction: floats like a boat while its hull stays dry (hull average ' + fmt(M / Vh, 0) + ' < ' + rL + ' kg/m³).';
         }
-        const net = (M - rl * V) * g;
-        let txt = 'Average density ' + r0 + ' kg/m³ > ' + rL + ' kg/m³ (' + ln + ') → sinks. Fully submerged it still feels a buoyant force of ' +
-            fmtAuto(rl * V * g) + ' N, so its apparent weight is ' + fmtAuto(net) + ' N';
-        if (P.areaOpen - P.areaBasin > 0.15 * (P.areaMat + P.areaSealed)) txt += ' (unless it traps air underneath, like an upside-down cup)';
+        let txt = 'Prediction: sinks (' + r0 + ' > ' + rL + ' kg/m³); under the surface it weighs ' +
+            fmtAuto((M - rl * V) * g) + ' N instead of ' + fmtAuto(M * g) + ' N';
+        if (P.areaOpen - P.areaBasin > 0.15 * (P.areaMat + P.areaSealed)) txt += ', unless it traps air';
         return txt + '.';
     }
 
     function setHint(text) {
-        if (el.hint) el.hint.textContent = text;
+        setText(el.hint, text);
         hintHold = performance.now() + 3500;
     }
     let hintHold = 0;
@@ -2453,21 +2573,23 @@
         if (!el.hint || performance.now() < hintHold) return;
         let t;
         if (mode === 'sim') {
-            t = 'Drag the object to lift or throw it · tap the liquid to make waves · Edit to change the drawing';
+            t = 'Drag the object to lift, push or throw it · tap the liquid for waves · Draw to change it';
         } else {
             const m = MATERIALS[settings.material];
+            const fine = pointer.type === 'mouse';
             const tips = {
-                brush: 'drag to paint (right-click erases)',
+                brush: fine ? 'drag to paint (right-click erases)' : 'drag to paint',
                 eraser: 'drag to erase',
-                rect: 'drag to draw a solid rectangle (Shift: square)',
-                box: 'drag for a hollow box; wall = brush size (Shift: square)',
-                ellipse: 'drag to draw a solid ellipse (Shift: circle)',
-                ring: 'drag for a hollow ring; wall = brush size (Shift: circle)',
-                fill: 'click inside a closed outline to fill it'
+                rect: fine ? 'drag out a solid rectangle (Shift: square)' : 'drag out a solid rectangle',
+                box: 'drag out a hollow box (wall = size)',
+                ellipse: fine ? 'drag out a solid ellipse (Shift: circle)' : 'drag out a solid ellipse',
+                ring: 'drag out a hollow ring (wall = size)',
+                fill: 'tap inside a closed outline to fill it'
             };
-            t = (settings.tool === 'eraser' ? 'Eraser' : m.name + ' · ' + m.rho.toLocaleString('en-US') + ' kg/m³') + ' — ' + tips[settings.tool];
+            t = (settings.tool === 'eraser' ? 'Eraser' : m.name + ' (' + m.rho.toLocaleString('en-US') + ' kg/m³)') +
+                ': ' + tips[settings.tool] + ' · then press Drop';
         }
-        if (el.hint.textContent !== t) el.hint.textContent = t;
+        setText(el.hint, t);
     }
 
     // ------------------------------------------------------------------
@@ -2511,7 +2633,8 @@
         pointer.x = x; pointer.y = y;
         pointer.shift = e.shiftKey;
         if (mode === 'sim') {
-            const tol = pointer.type === 'mouse' ? 0.012 : 0.035;
+            // grab tolerance in screen pixels: a finger needs more than a mouse
+            const tol = (pointer.type === 'mouse' ? 6 : 20) / scale;
             const hit = hitBody(x, y, tol);
             if (hit) {
                 grab.active = true; grab.bx = hit[0]; grab.by = hit[1]; grab.tx = x; grab.ty = y;
@@ -2552,7 +2675,7 @@
         pointer.x = x; pointer.y = y;
         if (mode === 'sim') {
             if (grab.active) { grab.tx = x; grab.ty = y; }
-            else if (pointer.type === 'mouse') canvas.style.cursor = hitBody(x, y, 0.012) ? 'grab' : 'default';
+            else if (pointer.type === 'mouse') canvas.style.cursor = hitBody(x, y, 6 / scale) ? 'grab' : 'default';
             return;
         }
         canvas.style.cursor = 'crosshair';
@@ -2601,10 +2724,11 @@
         if (tb) tb.classList.toggle('is-sim', mode === 'sim');
         const dropBtn = document.getElementById('dropBtn');
         const editBtn = document.getElementById('editBtn');
-        if (dropBtn) dropBtn.hidden = mode === 'sim';
-        if (editBtn) editBtn.hidden = mode !== 'sim';
-        const redrop = document.getElementById('redropBtn');
-        if (redrop) redrop.hidden = mode !== 'sim';
+        if (dropBtn) {
+            dropBtn.setAttribute('aria-pressed', mode === 'sim' ? 'true' : 'false');
+            dropBtn.title = mode === 'sim' ? 'Drop the object again from where it was drawn' : 'Drop the object into the liquid';
+        }
+        if (editBtn) editBtn.setAttribute('aria-pressed', mode === 'sim' ? 'false' : 'true');
         canvas.style.cursor = mode === 'sim' ? 'default' : 'crosshair';
         hintHold = 0;
         refreshHint();
@@ -2660,10 +2784,9 @@
                 b.className = 'buoy-mat';
                 b.dataset.mat = String(i);
                 b.setAttribute('role', 'radio');
-                b.title = m.name + ' – ' + m.rho.toLocaleString('en-US') + ' kg/m³';
+                b.title = m.name + ' (' + m.rho.toLocaleString('en-US') + ' kg/m³)';
                 b.setAttribute('aria-label', b.title);
-                b.innerHTML = '<span class="buoy-swatch" style="background:' + m.color + '"></span><span class="buoy-mat-name">' +
-                    m.name + '</span><span class="buoy-mat-rho">' + m.rho.toLocaleString('en-US') + '</span>';
+                b.innerHTML = '<span class="buoy-swatch" style="background:' + m.color + '"></span>';
                 b.addEventListener('click', () => {
                     settings.material = i;
                     if (settings.tool === 'eraser') settings.tool = 'brush';
@@ -2680,21 +2803,24 @@
                 syncToolButtons();
             });
         });
-        const sizeEl = document.getElementById('brushSize'), sizeVal = document.getElementById('brushSizeVal');
+        const sizeEl = document.getElementById('brushSize');
         if (sizeEl) {
-            const upd = () => {
-                settings.brushIndex = clamp(parseInt(sizeEl.value, 10) || 0, 0, BRUSH_SIZES.length - 1);
-                if (sizeVal) sizeVal.textContent = BRUSH_SIZES[settings.brushIndex] + ' cm';
-            };
-            sizeEl.addEventListener('input', upd);
+            sizeEl.innerHTML = '';
+            BRUSH_SIZES.forEach((cm, i) => {
+                const o = document.createElement('option');
+                o.value = String(i); o.textContent = cm + ' cm';
+                sizeEl.appendChild(o);
+            });
             sizeEl.value = String(settings.brushIndex);
-            upd();
+            sizeEl.addEventListener('change', () => {
+                settings.brushIndex = clamp(parseInt(sizeEl.value, 10) || 0, 0, BRUSH_SIZES.length - 1);
+                if (mode === 'sim') enterEditMode();
+            });
         }
         const on = (id, fn) => { const n = document.getElementById(id); if (n) n.addEventListener('click', fn); };
         on('dropBtn', () => dropObject());
-        on('editBtn', () => enterEditMode());
-        on('redropBtn', () => dropObject());
-        on('clearBtn', () => { pushUndo(); grid.fill(0); enterEditMode(); });
+        on('editBtn', () => { if (mode === 'sim') enterEditMode(); });
+        on('clearBtn', () => { pushUndo(); grid.fill(0); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
         on('undoBtn', () => undo());
         on('resetSimulationBtn', () => {
             if (mode === 'sim') dropObject();
@@ -2724,10 +2850,7 @@
             n.checked = get();
             n.addEventListener('change', () => set(n.checked));
         };
-        const rotLabel = document.querySelector('label[for="rotationToggle"]');
-        const showRot = () => { if (rotLabel) rotLabel.textContent = 'Rotation: ' + (settings.rotation ? 'on' : 'off'); };
-        bindCheck('rotationToggle', () => settings.rotation, (v) => { settings.rotation = v; if (!v) st.om = 0; showRot(); });
-        showRot();
+        bindCheck('rotationToggle', () => settings.rotation, (v) => { settings.rotation = v; if (!v) st.om = 0; });
         Object.keys(settings.arrows).forEach((k) => {
             bindCheck('arrow_' + k, () => settings.arrows[k], (v) => { settings.arrows[k] = v; });
         });
@@ -2742,15 +2865,19 @@
             if (v) v.textContent = fmtFn(get());
         };
         bindRange('speedSlider', 'speedVal', () => settings.speed, (x) => { settings.speed = x; }, (x) => x.toFixed(2));
+        const gName = document.getElementById('gravityName');
+        const showGravityName = (x) => {
+            let nm = '';
+            for (const [gv, n] of [[1.62, 'Moon'], [3.71, 'Mars'], [9.81, 'Earth'], [24.79, 'Jupiter']]) if (Math.abs(x - gv) < 0.06) nm = n;
+            if (gName && gName.textContent !== nm) gName.textContent = nm;
+        };
         bindRange('gravitySlider', 'gravityVal', () => settings.gravity, (x) => {
+            // snap to the named values so Earth, the Moon etc. are easy to hit
+            for (const gv of [1.62, 3.71, 9.81, 24.79]) if (Math.abs(x - gv) < 0.12) x = gv;
             settings.gravity = x;
             updateWaveCoefficients();
             updateStatsDisplay(true);
-        }, (x) => {
-            const named = [[1.62, 'Moon'], [3.71, 'Mars'], [9.81, 'Earth'], [24.79, 'Jupiter']];
-            for (const [gv, nm] of named) if (Math.abs(x - gv) < 0.06) return x.toFixed(2) + ' (' + nm + ')';
-            return x.toFixed(2);
-        });
+        }, (x) => { showGravityName(x); return x.toFixed(2); });
         bindRange('depthSlider', 'depthVal', () => Math.round(settings.liquidDepth * 100), (x) => {
             settings.liquidDepth = x / 100;
             if (mode === 'draw') level = drawModeLevel(preview);
@@ -2776,7 +2903,6 @@
 
         new MutationObserver(() => refreshPalette()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         window.addEventListener('resize', () => handleResize());
-        watchToolbarHeight();
         syncToolButtons();
         updateModeUI();
     }
@@ -2810,6 +2936,7 @@
             if (steps >= MAX_SUBSTEPS) physAcc = 0;
             if (steps > 0) {
                 stepParticles(steps * DT);
+                stepBubbles(steps * DT);
                 stepCavityVisuals(steps * DT);
             }
             // frame averages -> smoothed display values
@@ -2832,6 +2959,7 @@
         } else {
             physAcc = 0;
             if (nParticles) stepParticles(dtReal);
+            if (nBubbles) stepBubbles(dtReal);
         }
         const t1 = performance.now();
         render();
@@ -2905,7 +3033,7 @@
                 cavities: body.cavs.map((cv) => ({
                     cells: cv.nc, faces: cv.nf, area: cv.area, held: cv.V, fill: cv.V / cv.area,
                     level: cv.h, surfaceWidth: cv.Ws, qIn: cv.qIn, qOut: cv.qOut, vented: cv.vented,
-                    stream: cv.sDir * cv.sQ, slosh: cv.phi
+                    stream: cv.sDir * cv.sQ, slosh: cv.phi, sMode: cv.sMode, sX: cv.sX, sY: cv.sY, sV: cv.sV, sN: [cv.sNX, cv.sNY], xs: cv.xs
                 })),
                 heldTotal: body.waterArea, heldMass: body.waterMass
             };

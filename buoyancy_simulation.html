@@ -177,8 +177,16 @@
 										<h3 id="simulationControlsPanelLabel">Controls</h3>
 									</div>
 									<div class="sim-controls-content">
-										<div class="sim-control-group buoy-first-group">
-											<p class="sim-control-group-label" id="liquidLabel">Liquid:</p>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="presetLabel">Ready-made objects</p>
+											<div class="sim-select-container">
+												<select id="presetSelector" aria-labelledby="presetLabel">
+													<option value="" selected>Choose one to drop&hellip;</option>
+												</select>
+											</div>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="liquidLabel">Liquid</p>
 											<div class="sim-select-container">
 												<select id="liquidSelector" aria-labelledby="liquidLabel">
 													<option value="oil">Olive oil (911 kg/m³)</option>
@@ -188,48 +196,45 @@
 											</div>
 										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label" id="presetLabel">Preset objects:</p>
-											<div class="sim-select-container">
-												<select id="presetSelector" aria-labelledby="presetLabel">
-													<option value="" selected>Choose a preset to drop&hellip;</option>
-												</select>
-											</div>
-										</div>
-										<div class="sim-control-group">
-											<p class="sim-control-group-label">Motion:</p>
-											<div class="sim-checkbox-group buoy-toggle-group">
-												<input type="checkbox" id="rotationToggle" checked>
-												<label for="rotationToggle">Rotation: on</label>
-											</div>
-										</div>
-										<div class="sim-control-group">
-											<p class="sim-control-group-label">Force arrows:</p>
-											<div class="sim-checkbox-group buoy-toggle-group buoy-arrow-toggles">
+											<p class="sim-control-group-label">Force arrows</p>
+											<div class="sim-checkbox-group sim-chips buoy-arrow-chips">
 												<input type="checkbox" id="arrow_weight" checked>
 												<label for="arrow_weight"><span class="buoy-key" style="background:#ff5f5f"></span>Weight</label>
 												<input type="checkbox" id="arrow_buoyancy" checked>
 												<label for="arrow_buoyancy"><span class="buoy-key" style="background:#2fe39b"></span>Buoyancy</label>
+												<input type="checkbox" id="arrow_net">
+												<label for="arrow_net"><span class="buoy-key buoy-key-net"></span>Net force</label>
 												<input type="checkbox" id="arrow_drag">
 												<label for="arrow_drag"><span class="buoy-key" style="background:#ffc53d"></span>Drag</label>
 												<input type="checkbox" id="arrow_contact">
 												<label for="arrow_contact"><span class="buoy-key" style="background:#c58cff"></span>Contact</label>
-												<input type="checkbox" id="arrow_net" checked>
-												<label for="arrow_net"><span class="buoy-key buoy-key-net"></span>Net force</label>
-												<input type="checkbox" id="showMarkers" checked>
-												<label for="showMarkers">Centre markers</label>
+											</div>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="showMarkers">
+												<label for="showMarkers">Centre of mass and buoyancy</label>
 											</div>
 										</div>
 										<div class="sim-control-group">
-											<label>Speed: <span id="speedVal">1.00</span>x
+											<p class="sim-control-group-label">Motion</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="rotationToggle" checked>
+												<label for="rotationToggle">Object can rotate</label>
+											</div>
+											<label>Speed: <span class="sim-value" id="speedVal" style="--chars: 4">1.00</span>&times;
 												<input type="range" id="speedSlider" min="0.1" max="2" step="0.05" value="1">
 											</label>
-											<label>Gravity: <span id="gravityVal">9.81</span> m/s²
-												<input type="range" id="gravitySlider" min="1" max="25" step="0.01" value="9.81">
-											</label>
-											<label>Liquid depth: <span id="depthVal">60</span> cm
-												<input type="range" id="depthSlider" min="20" max="100" step="1" value="60">
-											</label>
 										</div>
+										<details class="sim-controls-more">
+											<summary>More options</summary>
+											<div class="sim-control-group">
+												<label>Gravity: <span class="sim-value" id="gravityVal" style="--chars: 5">9.81</span> m/s² <span class="buoy-gravity-name" id="gravityName">Earth</span>
+													<input type="range" id="gravitySlider" min="1" max="25" step="0.01" value="9.81">
+												</label>
+												<label>Liquid depth: <span class="sim-value" id="depthVal" style="--chars: 3">60</span> cm
+													<input type="range" id="depthSlider" min="20" max="100" step="1" value="60">
+												</label>
+											</div>
+										</details>
 									</div>
 								</div>
 
@@ -242,41 +247,42 @@
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
 										<div class="buoy-toolbar" id="buoyToolbar" role="toolbar" aria-label="Drawing tools">
-											<div class="buoy-group buoy-draw-only" id="materialPalette" role="radiogroup" aria-label="Material"></div>
-											<div class="buoy-group buoy-draw-only" role="radiogroup" aria-label="Drawing tool">
-												<button type="button" class="buoy-tool" data-tool="brush" role="radio" title="Brush" aria-label="Brush"><span class="icon solid fa-paint-brush"></span></button>
-												<button type="button" class="buoy-tool" data-tool="eraser" role="radio" title="Eraser" aria-label="Eraser"><span class="icon solid fa-eraser"></span></button>
-												<button type="button" class="buoy-tool" data-tool="rect" role="radio" title="Solid rectangle" aria-label="Solid rectangle"><span class="icon solid fa-square"></span></button>
-												<button type="button" class="buoy-tool" data-tool="box" role="radio" title="Hollow box" aria-label="Hollow box"><span class="icon fa-square"></span></button>
-												<button type="button" class="buoy-tool" data-tool="ellipse" role="radio" title="Solid ellipse" aria-label="Solid ellipse"><span class="icon solid fa-circle"></span></button>
-												<button type="button" class="buoy-tool" data-tool="ring" role="radio" title="Hollow ring" aria-label="Hollow ring"><span class="icon fa-circle"></span></button>
-												<button type="button" class="buoy-tool" data-tool="fill" role="radio" title="Fill an enclosed area" aria-label="Fill"><span class="icon solid fa-fill-drip"></span></button>
+											<div class="buoy-mode" role="group" aria-label="Mode">
+												<button type="button" id="editBtn" class="buoy-mode-btn" aria-pressed="false" title="Draw or change the object"><span class="icon solid fa-pencil-alt" aria-hidden="true"></span>Draw</button>
+												<button type="button" id="dropBtn" class="buoy-mode-btn" aria-pressed="true" title="Drop the object into the liquid"><span class="icon solid fa-play" aria-hidden="true"></span>Drop</button>
 											</div>
-											<label class="buoy-group buoy-size buoy-draw-only" for="brushSize">Size
-												<input type="range" id="brushSize" min="0" max="7" step="1" value="2" aria-label="Brush size or wall thickness">
-												<span id="brushSizeVal">3 cm</span>
-											</label>
-											<div class="buoy-group buoy-actions">
-												<button type="button" id="undoBtn" class="buoy-draw-only" title="Undo (Ctrl+Z)" aria-label="Undo"><span class="icon solid fa-undo"></span></button>
-												<button type="button" id="clearBtn" title="Clear the drawing" aria-label="Clear the drawing"><span class="icon solid fa-trash-alt"></span></button>
-												<button type="button" id="redropBtn" title="Drop the object again from where it was drawn" hidden><span class="icon solid fa-redo"></span> Again</button>
-												<button type="button" id="editBtn" class="buoy-primary" title="Back to drawing" hidden><span class="icon solid fa-pencil-alt"></span> Edit</button>
-												<button type="button" id="dropBtn" class="buoy-primary" title="Drop the object into the liquid"><span class="icon solid fa-play"></span> Drop</button>
+											<div class="buoy-group buoy-mats" id="materialPalette" role="radiogroup" aria-label="Material"></div>
+											<div class="buoy-group buoy-tools" role="radiogroup" aria-label="Drawing tool">
+												<button type="button" class="buoy-tool" data-tool="brush" role="radio" title="Brush" aria-label="Brush"><span class="icon solid fa-paint-brush" aria-hidden="true"></span></button>
+												<button type="button" class="buoy-tool" data-tool="rect" role="radio" title="Solid rectangle" aria-label="Solid rectangle"><span class="icon solid fa-square" aria-hidden="true"></span></button>
+												<button type="button" class="buoy-tool" data-tool="box" role="radio" title="Hollow box (wall = size)" aria-label="Hollow box"><span class="icon fa-square" aria-hidden="true"></span></button>
+												<button type="button" class="buoy-tool" data-tool="ellipse" role="radio" title="Solid ellipse" aria-label="Solid ellipse"><span class="icon solid fa-circle" aria-hidden="true"></span></button>
+												<button type="button" class="buoy-tool" data-tool="ring" role="radio" title="Hollow ring (wall = size)" aria-label="Hollow ring"><span class="icon fa-circle" aria-hidden="true"></span></button>
+												<button type="button" class="buoy-tool" data-tool="fill" role="radio" title="Fill an enclosed area" aria-label="Fill"><span class="icon solid fa-fill-drip" aria-hidden="true"></span></button>
+												<button type="button" class="buoy-tool" data-tool="eraser" role="radio" title="Eraser" aria-label="Eraser"><span class="icon solid fa-eraser" aria-hidden="true"></span></button>
 											</div>
+											<span class="buoy-break" aria-hidden="true"></span>
 											<p class="buoy-hint" id="toolHint" aria-live="polite"></p>
+											<label class="buoy-size" title="Brush size, or wall thickness of hollow shapes">Size
+												<select id="brushSize" aria-label="Brush size or wall thickness"></select>
+											</label>
+											<div class="buoy-group buoy-edit">
+												<button type="button" id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo"><span class="icon solid fa-undo" aria-hidden="true"></span></button>
+												<button type="button" id="clearBtn" title="Clear the drawing" aria-label="Clear the drawing"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
+											</div>
 										</div>
 										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container">
-												<div class="stats-box"><strong>Mass:</strong> <span id="statMass">-</span></div>
-												<div class="stats-box"><strong>Volume:</strong> <span id="statVolume">-</span></div>
-												<div class="stats-box"><strong>Avg. density:</strong> <span id="statDensity">-</span></div>
-												<div class="stats-box"><strong>Submerged:</strong> <span id="statSubmerged">-</span></div>
-												<div class="stats-box"><strong>Weight:</strong> <span id="statWeight">-</span></div>
-												<div class="stats-box"><strong>Buoyancy:</strong> <span id="statBuoyancy">-</span></div>
+												<div class="stats-box"><strong>Mass:</strong> <span class="sim-value" id="statMass" style="--chars: 5">-</span> kg</div>
+												<div class="stats-box"><strong>Volume:</strong> <span class="sim-value" id="statVolume" style="--chars: 4">-</span> L</div>
+												<div class="stats-box"><strong>Density:</strong> <span class="sim-value" id="statDensity" style="--chars: 6">-</span> kg/m³</div>
+												<div class="stats-box"><strong>Submerged:</strong> <span class="sim-value" id="statSubmerged" style="--chars: 3">-</span>%</div>
+												<div class="stats-box"><strong>Weight:</strong> <span class="sim-value" id="statWeight" style="--chars: 5">-</span> N</div>
+												<div class="stats-box"><strong>Buoyancy:</strong> <span class="sim-value" id="statBuoyancy" style="--chars: 5">-</span> N</div>
 												<p class="buoy-prediction" id="predictionText"></p>
 											</div>
 											<div class="sim-info-actions">
-												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset Simulation" title="Drop the object again">
+												<button id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Drop the object again" title="Drop the object again">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
 											</div>
@@ -289,62 +295,36 @@
 										</button>
 									</div>
 
-									<div class="description-area">
-										<h3>About this Simulation</h3>
-										<p>This simulation lets you explore <strong>buoyancy</strong>: the upward push a liquid gives to anything placed in it. Draw an object from up to seven materials (solid, hollow, or a mixture), press <strong>Drop</strong> and watch it float, sink or tip over in olive oil, fresh water or mercury. The tank is 2&nbsp;m wide and 1&nbsp;m tall, and your drawing is the cross-section of an object 10&nbsp;cm deep (the tank is 10&nbsp;cm deep too), so every mass, volume and force is shown in real units.</p>
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>Draw an object, drop it into a tank of liquid and see whether it floats. Your drawing is a slice through an object 10&nbsp;cm deep, so every mass and force is in real units.</p>
 
-										<h4>Archimedes' principle</h4>
-										<p>A liquid pushes on every part of an object's surface, and the push grows with depth. Adding all of those pushes together gives an upward <strong>buoyant force equal to the weight of the liquid the object displaces</strong>: <em>F<sub>b</sub> = &rho;<sub>liquid</sub> &times; g &times; V<sub>submerged</sub></em>. An object keeps sinking until it has pushed aside its own weight of liquid. If it is completely under the surface and still heavier than the liquid it displaces, it sinks to the bottom. Watch the liquid level rise as the object goes in: that is the displaced volume.</p>
+											<h4>Key ideas</h4>
+											<ul>
+												<li><strong>Archimedes' principle:</strong> the liquid pushes up with the weight of the liquid the object displaces: <em>F<sub>b</sub> = &rho;<sub>liquid</sub> g V<sub>submerged</sub></em>.</li>
+												<li><strong>Density decides:</strong> an object floats if its average density is below the liquid's, with that fraction of it under the surface: pine (500&nbsp;kg/m³) floats half under water, and steel sinks in water but floats on mercury.</li>
+												<li><strong>Hollow things float:</strong> sealed air (hatched) and the air in an open hull add volume but hardly any mass. Once water pours over the rim, the hull fills and sinks.</li>
+												<li><strong>Stability:</strong> weight acts at the centre of mass, buoyancy at the centre of the submerged part. If a tilt moves the buoyancy to the low side, the object rights itself.</li>
+											</ul>
 
-										<h4>Density decides</h4>
-										<p>Comparing weight with the maximum possible buoyant force is the same as comparing densities. If the object's <strong>average density</strong> (total mass &divide; total volume) is less than the liquid's, it floats, with the fraction <em>&rho;<sub>object</sub> / &rho;<sub>liquid</sub></em> of its volume below the surface. Pine (500&nbsp;kg/m³) floats half-submerged in water; ice (917&nbsp;kg/m³) floats about 92% submerged in water but slowly sinks in olive oil (911&nbsp;kg/m³), because the two densities are so close; steel (7,850&nbsp;kg/m³) sinks in water yet floats on mercury (13,534&nbsp;kg/m³) with about 58% submerged. Gravity cancels out of the comparison, so the floating depth is the same on the Moon as on Jupiter &mdash; try the gravity slider.</p>
+											<h4>Things to try</h4>
+											<ul>
+												<li>Drop the steel boat, then drag one side under until it swamps.</li>
+												<li>Drop a steel block in water, then switch the liquid to mercury.</li>
+											</ul>
 
-										<h4>Why hollow objects float</h4>
-										<p>Air pockets add a lot of volume for almost no mass, so they lower the average density. Empty cells completely surrounded by material are <strong>sealed air</strong> and are drawn with diagonal hatching. Empty space inside an <strong>open</strong> hull, like the inside of a boat or cup, also keeps the liquid out as long as the rim stays above the surface, which is why a steel boat floats. If the boat tilts or is overloaded until liquid pours over the rim, the hull floods and it sinks. Turn a cup upside down and the air trapped inside it keeps it afloat like a diving bell, at least until it tips and the air escapes.</p>
-
-										<h4>Centre of buoyancy and stability</h4>
-										<p>Weight acts at the <strong>centre of mass</strong> (the black-and-white marker), while buoyancy acts at the <strong>centre of buoyancy</strong>: the centre of the submerged volume (the green ring). When the object tilts, the submerged shape changes and the centre of buoyancy moves. If it moves far enough to the low side, the two forces form a righting couple that turns the object back; otherwise they tip it further. A wide, low object is stable, while a tall thin plank rolls over and floats lying down, and an off-centre weight makes its side sit lower. With <strong>Rotation</strong> switched off the object cannot turn at all, which lets you compare the two cases.</p>
-
-										<h4>How to use it</h4>
-										<ul>
-											<li><strong>Draw:</strong> pick a material, then paint with the <span class="icon solid fa-paint-brush"></span> brush or drag out a solid rectangle, hollow box, solid ellipse or hollow ring. The <strong>Size</strong> slider sets the brush diameter and the wall thickness of hollow shapes. Hold Shift for squares and circles. Right-click or use the <span class="icon solid fa-eraser"></span> eraser to remove material, the <span class="icon solid fa-fill-drip"></span> fill tool fills a closed outline (great for a foam-filled steel shell), and <span class="icon solid fa-undo"></span> undoes (Ctrl+Z).</li>
-											<li><strong>Drop</strong> releases the object from where you drew it. While it moves you can <strong>drag it</strong> to lift, push under or throw it, and tap the liquid to make ripples. <strong>Edit</strong> returns to your drawing, <strong>Again</strong> (or the reset button <span class="icon solid fa-sync-alt"></span>) drops it again, and <span class="icon solid fa-trash-alt"></span> clears everything.</li>
-											<li>The bar under the tank shows the object's mass, volume, average density (including sealed air), how much of it is submerged, its weight and the buoyant force, plus a prediction of whether it should float.</li>
-											<li>Use the <span class="icon solid fa-cog"></span> icon to open the controls panel and the <span class="icon solid fa-expand"></span> icon for fullscreen. Press <strong>F</strong> to show the frame rate.</li>
-										</ul>
-
-										<p><strong>Controls:</strong></p>
-										<ul>
-											<li><strong>Liquid:</strong> olive oil (911&nbsp;kg/m³, about 80 times more viscous than water, so waves die away quickly), fresh water (1,000&nbsp;kg/m³) or mercury (13,534&nbsp;kg/m³).</li>
-											<li><strong>Preset objects:</strong> ready-made objects that are dropped straight away, from a pine block to a steel boat, a sealed hollow steel ball and an upside-down cup.</li>
-											<li><strong>Rotation:</strong> when on, the object turns freely as a rigid body; when off, its angle is locked where it is (as if it had an infinite moment of inertia), which shows how much of the motion comes from turning.</li>
-											<li><strong>Force arrows:</strong> weight (red, at the centre of mass), buoyancy (green, at the centre of buoyancy), drag (yellow), contact force from the floor or walls (purple) and the net force. Arrow lengths are proportional to force, scaled so the weight arrow always has the same length; the legend on the tank lists the values in newtons. <strong>Centre markers</strong> shows the centres of mass and buoyancy.</li>
-											<li><strong>Speed:</strong> slow motion down to 0.1&times; or up to 2&times;.</li>
-											<li><strong>Gravity:</strong> from 1 to 25&nbsp;m/s² (Moon 1.62, Mars 3.71, Earth 9.81, Jupiter 24.79).</li>
-											<li><strong>Liquid depth:</strong> the depth of liquid in the tank before anything is put in it.</li>
-										</ul>
-
-										<h4>Materials</h4>
-										<ul class="buoy-material-list">
-											<li><span class="buoy-swatch" style="background:#c9a36b"></span>Cork &mdash; 240&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch" style="background:#d9a35e"></span>Pine wood &mdash; 500&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch" style="background:#c9ecfa"></span>Ice &mdash; 917&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch" style="background:#e8735f"></span>Nylon (plastic) &mdash; 1,150&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch" style="background:#c3c9cf"></span>Aluminium &mdash; 2,700&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch" style="background:#7b8692"></span>Steel &mdash; 7,850&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch" style="background:#e0b03a"></span>Gold &mdash; 19,300&nbsp;kg/m³</li>
-											<li><span class="buoy-swatch buoy-swatch-air"></span>Sealed air &mdash; 1.2&nbsp;kg/m³</li>
-										</ul>
-
-										<h4>The model</h4>
-										<p>The object is a rigid body made of 1&nbsp;cm cells. Every 1/240&nbsp;s, each cell is cut along the local liquid surface to find exactly how much of it is under the liquid and where; the buoyant force is applied at that point, so the centre of buoyancy and the turning effect come out naturally. Drag acts on the outside faces of the object (pressure drag on faces moving into the liquid, plus skin friction that depends on the liquid's viscosity), and the object also has to accelerate some of the surrounding liquid with it (the &ldquo;added mass&rdquo;). The mean liquid level follows from conservation of volume, and the waves are the tank's natural sloshing modes, calculated with the real dispersion relation for gravity and surface-tension waves. The model is two-dimensional and treats the liquid as static apart from its surface waves, so it captures floating, sinking, stability and splashes well, but not swirling flow or the compression of trapped air.</p>
-									</div>
+											<h4>How to use it</h4>
+											<p>Pick a material and a tool and drag on the tank to draw (a finger works too), then press <strong>Drop</strong>. Drag the object to lift or throw it, or tap the liquid for waves. <span class="icon solid fa-cog"></span> opens the settings: liquid, ready-made objects, force arrows and gravity.</p>
+											<p>The model is 2D: every 1&nbsp;cm cell is cut along the liquid surface to find exactly what is submerged, and liquid inside a hull keeps a level surface and flows through its openings. Drag and waves are included; swirling flow is not.</p>
+										</div>
+									</details>
 								</div>
 							</div>
 						</div>
 					</div>
 
-				<!-- Footer -->
+<!-- Footer -->
 					<footer id="footer">
 						<div class="inner">
 							<section>
