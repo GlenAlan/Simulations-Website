@@ -1,40 +1,59 @@
+// Shared UI for the simulation pages: settings panel, fullscreen, layout measurements, FPS counter.
+// Layout conventions are described at the top of assets/css/simulation_styles.css.
+
+// The canvas size in simulation_styles.css depends on the page's --aspect-ratio (set on .sim-aspect-ratio-box).
+// Copy it up to .simulation-main-content straight away (this script runs at the end of <body>, before the
+// deferred simulation scripts), so the canvas has its final size before a simulation first measures it.
+(function () {
+    const box = document.querySelector('#main > .inner .sim-aspect-ratio-box');
+    const mainContent = document.querySelector('#main > .inner .simulation-main-content');
+    if (!box || !mainContent) return;
+    const ratio = box.style.getPropertyValue('--aspect-ratio').trim() || getComputedStyle(box).getPropertyValue('--aspect-ratio').trim();
+    if (ratio) mainContent.style.setProperty('--aspect-ratio', ratio);
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
     const body = document.body;
-    const siteHeader = document.getElementById('header');
+    const root = document.documentElement;
 
     const simPageInner = document.querySelector('#main > .inner');
     if (!simPageInner) return;
 
     const controlsPanel = simPageInner.querySelector('#simulationControlsPanel');
     const fullscreenToggleBtn = simPageInner.querySelector('.sim-fullscreen-toggle');
-    const panelToggleBtn = simPageInner.querySelector('.sim-panel-toggle-button'); // External settings button (cog)
+    const panelToggleBtn = simPageInner.querySelector('.sim-panel-toggle-button'); // Settings (cog) button
     const simCanvas = simPageInner.querySelector('#simulationCanvas');
     const actionButtonsOverlay = document.querySelector('.sim-action-buttons-overlay');
     const simControlsHeader = controlsPanel ? controlsPanel.querySelector('.sim-controls-header') : null;
-    const simInfoBar = simPageInner.querySelector('.sim-info-bar'); // Get the info bar
+    const simInfoBar = simPageInner.querySelector('.sim-info-bar');
+    const simAreaWrapper = simPageInner.querySelector('.simulation-area-wrapper');
+    const simMainContent = simPageInner.querySelector('.simulation-main-content');
+    const displayContainer = simPageInner.querySelector('.simulation-display-container');
     const aspectRatioBox = simPageInner.querySelector('.sim-aspect-ratio-box');
     const canvasWrapper = aspectRatioBox ? aspectRatioBox.parentElement : null; // .sim-canvas-wrapper
-    let panelCloseBtnInside; // Internal close button for the panel
+    let panelCloseBtnInside; // Close button inside the panel header
     let scrollBeforeFullscreen = 0;
 
     // Convection grid size selector
     const convectionGridSizeSelector = controlsPanel ? controlsPanel.querySelector('#convectionGridSizeSelector') : null;
 
-    const openPanelIcon = '<span class="icon solid fa-cog"><span class="label">Open Settings</span></span>';
-    const closePanelIcon = '<span class="icon solid fa-times"><span class="label">Close Settings</span></span>';
+    const openPanelIcon = '<span class="icon solid fa-cog"><span class="label">Settings</span></span>';
+    const closePanelIcon = '<span class="icon solid fa-times"><span class="label">Close settings</span></span>';
 
-    const fullscreenIconExpand = '<span class="icon solid fa-expand"><span class="label">Enter Fullscreen</span></span>';
-    const fullscreenIconContract = '<span class="icon solid fa-compress"><span class="label">Exit Fullscreen</span></span>';
+    const fullscreenIconExpand = '<span class="icon solid fa-expand"><span class="label">Enter fullscreen</span></span>';
+    const fullscreenIconContract = '<span class="icon solid fa-compress"><span class="label">Exit fullscreen</span></span>';
 
-    // The fullscreen layout (simulation_styles.css) works out the size of .sim-canvas-wrapper
-    // from --aspect-ratio. Pages set it on .sim-aspect-ratio-box (and may change it at run time),
-    // so mirror it onto the wrapper; otherwise the wrapper always assumes 2:1.
+    // Mirror the page's --aspect-ratio (set on .sim-aspect-ratio-box, possibly changed at run time) onto
+    // the canvas wrapper and .simulation-main-content, which size the canvas area from it.
     function syncAspectRatio() {
-        if (!aspectRatioBox || !canvasWrapper) return;
+        if (!aspectRatioBox) return;
         const ratio = aspectRatioBox.style.getPropertyValue('--aspect-ratio').trim();
-        if (ratio && canvasWrapper.style.getPropertyValue('--aspect-ratio').trim() !== ratio) {
-            canvasWrapper.style.setProperty('--aspect-ratio', ratio);
-        }
+        if (!ratio) return;
+        [canvasWrapper, simMainContent].forEach((el) => {
+            if (el && el.style.getPropertyValue('--aspect-ratio').trim() !== ratio) {
+                el.style.setProperty('--aspect-ratio', ratio);
+            }
+        });
     }
 
     // Tell the simulation its display area has changed (simulation cores listen for 'resize').
@@ -42,12 +61,49 @@ document.addEventListener('DOMContentLoaded', () => {
         window.dispatchEvent(new Event('resize'));
     }
 
+    // The settings panel docks beside the simulation when there is room for both (wide screens and
+    // phones in landscape); otherwise it is a sheet that slides up from the bottom of the screen.
+    function panelFitsBeside() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        return w >= 1000 || (w >= 600 && w > h && h <= 600);
+    }
+
+    function updatePanelMode() {
+        const side = panelFitsBeside();
+        body.classList.toggle('sim-panel-side', side);
+        body.classList.toggle('sim-panel-sheet', !side);
+    }
+
+    // The fullscreen and settings buttons go at the end of the info bar, next to the page's own actions,
+    // so they never cover the simulation. Pages without an info bar get them over the canvas's corner.
+    function placeActionButtons() {
+        if (!actionButtonsOverlay) return;
+        if (simInfoBar) {
+            let actions = simInfoBar.querySelector('.sim-info-actions');
+            if (!actions) {
+                actions = document.createElement('div');
+                actions.className = 'sim-info-actions';
+                Array.from(simInfoBar.children).forEach((el) => {
+                    if (el.matches('.sim-reset-button, .sim-show-charts-label, .sim-icon-button')) actions.appendChild(el);
+                });
+                simInfoBar.appendChild(actions);
+            }
+            actions.appendChild(actionButtonsOverlay);
+        } else if (canvasWrapper) {
+            canvasWrapper.appendChild(actionButtonsOverlay);
+            actionButtonsOverlay.classList.add('sim-actions-floating');
+        }
+    }
+
     function createInternalCloseButton() {
         if (controlsPanel && simControlsHeader && !simControlsHeader.querySelector('.sim-panel-close-button-insIDE')) {
             panelCloseBtnInside = document.createElement('button');
+            panelCloseBtnInside.type = 'button';
             panelCloseBtnInside.innerHTML = closePanelIcon;
-            panelCloseBtnInside.className = 'sim-panel-close-button-insIDE'; // Will be styled by CSS to match others
-            panelCloseBtnInside.setAttribute('aria-label', 'Close Settings');
+            panelCloseBtnInside.className = 'sim-panel-close-button-insIDE';
+            panelCloseBtnInside.setAttribute('aria-label', 'Close settings');
+            panelCloseBtnInside.title = 'Close settings (Esc)';
             simControlsHeader.appendChild(panelCloseBtnInside);
 
             panelCloseBtnInside.addEventListener('click', (event) => {
@@ -57,174 +113,203 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // In fullscreen, simulation_styles.css narrows .simulation-main-content while the panel is open
-    // (body.sim-fullscreen-active.sim-panel-active), so no inline sizing is needed here.
-    function openSettingsPanel() {
-        if (controlsPanel && panelToggleBtn) {
-            controlsPanel.classList.add('panel-open');
-            body.classList.add('sim-panel-active'); // CSS hides actionButtonsOverlay
-            panelToggleBtn.setAttribute('aria-expanded', 'true');
-            updatePositions();
-            // The cog button is now hidden; move keyboard focus into the panel.
-            if (panelCloseBtnInside) panelCloseBtnInside.focus({ preventScroll: true });
-            if (body.classList.contains('sim-fullscreen-active')) {
-                notifyLayoutChange(); // Canvas area shrinks to make room for the panel
-            }
+    // On narrow screens the sheet covers the lower part of the screen: scroll the page so the
+    // simulation sits in the space above it.
+    function revealCanvasAboveSheet() {
+        const target = canvasWrapper || displayContainer;
+        if (!target || !controlsPanel) return;
+        const rect = target.getBoundingClientRect();
+        const sheetTop = window.innerHeight - controlsPanel.offsetHeight;
+        const margin = 8;
+        let delta = 0;
+        if (rect.top < margin) {
+            delta = rect.top - margin;
+        } else if (rect.bottom > sheetTop - margin) {
+            delta = Math.min(rect.bottom - (sheetTop - margin), rect.top - margin);
         }
+        if (Math.abs(delta) > 2) window.scrollBy({ top: delta, behavior: 'smooth' });
+    }
+
+    function openSettingsPanel() {
+        if (!controlsPanel) return;
+        updatePanelMode();
+        controlsPanel.classList.add('panel-open');
+        body.classList.add('sim-panel-active');
+        if (panelToggleBtn) panelToggleBtn.setAttribute('aria-expanded', 'true');
+        updatePositions();
+        // Move keyboard focus into the panel.
+        if (panelCloseBtnInside) panelCloseBtnInside.focus({ preventScroll: true });
+        if (body.classList.contains('sim-panel-sheet') && !body.classList.contains('sim-fullscreen-active')) {
+            revealCanvasAboveSheet();
+        }
+        notifyLayoutChange(); // The canvas area shrinks to make room for a docked panel
     }
 
     function closeSettingsPanel() {
-        if (controlsPanel && panelToggleBtn) {
-            const focusWasInPanel = controlsPanel.contains(document.activeElement);
-            controlsPanel.classList.remove('panel-open');
-            body.classList.remove('sim-panel-active'); // CSS shows actionButtonsOverlay
-            panelToggleBtn.setAttribute('aria-expanded', 'false');
-
-            updateButtonIcons(); // Update fullscreen icon if its state could have changed indirectly
-            updatePositions(); // Ensure positions are updated after panel closes
-            if (focusWasInPanel) panelToggleBtn.focus({ preventScroll: true });
-            notifyLayoutChange();
-        }
+        if (!controlsPanel) return;
+        const focusWasInPanel = controlsPanel.contains(document.activeElement);
+        controlsPanel.classList.remove('panel-open');
+        body.classList.remove('sim-panel-active');
+        if (panelToggleBtn) panelToggleBtn.setAttribute('aria-expanded', 'false');
+        root.style.removeProperty('--sim-sheet-h');
+        updatePositions();
+        if (focusWasInPanel && panelToggleBtn) panelToggleBtn.focus({ preventScroll: true });
+        notifyLayoutChange();
+        // A docked panel fades out before giving its width back to the simulation.
+        window.setTimeout(notifyLayoutChange, 260);
     }
 
     function updateButtonIcons() {
+        const isFullscreen = body.classList.contains('sim-fullscreen-active');
         if (fullscreenToggleBtn) {
-             fullscreenToggleBtn.innerHTML = body.classList.contains('sim-fullscreen-active') ? fullscreenIconContract : fullscreenIconExpand;
+            fullscreenToggleBtn.innerHTML = isFullscreen ? fullscreenIconContract : fullscreenIconExpand;
+            fullscreenToggleBtn.title = isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen';
+            fullscreenToggleBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
         }
-        if (panelToggleBtn) { // Ensure the button exists
-            panelToggleBtn.innerHTML = openPanelIcon; // Always set the cog icon for the external button
+        if (panelToggleBtn) {
+            panelToggleBtn.innerHTML = openPanelIcon;
+            panelToggleBtn.title = 'Settings';
         }
-        // The internal panelCloseBtnInside's icon is set upon its creation and doesn't need updating here.
+    }
+
+    // Measure the space above the simulation and under its canvas (simulation_styles.css caps the
+    // canvas height so all of it fits on screen). Only changes of 2px or more are applied, so the
+    // canvas can't creep by a pixel per frame.
+    let fitAbove = -1;
+    let fitBelow = -1;
+    function measureFit() {
+        if (!displayContainer || !canvasWrapper) return;
+        const displayRect = displayContainer.getBoundingClientRect();
+        const wrapperRect = canvasWrapper.getBoundingClientRect();
+        const above = Math.max(0, Math.round(displayRect.top + (window.scrollY || window.pageYOffset || 0)));
+        const below = Math.max(0, Math.ceil(displayRect.bottom - wrapperRect.bottom));
+        if (Math.abs(above - fitAbove) > 1) {
+            fitAbove = above;
+            root.style.setProperty('--sim-above-h', `${above}px`);
+        }
+        if (Math.abs(below - fitBelow) > 1) {
+            fitBelow = below;
+            root.style.setProperty('--sim-below-h', `${below}px`);
+        }
     }
 
     function updatePositions() {
+        updatePanelMode();
         const isFullscreen = body.classList.contains('sim-fullscreen-active');
 
-        // Panel positioning: below the site header normally; full height (above the info bar) in fullscreen
-        if (controlsPanel) {
-            let panelTopOffset = '0px';
-            let panelHeight = '100vh';
-            if (siteHeader && !isFullscreen) {
-                panelTopOffset = `${siteHeader.offsetHeight}px`;
-                panelHeight = `calc(100vh - ${siteHeader.offsetHeight}px)`;
-            }
-            controlsPanel.style.top = panelTopOffset;
-            controlsPanel.style.height = panelHeight;
-        }
-
         // In fullscreen the info bar is fixed to the bottom of the screen and can wrap onto
-        // several lines on narrow screens; the panel's height in CSS uses this to stop above it.
+        // several lines on narrow screens; the layout above it uses its height.
         if (isFullscreen && simInfoBar) {
-            document.documentElement.style.setProperty('--sim-fullscreen-info-bar-height', `${simInfoBar.offsetHeight}px`);
+            root.style.setProperty('--sim-fullscreen-info-bar-height', `${simInfoBar.offsetHeight}px`);
         } else {
-            document.documentElement.style.removeProperty('--sim-fullscreen-info-bar-height');
+            root.style.removeProperty('--sim-fullscreen-info-bar-height');
+            measureFit();
         }
 
-        // Action Buttons Overlay positioning logic
-        // Overlay is hidden by CSS if panel is open (body.sim-panel-active)
-        if (actionButtonsOverlay && !body.classList.contains('sim-panel-active')) {
-            const simulationAreaWrapper = document.querySelector('.simulation-area-wrapper');
-            const displayContainer = document.querySelector('.simulation-display-container');
-
-            if (isFullscreen) {
-                body.classList.remove('sim-buttons-over-canvas');
-                const buttonOffset = getComputedStyle(document.documentElement).getPropertyValue('--sim-button-offset').trim();
-                actionButtonsOverlay.style.position = 'fixed';
-                actionButtonsOverlay.style.top = buttonOffset;
-                actionButtonsOverlay.style.right = buttonOffset;
-                actionButtonsOverlay.style.left = 'auto';
-                actionButtonsOverlay.style.transform = 'none';
-                document.documentElement.style.setProperty('--sim-action-buttons-overlay-height', `${actionButtonsOverlay.offsetHeight}px`);
-            } else { // Non-fullscreen mode
-                actionButtonsOverlay.style.position = 'absolute';
-                const currentButtonOffsetString = getComputedStyle(document.documentElement).getPropertyValue('--sim-button-offset').trim(); // e.g., "5px"
-                const buttonOffsetNumeric = parseFloat(currentButtonOffsetString) || 0; // e.g., 5
-
-                actionButtonsOverlay.style.transform = 'none'; // Reset any transform from CSS
-
-                if (displayContainer && simulationAreaWrapper) {
-                    const displayRect = displayContainer.getBoundingClientRect();
-                    const areaWrapperRect = simulationAreaWrapper.getBoundingClientRect();
-                    // Go over the canvas on small screens, or whenever there's no room to its right.
-                    const fitsBeside = displayRect.right + buttonOffsetNumeric + actionButtonsOverlay.offsetWidth <= document.documentElement.clientWidth;
-                    const overCanvas = window.matchMedia("(max-width: 768px)").matches || !fitsBeside;
-                    // Lets a simulation keep that corner of its canvas clear.
-                    if (body.classList.contains('sim-buttons-over-canvas') !== overCanvas) {
-                        body.classList.toggle('sim-buttons-over-canvas', overCanvas);
-                    }
-
-                    if (overCanvas) {
-                        // Small screens: inside displayContainer (canvas area), top right edge
-                        actionButtonsOverlay.style.top = `${(displayRect.top - areaWrapperRect.top) + buttonOffsetNumeric}px`;
-                        actionButtonsOverlay.style.left = 'auto';
-                        // Calculate right relative to simulationAreaWrapper to place it buttonOffsetNumeric from displayContainer's right edge
-                        actionButtonsOverlay.style.right = `${(areaWrapperRect.right - displayRect.right) + buttonOffsetNumeric}px`;
-                    } else {
-                        // Large screens: right of simulation, vertically aligned with its top
-                        actionButtonsOverlay.style.top = `${(displayRect.top - areaWrapperRect.top)}px`; // Align top with displayContainer top
-                        actionButtonsOverlay.style.left = `${(displayRect.right - areaWrapperRect.left) + buttonOffsetNumeric}px`; // Position to the right of displayContainer with offset
-                        actionButtonsOverlay.style.right = 'auto';
-                    }
-                } else {
-                    // Fallback positioning if containers not found
-                    actionButtonsOverlay.style.top = currentButtonOffsetString;
-                    actionButtonsOverlay.style.right = currentButtonOffsetString;
-                    actionButtonsOverlay.style.left = 'auto';
-                }
-                document.documentElement.style.removeProperty('--sim-action-buttons-overlay-height');
-            }
+        if (controlsPanel && controlsPanel.classList.contains('panel-open') && body.classList.contains('sim-panel-sheet')) {
+            root.style.setProperty('--sim-sheet-h', `${controlsPanel.offsetHeight}px`);
         }
+
+        // Lets a simulation keep the canvas corner under the buttons clear (only when they are over it).
+        const overCanvas = !!(actionButtonsOverlay && actionButtonsOverlay.classList.contains('sim-actions-floating'));
+        if (body.classList.contains('sim-buttons-over-canvas') !== overCanvas) {
+            body.classList.toggle('sim-buttons-over-canvas', overCanvas);
+        }
+    }
+
+    let updateQueued = false;
+    function queueUpdate() {
+        if (updateQueued) return;
+        updateQueued = true;
+        requestAnimationFrame(() => {
+            updateQueued = false;
+            updatePositions();
+        });
+    }
+
+    // Fullscreen fills the browser window; where the browser allows it, the window also goes fullscreen
+    // (hiding the browser's own toolbars, which matters most on phones).
+    function browserFullscreenElement() {
+        return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+
+    function requestBrowserFullscreen() {
+        const el = document.documentElement;
+        const request = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (!request || browserFullscreenElement()) return;
+        // Browsers only allow this from a click or key press (not e.g. from a script).
+        if (navigator.userActivation && !navigator.userActivation.isActive) return;
+        try {
+            const result = request.call(el, { navigationUI: 'hide' });
+            if (result && typeof result.catch === 'function') result.catch(() => {});
+        } catch (e) { /* Not allowed here: the in-page fullscreen still works */ }
+    }
+
+    function exitBrowserFullscreen() {
+        if (!browserFullscreenElement()) return;
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (!exit) return;
+        try {
+            const result = exit.call(document);
+            if (result && typeof result.catch === 'function') result.catch(() => {});
+        } catch (e) { /* Ignore */ }
+    }
+
+    function setFullscreen(enter) {
+        if (enter === body.classList.contains('sim-fullscreen-active')) return;
+        if (enter) scrollBeforeFullscreen = window.scrollY || window.pageYOffset || 0;
+        body.classList.toggle('sim-fullscreen-active', enter);
+        // Toggle a class on simInfoBar for fullscreen-specific styling
+        if (simInfoBar) simInfoBar.classList.toggle('fullscreen-style', enter);
+        updateButtonIcons();
+        if (enter) requestBrowserFullscreen(); else exitBrowserFullscreen();
+        updatePositions();
+        notifyLayoutChange(); // Ensure canvas resizes
+        if (!enter) {
+            // Return to where the page was before entering fullscreen
+            window.scrollTo(0, scrollBeforeFullscreen);
+            updatePositions();
+        }
+    }
+
+    function onBrowserFullscreenChange() {
+        // Leaving the browser's fullscreen (e.g. with its own Esc handling) leaves ours too.
+        if (!browserFullscreenElement() && body.classList.contains('sim-fullscreen-active')) setFullscreen(false);
     }
 
     if (panelToggleBtn && controlsPanel) {
         panelToggleBtn.addEventListener('click', (event) => {
             event.stopPropagation();
-            if (!controlsPanel.classList.contains('panel-open')) {
-                openSettingsPanel();
-            }
+            if (controlsPanel.classList.contains('panel-open')) closeSettingsPanel();
+            else openSettingsPanel();
         });
     }
 
     if (fullscreenToggleBtn && simCanvas) {
         fullscreenToggleBtn.addEventListener('click', () => {
-            const isEnteringFullscreen = !body.classList.contains('sim-fullscreen-active');
-            if (isEnteringFullscreen) scrollBeforeFullscreen = window.scrollY || window.pageYOffset || 0;
-            body.classList.toggle('sim-fullscreen-active', isEnteringFullscreen);
-
-            fullscreenToggleBtn.setAttribute('aria-expanded', isEnteringFullscreen.toString());
-            // Toggle a class on simInfoBar for fullscreen-specific styling
-            if (simInfoBar) {
-                simInfoBar.classList.toggle('fullscreen-style', isEnteringFullscreen);
-            }
-
-            updateButtonIcons();
-            updatePositions();
-            notifyLayoutChange(); // Ensure canvas resizes
-            if (!isEnteringFullscreen) {
-                // Return to where the page was before entering fullscreen
-                window.scrollTo(0, scrollBeforeFullscreen);
-                updatePositions();
-            }
+            setFullscreen(!body.classList.contains('sim-fullscreen-active'));
         });
+        document.addEventListener('fullscreenchange', onBrowserFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', onBrowserFullscreenChange);
     }
 
     // Initial setup
     syncAspectRatio();
+    placeActionButtons();
     createInternalCloseButton();
     updateButtonIcons();
     updatePositions();
 
     window.addEventListener('resize', updatePositions);
+    window.addEventListener('load', queueUpdate);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueUpdate).catch(() => {});
 
-    // Keep the overlay buttons attached to the simulation when its layout changes without a
-    // window resize (e.g. a scrollbar appearing, fonts loading, a simulation resizing its canvas).
+    // Re-measure when the layout changes without a window resize (e.g. a scrollbar appearing, fonts
+    // loading, the info bar wrapping, a simulation changing its aspect ratio).
     if (typeof ResizeObserver !== 'undefined') {
-        const layoutObserver = new ResizeObserver(() => updatePositions());
-        const displayContainer = simPageInner.querySelector('.simulation-display-container');
-        const simulationAreaWrapper = simPageInner.querySelector('.simulation-area-wrapper');
-        if (displayContainer) layoutObserver.observe(displayContainer);
-        if (simulationAreaWrapper) layoutObserver.observe(simulationAreaWrapper);
-        if (simInfoBar) layoutObserver.observe(simInfoBar);
+        const layoutObserver = new ResizeObserver(queueUpdate);
+        [displayContainer, simAreaWrapper, simInfoBar, simPageInner.querySelector('h1'), document.getElementById('header')]
+            .forEach((el) => { if (el) layoutObserver.observe(el); });
     }
 
     if (aspectRatioBox && typeof MutationObserver !== 'undefined') {
@@ -232,16 +317,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            if (body.classList.contains('sim-fullscreen-active')) {
-                // Exit fullscreen (the panel, if open, stays open; a second Escape closes it)
-                if (fullscreenToggleBtn) {
-                    fullscreenToggleBtn.click();
-                }
-            } else if (controlsPanel && controlsPanel.classList.contains('panel-open')) {
-                // If panel is open and not in fullscreen, close the panel
-                closeSettingsPanel();
-            }
+        if (e.key !== 'Escape') return;
+        if (controlsPanel && controlsPanel.classList.contains('panel-open')) {
+            // Close the settings first; a second Escape leaves fullscreen
+            closeSettingsPanel();
+        } else if (body.classList.contains('sim-fullscreen-active')) {
+            setFullscreen(false);
         }
     });
 
