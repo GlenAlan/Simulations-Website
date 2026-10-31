@@ -621,13 +621,17 @@
         const n = list.length;
         ensureScratch(n);
         const stamp = ++gravStamp;
+        const useTree = forceMode === 'tree' || (forceMode === 'auto' && n > DIRECT_MAX);
+        const xs = SX, ys = SY, vxs = SVX, vys = SVY, ms = SM, grp = SGRP, eps = SEPS, a0 = SA0, pair = SPAIR;
         for (let k = 0; k < n; k++) {
             const b = list[k];
-            SX[k] = b.x; SY[k] = b.y; SVX[k] = b.vx; SVY[k] = b.vy; SM[k] = b.m;
-            SGRP[k] = b.grp || 0;
-            SEPS[k] = b.grp ? softLength(b) : 0;
-            SA0[k] = b.ax || b.ay ? Math.sqrt(b.ax * b.ax + b.ay * b.ay) : 0;
-            SPAIR[k] = -1;
+            xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
+            const g = b.grp || 0;
+            grp[k] = g;
+            eps[k] = g ? softLength(b) : 0;
+            // (the last acceleration: the tree's relative criterion needs it)
+            a0[k] = useTree && (b.ax || b.ay) ? Math.sqrt(b.ax * b.ax + b.ay * b.ay) : 0;
+            pair[k] = -1;
             b.slot = k; b.stamp = stamp;
         }
         if (pairs) {
@@ -646,14 +650,14 @@
         } else {
             pnCount = 0;
             if (pn) for (let k = 0; k < n; k++) { PAX[k] = 0; PAY[k] = 0; }
-            const useTree = forceMode === 'tree' || (forceMode === 'auto' && n > DIRECT_MAX);
             tmin = useTree ? gravityTree(n, pn) : gravityDirect(n, pn);
             if (pn) {
                 for (let k = 0; k < n; k++) { NAX[k] = SAX[k]; NAY[k] = SAY[k]; SAX[k] += PAX[k]; SAY[k] += PAY[k]; }
                 pnList = list; pnN = n; pnTmin = tmin;
             }
         }
-        for (let k = 0; k < n; k++) { const b = list[k]; b.ax = SAX[k]; b.ay = SAY[k]; }
+        const axs = SAX, ays = SAY;
+        for (let k = 0; k < n; k++) { const b = list[k]; b.ax = axs[k]; b.ay = ays[k]; }
         return tmin;
     }
 
