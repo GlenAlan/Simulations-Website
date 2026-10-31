@@ -1,8 +1,8 @@
 /* --- Orbits & Gravity simulation page styles (loaded after simulation_styles.css) --- */
 
 .orbits-sim {
-    --orb-chip-w: 66px;                                 /* body chips in the palette */
-    --orb-chip-h: 50px;
+    --orb-chip-w: 64px;                                 /* body chips in the palette */
+    --orb-chip-h: 48px;
     --orb-cols: 2;                                      /* chips per row in the column beside the canvas */
     /* tool column beside the canvas: chips, 4px gaps, padding and border */
     --orb-side-w: calc(var(--orb-cols) * (var(--orb-chip-w) + 4px) + 10px);
@@ -57,6 +57,24 @@ html:not(.dark-mode) .orbits-sim {
     flex-wrap: wrap;
     gap: 4px;
     flex: 1 1 100%;
+}
+
+/* Groups of chips (stars, dead stars, planets, small bodies): headed in the column beside the canvas;
+   under it the chips simply flow on, in the same order. */
+.orb-group,
+.orb-group-chips {
+    display: contents;
+}
+
+.orb-group-label {
+    display: none;
+    margin: 0;
+    font-size: 0.7em;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.6;
 }
 
 .orb-toolbar button {
@@ -226,6 +244,11 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
    The column has a fixed width, so the display container is made that much wider than the
    canvas (which the shared layout sizes from the screen height). */
 @media (orientation: landscape) and (min-width: 640px) {
+    .orbits-sim {
+        --orb-chip-w: 80px;                             /* room for "Neutron star" */
+        --orb-chip-h: 38px;
+    }
+
     .orbits-sim .simulation-display-container {
         display: grid;
         grid-template-columns: var(--orb-side-w) minmax(0, 1fr);
@@ -243,8 +266,9 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
         grid-area: info;
     }
 
-    /* As tall as the canvas beside it, never taller; if the chips need more room they scroll,
-       with soft shadows at the edges that show there is more. */
+    /* As tall as the canvas beside it, never taller. The "Fit view" button and the hint (which shows
+       the speed while a velocity is aimed) always show; if the chips need more room than is left they
+       scroll, with soft shadows at the edges that show there is more. */
     .orb-toolbar {
         grid-area: tools;
         display: flex;
@@ -255,6 +279,24 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
         margin-top: 0;
         min-height: 0;
         contain: size;
+        overflow: hidden;
+    }
+
+    .orb-toolbar-label {
+        display: block;
+        flex: 0 0 auto;
+        padding: 2px 2px 0;
+    }
+
+    .orb-palette {
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        gap: 7px;
+        flex: 0 1 auto;
+        min-height: 0;
+        margin: -2px -2px 0;
+        padding: 2px 2px 4px;
         overflow-x: hidden;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -267,22 +309,32 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
         background-color: var(--color-bg-alt);
     }
 
-    .orb-toolbar-label {
+    .orb-group {
         display: block;
-        padding: 2px 2px 0;
     }
 
-    .orb-palette {
+    .orb-group-label {
+        display: block;
+        padding: 0 2px 3px;
+    }
+
+    .orb-group-chips {
         display: grid;
         grid-template-columns: repeat(var(--orb-cols), minmax(0, 1fr));
-        flex: 0 0 auto;
+        gap: 4px;
     }
 
     .orb-toolbar .orb-chip {
         max-width: none;
         width: 100%;
+        gap: 3px;
         padding-left: 4px;
         padding-right: 4px;
+    }
+
+    .orb-toolbar .orb-chip-disc {
+        max-width: 16px;
+        max-height: 16px;
     }
 
     /* The column has a fixed width but the page text grows on wide screens: cap the names' size
@@ -293,17 +345,19 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
 
     .orb-toolbar .orb-fit {
         order: 0;
+        flex: 0 0 auto;
         width: 100%;
     }
 
+    /* Room for five lines, so a longer hint never moves the chips */
     .orb-hint {
         order: 0;
         flex: 0 0 auto;
-        height: auto;
+        height: 7.1em;
         display: block;
-        font-size: 0.9em;
+        font-size: 0.88em;
         line-height: 1.4;
-        padding: 2px 2px 0;
+        padding: 0 2px;
     }
 
     /* Phones held sideways: no room for the hint; slim chips (disc beside the name) so the whole
@@ -316,28 +370,35 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
         }
 
         .orbits-sim {
-            --orb-chip-w: 80px;
+            --orb-chip-w: 76px;
         }
 
         .orb-toolbar {
             gap: 6px;
         }
 
+        /* the groups simply follow on, a little apart */
+        .orb-group-label {
+            display: none;
+        }
+
+        .orb-palette {
+            gap: 6px;
+        }
+
         .orb-toolbar .orb-chip {
-            flex-direction: row;
-            justify-content: flex-start;
-            gap: 5px;
-            height: 32px;
-            padding: 0 5px;
+            gap: 2px;
+            height: 34px;
+            padding: 2px 3px 1px;
         }
 
         .orb-toolbar .orb-chip .orb-chip-name {
-            font-size: 0.78em;
+            font-size: 0.7em;
         }
 
         .orb-toolbar .orb-chip .orb-chip-disc {
-            width: 12px !important;
-            height: 12px !important;
+            width: 10px !important;
+            height: 10px !important;
         }
 
         .orb-chip-disc.is-custom {
@@ -397,7 +458,10 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     background: #7ecaf6;
 }
 
+/* The name keeps its room; "around the centre of mass" gives way */
 .orb-subject-name {
+    flex: 0 1 auto;
+    min-width: 3.5em;
     font-weight: 700;
     color: var(--sim-value-color);
     overflow: hidden;
@@ -405,6 +469,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 }
 
 .orb-subject-around {
+    flex: 0 100 auto;
+    min-width: 0;
     opacity: 0.75;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -749,6 +815,12 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     background: var(--color-accent);
     border: 2px solid var(--color-bg-alt);
     box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* A black hole's size is set by its mass: its slider is shown but can't be moved */
+.orb-popover input[type="range"]:disabled {
+    opacity: 0.35;
+    cursor: default;
 }
 
 .orb-popover input[type="range"]:focus-visible::-webkit-slider-thumb {
