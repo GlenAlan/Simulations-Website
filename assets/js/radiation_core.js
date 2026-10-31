@@ -583,7 +583,7 @@
         pal = dark ? {
             dark: true,
             chamber: '#141519', wall: '#4b4e58', text: '#ececec', muted: 'rgba(236,236,236,0.66)',
-            faint: 'rgba(236,236,236,0.42)', panel: 'rgba(20,21,25,0.72)', ir: '#ff6ec7', lead: '#7c818b', glass: 'rgba(255,255,255,0.10)',
+            faint: 'rgba(236,236,236,0.42)', panel: 'rgba(20,21,25,0.8)', ir: '#ff6ec7', lead: '#7c818b', glass: 'rgba(255,255,255,0.10)',
             glassEdge: 'rgba(255,255,255,0.65)', liquid: '#ff4d4f', barIn: '#ffa94d', barWalls: '#868e96',
             barOut: '#ff6ec7', barTrack: 'rgba(255,255,255,0.08)', warm: '#ff8787', cool: '#74c0fc',
             steady: '#8ce99a', outline: 'rgba(255,255,255,0.55)', highlight: 'rgba(255,255,255,0.8)',
@@ -591,7 +591,7 @@
         } : {
             dark: false,
             chamber: '#f5f6f8', wall: '#b4b8c1', text: '#2b2b2b', muted: 'rgba(43,43,43,0.85)',
-            faint: 'rgba(43,43,43,0.6)', panel: 'rgba(245,246,248,0.82)', ir: '#c2187a', lead: '#8b9099', glass: 'rgba(0,0,0,0.05)',
+            faint: 'rgba(43,43,43,0.6)', panel: 'rgba(245,246,248,0.86)', ir: '#c2187a', lead: '#8b9099', glass: 'rgba(0,0,0,0.05)',
             glassEdge: 'rgba(0,0,0,0.55)', liquid: '#e03131', barIn: '#f08c00', barWalls: '#adb5bd',
             barOut: '#c2187a', barTrack: 'rgba(0,0,0,0.06)', warm: '#e03131', cool: '#1c7ed6',
             steady: '#2b8a3e', outline: 'rgba(0,0,0,0.55)', highlight: 'rgba(0,0,0,0.7)',
@@ -609,36 +609,15 @@
 
     // --- Canvas sizing ---
     let cssW = 0, cssH = 0, dpr = 1, scale = 1;
+    // The shared stylesheet sizes the 2:1 aspect-ratio box (normal and fullscreen); the drawing
+    // buffer just follows the canvas's displayed size and the device pixel ratio.
     function handleResize() {
         if (!canvas || !ctx) return;
-        const box = canvas.parentElement;
-        if (!box) return;
-        const isFullscreen = document.body.classList.contains('sim-fullscreen-active');
-        let ratio = 2;
-        const ratioStr = getComputedStyle(box).getPropertyValue('--aspect-ratio').trim();
-        if (ratioStr) {
-            const parts = ratioStr.split('/');
-            const r = parts.length === 2 ? parseFloat(parts[0]) / parseFloat(parts[1]) : parseFloat(ratioStr);
-            if (isFinite(r) && r > 0) ratio = r;
-        }
-        let w, h;
-        if (isFullscreen) {
-            const wrapper = box.parentElement;
-            if (!wrapper) return;
-            const aw = wrapper.clientWidth, ah = wrapper.clientHeight;
-            if (aw <= 0 || ah <= 0) return;
-            if (aw / ah > ratio) { h = ah; w = h * ratio; } else { w = aw; h = w / ratio; }
-            box.style.width = `${w}px`;
-            box.style.height = `${h}px`;
-        } else {
-            box.style.width = '';
-            box.style.height = '';
-        }
         // Measure the canvas itself: the box has a border, so its outer size is 2px larger.
         const rect = canvas.getBoundingClientRect();
-        w = rect.width; h = rect.height;
-        w = Math.max(1, Math.round(w));
-        h = Math.max(1, Math.round(h));
+        if (rect.width < 1 || rect.height < 1) return;
+        const w = Math.max(1, Math.round(rect.width));
+        const h = Math.max(1, Math.round(rect.height));
         const newDpr = Math.min(2, window.devicePixelRatio || 1); // 3x phones gain little; keeps the fill rate down
         if (w === cssW && h === cssH && newDpr === dpr) return;
         cssW = w; cssH = h; dpr = newDpr;
@@ -691,8 +670,11 @@
         ctx.strokeStyle = thermal ? 'rgba(255,255,255,0.35)' : pal.wall;
         ctx.lineWidth = 2;
         ctx.strokeRect(1, 1, cssW - 2, cssH - 2);
+    }
 
-        if (!state.showLabels || cssW < 560) return; // no room for it beside the captions on small canvases
+    // "Vacuum chamber" title (Labels only; no room for it beside the captions on small canvases).
+    function drawChamberTitle(thermal) {
+        if (!state.showLabels || cssW < 560) return;
         const small = fontPx * 0.9;
         setFont(small, 600);
         ctx.textAlign = 'left';
@@ -1334,6 +1316,7 @@
             drawThermometer(cx, X(b.y0 + 1.2), X(b.y0 - 13), b.T, thermal);
         }
         drawFlashes();
+        drawChamberTitle(thermal);
         drawDistances(thermal);
         // Smoothly adapt the energy-bar scale to the largest flow
         let maxFlow = 1;
@@ -1759,9 +1742,8 @@
 
         window.addEventListener('resize', handleResize);
         if (typeof ResizeObserver !== 'undefined') {
-            const ro = new ResizeObserver(() => requestAnimationFrame(handleResize));
-            const wrapper = canvas.closest('.sim-canvas-wrapper');
-            if (wrapper) ro.observe(wrapper);
+            // Watch the canvas itself: the layout can resize it without a window resize.
+            new ResizeObserver(() => handleResize()).observe(canvas);
         }
         // Fullscreen is toggled with a class on <body>; theme with a class on <html>.
         new MutationObserver(() => setTimeout(handleResize, 60)).observe(document.body, { attributes: true, attributeFilter: ['class'] });

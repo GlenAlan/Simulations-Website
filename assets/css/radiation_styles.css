@@ -23,6 +23,7 @@
 .sim-controls-content label .rad-sub {
     margin-left: 0.25em;
     opacity: 0.75;
+    white-space: nowrap;
 }
 
 /* Labels above the two surface selects. */
