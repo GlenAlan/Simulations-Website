@@ -1,0 +1,359 @@
+/* --- Special Relativity simulation page styles (loaded after simulation_styles.css) --- */
+
+.relativity-sim {
+    --rel-btn-h: 34px;
+}
+
+@media (pointer: coarse) {
+    .relativity-sim {
+        --rel-btn-h: 40px;
+    }
+}
+
+/* The canvas only takes taps (to ride along with a craft), so swipes on it scroll the page. */
+#simulationCanvas {
+    touch-action: manipulation;
+}
+
+#simulationCanvas.rel-can-click {
+    cursor: pointer;
+}
+
+/* ---------- Main controls under the canvas: the frame switch and the speed slider ----------
+   One row on wide screens; on phones the slider gets a row of its own. */
+.rel-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 20px;
+    margin-top: 0.5em;
+    padding: 5px 12px 5px 6px;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius, 6px);
+    font-size: 0.85em;
+    line-height: 1.3;
+}
+
+.rel-toolbar-label {
+    flex: 0 0 auto;
+    font-weight: 300;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.rel-frame {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    flex: 0 0 auto;
+}
+
+/* Station / Ship: a segmented switch that shows which frame is on */
+.rel-seg {
+    display: flex;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.rel-toolbar .rel-frame-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45em;
+    flex: 1 1 0;
+    height: var(--rel-btn-h);
+    min-width: 0;
+    margin: 0;
+    padding: 0 0.9em;
+    font-size: 0.95em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.rel-toolbar .rel-frame-btn:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+.rel-toolbar .rel-frame-btn:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+.rel-toolbar .rel-frame-btn .icon:before {
+    line-height: 1;
+}
+
+.rel-toolbar .rel-frame-btn[aria-checked="true"] {
+    background-color: var(--color-accent);
+    color: #ffffff !important;
+}
+
+@media (hover: hover) {
+    .rel-toolbar .rel-frame-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .rel-toolbar .rel-frame-btn[aria-checked="true"]:hover {
+        background-color: var(--color-accent-active);
+        box-shadow: none;
+    }
+}
+
+.rel-toolbar .rel-frame-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+/* Speed: label, slider, value */
+.rel-toolbar .rel-velocity {
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    flex: 1 1 18em;
+    min-width: 0;
+    margin: 0;
+    font-size: 1em;
+    font-weight: 400;
+}
+
+.rel-velocity-value {
+    flex: 0 0 auto;
+    font-size: 1.1em;
+    white-space: nowrap;
+    color: var(--sim-value-color);
+}
+
+.rel-velocity-value .sim-value {
+    font-weight: 700;
+}
+
+.rel-velocity-value em {
+    font-weight: 400;
+}
+
+/* The slider looks like the ones in the settings panel (simulation_styles.css), a little bolder. */
+.rel-velocity input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    flex: 1 1 auto;
+    min-width: 6em;
+    height: var(--rel-btn-h);
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+}
+
+.rel-velocity input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, var(--color-accent) 0 var(--rel-fill, 0%), var(--sim-track) var(--rel-fill, 0%) 100%);
+}
+
+.rel-velocity input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -7px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+    transition: transform 0.1s ease;
+}
+
+.rel-velocity input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sim-track);
+}
+
+.rel-velocity input[type="range"]::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-accent);
+}
+
+.rel-velocity input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.rel-velocity input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.15);
+}
+
+.rel-velocity input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.rel-velocity input[type="range"]:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+@media (pointer: coarse) {
+    .rel-velocity input[type="range"]::-webkit-slider-thumb {
+        width: 26px;
+        height: 26px;
+        margin-top: -10px;
+    }
+
+    .rel-velocity input[type="range"]::-moz-range-thumb {
+        width: 22px;
+        height: 22px;
+    }
+}
+
+/* Phones: the frame switch fills the first row, the slider the second */
+@media (max-width: 600px) {
+    .rel-toolbar {
+        padding: 5px 8px 5px 6px;
+        gap: 4px 12px;
+    }
+
+    .rel-frame {
+        flex: 1 1 100%;
+    }
+
+    .rel-seg {
+        flex: 1 1 auto;
+    }
+
+    .rel-toolbar .rel-velocity {
+        flex: 1 1 100%;
+        padding-left: 2px;
+    }
+}
+
+/* ---------- Short landscape screens (phones held sideways): the controls in a column beside the canvas ----------
+   A row under the canvas would cost it a third of the screen's height. The column has a fixed width, so the
+   display container is made that much wider than the canvas (which the shared layout sizes from the height). */
+@media (orientation: landscape) and (max-height: 540px) {
+    .relativity-sim {
+        --rel-side-w: 138px;
+        --rel-side-gap: 8px;
+    }
+
+    .relativity-sim .simulation-display-container {
+        display: grid;
+        grid-template-columns: var(--rel-side-w) minmax(0, 1fr);
+        grid-template-areas: "tools canvas" "info info";
+        column-gap: var(--rel-side-gap);
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 2 / 1)) + 2px + var(--rel-side-w) + var(--rel-side-gap)));
+    }
+
+    .relativity-sim .sim-canvas-wrapper {
+        grid-area: canvas;
+        min-width: 0;
+    }
+
+    .relativity-sim .sim-info-bar {
+        grid-area: info;
+    }
+
+    .rel-toolbar {
+        grid-area: tools;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        align-self: start;
+        gap: 10px;
+        margin-top: 0;
+        padding: 8px;
+    }
+
+    .rel-frame {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+    }
+
+    .rel-seg {
+        flex-direction: column;
+    }
+
+    .rel-toolbar .rel-frame-btn {
+        flex: 0 0 auto;
+        justify-content: flex-start;
+        padding: 0 0.7em;
+    }
+
+    .rel-toolbar .rel-frame-btn:first-child {
+        border-radius: 4px 4px 0 0;
+    }
+
+    .rel-toolbar .rel-frame-btn:last-child {
+        border-radius: 0 0 4px 4px;
+    }
+
+    /* "Speed  0.80 c" over the slider */
+    .rel-toolbar .rel-velocity {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "label value" "slider slider";
+        align-items: center;
+        gap: 2px 6px;
+        flex: 0 0 auto;
+    }
+
+    .rel-velocity .rel-toolbar-label {
+        grid-area: label;
+    }
+
+    .rel-velocity-value {
+        grid-area: value;
+    }
+
+    .rel-velocity input[type="range"] {
+        grid-area: slider;
+        width: 100%;
+        min-width: 0;
+    }
+
+    /* Fullscreen: the grid fills the space above the fixed info bar */
+    body.sim-fullscreen-active .relativity-sim .simulation-display-container {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "tools canvas";
+        width: 100%;
+    }
+
+    body.sim-fullscreen-active .relativity-sim .sim-canvas-wrapper {
+        height: 100%;
+    }
+}
+
+/* ---------- Info bar: a colour key in front of each clock ---------- */
+.rel-dot {
+    display: inline-block;
+    width: 0.6em;
+    height: 0.6em;
+    margin-right: 0.4em;
+    border-radius: 50%;
+    vertical-align: 0.05em;
+    background-color: currentColor;
+}
+
+/* ---------- Settings panel ---------- */
+.sim-controls-content .rel-hint {
+    font-size: 0.8em;
+    opacity: 0.75;
+}
