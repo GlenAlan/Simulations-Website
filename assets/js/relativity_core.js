@@ -17,6 +17,12 @@
  *   the probes leave their craft at the same speed u, and the moving craft's probe is measured at
  *   (u + v)/(1 + uv/c²), never more than c. Strobe marks every 0.25 s show the speeds; "Newton's
  *   prediction" adds ghosts where the moving craft's flash and probe would be if speeds simply added.
+ * - Lightning (Einstein's train): lightning strikes both ends of the ship just as its middle passes the
+ *   station's middle, at the same moment measured from the station. Each flash runs along the track at c,
+ *   both ways from where its strike happened (measured in the shown frame), to a detector in the middle of
+ *   each craft, whose two lamps light as the flashes from behind and ahead arrive. The station's detector gets both at once and the ship's gets the front
+ *   flash first, in both frames; measured from the ship the front strike happened γvL/c²·(1/γ) = vL0/c²
+ *   earlier, so its detector, half way between the strikes, sees them in the order they happened.
  * - Light clocks: a ship and a station with the same rest length, each carrying a light clock (a pulse of
  *   light bouncing between two mirrors 0.5 light-seconds apart, so it ticks once a second). The craft at
  *   rest stays in the middle; the moving one wraps round the edges (as if the track were lined with
@@ -76,6 +82,18 @@
         MIN_SPAN: 5.5     // narrowest scene (ls)
     };
 
+    // Lightning (light-seconds and seconds): the light-clock ship and station, without their clocks
+    const LN = {
+        SIZE: 0.75,       // drawing scale (the light-clock craft are 1.6 ls long)
+        L0: 1.2,          // rest length of each craft (ls); the strikes hit the ship's nose and tail
+        GAP: 0.3,         // space between the ship's lane and the station's (ls)
+        LEAD: 1.0,        // s before the first strike
+        AFTER: 0.9,       // s after the last flash reaches a detector
+        HOLD: 1.8,        // s (real) holding the last picture before starting again
+        RATE: 0.5,        // s of the shown frame per second at 1x
+        MIN_SPAN: 4.2     // narrowest scene (ls)
+    };
+
     // Light clocks (light-seconds and seconds)
     const LC = {
         L0: 1.6,          // rest length of the ship and of the station (ls)
@@ -116,6 +134,14 @@
             show: ['paths', 'newton'], probe: true,
             hint: 'As the ship passes the station, each fires a flash of light and a probe straight ahead. The probes leave at the speed set here.',
             aria: 'A spaceship passes a space station; each fires a flash of light and a probe forward, and the two flashes stay level'
+        },
+        lightning: {
+            home: { name: 'Station', the: 'the station', icon: 'fa-satellite' },
+            away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
+            v: 0.6,
+            show: [],
+            hint: 'Lightning strikes both ends of the ship as its middle passes the station\u2019s middle. Lamps in the middle of each craft light as the flashes arrive.',
+            aria: 'Lightning strikes both ends of a spaceship as it passes a space station; light spreads out from each strike to a detector in the middle of each craft'
         },
         clocks: {
             home: { name: 'Station', the: 'the station', icon: 'fa-satellite' },
@@ -192,6 +218,9 @@
         hold: 0,              // s (real) left holding the last picture
         flashAt: -9           // real time the flashes were fired (for the burst at the muzzles)
     };
+
+    // Lightning
+    const ln = { t: 0, hold: 0, struck: [-9, -9] };   // frame time (s); real time of each strike (rear, front)
 
     // Light clocks
     const lc = {
@@ -322,6 +351,61 @@
             lt.t = end;
             lt.hold = LT.HOLD;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Lightning: physics
+    // ------------------------------------------------------------------
+    // The two strikes (rear, front) and the craft, measured in the shown frame. Both middles are at x = 0 at
+    // t = 0, when (measured from the station) lightning hits both ends of the ship. Each strike leaves a mark on
+    // the ship's end and on the station beside it; `own` is where each mark is along its craft, in the craft's own
+    // frame. Each detector (in a craft's middle) gets each flash when the spreading light reaches it.
+    function lightningState() {
+        const v = S.v, g = gammaOf(v);
+        const hm = homeMoves();
+        const L = LN.L0;
+        // Strikes: measured from the station at x = ∓L/(2γ), t = 0; from the ship at x = ∓L/2, t = ±vL/2.
+        const strikes = hm ? [{ x: -L / 2, t: v * L / 2 }, { x: L / 2, t: -v * L / 2 }]
+            : [{ x: -L / (2 * g), t: 0 }, { x: L / (2 * g), t: 0 }];
+        const craft = (u) => ({ u, moving: u !== 0, x0: 0 });
+        const home = craft(hm ? -v : 0), away = craft(hm ? 0 : v);
+        const own = { home: [-L / (2 * g), L / (2 * g)], away: [-L / 2, L / 2] };
+        // When the light from strike s reaches the middle of a craft moving at u (from x = 0 at t = 0)
+        const arrival = (s, u) => {
+            const side = Math.sign(u * s.t - s.x) || 1;     // where the detector is, relative to the strike
+            return side > 0 ? (-s.x + s.t) / (1 - u) : (s.x + s.t) / (1 + u);
+        };
+        const det = {
+            home: strikes.map((s) => arrival(s, home.u)),
+            away: strikes.map((s) => arrival(s, away.u))
+        };
+        const first = Math.min(strikes[0].t, strikes[1].t);
+        const last = Math.max(...det.home, ...det.away);
+        return { v, g, t: ln.t, strikes, home, away, own, det, start: first - LN.LEAD, end: last + LN.AFTER };
+    }
+
+    function resetLightning() {
+        ln.t = lightningState().start;
+        ln.hold = 0;
+        ln.struck = [-9, -9];
+    }
+
+    function stepLightning(dt, dtReal) {
+        if (ln.hold > 0) {
+            ln.hold -= dtReal;
+            if (ln.hold <= 0) {
+                resetLightning();
+                resetChartData();
+            }
+            return;
+        }
+        const st = lightningState();
+        const before = ln.t;
+        ln.t = Math.min(st.end, ln.t + dt);
+        st.strikes.forEach((s, i) => {
+            if (before < s.t && ln.t >= s.t) ln.struck[i] = realNow;
+        });
+        if (ln.t >= st.end) ln.hold = LN.HOLD;
     }
 
     // ------------------------------------------------------------------
@@ -989,6 +1073,29 @@
         }
     }
 
+    // A detector in place of a craft's windows: a dark panel with two lamps, lit by light that has arrived
+    // from behind (lit[0]) and from ahead (lit[1]).
+    function drawLamps(lit) {
+        localRect(-0.15, -0.22, 0.15, -0.08, 0.035);
+        ctx.fillStyle = pal.glass;
+        ctx.fill();
+        [[-0.125, -0.012], [0.012, 0.125]].forEach((seg, i) => {
+            if (lit[i]) {
+                const x = tx((seg[0] + seg[1]) / 2), y = ty(-0.15), r = 0.16 * tky;
+                const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+                g.addColorStop(0, `rgba(${pal.chamberLightRGB},0.75)`);
+                g.addColorStop(1, `rgba(${pal.chamberLightRGB},0)`);
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, TAU);
+                ctx.fill();
+            }
+            localRect(seg[0], -0.19, seg[1], -0.11, 0.015);
+            ctx.fillStyle = lit[i] ? pal.photon : 'rgba(255,255,255,0.14)';
+            ctx.fill();
+        });
+    }
+
     // The ship: a slim fuselage with a long nose, a swept tail fin and an engine bell, and a tall collar
     // amidships that holds the light clock (or, with bay false, two cabin windows).
     function drawShip(bay, flash) {
@@ -1046,7 +1153,9 @@
         // Collar
         localRect(-0.22, -0.33, 0.22, 0.33, 0.1);
         fillTones(pal.ship, pal.shipLo, pal.shipHi, 0.06, -0.33);
-        if (bay) {
+        if (Array.isArray(bay)) {
+            drawLamps(bay);
+        } else if (bay) {
             drawBay(flash || 0);
         } else {
             ctx.fillStyle = pal.glass;
@@ -1091,7 +1200,9 @@
         ring(Math.PI / 2, Math.PI * 1.5);
         ctx.fillStyle = pal.st;
         ctx.fill();
-        if (bay) {
+        if (Array.isArray(bay)) {
+            drawLamps(bay);
+        } else if (bay) {
             drawBay(flash || 0);
         } else {
             ctx.fillStyle = pal.glass;
@@ -1339,6 +1450,145 @@
                 }
             }
         }
+        drawScaleBar(k, 'ls', f);
+        drawCaption(f);
+    }
+
+    // ------------------------------------------------------------------
+    // Scene: lightning
+    // ------------------------------------------------------------------
+    // The ship's lane above the station's, each name on the outside. Both lanes share x, so a flash's front is
+    // a vertical line across both.
+    function lightningLayout() {
+        const f = fontPx;
+        const capH = Math.round(f * 2.3);
+        const labelH = Math.round(f * 1.9);
+        const botH = Math.round(f * 1.8);
+        const s = LN.SIZE;
+        const span = (0.34 + 0.33 + 0.46 + 0.46) * s + LN.GAP;     // fin top to the bottom of the station's wheel (ls)
+        const free = viewH - capH - botH - 2 * labelH;
+        const k = Math.max(8, Math.min(viewW / LN.MIN_SPAN, free / span));
+        const spare = Math.max(0, free - span * k);
+        const top = capH + labelH + spare / 2;
+        const yShip = top + 0.34 * s * k;
+        const yStation = yShip + (0.33 * s + LN.GAP + 0.46 * s) * k;
+        return { f, k, labelH, yShip, yStation, top, bottom: yStation + 0.46 * s * k, cx: viewW / 2, P: viewW / k };
+    }
+
+    // A lightning bolt from the top of the canvas down to (x, y), fading out.
+    function drawBolt(x, y, top, alpha, seed) {
+        if (alpha <= 0) return;
+        const n = 7;
+        ctx.beginPath();
+        ctx.moveTo(x + (seed % 2 ? 10 : -10), top);
+        for (let i = 1; i < n; i++) {
+            const yy = top + (y - top) * i / n;
+            const jag = ((i * 37 + seed * 11) % 7 - 3) * 4;
+            ctx.lineTo(x + jag, yy);
+        }
+        ctx.lineTo(x, y);
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = `rgba(${pal.chamberLightRGB},${(0.35 * alpha).toFixed(3)})`;
+        ctx.lineWidth = 7;
+        ctx.stroke();
+        ctx.strokeStyle = dark ? `rgba(255,250,225,${alpha.toFixed(3)})` : `rgba(${pal.lightRGB},${alpha.toFixed(3)})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.lineJoin = 'miter';
+    }
+
+    // A small four-pointed mark where a strike hit.
+    function drawScorch(x, y) {
+        ctx.fillStyle = dark ? '#ffe9a8' : '#b8860b';
+        ctx.beginPath();
+        ctx.moveTo(x, y - 5);
+        ctx.lineTo(x + 1.6, y - 1.6);
+        ctx.lineTo(x + 5, y);
+        ctx.lineTo(x + 1.6, y + 1.6);
+        ctx.lineTo(x, y + 5);
+        ctx.lineTo(x - 1.6, y + 1.6);
+        ctx.lineTo(x - 5, y);
+        ctx.lineTo(x - 1.6, y - 1.6);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    function drawLightning() {
+        const lay = lightningLayout();
+        const st = lightningState();
+        const k = lay.k, f = lay.f, t = st.t, g = st.g;
+        const X = (x) => lay.cx + x * k;
+        const hm = homeMoves();
+        drawStars(k, lay.P, hm ? st.home.u * (t - st.start) : 0, hm ? g : 1);
+        const lightRGB = dark ? pal.chamberLightRGB : pal.lightRGB;
+        const y0 = lay.top - 0.1 * k, y1 = lay.bottom + 0.06 * k;
+
+        // Each flash runs both ways along the track at c from where its strike happened in this frame: a front
+        // across both lanes, fading once it has passed both detectors.
+        st.strikes.forEach((s) => {
+            if (t < s.t) return;
+            const d = t - s.t;
+            const reach = Math.max(Math.abs(st.home.u * t - s.x), Math.abs(st.away.u * t - s.x));
+            const a = clamp(1 - (d - reach - 0.3) / 0.8, 0, 1);
+            if (a <= 0) return;
+            for (const dir of [-1, 1]) {
+                const x = X(s.x + dir * d);
+                if (x < -10 || x > viewW + 10) continue;
+                ctx.strokeStyle = `rgba(${lightRGB},${(0.16 * a).toFixed(3)})`;
+                ctx.lineWidth = 8;
+                ctx.beginPath();
+                ctx.moveTo(x, y0);
+                ctx.lineTo(x, y1);
+                ctx.stroke();
+                ctx.strokeStyle = `rgba(${lightRGB},${(0.9 * a).toFixed(3)})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.globalAlpha = a;
+                drawLightTag(x + (dir > 0 ? 4 : -f * 0.75), y0 + f * 0.4, f);
+                ctx.globalAlpha = 1;
+            }
+        });
+
+        // The craft, with a detector in each middle, and the marks the strikes left on them
+        const lanes = [
+            { which: 'away', c: st.away, y: lay.yShip, text: pal.pinkText },
+            { which: 'home', c: st.home, y: lay.yStation, text: pal.blueText }
+        ];
+        for (const lane of lanes) {
+            const c = lane.c;
+            const sx = c.moving ? 1 / g : 1;
+            const xs = X(c.u * t);
+            const lit = st.det[lane.which].map((td) => t >= td - 1e-9);
+            setCraft(xs, lane.y, k * LN.SIZE * sx, k * LN.SIZE);
+            if (lane.which === 'away') drawShip(lit);
+            else drawStation(lit);
+            st.strikes.forEach((s, i) => {
+                if (t >= s.t) drawScorch(xs + st.own[lane.which][i] * sx * k, lane.y + (lane.which === 'away' ? 0.02 * LN.SIZE * k : 0));
+            });
+            const labelY = lane.which === 'away' ? lane.y - 0.34 * LN.SIZE * k - lay.labelH / 2 : lane.y + 0.46 * LN.SIZE * k + lay.labelH / 2;
+            const tag = drawNameTag(xs, labelY, SCENARIOS.lightning[lane.which].name, lane.text, f, c.u);
+            const half = (LN.L0 / 2) * sx * k;
+            hitRects.push({ x0: Math.min(xs - half, tag.x0) - 6, x1: Math.max(xs + half, tag.x1) + 6,
+                y0: Math.min(labelY - f, lane.y - 0.46 * LN.SIZE * k), y1: Math.max(labelY + f, lane.y + 0.46 * LN.SIZE * k), frame: lane.which });
+        }
+
+        // The strikes themselves: a bolt and a burst at the moment each happens
+        st.strikes.forEach((s, i) => {
+            const age = realNow - ln.struck[i];
+            if (t < s.t || age > 0.45 || age < 0) return;
+            const a = 1 - age / 0.45;
+            const yb = lay.yStation;
+            drawBolt(X(s.x), yb, 0, a, i + 1);
+            for (const yy of [lay.yShip, lay.yStation]) {
+                const glow = ctx.createRadialGradient(X(s.x), yy, 0, X(s.x), yy, 24);
+                glow.addColorStop(0, `rgba(255,248,220,${a.toFixed(3)})`);
+                glow.addColorStop(1, 'rgba(255,248,220,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(X(s.x), yy, 24, 0, TAU);
+                ctx.fill();
+            }
+        });
         drawScaleBar(k, 'ls', f);
         drawCaption(f);
     }
@@ -1821,6 +2071,16 @@
                 { label: 'Both flashes:', value: fmtU(1), unit: 'c' }
             ];
         }
+        if (S.scenario === 'lightning') {
+            const st = lightningState();
+            // Each craft's clock in its middle reads zero as the middles pass (t = 0)
+            const clock = (c) => (c.moving ? st.t / st.g : st.t);
+            return [
+                { label: 'Station clock:', value: fmtNum(clock(st.home)), unit: 's', color: pal.blue },
+                { label: 'Ship clock:', value: fmtNum(clock(st.away)), unit: 's', color: pal.pink },
+                { label: 'Strikes apart:', value: Math.abs(st.strikes[0].t - st.strikes[1].t).toFixed(2), unit: 's' }
+            ];
+        }
         if (S.scenario === 'clocks') {
             const st = clockState();
             const movingName = st.away.moving ? 'Ship' : 'Station';
@@ -1886,6 +2146,7 @@
                 { label: 'Ship\u2019s probe', color: '#f2849e' }
             ] };
         }
+        if (S.scenario === 'lightning') return { t: 's', y: 'Clock time since the first strike (s)', lines: [{ label: 'Station clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
         if (S.scenario === 'clocks') return { t: 's', y: 'Clock reading (s)', lines: [{ label: 'Station clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
         if (S.scenario === 'twins') return { t: 'years', y: 'Age gained (years)', lines: [{ label: 'Earth twin', color: '#7ecaf6' }, { label: 'Traveller', color: '#f2849e' }] };
         return { t: '\u00b5s', y: 'Muons left', lines: [{ label: 'Muons left', color: '#ae85ca' }] };
@@ -2145,6 +2406,15 @@
                 const st = lightState();
                 return [lt.t, lt.t, lt.t, st.probe.home * lt.t, st.probe.away * lt.t];
             } },
+        lightning: { reset: resetLightning, step: stepLightning, draw: drawLightning,
+            chart: () => {
+                // From the first strike: the time passed on each craft's middle clock
+                const st = lightningState();
+                const t0 = Math.min(st.strikes[0].t, st.strikes[1].t);
+                if (ln.t < t0) return null;
+                const dt = ln.t - t0;
+                return [dt, homeMoves() ? dt / st.g : dt, homeMoves() ? dt : dt / st.g];
+            } },
         clocks: { reset: resetClocks, draw: drawClocks,
             step: (dt) => {
                 // Small steps keep the light's zig-zag corners exact even at high playback speeds.
@@ -2165,6 +2435,7 @@
 
     function rate() {
         if (S.scenario === 'twins') return TW.RATE;
+        if (S.scenario === 'lightning') return LN.RATE;
         if (S.scenario === 'muons') return MU.RATE / (homeMoves() ? gammaOf(S.v) : 1);
         return 1;
     }
@@ -2226,6 +2497,9 @@
                     screen: { flash: X(Math.max(0, lt.t)), probeHome: X(st.probe.home * Math.max(0, lt.t)), probeAway: X(st.probe.away * Math.max(0, lt.t)),
                         homeX: X(st.home.x), awayX: X(st.away.x) }
                 });
+            } else if (S.scenario === 'lightning') {
+                const lay = lightningLayout();
+                Object.assign(out, { t: ln.t, k: lay.k, cx: lay.cx, lightning: lightningState() });
             } else if (S.scenario === 'clocks') {
                 const lay = clocksLayout();
                 const st = clockState();
