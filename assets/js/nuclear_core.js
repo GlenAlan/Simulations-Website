@@ -65,9 +65,11 @@
     const MAX_BODIES = 40;
     const MAX_SPARKS = 240;
     const DECADES_PER_S = 2;        // clock decades per real second at 1x
-    // Speeds of the radiation, in canvas lengths (the longer side) per second at 1x: slow enough to read the
-    // labels. Gamma rays are the fastest and alpha particles the slowest, though nowhere near to scale.
-    const SPEED = { g: 0.26, nu: 0.22, e: 0.18, n: 0.15, p: 0.14, a: 0.11, cluster: 0.1, fragment: 0.32 };
+    // Speeds of the radiation, in canvas sizes (the geometric mean of width and height) per second at 1x: slow
+    // enough to read the labels, which stay in view for a couple of seconds whichever way a particle goes.
+    // Gamma rays are the fastest and alpha particles the slowest, though nowhere near to scale. (Fission
+    // fragments: in shorter sides per second.)
+    const SPEED = { g: 0.22, nu: 0.19, e: 0.15, n: 0.16, p: 0.13, a: 0.1, cluster: 0.09, fragment: 0.32 };
     const FADE_AT = 2.6, FADE_LEN = 1;   // s: emitted radiation fades out over FADE_LEN after FADE_AT
     const MIRROR_LIFE = 12;         // s: neutrons last longer between reflecting walls
     const PROMPT = 5e-22;           // s: nucleon emission from an unbound nucleus
@@ -1125,7 +1127,7 @@
             p.transient = true;
             p.emitted = true;
             const alpha = st.cz === 2 && st.cn === 2, m = st.cz + st.cn;
-            const sp = Math.max(viewW, viewH) * (alpha ? SPEED.a : (m > 1 ? SPEED.cluster : (st.cz ? SPEED.p : SPEED.n)));
+            const sp = radBase() * (alpha ? SPEED.a : (m > 1 ? SPEED.cluster : (st.cz ? SPEED.p : SPEED.n)));
             p.vx = Math.cos(dir) * sp; p.vy = Math.sin(dir) * sp;
             p.projectileUntil = simTime + MIRROR_LIFE;
             p.ignore = [b.id];
@@ -1160,7 +1162,7 @@
         const n = makeBody(0, 1, 0, x, y);
         n.transient = true;
         n.emitted = true;
-        const sp = Math.max(viewW, viewH) * SPEED.n;
+        const sp = radBase() * SPEED.n;
         n.vx = Math.cos(angle) * sp; n.vy = Math.sin(angle) * sp;
         n.projectileUntil = simTime + MIRROR_LIFE;
         n.ignore = ignore;
@@ -1277,10 +1279,11 @@
     // ------------------------------------------------------------------
     // Light particles and effects
     // ------------------------------------------------------------------
+    const radBase = () => Math.sqrt(viewW * viewH);    // px: the canvas size the radiation speeds are given in
     // A light particle leaving (x, y); its label shows once it is `clear` px out (past the nucleus it left).
     function spawnSpark(kind, x, y, angle, clear, energy) {
         if (sparks.length >= MAX_SPARKS) sparks.shift();
-        const sp = Math.max(viewW, viewH) * (kind === 'g' ? SPEED.g : (kind === 'nu' || kind === 'nubar' ? SPEED.nu : SPEED.e));
+        const sp = radBase() * (kind === 'g' ? SPEED.g : (kind === 'nu' || kind === 'nubar' ? SPEED.nu : SPEED.e));
         const s = { kind, x, y, ox: x, oy: y, clear: (clear || 0) + 10, vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, age: 0, energy: energy || 0, trail: [] };
         if (kind === 'e+') s.annihilateAt = 0.9 + Math.random() * 0.5;    // s: a positron soon meets an electron
         sparks.push(s);
@@ -3132,7 +3135,7 @@
                 const live = us.filter((u) => bodies.indexOf(u) >= 0 && !busy(u));
                 if (!live.length) return;
                 const t = live.reduce((a, b) => (b.x < a.x ? b : a));
-                const x = Math.min(t.x - t.R - Math.max(viewW, viewH) * SPEED.n * 0.6, reflector ? reflector.x0 - 20 : viewW);
+                const x = Math.min(t.x - t.R - radBase() * SPEED.n * 0.6, reflector ? reflector.x0 - 20 : viewW);
                 const n = launchNeutron(Math.max(layout.pad + 6, x), t.y, 0, []);
                 n.forceFission = true;
             });
