@@ -1,23 +1,48 @@
 /* --- Radiation simulation page styles (loaded after simulation_styles.css) --- */
 
-/* On/off toggles in the controls panel use the template's checkbox style. */
-.sim-controls-content .rad-toggle {
-    margin: 0.35em 0 0.25em 0;
+/* Blocks are dragged sideways, so let vertical swipes on the canvas still scroll the page on touch screens. */
+#simulationCanvas {
+    touch-action: pan-y;
 }
 
-.sim-controls-content .rad-toggle label {
-    display: inline-block;
-    margin-bottom: 0;
-    line-height: 1.8;
+/* The first group needs no divider above it. */
+.sim-controls-content .rad-first-group {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
 }
 
-/* The control-group divider already provides spacing; keep the checkbox close to the select above it. */
-.sim-control-group .rad-toggle {
-    margin-top: 0.6em;
+/* "(727 degC)" after the heater set point: secondary, not accent-coloured. */
+.sim-controls-content label .rad-sub,
+.sim-controls-content label .rad-sub .sim-value {
+    color: inherit;
+    font-weight: normal;
+    margin-left: 0;
+}
+
+.sim-controls-content label .rad-sub {
+    margin-left: 0.25em;
+    opacity: 0.75;
+}
+
+/* Labels above the two surface selects. */
+.sim-controls-content label.rad-select-label {
+    margin-bottom: 0.2em;
 }
 
 .sim-control-group .sim-select-container {
     margin-bottom: 0.5em;
+}
+
+.sim-control-group .sim-checkbox-group {
+    margin-top: 0.4em;
+}
+
+.sim-controls-content .rad-hint {
+    margin: 0;
+    font-size: 0.8em;
+    line-height: 1.4;
+    opacity: 0.75;
 }
 
 /* Charts below the canvas: side by side on wide screens, stacked on narrow ones.

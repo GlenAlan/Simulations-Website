@@ -184,20 +184,21 @@
                                         <h3 id="simulationControlsPanelLabel">Controls</h3>
                                     </div>
                                     <div class="sim-controls-content">
-                                        <label>Speed: <span id="speedVal">20</span>x
-                                            <input type="range" id="speedSlider" min="1" max="200" step="1" value="20">
-                                        </label>
-                                        <label>Heater Temperature: <span id="heaterTempVal">1000 K (727 °C)</span>
-                                            <input type="range" id="heaterTemp" min="300" max="2000" step="10" value="1000">
-                                        </label>
-                                        <div class="rad-toggle">
-                                            <input type="checkbox" id="heaterOn" checked>
-                                            <label for="heaterOn">Heater On</label>
+                                        <div class="sim-control-group rad-first-group">
+                                            <p class="sim-control-group-label">Heater</p>
+                                            <label>Temperature <span id="heaterTempVal" class="sim-value" style="--chars: 4">1000</span> K <span class="rad-sub">(<span id="heaterTempC" class="sim-value" style="--chars: 4">727</span> °C)</span>
+                                                <input type="range" id="heaterTemp" min="300" max="2000" step="10" value="1000">
+                                            </label>
+                                            <div class="sim-checkbox-group">
+                                                <input type="checkbox" id="heaterOn" checked>
+                                                <label for="heaterOn">Heater on</label>
+                                            </div>
                                         </div>
                                         <div class="sim-control-group">
-                                            <p class="sim-control-group-label" id="leftSurfaceLabel">Left Block Surface:</p>
+                                            <p class="sim-control-group-label">Surfaces</p>
+                                            <label for="leftSurface" class="rad-select-label">Left block</label>
                                             <div class="sim-select-container">
-                                                <select id="leftSurface" aria-labelledby="leftSurfaceLabel">
+                                                <select id="leftSurface">
                                                     <option value="black" selected>Matte black paint</option>
                                                     <option value="grey">Dull grey metal</option>
                                                     <option value="white">White paint</option>
@@ -205,14 +206,9 @@
                                                     <option value="silver">Polished silver</option>
                                                 </select>
                                             </div>
-                                            <label>Left Block Distance: <span id="leftDistanceVal">20</span> cm
-                                                <input type="range" id="leftDistance" min="10" max="50" step="1" value="20">
-                                            </label>
-                                        </div>
-                                        <div class="sim-control-group">
-                                            <p class="sim-control-group-label" id="rightSurfaceLabel">Right Block Surface:</p>
+                                            <label for="rightSurface" class="rad-select-label">Right block</label>
                                             <div class="sim-select-container">
-                                                <select id="rightSurface" aria-labelledby="rightSurfaceLabel">
+                                                <select id="rightSurface">
                                                     <option value="black">Matte black paint</option>
                                                     <option value="grey">Dull grey metal</option>
                                                     <option value="white">White paint</option>
@@ -220,12 +216,19 @@
                                                     <option value="silver" selected>Polished silver</option>
                                                 </select>
                                             </div>
-                                            <label>Right Block Distance: <span id="rightDistanceVal">20</span> cm
-                                                <input type="range" id="rightDistance" min="10" max="50" step="1" value="20">
-                                            </label>
                                         </div>
                                         <div class="sim-control-group">
-                                            <p class="sim-control-group-label" id="viewModeLabel">View:</p>
+                                            <p class="sim-control-group-label">Distance from heater</p>
+                                            <label>Left block <span id="leftDistanceVal" class="sim-value" style="--chars: 2">20</span> cm
+                                                <input type="range" id="leftDistance" min="10" max="50" step="1" value="20">
+                                            </label>
+                                            <label>Right block <span id="rightDistanceVal" class="sim-value" style="--chars: 2">20</span> cm
+                                                <input type="range" id="rightDistance" min="10" max="50" step="1" value="20">
+                                            </label>
+                                            <p class="rad-hint">You can also drag the blocks.</p>
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label" id="viewModeLabel">View</p>
                                             <div class="sim-select-container">
                                                 <select id="viewMode" aria-labelledby="viewModeLabel">
                                                     <option value="all" selected>Infrared + visible light</option>
@@ -233,11 +236,24 @@
                                                     <option value="thermal">Thermal camera</option>
                                                 </select>
                                             </div>
-                                            <div class="rad-toggle">
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label">Show</p>
+                                            <div class="sim-checkbox-group">
+                                                <input type="checkbox" id="showLabels">
+                                                <label for="showLabels">Labels &amp; distances</label>
+                                                <input type="checkbox" id="showEnergy">
+                                                <label for="showEnergy">Energy flow (power in / out)</label>
                                                 <input type="checkbox" id="showWallRadiation">
-                                                <label for="showWallRadiation">Show Radiation from Walls</label>
+                                                <label for="showWallRadiation">Radiation from the walls</label>
                                             </div>
                                         </div>
+                                        <details class="sim-controls-more">
+                                            <summary>More options</summary>
+                                            <label>Simulation speed <span id="speedVal" class="sim-value" style="--chars: 3">20</span>&times;
+                                                <input type="range" id="speedSlider" min="1" max="200" step="1" value="20">
+                                            </label>
+                                        </details>
                                     </div>
                                 </div>
 
@@ -251,10 +267,10 @@
                                         </div>
                                         <div class="sim-info-bar" id="statsBar">
                                             <div class="stats-container">
-                                                <div class="stats-box"><strong>Heater:</strong> <span id="sourceTempVal">727</span> °C</div>
-                                                <div class="stats-box"><strong>Left:</strong> <span id="leftTempVal">20.0</span> °C</div>
-                                                <div class="stats-box"><strong>Right:</strong> <span id="rightTempVal">20.0</span> °C</div>
-                                                <div class="stats-box"><strong>Time:</strong> <span id="simTimeVal">0:00</span></div>
+                                                <div class="stats-box"><strong>Heater</strong> <span id="sourceTempVal" class="sim-value" style="--chars: 4">727</span> °C</div>
+                                                <div class="stats-box"><strong>Left</strong> <span id="leftTempVal" class="sim-value" style="--chars: 5">20.0</span> °C</div>
+                                                <div class="stats-box"><strong>Right</strong> <span id="rightTempVal" class="sim-value" style="--chars: 5">20.0</span> °C</div>
+                                                <div class="stats-box"><strong>Time</strong> <span id="simTimeVal" class="sim-value" style="--chars: 7">0:00:00</span></div>
                                             </div>
                                             <div class="sim-info-actions">
                                                 <label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Toggle Charts">
