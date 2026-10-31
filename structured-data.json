@@ -168,7 +168,7 @@
           "item": {
             "@type": "LearningResource",
             "name": "Special Relativity Simulation",
-            "description": "A spaceship carrying a light clock flies past a station near light speed, showing time dilation and length contraction",
+            "description": "Light moves at the same speed for everyone: see how that slows moving clocks, shrinks ships and breaks simultaneity",
             "url": "https://simulations.science/relativity_simulation.html",
             "image": "https://simulations.science/images/relativity.png",
             "learningResourceType": "Simulation",
