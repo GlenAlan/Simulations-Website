@@ -41,7 +41,7 @@
         showCharts: byId('showCharts'), chartsContainer: byId('charts-container'),
         reset: byId('resetSimulationBtn'), fps: byId('fpsDisplay'),
         statP: byId('statPressure'), statV: byId('statVolume'), statT: byId('statTemperature'),
-        statN: byId('statCount'), statZ: byId('statRatio')
+        statN: byId('statCount')
     };
 
     // ------------------------------------------------------------------
@@ -886,7 +886,7 @@
     // Cached instrument strings (refreshed a few times per second)
     const txt = { gauge: '–', legend0: '', legend1: '', legend2: '' };
     let rows = [];
-    const ROW_LABELS = ['Ideal gas', 'Outside', 'Piston', 'Wall hits', 'Avg speed'];
+    const ROW_LABELS = ['Ideal gas', 'Outside', 'Piston', 'PV/NkT', 'Wall hits', 'Avg speed'];
     const tw = { num: 1, unit: 1, rowNeed: 1, rowNum: 1, rowUnit: 1, key: 1 };
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -898,7 +898,7 @@
     // Height of the instrument strip (stacked layout): taller on phones, where the details are
     // listed in one column instead of two.
     let stripH = 38;
-    function wantStripH() { return window.innerWidth < 520 ? 52 : 38; }
+    function wantStripH() { return window.innerWidth < 520 ? 56 : 38; }
     function applyLayout(stacked) {
         LY.stacked = stacked;
         if (stacked) {
@@ -1623,6 +1623,7 @@
         const Pext = externalPressure();
         const r = [{ key: 'ideal', label: 'Ideal gas', value: win.valid ? formatKpa(win.Pideal * KPA) : '–', unit: ' kPa' }];
         if (Pext > 0) r.push({ key: 'out', label: S.container === 'piston' ? 'Piston' : 'Outside', value: formatKpa(Pext * KPA), unit: ' kPa' });
+        r.push({ key: null, label: 'PV/NkT', value: win.valid ? Math.min(9.99, win.ratio).toFixed(2) : '–', unit: '' });
         r.push({ key: null, label: 'Wall hits', value: win.valid ? String(Math.min(9999, Math.round(win.hitRate))) : '–', unit: ' /s' });
         r.push({ key: null, label: 'Avg speed', value: String(Math.min(9999, Math.round(meanSpeed * SPEED_TO_MS))), unit: ' m/s' });
         rows = r;
@@ -1634,7 +1635,6 @@
         if (ui.statV) ui.statV.textContent = (area() / A_REF).toFixed(2);
         if (ui.statT) ui.statT.textContent = win.valid ? String(Math.min(9999, Math.round(win.T))) : '–';
         if (ui.statN) ui.statN.textContent = String(N);
-        if (ui.statZ) ui.statZ.textContent = win.valid ? Math.min(9.99, win.ratio).toFixed(2) : '–';
         if (S.container === 'syringe' && ui.volume && ui.volumeVal && dragging) {
             const V = syringeVolumeForX(syringeTarget);
             ui.volume.value = V.toFixed(2);
