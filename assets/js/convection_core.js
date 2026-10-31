@@ -93,8 +93,8 @@ function updateCanvasResolution() {
     if (!ctx) return;
 
     // Size the drawing buffer to the canvas's on-screen size (inside the box border) in device pixels,
-    // so the brush outline is sharp on high-DPI screens. The field itself is smooth, so pixel ratios
-    // above 2 would only cost fill rate.
+    // so the brush outline and the cell edges are sharp on high-DPI screens. Pixel ratios above 2
+    // would only cost fill rate.
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
     const targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
@@ -480,10 +480,8 @@ function renderDensity() {
     }
     offscreenCtx.putImageData(offscreenImageData, 0, 0);
 
-    // Smooth (bilinear) upscaling: on a large canvas each cell covers many pixels, and blending
-    // between cell centres shows the temperature field as a continuous fluid rather than blocks.
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    // Nearest-neighbour upscaling: each grid cell is drawn as a crisp square block.
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
     drawBrushOutlines();
 }
