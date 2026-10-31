@@ -195,7 +195,7 @@
                                         <div class="sim-control-group">
                                             <p class="sim-control-group-label">Heater</p>
                                             <label>Temperature <span id="heaterTempVal" class="sim-value" style="--chars: 4">1000</span> K <span class="rad-sub">(<span id="heaterTempC">727</span> °C)</span>
-                                                <input type="range" id="heaterTemp" min="300" max="2000" step="10" value="1000">
+                                                <input type="range" id="heaterTemp" min="300" max="4000" step="10" value="1000">
                                             </label>
                                             <div class="sim-checkbox-group">
                                                 <input type="checkbox" id="heaterOn" checked>
@@ -237,7 +237,7 @@
                                             <label>Right block <span id="rightDistanceVal" class="sim-value" style="--chars: 2">20</span> cm
                                                 <input type="range" id="rightDistance" min="10" max="50" step="1" value="20">
                                             </label>
-                                            <p class="rad-hint">You can also drag the blocks.</p>
+                                            <p class="rad-hint">You can also drag the blocks, and right-click one (or press and hold it) to change its surface.</p>
                                         </div>
                                         <div class="sim-control-group">
                                             <p class="sim-control-group-label" id="viewModeLabel">View</p>
@@ -270,6 +270,7 @@
                                                 <canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="A heater in a vacuum chamber radiating infrared packets to two blocks with different surfaces"></canvas>
                                             </div>
                                             <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+                                            <div class="rad-surface-menu" id="surfaceMenu" role="menu" aria-label="Surface" hidden></div>
                                         </div>
                                         <div class="sim-info-bar" id="statsBar">
                                             <div class="stats-container">
@@ -326,7 +327,7 @@
                                                 <li>Turn on <em>Energy flow</em> and compare the black and silver blocks. In a vacuum the silver one does reach the same final temperature &ndash; after hours, not minutes.</li>
                                                 <li>Try the <em>Visible light only</em> and <em>Thermal camera</em> views, or switch the heater off.</li>
                                             </ul>
-                                            <p><strong>How to interact:</strong> drag a block sideways (mouse or finger) to move it. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-chart-bar"></span> shows temperature and spectrum charts, <span class="icon solid fa-sync-alt"></span> restarts and <span class="icon solid fa-expand"></span> goes fullscreen.</p>
+                                            <p><strong>How to interact:</strong> drag a block sideways (mouse or finger) to move it; right-click it, or press and hold it, to change its surface. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-chart-bar"></span> shows temperature and spectrum charts, <span class="icon solid fa-sync-alt"></span> restarts and <span class="icon solid fa-expand"></span> goes fullscreen.</p>
                                             <p><em>Model:</em> a thermostat holds the 8&nbsp;cm heater ball at its set temperature; each hollow 8&nbsp;cm block warms at (power absorbed &minus; power emitted) &divide; heat capacity. The chamber walls stay at 20&nbsp;&deg;C.</p>
                                         </div>
                                     </details>

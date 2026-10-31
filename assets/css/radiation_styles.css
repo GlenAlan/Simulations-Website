@@ -23,3 +23,80 @@
     font-size: 0.8em;
     opacity: 0.75;
 }
+
+/* Right-click (or press-and-hold) menu for a block's surface, over the canvas. */
+.rad-surface-menu {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-width: 12.5em;
+    padding: 4px;
+    font-size: 14px;
+    line-height: 1.3;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.rad-surface-menu[hidden] {
+    display: none;
+}
+
+.rad-surface-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0.45em 0.6em;
+    font: inherit;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    text-align: left;
+    white-space: nowrap;
+    color: var(--sim-value-color) !important; /* Beats the site's button colour; body grey is faint at this size */
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.rad-surface-item:hover,
+.rad-surface-item:focus-visible {
+    background-color: rgba(128, 128, 128, 0.16);
+    outline: none;
+}
+
+.rad-surface-item[aria-checked="true"] {
+    font-weight: 700;
+}
+
+/* Tick after the current surface */
+.rad-surface-item[aria-checked="true"]::after {
+    content: "\2713";
+    margin-left: auto;
+    padding-left: 0.8em;
+    color: var(--color-accent, #f2849e);
+}
+
+/* Small samples matching how the blocks are drawn */
+.rad-swatch {
+    flex: 0 0 auto;
+    width: 1em;
+    height: 1em;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
+}
+
+.rad-swatch[data-surface="black"] { background: #121212; }
+.rad-swatch[data-surface="grey"] { background: #7b7e84; }
+.rad-swatch[data-surface="white"] { background: #f3f3ef; }
+.rad-swatch[data-surface="aluminium"] { background: linear-gradient(135deg, #d9dce1 0%, #a9aeb6 45%, #c9cdd3 55%, #8f949c 100%); }
+.rad-swatch[data-surface="silver"] { background: linear-gradient(135deg, #ffffff 0%, #c4c8cf 35%, #f4f5f7 50%, #b4b9c1 65%, #e9ebee 100%); }
