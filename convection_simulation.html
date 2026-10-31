@@ -115,6 +115,7 @@
 		</script>
 		<link rel="stylesheet" href="assets/css/main.css" />
 		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/convection_styles.css" />
 		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
 		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
 	</head>
@@ -170,37 +171,45 @@
                                         <h3 id="simulationControlsPanelLabel">Controls</h3>
                                     </div>
                                     <div class="sim-controls-content">
-                                        <label>Speed: <span id="timeScaleVal">2.5</span>x
-                                            <input type="range" id="timeScale" min="0.1" max="10" step="0.1" value="2.5">
-                                        </label>
-                                        <label>Heating Radius: <span id="heatSizeVal">5</span>
-                                            <input type="range" id="heatSize" min="1" max="20" step="1" value="5">
-                                        </label>
-                                        <label>Heat Intensity: <span id="heatAmpVal">0.50</span>
-                                            <input type="range" id="heatAmp" min="0.01" max="1" step="0.01" value="0.50">
-                                        </label>
-                                        <label>Surface Cooling: <span id="coolRateVal">0.50</span>
-                                            <input type="range" id="coolRate" min="0" max="1" step="0.01" value="0.50">
-                                        </label>
                                         <div class="sim-control-group">
-                                            <p class="sim-control-group-label" id="viscosityLabel">Viscosity:</p>
+                                            <p class="sim-control-group-label">Fluid</p>
+                                            <label for="viscositySelector">Viscosity</label>
                                             <div class="sim-select-container">
-                                                <select id="viscositySelector" aria-labelledby="viscosityLabel">
-                                                    <option value="0.000001">Acetone (Very Low)</option>
-                                                    <option value="0.0001" selected>Water (Low)</option>
-                                                    <option value="0.001">Oil (Medium)</option>
-                                                    <option value="0.1">Honey (High)</option>
+                                                <select id="viscositySelector">
+                                                    <option value="0.000001">Acetone (very runny)</option>
+                                                    <option value="0.0001" selected>Water (runny)</option>
+                                                    <option value="0.001">Oil (thicker)</option>
+                                                    <option value="0.1">Honey (very thick)</option>
                                                 </select>
                                             </div>
+                                            <label>Surface cooling: <span id="coolRateVal" class="sim-value" style="--chars: 3">50</span> %
+                                                <input type="range" id="coolRate" min="0" max="100" step="1" value="50">
+                                            </label>
                                         </div>
                                         <div class="sim-control-group">
-                                            <p class="sim-control-group-label" id="convectionGridSizeLabel">Simulation Size:</p>
+                                            <p class="sim-control-group-label">Heating brush</p>
+                                            <label>Radius: <span id="heatSizeVal" class="sim-value" style="--chars: 2">8</span> % of box
+                                                <input type="range" id="heatSize" min="2" max="30" step="1" value="8">
+                                            </label>
+                                            <label>Strength: <span id="heatAmpVal" class="sim-value" style="--chars: 3">1.0</span>&times;
+                                                <input type="range" id="heatAmp" min="0.1" max="2" step="0.1" value="1">
+                                            </label>
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label">Simulation</p>
+                                            <label>Speed: <span id="timeScaleVal" class="sim-value" style="--chars: 4">2.5</span>&times;
+                                                <input type="range" id="timeScale" min="0.1" max="10" step="0.1" value="2.5">
+                                            </label>
+                                        </div>
+                                        <details class="sim-controls-more">
+                                            <summary>More options</summary>
+                                            <label for="convectionGridSizeSelector">Grid resolution (cells)</label>
                                             <div class="sim-select-container">
-                                                <select id="convectionGridSizeSelector" aria-labelledby="convectionGridSizeLabel">
+                                                <select id="convectionGridSizeSelector">
                                                     <!-- Options will be populated by JavaScript -->
                                                 </select>
                                             </div>
-                                        </div>
+                                        </details>
                                     </div>
                                 </div>
 
@@ -211,12 +220,20 @@
                                                 <canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Convection simulation: fluid temperature shown from blue (cold) to red (hot)"></canvas>
                                             </div>
                                             <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+                                            <p class="thermal-hint" id="thermalHint" aria-hidden="true">Press and drag in the fluid to heat it</p>
                                         </div>
                                         <div class="sim-info-bar">
-                                            <span class="sim-info-item">Avg. Temperature: <span id="avgDensityVal">50.0</span> °C</span>
-                                            <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation">
-                                                <span class="icon solid fa-sync-alt"></span>
-                                            </button>
+                                            <span class="sim-info-item">Avg. temperature: <span id="avgDensityVal" class="sim-value" style="--chars: 5">50.0</span> °C</span>
+                                            <span class="thermal-legend" aria-hidden="true"><span>0 °C</span><span class="thermal-legend-bar" id="colourLegendBar"></span><span>100 °C</span></span>
+                                            <div class="sim-info-actions">
+                                                <div class="thermal-mode" role="radiogroup" aria-label="Brush mode">
+                                                    <button type="button" role="radio" aria-checked="true" data-mode="heat" title="Drag in the fluid to heat it"><span class="icon solid fa-fire" aria-hidden="true"></span>Heat</button>
+                                                    <button type="button" role="radio" aria-checked="false" data-mode="cool" title="Drag in the fluid to cool it (shortcuts: right-click or Shift+click)"><span class="icon solid fa-snowflake" aria-hidden="true"></span>Cool</button>
+                                                </div>
+                                                <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation" title="Reset">
+                                                    <span class="icon solid fa-sync-alt"></span>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="sim-action-buttons-overlay">
@@ -226,22 +243,27 @@
                                         </button>
                                     </div>
 
-                                    <div class="description-area">
-                                        <h3>About this Simulation</h3>
-                                        <p>This simulation visualizes convection in a box of fluid. When fluid is heated it expands, becoming less dense than the fluid around it, so buoyancy makes it rise; cooler, denser fluid sinks to take its place. The top surface constantly loses heat, so warm fluid that reaches it cools and sinks again, creating circulating convection currents. Colours show temperature, from blue (0 °C) through green (50 °C) to red (100 °C).</p>
-                                        <p><strong>Left-click</strong> (or touch, with one or more fingers) and drag on the canvas to heat the fluid locally. <strong>Right-click</strong> (or <strong>Shift + left-click</strong>) and drag to cool it.</p>
-                                        <p>Adjust parameters using the controls panel (toggle with the <span class="icon solid fa-cog"></span> icon). Press 'F' to toggle the FPS display. Use the fullscreen icon (<span class="icon solid fa-expand"></span>) for an immersive view. The reset button (<span class="icon solid fa-sync-alt"></span>) restarts the simulation with the current settings.</p>
-                                        <p><strong>Controls:</strong></p>
-                                        <ul>
-                                            <li><strong>Speed:</strong> Adjusts the simulation rate. On slower devices, large simulation sizes may not reach the highest speeds.</li>
-                                            <li><strong>Heating Radius:</strong> Controls the size of the area affected when you heat or cool the fluid.</li>
-                                            <li><strong>Heat Intensity:</strong> Determines how much energy is added when heating, or removed when cooling.</li>
-                                            <li><strong>Surface Cooling:</strong> Adjusts the rate at which the fluid at the top surface cools down.</li>
-                                            <li><strong>Viscosity:</strong> Sets how "thick" the fluid is. Viscous fluids such as honey resist flowing, so their convection currents are slower and smoother.</li>
-                                            <li><strong>Simulation Size:</strong> Changes the resolution of the simulation grid. Larger sizes show finer detail but may impact performance.</li>
-                                        </ul>
-                                        <p>The simulation solves a simplified version of the Navier-Stokes equations for an incompressible fluid. Temperature differences cause buoyancy effects and fluid motion: each region is pushed up or down in proportion to how much warmer or cooler it is than the average (the Boussinesq approximation). Moving fluid carries heat around without creating or destroying it, so the Avg. Temperature only changes when heat is added or removed, by you or by the cooled surface.</p>
-                                    </div>
+                                    <details class="description-area">
+                                        <summary>About this simulation</summary>
+                                        <div class="description-content">
+                                            <p>Heated fluid expands and becomes less dense, so buoyancy makes it rise while cooler, denser fluid sinks to take its place. This circulation carries heat through liquids and gases and is called <strong>convection</strong>.</p>
+                                            <h4>What you're seeing</h4>
+                                            <ul>
+                                                <li>A box of fluid coloured by temperature: blue is 0 °C, green 50 °C and red 100 °C.</li>
+                                                <li>The top surface keeps losing heat, so warm fluid that reaches it cools and sinks again, setting up convection currents.</li>
+                                                <li>Moving fluid carries heat around without creating or destroying it, so the average temperature only changes when you, or the cold surface, add or remove heat.</li>
+                                            </ul>
+                                            <h4>Things to try</h4>
+                                            <ul>
+                                                <li>Heat a spot near the bottom and watch a warm plume rise and spread out under the surface.</li>
+                                                <li>Switch the fluid to honey: its high viscosity makes the currents slow and smooth.</li>
+                                                <li>Turn surface cooling to 0 % and heat the bottom: the warm fluid collects in a layer at the top and stays there.</li>
+                                            </ul>
+                                            <h4>How to interact</h4>
+                                            <p>Press and drag in the fluid to heat it, or pick <strong>Cool</strong> below the simulation to cool it instead (with a mouse, right-click or Shift+click also cools). <span class="icon solid fa-cog"></span> opens the settings and <span class="icon solid fa-expand"></span> goes fullscreen.</p>
+                                            <p>Under the hood: a simplified Navier&ndash;Stokes solver for an incompressible fluid, with buoyancy proportional to how much warmer or cooler each region is than the average (the Boussinesq approximation).</p>
+                                        </div>
+                                    </details>
                                 </div>
 							</div>
 						</div>
