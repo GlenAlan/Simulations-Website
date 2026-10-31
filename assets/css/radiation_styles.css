@@ -23,9 +23,3 @@
     font-size: 0.8em;
     opacity: 0.75;
 }
-
-/* Stopgap for a shared-layout issue: keep each hidden toggle checkbox inside the scrolling panel content,
-   so focusing it (tapping its label) doesn't scroll the whole panel and hide its header. */
-.sim-controls-content .sim-checkbox-group {
-    position: relative;
-}
