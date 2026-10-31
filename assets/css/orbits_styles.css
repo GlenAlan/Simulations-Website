@@ -900,3 +900,42 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 #simulationCanvas.orb-can-aim {
     cursor: crosshair;
 }
+
+/* ---------- Time controls and the period readout ---------- */
+/* The step button only works while paused: dimmed (not hidden, so the buttons beside it never move
+   under a finger) while the simulation runs. */
+#stepBtn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+@media (hover: hover) {
+    #stepBtn:disabled:hover {
+        color: var(--color-text) !important;
+        background-color: transparent;
+    }
+}
+
+/* A tick after the period once it has been measured over a full orbit */
+.orb-period-mark {
+    margin-left: 0.35em;
+    font-size: 0.8em;
+    color: var(--color-accent);
+}
+
+.orb-period-mark[hidden] {
+    display: none;
+}
+
+/* The eccentricity only where it has a place of its own: the spare cell beside the period in the
+   phones' two-column grid. Elsewhere it would push the readouts onto another row (it is in the
+   period's tooltip, the Kepler's 1st law card and the eccentricity slider). */
+.orb-ecc-box {
+    display: none;
+}
+
+@media screen and (max-width: 600px) {
+    .orb-ecc-box {
+        display: block;
+    }
+}
