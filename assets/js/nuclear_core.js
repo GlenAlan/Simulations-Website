@@ -9,9 +9,10 @@
  * electron capture and beta+ decay, plus three isomers (Tc-99m, Ba-137m, Pa-234m).
  *
  * Time: each unstable nucleus has its own logarithmic clock, the same for all of them, so any number of nuclei
- * can be compared fairly: it starts at 1e-22 s when the nucleus forms and gains a factor of ten every third of
- * a second at 1x, so it gets from the shortest-lived nuclei to billions of years within seconds. The ring
- * around a nucleus is a log-time ruler shared by all of them (1e-22 s to 1e18 s): how full it is shows the
+ * can be compared fairly: it reads "<1 ps" for 0.4 s when the nucleus forms (whatever decays within a
+ * picosecond goes then: 37 nuclides have half-lives that short), then counts from 1 ps, gaining a factor of
+ * ten every third of a second at 1x, so it gets to billions of years within seconds. The ring
+ * around a nucleus is a log-time ruler shared by all of them (1 ps to 1e18 s): how full it is shows the
  * nucleus's age, and its notch marks that nucleus's half-life on the same ruler, so nuclei of the same age
  * have equally full rings and a short-lived one's notch comes early. The decay time is drawn when the nucleus
  * forms, t = -(T1/2 / ln 2) ln U (U uniform in
@@ -69,7 +70,8 @@
     const MAX_BODIES = 40;
     const MAX_SPARKS = 240;
     const DECADES_PER_S = 3;        // clock decades per real second at 1x
-    const LOG_T0 = -22;             // log10 s: every clock starts here (just below the shortest-lived nuclei shown)
+    const LOG_T0 = -12;             // log10 s: every clock counts from here (1 ps)...
+    const FIRST_WAIT = 0.4;         // s at 1x: ...after reading "<1 ps" this long, when what decays within 1 ps goes
     const LOG_T1 = 18;              // log10 s: the end of the clocks' ruler (about 30 billion years)
     // Speeds of the radiation, in canvas sizes (the geometric mean of width and height) per second at 1x: slow
     // enough to read the labels, which stay in view for a couple of seconds whichever way a particle goes.
@@ -901,7 +903,9 @@
         const hl = info.hl;
         const t = -hl / LN2 * Math.log(1 - Math.random());       // 1 - U is in (0, 1]
         const logHalf = Math.log10(hl);
-        const logStart = LOG_T0;     // the same for every nucleus, so their clocks can be compared
+        // the same for every nucleus, so their clocks can be compared (the clock counts on through the wait,
+        // reading "<1 ps" until it reaches 1 ps)
+        const logStart = LOG_T0 - FIRST_WAIT * DECADES_PER_S;
         b.clock = { logT: logStart, logStart, logHalf, logEnd: Math.log10(Math.max(t, 1e-30)), branch: null };
         // a member of the carbon-dating sample reads the sample's shared steady clock (its ring starts
         // nearer the half-life, which it passes within seconds)
@@ -1426,7 +1430,7 @@
                 let logNow = b.clock.logT + clockDt;
                 if (b.clock.shared) logNow = Math.log10(Math.max(1e-30, batch ? batch.t : 0));
                 b.clock.logT = Math.max(b.clock.logStart, logNow);
-                if (logNow >= b.clock.logEnd) { b.clock.logT = b.clock.logEnd; beginDecay(b); }
+                if (logNow >= Math.max(b.clock.logEnd, LOG_T0)) { b.clock.logT = b.clock.logEnd; beginDecay(b); }
             }
             b.lx = b.x; b.ly = b.y;
             if (b.held) continue;
@@ -2305,7 +2309,7 @@
     }
 
     // The clock as a gauge around the nucleus, open at the bottom (towards the label): a log-time ruler from
-    // 1e-22 s to 1e18 s, the same for every nucleus. It fills clockwise from the lower left with the nucleus's
+    // 1 ps to 1e18 s, the same for every nucleus. It fills clockwise from the lower left with the nucleus's
     // age, and the notch marks its half-life on the same ruler (at the end for anything longer-lived).
     const RING_A0 = Math.PI * 0.75, RING_SPAN = Math.PI * 1.5;
     function drawClockRing(b, x, y) {
@@ -2360,7 +2364,7 @@
         } else if (b.clock) {
             // a stopwatch, then the count (one significant figure) right-aligned at a fixed point, so the
             // digits stay put as it counts up
-            const d = formatDuration(Math.pow(10, b.clock.logT));
+            const d = b.clock.logT < LOG_T0 ? { num: '<1', unit: 'ps', wide: 'ps' } : formatDuration(Math.pow(10, b.clock.logT));
             const digits = d.wide[0] === '×' ? '0' : (/^(s|min|hours)$/.test(d.wide) ? '00' : '000');
             const icon = fontPx * 0.95;
             const wNum = ctx.measureText(digits).width, wUnit = ctx.measureText(' ' + d.wide).width;
@@ -3203,7 +3207,7 @@
             // on a tall canvas the core gets the whole width: the chart comes back with the next scene
             if (layout.tall) setupNeeds(ui.showChart, false);
             const [cw, ch] = slotSize(92, 143);
-            const pts = setupSlots(layout.tall ? 16 : 20, cw, ch);
+            const pts = setupSlots(layout.tall ? 16 : 26, cw, ch);
             const us = pts.map((p) => addBody(92, 143, 0, p.x, p.y)).filter(Boolean);
             // a reflector round the core keeps the neutrons among the nuclei, as in a reactor
             const m = layout.pad * 0.5;
