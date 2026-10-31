@@ -952,7 +952,7 @@ document.addEventListener('DOMContentLoaded', () => {
         heldPointers.clear();
         spaceHeld = false;
         setText(demonModeNote, manual
-            ? 'Press and hold on the simulation (or hold Space) to open the gate yourself.'
+            ? 'You are the demon: press and hold on the simulation (or hold Space) to open the gate.'
             : 'Lets fast particles through to the right and slow ones to the left.');
         if (manual) {
             manualHintDismissed = false;
