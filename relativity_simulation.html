@@ -1,0 +1,342 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Special Relativity Simulation | Time Dilation &amp; Length Contraction | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Interactive special relativity simulation: speed a spaceship towards light speed and watch moving light clocks tick slowly, lengths contract and simultaneity change." />
+		<meta name="keywords" content="special relativity, time dilation, length contraction, Lorentz factor, light clock, relativity of simultaneity, twin paradox, muon decay, speed of light, Einstein, physics simulation, interactive physics" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/relativity_simulation.html" />
+		<meta property="og:title" content="Special Relativity Simulation | Simulations.Science" />
+		<meta property="og:description" content="Watch moving clocks tick slowly and moving ships shrink as you near light speed." />
+		<meta property="og:image" content="https://simulations.science/images/relativity.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/relativity_simulation.html" />
+		<meta name="twitter:title" content="Special Relativity Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="Watch moving clocks tick slowly and moving ships shrink as you near light speed." />
+		<meta name="twitter:image" content="https://simulations.science/images/relativity.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/relativity_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Special Relativity Simulation",
+			"description": "An interactive special relativity simulation: a spaceship and a space station each carry a light clock, and changing the ship's speed or the frame the measurements are made from shows time dilation, length contraction and the relativity of simultaneity, with the twin paradox and cosmic-ray muons as worked examples.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/relativity_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"about": [
+				{
+					"@type": "Thing",
+					"name": "Special Relativity",
+					"description": "Einstein's theory of space and time for observers moving at constant velocity, built on the speed of light being the same for all of them"
+				},
+				{
+					"@type": "Thing",
+					"name": "Time Dilation",
+					"description": "A moving clock is measured to tick slower than clocks at rest, by the Lorentz factor gamma"
+				},
+				{
+					"@type": "Thing",
+					"name": "Length Contraction",
+					"description": "A moving object is measured to be shorter along its direction of motion, by the Lorentz factor gamma"
+				},
+				{
+					"@type": "Thing",
+					"name": "Relativity of Simultaneity",
+					"description": "Clocks that are synchronised in one frame of reference are not synchronised in a frame moving relative to it"
+				},
+				{
+					"@type": "Thing",
+					"name": "Twin Paradox",
+					"description": "A twin who travels to a star and back at high speed returns younger than the twin who stayed on Earth"
+				}
+			],
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/relativity.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "special relativity, time dilation, length contraction, Lorentz factor, light clock, relativity of simultaneity, twin paradox, muon decay, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Special Relativity Simulation",
+					"item": "https://simulations.science/relativity_simulation.html"
+				}
+			]
+		}
+		</script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/relativity_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>
+							<li itemprop="name"><a href="convection_simulation.html" itemprop="url">Convection</a></li>
+							<li itemprop="name"><a href="conduction_simulation.html" itemprop="url">Conduction</a></li>
+							<li itemprop="name"><a href="radiation_simulation.html" itemprop="url">Radiation</a></li>
+							<li itemprop="name"><a href="buoyancy_simulation.html" itemprop="url">Buoyancy</a></li>
+							<li itemprop="name"><a href="pressure_simulation.html" itemprop="url">Pressure</a></li>
+							<li itemprop="name"><a href="maxwell_demon_simulation.html" itemprop="url">Maxwell's Demon</a></li>
+							<li itemprop="name"><a href="nuclear_decay_simulation.html" itemprop="url">Nuclear Decay</a></li>
+							<li itemprop="name"><a href="relativity_simulation.html" itemprop="url">Special Relativity</a></li>
+							<li itemprop="name"><a href="orbits_simulation.html" itemprop="url">Orbits &amp; Gravity</a></li>
+							<li itemprop="name"><a href="sitemap.html" itemprop="url">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Special Relativity Simulation</h1>
+
+							<div class="simulation-area-wrapper relativity-sim">
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group sim-speed-control">
+											<label>Simulation speed: <span id="speedVal" class="sim-value" style="--chars: 3">1.0</span>&times;
+												<input type="range" id="speedSlider" min="0.1" max="3" step="0.1" value="1">
+											</label>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="scenarioLabel">Scenario</p>
+											<select id="scenarioSelect" aria-labelledby="scenarioLabel" aria-describedby="scenarioHint">
+												<option value="clocks" selected>Light clocks: ship &amp; station</option>
+												<option value="twins">Twin paradox: a trip to a star</option>
+												<option value="muons">Muons from cosmic rays</option>
+											</select>
+											<p class="rel-hint" id="scenarioHint">A ship and a station of the same length each carry a light clock that ticks once a second.</p>
+										</div>
+										<div class="sim-control-group" id="showGroup">
+											<p class="sim-control-group-label">Show</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="pathsToggle" checked>
+												<label for="pathsToggle" id="pathsLabel">Light paths</label>
+												<input type="checkbox" id="lengthsToggle">
+												<label for="lengthsToggle" id="lengthsLabel">Measured lengths</label>
+												<input type="checkbox" id="syncToggle">
+												<label for="syncToggle" id="syncLabel">Clocks at each end (simultaneity)</label>
+											</div>
+										</div>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 4/3;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="A spaceship carrying a light clock flies past a space station that carries an identical light clock"></canvas>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<!-- The two main controls, always in view: which frame the measurements are made from, and the ship's speed -->
+										<div class="rel-toolbar" id="relToolbar">
+											<div class="rel-frame" role="radiogroup" aria-labelledby="frameLabel">
+												<span class="rel-toolbar-label" id="frameLabel">Measured from</span>
+												<div class="rel-seg">
+													<button type="button" class="rel-frame-btn" data-frame="home" role="radio" aria-checked="true"><span class="icon solid fa-satellite" aria-hidden="true"></span><span class="rel-frame-name">Station</span></button>
+													<button type="button" class="rel-frame-btn" data-frame="away" role="radio" aria-checked="false"><span class="icon solid fa-rocket" aria-hidden="true"></span><span class="rel-frame-name">Ship</span></button>
+												</div>
+											</div>
+											<label class="rel-velocity">
+												<span class="rel-toolbar-label" id="velocityLabel">Speed</span>
+												<input type="range" id="velocitySlider" min="0" max="130" step="1" value="80" aria-labelledby="velocityLabel">
+												<span class="rel-velocity-value"><span id="velocityVal" class="sim-value" style="--chars: 5">0.80</span>&thinsp;<em>c</em></span>
+											</label>
+										</div>
+										<div class="sim-info-bar" id="statsBar">
+											<div class="stats-container">
+												<div class="stats-box" title="Lorentz factor: moving clocks tick this many times slower, and moving lengths are this many times shorter">
+													<strong>&gamma;:</strong> <span id="statGamma" class="sim-value" style="--chars: 5">1.667</span>
+												</div>
+												<div class="stats-box" id="statABox">
+													<span class="rel-dot" id="statADot"></span><strong id="statALabel">Station clock:</strong> <span id="statA" class="sim-value" style="--chars: 5">0.0</span> <span id="statAUnit">s</span>
+												</div>
+												<div class="stats-box" id="statBBox">
+													<span class="rel-dot" id="statBDot"></span><strong id="statBLabel">Ship clock:</strong> <span id="statB" class="sim-value" style="--chars: 5">0.0</span> <span id="statBUnit">s</span>
+												</div>
+												<div class="stats-box" id="statCBox">
+													<strong id="statCLabel">Ship length:</strong> <span id="statC" class="sim-value" style="--chars: 4">0.96</span> <span id="statCUnit">ls</span>
+												</div>
+											</div>
+											<div class="sim-info-actions">
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Graphs">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart the clocks" title="Restart">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+											</div>
+										</div>
+									</div>
+									<div id="charts-container" style="display: none;">
+										<div class="sim-charts-row">
+											<div class="chart-box">
+												<canvas id="clockChart" role="img" aria-label="Graph of the two clock readings against time"></canvas>
+											</div>
+											<div class="chart-box">
+												<canvas id="gammaChart" role="img" aria-label="Graph of the Lorentz factor gamma against speed, with the current speed marked"></canvas>
+											</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>Nothing can go faster than light, and light's speed, <em>c</em>, is the same for everyone, however fast they move. Einstein realised that this forces time and space themselves to stretch and shrink.</p>
+
+											<h4>What you're seeing</h4>
+											<ul>
+												<li>A ship and a station of the same length each carry a <strong>light clock</strong>: a flash of light bouncing between two mirrors that ticks once a second. To make that work the mirrors are half a light-second (150,000&nbsp;km) apart, so lengths are in light-seconds (ls).</li>
+												<li>Everything is drawn as it is <em>measured</em> from one frame (the station's or the ship's), not as a camera would see it: the delay of light reaching an eye is left out.</li>
+											</ul>
+
+											<h4>Key idea</h4>
+											<p>The moving clock's light has to zig-zag a longer path at the same speed <em>c</em>, so it ticks slower: <em>t</em> = <em>&gamma;&tau;</em>, where <em>&gamma;</em> = 1/&radic;(1 &minus; <em>v</em>&sup2;/<em>c</em>&sup2;). Moving objects are also shorter along their motion: <em>L</em> = <em>L</em><sub>0</sub>/<em>&gamma;</em>. At 0.6<em>c</em>, <em>&gamma;</em> = 1.25; at 0.8<em>c</em>, 1.67.</p>
+
+											<h4>Things to try</h4>
+											<ul>
+												<li>Switch to <strong>measured from the ship</strong>: now the station is short and its clock is slow. Both views are right; turn on the clocks at each end to see why (clocks synchronised in one frame aren't in the other).</li>
+												<li>Push the speed past 0.99<em>c</em> and watch the moving clock almost stop.</li>
+												<li>In the <strong>twin paradox</strong> the traveller comes home younger; in <strong>muons</strong>, real particles that should decay high in the sky reach the ground.</li>
+											</ul>
+
+											<h4>How to interact</h4>
+											<p>Drag the speed slider and pick a frame under the simulation, or tap the ship or station to ride along with it. <span class="icon solid fa-cog"></span> opens the settings (scenarios and extra details), <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-sync-alt"></span> restarts the clocks and <span class="icon solid fa-chart-bar"></span> shows graphs. Press F to show the frame rate.</p>
+										</div>
+									</details>
+								</div>
+							</div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script src="assets/js/relativity_core.js" defer></script> <!-- Simulation specific logic -->
+	</body>
+</html>
