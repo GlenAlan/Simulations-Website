@@ -552,6 +552,13 @@ function setupCharts() {
         responsive: true,
         maintainAspectRatio: false,
         normalized: true,
+        // Short boxes (fullscreen on a small screen): drop the legend and axis titles so the
+        // plot keeps some height. The info bar shows the colour key anyway.
+        onResize: (chart, size) => {
+            chart.options.plugins.legend.display = size.height >= 170;
+            chart.options.scales.x.title.display = size.height >= 150;
+            chart.options.scales.y.title.display = size.height >= 150;
+        },
         elements: { point: { radius: 0, hitRadius: 4 }, line: { borderWidth: 2, tension: 0 } },
         interaction: { mode: 'index', intersect: false },
         plugins: {
