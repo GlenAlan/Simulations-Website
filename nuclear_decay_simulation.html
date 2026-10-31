@@ -1,0 +1,332 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Nuclear Decay Simulation | Stability, Half-Life &amp; Radioactivity | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Build nuclei from protons and neutrons, collide them and watch real alpha, beta, gamma, electron capture and fission decays, with half-lives and the chart of nuclides." />
+		<meta name="keywords" content="nuclear decay, radioactive decay, nuclear stability, half-life, alpha decay, beta decay, gamma radiation, electron capture, positron emission, nuclear fission, chart of nuclides, Segrè chart, isotopes, decay chain, physics simulation, interactive science" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/nuclear_decay_simulation.html" />
+		<meta property="og:title" content="Nuclear Decay Simulation | Simulations.Science" />
+		<meta property="og:description" content="Build nuclei, collide them and watch them decay, from nanoseconds to billions of years." />
+		<meta property="og:image" content="https://simulations.science/images/nuclear.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/nuclear_decay_simulation.html" />
+		<meta name="twitter:title" content="Nuclear Decay Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="Build nuclei, collide them and watch them decay, from nanoseconds to billions of years." />
+		<meta name="twitter:image" content="https://simulations.science/images/nuclear.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/nuclear_decay_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Nuclear Decay Simulation",
+			"description": "An interactive simulation of nuclear stability and radioactive decay: build nuclei from protons and neutrons, combine and collide them, and watch alpha, beta-minus, beta-plus, electron capture, gamma, proton and neutron emission and fission happen at random with real half-lives, on a chart of nuclides.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/nuclear_decay_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"about": [
+				{
+					"@type": "Thing",
+					"name": "Radioactive Decay",
+					"description": "The random transformation of an unstable atomic nucleus by emitting particles or radiation"
+				},
+				{
+					"@type": "Thing",
+					"name": "Nuclear Stability",
+					"description": "Why only certain combinations of protons and neutrons hold together, shown by the valley of stability on the chart of nuclides"
+				},
+				{
+					"@type": "Thing",
+					"name": "Half-Life",
+					"description": "The time in which half of a large number of identical unstable nuclei decay"
+				},
+				{
+					"@type": "Thing",
+					"name": "Nuclear Fission",
+					"description": "The splitting of a heavy nucleus into two lighter nuclei and a few neutrons, spontaneously or after a neutron is absorbed"
+				}
+			],
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/nuclear.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "nuclear decay, radioactive decay, nuclear stability, half-life, alpha decay, beta decay, gamma radiation, electron capture, nuclear fission, chart of nuclides, isotopes, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Nuclear Decay Simulation",
+					"item": "https://simulations.science/nuclear_decay_simulation.html"
+				}
+			]
+		}
+		</script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/nuclear_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>
+							<li itemprop="name"><a href="convection_simulation.html" itemprop="url">Convection</a></li>
+							<li itemprop="name"><a href="conduction_simulation.html" itemprop="url">Conduction</a></li>
+							<li itemprop="name"><a href="radiation_simulation.html" itemprop="url">Radiation</a></li>
+							<li itemprop="name"><a href="buoyancy_simulation.html" itemprop="url">Buoyancy</a></li>
+							<li itemprop="name"><a href="pressure_simulation.html" itemprop="url">Pressure</a></li>
+							<li itemprop="name"><a href="maxwell_demon_simulation.html" itemprop="url">Maxwell's Demon</a></li>
+							<li itemprop="name"><a href="nuclear_decay_simulation.html" itemprop="url">Nuclear Decay</a></li>
+							<li itemprop="name"><a href="relativity_simulation.html" itemprop="url">Special Relativity</a></li>
+							<li itemprop="name"><a href="orbits_simulation.html" itemprop="url">Orbits &amp; Gravity</a></li>
+							<li itemprop="name"><a href="sitemap.html" itemprop="url">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Nuclear Stability &amp; Decay</h1>
+
+							<div class="simulation-area-wrapper nuclear-sim">
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group sim-speed-control">
+											<label>Clock speed: <span id="speedVal" class="sim-value" style="--chars: 4">1.00</span>&times;
+												<input type="range" id="speedSlider" min="0.25" max="4" step="0.25" value="1">
+											</label>
+											<p class="nuc-control-note">At 1&times; each clock runs ten times faster every half second.</p>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="addLabel">Add any nuclide</p>
+											<div class="nuc-add-row">
+												<select id="elementSelect" aria-label="Element"></select>
+												<select id="isotopeSelect" aria-label="Isotope"></select>
+												<button type="button" id="addNuclideBtn" class="nuc-add-button">Add</button>
+											</div>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Show</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="showChartToggle" checked>
+												<label for="showChartToggle">Chart of nuclides (N&ndash;Z)</label>
+												<input type="checkbox" id="showTagsToggle" checked>
+												<label for="showTagsToggle">Decay labels</label>
+												<input type="checkbox" id="showNeutrinosToggle" checked>
+												<label for="showNeutrinosToggle">Neutrinos</label>
+												<input type="checkbox" id="showEquationsToggle">
+												<label for="showEquationsToggle">Nuclear equations</label>
+												<input type="checkbox" id="showDetailsToggle">
+												<label for="showDetailsToggle">Details (energies, binding energy)</label>
+											</div>
+										</div>
+										<details class="sim-controls-more">
+											<summary>More options</summary>
+											<div class="sim-control-group">
+												<div class="sim-checkbox-group">
+													<input type="checkbox" id="notationToggle">
+													<label for="notationToggle">Label nuclei as <span class="nuc-notation"><span class="nuc-scripts"><sup>14</sup><sub>6</sub></span>C</span></label>
+													<input type="checkbox" id="keepParticlesToggle">
+													<label for="keepParticlesToggle">Keep emitted &alpha;, p and n</label>
+													<input type="checkbox" id="mirrorWallsToggle">
+													<label for="mirrorWallsToggle">Walls reflect neutrons</label>
+												</div>
+											</div>
+										</details>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 4/5;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Atomic nuclei made of protons and neutrons that decay over time, with a chart of nuclides showing neutron number against proton number"></canvas>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<div class="nuc-toolbar" id="nucToolbar" role="toolbar" aria-label="Particles and nuclei to add">
+											<div class="nuc-palette" id="nucPalette"></div>
+											<p class="nuc-hint">Drag onto the canvas or tap to add. Drop onto a nucleus to combine; flick to collide.</p>
+										</div>
+										<div class="sim-info-bar" id="statsBar">
+											<div class="stats-container">
+												<div class="stats-box" title="The selected nucleus (tap one to select it)">
+													<strong>Nucleus:</strong> <span id="statNucleus" class="sim-value" style="--chars: 11">&ndash;</span>
+												</div>
+												<div class="stats-box" title="Half-life: the time in which half of a large sample would decay">
+													<strong>Half-life:</strong> <span id="statHalfLife" class="sim-value" style="--chars: 12">&ndash;</span>
+												</div>
+												<div class="stats-box" title="How it decays">
+													<strong>Decays by:</strong> <span id="statDecay" class="sim-value" style="--chars: 6">&ndash;</span>
+												</div>
+											</div>
+											<div class="sim-info-actions">
+												<button type="button" id="clearSimulationBtn" class="sim-icon-button" aria-label="Remove everything" title="Clear">
+													<span class="icon solid fa-trash-alt"></span>
+												</button>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Reset the simulation" title="Reset">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+											</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>Most combinations of protons and neutrons fall apart. About 250 are stable; the other 3,300 or so known nuclides are radioactive, and each nucleus decays at its own random moment.</p>
+
+											<h4>What you're seeing</h4>
+											<ul>
+												<li><strong>Nuclei:</strong> protons pink, neutrons grey. The number of protons sets the element; protons plus neutrons give the mass number, as in carbon-14.</li>
+												<li><strong>The ring</strong> around an unstable nucleus is its own clock. It speeds up tenfold every half second (at 1&times;), so it reaches nanoseconds, years and billions of years within seconds. The notch marks the half-life.</li>
+												<li><strong>The chart</strong> plots neutrons <em>N</em> against protons <em>Z</em>, coloured by how each nuclide decays, with arrows tracing the selected nucleus's decays.</li>
+											</ul>
+
+											<h4>Key idea</h4>
+											<p>The strong force holds nucleons together while the protons repel each other. Light stable nuclei have <em>N</em>&nbsp;&asymp;&nbsp;<em>Z</em>; heavier ones need extra neutrons, so the valley of stability bends towards <em>N</em>&nbsp;&asymp;&nbsp;1.5<em>Z</em>. Too many neutrons: &beta;<sup>&minus;</sup> decay (n&nbsp;&rarr;&nbsp;p&nbsp;+&nbsp;e<sup>&minus;</sup>&nbsp;+&nbsp;&nu;&#772;). Too many protons: &beta;<sup>+</sup> decay or electron capture. Too heavy: &alpha; decay or fission. Half of a large sample decays in one half-life, but no one can say when a single nucleus will.</p>
+
+											<h4>Things to try</h4>
+											<ul>
+												<li>Drop a neutron onto uranium-235: it usually splits into two fragments and two or three neutrons.</li>
+												<li>Follow uranium-238 through fourteen decays to lead-206.</li>
+												<li>Add a neutron to uranium-238 and watch it become plutonium-239.</li>
+												<li>Keep adding neutrons to carbon-12. When does it stop holding them?</li>
+											</ul>
+
+											<h4>How to use it</h4>
+											<p>Drag a particle or nucleus from the tray (or tap it). Drop one onto another to combine them, or flick it to throw. Tap a nucleus for its details; drag it to the bin or off the canvas to remove it. Tap the chart to enlarge it, then tap any square to add that nuclide. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-trash-alt"></span> clears and <span class="icon solid fa-sync-alt"></span> resets.</p>
+											<p>Half-lives, decay modes and gamma energies are evaluated data (IAEA ENSDF and NUBASE2020) for 3,558 nuclides; anything else is estimated from the semi-empirical mass formula.</p>
+										</div>
+									</details>
+								</div>
+							</div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script src="assets/js/nuclear_data.js" defer></script> <!-- Nuclide table -->
+			<script src="assets/js/nuclear_core.js" defer></script> <!-- Simulation specific logic -->
+	</body>
+</html>
