@@ -2587,11 +2587,8 @@
         }
         if (!(wsum > 0)) return;
         const px1 = 1 / scale;
-        // (copied: drawing a stream inside reuses nothing, but the runs are only valid until the
-        // next bandRuns)
-        const rs = runs.slice();
         for (let k = 0; k < nr; k++) {
-            const r = rs[k];
+            const r = runs[k];
             const L = Math.hypot(r.ex - r.sx, r.ez - r.sz);
             if (L < px1) continue;
             // through the stretch, perpendicular to it
@@ -2736,8 +2733,9 @@
                 if (spillB) drawTongue(cv, ch, rB, false, m, -ch.sB, liq, split, c, s);
             }
 
-            // 4. Streams falling into the cavity: over the lips, through holes as jets, or, over a
-            //    submerged hole, a fountain of what is left of the jet when it reaches the surface
+            // 4. Streams falling into the cavity: over the lips, as curtains through stretches of wide
+            //    openings, through holes as jets, or, over a submerged hole, a fountain of what is left
+            //    of the jet when it reaches the surface; and streams leaving it (drawn later, on top)
             //    (The nappes are drawn once inside the cavity and once over the cleared stretches.)
             for (let pass = 0; pass < (nClear ? 2 : 1) && nappes.length; pass++) {
                 ctx.save();
