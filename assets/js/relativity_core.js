@@ -20,14 +20,20 @@
  * - Lightning (Einstein's train): lightning strikes both ends of the ship just as its middle passes the
  *   station's middle, at the same moment measured from the station. Each flash runs along the track at c,
  *   both ways from where its strike happened (measured in the shown frame), to a detector in the middle of
- *   each craft, whose two lamps light as the flashes from behind and ahead arrive. The station's detector gets both at once and the ship's gets the front
- *   flash first, in both frames; measured from the ship the front strike happened γvL/c²·(1/γ) = vL0/c²
- *   earlier, so its detector, half way between the strikes, sees them in the order they happened.
+ *   each craft, whose two lamps light as the flashes from behind and ahead arrive. The station's detector
+ *   gets both at once and the ship's gets the front flash first, in both frames. Measured from the ship the
+ *   front strike happened γvΔx/c² = vL0/c² earlier (Δx = L0/γ, their separation measured from the station),
+ *   so its detector, half way between the strikes, sees them in the order they happened.
  * - Light clocks: a ship and a station with the same rest length, each carrying a light clock (a pulse of
  *   light bouncing between two mirrors 0.5 light-seconds apart, so it ticks once a second). The craft at
  *   rest stays in the middle; the moving one wraps round the edges (as if the track were lined with
  *   identical, synchronised copies of the craft at rest, one per screen width). Both clocks read zero as
  *   the two craft pass each other.
+ * - Muons: a batch of muons made 15 km up falls to the ground. Each decays when its own clock reaches a
+ *   random lifetime (mean 2.2 µs), so the same muons survive whichever frame the fall is measured from.
+ *   Measured from the muons the atmosphere is only 15/γ km thick, so that view is zoomed in γ times (after a
+ *   moment at Earth's scale) and played γ times slower: the fall takes as long on screen in both frames, the
+ *   muons decay at the same moments, and anything moving at a given speed crosses the screen equally fast.
  * - Ship in a hangar (the pole-and-barn paradox): at rest the ship is longer than the hangar. Measured from
  *   the hangar both doors shut at the same moment, for a short while, with the contracted ship inside.
  *   Measured from the ship the hangar is even shorter, but each door shuts when the hangar's own clock beside
@@ -36,11 +42,6 @@
  *   door's shut moment.
  * - Twin paradox: a return trip to Proxima Centauri (4.24 ly). Measured from the ship (its outbound frame,
  *   then its inbound frame), Earth's clock jumps ahead at the turnaround.
- * - Muons: a batch of muons made 15 km up falls to the ground. Each decays when its own clock reaches a
- *   random lifetime (mean 2.2 µs), so the same muons survive whichever frame the fall is measured from.
- *   Measured from the muons the atmosphere is only 15/γ km thick, so that view is zoomed in γ times (after a
- *   moment at Earth's scale) and played γ times slower: the fall takes as long on screen in both frames, the
- *   muons decay at the same moments, and anything moving at a given speed crosses the screen equally fast.
  */
 (function () {
     'use strict';
