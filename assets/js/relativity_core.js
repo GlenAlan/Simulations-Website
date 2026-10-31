@@ -1051,9 +1051,15 @@
         if (gap) {
             ctx.textBaseline = 'middle';
             ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), y + 0.5);
+        } else if (inline) {
+            // Beside the line, on whichever side has room
+            const right = x1 + 6 + tw <= viewW - 4;
+            ctx.textAlign = right ? 'left' : 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, right ? x1 + 6 : x0 - 6, y + 0.5);
         } else {
-            ctx.textBaseline = inline ? 'bottom' : 'top';
-            ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), inline ? y - tick - 2 : y + tick + 2);
+            ctx.textBaseline = 'top';
+            ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), y + tick + 2);
         }
     }
 
@@ -1474,7 +1480,7 @@
                         }
                         const xp = X(lane.w * tn);
                         if (xp > -4 && xp < viewW + 4) {
-                            ctx.fillStyle = lane.color;
+                            ctx.fillStyle = dark ? lane.color : lane.text;
                             ctx.globalAlpha = 0.65;
                             ctx.beginPath();
                             ctx.arc(xp, y + dy, Math.max(1.5, pr * 0.45), 0, TAU);
@@ -1629,7 +1635,8 @@
         const hm = homeMoves();
         drawStars(k, lay.P, hm ? st.home.u * (t - st.start) : 0, hm ? g : 1);
         const lightRGB = dark ? pal.chamberLightRGB : pal.lightRGB;
-        const y0 = lay.top - 0.1 * k, y1 = lay.bottom + 0.06 * k;
+        const y0 = lay.top - 0.04 * k, y1 = lay.bottom + 0.04 * k;
+        const yTag = (lay.yShip + 0.33 * LN.SIZE * k + lay.yStation - 0.46 * LN.SIZE * k) / 2;   // the gap between lanes
 
         // Each flash runs both ways along the track at c from where its strike happened in this frame: a front
         // across both lanes, fading once it has passed both detectors.
@@ -1652,7 +1659,7 @@
                 ctx.lineWidth = 2;
                 ctx.stroke();
                 ctx.globalAlpha = a;
-                drawLightTag(x + (dir > 0 ? 4 : -f * 0.75), y0 + f * 0.4, f);
+                drawLightTag(x + (dir > 0 ? 4 : -f * 0.75), yTag, f);
                 ctx.globalAlpha = 1;
             }
         });
@@ -1951,10 +1958,8 @@
         ctx.beginPath();
         ctx.ellipse(x, y, rx, r, 0, 0, TAU);
         ctx.clip();
-        const g = ctx.createRadialGradient(x - rx * 0.35, y - r * 0.35, r * 0.1, x, y, r);
-        g.addColorStop(0, '#9ad6fa');
-        g.addColorStop(1, pal.earthOcean);
-        ctx.fillStyle = g;
+        // Flat, like the craft: ocean, land, and the night side as a darker crescent
+        ctx.fillStyle = pal.earthOcean;
         ctx.fillRect(x - rx, y - r, 2 * rx, 2 * r);
         ctx.fillStyle = pal.teal;
         const blobs = [[-0.35, -0.3, 0.42, 0.3], [0.32, 0.12, 0.38, 0.45], [-0.1, 0.55, 0.3, 0.18], [0.45, -0.55, 0.2, 0.14]];
@@ -1963,6 +1968,11 @@
             ctx.ellipse(x + b[0] * rx, y + b[1] * r, b[2] * rx, b[3] * r, 0.4, 0, TAU);
             ctx.fill();
         }
+        ctx.beginPath();
+        ctx.rect(x - rx, y - r, 2 * rx, 2 * r);
+        ctx.ellipse(x - rx * 0.28, y - r * 0.12, rx * 1.02, r * 1.02, 0, 0, TAU, true);
+        ctx.fillStyle = 'rgba(10,20,40,0.28)';
+        ctx.fill('evenodd');
         ctx.restore();
         ctx.beginPath();
         ctx.ellipse(x, y, rx, r, 0, 0, TAU);
@@ -2040,7 +2050,9 @@
         ctx.fillStyle = pal.muted;
         const starName = 'Proxima Centauri';
         const snw = textW(starName, f * 0.95, 700);
-        ctx.fillText(starName, clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6), y + lay.rE + f * 1.5);
+        const ew = craftLabelWidth(f, 'Earth twin', 'yr', ageTemplate);
+        const crowded = Math.abs(xS - xE) < ew / 2 + snw / 2 + 12;
+        ctx.fillText(starName, clamp(xS, snw / 2 + 6, viewW - snw / 2 - 6), crowded ? y - lay.rE - f * 0.9 : y + lay.rE + f * 1.5);
 
         // Earth and the star move together when measured from the ship: one arrow on the route between them
         const arrowLen = clamp(0.06 * viewW, 26, 60);
