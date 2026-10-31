@@ -80,7 +80,7 @@ const INITIAL_SAMPLE_INTERVAL = 2;          // simulated seconds between chart s
 
 // --- Parameters from the controls ---
 function speedFromSlider() {
-    if (!speedSlider) return 50;
+    if (!speedSlider) return 100;
     const index = Math.max(0, Math.min(SPEED_STOPS.length - 1, Math.round(+speedSlider.value)));
     return SPEED_STOPS[index];
 }
