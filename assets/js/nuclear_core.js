@@ -8,9 +8,13 @@
  * every known ground state (IAEA LiveChart/ENSDF, gaps from NUBASE2020), the main gamma lines and the split of
  * electron capture and beta+ decay, plus three isomers (Tc-99m, Ba-137m, Pa-234m).
  *
- * Time: each unstable nucleus has its own logarithmic clock. It starts at 1 ns (earlier for very short-lived
- * nuclei) and runs ten times faster every half second at 1x, so a timer gets from nanoseconds to billions of
- * years within seconds. The decay time is drawn when the nucleus forms, t = -(T1/2 / ln 2) ln U (U uniform in
+ * Time: each unstable nucleus has its own logarithmic clock, the same for all of them, so any number of nuclei
+ * can be compared fairly: it starts at 1e-22 s when the nucleus forms and gains a factor of ten every third of
+ * a second at 1x, so it gets from the shortest-lived nuclei to billions of years within seconds. The ring
+ * around a nucleus is a log-time ruler shared by all of them (1e-22 s to 1e18 s): how full it is shows the
+ * nucleus's age, and its notch marks that nucleus's half-life on the same ruler, so nuclei of the same age
+ * have equally full rings and a short-lived one's notch comes early. The decay time is drawn when the nucleus
+ * forms, t = -(T1/2 / ln 2) ln U (U uniform in
  * (0, 1]), together with the branch (by its branching ratio); the nucleus decays when its clock reaches t.
  * Nothing warns of a decay in advance: it is random and memoryless, as in a real nucleus. (The carbon-dating
  * setup gives its sample one shared, steady clock instead, so the sample can be seen to halve.) The simulation
@@ -64,7 +68,9 @@
     const MAX_Z = 130;
     const MAX_BODIES = 40;
     const MAX_SPARKS = 240;
-    const DECADES_PER_S = 2;        // clock decades per real second at 1x
+    const DECADES_PER_S = 3;        // clock decades per real second at 1x
+    const LOG_T0 = -22;             // log10 s: every clock starts here (just below the shortest-lived nuclei shown)
+    const LOG_T1 = 18;              // log10 s: the end of the clocks' ruler (about 30 billion years)
     // Speeds of the radiation, in canvas sizes (the geometric mean of width and height) per second at 1x: slow
     // enough to read the labels, which stay in view for a couple of seconds whichever way a particle goes.
     // Gamma rays are the fastest and alpha particles the slowest, though nowhere near to scale. (Fission
@@ -471,7 +477,7 @@
 
     // Timer units: [length in s, singular, plural]. Each runs up to the next (60 s make a minute, and so on).
     const TIME_UNITS = [
-        [1e-12, 'ps', 'ps'], [1e-9, 'ns', 'ns'], [1e-6, 'µs', 'µs'], [1e-3, 'ms', 'ms'], [1, 's', 's'], [60, 'min', 'min'],
+        [1e-18, 'as', 'as'], [1e-15, 'fs', 'fs'], [1e-12, 'ps', 'ps'], [1e-9, 'ns', 'ns'], [1e-6, 'µs', 'µs'], [1e-3, 'ms', 'ms'], [1, 's', 's'], [60, 'min', 'min'],
         [3600, 'hour', 'hours'], [86400, 'day', 'days'], [YEAR, 'year', 'years'], [1e3 * YEAR, 'thousand years', 'thousand years'],
         [1e6 * YEAR, 'million years', 'million years'], [1e9 * YEAR, 'billion years', 'billion years'],
     ];
@@ -487,7 +493,7 @@
     // "4 billion years"): { num, unit, wide }, where wide is the unit's longest form (for a steady layout).
     function formatDuration(s) {
         if (!(s > 0)) return { num: '0', unit: 's', wide: 's' };
-        if (s < 1e-12) {
+        if (s < 1e-18) {
             const f = oneFigure(s);
             const u = '× 10' + sup(f.e) + ' s';
             return { num: String(f.m), unit: u, wide: u };
@@ -517,7 +523,7 @@
             let t = Number(v.toPrecision(n));
             return t >= 1000 ? t.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : String(t);
         };
-        if (s < 1e-12) {
+        if (s < 1e-18) {
             const e = Math.floor(Math.log10(s));
             return trim(s / Math.pow(10, e), 2) + ' × 10' + sup(e) + ' s';
         }
@@ -534,7 +540,9 @@
         if (s >= 1e-3) return trim(s * 1e3, 4) + ' ms';
         if (s >= 1e-6) return trim(s * 1e6, 4) + ' µs';
         if (s >= 1e-9) return trim(s * 1e9, 4) + ' ns';
-        return trim(s * 1e12, 4) + ' ps';
+        if (s >= 1e-12) return trim(s * 1e12, 4) + ' ps';
+        if (s >= 1e-15) return trim(s * 1e15, 4) + ' fs';
+        return trim(s * 1e18, 4) + ' as';
     }
 
     function formatEnergy(keV) {
@@ -893,7 +901,7 @@
         const hl = info.hl;
         const t = -hl / LN2 * Math.log(1 - Math.random());       // 1 - U is in (0, 1]
         const logHalf = Math.log10(hl);
-        const logStart = Math.min(-9, logHalf - 2.5);
+        const logStart = LOG_T0;     // the same for every nucleus, so their clocks can be compared
         b.clock = { logT: logStart, logStart, logHalf, logEnd: Math.log10(Math.max(t, 1e-30)), branch: null };
         // a member of the carbon-dating sample reads the sample's shared steady clock (its ring starts
         // nearer the half-life, which it passes within seconds)
@@ -2296,16 +2304,17 @@
         }
     }
 
-    // Log-time progress as a gauge around the nucleus, open at the bottom (towards the label): it fills
-    // clockwise from the lower left, and the notch near the end marks the half-life.
+    // The clock as a gauge around the nucleus, open at the bottom (towards the label): a log-time ruler from
+    // 1e-22 s to 1e18 s, the same for every nucleus. It fills clockwise from the lower left with the nucleus's
+    // age, and the notch marks its half-life on the same ruler (at the end for anything longer-lived).
     const RING_A0 = Math.PI * 0.75, RING_SPAN = Math.PI * 1.5;
     function drawClockRing(b, x, y) {
         const c = b.clock;
         if (!c) return;
         const r = b.R + 4;
-        const span = c.logHalf + 1 - c.logStart;
-        const f = Math.max(0, Math.min(1, (c.logT - c.logStart) / span));
-        const fh = (c.logHalf - c.logStart) / span;
+        const span = LOG_T1 - LOG_T0;
+        const f = Math.max(0, Math.min(1, (c.logT - LOG_T0) / span));
+        const fh = Math.max(0, Math.min(1, (c.logHalf - LOG_T0) / span));
         ctx.lineWidth = 2;
         ctx.lineCap = 'round';
         ctx.strokeStyle = C.faint;
@@ -3169,6 +3178,8 @@
         const R = nuclideLook(Z, N).R;
         ctx.font = font(700, fontPx);
         const lw = ctx.measureText(chainRx ? shortName(Z, N, 0) : nuclideName(Z, N, 0)).width;
+        // (the chain reaction's fuel is packed closer: it stays put, and its labels are short)
+        if (chainRx) return [Math.max(2 * R + 10, lw + 10), 2 * R + 14 + fontPx * 1.2];
         return [Math.max(2 * R + 16, lw + 22), 2 * R + 20 + fontPx * 2.6];
     }
     function setToggle(el, on) {
@@ -3192,7 +3203,7 @@
             // on a tall canvas the core gets the whole width: the chart comes back with the next scene
             if (layout.tall) setupNeeds(ui.showChart, false);
             const [cw, ch] = slotSize(92, 143);
-            const pts = setupSlots(layout.tall ? 12 : 14, cw, ch);
+            const pts = setupSlots(layout.tall ? 16 : 20, cw, ch);
             const us = pts.map((p) => addBody(92, 143, 0, p.x, p.y)).filter(Boolean);
             // a reflector round the core keeps the neutrons among the nuclei, as in a reactor
             const m = layout.pad * 0.5;
