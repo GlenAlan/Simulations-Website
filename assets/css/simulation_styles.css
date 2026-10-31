@@ -51,6 +51,22 @@ html {
     margin-bottom: 1.1em;
 }
 
+/* The theme and menu buttons scroll away with the header rather than floating over the simulation. */
+#header nav {
+    position: absolute;
+}
+
+/* Short screens (phones in landscape): a slimmer header. */
+@media screen and (max-height: 540px) and (min-width: 737px) {
+    #header {
+        padding-top: 1.25em;
+    }
+
+    #header nav {
+        top: 1em;
+    }
+}
+
 #main > .inner > h1 {
     font-size: 1.75em;
     line-height: 1.2;
@@ -59,14 +75,16 @@ html {
 }
 
 @media screen and (max-width: 736px) {
+    /* The theme toggle sits under the menu button here (down to 7em from the top): keep the title
+       beside it and the canvas below it. */
     #header .logo {
-        margin-bottom: 1em;
+        margin-bottom: 1.5em;
     }
 
-    /* Keep the title clear of the theme toggle, which sits under the menu button here. */
     #main > .inner > h1 {
         font-size: 1.4em;
         padding-right: 2.9em;
+        margin-bottom: 0.8em;
     }
 }
 
@@ -115,10 +133,10 @@ html {
     }
 }
 
-/* Canvas, toolbars and info bar: as wide as the canvas, centred. */
+/* Canvas, toolbars and info bar: as wide as the canvas (but wide enough for a one-line info bar), centred. */
 .simulation-display-container {
     position: relative;
-    width: var(--sim-canvas-w);
+    width: max(var(--sim-canvas-w), min(100%, 26em));
     max-width: 100%;
     margin: 0 auto;
 }
@@ -126,6 +144,8 @@ html {
 .sim-canvas-wrapper {
     position: relative;
     width: 100%;
+    max-width: calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 2 / 1)) + 2px);
+    margin: 0 auto;
     box-sizing: border-box;
 }
 
@@ -140,6 +160,14 @@ html {
     border: 1px solid var(--color-border);
     border-radius: var(--sim-radius);
     overflow: hidden;
+}
+
+/* Optional: a taller canvas on phones in portrait. A page sets e.g. style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 4/3"
+   on the box (its core must then read the ratio from getComputedStyle(box), as simulation_ui.js does). */
+@media (max-width: 600px) and (orientation: portrait) {
+    .sim-aspect-ratio-box[style*="--aspect-ratio-portrait"] {
+        --aspect-ratio: var(--aspect-ratio-portrait) !important;
+    }
 }
 
 @supports not (aspect-ratio: 1 / 1) {
@@ -236,6 +264,8 @@ html {
 
 .sim-info-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
     gap: 2px;
     flex: 0 0 auto;
@@ -397,6 +427,7 @@ html {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    overflow: clip; /* Never scrolled itself (only its content scrolls) */
     font-size: clamp(15px, 0.85em, 17px);
     line-height: 1.45;
     color: var(--color-text);
@@ -534,6 +565,7 @@ body.sim-panel-sheet .sim-controls-header::before {
 }
 
 .sim-controls-content {
+    position: relative; /* Positioned children (e.g. hidden checkboxes) scroll with the content */
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
@@ -559,6 +591,17 @@ body.sim-panel-sheet .sim-controls-header::before {
 
 .sim-controls-content::-webkit-scrollbar-track {
     background: transparent;
+}
+
+/* In Chromium the contents of a <details> inherit box-sizing through a content-box UA slot;
+   restore main.css's border-box so e.g. selects in "More options" fit the panel. */
+details.sim-controls-more *,
+details.sim-controls-more *::before,
+details.sim-controls-more *::after,
+details.description-area *,
+details.description-area *::before,
+details.description-area *::after {
+    box-sizing: border-box;
 }
 
 /* Slider rows: "Label: value unit" above the slider. */
@@ -792,6 +835,7 @@ body.sim-panel-sheet .sim-controls-header::before {
 /* On/off toggles: a row with the label on the left and a switch on the right.
    The switch is drawn entirely by label::before (track colour + knob gradient). */
 .sim-checkbox-group {
+    position: relative; /* Keeps the hidden checkboxes next to their labels, so focusing one never scrolls the panel */
     display: flex;
     flex-direction: column;
     gap: 0.1em;
@@ -954,6 +998,7 @@ div:where(#charts-container .chart-box) {
 /* ---------- About this simulation ---------- */
 .description-area {
     box-sizing: border-box;
+    overflow-wrap: anywhere;
     width: max(min(100%, 40em), var(--sim-canvas-w));
     max-width: 100%;
     margin: 1.25em auto 0 auto;
@@ -1212,6 +1257,8 @@ body.sim-fullscreen-active .sim-canvas-wrapper {
     flex: 1 1 0%;
     min-height: 0;
     width: 100%;
+    max-width: none;
+    margin: 0;
     display: flex;
     align-items: center;
     justify-content: center;
