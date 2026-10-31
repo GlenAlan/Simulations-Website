@@ -61,6 +61,7 @@
         MIRROR: 0.5,      // mirror separation (ls): half a second up, half a second down
         TICK: 1,          // s per tick
         TRAIL: 2,         // seconds of light path left behind each pulse
+        DOT: 0.1,         // seconds between the marks along a light path
         END: 0.62,        // end clocks' distance from the middle, in the craft's own frame (ls)
         HEIGHT: 0.94,     // craft height including fins and solar panels (ls)
         MIN_SPAN: 3.5     // narrowest scene (ls), so a craft at rest never fills more than ~45 % of the width
@@ -718,6 +719,46 @@
         ctx.fillText(text, (x0 + x1) / 2, y + tick + 2);
     }
 
+    // Scale bar at the bottom left (as on the other simulation pages): a round length, `unit` per `k` px.
+    function niceLength(x) {
+        const e = Math.pow(10, Math.floor(Math.log10(x)));
+        const m = x / e;
+        return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * e;
+    }
+    function drawScaleBar(k, unit, f) {
+        const len = niceLength(clamp(viewW / 9, 60, 140) / k);
+        const px = len * k;
+        const x0 = 12, y0 = viewH - 10;
+        ctx.strokeStyle = pal.muted;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0 - 5);
+        ctx.lineTo(x0, y0);
+        ctx.lineTo(x0 + px, y0);
+        ctx.lineTo(x0 + px, y0 - 5);
+        ctx.stroke();
+        setFont(f * 0.88, 400);
+        ctx.fillStyle = pal.muted;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`${len} ${unit}`, x0 + px + 6, y0 + 2);
+    }
+
+    // A small italic "c" beside a pulse of light: its speed, the same in every frame. The dark halo keeps it
+    // readable on the craft and on either theme's background.
+    function drawLightTag(x, y, f, text) {
+        ctx.font = `italic 700 ${Math.round(f * 0.95)}px ${FONT}`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(13,16,22,0.85)';
+        ctx.strokeText(text || 'c', x, y);
+        ctx.fillStyle = `rgb(${pal.chamberLightRGB})`;
+        ctx.fillText(text || 'c', x, y);
+        ctx.lineJoin = 'miter';
+    }
+
     // Background stars, fixed to the home frame (period P scene units). Measured from the away frame they
     // stream past at the home frame's velocity u and bunch up by γ (the home frame is length-contracted).
     function drawStars(k, P, homeX, g) {
@@ -948,6 +989,29 @@
         ctx.lineJoin = 'miter';
     }
 
+    // Marks along a light path at every LC.DOT seconds of the shown frame's time, like a strobe photograph.
+    // Light covers the same distance between marks in both clocks (straight up and down in the clock at rest,
+    // on a slant in the moving one), so the marks are the same distance apart: the same speed, c.
+    function drawStrobe(trail, xShift, k, cx, cy, Tnow, rgb, r) {
+        if (trail.length < 2) return;
+        const m = LC.MIRROR / 2;
+        const dot = LC.DOT * k >= 6 ? LC.DOT : 2 * LC.DOT;
+        let j = 1;
+        for (let n = Math.ceil(Math.max(trail[0].t, Tnow - LC.TRAIL) / dot - 1e-6); n * dot <= Tnow + 1e-6; n++) {
+            const td = n * dot;
+            while (j < trail.length - 1 && trail[j].t < td) j++;
+            const a = trail[j - 1], b = trail[j];
+            const s = b.t > a.t ? clamp((td - a.t) / (b.t - a.t), 0, 1) : 1;
+            const x = cx + (a.x + s * (b.x - a.x) + xShift) * k;
+            const y = cy + (m - (a.h + s * (b.h - a.h)) * LC.MIRROR) * k;
+            const alpha = 0.95 * (1 - clamp((Tnow - td) / LC.TRAIL, 0, 1));
+            ctx.fillStyle = `rgba(${rgb},${alpha.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+        }
+    }
+
     // ------------------------------------------------------------------
     // Scene: light clocks
     // ------------------------------------------------------------------
@@ -974,6 +1038,7 @@
         drawStars(lay.k, lay.P, st.home.moving ? lc.xTravel : 0, st.home.moving ? g : 1);
         drawCraftLane('away', st.away, lay.yShip, lay, g);
         drawCraftLane('home', st.home, lay.yStation, lay, g);
+        drawScaleBar(lay.k, 'ls', lay.f);
         drawCaption(lay.f);
     }
 
@@ -1009,10 +1074,14 @@
             else drawStation(true, flash);
             if (S.showPaths) {
                 // A moving clock's path leaves its chamber, so it uses the colour that shows on the background.
-                drawTrail(trail, xShift, k, lay.cx, y, lc.T, c.moving ? pal.lightRGB : pal.chamberLightRGB, Math.max(1.5, k * 0.012));
+                const rgb = c.moving ? pal.lightRGB : pal.chamberLightRGB;
+                drawTrail(trail, xShift, k, lay.cx, y, lc.T, rgb, Math.max(1.2, k * 0.008));
+                drawStrobe(trail, xShift, k, lay.cx, y, lc.T, rgb, Math.max(1.8, k * 0.011));
             }
             const py = y + (LC.MIRROR / 2 - lightHeight(c.clock) * LC.MIRROR) * k;
-            drawPhoton(xs, py, Math.max(2.5, k * 0.022));
+            const pr = Math.max(2.5, k * 0.022);
+            drawPhoton(xs, py, pr);
+            drawLightTag(xs + pr * 1.6 + 3, py - pr * 1.6, f);
 
             if (c.moving) drawVelocity(xs + dir * (halfLen + 10), y, dir, arrowLen, f, S.v);
 
