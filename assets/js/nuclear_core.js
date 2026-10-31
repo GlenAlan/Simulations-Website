@@ -3207,7 +3207,7 @@
             // on a tall canvas the core gets the whole width: the chart comes back with the next scene
             if (layout.tall) setupNeeds(ui.showChart, false);
             const [cw, ch] = slotSize(92, 143);
-            const pts = setupSlots(layout.tall ? 16 : 26, cw, ch);
+            const pts = setupSlots(layout.tall ? 16 : 32, cw, ch);
             const us = pts.map((p) => addBody(92, 143, 0, p.x, p.y)).filter(Boolean);
             // a reflector round the core keeps the neutrons among the nuclei, as in a reactor
             const m = layout.pad * 0.5;
