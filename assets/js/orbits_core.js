@@ -3245,6 +3245,11 @@
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : 'keeps its velocity';
             setHint(null, `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.`);
+        } else if (pr && pr.p.m < b.m) {
+            // The heaviest body orbits nothing: just its speed in this view
+            const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
+            const base = aimBase(b), v = fmtSpeedKms(Math.hypot(b.aim.vx + base.x - (L ? L.vx : totals(bodies).vx), b.aim.vy + base.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
+            setHint(null, `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
             const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
@@ -3332,8 +3337,15 @@
         }
         const base = ref ? { x: ref.vx, y: ref.vy } : fv;
         b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
-        const tip = velocityTip(b);
-        d.grabX = pt.x - tip.x; d.grabY = pt.y - tip.y;   // keep the grabbed point on the arrow
+        // Keep the grabbed point on the arrow. A body at rest has no arrow: its handle stands out from
+        // the edge of its disc, so the arrow grows from there as soon as the handle moves.
+        let tip = velocityTip(b);
+        if (tip.len < 1) {
+            const h = handlePos(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+            const l = Math.hypot(h.x - x, h.y - y) || 1;
+            tip = { x: x + ((h.x - x) / l) * r, y: y + ((h.y - y) / l) * r };
+        }
+        d.grabX = pt.x - tip.x; d.grabY = pt.y - tip.y;
         d.fine = null;
         d.start = { x: pt.x, y: pt.y, vx: b.aim.vx, vy: b.aim.vy, coarse: false };
     }
