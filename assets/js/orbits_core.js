@@ -1569,8 +1569,8 @@
         drawFlybyGhost(C);
         if (settings.k1) drawEllipseLaw(C, subj);
         drawDragPreviews(C);
-        if (settings.com) drawCentreOfMass(C);
         drawBodies(C);
+        if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
         drawLabels(C);
         drawOffscreen(C);
@@ -1815,20 +1815,29 @@
             ctx.strokeText(b.name, best.box.l, best.box.t);
             ctx.fillText(b.name, best.box.l, best.box.t);
         }
-        // Last, the centre of mass's own label, in the first free spot round its marker
+        // Last, the centre of mass's own label, in the first free spot round its marker (if the
+        // marker is on a star, over the star's glow rather than not at all)
         if (settings.com && bodies.length) {
             const c = drawnCentreOfMass();
             ctx.font = font(clamp(Math.min(viewW, viewH) / 46, 10, 12));
             const w = ctx.measureText('centre of mass').width, h = 12;
-            for (const [dx, dy] of [[11, -16], [11, 4], [-11 - w, -16], [-11 - w, 4]]) {
-                const box = { l: c.x + dx, t: c.y + dy, r: c.x + dx + w, b: c.y + dy + h };
-                if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
-                if (placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)) continue;
-                if (discs.some((d) => d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b)) continue;
+            const spots = [[11, -16], [11, 4], [-11 - w, -16], [-11 - w, 4], [-w / 2, -26], [-w / 2, 14]];
+            let at = null;
+            for (const strict of [true, false]) {
+                for (const [dx, dy] of spots) {
+                    const box = { l: c.x + dx, t: c.y + dy, r: c.x + dx + w, b: c.y + dy + h };
+                    if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
+                    if (placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)) continue;
+                    if (strict && discs.some((d) => d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b)) continue;
+                    at = box;
+                    break;
+                }
+                if (at) break;
+            }
+            if (at) {
                 ctx.fillStyle = C.subtle;
-                ctx.strokeText('centre of mass', box.l, box.t);
-                ctx.fillText('centre of mass', box.l, box.t);
-                break;
+                ctx.strokeText('centre of mass', at.l, at.t);
+                ctx.fillText('centre of mass', at.l, at.t);
             }
         }
     }
@@ -2952,7 +2961,8 @@
             const kms = (s) => fmtSpeedKms(s * AUYR_KMS);
             note = `Circular ${kms(vc).v} · escape ${kms(ve).v} ${kms(ve).u}, relative to ${theName(sr.p)}`;
         } else {
-            if (!popSpeedMax) popSpeedMax = Math.max(1.15 * v, 1e-6);
+            // (the heaviest body barely moves: let its slider reach the scene's typical speed)
+            if (!popSpeedMax) popSpeedMax = Math.max(1.15 * v, vRef);
             note = 'Relative to the centre of mass';
         }
         if (!recent) ui.popSpeed.value = String(Math.round(clamp(v / popSpeedMax, 0, 1) * 1000));
