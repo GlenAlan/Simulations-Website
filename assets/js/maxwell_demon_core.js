@@ -32,6 +32,10 @@ const rightTempEl = document.getElementById('rightTemp');
 
 const resetButton = document.getElementById('resetSimulationBtn');
 const fpsDisplay = document.getElementById('fpsDisplay');
+const hintEl = document.getElementById('demonHint');
+const demonModeNote = document.getElementById('demonModeNote');
+const leftLabelEl = document.getElementById('leftLabel');
+const rightLabelEl = document.getElementById('rightLabel');
 
 // --- Simulation Constants ---
 // The physics runs in a fixed 750 x 375 "world" (matching the 2:1 canvas),
@@ -42,8 +46,13 @@ const WORLD_HEIGHT = 375;
 const CENTER_X = WORLD_WIDTH / 2;
 const radius = 5;
 
-const MAX_PER_COLOR = particleCountSlider ? +particleCountSlider.max || 500 : 500;
+// The particle slider sets the total; half the particles start fast and half slow.
+const MAX_PER_COLOR = particleCountSlider ? Math.floor((+particleCountSlider.max || 1000) / 2) : 500;
 const MAX_PARTICLES = 2 * MAX_PER_COLOR;
+
+// The speed slider picks one of these (roughly logarithmic) steps.
+const SPEED_STOPS = [1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000];
+const MAX_RENDER_DPR = 2; // canvas resolution cap; sharper than this isn't visible but costs fill rate
 
 // Starting temperature: each velocity component is normal with std-dev SIGMA
 // (mean speed ~1.5 world units per simulated second).
@@ -63,8 +72,16 @@ const MAX_CHART_POINTS = 400;
 const INITIAL_SAMPLE_INTERVAL = 2;          // simulated seconds between chart samples (doubles as history grows)
 
 // --- Parameters from the controls ---
-let nPerColor = particleCountSlider ? +particleCountSlider.value : 100;
-let speedMultiplier = speedSlider ? +speedSlider.value : 50;
+function speedFromSlider() {
+    if (!speedSlider) return 50;
+    const index = Math.max(0, Math.min(SPEED_STOPS.length - 1, Math.round(+speedSlider.value)));
+    return SPEED_STOPS[index];
+}
+function perColourFromSlider() {
+    return particleCountSlider ? Math.max(1, Math.round(+particleCountSlider.value / 2)) : 100;
+}
+let nPerColor = perColourFromSlider();
+let speedMultiplier = speedFromSlider();
 let gateSizePercent = gateSizeSlider ? +gateSizeSlider.value : 25;
 let demonMode = demonModeSelector ? demonModeSelector.value : 'automatic';
 
@@ -77,8 +94,9 @@ const velY = new Float64Array(MAX_PARTICLES);
 const side = new Uint8Array(MAX_PARTICLES); // 0 = left chamber, 1 = right chamber
 
 let gateOpen = false;
-let pointerHeld = false;       // manual mode: gate is held open by mouse / touch
-let currentSimulationTime = 0; // simulated seconds since reset
+const heldPointers = new Set(); // manual mode: pointers (mouse / touch / pen) holding the gate open
+let spaceHeld = false;          // manual mode: Space held while the canvas has focus
+let currentSimulationTime = 0;  // simulated seconds since reset
 let maxSpeed = 0;              // fastest particle at the end of the last sub-step
 
 // Uniform grid for collision detection (cell size = particle diameter).
@@ -92,10 +110,16 @@ const cellOfParticle = new Int32Array(MAX_PARTICLES);
 const particlesByCell = new Int32Array(MAX_PARTICLES);
 
 // --- Rendering State ---
-let canvasScaleX = 1; // device pixels per world unit
-let canvasScaleY = 1;
+let viewScale = 1;    // canvas pixels per world unit (the same in x and y)
+let viewOffsetX = 0;  // canvas pixels; non-zero only if the canvas isn't exactly 2:1 (the world is centred)
+let viewOffsetY = 0;
+let renderDpr = 1;    // canvas pixels per CSS pixel
+let vertical = false; // chambers stacked (left chamber drawn on top) on tall, narrow screens
+let orientationSet = false;
 let currentDpr = window.devicePixelRatio || 1;
 let palette = null;
+let leftTempRatio = 1, rightTempRatio = 1; // latest chamber temperatures relative to the start
+let leftTint = 0, rightTint = 0;           // smoothed versions of those, for the chamber shading
 let lastTimestamp = null;
 let frameCount = 0;
 let lastFpsUpdate = 0;
@@ -219,6 +243,7 @@ function initializeSimulationState() {
     gateOpen = false;
     observeGate();
     resetChartData();
+    updateCountWidths();
     lastReadoutUpdate = -Infinity;
 }
 
@@ -361,9 +386,13 @@ function enforceBoundaries(gateTop, gateBottom) {
 // should go through (fast heading right, or slow heading left) and none of
 // them should not; it also holds the gate open for a particle still in the
 // doorway on its way out.
+function manualGateHeld() {
+    return heldPointers.size > 0 || spaceHeld;
+}
+
 function observeGate() {
     if (demonMode !== 'automatic') {
-        gateOpen = pointerHeld;
+        gateOpen = manualGateHeld();
         return;
     }
     const [gateTop, gateBottom] = gateBounds();
@@ -468,9 +497,15 @@ function redrawCharts(now) {
     lastChartRedraw = now === undefined ? performance.now() : now;
     chartsDirty = false;
     const xMax = Math.max(10, currentSimulationTime);
+    // Both charts share a y range so the two chambers can be compared at a glance
+    let yMax = 1;
+    for (const series of [chartData.left.red, chartData.left.blue, chartData.right.red, chartData.right.blue]) {
+        for (let i = 0; i < series.length; i++) if (series[i] > yMax) yMax = series[i];
+    }
     const sets = [[leftChart, chartData.left], [rightChart, chartData.right]];
     for (const [chart, data] of sets) {
         chart.options.scales.x.max = xMax;
+        chart.options.scales.y.suggestedMax = yMax;
         chart.data.labels = chartData.times;
         chart.data.datasets[0].data = data.red;
         chart.data.datasets[1].data = data.blue;
@@ -484,6 +519,7 @@ function readThemeColour(name, fallback) {
 }
 
 function updateChartColors() {
+    if (!palette) refreshPalette();
     const textColor = readThemeColour('--color-text', '#888');
     const gridColor = readThemeColour('--color-border', 'rgba(128,128,128,0.3)');
     [leftChart, rightChart].forEach(chart => {
@@ -493,6 +529,9 @@ function updateChartColors() {
         y.title.color = textColor; y.ticks.color = textColor; y.grid.color = gridColor;
         chart.options.plugins.title.color = textColor;
         chart.options.plugins.legend.labels.color = textColor;
+        const [fastSet, slowSet] = chart.data.datasets;
+        fastSet.borderColor = fastSet.backgroundColor = palette.red;
+        slowSet.borderColor = slowSet.backgroundColor = palette.blue;
         chart.update('none');
     });
 }
@@ -513,11 +552,18 @@ function setupCharts() {
         responsive: true,
         maintainAspectRatio: false,
         normalized: true,
+        // Short boxes (fullscreen on a small screen): drop the legend and axis titles so the
+        // plot keeps some height. The info bar shows the colour key anyway.
+        onResize: (chart, size) => {
+            chart.options.plugins.legend.display = size.height >= 170;
+            chart.options.scales.x.title.display = size.height >= 150;
+            chart.options.scales.y.title.display = size.height >= 150;
+        },
         elements: { point: { radius: 0, hitRadius: 4 }, line: { borderWidth: 2, tension: 0 } },
         interaction: { mode: 'index', intersect: false },
         plugins: {
-            title: { display: true, text: titleText },
-            legend: { labels: { boxWidth: 12 } },
+            title: { display: true, text: titleText, padding: { top: 2, bottom: 4 } },
+            legend: { labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle' } },
             tooltip: {
                 callbacks: { title: (items) => items.length ? `t = ${Number(items[0].label).toFixed(0)} s` : '' }
             }
@@ -527,13 +573,13 @@ function setupCharts() {
                 type: 'linear',
                 min: 0,
                 max: 10,
-                title: { display: true, text: 'Simulation Time (s)' },
-                ticks: { maxTicksLimit: 6, callback: (value) => Number(value).toFixed(0) },
+                title: { display: true, text: 'Simulated time (s)' },
+                ticks: { maxTicksLimit: 6, includeBounds: false, callback: (value) => Number(value).toFixed(0) },
                 grid: {}
             },
             y: {
                 beginAtZero: true,
-                title: { display: true, text: 'Particle Count' },
+                title: { display: true, text: 'Particles' },
                 ticks: { precision: 0 },
                 grid: {}
             }
@@ -546,8 +592,8 @@ function setupCharts() {
         data: {
             labels: [],
             datasets: [
-                dataset('Red (fast)', 'rgba(255, 0, 0, 0.85)'),
-                dataset('Blue (slow)', 'rgba(0, 100, 255, 0.85)')
+                dataset('Fast', palette.red),
+                dataset('Slow', palette.blue)
             ]
         },
         options: chartOptions(title)
@@ -555,13 +601,13 @@ function setupCharts() {
 
     if (leftChart) leftChart.destroy();
     if (rightChart) rightChart.destroy();
-    leftChart = makeChart(leftChartCanvas, 'Left Chamber');
-    rightChart = makeChart(rightChartCanvas, 'Right Chamber');
+    leftChart = makeChart(leftChartCanvas, 'Left chamber');
+    rightChart = makeChart(rightChartCanvas, 'Right chamber');
     updateChartColors();
     chartsDirty = true;
 }
 
-function applyChartsVisibility() {
+function applyChartsVisibility(userToggled) {
     if (!showChartsCheckbox || !chartsContainer) return;
     const visible = showChartsCheckbox.checked;
     chartsContainer.style.display = visible ? 'block' : 'none';
@@ -572,66 +618,152 @@ function applyChartsVisibility() {
         chartsDirty = true;
         redrawCharts();
     }
+    // With a big canvas the charts open below the fold: bring them into view so the
+    // button visibly does something (fullscreen makes room for them itself).
+    if (visible && userToggled === true && !document.body.classList.contains('sim-fullscreen-active')) {
+        requestAnimationFrame(() => {
+            const rect = chartsContainer.getBoundingClientRect();
+            if (rect.bottom > window.innerHeight) {
+                chartsContainer.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        });
+    }
 }
 
 // --- Rendering ---
 function refreshPalette() {
     const dark = document.documentElement.classList.contains('dark-mode');
     palette = {
-        wall: dark ? '#6b6b6b' : '#444444',
-        gate: dark ? '#c47cff' : '#800080',
-        red: 'rgba(255, 0, 0, 0.85)',
-        blue: 'rgba(0, 100, 255, 0.85)'
+        dark,
+        wall: dark ? '#7a7a7a' : '#5a5a5a',
+        gate: dark ? '#b98cff' : '#7b2fbf',
+        demonFace: dark ? '#1e1e1e' : '#ffffff',
+        halo: readThemeColour('--color-bg', dark ? '#1e1e1e' : '#ffffff'),
+        red: readThemeColour('--mx-fast', dark ? '#ff4646' : '#e0242b'),
+        blue: readThemeColour('--mx-slow', dark ? '#3f8cff' : '#1f62d6')
     };
 }
 
+// Temperature relative to the start, always at most 4 characters wide.
 function formatTemperature(energy, count) {
-    return count > 0 ? (energy / count / T0).toFixed(2) : '–';
+    if (!(count > 0)) return '–';
+    const t = energy / count / T0;
+    if (t < 9.995) return t.toFixed(2);
+    if (t < 99.95) return t.toFixed(1);
+    return String(Math.min(9999, Math.round(t)));
 }
 
 function setText(el, text) {
     if (el && el.textContent !== text) el.textContent = text;
 }
 
+// Reserve room for the largest count possible with the current number of particles,
+// so the readouts keep their width while the counts change.
+function updateCountWidths() {
+    const chars = String(particleCount).length;
+    [leftRedEl, leftBlueEl, rightRedEl, rightBlueEl].forEach(el => {
+        if (el) el.style.setProperty('--chars', chars);
+    });
+}
+
 function updateReadouts() {
     const s = computeChamberStats();
+    const leftCount = s.leftRed + s.leftBlue, rightCount = s.rightRed + s.rightBlue;
+    leftTempRatio = leftCount > 0 ? s.leftEnergy / leftCount / T0 : 1;
+    rightTempRatio = rightCount > 0 ? s.rightEnergy / rightCount / T0 : 1;
     setText(leftRedEl, String(s.leftRed));
     setText(leftBlueEl, String(s.leftBlue));
     setText(rightRedEl, String(s.rightRed));
     setText(rightBlueEl, String(s.rightBlue));
-    setText(leftTempEl, formatTemperature(s.leftEnergy, s.leftRed + s.leftBlue));
-    setText(rightTempEl, formatTemperature(s.rightEnergy, s.rightRed + s.rightBlue));
+    setText(leftTempEl, formatTemperature(s.leftEnergy, leftCount));
+    setText(rightTempEl, formatTemperature(s.rightEnergy, rightCount));
 }
 
+// Faint red / blue shading of a chamber that is hotter / colder than at the start.
+// `chamber` is 0 (left / top) or 1 (right / bottom).
+function drawChamberTint(chamber, tint) {
+    const strength = Math.min(0.1, Math.abs(tint - 1) * 0.25);
+    if (strength < 0.01) return;
+    const half = CENTER_X * viewScale, across = WORLD_HEIGHT * viewScale;
+    ctx.globalAlpha = strength;
+    ctx.fillStyle = tint > 1 ? palette.red : palette.blue;
+    if (vertical) ctx.fillRect(viewOffsetX, viewOffsetY + chamber * half, across, half);
+    else ctx.fillRect(viewOffsetX + chamber * half, viewOffsetY, half, across);
+    ctx.globalAlpha = 1;
+}
+
+// The demon: a small horned face sitting on the wall just before the gate (above it, or
+// to its left when the chambers are stacked). Sizes are in CSS pixels so it stays
+// readable on a phone without growing huge on a big screen.
+function drawDemon(wallPos, gateStart, alongMin, cssSize) {
+    const k = renderDpr;
+    const r = Math.max(8, Math.min(18, cssSize * 0.034)) * k;
+    const along = Math.max(gateStart - r - 5 * k, alongMin + 1.5 * r);
+    const awake = demonMode === 'automatic';
+
+    ctx.save();
+    if (vertical) ctx.translate(along, wallPos); else ctx.translate(wallPos, along);
+    // Head and horns, with a thin halo in the background colour so the demon
+    // stands out from particles passing behind it
+    const parts = [new Path2D(), new Path2D(), new Path2D()]; // filled separately so overlaps never cancel out
+    for (const side of [-1, 1]) {
+        const horn = parts[side < 0 ? 0 : 1];
+        horn.moveTo(side * 0.78 * r, -0.4 * r);
+        horn.lineTo(side * 0.92 * r, -1.38 * r);
+        horn.lineTo(side * 0.22 * r, -0.86 * r);
+        horn.closePath();
+    }
+    parts[2].arc(0, 0, r, 0, Math.PI * 2);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3 * k;
+    ctx.strokeStyle = palette.halo;
+    parts.forEach(p => ctx.stroke(p));
+    ctx.fillStyle = palette.gate;
+    parts.forEach(p => ctx.fill(p));
+    // Eyes: open while it is sorting, shut in manual mode (you are the demon then)
+    ctx.fillStyle = ctx.strokeStyle = palette.demonFace;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(1, 0.14 * r);
+    if (awake) {
+        ctx.beginPath();
+        ctx.arc(-0.36 * r, -0.12 * r, 0.17 * r, 0, Math.PI * 2);
+        ctx.arc(0.36 * r, -0.12 * r, 0.17 * r, 0, Math.PI * 2);
+        ctx.fill();
+    } else {
+        ctx.beginPath();
+        ctx.moveTo(-0.52 * r, -0.1 * r); ctx.lineTo(-0.2 * r, -0.1 * r);
+        ctx.moveTo(0.2 * r, -0.1 * r); ctx.lineTo(0.52 * r, -0.1 * r);
+        ctx.stroke();
+    }
+    // Grin
+    ctx.beginPath();
+    ctx.arc(0, 0.08 * r, 0.48 * r, 0.18 * Math.PI, 0.82 * Math.PI);
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Draws the world either as is (left / right chambers) or transposed (world x runs
+// down the screen, so the left chamber is on top) for tall screens. Below, "along"
+// is the screen coordinate along the dividing wall and "across" the one through it.
 function renderSimulation() {
     if (!ctx) return;
     if (!palette) refreshPalette();
     const [gateTop, gateBottom] = gateBounds();
+    const s = viewScale, ox = viewOffsetX, oy = viewOffsetY;
+    const k = renderDpr;
+    const cssSize = Math.min(canvas.width, canvas.height) / k;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(canvasScaleX, 0, 0, canvasScaleY, 0, 0);
 
-    // Central wall with the gap for the gate
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = palette.wall;
-    ctx.beginPath();
-    ctx.moveTo(CENTER_X, 0);
-    ctx.lineTo(CENTER_X, gateTop);
-    ctx.moveTo(CENTER_X, gateBottom);
-    ctx.lineTo(CENTER_X, WORLD_HEIGHT);
-    ctx.stroke();
+    // Chambers shaded by how much hotter / colder they are than at the start
+    leftTint += (leftTempRatio - leftTint) * 0.08;
+    rightTint += (rightTempRatio - rightTint) * 0.08;
+    drawChamberTint(0, leftTint);
+    drawChamberTint(1, rightTint);
 
-    if (!gateOpen) {
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = palette.gate;
-        ctx.beginPath();
-        ctx.moveTo(CENTER_X, gateTop);
-        ctx.lineTo(CENTER_X, gateBottom);
-        ctx.stroke();
-    }
-
-    // One path per colour keeps this cheap even with 1000 particles
+    // Particles, in world units. One path per colour keeps this cheap even with 1000 particles.
+    if (vertical) ctx.setTransform(0, s, s, 0, ox, oy); else ctx.setTransform(s, 0, 0, s, ox, oy);
     const redPath = new Path2D();
     const bluePath = new Path2D();
     const twoPi = Math.PI * 2;
@@ -645,6 +777,64 @@ function renderSimulation() {
     ctx.fill(redPath);
     ctx.fillStyle = palette.blue;
     ctx.fill(bluePath);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Wall and gate, with line widths in CSS pixels
+    const wallWidth = (cssSize > 500 ? 3 : 2) * k;
+    const acrossOrigin = vertical ? oy : ox, alongOrigin = vertical ? ox : oy;
+    const wallPos = Math.round(acrossOrigin + CENTER_X * s) + ((Math.round(wallWidth) % 2) ? 0.5 : 0);
+    const wallStart = alongOrigin, wallEnd = alongOrigin + WORLD_HEIGHT * s;
+    const gateStart = alongOrigin + gateTop * s, gateEnd = alongOrigin + gateBottom * s;
+    const segment = (path, a0, a1, c0, c1) => {
+        if (vertical) { path.moveTo(a0, c0); path.lineTo(a1, c1); }
+        else { path.moveTo(c0, a0); path.lineTo(c1, a1); }
+    };
+
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = wallWidth;
+    ctx.strokeStyle = palette.wall;
+    const wall = new Path2D();
+    segment(wall, wallStart, gateStart, wallPos, wallPos);
+    segment(wall, gateEnd, wallEnd, wallPos, wallPos);
+    ctx.stroke(wall);
+
+    // Door frame: short ticks at both ends of the gap, so the doorway is visible when open
+    const tick = 5 * k;
+    const frame = new Path2D();
+    segment(frame, gateStart, gateStart, wallPos - tick, wallPos + tick);
+    segment(frame, gateEnd, gateEnd, wallPos - tick, wallPos + tick);
+    ctx.strokeStyle = palette.gate;
+    ctx.stroke(frame);
+
+    const door = new Path2D();
+    segment(door, gateStart, gateEnd, wallPos, wallPos);
+    if (gateOpen) {
+        // Open: a faint dashed line marks the doorway
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = Math.max(1, k);
+        ctx.setLineDash([3 * k, 4 * k]);
+        ctx.stroke(door);
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+    } else {
+        // Closed: a solid bar, thicker than the wall, with a thin halo to separate it from particles
+        ctx.lineWidth = wallWidth + 4 * k;
+        ctx.strokeStyle = palette.halo;
+        ctx.stroke(door);
+        ctx.lineWidth = wallWidth + 2 * k;
+        ctx.strokeStyle = palette.gate;
+        ctx.stroke(door);
+    }
+
+    drawDemon(wallPos, gateStart, wallStart, cssSize);
+
+    // If the canvas isn't exactly the world's shape, outline the world
+    if (ox > 1 || oy > 1) {
+        const w = (vertical ? WORLD_HEIGHT : WORLD_WIDTH) * s, h = (vertical ? WORLD_WIDTH : WORLD_HEIGHT) * s;
+        ctx.lineWidth = k;
+        ctx.strokeStyle = palette.wall;
+        ctx.strokeRect(ox + 0.5, oy + 0.5, w - 1, h - 1);
+    }
 }
 
 // --- Main Animation Loop ---
@@ -667,7 +857,7 @@ function animate(timestamp) {
 
     if ((window.devicePixelRatio || 1) !== currentDpr) handleSimulationResize();
 
-    if (demonMode !== 'automatic') gateOpen = pointerHeld;
+    if (demonMode !== 'automatic') gateOpen = manualGateHeld();
     advanceSimulation(elapsed * speedMultiplier);
     renderSimulation();
 
@@ -679,45 +869,67 @@ function animate(timestamp) {
 }
 
 // --- Sizing ---
+// The page layout (simulation_styles.css) sizes the 2:1 canvas box, in normal and
+// fullscreen mode; here the drawing buffer is matched to the canvas's displayed size.
 function handleSimulationResize() {
     if (!canvas || !ctx) return;
-    const aspectRatioBox = canvas.parentElement; // .sim-aspect-ratio-box
-    if (!aspectRatioBox) return;
-
-    if (document.body.classList.contains('sim-fullscreen-active')) {
-        // Fit the largest 2:1 box into the space the fullscreen layout gives the canvas wrapper
-        const canvasWrapper = aspectRatioBox.parentElement;
-        if (!canvasWrapper) return;
-        const availableWidth = canvasWrapper.clientWidth;
-        const availableHeight = canvasWrapper.clientHeight;
-        if (availableWidth > 0 && availableHeight > 0) {
-            const aspect = WORLD_WIDTH / WORLD_HEIGHT;
-            let targetWidth = availableWidth, targetHeight = availableWidth / aspect;
-            if (targetHeight > availableHeight) {
-                targetHeight = availableHeight;
-                targetWidth = availableHeight * aspect;
-            }
-            aspectRatioBox.style.width = `${Math.floor(targetWidth)}px`;
-            aspectRatioBox.style.height = `${Math.floor(targetHeight)}px`;
-        }
-    } else {
-        // Let the CSS aspect-ratio box size itself
-        aspectRatioBox.style.width = '';
-        aspectRatioBox.style.height = '';
-    }
-
-    // Match the backing store to the canvas's displayed size for crisp high-DPI rendering
+    applyOrientation();
     currentDpr = window.devicePixelRatio || 1;
-    const cssWidth = canvas.clientWidth;
-    const cssHeight = canvas.clientHeight;
-    if (cssWidth === 0 || cssHeight === 0) return;
-    const pixelWidth = Math.max(1, Math.round(cssWidth * currentDpr));
-    const pixelHeight = Math.max(1, Math.round(cssHeight * currentDpr));
+    renderDpr = Math.min(currentDpr, MAX_RENDER_DPR);
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return;
+    const pixelWidth = Math.max(1, Math.round(rect.width * renderDpr));
+    const pixelHeight = Math.max(1, Math.round(rect.height * renderDpr));
     if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
-    canvasScaleX = pixelWidth / WORLD_WIDTH;
-    canvasScaleY = pixelHeight / WORLD_HEIGHT;
+    // One scale for both axes; if the box isn't exactly the world's shape the world is centred in it.
+    const worldW = vertical ? WORLD_HEIGHT : WORLD_WIDTH, worldH = vertical ? WORLD_WIDTH : WORLD_HEIGHT;
+    viewScale = Math.min(pixelWidth / worldW, pixelHeight / worldH);
+    viewOffsetX = (pixelWidth - worldW * viewScale) / 2;
+    viewOffsetY = (pixelHeight - worldH * viewScale) / 2;
     renderSimulation();
+}
+
+// Phones held upright: a 2:1 box would use a thin strip of the screen, so the page gives
+// the box --aspect-ratio-portrait: 1/2 there (applied by simulation_styles.css) and the
+// chambers are stacked: the same world drawn transposed, left chamber on top.
+function wantsVertical() {
+    const box = canvas.parentElement; // .sim-aspect-ratio-box
+    if (!box) return false;
+    const parts = getComputedStyle(box).getPropertyValue('--aspect-ratio').split('/').map(Number);
+    return parts.length === 2 && parts[0] > 0 && parts[1] > parts[0];
+}
+
+function chamberNames() {
+    return vertical ? ['Top', 'Bottom'] : ['Left', 'Right'];
+}
+
+function demonNoteText() {
+    if (demonMode === 'manual') return 'You are the demon: press and hold on the simulation (or hold Space) to open the gate.';
+    return vertical
+        ? 'Lets fast particles through to the bottom and slow ones to the top.'
+        : 'Lets fast particles through to the right and slow ones to the left.';
+}
+
+function applyOrientation() {
+    const v = wantsVertical();
+    if (orientationSet && v === vertical) return;
+    vertical = v;
+    orientationSet = true;
+    const [first, second] = chamberNames();
+    setText(leftLabelEl, first);
+    setText(rightLabelEl, second);
+    [[leftLabelEl, first], [rightLabelEl, second]].forEach(([el, name]) => {
+        const boxEl = el ? el.closest('.stats-box') : null;
+        if (boxEl) boxEl.title = `${name} chamber: number of fast and slow particles, and temperature relative to the start`;
+    });
+    setText(demonModeNote, demonNoteText());
+    [[leftChart, first], [rightChart, second]].forEach(([chart, name]) => {
+        if (!chart) return;
+        chart.options.plugins.title.text = `${name} chamber`;
+        chart.canvas.setAttribute('aria-label', `Chart: fast and slow particles in the ${name.toLowerCase()} chamber over time`);
+        chart.update('none');
+    });
 }
 
 function fullResetAndRestart() {
@@ -726,6 +938,25 @@ function fullResetAndRestart() {
     lastReadoutUpdate = performance.now();
     redrawCharts();
     renderSimulation();
+}
+
+// --- Hints over the canvas ---
+const HINT_MANUAL = 'Press and hold to open the gate';
+const HINT_AUTOMATIC = 'The demon is in charge. Choose Manual in the settings to work the gate yourself.';
+let hintTimer = null;
+let manualHintDismissed = false;
+
+function showHint(text, durationMs) {
+    if (!hintEl) return;
+    clearTimeout(hintTimer);
+    setText(hintEl, text);
+    hintEl.classList.add('is-visible');
+    if (durationMs) hintTimer = setTimeout(hideHint, durationMs);
+}
+
+function hideHint() {
+    clearTimeout(hintTimer);
+    if (hintEl) hintEl.classList.remove('is-visible');
 }
 
 // --- Event Listeners & Initialisation ---
@@ -742,57 +973,112 @@ document.addEventListener('DOMContentLoaded', () => {
     updateReadouts();
 
     if (particleCountSlider) {
+        const showCount = () => {
+            setText(countVal, String(2 * nPerColor));
+            particleCountSlider.setAttribute('aria-valuetext', `${2 * nPerColor} particles`);
+        };
         particleCountSlider.addEventListener('input', () => {
-            nPerColor = +particleCountSlider.value;
-            if (countVal) countVal.textContent = nPerColor;
+            nPerColor = perColourFromSlider();
+            showCount();
             fullResetAndRestart();
         });
-        if (countVal) countVal.textContent = nPerColor;
+        showCount();
     }
 
     if (speedSlider) {
+        const showSpeed = () => {
+            setText(speedValEl, String(speedMultiplier));
+            speedSlider.setAttribute('aria-valuetext', `${speedMultiplier} times`);
+        };
         speedSlider.addEventListener('input', () => {
-            speedMultiplier = +speedSlider.value;
-            if (speedValEl) speedValEl.textContent = speedMultiplier;
+            speedMultiplier = speedFromSlider();
+            showSpeed();
         });
-        if (speedValEl) speedValEl.textContent = speedMultiplier;
+        showSpeed();
     }
 
     if (gateSizeSlider) {
         gateSizeSlider.addEventListener('input', () => {
             gateSizePercent = +gateSizeSlider.value;
-            if (gateSizeValEl) gateSizeValEl.textContent = gateSizePercent;
+            setText(gateSizeValEl, String(gateSizePercent));
+            renderSimulation();
         });
-        if (gateSizeValEl) gateSizeValEl.textContent = gateSizePercent;
+        setText(gateSizeValEl, String(gateSizePercent));
     }
 
-    const applyDemonMode = () => {
+    const applyDemonMode = (userChanged) => {
         demonMode = demonModeSelector ? demonModeSelector.value : 'automatic';
-        canvas.style.cursor = demonMode === 'manual' ? 'pointer' : '';
+        const manual = demonMode === 'manual';
+        canvas.classList.toggle('mx-manual', manual);
+        heldPointers.clear();
+        spaceHeld = false;
+        setText(demonModeNote, demonNoteText());
+        if (manual) {
+            manualHintDismissed = false;
+            showHint(HINT_MANUAL);
+        } else if (userChanged === true) {
+            hideHint();
+        }
         observeGate();
+        renderSimulation();
     };
-    if (demonModeSelector) demonModeSelector.addEventListener('change', applyDemonMode);
-    applyDemonMode();
+    if (demonModeSelector) demonModeSelector.addEventListener('change', () => applyDemonMode(true));
+    applyDemonMode(false);
 
     if (showChartsCheckbox && chartsContainer) {
-        showChartsCheckbox.addEventListener('change', applyChartsVisibility);
-        applyChartsVisibility();
+        showChartsCheckbox.addEventListener('change', () => applyChartsVisibility(true));
+        applyChartsVisibility(false);
     }
 
     if (resetButton) resetButton.addEventListener('click', fullResetAndRestart);
 
-    // Manual mode: press and hold (mouse, pen or touch) on the canvas to open the gate
-    const releaseGate = () => { pointerHeld = false; };
+    // Manual mode: press and hold (mouse, pen or touch) on the canvas to open the gate.
+    // In automatic mode the canvas doesn't capture touches (the page scrolls over it);
+    // a tap there explains how to take over.
+    const releasePointer = (e) => {
+        heldPointers.delete(e.pointerId);
+        if (demonMode === 'manual') observeGate();
+    };
     canvas.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'mouse' && e.button !== 0) return;
-        pointerHeld = true;
-        if (demonMode === 'manual') e.preventDefault();
+        if (demonMode !== 'manual') return;
+        e.preventDefault(); // no text selection or focus-scroll from the press
+        heldPointers.add(e.pointerId);
+        observeGate();
+        if (!manualHintDismissed) {
+            manualHintDismissed = true;
+            hideHint();
+        }
     });
-    canvas.addEventListener('pointerup', releaseGate);
-    canvas.addEventListener('pointercancel', releaseGate);
-    canvas.addEventListener('pointerleave', releaseGate);
-    window.addEventListener('blur', releaseGate);
+    canvas.addEventListener('pointerup', (e) => {
+        if (demonMode === 'manual') {
+            releasePointer(e);
+        } else if (!(e.pointerType === 'mouse' && e.button !== 0)) {
+            showHint(HINT_AUTOMATIC, 3500);
+        }
+    });
+    canvas.addEventListener('pointercancel', releasePointer);
+    canvas.addEventListener('pointerleave', releasePointer);
+    window.addEventListener('blur', () => { heldPointers.clear(); spaceHeld = false; });
     canvas.addEventListener('contextmenu', (e) => { if (demonMode === 'manual') e.preventDefault(); });
+
+    // Keyboard: with the canvas focused, hold Space to open the gate in manual mode
+    canvas.addEventListener('keydown', (e) => {
+        if (e.key !== ' ' && e.code !== 'Space') return;
+        e.preventDefault(); // don't scroll the page
+        if (e.repeat) return;
+        if (demonMode === 'manual') {
+            spaceHeld = true;
+            observeGate();
+            if (!manualHintDismissed) { manualHintDismissed = true; hideHint(); }
+        } else {
+            showHint(HINT_AUTOMATIC, 3500);
+        }
+    });
+    canvas.addEventListener('keyup', (e) => {
+        if (e.key === ' ' || e.code === 'Space') { spaceHeld = false; observeGate(); }
+    });
+    canvas.addEventListener('blur', () => { spaceHeld = false; });
 
     // Resize: window resizes, fullscreen / panel changes (simulation_ui.js) and layout shifts
     window.addEventListener('resize', handleSimulationResize);
