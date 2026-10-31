@@ -7,9 +7,9 @@
 // heat is conducted through a solid. Between heating and cooling the total
 // energy is conserved (velocity-Verlet integration).
 //
-// The physics runs in lattice units (spacing = 1), so the dynamics, colours and
-// temperature do not depend on the size of the canvas. Positions are scaled to
-// CSS pixels only for drawing and for the heating/cooling brush.
+// The physics runs in lattice units (spacing = 1), so the dynamics, colours,
+// temperature and brush size do not depend on the size of the canvas. Positions
+// are scaled to CSS pixels only for drawing and for locating the brush.
 (function () {
     'use strict';
 
@@ -35,10 +35,14 @@
     const gridLayoutSelector = document.getElementById('gridLayoutSelector');
     const aspectRatioBox = canvas.parentElement;                              // .sim-aspect-ratio-box
     const canvasWrapper = aspectRatioBox ? aspectRatioBox.parentElement : null; // .sim-canvas-wrapper
+    const modeButtons = Array.from(document.querySelectorAll('.thermal-mode [data-mode]'));
+    const hintEl = document.getElementById('thermalHint');
+    const legendBar = document.getElementById('colourLegendBar');
 
-    // --- Layout (CSS pixels) ---
-    const MARGIN = 25;                       // gap between the outer atoms and the canvas edge
-    const MIN_SPACING = 1;
+    // --- Layout ---
+    // Each atom sits in the middle of a square cell one spacing wide, and the
+    // canvas has the lattice's shape (cols:rows), so the outer atoms are half a
+    // spacing from the edge at every canvas size.
     const PARTICLE_RADIUS_SCALE_FACTOR = 6;  // atom radius = spacing / 6
 
     // --- Physics (lattice units: spacing = 1, mass = 1) ---
@@ -66,20 +70,23 @@
     const COLOUR_LEVELS = 120;               // hue steps from blue (cold) to red (hot)
 
     const PREDEFINED_GRID_LAYOUTS = {
-        "default": { cols: 20, rows: 10 },
         "small": { cols: 10, rows: 5 },
+        "default": { cols: 20, rows: 10 },
         "large": { cols: 40, rows: 20 },
         "wide": { cols: 30, rows: 5 },
         "square_medium": { cols: 15, rows: 15 },
         "large_square": { cols: 25, rows: 25 }
     };
-    let currentGridLayoutName = "default";
-    let cols = PREDEFINED_GRID_LAYOUTS.default.cols;
-    let rows = PREDEFINED_GRID_LAYOUTS.default.rows;
+    // Portrait phones are too narrow for a 2:1 lattice to be comfortable to touch,
+    // so they start with the square one.
+    const narrowPortrait = !!(window.matchMedia && window.matchMedia('(max-width: 600px) and (orientation: portrait)').matches);
+    let currentGridLayoutName = narrowPortrait ? "square_medium" : "default";
+    let cols = PREDEFINED_GRID_LAYOUTS[currentGridLayoutName].cols;
+    let rows = PREDEFINED_GRID_LAYOUTS[currentGridLayoutName].rows;
 
     // Parameters from the controls
     let timeScale = timeSlider ? parseFloat(timeSlider.value) : 25;
-    let heatRadius = radiusSlider ? parseFloat(radiusSlider.value) : 25;   // CSS px
+    let heatRadius = radiusSlider ? parseFloat(radiusSlider.value) : 1.5;  // brush radius in atom spacings
     let heatAmp = heatAmpSlider ? parseFloat(heatAmpSlider.value) : 1;
     let kN = springConstantSlider ? parseFloat(springConstantSlider.value) : 0.2; // neighbour spring constant
 
@@ -160,25 +167,12 @@
 
     // Grid spacing and centring offsets for a canvas of the given CSS size.
     function calculateGridGeometry(width, height) {
-        let sX, sY;
-        if (cols > 1) {
-            sX = width >= 2 * MARGIN + (cols - 1) * MIN_SPACING
-                ? (width - 2 * MARGIN) / (cols - 1)
-                : width / (cols - 1);
-        } else {
-            sX = width;
-        }
-        if (rows > 1) {
-            sY = height >= 2 * MARGIN + (rows - 1) * MIN_SPACING
-                ? (height - 2 * MARGIN) / (rows - 1)
-                : height / (rows - 1);
-        } else {
-            sY = height;
-        }
-        const s = Math.max(MIN_SPACING, (cols <= 1 || rows <= 1) ? Math.max(sX, sY) : Math.min(sX, sY));
-        const gridWidth = cols > 1 ? (cols - 1) * s : 0;
-        const gridHeight = rows > 1 ? (rows - 1) * s : 0;
-        return { spacing: s, offsetX: (width - gridWidth) / 2, offsetY: (height - gridHeight) / 2 };
+        const s = Math.max(0.5, Math.min(width / cols, height / rows));
+        return {
+            spacing: s,
+            offsetX: (width - (cols - 1) * s) / 2,
+            offsetY: (height - (rows - 1) * s) / 2
+        };
     }
 
     // --- Physics ---
@@ -268,12 +262,15 @@
     }
 
     // --- Heating / cooling tool ---
-    // Mouse or pen: left button heats; right button (or Ctrl+click) cools.
-    // Touch: one finger heats; two or more fingers cool under each finger.
+    // The Heat / Cool switch sets what a plain press does (left mouse button, pen
+    // or one finger). The shortcuts do the opposite: right button, pen eraser,
+    // Ctrl or Shift + click, or two or more fingers (acting under each finger).
     const TOOL_NONE = 0, TOOL_HEAT = 1, TOOL_COOL = -1;
+    let toolMode = TOOL_HEAT;
     const touchPoints = new Map();     // pointerId -> {x, y} (CSS px, canvas-relative)
     let mouseTool = TOOL_NONE;
     let mousePoint = { x: 0, y: 0 };
+    let hoverPoint = null;             // mouse/pen position while no button is pressed
     const brushPoints = [];            // where the tool acts this frame
     let activeTool = TOOL_NONE;
 
@@ -281,7 +278,7 @@
         brushPoints.length = 0;
         if (touchPoints.size > 0) {
             touchPoints.forEach((p) => brushPoints.push(p));
-            activeTool = touchPoints.size >= 2 ? TOOL_COOL : TOOL_HEAT;
+            activeTool = touchPoints.size >= 2 ? -toolMode : toolMode;
         } else if (mouseTool !== TOOL_NONE) {
             brushPoints.push(mousePoint);
             activeTool = mouseTool;
@@ -290,12 +287,19 @@
         }
     }
 
+    // The brush is a Gaussian whose visible edge (2 sigma) is heatRadius atom
+    // spacings from its centre, so it covers the same atoms at every canvas size.
+    function brushSigmaPx() {
+        return 0.5 * heatRadius * spacing;
+    }
+
     function applyTool(frameMs) {
         updateBrush();
         if (activeTool === TOOL_NONE) return;
         const frameScale = frameMs / REFERENCE_FRAME_MS;
-        const inv2R2 = 1 / (2 * heatRadius * heatRadius);
-        const reach2 = 16 * heatRadius * heatRadius; // ignore atoms beyond 4 sigma
+        const sigma = brushSigmaPx();
+        const inv2R2 = 1 / (2 * sigma * sigma);
+        const reach2 = 16 * sigma * sigma; // ignore atoms beyond 4 sigma
         const kick = HEAT_KICK * heatAmp * Math.sqrt(frameScale); // random walk: energy grows linearly in time
         for (const p of brushPoints) {
             for (let i = 0; i < count; i++) {
@@ -326,15 +330,20 @@
         return { x: e.clientX - r.left, y: e.clientY - r.top };
     }
 
-    function toolForButtons(buttons, ctrlKey) {
-        if (buttons & (2 | 32)) return TOOL_COOL;     // right button or pen eraser
-        if (buttons & 1) return ctrlKey ? TOOL_COOL : TOOL_HEAT; // Ctrl+click: macOS one-button cooling
+    function toolForButtons(buttons, modifier) {
+        if (buttons & (2 | 32)) return -toolMode;     // right button or pen eraser
+        if (buttons & 1) return modifier ? -toolMode : toolMode; // Ctrl/Shift+click: one-button shortcut
         return TOOL_NONE;
     }
 
     function releaseAllTools() {
         touchPoints.clear();
         mouseTool = TOOL_NONE;
+        hoverPoint = null;
+    }
+
+    function hideHint() {
+        if (hintEl && !hintEl.classList.contains('is-hidden')) hintEl.classList.add('is-hidden');
     }
 
     // Pointer capture keeps the tool working while a drag strays past the edge
@@ -343,32 +352,66 @@
         if (e.pointerType === 'touch') {
             touchPoints.set(e.pointerId, canvasPoint(e));
         } else {
-            mouseTool = toolForButtons(e.buttons, e.ctrlKey);
+            mouseTool = toolForButtons(e.buttons, e.ctrlKey || e.shiftKey);
             if (mouseTool === TOOL_NONE) return;
             mousePoint = canvasPoint(e);
+            hoverPoint = null;
         }
+        hideHint();
         try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointer already released */ }
     });
     canvas.addEventListener('pointermove', (e) => {
         if (e.pointerType === 'touch') {
             if (touchPoints.has(e.pointerId)) touchPoints.set(e.pointerId, canvasPoint(e));
         } else if (mouseTool !== TOOL_NONE) {
-            // Buttons can be pressed or released mid-drag (chorded buttons, Ctrl).
-            mouseTool = toolForButtons(e.buttons, e.ctrlKey);
+            // Buttons can be pressed or released mid-drag (chorded buttons, Ctrl, Shift).
+            mouseTool = toolForButtons(e.buttons, e.ctrlKey || e.shiftKey);
             mousePoint = canvasPoint(e);
+        } else {
+            hoverPoint = canvasPoint(e); // shows the brush outline under the mouse
         }
     });
     const endPointer = (e) => {
-        if (e.pointerType === 'touch') touchPoints.delete(e.pointerId);
-        else mouseTool = TOOL_NONE;
+        if (e.pointerType === 'touch') {
+            touchPoints.delete(e.pointerId);
+        } else if (mouseTool !== TOOL_NONE) {
+            mouseTool = TOOL_NONE;
+            if (e.type === 'pointerup') hoverPoint = canvasPoint(e);
+        }
     };
     canvas.addEventListener('pointerup', endPointer);
     canvas.addEventListener('pointercancel', endPointer);
     canvas.addEventListener('lostpointercapture', endPointer);
+    canvas.addEventListener('pointerleave', (e) => {
+        if (e.pointerType !== 'touch' && mouseTool === TOOL_NONE) hoverPoint = null;
+    });
     window.addEventListener('blur', releaseAllTools);
     // Only suppress the menu: Windows fires contextmenu after the right button
     // is released, so it must not switch cooling on.
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Heat / Cool switch (a radio group: arrow keys move between the options)
+    function setToolMode(mode) {
+        toolMode = mode;
+        modeButtons.forEach((button) => {
+            const checked = (button.dataset.mode === 'cool' ? TOOL_COOL : TOOL_HEAT) === mode;
+            button.setAttribute('aria-checked', String(checked));
+            button.tabIndex = checked ? 0 : -1;
+        });
+    }
+    modeButtons.forEach((button, index) => {
+        button.addEventListener('click', () => setToolMode(button.dataset.mode === 'cool' ? TOOL_COOL : TOOL_HEAT));
+        button.addEventListener('keydown', (e) => {
+            const step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1
+                : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;
+            if (!step) return;
+            e.preventDefault();
+            const next = modeButtons[(index + step + modeButtons.length) % modeButtons.length];
+            next.click();
+            next.focus();
+        });
+    });
+    setToolMode(TOOL_HEAT);
 
     // --- Canvas sizing ---
     // Sizes the canvas backing store to its displayed size times devicePixelRatio
@@ -436,7 +479,7 @@
     // Atoms go from blue (cold) through green and yellow to red (hot). On the
     // dark theme the original fully saturated hues are kept; on the light theme
     // greens, yellows and cyans are darkened until they contrast with white.
-    const palette = { atoms: [], spring: '', heatGlow: [], coolGlow: [] };
+    const palette = { atoms: [], spring: '', heatGlow: [], coolGlow: [], heatRing: '', coolRing: '' };
 
     function hslToLuminance(h, s, l) {
         const a = s * Math.min(l, 1 - l);
@@ -462,6 +505,15 @@
         palette.spring = 'rgba(100, 100, 100, 0.5)';
         palette.heatGlow = ['rgba(255, 70, 40, 0.3)', 'rgba(255, 70, 40, 0)'];
         palette.coolGlow = ['rgba(40, 140, 255, 0.3)', 'rgba(40, 140, 255, 0)'];
+        palette.heatRing = light ? 'rgba(210, 60, 20, 0.6)' : 'rgba(255, 120, 80, 0.6)';
+        palette.coolRing = light ? 'rgba(20, 100, 210, 0.6)' : 'rgba(90, 170, 255, 0.6)';
+
+        // The legend under the canvas shows the same colour scale as the atoms.
+        if (legendBar) {
+            const stops = [];
+            for (let k = 0; k <= 6; k++) stops.push(palette.atoms[Math.round(k / 6 * COLOUR_LEVELS)]);
+            legendBar.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
+        }
     }
     buildPalette();
     new MutationObserver(buildPalette).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
@@ -480,10 +532,11 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
 
-        // Soft glow showing where the heating/cooling brush acts (Gaussian, sigma = radius)
+        // Soft glow showing where the heating/cooling brush acts (Gaussian; it
+        // fades out at 2 sigma, the brush radius)
+        const reach = 2 * brushSigmaPx();
         if (activeTool !== TOOL_NONE) {
             const glow = activeTool === TOOL_HEAT ? palette.heatGlow : palette.coolGlow;
-            const reach = 2 * heatRadius;
             for (const p of brushPoints) {
                 const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, reach);
                 gradient.addColorStop(0, glow[0]);
@@ -495,7 +548,7 @@
             }
         }
 
-        // Springs, as a single path
+        // Springs, as a single path (a little thicker on big canvases)
         ctx.beginPath();
         for (let s = 0; s < springCount; s++) {
             const a = springA[s], b = springB[s];
@@ -503,7 +556,7 @@
             ctx.lineTo(sx[b], sy[b]);
         }
         ctx.strokeStyle = palette.spring;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = Math.min(1.5, Math.max(1, spacing / 50));
         ctx.stroke();
 
         // Atoms, batched by colour (counting sort on colour level)
@@ -528,6 +581,15 @@
             ctx.fill();
             start = end;
         }
+
+        // Outline of the brush under an idle mouse, in the colour of the current mode
+        if (hoverPoint && activeTool === TOOL_NONE) {
+            ctx.beginPath();
+            ctx.arc(hoverPoint.x, hoverPoint.y, reach, 0, Math.PI * 2);
+            ctx.strokeStyle = toolMode === TOOL_COOL ? palette.coolRing : palette.heatRing;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
     }
 
     let lastReadoutText = '';
@@ -535,7 +597,8 @@
     function updateReadout(timestamp) {
         if (!temperatureVal || timestamp - lastReadoutTime < 100) return;
         lastReadoutTime = timestamp;
-        const text = Math.round(averageTemperatureK()).toString();
+        // Whole kelvin, at most 5 digits (heating fades out well below that), so the width is fixed
+        const text = Math.min(99999, Math.round(averageTemperatureK())).toString();
         if (text !== lastReadoutText) {
             temperatureVal.textContent = text;
             lastReadoutText = text;
@@ -591,9 +654,10 @@
     if (radiusSlider && radiusVal) {
         radiusSlider.addEventListener('input', () => {
             heatRadius = parseFloat(radiusSlider.value);
-            radiusVal.textContent = heatRadius;
+            radiusVal.textContent = heatRadius.toFixed(1);
         });
-        radiusVal.textContent = radiusSlider.value;
+        heatRadius = parseFloat(radiusSlider.value);
+        radiusVal.textContent = heatRadius.toFixed(1);
     }
     if (heatAmpSlider && ampVal) {
         heatAmpSlider.addEventListener('input', () => {
@@ -651,8 +715,7 @@
             const layout = PREDEFINED_GRID_LAYOUTS[layoutName];
             const option = document.createElement('option');
             option.value = layoutName;
-            const pretty = layoutName.replace(/_/g, ' ');
-            option.textContent = `${pretty.charAt(0).toUpperCase() + pretty.slice(1)} (${layout.cols}x${layout.rows})`;
+            option.textContent = `${layout.cols} × ${layout.rows}`;
             gridLayoutSelector.appendChild(option);
         }
         gridLayoutSelector.value = currentGridLayoutName;

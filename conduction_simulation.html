@@ -172,23 +172,30 @@
                                         <h3 id="simulationControlsPanelLabel">Controls</h3>
                                     </div>
                                     <div class="sim-controls-content">
-                                        <label>Speed: <span id="timeScaleVal">25</span>x
-                                            <input type="range" id="timeScale" min="1" max="100" step="1" value="25">
-                                        </label>
-                                        <label>Heating Radius: <span id="heatSizeVal">25</span> px
-                                            <input type="range" id="heatSize" min="10" max="100" step="1" value="25">
-                                        </label>
-                                        <label>Heat Intensity: <span id="heatAmpVal">1.0</span>
-                                            <input type="range" id="heatAmp" min="0.1" max="5" step="0.1" value="1">
-                                        </label>
-                                        <label>Atom Interaction: <span id="springConstantVal">0.2</span>
-                                            <input type="range" id="springConstant" min="0.01" max="1.0" step="0.01" value="0.2">
-                                        </label>
                                         <div class="sim-control-group">
-                                            <p class="sim-control-group-label">Grid Layout:</p>
-                                            <div class="sim-select-group">
-                                                <select id="gridLayoutSelector" aria-label="Select Grid Layout"></select>
+                                            <p class="sim-control-group-label">Material</p>
+                                            <label>Bond stiffness: <span id="springConstantVal" class="sim-value" style="--chars: 4">0.20</span>
+                                                <input type="range" id="springConstant" min="0.01" max="1.0" step="0.01" value="0.2">
+                                            </label>
+                                            <label for="gridLayoutSelector">Lattice size</label>
+                                            <div class="sim-select-container">
+                                                <select id="gridLayoutSelector"></select>
                                             </div>
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label">Heating brush</p>
+                                            <label>Radius: <span id="heatSizeVal" class="sim-value" style="--chars: 3">1.5</span> atoms
+                                                <input type="range" id="heatSize" min="0.5" max="5" step="0.5" value="1.5">
+                                            </label>
+                                            <label>Strength: <span id="heatAmpVal" class="sim-value" style="--chars: 3">1.0</span>&times;
+                                                <input type="range" id="heatAmp" min="0.1" max="5" step="0.1" value="1">
+                                            </label>
+                                        </div>
+                                        <div class="sim-control-group">
+                                            <p class="sim-control-group-label">Simulation</p>
+                                            <label>Speed: <span id="timeScaleVal" class="sim-value" style="--chars: 3">25</span>&times;
+                                                <input type="range" id="timeScale" min="1" max="100" step="1" value="25">
+                                            </label>
                                         </div>
                                     </div>
                                 </div>
@@ -200,12 +207,20 @@
                                                 <canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Lattice of atoms joined by springs; each atom's color shows its temperature, from blue (cold) to red (hot)"></canvas>
                                             </div>
                                             <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+                                            <p class="thermal-hint" id="thermalHint" aria-hidden="true">Press and drag on the lattice to heat it</p>
                                         </div>
                                         <div class="sim-info-bar">
-                                            <span class="sim-info-item">Avg. Temperature: <span id="energyVal">0</span> K</span>
-                                            <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation">
-                                                <span class="icon solid fa-sync-alt"></span>
-                                            </button>
+                                            <span class="sim-info-item">Avg. temperature: <span id="energyVal" class="sim-value" style="--chars: 5">0</span> K</span>
+                                            <span class="thermal-legend" aria-hidden="true"><span>Cold</span><span class="thermal-legend-bar" id="colourLegendBar"></span><span>Hot</span></span>
+                                            <div class="sim-info-actions">
+                                                <div class="thermal-mode" role="radiogroup" aria-label="Brush mode">
+                                                    <button type="button" role="radio" aria-checked="true" data-mode="heat" title="Drag on the lattice to heat it"><span class="icon solid fa-fire" aria-hidden="true"></span>Heat</button>
+                                                    <button type="button" role="radio" aria-checked="false" data-mode="cool" title="Drag on the lattice to cool it (shortcuts: right-click, Ctrl+click or two fingers)"><span class="icon solid fa-snowflake" aria-hidden="true"></span>Cool</button>
+                                                </div>
+                                                <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation" title="Reset">
+                                                    <span class="icon solid fa-sync-alt"></span>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="sim-action-buttons-overlay">
@@ -215,21 +230,26 @@
                                         </button>
                                     </div>
 
-                                    <div class="description-area">
-                                        <h3>About this Simulation</h3>
-                                        <p>This simulation models the conduction of heat energy through materials. The 2D lattice of particles represents a simplified material where each particle is held near its place in the lattice and connected to its neighbors by springs. You can "heat" an area with your mouse (or touch), which imparts kinetic energy to the particles in that region, causing them to vibrate with a greater amplitude. These vibrations propagate through the lattice representing the conduction of heat through a solid material.</p>
-                                        <p><strong>Left-click</strong> and drag on the canvas to apply heat. <strong>Right-click</strong> and drag to cool down particles. On a touchscreen, drag with <strong>one finger</strong> to heat and <strong>two fingers</strong> to cool. The color of each particle shows its vibrational energy (how strongly it is vibrating): cold particles are blue, and hotter particles shift through green and yellow to red.</p>
-                                        <p>Use the <span class="icon solid fa-cog"></span> icon to toggle the controls panel, and the <span class="icon solid fa-expand"></span> icon to enter or exit fullscreen mode. The reset button (<span class="icon solid fa-sync-alt"></span>) will restart the simulation with current settings.</p>
-                                        <p><strong>Controls:</strong></p>
-                                        <ul>
-                                            <li><strong>Speed:</strong> Adjusts the simulation rate. Higher values make time pass faster.</li>
-                                            <li><strong>Heating Radius:</strong> Controls the size of the area affected when you apply heat or cooling.</li>
-                                            <li><strong>Heat Intensity:</strong> Determines how much energy is added to the particles when heating or removed when cooling.</li>
-                                            <li><strong>Atom Interaction:</strong> Controls how strongly particles are connected, affecting how quickly heat conducts through the lattice.</li>
-                                            <li><strong>Grid Layout:</strong> Changes the number of particles in the lattice (columns x rows). Changing it restarts the simulation.</li>
-                                            <li><strong>Avg. Temperature:</strong> Displays the average temperature of the lattice, calculated from the vibrational (kinetic plus potential) energy per particle. The lattice starts at rest, at absolute zero, and the kelvin scale is illustrative. While you are not heating or cooling, energy is conserved, so the average stays constant as heat spreads from hot regions to cold ones. (Changing Atom Interaction alters the energy stored in the springs, so it changes the average too.)</li>
-                                        </ul>
-                                    </div>
+                                    <details class="description-area">
+                                        <summary>About this simulation</summary>
+                                        <div class="description-content">
+                                            <p>In a solid, heat is the jiggling of atoms. Here a 2D lattice of atoms is held together by spring-like bonds: a vibrating atom tugs on its neighbours, so the energy spreads from atom to atom. That spreading is <strong>conduction</strong>.</p>
+                                            <h4>What you're seeing</h4>
+                                            <ul>
+                                                <li>Each dot is an atom. Its colour shows how strongly it vibrates: blue is cold, then green and yellow, and red is hot.</li>
+                                                <li>The lattice starts at rest, at absolute zero. The readout is the average vibrational energy per atom, on an illustrative kelvin scale.</li>
+                                                <li>When you are not heating or cooling, energy is conserved: the average stays the same while heat flows from hot regions to cold ones.</li>
+                                            </ul>
+                                            <h4>Things to try</h4>
+                                            <ul>
+                                                <li>Heat one end of the lattice and watch the warmth creep along it.</li>
+                                                <li>Raise <em>Bond stiffness</em>: stiffer bonds pass vibrations on faster, so heat conducts more quickly.</li>
+                                                <li>Heat a patch, then cool the atoms next to it and watch heat flow into the cold spot.</li>
+                                            </ul>
+                                            <h4>How to interact</h4>
+                                            <p>Press and drag on the lattice to heat it, or pick <strong>Cool</strong> below the simulation to cool it instead. Shortcuts: right-click or Ctrl+click cools with a mouse, and two fingers cool on a touchscreen. <span class="icon solid fa-cog"></span> opens the settings and <span class="icon solid fa-expand"></span> goes fullscreen.</p>
+                                        </div>
+                                    </details>
                                 </div>
 							</div>
 						</div>
