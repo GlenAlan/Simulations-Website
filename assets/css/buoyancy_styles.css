@@ -354,10 +354,6 @@
         height: 100%;
     }
 
-    body.sim-fullscreen-active .buoy-toolbar {
-        align-self: start;
-        max-height: 100%;
-    }
 }
 
 /* ---------- Info bar: read-outs on the left, buttons on the right of the first row ---------- */

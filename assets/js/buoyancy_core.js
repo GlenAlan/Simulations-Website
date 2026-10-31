@@ -648,13 +648,26 @@
             let lowZ = Infinity, lowX = 0, lowY = 0;                         // lowest lip the liquid leaves over
             let bubX = 0, bubY = 0;                                          // where trapped air escapes
             const F = cv.faces;
+            // The tank's surface is one curve across the whole tank, so over the object it means
+            // nothing: liquid reaches an opening from beyond its ends, so the outside level at a
+            // face is capped by the level just outside the opening's ends.
+            let fx0 = Infinity, fx1 = -Infinity;
+            for (let f = 0; f < cv.nf; f++) {
+                const X = x0 + c * F[4 * f] - s * F[4 * f + 1];
+                if (X < fx0) fx0 = X;
+                if (X > fx1) fx1 = X;
+            }
+            const sL = surfaceAt(fx0 - CELL), sR = surfaceAt(fx1 + CELL);
+            const fspan = fx1 - fx0 > 1e-6 ? fx1 - fx0 : 1;
             for (let f = 0; f < cv.nf; f++) {
                 const mx = F[4 * f], my = F[4 * f + 1], nx = F[4 * f + 2], ny = F[4 * f + 3];
                 const X = x0 + c * mx - s * my, Yf = y0 + s * mx + c * my;
                 const nwx = c * nx - s * ny, nwy = s * nx + c * ny;
                 const e = (nwx < 0 ? -nwx : nwx) * hc;
                 const z0 = Yf - e, z1 = Yf + e;
-                const S = surfaceAt(X);
+                const sEnds = sL + (sR - sL) * (X - fx0) / fspan;
+                const sHere = surfaceAt(X);
+                const S = sHere < sEnds ? sHere : sEnds;
                 const airIn = !full && hin < z1 - AIR_EPS;
                 const airOut = S < z1 - AIR_EPS;
                 if (airIn) {
@@ -731,6 +744,16 @@
                 cv.sY = wIY / w;
                 const pad = 0.5 * CELL;
                 cv.cX0 = inX0 - pad; cv.cY0 = inY0; cv.cX1 = inX1 + pad; cv.cY1 = inY1;
+                if (cv.sMode === 1 && inX1 - inX0 < 0.06) {
+                    // only a short stretch of rim is under: the liquid spills over the lip, inwards
+                    const lipLeft = inY0 <= inY1;
+                    const lx = lipLeft ? inX0 : inX1, ly = lipLeft ? inY0 : inY1;
+                    const inward = cv.xs >= lx ? 1 : -1;
+                    cv.sMode = 3;
+                    cv.sX = lx + inward * 0.5 * CELL; cv.sY = ly;
+                    cv.sNX = inward; cv.sNY = 0;
+                    cv.sV = 0.8 * Math.sqrt(2 * g * dIn);
+                }
             } else if (QO > 0) {
                 const w = qOut;
                 sQ = QO;
@@ -821,7 +844,7 @@
         let n = 0;
         for (let i = 0; i < JET_MAX; i++) {
             const sp = Math.hypot(vx, vy);
-            jetX[n] = x; jetY[n] = y; jetW[n] = cv.sQ / Math.max(0.2, sp); n++;
+            jetX[n] = x; jetY[n] = y; jetW[n] = cv.sQ / Math.max(0.7, sp); n++;
             const r = inflow ? cavityLevelAt(cv, x) : Math.max(0, surfaceAt(x));
             if (y <= r || x < 0 || x > TANK_W) break;
             if (inflow && (x < cv.xmin - CELL || x > cv.xmax + CELL || y < cv.ymin - CELL)) break;
@@ -2097,7 +2120,7 @@
     }
 
     function drawJet(cv, n, liq) {
-        const maxW = 0.03 * scale;
+        const maxW = 0.02 * scale;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.strokeStyle = 'rgba(' + liq.top.join(',') + ',0.9)';
@@ -2600,8 +2623,8 @@
         if (!P) {
             predictionLines = [];
             if (!el.mass) return;
-            setText(el.mass, '-'); setText(el.volume, '-'); setText(el.density, '-');
-            setText(el.submerged, '-'); setText(el.weight, '-'); setText(el.buoyancy, '-');
+            setText(el.mass, '–'); setText(el.volume, '–'); setText(el.density, '–');
+            setText(el.submerged, '–'); setText(el.weight, '–'); setText(el.buoyancy, '–');
             return;
         }
         const V = (P.areaMat + P.areaSealed) * DEPTH;
@@ -2619,8 +2642,8 @@
             setText(el.buoyancy, fmtR(Math.hypot(fv.fbX, fv.fbY)));
         } else {
             setText(el.weight, fmtR(M * g));
-            setText(el.submerged, '-');
-            setText(el.buoyancy, '-');
+            setText(el.submerged, '–');
+            setText(el.buoyancy, '–');
         }
     }
 
