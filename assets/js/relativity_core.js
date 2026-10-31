@@ -28,6 +28,12 @@
  *   rest stays in the middle; the moving one wraps round the edges (as if the track were lined with
  *   identical, synchronised copies of the craft at rest, one per screen width). Both clocks read zero as
  *   the two craft pass each other.
+ * - Ship in a hangar (the pole-and-barn paradox): at rest the ship is longer than the hangar. Measured from
+ *   the hangar both doors shut at the same moment, for a short while, with the contracted ship inside.
+ *   Measured from the ship the hangar is even shorter, but each door shuts when the hangar's own clock beside
+ *   it reads zero, and those clocks are not synchronised measured from the ship: the exit door shuts and
+ *   reopens ahead of the nose, then the entrance shuts and reopens behind the tail. The run pauses at each
+ *   door's shut moment.
  * - Twin paradox: a return trip to Proxima Centauri (4.24 ly). Measured from the ship (its outbound frame,
  *   then its inbound frame), Earth's clock jumps ahead at the turnaround.
  * - Muons: a batch of muons made 15 km up falls to the ground. Each decays when its own clock reaches a
@@ -106,6 +112,18 @@
         MIN_SPAN: 3.5     // narrowest scene (ls), so a craft at rest never fills more than ~45 % of the width
     };
 
+    // Ship in a hangar (light-seconds and seconds): the light-clock ship, without its clock
+    const HG = {
+        SHIP: 1.6,        // the ship's rest length (ls)
+        L0: 1.2,          // the hangar's rest length, door to door (ls)
+        IN: 0.42,         // half the hangar's inner height (ls)
+        WALL: 0.07,       // roof and floor thickness (ls)
+        SHUT: 0.55,       // the doors are shut for this fraction of the time the contracted ship spends wholly inside
+        HOLD: 1.3,        // s (real) paused at each door's shut moment
+        END_HOLD: 0.8,    // s (real) before starting again
+        MIN_SPAN: 4.6     // narrowest scene (ls)
+    };
+
     // Twin paradox (light-years and years)
     const TW = {
         D: 4.24,          // Earth to Proxima Centauri (ly)
@@ -151,6 +169,14 @@
             hint: 'A ship and a station of the same length each carry a light clock that ticks once a second.',
             aria: 'A spaceship carrying a light clock flies past a space station that carries an identical light clock'
         },
+        hangar: {
+            home: { name: 'Hangar', the: 'the hangar', icon: 'fa-warehouse' },
+            away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
+            v: 0.8,
+            show: ['sync'],
+            hint: 'At rest the ship is 1.6 ls long and the hangar 1.2 ls. The hangar\u2019s doors both shut for a moment as the ship flies through.',
+            aria: 'A spaceship longer than a hangar flies through it while the hangar doors shut for a moment'
+        },
         twins: {
             home: { name: 'Earth', the: 'Earth', icon: 'fa-globe-europe' },
             away: { name: 'Ship', the: 'the ship', icon: 'fa-rocket' },
@@ -187,6 +213,8 @@
     const fmtGamma = (g) => (g < 9.9995 ? g.toFixed(3) : g.toFixed(2));
     const fmtNum = (x) => (Math.abs(x) < 999.95 ? x.toFixed(1) : x.toFixed(0));
     const fmtTimes = (g) => (g < 9.995 ? g.toFixed(2) : g.toFixed(1));
+    // A time that can be before zero, to two decimals, with a proper minus sign.
+    const fmtSigned = (x) => (x < -0.005 ? '\u2212' : '') + Math.abs(x).toFixed(2);
     // A velocity in units of c, with a minus sign when it points backwards.
     const fmtU = (u) => (u < -0.0005 ? '\u2212' : '') + fmtV(Math.abs(u));
 
@@ -232,6 +260,9 @@
         tickHome: 0, tickAway: 0,
         flashHome: -9, flashAway: -9
     };
+
+    // Ship in a hangar
+    const hg = { t: 0, hold: 0, done: false, slam: [-9, -9] };   // frame time (s); real time each door last moved
 
     // Twin paradox
     const tw = { t: 0, stage: 'out', pause: 0, pauseLen: 1 };
@@ -498,6 +529,72 @@
         if (ta > lc.tickAway) lc.flashAway = realNow;
         lc.tickHome = th;
         lc.tickAway = ta;
+    }
+
+    // ------------------------------------------------------------------
+    // Ship in a hangar: physics
+    // ------------------------------------------------------------------
+    // The hangar is centred on x = 0 and the ship's middle passes its middle at t = 0. Each door (own position
+    // ∓L0/2 along the hangar) is shut while the hangar's clock beside it reads between -d and +d; those clocks
+    // are synchronised in the hangar's frame, so measured from the hangar both doors shut at once. d is a fraction
+    // of the time the contracted ship spends wholly inside; if it doesn't fit, the doors stay open.
+    function hangarState() {
+        const v = Math.max(S.v, 1e-6), g = gammaOf(S.v);
+        const hm = homeMoves();
+        const room = (HG.L0 - HG.SHIP / g) / (2 * v);      // hangar time the ship is wholly inside, either side of 0
+        const d = room > 0 ? HG.SHUT * room : 0;
+        const t = hg.t;
+        const hangar = { x: hm ? -v * t : 0, u: hm ? -v : 0, length: HG.L0 / (hm ? g : 1), clock: hm ? t / g : t };
+        const ship = { x: hm ? 0 : v * t, u: hm ? 0 : v, length: HG.SHIP / (hm ? 1 : g) };
+        // Each door's clock now, and whether it is shut ([entrance, exit])
+        const doors = [-1, 1].map((side) => {
+            const own = side * HG.L0 / 2;
+            const clock = hangar.clock - hangar.u * own;
+            return { own, clock, x: hangar.x + own * (hm ? 1 / g : 1), shut: d > 0 && Math.abs(clock) < d };
+        });
+        // Frame times at which each door is in the middle of its shut spell (the clock beside it reads zero)
+        const pauses = d > 0 ? (hm ? [-g * v * HG.L0 / 2, g * v * HG.L0 / 2] : [0]) : [];
+        // From the ship's nose at the left edge (or the hangar coming in from the right) until it has gone
+        const half = (viewW > 0 ? hangarLayout().P : 5) / 2;
+        const reach = half + (hm ? hangar.length : ship.length) / 2 + 0.1;
+        return { v, g, t, d, hangar, ship, doors, pauses, both: doors[0].shut && doors[1].shut,
+            shutFor: hm || d === 0 ? 0 : 2 * d, start: -reach / v, end: reach / v };
+    }
+
+    function resetHangar() {
+        hg.t = hangarState().start;
+        hg.hold = 0;
+        hg.done = false;
+    }
+
+    function stepHangar(dt, dtReal) {
+        if (hg.hold > 0) {
+            hg.hold -= dtReal;
+            if (hg.hold <= 0 && hg.done) {
+                resetHangar();
+                resetChartData();
+            }
+            return;
+        }
+        const st = hangarState();
+        const before = hg.t;
+        hg.t = Math.min(st.end, hg.t + dt);
+        // Pause at each door's shut moment
+        for (const tp of st.pauses) {
+            if (before < tp && hg.t >= tp) {
+                hg.t = tp;
+                hg.hold = HG.HOLD;
+                break;
+            }
+        }
+        const after = hangarState();
+        after.doors.forEach((door, i) => {
+            if (door.shut !== st.doors[i].shut) hg.slam[i] = realNow;
+        });
+        if (hg.t >= st.end) {
+            hg.done = true;
+            hg.hold = HG.END_HOLD;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -929,24 +1026,35 @@
         return { x0, x1: x0 + w };
     }
 
-    // Horizontal dimension line from x0 to x1 with its length written under it.
-    function drawDimension(x0, x1, y, text, f, color) {
+    // Horizontal dimension line from x0 to x1 with its length written under it, or (inline) in a gap in the
+    // middle of the line when there is room for it.
+    function drawDimension(x0, x1, y, text, f, color, inline) {
         const tick = Math.max(4, f * 0.4);
+        setFont(f * 0.95, 700);
+        const tw = ctx.measureText(text).width;
+        const gap = inline && x1 - x0 > tw + 24 ? tw / 2 + 6 : 0;
+        const xm = (x0 + x1) / 2;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(x0, y);
+        ctx.lineTo(xm - gap, y);
+        ctx.moveTo(xm + gap, y);
         ctx.lineTo(x1, y);
         ctx.moveTo(x0, y - tick);
         ctx.lineTo(x0, y + tick);
         ctx.moveTo(x1, y - tick);
         ctx.lineTo(x1, y + tick);
         ctx.stroke();
-        setFont(f * 0.95, 700);
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
         ctx.fillStyle = color;
-        ctx.fillText(text, (x0 + x1) / 2, y + tick + 2);
+        if (gap) {
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), y + 0.5);
+        } else {
+            ctx.textBaseline = inline ? 'bottom' : 'top';
+            ctx.fillText(text, clamp(xm, tw / 2 + 4, viewW - tw / 2 - 4), inline ? y - tick - 2 : y + tick + 2);
+        }
     }
 
     // Scale bar at the bottom left (as on the other simulation pages): a round length, `unit` per `k` px.
@@ -1729,6 +1837,103 @@
     }
 
     // ------------------------------------------------------------------
+    // Scene: ship in a hangar
+    // ------------------------------------------------------------------
+    // One lane: the hangar's name and length over it, the ship's under it.
+    function hangarLayout() {
+        const f = fontPx;
+        const capH = Math.round(f * 2.3);
+        const tagH = Math.round(f * 1.7);
+        const dimH = Math.round(f * 1.7);
+        const clockH = S.showSync ? Math.round(f * 2.2) : 0;    // the hangar's door clocks, over the roof
+        const botH = Math.round(f * 1.8);
+        const H = 2 * (HG.IN + HG.WALL);
+        const free = viewH - capH - botH - 2 * (tagH + dimH) - clockH;
+        const k = Math.max(8, Math.min(viewW / HG.MIN_SPAN, free / H));
+        const y = capH + tagH + dimH + clockH + Math.max(0, free - H * k) / 2 + H * k / 2;
+        return { f, k, y, H, tagH, dimH, clockH, cx: viewW / 2, P: viewW / k };
+    }
+
+    // The hangar in its own coordinates (set with setCraft): a dark back wall, a roof and a floor that run a
+    // little past the doors, and a door at each end that drops from the roof when shut.
+    function drawHangar(doors, both, glow) {
+        const L = HG.L0 / 2, o = 0.09, w = HG.WALL;
+        localRect(-L - 0.02, -HG.IN, L + 0.02, HG.IN, 0.02);
+        ctx.fillStyle = dark ? 'rgba(126,202,246,0.07)' : 'rgba(63,136,187,0.08)';
+        ctx.fill();
+        if (both || glow > 0) {
+            ctx.fillStyle = `rgba(123,208,193,${(0.22 * Math.max(both ? 1 : 0, glow)).toFixed(3)})`;
+            ctx.fill();
+        }
+        for (const s of [-1, 1]) {
+            localRect(-L - o, s > 0 ? HG.IN : -HG.IN - w, L + o, s > 0 ? HG.IN + w : -HG.IN, 0.025);
+            fillTones(pal.st, pal.stLo, pal.stHi, s > 0 ? HG.IN + w * 0.55 : -HG.IN - w * 0.45, s > 0 ? HG.IN : -HG.IN - w);
+        }
+        drawDoors(doors, false);
+    }
+
+    // The doors: open ones as a stub under the roof (drawn behind the ship), shut ones from roof to floor (in
+    // front of it), each flashing as it moves.
+    function drawDoors(doors, shut) {
+        doors.forEach((door, i) => {
+            if (door.shut !== shut) return;
+            const side = i === 0 ? -1 : 1;
+            const x0 = side * HG.L0 / 2 - (side < 0 ? 0.035 : 0);
+            localRect(x0, -HG.IN, x0 + 0.035, -HG.IN + (shut ? 2 * HG.IN : 0.06), 0.01);
+            ctx.fillStyle = pal.peri;
+            ctx.fill();
+            if (door.flash > 0) {
+                ctx.fillStyle = `rgba(255,255,255,${(0.6 * door.flash).toFixed(3)})`;
+                ctx.fill();
+            }
+        });
+    }
+
+    function drawHangarScene() {
+        const lay = hangarLayout();
+        const st = hangarState();
+        const k = lay.k, f = lay.f, g = st.g, y = lay.y;
+        const X = (x) => lay.cx + x * k;
+        const hm = homeMoves();
+        drawStars(k, lay.P, hm ? st.hangar.x : 0, hm ? g : 1);
+        const hx = X(st.hangar.x), sx = X(st.ship.x);
+        const hk = k * (hm ? 1 / g : 1);
+        const doors = st.doors.map((d, i) => Object.assign({}, d, { flash: clamp(1 - (realNow - hg.slam[i]) / 0.4, 0, 1) }));
+        // Glow inside while both doors are shut; it lingers a moment through the pause
+        setCraft(hx, y, hk, k);
+        drawHangar(doors, st.both, 0);
+        setCraft(sx, y, k * (hm ? 1 : 1 / g), k);
+        drawShip(false);
+        // Shut doors in front (they never overlap the ship: each shuts only while the ship is clear of it)
+        setCraft(hx, y, hk, k);
+        drawDoors(doors, true);
+
+        // Names and measured lengths: the hangar's over it, the ship's under it
+        const top = y - (HG.IN + HG.WALL) * k, bot = y + (HG.IN + HG.WALL) * k;
+        const hl = st.hangar.length * k / 2, sl = st.ship.length * k / 2;
+        const above = top - lay.clockH;
+        drawDimension(hx - hl, hx + hl, above - lay.dimH / 2, `${st.hangar.length.toFixed(2)} ls`, f, hm ? pal.blueText : pal.muted, true);
+        drawDimension(sx - sl, sx + sl, bot + lay.dimH / 2, `${st.ship.length.toFixed(2)} ls`, f, hm ? pal.muted : pal.pinkText, true);
+        const hTag = drawNameTag(hx, above - lay.dimH - lay.tagH / 2, SCENARIOS.hangar.home.name, pal.blueText, f, st.hangar.u);
+        const sTag = drawNameTag(sx, bot + lay.dimH + lay.tagH / 2, SCENARIOS.hangar.away.name, pal.pinkText, f, st.ship.u);
+        hitRects.push({ x0: Math.min(hx - hl, hTag.x0) - 6, x1: Math.max(hx + hl, hTag.x1) + 6, y0: above - lay.dimH - lay.tagH, y1: top + 4, frame: 'home' });
+        hitRects.push({ x0: Math.min(sx - sl, sTag.x0) - 6, x1: Math.max(sx + sl, sTag.x1) + 6, y0: y - 0.34 * k, y1: bot + lay.dimH + lay.tagH, frame: 'away' });
+
+        // The hangar's clocks beside its doors (synchronised in the hangar's frame)
+        if (S.showSync) {
+            const pw = pillWidth(f, 's', '\u22120.00', true);
+            doors.forEach((door, i) => {
+                // Over the roof at its door, nudged apart if the contracted hangar brings them together
+                const xd = X(door.x) + (i === 0 ? -1 : 1) * Math.max(0, (pw + 6 - (X(doors[1].x) - X(doors[0].x))) / 2);
+                drawPill(clamp(xd, pw / 2 + 4, viewW - pw / 2 - 4), top - lay.clockH / 2, fmtSigned(door.clock), 's',
+                    { f, color: pal.blue, edge: door.shut ? pal.peri : pal.faint, compact: true, template: '\u22120.00' });
+            });
+        }
+        drawScaleBar(k, 'ls', f);
+        drawCaption(f);
+    }
+
+    // ------------------------------------------------------------------
     // Scene: twin paradox
     // ------------------------------------------------------------------
     function twinsLayout() {
@@ -2090,6 +2295,14 @@
                 { label: `${movingName} length:`, value: (LC.L0 / g).toFixed(2), unit: 'ls' }
             ];
         }
+        if (S.scenario === 'hangar') {
+            const st = hangarState();
+            return [
+                { label: 'Ship length:', value: st.ship.length.toFixed(2), unit: 'ls', color: pal.pink },
+                { label: 'Hangar length:', value: st.hangar.length.toFixed(2), unit: 'ls', color: pal.blue },
+                { label: 'Both doors shut:', value: st.shutFor > 0 ? st.shutFor.toFixed(2) : 'never', unit: st.shutFor > 0 ? 's' : '' }
+            ];
+        }
         if (S.scenario === 'twins') {
             const st = twinState();
             return [
@@ -2148,6 +2361,7 @@
         }
         if (S.scenario === 'lightning') return { t: 's', y: 'Clock time since the first strike (s)', lines: [{ label: 'Station clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
         if (S.scenario === 'clocks') return { t: 's', y: 'Clock reading (s)', lines: [{ label: 'Station clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
+        if (S.scenario === 'hangar') return { t: 's', y: 'Clock reading (s)', lines: [{ label: 'Hangar clock', color: '#7ecaf6' }, { label: 'Ship clock', color: '#f2849e' }] };
         if (S.scenario === 'twins') return { t: 'years', y: 'Age gained (years)', lines: [{ label: 'Earth twin', color: '#7ecaf6' }, { label: 'Traveller', color: '#f2849e' }] };
         return { t: '\u00b5s', y: 'Muons left', lines: [{ label: 'Muons left', color: '#ae85ca' }] };
     }
@@ -2425,6 +2639,12 @@
                 const st = clockState();
                 return [lc.T, st.home.clock, st.away.clock];
             } },
+        hangar: { reset: resetHangar, step: stepHangar, draw: drawHangarScene,
+            chart: () => {
+                // Each middle clock reads zero as the middles pass
+                const st = hangarState();
+                return [hg.t - st.start, homeMoves() ? hg.t / st.g : hg.t, homeMoves() ? hg.t : hg.t / st.g];
+            } },
         twins: { reset: resetTwins, step: stepTwins, draw: drawTwins,
             chart: () => {
                 const st = twinState();
@@ -2497,6 +2717,9 @@
                     screen: { flash: X(Math.max(0, lt.t)), probeHome: X(st.probe.home * Math.max(0, lt.t)), probeAway: X(st.probe.away * Math.max(0, lt.t)),
                         homeX: X(st.home.x), awayX: X(st.away.x) }
                 });
+            } else if (S.scenario === 'hangar') {
+                const lay = hangarLayout();
+                Object.assign(out, { t: hg.t, k: lay.k, cx: lay.cx, hold: hg.hold, hangar: hangarState() });
             } else if (S.scenario === 'lightning') {
                 const lay = lightningLayout();
                 Object.assign(out, { t: ln.t, k: lay.k, cx: lay.cx, lightning: lightningState() });
