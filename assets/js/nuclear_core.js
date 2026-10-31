@@ -2176,7 +2176,7 @@
                 ctx.drawImage(b.sprite, x - w / 2, y - w / 2, w, w);
                 // a nucleus that has just gained or lost nucleons: the old look fades into the new one
                 if (b.prev) {
-                    const u = (simTime - b.prev.t) / 0.3;
+                    const u = (simTime - b.prev.t) / 0.15;   // (quick: halfway, red and grey blend to pink)
                     if (u >= 1 || u < 0) b.prev = null;
                     else {
                         const pw = b.prev.look.sw * scale;
