@@ -2398,15 +2398,17 @@
         if (A.drag) drawArrow(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color, kPx, maxLen);
         if (A.contact && disp.hasContact > 0.05) drawArrow(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color, kPx, maxLen);
         if (A.net) drawArrow(cx, cy, disp.netX, disp.netY, ARROWS.net.color, kPx, maxLen);
+        if (!legendVals.ok) storeLegendValues();
+        const L = legendVals;
         const rows = [];
         const N = (v) => fmtAuto(v) + ' N';
-        if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(weight)]);
-        if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(Math.hypot(fv.fbX, fv.fbY))]);
-        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(Math.hypot(disp.netX, disp.netY))]);
-        if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(Math.hypot(disp.fdX, disp.fdY))]);
-        if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(Math.hypot(disp.fcX, disp.fcY))]);
-        if (B.cavs.length && fv.carried > 0.01) {
-            rows.push(['liquid', LIQUIDS[settings.liquid].name.replace('Fresh water', 'Water') + ' held up', fmtAuto(fv.carried) + ' kg']);
+        if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(L.weight)]);
+        if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(L.buoyancy)]);
+        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(L.net)]);
+        if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(L.drag)]);
+        if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(L.contact)]);
+        if (B.cavs.length && L.carried > 0.01) {
+            rows.push(['liquid', LIQUIDS[settings.liquid].name.replace('Fresh water', 'Water') + ' held up', fmtAuto(L.carried) + ' kg']);
         }
 
         if (settings.markers) {
@@ -2612,6 +2614,18 @@
         return v.toFixed(a < 9.995 ? 2 : (a < 99.95 ? 1 : 0));
     }
     let predictionLines = [];
+    // Force values for the on-canvas key, refreshed together with the info bar so the two always
+    // agree and the key's numbers don't flicker every frame while the object bobs.
+    const legendVals = { ok: false, weight: 0, buoyancy: 0, net: 0, drag: 0, contact: 0, carried: 0 };
+    function storeLegendValues() {
+        legendVals.ok = true;
+        legendVals.weight = fv.W;
+        legendVals.buoyancy = Math.hypot(fv.fbX, fv.fbY);
+        legendVals.net = Math.hypot(disp.netX, disp.netY);
+        legendVals.drag = Math.hypot(disp.fdX, disp.fdY);
+        legendVals.contact = Math.hypot(disp.fcX, disp.fcY);
+        legendVals.carried = fv.carried;
+    }
     function updateStatsDisplay(force) {
         const now = performance.now();
         if (!force && now - lastStatsT < 200) return;
@@ -2636,10 +2650,12 @@
         setText(el.density, rho.toFixed(0));
         if (mode === 'sim') {
             forceView();
+            storeLegendValues();
             setText(el.weight, fmtR(fv.W));
             setText(el.submerged, (100 * clamp(disp.sub, 0, 1)).toFixed(0));
-            setText(el.buoyancy, fmtR(Math.hypot(fv.fbX, fv.fbY)));
+            setText(el.buoyancy, fmtR(legendVals.buoyancy));
         } else {
+            legendVals.ok = false;
             setText(el.weight, fmtR(M * g));
             setText(el.submerged, '–');
             setText(el.buoyancy, '–');
