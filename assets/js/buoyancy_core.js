@@ -551,18 +551,20 @@
             const allOpen = s0 === m;
             if (allOpen) s0 = 0;
             const at = (i) => loop[(s0 + i) % m];
-            // outline: a vertex wherever the direction or the kind of side changes
-            const px = [], py = [], pd = [], po = [];
-            for (let i = 0; i < m; i++) {
-                const ec = at(i), ep = at(i + m - 1);
-                if (eD[ec] === eD[ep] && eO[ec] === eO[ep]) continue;
-                px.push(vxOf(eS[ec])); py.push(vyOf(eS[ec])); pd.push(eD[ec]); po.push(eO[ec]);
-            }
-            loops.push({ x: Float64Array.from(px), y: Float64Array.from(py), d: Uint8Array.from(pd), o: Uint8Array.from(po) });
+            // The outline as drawn: a vertex wherever a wall side changes direction, and each opening
+            // as its outer envelope (below); per vertex the outward normal of the side leaving it and
+            // whether that side is open
+            const ox = [], oy = [], onx = [], ony = [], oo = [];
             // openings: runs of sides facing the outside, as faces (midpoint, outward normal) and a polyline
             let i = 0;
             while (i < m) {
-                if (!eO[at(i)]) { i++; continue; }
+                if (!eO[at(i)]) {
+                    const e0 = at(i), d = eD[e0];
+                    ox.push(vxOf(eS[e0])); oy.push(vyOf(eS[e0])); onx.push(DIRY[d]); ony.push(-DIRX[d]); oo.push(0);
+                    i++;
+                    while (i < m && !eO[at(i)] && eD[at(i)] === d) i++;
+                    continue;
+                }
                 const f0 = faces.length / 4;
                 const cx = [vxOf(eS[at(i)])], cy = [vyOf(eS[at(i)])];
                 let dPrev = -1, nsx = 0, nsy = 0;
@@ -579,8 +581,25 @@
                     i++;
                 }
                 const nf = faces.length / 4 - f0;
+                // A stair-stepped opening follows a slanted edge of the hull: drawn, it is that straight
+                // edge, the outer envelope of its corners (with the cavity on the left, a polyline that
+                // only turns right). The ends, its lips, stay where they are.
+                const ex = [cx[0]], ey = [cy[0]];
+                for (let k = 1; k < cx.length && !allOpen; k++) {
+                    while (ex.length >= 2) {
+                        const n = ex.length, ax = ex[n - 2], ay = ey[n - 2], bx = ex[n - 1], by = ey[n - 1];
+                        if ((bx - ax) * (cy[k] - by) - (by - ay) * (cx[k] - bx) >= -1e-12) { ex.pop(); ey.pop(); } else break;
+                    }
+                    ex.push(cx[k]); ey.push(cy[k]);
+                }
+                const env = allOpen ? [cx, cy] : [ex, ey];
+                for (let k = 0; k < env[0].length - 1; k++) {
+                    const dx = env[0][k + 1] - env[0][k], dy = env[1][k + 1] - env[1][k], l = Math.hypot(dx, dy) || 1;
+                    ox.push(env[0][k]); oy.push(env[1][k]); onx.push(dy / l); ony.push(-dx / l); oo.push(1);
+                }
                 chains.push({
                     f0, nf, px: Float64Array.from(cx), py: Float64Array.from(cy), lips: !allOpen,
+                    ex: Float64Array.from(env[0]), ey: Float64Array.from(env[1]),   // as drawn
                     nbx: nsx / nf, nby: nsy / nf,           // mean outward normal (body frame)
                     qI: 0, qO: 0, lipMode: false, wA: 0.5,  // this step: flows, over the lips?, lip A's share
                     tin: null, tout: null,                  // where it flows through (flow-weighted)
@@ -588,6 +607,7 @@
                     sA: 0, sB: 0, sJ: 0, jx: 0, jy: 0, jnx: 0, jny: 0, jv: 0, jw: CELL
                 });
             }
+            loops.push({ x: Float64Array.from(ox), y: Float64Array.from(oy), nx: Float64Array.from(onx), ny: Float64Array.from(ony), o: Uint8Array.from(oo) });
         }
         for (const ch of chains) { ch.tin = new Float64Array(5); ch.tout = new Float64Array(5); }
         return { loops, chains, faces: Float64Array.from(faces) };
@@ -990,16 +1010,16 @@
         return B.ltype[li];
     }
 
-    // an opening's polyline in world coordinates (cpX/cpZ), no segment longer than a centimetre
+    // an opening as drawn (its envelope) in world coordinates (cpX/cpZ), no segment longer than 1 cm
     const CP_MAX = 4096;
     const cpX = new Float64Array(CP_MAX), cpZ = new Float64Array(CP_MAX);
     function chainPoints(ch, c, s) {
-        const n = ch.px.length;
-        let px = st.x + c * ch.px[0] - s * ch.py[0], pz = st.y + s * ch.px[0] + c * ch.py[0];
+        const n = ch.ex.length;
+        let px = st.x + c * ch.ex[0] - s * ch.ey[0], pz = st.y + s * ch.ex[0] + c * ch.ey[0];
         let m = 0;
         cpX[m] = px; cpZ[m] = pz; m++;
         for (let i = 1; i < n && m < CP_MAX; i++) {
-            const qx = st.x + c * ch.px[i] - s * ch.py[i], qz = st.y + s * ch.px[i] + c * ch.py[i];
+            const qx = st.x + c * ch.ex[i] - s * ch.ey[i], qz = st.y + s * ch.ex[i] + c * ch.ey[i];
             const k = Math.max(1, Math.ceil(Math.hypot(qx - px, qz - pz) / CELL));
             for (let j = 1; j <= k && m < CP_MAX; j++) { cpX[m] = px + (qx - px) * j / k; cpZ[m] = pz + (qz - pz) * j / k; m++; }
             px = qx; pz = qz;
@@ -2251,13 +2271,10 @@
                 if (first) { p.moveTo(X, Y); first = false; } else p.lineTo(X, Y);
             };
             for (let i = 0; i < n; i++) {
+                // (consecutive wall sides are at right angles, so their offsets add up exactly)
                 const ip = i === 0 ? n - 1 : i - 1;
-                const dIn = L.d[ip], dOut = L.d[i];
                 const oIn = L.o[ip] ? 0 : d, oOut = L.o[i] ? 0 : d;
-                const bx = L.x[i], by = L.y[i];
-                // outward normal of a side running in direction k: (DIRY[k], -DIRX[k])
-                if (dIn !== dOut) put(bx + oIn * DIRY[dIn] + oOut * DIRY[dOut], by - oIn * DIRX[dIn] - oOut * DIRX[dOut]);
-                else { put(bx + oIn * DIRY[dIn], by - oIn * DIRX[dIn]); put(bx + oOut * DIRY[dOut], by - oOut * DIRX[dOut]); }
+                put(L.x[i] + oIn * L.nx[ip] + oOut * L.nx[i], L.y[i] + oIn * L.ny[ip] + oOut * L.ny[i]);
             }
             p.closePath();
         }
