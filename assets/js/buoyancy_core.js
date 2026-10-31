@@ -19,9 +19,11 @@
  *    or cup). Each cavity holds a volume of liquid with a level, world-horizontal
  *    free surface (solved every sub-step for the current pose), so its mass and
  *    moving centre of mass feed straight into the rigid-body dynamics. Liquid
- *    runs in and out through the cavity's openings at a rate set by the head
- *    difference (orifice flow ~ sqrt(2 g dh), limited to weir flow ~ H^1.5 over
- *    a rim), but only while air can get out (or in): an upside-down cup keeps its
+ *    runs in and out through the cavity's openings (runs of its boundary that
+ *    meet the outside) at a rate set by the head difference: orifice flow
+ *    ~ Cd sqrt(2 g dh), but through an opening that faces up no more than
+ *    sharp-crested weir flow (2/3) Cd sqrt(2 g) H^1.5 over each of its lips. It
+ *    flows only while air can get out (or in): an upside-down cup keeps its
  *    trapped air until it tips and the air bubbles out. Volume is conserved: what
  *    the object holds is missing from the tank.
  *  - Drag on every exposed face: quadratic pressure drag on faces moving into
@@ -1097,6 +1099,21 @@
                     t -= hh;
                 }
                 if (cv.phi > 0.3) { cv.phi = 0.3; cv.phiV = 0; } else if (cv.phi < -0.3) { cv.phi = -0.3; cv.phiV = 0; }
+                // the slosh is only drawn, so it must not lift the surface over a lip (it would have
+                // to spill there)
+                const c = Math.cos(st.th), s = Math.sin(st.th);
+                let lo = -1, hi = 1;
+                for (const ch of cv.chains) {
+                    if (!ch.lips) continue;
+                    for (let e = 0; e < 2; e++) {
+                        const i = e ? ch.px.length - 1 : 0;
+                        const dx = st.x + c * ch.px[i] - s * ch.py[i] - cv.xs, dz = st.y + s * ch.px[i] + c * ch.py[i] - cv.h;
+                        if (dz <= 0 || (dx < 0 ? -dx : dx) < 1e-4) continue;
+                        if (dx > 0) { if (dz / dx < hi) hi = dz / dx; } else if (dz / dx > lo) lo = dz / dx;
+                    }
+                }
+                const tp = Math.tan(cv.phi);
+                if (tp > hi) { cv.phi = Math.atan(hi); cv.phiV = 0; } else if (tp < lo) { cv.phi = Math.atan(lo); cv.phiV = 0; }
             }
             // a stream pouring in stirs the inside surface
             if (cv.V > 0) {
@@ -1867,6 +1884,13 @@
             const S = MAT_ID.steel;
             fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
             setCell(119, 48, 0);
+        } },
+        { key: 'bulkheads', label: 'Boat with bulkheads (one compartment holed)', build() {
+            // the holed end compartment floods to the outside level; the others keep the boat afloat
+            const A = MAT_ID.aluminium;
+            fillRect(84, 48, 72, 1, A); fillRect(84, 49, 1, 18, A); fillRect(155, 49, 1, 18, A);
+            fillRect(100, 49, 1, 18, A); fillRect(139, 49, 1, 18, A);
+            setCell(91, 48, 0);
         } },
         { key: 'canoe', label: 'Aluminium canoe', build() {
             fillShape('ring', 88, 66, 151, 109, 1, MAT_ID.aluminium, (c, r) => r < 88);
