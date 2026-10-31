@@ -86,67 +86,18 @@ let offscreenCanvas = null;
 let offscreenCtx = null;
 let offscreenImageData = null;
 
+// The shared layout sizes the canvas (normal and fullscreen); this only matches the drawing buffer to it.
 function updateCanvasResolution() {
     if (!canvas) return;
     if (!ctx && canvas) ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const aspectRatioBox = canvas.parentElement; // .sim-aspect-ratio-box
-    if (!aspectRatioBox) return;
-
-    const isFullscreen = document.body.classList.contains('sim-fullscreen-active');
-    let targetWidth, targetHeight;
-
-    const simStyle = getComputedStyle(aspectRatioBox);
-    const simAspectRatioString = simStyle.getPropertyValue('--aspect-ratio').trim();
-    let simAspectRatio = 1; 
-    if (simAspectRatioString) {
-        const parts = simAspectRatioString.split('/');
-        if (parts.length === 2 && parseFloat(parts[1]) !== 0) {
-            simAspectRatio = parseFloat(parts[0]) / parseFloat(parts[1]);
-        } else if (parts.length === 1) {
-            simAspectRatio = parseFloat(simAspectRatioString);
-        }
-    }
-    if (isNaN(simAspectRatio) || simAspectRatio <= 0) simAspectRatio = 1;
-    
-    if (isFullscreen) {
-        // In fullscreen, calculate maximum size that fits while maintaining aspect ratio
-        const canvasWrapper = aspectRatioBox.parentElement; 
-        if (!canvasWrapper) return;
-        
-        // Get available space from the wrapper (accounts for padding from parent)
-        const availableWidth = canvasWrapper.clientWidth;
-        const availableHeight = canvasWrapper.clientHeight;
-        
-        // Calculate the largest size that fits the aspect ratio within available space
-        if (availableWidth / availableHeight > simAspectRatio) {
-            // Height is the limiting factor
-            targetHeight = availableHeight;
-            targetWidth = targetHeight * simAspectRatio;
-        } else {
-            // Width is the limiting factor  
-            targetWidth = availableWidth;
-            targetHeight = targetWidth / simAspectRatio;
-        }
-        
-        // Set explicit dimensions for fullscreen to ensure proper scaling
-        aspectRatioBox.style.width = `${targetWidth}px`;
-        aspectRatioBox.style.height = `${targetHeight}px`;
-    } else {
-        // Not fullscreen: .sim-aspect-ratio-box gets its width from .sim-canvas-wrapper,
-        // which gets its width from .simulation-display-container (max-width: 750px, centered).
-        // Reset inline styles so CSS can take over.
-        aspectRatioBox.style.width = ''; 
-        aspectRatioBox.style.height = ''; 
-    }
-
     // Size the drawing buffer to the canvas's on-screen size (inside the box border) in device pixels,
     // so the brush outline is sharp on high-DPI screens. The field itself is smooth, so pixel ratios
     // above 2 would only cost fill rate.
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
-    targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    const targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    const targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
 
     // Ensure offscreen canvas for simulation logic always matches N
     if (!offscreenCanvas || offscreenCanvas.width !== N || offscreenCanvas.height !== N) {
@@ -168,27 +119,10 @@ function updateCanvasResolution() {
 
 
 if (canvas) {
-    // Observe .sim-canvas-wrapper for resizes (window resize, fullscreen, settings panel)
-    const resizeObserverTarget = canvas.closest('.sim-canvas-wrapper');
-
+    // Resize the buffer whenever the canvas changes size (window resize, fullscreen, settings panel).
+    // The observer runs after layout and before paint, so the redraw shows no blank frame.
     if (typeof ResizeObserver !== 'undefined') {
-        const generalResizeObserver = new ResizeObserver(entries => {
-            // Call with a slight delay to ensure all other layout shifts are done.
-            requestAnimationFrame(updateCanvasResolution);
-        });
-
-        if (resizeObserverTarget) generalResizeObserver.observe(resizeObserverTarget);
-        
-        const fullscreenClassObserver = new MutationObserver((mutationsList) => {
-            for(const mutation of mutationsList) {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'class' && mutation.target === document.body) {
-                     // If fullscreen state changes, trigger resize after a short delay
-                    setTimeout(updateCanvasResolution, 100); // Increased delay for layout settle
-                    break; 
-                }
-            }
-        });
-        fullscreenClassObserver.observe(document.body, { attributes: true });
+        new ResizeObserver(() => updateCanvasResolution()).observe(canvas);
     } else {
         window.addEventListener('resize', () => setTimeout(updateCanvasResolution, 100));
     }

@@ -48,7 +48,7 @@
     font-size: 0.75em;
     color: var(--color-text);
     white-space: nowrap;
-    margin-right: 1em;
+    margin-right: auto; /* stays beside the readout when the actions wrap below */
 }
 
 .thermal-legend > span:not(.thermal-legend-bar) {
@@ -73,13 +73,14 @@
 }
 
 .thermal-mode button {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.4em;
+    gap: 0.35em;
     height: 40px;
     min-width: 40px;
-    padding: 0 0.85em;
+    padding: 0 0.7em;
     border-radius: 6px;
     box-shadow: none;
     background-color: transparent;
@@ -114,6 +115,35 @@
 .thermal-mode button[data-mode="cool"][aria-checked="true"] {
     background-color: #1971c2;
     color: #ffffff !important;
+}
+
+/* Narrow info bars (e.g. a square canvas on a phone in landscape): icon-only Heat / Cool buttons
+   (the words stay for screen readers) and a legend without its labels, so everything fits. */
+.sim-info-bar {
+    container-type: inline-size;
+}
+
+@container (max-width: 300px) {
+    .thermal-mode button {
+        padding: 0 0.6em;
+    }
+
+    .thermal-mode-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+    }
+
+    .thermal-legend > span:not(.thermal-legend-bar) {
+        display: none;
+    }
+
+    .thermal-legend-bar {
+        width: 3em;
+    }
 }
 
 /* ---------- Small screens ---------- */

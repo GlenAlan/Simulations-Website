@@ -215,7 +215,7 @@
 
                                 <div class="simulation-main-content">
                                     <div class="simulation-display-container">
-                                        <div class="sim-canvas-wrapper" style="--aspect-ratio: 1/1;">
+                                        <div class="sim-canvas-wrapper">
                                             <div class="sim-aspect-ratio-box" style="--aspect-ratio: 1/1;">
                                                 <canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Convection simulation: fluid temperature shown from blue (cold) to red (hot)"></canvas>
                                             </div>
@@ -223,12 +223,12 @@
                                             <p class="thermal-hint" id="thermalHint" aria-hidden="true">Press and drag in the fluid to heat it</p>
                                         </div>
                                         <div class="sim-info-bar">
-                                            <span class="sim-info-item">Avg. temperature: <span id="avgDensityVal" class="sim-value" style="--chars: 5">50.0</span> °C</span>
+                                            <span class="sim-info-item">Avg. temperature: <span id="avgDensityVal" class="sim-value" style="--chars: 4">50.0</span> °C</span>
                                             <span class="thermal-legend" aria-hidden="true"><span>0 °C</span><span class="thermal-legend-bar" id="colourLegendBar"></span><span>100 °C</span></span>
                                             <div class="sim-info-actions">
                                                 <div class="thermal-mode" role="radiogroup" aria-label="Brush mode">
-                                                    <button type="button" role="radio" aria-checked="true" data-mode="heat" title="Drag in the fluid to heat it"><span class="icon solid fa-fire" aria-hidden="true"></span>Heat</button>
-                                                    <button type="button" role="radio" aria-checked="false" data-mode="cool" title="Drag in the fluid to cool it (shortcuts: right-click or Shift+click)"><span class="icon solid fa-snowflake" aria-hidden="true"></span>Cool</button>
+                                                    <button type="button" role="radio" aria-checked="true" data-mode="heat" title="Drag in the fluid to heat it"><span class="icon solid fa-fire" aria-hidden="true"></span><span class="thermal-mode-label">Heat</span></button>
+                                                    <button type="button" role="radio" aria-checked="false" data-mode="cool" title="Drag in the fluid to cool it (shortcuts: right-click or Shift+click)"><span class="icon solid fa-snowflake" aria-hidden="true"></span><span class="thermal-mode-label">Cool</span></button>
                                                 </div>
                                                 <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation" title="Reset">
                                                     <span class="icon solid fa-sync-alt"></span>

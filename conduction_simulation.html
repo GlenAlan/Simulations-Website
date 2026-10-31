@@ -210,12 +210,12 @@
                                             <p class="thermal-hint" id="thermalHint" aria-hidden="true">Press and drag on the lattice to heat it</p>
                                         </div>
                                         <div class="sim-info-bar">
-                                            <span class="sim-info-item">Avg. temperature: <span id="energyVal" class="sim-value" style="--chars: 5">0</span> K</span>
+                                            <span class="sim-info-item">Avg. temperature: <span id="energyVal" class="sim-value" style="--chars: 4">0</span> K</span>
                                             <span class="thermal-legend" aria-hidden="true"><span>Cold</span><span class="thermal-legend-bar" id="colourLegendBar"></span><span>Hot</span></span>
                                             <div class="sim-info-actions">
                                                 <div class="thermal-mode" role="radiogroup" aria-label="Brush mode">
-                                                    <button type="button" role="radio" aria-checked="true" data-mode="heat" title="Drag on the lattice to heat it"><span class="icon solid fa-fire" aria-hidden="true"></span>Heat</button>
-                                                    <button type="button" role="radio" aria-checked="false" data-mode="cool" title="Drag on the lattice to cool it (shortcuts: right-click, Ctrl+click or two fingers)"><span class="icon solid fa-snowflake" aria-hidden="true"></span>Cool</button>
+                                                    <button type="button" role="radio" aria-checked="true" data-mode="heat" title="Drag on the lattice to heat it"><span class="icon solid fa-fire" aria-hidden="true"></span><span class="thermal-mode-label">Heat</span></button>
+                                                    <button type="button" role="radio" aria-checked="false" data-mode="cool" title="Drag on the lattice to cool it (shortcuts: right-click, Ctrl+click or two fingers)"><span class="icon solid fa-snowflake" aria-hidden="true"></span><span class="thermal-mode-label">Cool</span></button>
                                                 </div>
                                                 <button id="resetSimulationBtn" class="sim-reset-button" aria-label="Reset Simulation" title="Reset">
                                                     <span class="icon solid fa-sync-alt"></span>

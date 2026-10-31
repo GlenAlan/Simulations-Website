@@ -33,8 +33,7 @@
     const fpsDisplay = document.getElementById('fpsDisplay');
     const resetButton = document.getElementById('resetSimulationBtn');
     const gridLayoutSelector = document.getElementById('gridLayoutSelector');
-    const aspectRatioBox = canvas.parentElement;                              // .sim-aspect-ratio-box
-    const canvasWrapper = aspectRatioBox ? aspectRatioBox.parentElement : null; // .sim-canvas-wrapper
+    const aspectRatioBox = canvas.parentElement; // .sim-aspect-ratio-box
     const modeButtons = Array.from(document.querySelectorAll('.thermal-mode [data-mode]'));
     const hintEl = document.getElementById('thermalHint');
     const legendBar = document.getElementById('colourLegendBar');
@@ -414,32 +413,11 @@
     setToolMode(TOOL_HEAT);
 
     // --- Canvas sizing ---
-    // Sizes the canvas backing store to its displayed size times devicePixelRatio
-    // (crisp on high-DPI screens). In fullscreen the aspect-ratio box is given an
-    // explicit size that fits the wrapper; otherwise CSS sizes it.
+    // The shared layout sizes the aspect-ratio box (normal and fullscreen); this
+    // only sizes the canvas backing store to its displayed size times
+    // devicePixelRatio, so it is crisp on high-DPI screens.
     function layoutCanvas() {
         layoutDirty = false;
-        if (aspectRatioBox && canvasWrapper) {
-            if (document.body.classList.contains('sim-fullscreen-active')) {
-                const aspect = cols / rows;
-                const borderX = aspectRatioBox.offsetWidth - aspectRatioBox.clientWidth;
-                const borderY = aspectRatioBox.offsetHeight - aspectRatioBox.clientHeight;
-                const availW = canvasWrapper.clientWidth - borderX;
-                const availH = canvasWrapper.clientHeight - borderY;
-                if (availW > 0 && availH > 0) {
-                    let w = availW, h = availW / aspect;
-                    if (h > availH) { h = availH; w = availH * aspect; }
-                    const boxW = `${Math.floor(w) + borderX}px`;
-                    const boxH = `${Math.floor(h) + borderY}px`;
-                    if (aspectRatioBox.style.width !== boxW) aspectRatioBox.style.width = boxW;
-                    if (aspectRatioBox.style.height !== boxH) aspectRatioBox.style.height = boxH;
-                }
-            } else if (aspectRatioBox.style.width || aspectRatioBox.style.height) {
-                aspectRatioBox.style.width = '';
-                aspectRatioBox.style.height = '';
-            }
-        }
-
         const rect = canvas.getBoundingClientRect();
         const cssW = Math.max(1, rect.width), cssH = Math.max(1, rect.height);
         const dpr = window.devicePixelRatio || 1;
@@ -458,19 +436,15 @@
     }
 
     function setAspectRatioProperty() {
-        // A plain number (not "a/b") so it can be used as a divisor in CSS calc().
-        // Also set on the wrapper, whose fullscreen size is computed from it.
-        const value = String(cols / rows);
-        if (aspectRatioBox) aspectRatioBox.style.setProperty('--aspect-ratio', value);
-        if (canvasWrapper) canvasWrapper.style.setProperty('--aspect-ratio', value);
+        // The lattice's shape; simulation_ui.js copies it to wherever the shared
+        // layout needs it. A plain number so it also works as a CSS calc() divisor.
+        if (aspectRatioBox) aspectRatioBox.style.setProperty('--aspect-ratio', String(cols / rows));
     }
 
     const markLayoutDirty = () => { layoutDirty = true; };
     window.addEventListener('resize', markLayoutDirty);
     if (typeof ResizeObserver === 'function') {
-        const ro = new ResizeObserver(markLayoutDirty);
-        if (canvasWrapper) ro.observe(canvasWrapper);
-        if (aspectRatioBox) ro.observe(aspectRatioBox);
+        new ResizeObserver(markLayoutDirty).observe(canvas);
     }
     // Fullscreen / panel state is toggled through body classes.
     new MutationObserver(markLayoutDirty).observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -597,8 +571,9 @@
     function updateReadout(timestamp) {
         if (!temperatureVal || timestamp - lastReadoutTime < 100) return;
         lastReadoutTime = timestamp;
-        // Whole kelvin, at most 5 digits (heating fades out well below that), so the width is fixed
-        const text = Math.min(99999, Math.round(averageTemperatureK())).toString();
+        // Whole kelvin: the readout reserves 4 digits, which covers everything short of
+        // heating the whole lattice for a long time
+        const text = Math.round(averageTemperatureK()).toString();
         if (text !== lastReadoutText) {
             temperatureVal.textContent = text;
             lastReadoutText = text;
