@@ -1,0 +1,159 @@
+/* Convection simulation: page-specific styles (loaded after simulation_styles.css).
+   The hint, legend and Heat / Cool switch match conduction_styles.css. */
+
+/* The canvas is a heating/cooling tool: show a crosshair, and stop drags and
+   long-presses on it from selecting page text or opening the iOS callout. */
+#simulationCanvas {
+    cursor: crosshair;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+/* ---------- First-use hint over the canvas (hidden after the first press) ---------- */
+.thermal-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 0.75em;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 0.3em 0.8em;
+    max-width: calc(100% - 1.5em);
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    font-size: 0.8em;
+    line-height: 1.4;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 0.4s ease-out;
+    z-index: 5;
+}
+
+.thermal-hint.is-hidden {
+    opacity: 0;
+}
+
+/* ---------- Info bar: readout, colour legend, Heat / Cool switch, reset ---------- */
+.sim-info-bar .sim-info-actions {
+    margin-left: auto;
+    gap: 0.5em;
+}
+
+.thermal-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    font-size: 0.75em;
+    color: var(--color-text);
+    white-space: nowrap;
+    margin-right: auto; /* stays beside the readout when the actions wrap below */
+}
+
+.thermal-legend > span:not(.thermal-legend-bar) {
+    opacity: 0.75;
+}
+
+.thermal-legend-bar {
+    display: inline-block;
+    width: 5.5em;
+    height: 0.6em;
+    border-radius: 0.3em;
+    background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
+}
+
+/* Segmented Heat / Cool switch (overrides main.css's large uppercase buttons) */
+.thermal-mode {
+    display: inline-flex;
+    padding: 2px;
+    gap: 2px;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.thermal-mode button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35em;
+    height: 40px;
+    min-width: 40px;
+    padding: 0 0.7em;
+    border-radius: 6px;
+    box-shadow: none;
+    background-color: transparent;
+    color: var(--color-text) !important;
+    font-size: 0.8em;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    text-transform: none;
+}
+
+.thermal-mode button:hover {
+    box-shadow: none;
+    background-color: var(--color-bg-subtle);
+    color: var(--color-text) !important;
+}
+
+.thermal-mode button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.thermal-mode button .icon:before {
+    line-height: 1;
+}
+
+.thermal-mode button[data-mode="heat"][aria-checked="true"] {
+    background-color: #c2410c;
+    color: #ffffff !important;
+}
+
+.thermal-mode button[data-mode="cool"][aria-checked="true"] {
+    background-color: #1971c2;
+    color: #ffffff !important;
+}
+
+/* Narrow info bars (e.g. a square canvas on a phone in landscape): icon-only Heat / Cool buttons
+   (the words stay for screen readers) and a legend without its labels, so everything fits. */
+.sim-info-bar {
+    container-type: inline-size;
+}
+
+@container (max-width: 300px) {
+    .thermal-mode button {
+        padding: 0 0.6em;
+    }
+
+    .thermal-mode-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+    }
+
+    .thermal-legend > span:not(.thermal-legend-bar) {
+        display: none;
+    }
+
+    .thermal-legend-bar {
+        width: 3em;
+    }
+}
+
+/* ---------- Small screens ---------- */
+@media (max-width: 480px) {
+    .thermal-legend-bar {
+        width: 3.5em;
+    }
+
+    .thermal-hint {
+        font-size: 0.7em;
+        bottom: 0.5em;
+    }
+}

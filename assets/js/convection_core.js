@@ -51,13 +51,16 @@ let avg_density = ambientTemp;
 let prev_avg_density = ambientTemp;
 
 // UI STATE
-let heatRadius = 5, 
-    heatAmp    = 0.5, 
-    coolRate   = 0.5;
+let heatRadius = 8,    // brush radius as a percentage of the box width (the same area at every grid size)
+    heatAmp    = 1,    // brush strength multiplier
+    coolRate   = 0.5;  // surface cooling, 0 ... 1
+const baseHeatAmp = 0.5; // heat added per step at strength 1x (before heatAmpMult)
+let brushMode = 1;       // what a plain press does: +1 = heat, -1 = cool (Heat / Cool switch)
 
 // POINTER STATE: every mouse button, finger or pen currently pressed on the canvas.
 // pointerId -> { x, y, sign } with x/y as fractions of the canvas size and sign +1 = heat, -1 = cool
 const activePointers = new Map();
+let hoverPointer = null; // { x, y } fractions: an idle mouse over the canvas, to show the brush outline
 
 // DOM REFS
 const canvas      = document.getElementById('simulationCanvas'); 
@@ -74,72 +77,27 @@ const viscositySelector = document.getElementById('viscositySelector');
 const fpsDisplay  = document.getElementById('fpsDisplay'); 
 const avgDensityDisplay = document.getElementById('avgDensityVal');
 const resetSimButton = document.getElementById('resetSimulationBtn');
+const modeButtons = Array.from(document.querySelectorAll('.thermal-mode [data-mode]'));
+const hintEl = document.getElementById('thermalHint');
+const legendBar = document.getElementById('colourLegendBar');
 
 // Offscreen canvas
 let offscreenCanvas = null;
 let offscreenCtx = null;
 let offscreenImageData = null;
 
+// The shared layout sizes the canvas (normal and fullscreen); this only matches the drawing buffer to it.
 function updateCanvasResolution() {
     if (!canvas) return;
     if (!ctx && canvas) ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const aspectRatioBox = canvas.parentElement; // .sim-aspect-ratio-box
-    if (!aspectRatioBox) return;
-
-    const isFullscreen = document.body.classList.contains('sim-fullscreen-active');
-    let targetWidth, targetHeight;
-
-    const simStyle = getComputedStyle(aspectRatioBox);
-    const simAspectRatioString = simStyle.getPropertyValue('--aspect-ratio').trim();
-    let simAspectRatio = 1; 
-    if (simAspectRatioString) {
-        const parts = simAspectRatioString.split('/');
-        if (parts.length === 2 && parseFloat(parts[1]) !== 0) {
-            simAspectRatio = parseFloat(parts[0]) / parseFloat(parts[1]);
-        } else if (parts.length === 1) {
-            simAspectRatio = parseFloat(simAspectRatioString);
-        }
-    }
-    if (isNaN(simAspectRatio) || simAspectRatio <= 0) simAspectRatio = 1;
-    
-    if (isFullscreen) {
-        // In fullscreen, calculate maximum size that fits while maintaining aspect ratio
-        const canvasWrapper = aspectRatioBox.parentElement; 
-        if (!canvasWrapper) return;
-        
-        // Get available space from the wrapper (accounts for padding from parent)
-        const availableWidth = canvasWrapper.clientWidth;
-        const availableHeight = canvasWrapper.clientHeight;
-        
-        // Calculate the largest size that fits the aspect ratio within available space
-        if (availableWidth / availableHeight > simAspectRatio) {
-            // Height is the limiting factor
-            targetHeight = availableHeight;
-            targetWidth = targetHeight * simAspectRatio;
-        } else {
-            // Width is the limiting factor  
-            targetWidth = availableWidth;
-            targetHeight = targetWidth / simAspectRatio;
-        }
-        
-        // Set explicit dimensions for fullscreen to ensure proper scaling
-        aspectRatioBox.style.width = `${targetWidth}px`;
-        aspectRatioBox.style.height = `${targetHeight}px`;
-    } else {
-        // Not fullscreen: .sim-aspect-ratio-box gets its width from .sim-canvas-wrapper,
-        // which gets its width from .simulation-display-container (max-width: 750px, centered).
-        // Reset inline styles so CSS can take over.
-        aspectRatioBox.style.width = ''; 
-        aspectRatioBox.style.height = ''; 
-    }
-
     // Size the drawing buffer to the canvas's on-screen size (inside the box border) in device pixels,
-    // so the grid cells are drawn with crisp edges instead of being upscaled and blurred on high-DPI screens
-    const dpr = window.devicePixelRatio || 1;
-    targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
-    targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    // so the brush outline is sharp on high-DPI screens. The field itself is smooth, so pixel ratios
+    // above 2 would only cost fill rate.
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const targetWidth = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    const targetHeight = Math.max(1, Math.round(canvas.clientHeight * dpr));
 
     // Ensure offscreen canvas for simulation logic always matches N
     if (!offscreenCanvas || offscreenCanvas.width !== N || offscreenCanvas.height !== N) {
@@ -161,27 +119,10 @@ function updateCanvasResolution() {
 
 
 if (canvas) {
-    // Observe .sim-canvas-wrapper for resizes (window resize, fullscreen, settings panel)
-    const resizeObserverTarget = canvas.closest('.sim-canvas-wrapper');
-
+    // Resize the buffer whenever the canvas changes size (window resize, fullscreen, settings panel).
+    // The observer runs after layout and before paint, so the redraw shows no blank frame.
     if (typeof ResizeObserver !== 'undefined') {
-        const generalResizeObserver = new ResizeObserver(entries => {
-            // Call with a slight delay to ensure all other layout shifts are done.
-            requestAnimationFrame(updateCanvasResolution);
-        });
-
-        if (resizeObserverTarget) generalResizeObserver.observe(resizeObserverTarget);
-        
-        const fullscreenClassObserver = new MutationObserver((mutationsList) => {
-            for(const mutation of mutationsList) {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'class' && mutation.target === document.body) {
-                     // If fullscreen state changes, trigger resize after a short delay
-                    setTimeout(updateCanvasResolution, 100); // Increased delay for layout settle
-                    break; 
-                }
-            }
-        });
-        fullscreenClassObserver.observe(document.body, { attributes: true });
+        new ResizeObserver(() => updateCanvasResolution()).observe(canvas);
     } else {
         window.addEventListener('resize', () => setTimeout(updateCanvasResolution, 100));
     }
@@ -207,11 +148,11 @@ if (canvas) {
 
 
 if(timeSlider && timeVal) timeSlider.oninput = () => { timeScale = +timeSlider.value; timeVal.textContent = timeScale.toFixed(1); };
-if(radiusSlider && radiusVal) radiusSlider.oninput = () => { heatRadius = +radiusSlider.value; radiusVal.textContent = heatRadius; };
+if(radiusSlider && radiusVal) radiusSlider.oninput = () => { heatRadius = +radiusSlider.value; radiusVal.textContent = heatRadius.toFixed(0); };
 if(heatAmpSlider && ampVal) {
-    heatAmpSlider.oninput = () => { heatAmp = +heatAmpSlider.value; ampVal.textContent = heatAmp.toFixed(2); };
+    heatAmpSlider.oninput = () => { heatAmp = +heatAmpSlider.value; ampVal.textContent = heatAmp.toFixed(1); };
 }
-if(coolSlider && coolVal) coolSlider.oninput = () => { coolRate = +coolSlider.value; coolVal.textContent = coolRate.toFixed(2); };
+if(coolSlider && coolVal) coolSlider.oninput = () => { coolRate = +coolSlider.value / 100; coolVal.textContent = coolSlider.value; };
 
 
 // Pointer position as a fraction of the canvas size (resolution-independent)
@@ -221,12 +162,17 @@ function pointerFraction(e) {
   return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
 }
 
-// Left mouse button, touch and pen heat; right mouse button (or Shift + left button) cools
+// A plain press (left mouse button, touch, one or more fingers, pen) does what the Heat / Cool switch
+// says; the right mouse button or Shift (or Ctrl) + left button does the opposite.
 function pointerSign(e, buttons) {
-  if (e.pointerType !== 'mouse') return 1;
-  if (buttons & 1) return e.shiftKey ? -1 : 1;
-  if (buttons & 2) return -1;
+  if (e.pointerType !== 'mouse') return brushMode;
+  if (buttons & 1) return (e.shiftKey || e.ctrlKey) ? -brushMode : brushMode;
+  if (buttons & 2) return -brushMode;
   return 0;
+}
+
+function hideHint() {
+  if (hintEl && !hintEl.classList.contains('is-hidden')) hintEl.classList.add('is-hidden');
 }
 
 if (canvas) {
@@ -237,12 +183,17 @@ if (canvas) {
         if (!sign || !pos) return;
         e.preventDefault(); // No text selection or emulated mouse events while drawing
         activePointers.set(e.pointerId, { x: pos.x, y: pos.y, sign: sign });
+        hoverPointer = null;
+        hideHint();
         // Keep receiving moves (and the release) if the pointer is dragged off the canvas
         try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
     });
     canvas.addEventListener('pointermove', (e) => {
         const pointer = activePointers.get(e.pointerId);
-        if (!pointer) return;
+        if (!pointer) {
+            if (e.pointerType !== 'touch') hoverPointer = pointerFraction(e); // brush outline under the mouse
+            return;
+        }
         const pos = pointerFraction(e);
         if (pos) { pointer.x = pos.x; pointer.y = pos.y; }
         if (e.pointerType === 'mouse') {
@@ -251,13 +202,41 @@ if (canvas) {
             if (sign) pointer.sign = sign;
         }
     });
-    const endPointer = (e) => { activePointers.delete(e.pointerId); };
+    const endPointer = (e) => {
+        if (!activePointers.delete(e.pointerId)) return;
+        if (e.type === 'pointerup' && e.pointerType !== 'touch') hoverPointer = pointerFraction(e);
+    };
     canvas.addEventListener('pointerup', endPointer);
     canvas.addEventListener('pointercancel', endPointer);
     canvas.addEventListener('lostpointercapture', endPointer);
+    canvas.addEventListener('pointerleave', (e) => { if (!activePointers.has(e.pointerId)) hoverPointer = null; });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // Right-click is used for cooling
-    window.addEventListener('blur', () => activePointers.clear()); // Don't keep heating after switching windows
+    // Don't keep heating after switching windows
+    window.addEventListener('blur', () => { activePointers.clear(); hoverPointer = null; });
 }
+
+// Heat / Cool switch (a radio group: arrow keys move between the options)
+function setBrushMode(mode) {
+    brushMode = mode;
+    modeButtons.forEach((button) => {
+        const checked = (button.dataset.mode === 'cool' ? -1 : 1) === mode;
+        button.setAttribute('aria-checked', String(checked));
+        button.tabIndex = checked ? 0 : -1;
+    });
+}
+modeButtons.forEach((button, index) => {
+    button.addEventListener('click', () => setBrushMode(button.dataset.mode === 'cool' ? -1 : 1));
+    button.addEventListener('keydown', (e) => {
+        const step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1
+            : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const next = modeButtons[(index + step + modeButtons.length) % modeButtons.length];
+        next.click();
+        next.focus();
+    });
+});
+setBrushMode(1);
 
 function IX(i,j){ return i + j*size; }
 function setBnd(b, x_arr) {
@@ -433,7 +412,39 @@ const colorLUT = new Uint8Array(COLOR_LEVELS * 3);
         colorLUT[k*3 + 1] = Math.round(g_prime * 255);
         colorLUT[k*3 + 2] = Math.round(b_prime * 255);
     }
+    // The legend under the canvas shows the same scale
+    if (legendBar) {
+        const stops = [];
+        for (let s = 0; s <= 8; s++) {
+            const k = Math.round(s / 8 * (COLOR_LEVELS - 1)) * 3;
+            stops.push(`rgb(${colorLUT[k]}, ${colorLUT[k + 1]}, ${colorLUT[k + 2]})`);
+        }
+        legendBar.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
+    }
 })();
+
+// Outline of the brush: under an idle mouse, and around every pointer that is heating or cooling
+function drawBrushOutlines() {
+    if (!hoverPointer && activePointers.size === 0) return;
+    const w = canvas.width, h = canvas.height;
+    const radius = heatRadius / 100 * w;
+    const dpr = w / Math.max(1, canvas.clientWidth);
+    // A light line over a dark one stays visible on every colour of the scale; cooling is dashed.
+    const ring = (x, y, sign, alpha) => {
+        ctx.setLineDash(sign > 0 ? [] : [6 * dpr, 4 * dpr]);
+        ctx.beginPath();
+        ctx.arc(x * w, y * h, radius, 0, Math.PI * 2);
+        ctx.lineWidth = 3 * dpr;
+        ctx.strokeStyle = `rgba(0, 0, 0, ${0.35 * alpha})`;
+        ctx.stroke();
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+        ctx.stroke();
+    };
+    if (hoverPointer) ring(hoverPointer.x, hoverPointer.y, brushMode, 0.6);
+    activePointers.forEach((p) => ring(p.x, p.y, p.sign, 0.85));
+    ctx.setLineDash([]);
+}
 
 function renderDensity() {
     if (!ctx) return;
@@ -469,18 +480,22 @@ function renderDensity() {
     }
     offscreenCtx.putImageData(offscreenImageData, 0, 0);
 
-    ctx.imageSmoothingEnabled = false;
+    // Smooth (bilinear) upscaling: on a large canvas each cell covers many pixels, and blending
+    // between cell centres shows the temperature field as a continuous fluid rather than blocks.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height);
+    drawBrushOutlines();
 }
 // Adds heat (sign = +1) or removes it (sign = -1) around a point given as a fraction of the canvas
-// width/height. The radius is measured in cells of the 64x64 reference grid, so the brush covers the
-// same area (and adds the same heat per second) at every grid size.
+// width/height. The radius is a percentage of the box width, so the brush covers the same area (and
+// adds the same heat per second) at every grid size.
 function applyHeatBrush(xFrac, yFrac, sign) {
-  const r = heatRadius * N / referenceN;
+  const r = heatRadius / 100 * N;
   const rSq = r*r, twiceRSq = 2*rSq, reach = Math.floor(r);
   const ci = Math.floor(xFrac * N) + 1;
   const cj = N - Math.floor(yFrac * N);
-  const amount = sign * heatAmpMult * heatAmp;
+  const amount = sign * heatAmpMult * baseHeatAmp * heatAmp;
   for (let dj = -reach; dj <= reach; dj++) {
     const jj = cj + dj;
     if (jj < 1 || jj > N) continue;
@@ -620,9 +635,9 @@ function updateAverageDisplay() {
 
 // Initialize slider values from HTML defaults if sliders exist
 if (timeSlider && timeVal) { timeScale = +timeSlider.value; timeVal.textContent = timeScale.toFixed(1); }
-if (radiusSlider && radiusVal) { heatRadius = +radiusSlider.value; radiusVal.textContent = heatRadius; }
-if (heatAmpSlider && ampVal) { heatAmp = +heatAmpSlider.value; ampVal.textContent = heatAmp.toFixed(2); }
-if (coolSlider && coolVal) { coolRate = +coolSlider.value; coolVal.textContent = coolRate.toFixed(2); }
+if (radiusSlider && radiusVal) { heatRadius = +radiusSlider.value; radiusVal.textContent = heatRadius.toFixed(0); }
+if (heatAmpSlider && ampVal) { heatAmp = +heatAmpSlider.value; ampVal.textContent = heatAmp.toFixed(1); }
+if (coolSlider && coolVal) { coolRate = +coolSlider.value / 100; coolVal.textContent = coolSlider.value; }
 if (viscositySelector) { visc = +viscositySelector.value; }
 
 function startSimulationWhenReady() {
