@@ -413,6 +413,10 @@
 										<div class="orb-toolbar" id="orbToolbar" role="toolbar" aria-label="Add bodies">
 											<p class="orb-toolbar-label" id="paletteLabel">Add a body</p>
 											<div class="orb-palette" id="bodyPalette" role="group" aria-labelledby="paletteLabel"></div>
+											<div class="orb-history" role="group" aria-label="Undo and redo">
+												<button type="button" class="orb-history-btn" id="undoBtn" title="Nothing to undo" aria-label="Undo" disabled><span class="icon solid fa-undo" aria-hidden="true"></span><span class="orb-history-text">Undo</span></button>
+												<button type="button" class="orb-history-btn" id="redoBtn" title="Nothing to redo" aria-label="Redo" disabled><span class="icon solid fa-redo" aria-hidden="true"></span><span class="orb-history-text">Redo</span></button>
+											</div>
 											<button type="button" class="orb-fit" id="fitViewBtn" title="Fit everything in view" aria-label="Fit everything in view"><span class="icon solid fa-expand-arrows-alt" aria-hidden="true"></span><span class="orb-fit-text">Fit view</span></button>
 											<p class="orb-hint" id="orbHint" aria-live="polite"></p>
 										</div>
@@ -452,7 +456,10 @@
 													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
 													<span class="icon solid fa-chart-bar"></span>
 												</label>
-												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart the scene" title="Restart">
+												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
+													<span class="icon solid fa-history"></span>
+												</button>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart the scene" title="Restart the scene from its original setup">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
 											</div>
