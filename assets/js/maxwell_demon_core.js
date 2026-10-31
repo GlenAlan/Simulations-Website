@@ -873,6 +873,7 @@ function animate(timestamp) {
 // fullscreen mode; here the drawing buffer is matched to the canvas's displayed size.
 function handleSimulationResize() {
     if (!canvas || !ctx) return;
+    applyOrientation();
     currentDpr = window.devicePixelRatio || 1;
     renderDpr = Math.min(currentDpr, MAX_RENDER_DPR);
     const rect = canvas.getBoundingClientRect();
@@ -889,11 +890,14 @@ function handleSimulationResize() {
     renderSimulation();
 }
 
-// Phones held upright: a 2:1 box would use a thin strip of the screen, so stack the
-// chambers instead (the same world drawn transposed in a 1:2 box, left chamber on top).
+// Phones held upright: a 2:1 box would use a thin strip of the screen, so the page gives
+// the box --aspect-ratio-portrait: 1/2 there (applied by simulation_styles.css) and the
+// chambers are stacked: the same world drawn transposed, left chamber on top.
 function wantsVertical() {
-    const w = window.innerWidth, h = window.innerHeight;
-    return w <= 600 && h > 1.2 * w;
+    const box = canvas.parentElement; // .sim-aspect-ratio-box
+    if (!box) return false;
+    const parts = getComputedStyle(box).getPropertyValue('--aspect-ratio').split('/').map(Number);
+    return parts.length === 2 && parts[0] > 0 && parts[1] > parts[0];
 }
 
 function chamberNames() {
@@ -912,8 +916,6 @@ function applyOrientation() {
     if (orientationSet && v === vertical) return;
     vertical = v;
     orientationSet = true;
-    const box = canvas.parentElement; // .sim-aspect-ratio-box (simulation_ui.js mirrors the ratio for fullscreen)
-    if (box) box.style.setProperty('--aspect-ratio', v ? '1/2' : '2/1');
     const [first, second] = chamberNames();
     setText(leftLabelEl, first);
     setText(rightLabelEl, second);
@@ -928,11 +930,6 @@ function applyOrientation() {
         chart.canvas.setAttribute('aria-label', `Chart: fast and slow particles in the ${name.toLowerCase()} chamber over time`);
         chart.update('none');
     });
-}
-
-function handleWindowResize() {
-    applyOrientation();
-    handleSimulationResize();
 }
 
 function fullResetAndRestart() {
@@ -972,7 +969,6 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshPalette();
     setupCharts();
     initializeSimulationState();
-    applyOrientation();
     handleSimulationResize();
     updateReadouts();
 
@@ -1085,7 +1081,7 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('blur', () => { spaceHeld = false; });
 
     // Resize: window resizes, fullscreen / panel changes (simulation_ui.js) and layout shifts
-    window.addEventListener('resize', handleWindowResize);
+    window.addEventListener('resize', handleSimulationResize);
     if (typeof ResizeObserver !== 'undefined') {
         const resizeObserver = new ResizeObserver(() => handleSimulationResize());
         resizeObserver.observe(canvas);
