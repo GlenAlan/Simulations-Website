@@ -182,14 +182,24 @@
 									</div>
 									<div class="sim-controls-content">
 										<div class="sim-control-group sim-speed-control">
-											<label>Clock speed: <span id="speedVal" class="sim-value" style="--chars: 4">1.00</span>&times;
-												<input type="range" id="speedSlider" min="0.25" max="4" step="0.25" value="1">
+											<label>Simulation speed: <span id="speedVal" class="sim-value" style="--chars: 3">1.0</span>&times;
+												<input type="range" id="speedSlider" min="0.1" max="4" step="0.1" value="1">
 											</label>
-											<p class="nuc-control-note">At 1&times; each clock runs ten times faster every half second.</p>
+											<p class="nuc-control-note">The decay clocks and the radiation together. At 1&times; each clock runs ten times faster every half second.</p>
 										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label" id="addLabel">Add any nuclide</p>
-											<div class="nuc-add-row">
+											<p class="sim-control-group-label" id="addLabel">Add</p>
+											<p class="nuc-add-caption" id="setupsLabel">A ready-made scene (replaces what is there)</p>
+											<div class="nuc-setups" role="group" aria-labelledby="setupsLabel">
+												<button type="button" class="nuc-setup" data-setup="chain" title="Uranium-235 between walls that reflect neutrons, and one neutron fired in">U-235 chain reaction</button>
+												<button type="button" class="nuc-setup" data-setup="series" title="One uranium-238 nucleus, followed on the chart all the way to lead-206">U-238 decay series</button>
+												<button type="button" class="nuc-setup" data-setup="dating" title="A sample of carbon-14 on one steady clock, with a count: half is left after each half-life">Carbon dating</button>
+												<button type="button" class="nuc-setup" data-setup="carbon" title="Carbon-9 to carbon-16 side by side: too few or too many neutrons">Isotopes of carbon</button>
+												<button type="button" class="nuc-setup" data-setup="fusion" title="Deuterium and tritium fuse to helium-5, which gives off a neutron">D&ndash;T fusion</button>
+												<button type="button" class="nuc-setup" data-setup="pet" title="Fluorine-18: positrons, and the pairs of gamma rays a PET scanner detects">PET tracer (F-18)</button>
+											</div>
+											<p class="nuc-add-caption" id="anyNuclideLabel">Any nuclide</p>
+											<div class="nuc-add-row" role="group" aria-labelledby="anyNuclideLabel">
 												<select id="elementSelect" aria-label="Element"></select>
 												<select id="isotopeSelect" aria-label="Isotope"></select>
 												<button type="button" id="addNuclideBtn" class="nuc-add-button">Add</button>
@@ -204,7 +214,7 @@
 												<label for="showTagsToggle">Decay labels</label>
 												<input type="checkbox" id="showNeutrinosToggle" checked>
 												<label for="showNeutrinosToggle">Neutrinos</label>
-												<input type="checkbox" id="showEquationsToggle">
+												<input type="checkbox" id="showEquationsToggle" checked>
 												<label for="showEquationsToggle">Nuclear equations</label>
 												<input type="checkbox" id="showDetailsToggle">
 												<label for="showDetailsToggle">Details (energies, binding energy)</label>
@@ -234,9 +244,12 @@
 											</div>
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
-										<div class="nuc-toolbar" id="nucToolbar" role="toolbar" aria-label="Particles and nuclei to add">
-											<div class="nuc-palette" id="nucPalette"></div>
-											<p class="nuc-hint">Drag onto the canvas or tap to add. Drop onto a nucleus to combine; flick to collide.</p>
+										<div class="nuc-toolbar" id="nucToolbar">
+											<button type="button" class="nuc-tray-toggle" id="nucTrayToggle" aria-controls="nucPalette" aria-expanded="true" aria-label="Hide the particles and nuclei" title="Hide the particles and nuclei">
+												<span class="nuc-tray-label" aria-hidden="true">Add</span>
+												<span class="icon solid fa-chevron-left" aria-hidden="true"></span>
+											</button>
+											<div class="nuc-palette" id="nucPalette" role="toolbar" aria-label="Particles and nuclei to add"></div>
 										</div>
 										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container">
@@ -276,9 +289,9 @@
 
 											<h4>What you're seeing</h4>
 											<ul>
-												<li><strong>Nuclei:</strong> protons pink, neutrons grey. The proton number sets the element; protons plus neutrons give the mass number (carbon-14).</li>
+												<li><strong>Nuclei:</strong> protons red, neutrons grey. The proton number sets the element; protons plus neutrons give the mass number (carbon-14).</li>
 												<li><strong>The ring</strong> around an unstable nucleus is its own clock, ten times faster every half second at 1&times;, so billions of years pass in seconds. The notch marks the half-life.</li>
-												<li><strong>The chart</strong> plots neutrons <em>N</em> (up) against protons <em>Z</em> (across), coloured by how each nuclide decays; arrows trace the selected nucleus's decays.</li>
+												<li><strong>The chart</strong> plots neutrons <em>N</em> (up) against protons <em>Z</em> (across), coloured by how each nuclide decays. It zooms in on the selected nucleus, with arrows for each decay; its equations appear underneath.</li>
 											</ul>
 
 											<h4>Key idea</h4>
@@ -286,13 +299,13 @@
 
 											<h4>Things to try</h4>
 											<ul>
-												<li>Drop a neutron onto uranium-235: it usually splits in two, freeing two or three neutrons. With <em>Walls reflect neutrons</em> on, a dozen of them make a chain reaction.</li>
-												<li>Add a neutron to uranium-238 and watch it become plutonium-239.</li>
-												<li>Keep adding neutrons to carbon-12. When does it stop holding them?</li>
+												<li>Drop a neutron onto uranium-235: it usually splits in two, freeing two or three neutrons. The <em>U-235 chain reaction</em> setup shows where that leads.</li>
+												<li><em>Carbon dating</em> runs one steady clock for a whole sample: about half is left after each half-life.</li>
+												<li>Add a neutron to uranium-238 and watch it become plutonium-239, or flick it through a crowd of light nuclei.</li>
 											</ul>
 
 											<h4>How to use it</h4>
-											<p>Drag from the tray (or tap) to add; drop onto a nucleus to combine, or flick to throw. Drag onto the bin or off the canvas to remove. Tap the chart to enlarge it and add any nuclide. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-trash-alt"></span> clears and <span class="icon solid fa-sync-alt"></span> resets.</p>
+											<p>Drag from the tray (or tap) to add; drop onto a nucleus to combine, or flick to throw. Drag onto the bin or off the canvas to remove. <span class="icon solid fa-chevron-left"></span> folds the tray away. Tap the chart to enlarge it. <span class="icon solid fa-cog"></span> opens the settings (speed, setups, any nuclide), <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-trash-alt"></span> clears and <span class="icon solid fa-sync-alt"></span> resets.</p>
 											<p>Data: IAEA ENSDF and NUBASE2020; other nuclides are estimated with the semi-empirical mass formula.</p>
 										</div>
 									</details>

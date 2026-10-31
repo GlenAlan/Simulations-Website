@@ -12,7 +12,10 @@
  * nuclei) and runs ten times faster every half second at 1x, so a timer gets from nanoseconds to billions of
  * years within seconds. The decay time is drawn when the nucleus forms, t = -(T1/2 / ln 2) ln U (U uniform in
  * (0, 1]), together with the branch (by its branching ratio); the nucleus decays when its clock reaches t.
- * Nothing warns of a decay in advance: it is random and memoryless, as in a real nucleus.
+ * Nothing warns of a decay in advance: it is random and memoryless, as in a real nucleus. (The carbon-dating
+ * setup gives its sample one shared, steady clock instead, so the sample can be seen to halve.) The simulation
+ * speed scales the clocks and everything that moves on its own (radiation, recoils); things the user throws
+ * move in real time.
  *
  * Model for nuclides that are not in the table (the user can build anything up to 300 nucleons):
  *  - Masses: the semi-empirical (Bethe-Weizsaecker) formula with pairing, anchored to the nearest measured isotope
@@ -40,7 +43,8 @@
         showEquations: byId('showEquationsToggle'), showDetails: byId('showDetailsToggle'),
         notation: byId('notationToggle'), keepParticles: byId('keepParticlesToggle'), mirrorWalls: byId('mirrorWallsToggle'),
         element: byId('elementSelect'), isotope: byId('isotopeSelect'), addBtn: byId('addNuclideBtn'),
-        toolbar: byId('nucToolbar'), palette: byId('nucPalette'),
+        toolbar: byId('nucToolbar'), palette: byId('nucPalette'), trayToggle: byId('nucTrayToggle'),
+        setups: document.querySelectorAll('[data-setup]'),
         reset: byId('resetSimulationBtn'), clear: byId('clearSimulationBtn'), fps: byId('fpsDisplay'),
         statName: byId('statNucleus'), statHalf: byId('statHalfLife'), statDecay: byId('statDecay'),
     };
@@ -61,6 +65,13 @@
     const MAX_BODIES = 40;
     const MAX_SPARKS = 240;
     const DECADES_PER_S = 2;        // clock decades per real second at 1x
+    // Speeds of the radiation, in canvas sizes (the geometric mean of width and height) per second at 1x: slow
+    // enough to read the labels, which stay in view for a couple of seconds whichever way a particle goes.
+    // Gamma rays are the fastest and alpha particles the slowest, though nowhere near to scale. (Fission
+    // fragments: in shorter sides per second.)
+    const SPEED = { g: 0.22, nu: 0.19, e: 0.15, n: 0.16, p: 0.13, a: 0.1, cluster: 0.09, fragment: 0.32 };
+    const FADE_AT = 2.6, FADE_LEN = 1;   // s: emitted radiation fades out over FADE_LEN after FADE_AT
+    const MIRROR_LIFE = 12;         // s: neutrons last longer between reflecting walls
     const PROMPT = 5e-22;           // s: nucleon emission from an unbound nucleus
     const LOG_FT = { ee: 4.3, odd: 5.0, oo: 5.4 };   // fitted to the data (see header)
     const EC_K = 20.3;              // K-capture strength, fitted to the measured EC/beta+ ratios
@@ -89,6 +100,8 @@
     // Palette strip: the particles and ready-made nuclei (chosen so every decay type has an example).
     const PRESETS = [
         { Z: 1, N: 0 }, { Z: 0, N: 1 },
+        { Z: 1, N: 1, note: 'deuterium: fuse it with tritium' },
+        { Z: 1, N: 2, note: 'tritium' },
         { Z: 2, N: 2, note: 'the alpha particle' },
         { Z: 6, N: 8, note: 'radiocarbon dating' },
         { Z: 4, N: 3, note: 'pure electron capture' },
@@ -103,28 +116,33 @@
         { Z: 98, N: 154, note: 'alpha, or spontaneous fission' },
     ];
     // fx, fy: place on a wide canvas; tx, ty: on a tall one (phones in portrait), clear of the chart
+    // (on a tall canvas: three across the top, two down the side beside the chart)
     const START_SCENE = [
-        { Z: 92, N: 146, fx: 0.24, fy: 0.42, tx: 0.3, ty: 0.2, select: true },
-        { Z: 6, N: 8, fx: 0.47, fy: 0.3, tx: 0.76, ty: 0.12 },
-        { Z: 43, N: 56, iso: 1, fx: 0.5, fy: 0.68, tx: 0.7, ty: 0.34 },
-        { Z: 27, N: 33, fx: 0.7, fy: 0.62, tx: 0.26, ty: 0.52 },
-        { Z: 26, N: 30, fx: 0.12, fy: 0.75, tx: 0.22, ty: 0.8 },
+        { Z: 92, N: 146, fx: 0.24, fy: 0.42, tx: 0.22, ty: 0.15, select: true },
+        { Z: 6, N: 8, fx: 0.47, fy: 0.3, tx: 0.56, ty: 0.1 },
+        { Z: 43, N: 56, iso: 1, fx: 0.5, fy: 0.68, tx: 0.26, ty: 0.46 },
+        { Z: 27, N: 33, fx: 0.7, fy: 0.62, tx: 0.26, ty: 0.7 },
+        { Z: 26, N: 30, fx: 0.12, fy: 0.75, tx: 0.85, ty: 0.1 },
     ];
 
     // Neutron capture on these (Z, N) targets usually splits the nucleus (thermal fission / (fission + capture)).
     const FISSILE = { '92,141': 0.92, '92,143': 0.85, '94,145': 0.73, '94,147': 0.74, '95,147': 0.85, '96,149': 0.87, '98,153': 0.83 };
+    const NEUTRON_CATCH = 0.35;     // chance that another nucleus catches a free neutron that touches it
 
     // ------------------------------------------------------------------
     // Settings & state
     // ------------------------------------------------------------------
     const S = {
-        speed: 1, showChart: true, showTags: true, showNeutrinos: true, showEquations: false, showDetails: false,
+        speed: 1, showChart: true, showTags: true, showNeutrinos: true, showEquations: true, showDetails: false,
         notation: false, keepParticles: false, mirrorWalls: false,
     };
     let viewW = 0, viewH = 0, dpr = 1;
     let rN = 4;                     // nucleon radius (CSS px)
     let fontPx = 13;
-    let realTime = 0;               // s since start (animations)
+    let realTime = 0;               // s since start (labels, the chart's zoom)
+    let simTime = 0;                // s of simulation time (runs at the simulation speed: decays, radiation)
+    let batch = null;               // the carbon-dating sample: a shared steady clock and its count
+    let reflector = null;           // the chain-reaction core's neutron reflector { x0, y0, x1, y1 } (with the mirror setting)
     let nextId = 1;
     let bodies = [];
     let sparks = [];                // light particles: e-, e+, neutrinos, gammas
@@ -446,39 +464,45 @@
     const SUP = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻' };
     const sup = (n) => String(n).split('').map((c) => SUP[c] || c).join('');
 
-    // Three significant figures in a fixed width of 4 characters ("1.23", "12.3", " 123").
-    function sig3(v) {
-        if (v < 9.995) return v.toFixed(2);
-        if (v < 99.95) return v.toFixed(1);
-        return v.toFixed(0);
-    }
+    // Timer units: [length in s, singular, plural]. Each runs up to the next (60 s make a minute, and so on).
     const TIME_UNITS = [
-        [1e-12, 'ps'], [1e-9, 'ns'], [1e-6, 'µs'], [1e-3, 'ms'], [1, 's'], [60, 'min'], [3600, 'hours'], [86400, 'days'],
-        [YEAR, 'years'], [1e3 * YEAR, 'thousand years'], [1e6 * YEAR, 'million years'], [1e9 * YEAR, 'billion years'],
+        [1e-12, 'ps', 'ps'], [1e-9, 'ns', 'ns'], [1e-6, 'µs', 'µs'], [1e-3, 'ms', 'ms'], [1, 's', 's'], [60, 'min', 'min'],
+        [3600, 'hour', 'hours'], [86400, 'day', 'days'], [YEAR, 'year', 'years'], [1e3 * YEAR, 'thousand years', 'thousand years'],
+        [1e6 * YEAR, 'million years', 'million years'], [1e9 * YEAR, 'billion years', 'billion years'],
     ];
-    const UNIT_LIMIT = [1000, 1000, 1000, 1000, 60, 60, 24, 365.25, 1000, 1000, 1000, 1000];
-    // A running timer: { num, unit } with a 4-character number, so the digits never shift.
+    // Leading digit of v (> 0) and its power of ten, rounded down: a counting timer never runs ahead.
+    function oneFigure(v) {
+        let e = Math.floor(Math.log10(v));
+        let m = Math.floor(v / Math.pow(10, e) + 1e-9);
+        if (m >= 10) { m = 1; e += 1; }
+        if (m < 1) { m = 9; e -= 1; }
+        return { m, e };
+    }
+    // A running timer to one significant figure ("7 ns", "40 µs", "3 s", "20 min", "5 days", "300 years",
+    // "4 billion years"): { num, unit, wide }, where wide is the unit's longest form (for a steady layout).
     function formatDuration(s) {
-        if (!(s > 0)) return { num: '0', unit: 's' };
+        if (!(s > 0)) return { num: '0', unit: 's', wide: 's' };
         if (s < 1e-12) {
-            const e = Math.floor(Math.log10(s));
-            return { num: (s / Math.pow(10, e)).toFixed(1), unit: '× 10' + sup(e) + ' s' };
+            const f = oneFigure(s);
+            const u = '× 10' + sup(f.e) + ' s';
+            return { num: String(f.m), unit: u, wide: u };
         }
         for (let i = TIME_UNITS.length - 1; i >= 0; i--) {
-            if (s >= TIME_UNITS[i][0]) {
-                let v = s / TIME_UNITS[i][0];
-                if (i === TIME_UNITS.length - 1 && v >= 999.5) {
-                    const yr = s / YEAR;
-                    const e = Math.floor(Math.log10(yr));
-                    return { num: (yr / Math.pow(10, e)).toFixed(1), unit: '× 10' + sup(e) + ' years' };
-                }
-                if (+sig3(v) >= UNIT_LIMIT[i] && i < TIME_UNITS.length - 1) { v = s / TIME_UNITS[i + 1][0]; return { num: sig3(v), unit: TIME_UNITS[i + 1][1] }; }
-                return { num: sig3(v), unit: TIME_UNITS[i][1] };
+            const [len, one, many] = TIME_UNITS[i];
+            if (s < len) continue;
+            const v = s / len;
+            if (i === TIME_UNITS.length - 1 && v >= 1000) {
+                const f = oneFigure(s / YEAR);
+                const u = '× 10' + sup(f.e) + ' years';
+                return { num: String(f.m), unit: u, wide: u };
             }
+            const f = oneFigure(v);
+            const n = f.m * Math.pow(10, f.e);
+            return { num: String(Math.round(n)), unit: n === 1 ? one : many, wide: many };
         }
-        return { num: sig3(s * 1e12), unit: 'ps' };
+        return { num: '0', unit: 's', wide: 's' };
     }
-    const durationText = (s) => { const d = formatDuration(s); return d.num.trim() + ' ' + d.unit; };
+    const durationText = (s) => { const d = formatDuration(s); return d.num + ' ' + d.unit; };
 
     // A fixed half-life, up to 4 significant figures without trailing zeros ("5,700 years", "4.468 billion years").
     function formatHalfLife(s) {
@@ -563,8 +587,11 @@
             border: dark ? 'rgba(255,255,255,0.13)' : 'rgba(0,0,0,0.13)',
             accent: '#f2849e',
             accentText: dark ? '#f2849e' : '#cc4c74',     // the accent as text: deeper on a light background
-            proton: dark ? '#f2849e' : '#ec6f8d',
-            neutron: dark ? '#aeb8c6' : '#93a0b2',
+            // nucleons as in textbook pictures: crimson protons, light grey neutrons
+            proton: '#d4203f',
+            neutron: dark ? '#c6c8cc' : '#bdc0c5',
+            protonText: dark ? '#f0607a' : '#c01d3a',      // the same colours as text
+            neutronText: dark ? '#c6c8cc' : '#6c7079',
             electron: dark ? '#5cb8f2' : '#2f8fd6',
             positron: dark ? '#f6a04d' : '#e2862c',
             gamma: dark ? '#e07ad0' : '#c2459f',
@@ -599,178 +626,249 @@
     }
 
     // ------------------------------------------------------------------
-    // Nucleon packing: an FCC lattice ball. The first A points (sorted by distance, ties broken by a hash so
-    // partly filled shells stay round) are the nucleons of a nucleus with A nucleons.
+    // Nucleon packing. Every nucleus is a round ball built the same way for its A, so the same nuclide always
+    // looks the same: 1 to 4 nucleons make a sphere, a pair, a triangle and a tetrahedron; 5 to 16 sit evenly
+    // on one shell; bigger nuclei are concentric shells, each holding its share of a ball of even density
+    // with its nucleons spread evenly over it. Positions are in nucleon spacings.
+    // The protons are spread evenly through the ball: the sites are put in farthest-point order (each one the
+    // site farthest from all those before it) and the first Z are protons, so a beta decay changes one site.
     // ------------------------------------------------------------------
-    const LAT = [];
-    (function buildLattice() {
-        const pts = [];
-        const L = 7;
-        for (let i = -L; i <= L; i++) for (let j = -L; j <= L; j++) for (let k = -L; k <= L; k++) {
-            if ((i + j + k) & 1) continue;
-            const h = Math.sin(i * 12.9898 + j * 78.233 + k * 37.719) * 43758.5453;
-            pts.push({ i, j, k, d: i * i + j * j + k * k + (h - Math.floor(h)) * 0.5 });
+    const SPACING = 1.62;           // nucleon spacing in nucleon radii: neighbours overlap a little, as in textbook pictures
+    const shellCache = new Map();
+    // n points spread evenly over the unit sphere (a Fibonacci spiral evened out by mutual repulsion, as in
+    // the Thomson problem) and their smallest separation.
+    function shellPoints(n) {
+        if (shellCache.has(n)) return shellCache.get(n);
+        const ga = Math.PI * (3 - Math.sqrt(5));
+        const p = new Float64Array(n * 3), f = new Float64Array(n * 3);
+        for (let i = 0; i < n; i++) {
+            const y = 1 - (i + 0.5) * 2 / n, r = Math.sqrt(1 - y * y);
+            p[i * 3] = Math.cos(i * ga) * r; p[i * 3 + 1] = y; p[i * 3 + 2] = Math.sin(i * ga) * r;
         }
-        pts.sort((a, b) => a.d - b.d);
-        // A fixed tilt so no lattice rows line up on screen; nearest neighbours are sqrt(2) apart.
-        const ax = 0.62, ay = 0.41, az = 0.27;
-        const cx = Math.cos(ax), sx = Math.sin(ax), cy = Math.cos(ay), sy = Math.sin(ay), cz = Math.cos(az), sz = Math.sin(az);
-        for (let n = 0; n < MAX_A + 10 && n < pts.length; n++) {
-            let { i: x, j: y, k: z } = pts[n];
-            let t = y * cx - z * sx; z = y * sx + z * cx; y = t;
-            t = x * cy + z * sy; z = -x * sy + z * cy; x = t;
-            t = x * cz - y * sz; y = x * sz + y * cz; x = t;
-            LAT.push([x / Math.SQRT2, y / Math.SQRT2, z / Math.SQRT2]);   // in nucleon diameters
+        const iters = n <= 16 ? 400 : (n <= 60 ? 80 : 30);
+        for (let it = 0; it < iters; it++) {
+            f.fill(0);
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    const dx = p[i * 3] - p[j * 3], dy = p[i * 3 + 1] - p[j * 3 + 1], dz = p[i * 3 + 2] - p[j * 3 + 2];
+                    const d2 = dx * dx + dy * dy + dz * dz + 1e-12, k = 1 / (d2 * Math.sqrt(d2));
+                    f[i * 3] += dx * k; f[i * 3 + 1] += dy * k; f[i * 3 + 2] += dz * k;
+                    f[j * 3] -= dx * k; f[j * 3 + 1] -= dy * k; f[j * 3 + 2] -= dz * k;
+                }
+            }
+            const step = 0.5 / Math.pow(n, 1.5) * (1 - 0.7 * it / iters);
+            for (let i = 0; i < n * 3; i += 3) {
+                const x = p[i] + f[i] * step, y = p[i + 1] + f[i + 1] * step, z = p[i + 2] + f[i + 2] * step;
+                const m = Math.hypot(x, y, z);
+                p[i] = x / m; p[i + 1] = y / m; p[i + 2] = z / m;
+            }
         }
-    })();
-    const centroids = [];
-    function centroid(A) {
-        if (centroids[A]) return centroids[A];
-        let x = 0, y = 0, z = 0;
-        for (let i = 0; i < A; i++) { x += LAT[i][0]; y += LAT[i][1]; z += LAT[i][2]; }
-        return (centroids[A] = [x / A, y / A, z / A]);
+        let dmin = 2;
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) dmin = Math.min(dmin, Math.hypot(p[i * 3] - p[j * 3], p[i * 3 + 1] - p[j * 3 + 1], p[i * 3 + 2] - p[j * 3 + 2]));
+        }
+        const res = { p, dmin };
+        shellCache.set(n, res);
+        return res;
+    }
+    // Turn a point about the x, y and z axes (so no two shells, and no spiral pole, line up with the view).
+    function rotate(pt, ax, ay, az) {
+        let [x, y, z] = pt, t;
+        t = y * Math.cos(ax) - z * Math.sin(ax); z = y * Math.sin(ax) + z * Math.cos(ax); y = t;
+        t = x * Math.cos(ay) + z * Math.sin(ay); z = -x * Math.sin(ay) + z * Math.cos(ay); x = t;
+        t = x * Math.cos(az) - y * Math.sin(az); y = x * Math.sin(az) + y * Math.cos(az); x = t;
+        return [x, y, z];
     }
 
-    // Shaded nucleon sprites: [type][shade] canvases at the current size.
-    let nucleonSprites = null;
-    const SHADES = 6;
-    function buildNucleonSprites() {
-        const r = rN * dpr;
-        const size = Math.ceil(r * 2 + 2);
-        nucleonSprites = [0, 1].map((type) => {
-            const base = type ? C.proton : C.neutron;
+    // The sites of a nucleus with A nucleons: { x, y, z (z towards the viewer), radius, order (farthest-point
+    // order, protons first), depth (indices from back to front) }.
+    const arrCache = [];
+    function arrangement(A) {
+        if (arrCache[A]) return arrCache[A];
+        let P = [];
+        const shell = (n, r, k) => {
+            const s = shellPoints(n);
+            for (let i = 0; i < n; i++) P.push(rotate([s.p[i * 3] * r, s.p[i * 3 + 1] * r, s.p[i * 3 + 2] * r], 0.9 + 0.71 * k, 0.4 + 1.13 * k, 0.25 + 0.57 * k));
+        };
+        if (A <= 1) P.push([0, 0, 0]);
+        else if (A === 2) P = [[-0.5, 0, 0], [0.5, 0, 0]].map((p) => rotate(p, 0, 0.45, 0.2));
+        else if (A === 3) {
+            for (let i = 0; i < 3; i++) P.push(rotate([Math.cos(i * TAU / 3 + 0.3) / Math.sqrt(3), Math.sin(i * TAU / 3 + 0.3) / Math.sqrt(3), 0], 0.5, 0.35, 0));
+        } else if (A === 4) {
+            // a tetrahedron with a corner towards the viewer (tipped a little): all four show
+            const rc = 1 / Math.sqrt(3), zb = -Math.sqrt(2 / 3) / 4;
+            P = [[0, 0, -3 * zb]];
+            for (let i = 0; i < 3; i++) P.push([Math.cos(i * TAU / 3 + 0.5) * rc, Math.sin(i * TAU / 3 + 0.5) * rc, zb]);
+            P = P.map((p) => rotate(p, 0.45, -0.3, 0));
+        } else if (A <= 16) shell(A, 0.94 / shellPoints(A).dmin, 0);
+        else {
+            // shells one spacing apart from the outside in, each with the nucleons of its slice of the ball
+            const R = 0.5527 * Math.cbrt(A);      // radius of A close-packed nucleons, in spacings
+            let done = 0;
+            for (let k = 0; done < A; k++) {
+                const ri = Math.max(0, R - k - 1);
+                const cum = ri > 0 ? Math.round(A * (1 - Math.pow(ri / R, 3))) : A;
+                const n = cum - done;
+                if (n <= 0) continue;
+                if (n === 1 && ri === 0) P.push([0, 0, 0]);
+                else shell(n, Math.max(R - k - 0.5, n === 2 ? 0.47 : 0.94 / shellPoints(n).dmin), k);
+                done = cum;
+            }
+        }
+        const n = P.length;
+        const x = new Float32Array(n), y = new Float32Array(n), z = new Float32Array(n);
+        let radius = 0;
+        P.forEach((p, i) => { x[i] = p[0]; y[i] = p[1]; z[i] = p[2]; radius = Math.max(radius, Math.hypot(p[0], p[1], p[2])); });
+        // farthest-point order, from the frontmost site; ties go to the site further back
+        const order = new Int16Array(n), dmin = new Float64Array(n).fill(Infinity), used = new Uint8Array(n);
+        let cur = 0;
+        for (let i = 1; i < n; i++) if (z[i] > z[cur] + 1e-9) cur = i;
+        for (let c = 0; c < n; c++) {
+            order[c] = cur; used[cur] = 1;
+            let best = -1, bd = -1;
+            for (let i = 0; i < n; i++) {
+                if (used[i]) continue;
+                const d = (x[i] - x[cur]) ** 2 + (y[i] - y[cur]) ** 2 + (z[i] - z[cur]) ** 2;
+                if (d < dmin[i]) dmin[i] = d;
+                if (dmin[i] > bd + 1e-9 || (dmin[i] > bd - 1e-9 && z[i] < z[best] - 1e-9)) { bd = dmin[i]; best = i; }
+            }
+            cur = best;
+        }
+        const depth = Array.from({ length: n }, (_, i) => i).sort((i, j) => z[i] - z[j]);
+        return (arrCache[A] = { A: n, x, y, z, radius, order, depth });
+    }
+    // Which sites hold protons: 1 for a proton, 0 for a neutron.
+    function siteTypes(arr, Z) {
+        const t = new Uint8Array(arr.A);
+        for (let i = 0; i < Z && i < arr.A; i++) t[arr.order[i]] = 1;
+        return t;
+    }
+
+    // Shaded nucleon spheres for a nucleon radius r (CSS px) at k device px per CSS px: [type][shade], type 1
+    // a proton, and the shades for depth (those at the back a little darker).
+    const SHADES = 5;
+    const nucleonCache = new Map();
+    function nucleonSprites(r, k) {
+        const id = r.toFixed(2) + '/' + k;
+        if (nucleonCache.has(id)) return nucleonCache.get(id);
+        const rp = r * k, size = Math.ceil(rp * 2 + 2), c0 = size / 2;
+        const sprites = [C.neutron, C.proton].map((base) => {
             const list = [];
             for (let s = 0; s < SHADES; s++) {
+                const d = 0.8 + 0.2 * s / (SHADES - 1);
                 const c = document.createElement('canvas');
                 c.width = c.height = size;
                 const g = c.getContext('2d');
-                const k = 0.5 + 0.5 * s / (SHADES - 1);     // back nucleons darker
-                const grad = g.createRadialGradient(size / 2 - r * 0.35, size / 2 - r * 0.4, r * 0.1, size / 2, size / 2, r);
-                grad.addColorStop(0, shadeColor(base, 1.0 + 0.35 * k));
-                grad.addColorStop(0.55, shadeColor(base, k));
-                grad.addColorStop(1, shadeColor(base, k * 0.62));
+                // a soft highlight up and to the left, the colour, and a darker rim
+                const grad = g.createRadialGradient(c0 - rp * 0.36, c0 - rp * 0.4, rp * 0.04, c0 - rp * 0.12, c0 - rp * 0.14, rp * 1.12);
+                grad.addColorStop(0, shadeColor(base, 1.62, d));
+                grad.addColorStop(0.28, shadeColor(base, 1.1, d));
+                grad.addColorStop(0.7, shadeColor(base, 0.86, d));
+                grad.addColorStop(1, shadeColor(base, 0.52, d));
                 g.fillStyle = grad;
-                g.beginPath();
-                g.arc(size / 2, size / 2, r * 0.97, 0, TAU);
-                g.fill();
+                g.beginPath(); g.arc(c0, c0, rp, 0, TAU); g.fill();
                 if (!C.dark) {
-                    g.strokeStyle = 'rgba(0,0,0,0.18)';
-                    g.lineWidth = Math.max(0.6, dpr * 0.6);
+                    g.strokeStyle = 'rgba(0,0,0,0.14)';
+                    g.lineWidth = Math.max(0.6, k * 0.5);
                     g.stroke();
                 }
                 list.push(c);
             }
             return list;
         });
+        nucleonCache.set(id, sprites);
+        return sprites;
     }
-    function shadeColor(hex, k) {
+    // hex lightened towards white (k > 1) or darkened (k < 1), then dimmed by d
+    function shadeColor(hex, k, d) {
         const n = parseInt(hex.slice(1), 16);
         let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
         if (k > 1) { const t = k - 1; r += (255 - r) * t; g += (255 - g) * t; b += (255 - b) * t; } else { r *= k; g *= k; b *= k; }
-        return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+        const m = d == null ? 1 : d;
+        return `rgb(${Math.round(r * m)},${Math.round(g * m)},${Math.round(b * m)})`;
+    }
+
+    // A nucleus drawn into its own canvas: the nucleons from back to front, then a soft shadow round the rim
+    // so the ball reads as round. { canvas, sw (size in CSS px), R (radius, CSS px), s (site spacing, CSS px),
+    // arr, types }.
+    function renderNucleus(Z, N, r, k) {
+        const arr = arrangement(Math.max(1, Z + N));
+        const s = r * SPACING, R = arr.radius * s + r;
+        const half = Math.ceil(R + 2), size = Math.ceil(half * 2 * k);
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = size;
+        const g = canvas.getContext('2d');
+        const types = siteTypes(arr, Z);
+        const sp = nucleonSprites(r, k), ns = sp[0][0].width;
+        const zr = arr.radius || 1;
+        for (const i of arr.depth) {
+            const shade = Math.max(0, Math.min(SHADES - 1, Math.round((arr.z[i] / zr * 0.5 + 0.5) * (SHADES - 1))));
+            g.drawImage(sp[types[i]][shade], (half + arr.x[i] * s) * k - ns / 2, (half + arr.y[i] * s) * k - ns / 2);
+        }
+        if (arr.A > 1) {
+            g.globalCompositeOperation = 'source-atop';
+            const rim = g.createRadialGradient(half * k, half * k, R * k * 0.4, half * k, half * k, R * k);
+            rim.addColorStop(0, 'rgba(0,0,0,0)');
+            rim.addColorStop(1, C.dark ? 'rgba(0,0,0,0.32)' : 'rgba(0,0,0,0.2)');
+            g.fillStyle = rim;
+            g.fillRect(0, 0, size, size);
+            g.globalCompositeOperation = 'source-over';
+        }
+        return { canvas, sw: size / k, R, s, arr, types };
+    }
+
+    // The look of each nuclide at the current size, shared by all its nuclei (the most recently used kept).
+    const lookCache = new Map();
+    function nuclideLook(Z, N) {
+        const id = Z * 400 + N;
+        let l = lookCache.get(id);
+        if (l) { lookCache.delete(id); lookCache.set(id, l); return l; }
+        l = renderNucleus(Z, N, rN, dpr);
+        lookCache.set(id, l);
+        if (lookCache.size > 150) lookCache.delete(lookCache.keys().next().value);
+        return l;
     }
 
     // ------------------------------------------------------------------
     // Bodies (nuclei and nucleons on the canvas)
     // ------------------------------------------------------------------
-    function randomTypes(Z, N) {
-        const t = [];
-        for (let i = 0; i < Z; i++) t.push(1);
-        for (let i = 0; i < N; i++) t.push(0);
-        for (let i = t.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const s = t[i]; t[i] = t[j]; t[j] = s; }
-        return t;
-    }
-
     function makeBody(Z, N, iso, x, y) {
         const b = {
-            id: nextId++, Z, N, iso: iso ? 1 : 0, info: null, types: randomTypes(Z, N), x, y, vx: 0, vy: 0,
-            R: 4, spin: Math.random() * TAU, bob: Math.random() * TAU, sprite: null, sw: 0, px: null, py: null, pz: null,
-            clock: null, steps: [], step: null, transient: false, projectileUntil: 0, held: false, excited: 0,
-            born: realTime, chain: [], glow: null, pulse: 0, recoil: 0,
+            id: nextId++, Z, N, iso: iso ? 1 : 0, info: null, look: null, x, y, vx: 0, vy: 0, lx: x, ly: y,
+            R: 4, sprite: null, sw: 0, clock: null, steps: [], step: null, transient: false, projectileUntil: 0,
+            held: false, excited: 0, born: simTime, chain: [], glow: null, prev: null, pulse: 0, thrown: false,
         };
-        setComposition(b, Z, N, iso, null, false);
+        setComposition(b, Z, N, iso, null);
         return b;
     }
 
-    // Change what a body is made of (the nucleon arrangement is updated by the caller), refresh its info and
-    // sprite, and record the step in its decay chain.
-    function setComposition(b, Z, N, iso, code, keepTypes) {
+    // Change what a body is made of: refresh its info and look, and record the step in its decay chain. When
+    // the number of nucleons changes the old look fades into the new one.
+    function setComposition(b, Z, N, iso, code) {
+        const oldLook = b.look, oldA = b.Z + b.N;
         b.Z = Z; b.N = N; b.iso = iso && table.has(key(Z, N, 1)) ? 1 : 0;
-        if (!keepTypes) b.types = randomTypes(Z, N);
         b.info = getInfo(Z, N, b.iso);
         b.chain.push({ Z, N, iso: b.iso, code });
         if (b.chain.length > 40) b.chain.splice(1, b.chain.length - 40);
-        buildSprite(b);
+        applyLook(b);
+        if (oldLook && oldA !== Z + N && code !== 'f') b.prev = { look: oldLook, t: simTime };
         b.clock = null;
     }
-
-    // Draw the nucleons into the body's own canvas (rebuilt only when its make-up or the scale changes).
-    function buildSprite(b) {
-        const A = b.types.length;
-        const c0 = centroid(Math.max(1, A));
-        const s = rN * 2;                       // px per nucleon diameter
-        const cs = Math.cos(b.spin), sn = Math.sin(b.spin);
-        const px = new Float32Array(A), py = new Float32Array(A), pz = new Float32Array(A);
-        let maxR = 0, zMin = 1e9, zMax = -1e9;
-        for (let i = 0; i < A; i++) {
-            const p = LAT[i];
-            const x = (p[0] - c0[0]) * s, y = (p[1] - c0[1]) * s;
-            px[i] = x * cs - y * sn;
-            py[i] = x * sn + y * cs;
-            pz[i] = (p[2] - c0[2]) * s;
-            maxR = Math.max(maxR, Math.hypot(px[i], py[i]));
-            zMin = Math.min(zMin, pz[i]); zMax = Math.max(zMax, pz[i]);
-        }
-        b.px = px; b.py = py; b.pz = pz;
-        b.R = maxR + rN;
-        const half = Math.ceil(b.R + 2);
-        const size = Math.ceil(half * 2 * dpr);
-        if (!b.sprite) b.sprite = document.createElement('canvas');
-        b.sprite.width = b.sprite.height = size;
-        b.sw = size / dpr;
-        const g = b.sprite.getContext('2d');
-        g.clearRect(0, 0, size, size);
-        const order = Array.from({ length: A }, (_, i) => i).sort((i, j) => pz[i] - pz[j]);
-        const ns = nucleonSprites[0][0].width;
-        for (const i of order) {
-            const shade = zMax > zMin ? Math.round((pz[i] - zMin) / (zMax - zMin) * (SHADES - 1)) : SHADES - 1;
-            g.drawImage(nucleonSprites[b.types[i]][shade], (half + px[i]) * dpr - ns / 2, (half + py[i]) * dpr - ns / 2);
-        }
+    function applyLook(b) {
+        b.look = nuclideLook(b.Z, b.N);
+        b.sprite = b.look.canvas; b.sw = b.look.sw; b.R = b.look.R;
     }
 
-    function frontIndex(b, type) {
-        // A nucleon of this type near the front, so the change can be seen.
-        let best = -1, bz = -1e9;
-        for (let i = 0; i < b.types.length; i++) {
-            if (b.types[i] !== type) continue;
-            const z = b.pz[i] - 0.15 * Math.hypot(b.px[i], b.py[i]) + Math.random() * rN;
-            if (z > bz) { bz = z; best = i; }
+    // The sites that change in a beta decay or electron capture (one per unit of charge): with the protons on
+    // the first Z sites in farthest-point order, Z -> Z + 1 turns site Z into a proton.
+    function changedSites(b, dZ) {
+        const arr = b.look.arr, out = [];
+        const from = dZ > 0 ? b.Z : b.Z + dZ, to = dZ > 0 ? b.Z + dZ : b.Z;
+        for (let c = from; c < to && c < arr.A; c++) {
+            const i = arr.order[c];
+            out.push({ x: arr.x[i] * b.look.s, y: arr.y[i] * b.look.s, from: dZ > 0 ? 0 : 1, to: dZ > 0 ? 1 : 0 });
         }
-        return best;
-    }
-
-    // Remove `count` nucleons of each type from the side facing `dir` (outer lattice points refill the holes,
-    // so the rest of the nucleus keeps its look).
-    function removeNucleons(b, nP, nN, dir) {
-        const dx = Math.cos(dir), dy = Math.sin(dir);
-        const idx = b.types.map((t, i) => i).sort((i, j) => (b.px[j] * dx + b.py[j] * dy) - (b.px[i] * dx + b.py[i] * dy));
-        const remove = [];
-        let p = nP, n = nN;
-        for (const i of idx) {
-            if (p > 0 && b.types[i] === 1) { remove.push(i); p--; } else if (n > 0 && b.types[i] === 0) { remove.push(i); n--; }
-            if (p === 0 && n === 0) break;
-        }
-        remove.sort((a, c) => c - a);
-        const types = b.types.slice();
-        for (const i of remove) {
-            const last = types.length - 1;
-            if (i !== last) types[i] = types[last];
-            types.pop();
-        }
-        // If the side ran short of one type (only for odd cases), take any.
-        while (p-- > 0) { const i = types.lastIndexOf(1); if (i >= 0) types.splice(i, 1); }
-        while (n-- > 0) { const i = types.lastIndexOf(0); if (i >= 0) types.splice(i, 1); }
-        b.types = types;
+        return out;
     }
 
     function addBody(Z, N, iso, x, y) {
@@ -789,6 +887,12 @@
         const logHalf = Math.log10(hl);
         const logStart = Math.min(-9, logHalf - 2.5);
         b.clock = { logT: logStart, logStart, logHalf, logEnd: Math.log10(Math.max(t, 1e-30)), branch: null };
+        // a member of the carbon-dating sample reads the sample's shared steady clock (its ring starts
+        // nearer the half-life, which it passes within seconds)
+        if (batch && batch.ids.has(b.id) && b.Z === batch.Z && b.N === batch.N) {
+            b.clock.shared = true;
+            b.clock.logStart = b.clock.logT = logHalf - 1.3;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -957,7 +1061,8 @@
         nextStep(b);
     }
 
-    const STEP_DUR = { beta: 0.75, ec: 1.0, emit: 0.55, fission: 1.1, gamma: 0.55, capture: 0.45 };
+    const STEP_DUR = { beta: 0.85, ec: 1.0, emit: 0.6, fission: 1.1, gamma: 0.55, capture: 0.45 };
+    const FIRE_AT = { beta: 0.45, ec: 0.55, emit: 0.15, fission: 0.5, gamma: 0.35, capture: 0.3 };
     function nextStep(b) {
         const st = b.steps.shift();
         if (!st) { b.step = null; afterFormed(b, 0.15); return; }
@@ -965,15 +1070,8 @@
         st.dur = STEP_DUR[st.kind];
         st.fired = false;
         st.dir = b.forceDir != null ? b.forceDir : Math.random() * TAU;
-        if (st.kind === 'beta' || st.kind === 'ec') {
-            st.idx = [];
-            for (let i = 0; i < st.count; i++) {
-                const want = st.kind === 'beta' && st.sign < 0 ? 0 : 1;   // beta-: a neutron changes; beta+/EC: a proton
-                let j = frontIndex(b, want);
-                if (st.idx.indexOf(j) >= 0) j = b.types.indexOf(want, j + 1);
-                st.idx.push(j);
-            }
-        }
+        // beta-: a neutron becomes a proton; beta+ and electron capture: a proton becomes a neutron
+        if (st.kind === 'beta' || st.kind === 'ec') st.sites = changedSites(b, st.kind === 'beta' && st.sign < 0 ? st.count : -st.count);
         if (st.kind === 'gamma') b.excited = 1;
         b.step = st;
     }
@@ -987,7 +1085,7 @@
 
     function logEquation(b) {
         if (!b.pendingEq) return;
-        eqLog.push({ eq: b.pendingEq, color: modeColor(b.pendingCode), t: realTime, w: 0, fs: 0 });
+        eqLog.push({ eq: b.pendingEq, color: modeColor(b.pendingCode), t: realTime });
         if (eqLog.length > 30) eqLog.shift();
         if (S.showTags) addTag(b.x, b.y - b.R - 10, b.pendingTag, b.pendingCode === 'capture' ? C.accent : modeColor(b.pendingCode), b);
         b.pendingEq = null;
@@ -997,8 +1095,7 @@
         const st = b.step;
         st.t += dt;
         const u = st.t / st.dur;
-        const fireAt = { beta: 0.35, ec: 0.55, emit: 0.15, fission: 0.5, gamma: 0.35, capture: 0.3 }[st.kind];
-        if (!st.fired && u >= fireAt) {
+        if (!st.fired && u >= FIRE_AT[st.kind]) {
             st.fired = true;
             fireStep(b, st);
         }
@@ -1008,65 +1105,70 @@
     function fireStep(b, st) {
         const cx = b.x, cy = b.y;
         logEquation(b);
-        if (st.kind === 'beta') {
-            const k = st.count;
-            for (let i = 0; i < k; i++) {
-                const j = st.idx[i];
-                const ox = j >= 0 ? b.px[j] : 0, oy = j >= 0 ? b.py[j] : 0;
-                if (j >= 0) b.types[j] = st.sign < 0 ? 1 : 0;
+        if (st.kind === 'beta' || st.kind === 'ec') {
+            const minus = st.kind === 'beta' && st.sign < 0;
+            const col = minus ? C.electron : C.positron;
+            st.sites.forEach((sv, i) => {
                 const a = st.dir + i * 2.4;
-                spawnSpark(st.sign < 0 ? 'e-' : 'e+', cx + ox, cy + oy, a, 1);
-                spawnSpark(st.sign < 0 ? 'nubar' : 'nu', cx + ox, cy + oy, a + 2.2 + Math.random() * 1.6, 1);
-                addFlash(cx + ox, cy + oy, rN * 3.2, st.sign < 0 ? C.electron : C.positron);
-                b.glow = { x: ox, y: oy, t: realTime, color: st.sign < 0 ? C.electron : C.positron };
-            }
+                if (st.kind === 'beta') {
+                    spawnSpark(minus ? 'e-' : 'e+', cx + sv.x, cy + sv.y, a, b.R);
+                    spawnSpark(minus ? 'nubar' : 'nu', cx + sv.x, cy + sv.y, a + 2.2 + Math.random() * 1.6, b.R);
+                } else spawnSpark('nu', cx + sv.x, cy + sv.y, st.dir + Math.PI + i, b.R);
+                addFlash(cx + sv.x, cy + sv.y, rN * 3.2, col);
+            });
+            b.glow = { sites: st.sites, t: simTime, color: st.kind === 'ec' ? C.modes.e : col };
             const to = st.to;
-            setComposition(b, to[0], to[1], to[2], to[3], true);
-            b.pulse = 1;
-        } else if (st.kind === 'ec') {
-            for (let i = 0; i < st.count; i++) {
-                const j = st.idx[i];
-                if (j >= 0) b.types[j] = 0;
-                const ox = j >= 0 ? b.px[j] : 0, oy = j >= 0 ? b.py[j] : 0;
-                spawnSpark('nu', cx + ox, cy + oy, st.dir + Math.PI + i, 1);
-                addFlash(cx + ox, cy + oy, rN * 3, C.positron);
-                b.glow = { x: ox, y: oy, t: realTime, color: C.modes.e };
-            }
-            const to = st.to;
-            setComposition(b, to[0], to[1], to[2], to[3], true);
+            setComposition(b, to[0], to[1], to[2], to[3]);
             b.pulse = 1;
         } else if (st.kind === 'emit') {
             const dir = st.dir;
-            removeNucleons(b, st.cz, st.cn, dir);
             const ex = cx + Math.cos(dir) * b.R, ey = cy + Math.sin(dir) * b.R;
             const p = makeBody(st.cz, st.cn, 0, ex, ey);
             p.transient = true;
             p.emitted = true;
-            const sp = Math.max(viewW, viewH) * (st.cz + st.cn > 1 ? 0.55 : 0.75);
+            const alpha = st.cz === 2 && st.cn === 2, m = st.cz + st.cn;
+            const sp = radBase() * (alpha ? SPEED.a : (m > 1 ? SPEED.cluster : (st.cz ? SPEED.p : SPEED.n)));
             p.vx = Math.cos(dir) * sp; p.vy = Math.sin(dir) * sp;
-            p.projectileUntil = realTime + 3;
+            p.projectileUntil = simTime + MIRROR_LIFE;
             p.ignore = [b.id];
             bodies.push(p);
-            const m = st.cz + st.cn, M = b.types.length;
+            const M = b.Z + b.N;
             b.vx -= p.vx * m / Math.max(1, M) * 0.6; b.vy -= p.vy * m / Math.max(1, M) * 0.6;
-            const col = st.cz === 2 && st.cn === 2 ? C.modes.a : (st.cn === 0 ? C.modes.p : (st.cz === 0 ? C.modes.n : C.modes.a));
-            p.trail = { color: col, text: st.cz === 2 && st.cn === 2 ? 'α' : (st.cz + st.cn === 1 ? (st.cz ? 'p' : 'n') : shortName(st.cz, st.cn, 0)) };
+            // the trail in the colour of the radiation (alpha) or of the nucleon (p, n)
+            const nucleon = m === 1;
+            const col = nucleon ? (st.cz ? C.proton : C.neutron) : C.modes.a;
+            const text = alpha ? 'α' : (nucleon ? (st.cz ? 'p' : 'n') : shortName(st.cz, st.cn, 0));
+            p.trail = { color: col, text, ink: nucleon ? (st.cz ? C.protonText : C.neutronText) : ink(C.modes.a) };
             addFlash(ex, ey, rN * 4, col);
             const to = st.to;
-            setComposition(b, to[0], to[1], to[2], to[3], true);
+            setComposition(b, to[0], to[1], to[2], to[3]);
             b.pulse = 1;
         } else if (st.kind === 'gamma') {
-            st.energies.forEach((E, i) => spawnSpark('g', cx, cy, st.dir + i * 2.3, 1, E));
-            if (b.iso !== st.iso) setComposition(b, b.Z, b.N, st.iso, 'i', true);
+            st.energies.forEach((E, i) => spawnSpark('g', cx, cy, st.dir + i * 2.3, b.R, E));
+            if (b.iso !== st.iso) setComposition(b, b.Z, b.N, st.iso, 'i');
             addFlash(cx, cy, b.R * 1.6, C.gamma);
             b.excited = 0;
         } else if (st.kind === 'fission') {
             fissionSplit(b, st);
         } else if (st.kind === 'capture') {
             // de-excitation gamma of a freshly combined nucleus
-            if (st.energy > 0) spawnSpark('g', cx, cy, st.dir, 1, st.energy);
+            if (st.energy != null) spawnSpark('g', cx, cy, st.dir, b.R, st.energy);
             b.excited = 0;
         }
+    }
+
+    // A neutron flying out of a fission or a decay (it ignores the nuclei it came from).
+    function launchNeutron(x, y, angle, ignore) {
+        const n = makeBody(0, 1, 0, x, y);
+        n.transient = true;
+        n.emitted = true;
+        const sp = radBase() * SPEED.n;
+        n.vx = Math.cos(angle) * sp; n.vy = Math.sin(angle) * sp;
+        n.projectileUntil = simTime + MIRROR_LIFE;
+        n.ignore = ignore;
+        n.trail = { color: C.neutron, text: 'n', ink: C.neutronText };
+        bodies.push(n);
+        return n;
     }
 
     function fissionSplit(b, st) {
@@ -1076,57 +1178,66 @@
         const light = makeBody(ZL, NL, 0, cx, cy);
         light.chain = b.chain.slice();
         light.chain.push({ Z: ZL, N: NL, iso: 0, code: 'f' });
-        setComposition(b, ZH, NH, 0, 'f', false);
+        setComposition(b, ZH, NH, 0, 'f');
         const sep = (b.R + light.R) * 0.55;
         b.x = cx - Math.cos(dir) * sep; b.y = cy - Math.sin(dir) * sep;
         light.x = cx + Math.cos(dir) * sep; light.y = cy + Math.sin(dir) * sep;
-        const v = Math.min(viewW, viewH) * 1.1;
+        // the fragments fly apart with equal and opposite momenta, then slow down
+        const v = Math.min(viewW, viewH) * SPEED.fragment;
         const AH = ZH + NH, AL = ZL + NL;
         b.vx = -Math.cos(dir) * v * AL / (AH + AL) * 2; b.vy = -Math.sin(dir) * v * AL / (AH + AL) * 2;
         light.vx = Math.cos(dir) * v * AH / (AH + AL) * 2; light.vy = Math.sin(dir) * v * AH / (AH + AL) * 2;
+        b.thrown = false;
         light.pulse = b.pulse = 1;
         bodies.push(light);
         afterFormed(light, 0.5);
         for (let i = 0; i < st.nu; i++) {
             const a = dir + Math.PI / 2 + (i - (st.nu - 1) / 2) * 0.9 + (Math.random() - 0.5) * 0.5 + (i % 2 ? Math.PI : 0);
-            const n = makeBody(0, 1, 0, cx, cy);
-            n.transient = true;
-            n.emitted = true;
-            const sp = Math.max(viewW, viewH) * 0.7;
-            n.vx = Math.cos(a) * sp; n.vy = Math.sin(a) * sp;
-            n.projectileUntil = realTime + 3;
-            n.ignore = [b.id, light.id];
-            n.trail = { color: C.modes.n, text: 'n' };
-            bodies.push(n);
+            launchNeutron(cx, cy, a, [b.id, light.id]);
         }
         addFlash(cx, cy, (b.R + light.R) * 2.2, C.modes.f);
-        for (let i = 0; i < 2; i++) spawnSpark('g', cx, cy, Math.random() * TAU, 1, 0);
+        for (let i = 0; i < 2; i++) spawnSpark('g', cx, cy, Math.random() * TAU, (b.R + light.R) * 0.5, 0);
     }
 
     // ------------------------------------------------------------------
     // Combining (drop one thing onto another, or a collision)
     // ------------------------------------------------------------------
-    function combine(target, other) {
+    // Busy: in the middle of a decay. A nucleus still to give off its capture gamma is not: it can take in
+    // more at once (the gamma goes straight away).
+    function busy(b) { return b.steps.length > 0 || !!(b.step && b.step.kind !== 'capture'); }
+    function settleCapture(b) {
+        if (!b.step || b.step.kind !== 'capture' || b.steps.length) return;
+        if (!b.step.fired) { b.step.fired = true; fireStep(b, b.step); }
+        b.step = null;
+    }
+
+    // Combine two bodies into target. impact: they met in flight, so the collision itself leaves the new
+    // nucleus excited (it gives off a gamma even when the fusion takes in energy).
+    function combine(target, other, impact) {
         const Z = target.Z + other.Z, N = target.N + other.N;
         if (Z + N > MAX_A || Z > MAX_Z) { showToast('Too big to build: the limit here is ' + MAX_A + ' nucleons'); return false; }
-        if (target.step || target.steps.length) return false;
+        if (busy(target) || busy(other)) return false;
+        settleCapture(target); settleCapture(other);
         const meBefore = massExcess(target.Z, target.N, target.iso) + massExcess(other.Z, other.N, other.iso);
         const lhs = [nucTok(other.Z, other.N, other.iso), nucTok(target.Z, target.N, target.iso)];
         const isNeutron = other.Z === 0 && other.N === 1;
         const fissile = isNeutron && FISSILE[target.Z + ',' + target.N];
         // the combined nucleus: centre of mass, momentum conserved
-        const mT = target.types.length, mO = other.types.length;
+        const mT = target.Z + target.N, mO = other.Z + other.N;
         const x = (target.x * mT + other.x * mO) / (mT + mO), y = (target.y * mT + other.y * mO) / (mT + mO);
         const vx = (target.vx * mT + other.vx * mO) / (mT + mO), vy = (target.vy * mT + other.vy * mO) / (mT + mO);
+        const wasSelected = selectedId === other.id;
         removeBody(other);
-        target.types = target.types.concat(other.types);
+        if (wasSelected) selectedId = target.id;
+        // something thrown keeps flying (and taking in what it meets) as part of the new nucleus
+        if (other.thrown && !other.emitted) target.thrown = true;
         target.x = x; target.y = y; target.vx = vx; target.vy = vy;
         target.clock = null;
         target.needsClock = false;
-        setComposition(target, Z, N, 0, 'capture', true);
+        setComposition(target, Z, N, 0, 'capture');
         target.pulse = 1;
         const Q = meBefore - target.info.me;
-        addFlash(target.x, target.y, target.R * 1.8, isNeutron ? C.modes.n : C.accent);
+        addFlash(target.x, target.y, target.R * 1.8, isNeutron ? C.modes.n : C.accent, target);
         const unbound = !target.info.stable && target.info.hl < 1e-15;
         if (fissile && (other.forceFission || Math.random() < fissile)) {
             // induced fission: n + U-235 -> U-236* -> two fragments + neutrons
@@ -1143,14 +1254,15 @@
             return true;
         }
         const eq = { lhs, rhs: [nucTok(Z, N, 0)], code: 'capture', Q };
-        if (Q > 0 && !unbound) eq.rhs.push({ t: 'g', k: 1 });
+        const gamma = (Q > 0 || impact) && !unbound;
+        if (gamma) eq.rhs.push({ t: 'g', k: 1 });
         target.pendingEq = eq;
         target.pendingTag = isNeutron ? 'neutron capture' : (other.Z === 1 && other.N === 0 ? 'proton capture' : 'fusion');
         target.pendingCode = isNeutron ? 'n' : 'capture';
         logEquation(target);
-        if (Q > 0 && !unbound) {
+        if (gamma) {
             target.excited = 1;
-            target.step = { kind: 'capture', t: 0, dur: STEP_DUR.capture, fired: false, dir: Math.random() * TAU, energy: Q };
+            target.step = { kind: 'capture', t: 0, dur: STEP_DUR.capture, fired: false, dir: Math.random() * TAU, energy: Math.max(0, Q) };
         } else {
             afterFormed(target, 0.25);
         }
@@ -1167,54 +1279,73 @@
     // ------------------------------------------------------------------
     // Light particles and effects
     // ------------------------------------------------------------------
-    function spawnSpark(kind, x, y, angle, speedK, energy) {
+    const radBase = () => Math.sqrt(viewW * viewH);    // px: the canvas size the radiation speeds are given in
+    // A light particle leaving (x, y); its label shows once it is `clear` px out (past the nucleus it left).
+    function spawnSpark(kind, x, y, angle, clear, energy) {
         if (sparks.length >= MAX_SPARKS) sparks.shift();
-        const base = Math.max(viewW, viewH);
-        const sp = base * (kind === 'g' ? 0.8 : (kind === 'nu' || kind === 'nubar' ? 0.62 : 0.42)) * speedK;
-        const s = { kind, x, y, vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, age: 0, energy: energy || 0, trail: [] };
-        if (kind === 'e+') s.annihilateAt = 0.3 + Math.random() * 0.25;    // s: a positron soon meets an electron
+        const sp = radBase() * (kind === 'g' ? SPEED.g : (kind === 'nu' || kind === 'nubar' ? SPEED.nu : SPEED.e));
+        const s = { kind, x, y, ox: x, oy: y, clear: (clear || 0) + 10, vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, age: 0, energy: energy || 0, trail: [] };
+        if (kind === 'e+') s.annihilateAt = 0.9 + Math.random() * 0.5;    // s: a positron soon meets an electron
         sparks.push(s);
     }
-    function addFlash(x, y, r, color) { effects.push({ kind: 'flash', x, y, r, color, age: 0, life: 0.45 }); }
+    // Emitted radiation fades out as it leaves (age in s of simulation time).
+    const fadeOf = (age, life) => Math.max(0, Math.min(1, ((life || FADE_AT + FADE_LEN) - age) / FADE_LEN));
+    // A flash of light (following a moving nucleus, if given one).
+    function addFlash(x, y, r, color, body) {
+        // (one at a time on a moving nucleus: flashes on top of each other would wash it out)
+        const same = body && effects.find((e) => e.kind === 'flash' && e.body === body);
+        if (same) { same.age = 0; same.r = r; return; }
+        effects.push({ kind: 'flash', x, y, r, color, age: 0, life: 0.45, body: body || null });
+    }
     // A short label over a nucleus that has just decayed ("alpha decay"); it rises, fades and follows the nucleus.
     function addTag(x, y, text, color, body) {
+        // the same thing again (a thrown nucleus taking in one after another): count it on the same label
+        const same = body && effects.find((e) => e.kind === 'tag' && e.body === body && e.text === text && e.age < e.life * 0.8);
+        if (same) { same.count = (same.count || 1) + 1; same.age = Math.min(same.age, 0.2); return; }
+        // in a busy scene a label right next to a fresh one would only cover it up
+        for (const e of effects) if (e.kind === 'tag' && e.body !== body && e.age < 0.9 && Math.abs(e.x - x) < 90 && Math.abs(e.y - e.rise - y) < 30) return;
         let stack = 0;
         for (const e of effects) if (e.kind === 'tag' && e.age < 1 && (body ? e.body === body : Math.hypot(e.x - x, e.y - y) < 40)) stack += 1;
-        effects.push({ kind: 'tag', x, y, text, color, body: body || null, stack, rise: 0, age: 0, life: 1.9 });
+        effects.push({ kind: 'tag', x, y, text, color, body: body || null, stack, rise: 0, age: 0, life: 2.2 });
     }
-    function showToast(text) { toast = { text, age: 0, life: 2.8 }; }
+    function showToast(text, life) { toast = { text, age: 0, life: life || 2.8 }; }
 
-    function updateSparks(dt) {
+    // dt: simulation time (radiation, flashes); dtReal: real time (labels and messages, to stay readable)
+    function updateSparks(dt, dtReal) {
         for (let i = sparks.length - 1; i >= 0; i--) {
             const s = sparks[i];
             s.age += dt;
             s.x += s.vx * dt; s.y += s.vy * dt;
             if (s.kind === 'e-' || s.kind === 'e+') {
-                s.trail.push(s.x, s.y);
-                if (s.trail.length > 16) s.trail.splice(0, 2);
+                const n = s.trail.length;
+                if (!n || Math.hypot(s.x - s.trail[n - 2], s.y - s.trail[n - 1]) > 3) s.trail.push(s.x, s.y);
+                if (s.trail.length > 24) s.trail.splice(0, 2);
             }
             if (s.annihilateAt && s.age >= s.annihilateAt) {
                 // e+ + e- -> two 511 keV photons, back to back
                 const a = Math.random() * TAU;
-                spawnSpark('g', s.x, s.y, a, 1, M_E);
-                spawnSpark('g', s.x, s.y, a + Math.PI, 1, M_E);
+                spawnSpark('g', s.x, s.y, a, 4, M_E);
+                spawnSpark('g', s.x, s.y, a + Math.PI, 4, M_E);
                 addFlash(s.x, s.y, rN * 3, C.positron);
                 sparks.splice(i, 1);
                 continue;
             }
             const m = 60;
-            if (s.x < -m || s.y < -m || s.x > viewW + m || s.y > viewH + m || s.age > 4) sparks.splice(i, 1);
+            if (s.x < -m || s.y < -m || s.x > viewW + m || s.y > viewH + m || s.age > FADE_AT + FADE_LEN) sparks.splice(i, 1);
         }
         for (let i = effects.length - 1; i >= 0; i--) {
             const e = effects[i];
-            e.age += dt;
             if (e.kind === 'tag') {
-                e.rise += 9 * dt;
+                e.age += dtReal;
+                e.rise += 9 * dtReal;
                 if (e.body && bodies.indexOf(e.body) >= 0) { e.x = e.body.x; e.y = e.body.y - e.body.R - 10; }
+            } else {
+                e.age += dt;
+                if (e.body && bodies.indexOf(e.body) >= 0) { e.x = e.body.x; e.y = e.body.y; }
             }
             if (e.age >= e.life) effects.splice(i, 1);
         }
-        if (toast) { toast.age += dt; if (toast.age > toast.life) toast = null; }
+        if (toast) { toast.age += dtReal; if (toast.age > toast.life) toast = null; }
     }
 
     // ------------------------------------------------------------------
@@ -1236,11 +1367,26 @@
         };
     }
 
-    function updateBodies(dt, clockDt) {
+    // Something fast that takes in what it hits: a free neutron, or a nucleus that was thrown (or knocked).
+    function isProjectile(b) {
+        if (b.held) return false;
+        if (b.emitted) return b.Z === 0 && b.N === 1 && b.projectileUntil > simTime;
+        return (b.thrown || b.projectileUntil > simTime) && Math.hypot(b.vx, b.vy) > 120;
+    }
+    // Distance from (px, py) to the segment (ax, ay)-(bx, by): the path a body covered this frame.
+    function segDist(px, py, ax, ay, bx, by) {
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const u = l2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+        return Math.hypot(px - ax - u * dx, py - ay - u * dy);
+    }
+
+    // dt: simulation time; clockDt: clock decades; dtReal: real time (for what the user throws)
+    function updateBodies(dt, clockDt, dtReal) {
         const wr = workRect();
         const obstacles = [];
         if (S.showChart && layout) obstacles.push(layout.inset);
         panelRects.forEach((r) => obstacles.push(r));
+        if (batch && !paused) batch.t += batch.rate * dt;
         for (let i = bodies.length - 1; i >= 0; i--) {
             const b = bodies[i];
             if (b.pulse > 0) b.pulse = Math.max(0, b.pulse - dt * 3);
@@ -1249,28 +1395,37 @@
                 b.clockDelay -= dt;
                 if (b.clockDelay <= 0) { b.needsClock = false; startClock(b); }
             } else if (b.clock && !paused) {
-                b.clock.logT += clockDt;
-                if (b.clock.logT >= b.clock.logEnd) { b.clock.logT = b.clock.logEnd; beginDecay(b); }
+                let logNow = b.clock.logT + clockDt;
+                if (b.clock.shared) logNow = Math.log10(Math.max(1e-30, batch ? batch.t : 0));
+                b.clock.logT = Math.max(b.clock.logStart, logNow);
+                if (logNow >= b.clock.logEnd) { b.clock.logT = b.clock.logEnd; beginDecay(b); }
             }
+            b.lx = b.x; b.ly = b.y;
             if (b.held) continue;
-            b.x += b.vx * dt; b.y += b.vy * dt;
+            const mdt = b.thrown ? dtReal : dt;      // what the user throws moves in real time
+            b.x += b.vx * mdt; b.y += b.vy * mdt;
             const speed = Math.hypot(b.vx, b.vy);
             if (b.transient && !S.keepParticles) {
-                // emitted particles fly straight off the canvas (or bounce off neutron mirrors)
-                if (S.mirrorWalls && b.Z === 0) bounceWalls(b, wr, 1);
+                // emitted particles fly straight off the canvas (or bounce off neutron mirrors), fading as they go
+                const mirrored = S.mirrorWalls && b.Z === 0;
+                // a neutron set free inside the reflector stays in it; any other bounces off the canvas walls
+                if (b.inReflector === undefined) b.inReflector = !!reflector && b.x > reflector.x0 && b.x < reflector.x1 && b.y > reflector.y0 && b.y < reflector.y1;
+                if (mirrored) bounceWalls(b, b.inReflector && reflector ? reflector : wr, 1);
                 const m = b.R + 4;
-                if (b.x < -m || b.y < -m || b.x > viewW + m || b.y > viewH + m || realTime - b.born > 6) { removeBody(b); continue; }
+                const life = mirrored ? MIRROR_LIFE : FADE_AT + FADE_LEN;
+                if (b.x < -m || b.y < -m || b.x > viewW + m || b.y > viewH + m || simTime - b.born > life) { removeBody(b); continue; }
             } else {
-                const damp = Math.exp(-dt / (b.transient ? 0.35 : 0.55));
+                const damp = Math.exp(-mdt / (b.transient ? 1.6 : 0.6));
                 b.vx *= damp; b.vy *= damp;
                 // a kept particle comes to rest and joins the rest (a free neutron starts its clock)
-                if (b.transient && speed < 40) { b.transient = false; b.emitted = false; afterFormed(b, 0); }
+                if (b.transient && speed < 25) { b.transient = false; b.emitted = false; afterFormed(b, 0); }
+                if (b.thrown && speed < 20) b.thrown = false;
                 bounceWalls(b, wr, 0.45);
             }
         }
         // Resting bodies keep their nuclei and labels apart: overlapping boxes are pushed apart along the
-        // shorter overlap.
-        const boxes = bodies.map((b) => (b.transient ? null : bodyBox(b)));
+        // shorter overlap. (Not something flying through: it would push its targets out of its way.)
+        const boxes = bodies.map((b) => (b.transient || isProjectile(b) ? null : bodyBox(b)));
         const k = Math.min(1, dt * 8);
         for (let i = 0; i < bodies.length; i++) {
             const a = bodies[i], ba = boxes[i];
@@ -1296,18 +1451,24 @@
         for (const b of bodies) {
             if (!b.transient && !b.held) obstacles.forEach((r) => pushOutOfRect(b, r, 1));
         }
-        // Fast things hit what is in their way: neutrons are captured by any nucleus (no charge, no barrier); a
-        // thrown nucleus fuses with what it hits.
-        for (const p of bodies) {
-            if (p.held || p.projectileUntil < realTime) continue;
-            if (p.emitted && !(p.Z === 0 && p.N === 1)) continue;
-            if (Math.hypot(p.vx, p.vy) < 120) continue;
+        // Fast things hit what is in their way: a neutron is captured by any nucleus it meets (no charge, no
+        // barrier), and a thrown nucleus takes in each lighter one along its path, slowing down as it gains
+        // mass (momentum is conserved). The test covers this frame's whole path, so nothing slips through, and
+        // each body merges at most once a frame.
+        const merged = new Set();
+        for (const p of bodies.slice()) {
+            if (merged.has(p) || bodies.indexOf(p) < 0 || !isProjectile(p)) continue;
             for (const t of bodies) {
-                if (t === p || t.transient || t.held || t.step || t.steps.length || (p.ignore && p.ignore.indexOf(t.id) >= 0)) continue;
-                const d = Math.hypot(t.x - p.x, t.y - p.y);
-                if (d < t.R + p.R * 0.6) {
-                    if (combine(t, p)) break;
-                }
+                if (t === p || t.transient || t.held || merged.has(t) || (p.ignore && p.ignore.indexOf(t.id) >= 0)) continue;
+                const reach = Math.max(t.R, p.R) * 0.85 + Math.min(t.R, p.R) * 0.5;
+                if (segDist(t.x, t.y, p.lx, p.ly, p.x, p.y) >= reach || busy(t)) continue;
+                const big = p.Z + p.N > t.Z + t.N ? p : t;    // the heavier takes in the lighter
+                const small = big === p ? t : p;
+                // A free neutron is not always caught: most nuclei (fission fragments among them) take in slow
+                // neutrons far less readily than uranium-235 or plutonium-239 does, which keeps a chain going.
+                const caught = !p.emitted || FISSILE[t.Z + ',' + t.N] || Math.random() < NEUTRON_CATCH;
+                if (caught && combine(big, small, true)) { merged.add(big); merged.add(small); } else (p.ignore || (p.ignore = [])).push(t.id);
+                break;
             }
         }
     }
@@ -1350,21 +1511,39 @@
         const tall = viewH > viewW * 0.85;
         const pad = Math.max(6, Math.min(12, viewW / 90));
         // The chart is taller than it is wide (Z across, N up): beside the nuclei on a wide canvas, in the
-        // lower corner on a tall one.
+        // lower corner on a tall one. The nuclear equations go under it, right-aligned.
         const cw = chartZMax + 3, ch = chartNMax + 3;
-        let w, h;
-        if (tall) { w = Math.min(viewW * 0.38, 170); h = w * ch / cw; }
-        else { h = Math.max(120, Math.min(viewH * 0.56, 330)); w = h * cw / ch; }
-        const inset = tall ? { x: viewW - w - pad, y: viewH - h - pad, w, h } : { x: viewW - w - pad, y: pad, w, h };
-        layout = { tall, pad, inset };
+        const eqFs = Math.max(13, Math.min(20, viewW / 58));
+        const eqLineH = eqFs * 1.7;
+        let w, h, inset, eq;
+        if (tall) {
+            // two lines of equations along the bottom, the chart just above them
+            w = Math.min(viewW * 0.38, 170); h = w * ch / cw;
+            const eqH = S.showEquations ? 2 * eqLineH + eqFs * 0.5 : 0;
+            inset = { x: viewW - w - pad, y: viewH - h - pad - (eqH ? eqH + pad * 0.6 : 0), w, h };
+            eq = { right: viewW - pad, top: viewH - pad - eqH, bottom: viewH - pad, lines: 2, maxW: viewW - 2 * pad, fromTop: true };
+        } else {
+            h = Math.max(120, Math.min(viewH * 0.56, 330)); w = h * cw / ch;
+            inset = { x: viewW - w - pad, y: pad, w, h };
+            const top = S.showChart ? inset.y + h + pad * 0.8 : pad;
+            const lines = Math.max(1, Math.min(4, Math.floor((viewH - pad - top - eqFs * 0.5) / eqLineH)));
+            eq = { right: viewW - pad, top, bottom: viewH - pad, lines, maxW: Math.max(w, viewW * 0.5), fromTop: S.showChart };
+        }
+        layout = { tall, pad, inset, eq, eqFs };
         insetCache = null;
     }
 
     // ------------------------------------------------------------------
     // Chart of nuclides (Segre chart), as in textbooks: protons Z across, neutrons N up. Each element is a
     // column, and the stable valley climbs above the N = Z line towards N = 1.5 Z.
+    // The inset shows the whole chart, or zooms in on the selected nucleus's history (where it started, each
+    // step since and where it is now). Its view is the chart point at its centre and the size of a square in
+    // px, easing towards its target.
     // ------------------------------------------------------------------
     let insetCache = null;
+    const insetView = { z: 0, n: 0, cell: 0 };
+    const INSET_PAD = 6;
+    const MIN_ROWS = 26;             // zoomed in on a single nuclide, the inset still shows this many rows
     const chartList = [];            // [Z, N] of every ground state in the table
     function buildChartList() {
         chartList.length = 0;
@@ -1389,56 +1568,119 @@
         }
     }
 
-    function drawInsetChart() {
-        const r = layout.inset;
+    // The squares a body's history covers.
+    function historyBox(b) {
+        let z0 = b.Z, z1 = b.Z, n0 = b.N, n1 = b.N;
+        b.chain.forEach((c) => { z0 = Math.min(z0, c.Z); z1 = Math.max(z1, c.Z); n0 = Math.min(n0, c.N); n1 = Math.max(n1, c.N); });
+        return { z0, z1, n0, n1 };
+    }
+    function insetFullView(r) {
         const zMax = chartZMax + 2, nMax = chartNMax + 2;
-        const inner = 6;
-        const cell = Math.min((r.w - inner * 2) / (zMax + 1), (r.h - inner * 2) / (nMax + 1));
-        const cw = cell * (zMax + 1), chh = cell * (nMax + 1);
-        const ox = r.x + (r.w - cw) / 2, oy = r.y + (r.h - chh) / 2;
-        if (!insetCache || insetCache.theme !== C.dark || insetCache.w !== r.w || insetCache.h !== r.h || insetCache.dpr !== dpr) {
-            const c = document.createElement('canvas');
-            c.width = Math.ceil(r.w * dpr); c.height = Math.ceil(r.h * dpr);
-            const g = c.getContext('2d');
+        return { z: zMax / 2, n: nMax / 2, cell: Math.min((r.w - INSET_PAD * 2) / (zMax + 1), (r.h - INSET_PAD * 2) / (nMax + 1)) };
+    }
+    function insetTarget(r) {
+        const full = insetFullView(r);
+        const sel = selectedBody();
+        if (!sel || sel.transient || !S.showChart) return full;
+        const bx = historyBox(sel), m = 2.5;            // a margin of two and a half squares
+        const w = r.w - INSET_PAD * 2, h = r.h - INSET_PAD * 2;
+        const cell = Math.max(full.cell, Math.min(w / (bx.z1 - bx.z0 + 1 + 2 * m), h / (bx.n1 - bx.n0 + 1 + 2 * m), h / MIN_ROWS));
+        // centred on the history, but not past the edges of the chart
+        const centre = (c, half, max) => (half * 2 >= max + 1 ? max / 2 : Math.max(half - 0.5, Math.min(max + 0.5 - half, c)));
+        return { z: centre((bx.z0 + bx.z1) / 2, w / 2 / cell, chartZMax + 2), n: centre((bx.n0 + bx.n1) / 2, h / 2 / cell, chartNMax + 2), cell };
+    }
+    function updateInsetView(dt) {
+        if (!layout) return;
+        const t = insetTarget(layout.inset), v = insetView;
+        if (!(v.cell > 0) || dt <= 0) { if (!(v.cell > 0)) Object.assign(v, t); return; }
+        const k = 1 - Math.exp(-dt / 0.2);
+        v.z += (t.z - v.z) * k; v.n += (t.n - v.n) * k;
+        v.cell = Math.exp(Math.log(v.cell) + (Math.log(t.cell) - Math.log(v.cell)) * k);
+        if (Math.abs(t.z - v.z) < 0.01 && Math.abs(t.n - v.n) < 0.01 && Math.abs(t.cell / v.cell - 1) < 0.002) Object.assign(v, t);
+    }
+    const insetToScreen = (r, Z, N) => [r.x + r.w / 2 + (Z - insetView.z) * insetView.cell, r.y + r.h / 2 - (N - insetView.n) * insetView.cell];
+
+    function drawInsetChart() {
+        const r = layout.inset, v = insetView;
+        const zMax = chartZMax + 2, nMax = chartNMax + 2;
+        const zoomed = v.cell > insetFullView(r).cell * 1.3;
+        const fs = Math.max(9, Math.min(11, r.w / 16));
+        let c = insetCache;
+        if (!c || c.theme !== C.dark || c.w !== r.w || c.h !== r.h || c.dpr !== dpr || c.z !== v.z || c.n !== v.n || c.cell !== v.cell) {
+            const canvasEl = c && c.w === r.w && c.h === r.h && c.dpr === dpr ? c.canvas : document.createElement('canvas');
+            canvasEl.width = Math.ceil(r.w * dpr); canvasEl.height = Math.ceil(r.h * dpr);
+            const g = canvasEl.getContext('2d');
             g.setTransform(dpr, 0, 0, dpr, 0, 0);
             roundRect(g, 0.5, 0.5, r.w - 1, r.h - 1, 6);
             g.fillStyle = C.panel; g.fill();
             g.strokeStyle = C.border; g.lineWidth = 1; g.stroke();
-            const lx = ox - r.x, ly = oy - r.y;
+            g.save();
+            roundRect(g, 1, 1, r.w - 2, r.h - 2, 5); g.clip();
+            const cell = v.cell;
+            const X = (Z) => r.w / 2 + (Z - v.z) * cell, Y = (N) => r.h / 2 - (N - v.n) * cell;
+            // the chart's own extent (in the full view the lines stop at its edges)
+            const x0 = Math.max(0, X(-0.5)), x1 = Math.min(r.w, X(zMax + 0.5)), y0 = Math.max(0, Y(nMax + 0.5)), y1 = Math.min(r.h, Y(-0.5));
             // magic numbers: faint lines (Z = m upright, N = m across), N = Z dashed
-            g.strokeStyle = C.faint; g.lineWidth = 1;
+            g.strokeStyle = C.faint; g.lineWidth = Math.max(1, Math.min(2, cell * 0.12));
             MAGIC.forEach((m) => {
-                if (m <= zMax) { g.beginPath(); g.moveTo(lx + (m + 0.5) * cell, ly); g.lineTo(lx + (m + 0.5) * cell, ly + chh); g.stroke(); }
-                if (m <= nMax) { g.beginPath(); g.moveTo(lx, ly + (nMax - m + 0.5) * cell); g.lineTo(lx + cw, ly + (nMax - m + 0.5) * cell); g.stroke(); }
+                if (m <= zMax) { g.beginPath(); g.moveTo(X(m), y0); g.lineTo(X(m), y1); g.stroke(); }
+                if (m <= nMax) { g.beginPath(); g.moveTo(x0, Y(m)); g.lineTo(x1, Y(m)); g.stroke(); }
             });
-            renderChartCells(g, lx, ly, cell, 0, zMax, 0, nMax);
+            const zFrom = Math.max(0, Math.floor(v.z - r.w / 2 / cell) - 1), zTo = Math.min(zMax, Math.ceil(v.z + r.w / 2 / cell) + 1);
+            const nFrom = Math.max(0, Math.floor(v.n - r.h / 2 / cell) - 1), nTo = Math.min(nMax, Math.ceil(v.n + r.h / 2 / cell) + 1);
+            renderChartCells(g, X(zFrom) - cell / 2, Y(nTo) - cell / 2, cell, zFrom, zTo, nFrom, nTo);
             const k = Math.min(zMax, nMax);
             g.setLineDash([3, 3]);
-            g.strokeStyle = C.muted; g.globalAlpha = 0.6;
-            g.beginPath(); g.moveTo(lx + 0.5 * cell, ly + (nMax + 0.5) * cell); g.lineTo(lx + (k + 0.5) * cell, ly + (nMax - k + 0.5) * cell); g.stroke();
+            g.strokeStyle = C.muted; g.globalAlpha = 0.6; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(X(0), Y(0)); g.lineTo(X(k), Y(k)); g.stroke();
             g.setLineDash([]); g.globalAlpha = 1;
-            // axis captions, and the hint in the empty corner above the valley
-            const fs = Math.max(9, Math.min(11, r.w / 16));
-            g.font = `700 ${fs}px "Source Sans Pro", Helvetica, sans-serif`;
-            g.fillStyle = C.muted;
-            g.textBaseline = 'bottom'; g.textAlign = 'right';
-            g.fillText('Z →', r.w - inner, r.h - inner + 1);
-            g.textBaseline = 'top'; g.textAlign = 'left';
-            g.fillText('N ↑', inner, inner - 1);
-            g.font = `300 ${fs}px "Source Sans Pro", Helvetica, sans-serif`;
-            g.fillText('tap to', inner, inner + fs * 1.25);
-            g.fillText('enlarge', inner, inner + fs * 2.35);
-            insetCache = { canvas: c, theme: C.dark, w: r.w, h: r.h, dpr };
+            g.restore();
+            // axis captions and the hint, in the empty corner above the valley (on a backing when zoomed in)
+            const caption = (t, x, y, align, base, w8) => {
+                g.font = font(w8, fs);
+                if (zoomed) {
+                    const tw = g.measureText(t).width;
+                    const bx = align === 'right' ? x - tw - 3 : x - 3, by = base === 'top' ? y - 1 : y - fs - 1;
+                    roundRect(g, bx, by, tw + 6, fs + 3, 3);
+                    g.fillStyle = C.panelSolid; g.globalAlpha = 0.85; g.fill(); g.globalAlpha = 1;
+                }
+                g.fillStyle = C.muted; g.textAlign = align; g.textBaseline = base;
+                g.fillText(t, x, y);
+            };
+            if (!zoomed) {
+                caption('Z →', r.w - INSET_PAD, r.h - INSET_PAD + 1, 'right', 'bottom', 700);
+                caption('N ↑', INSET_PAD, INSET_PAD - 1, 'left', 'top', 700);
+                caption('tap to', INSET_PAD, INSET_PAD + fs * 1.25, 'left', 'top', 300);
+                caption('enlarge', INSET_PAD, INSET_PAD + fs * 2.35, 'left', 'top', 300);
+            } else caption('tap to enlarge', r.w - INSET_PAD, INSET_PAD - 1, 'right', 'top', 300);
+            c = insetCache = { canvas: canvasEl, theme: C.dark, w: r.w, h: r.h, dpr, z: v.z, n: v.n, cell: v.cell };
         }
-        ctx.drawImage(insetCache.canvas, r.x, r.y, r.w, r.h);
+        ctx.drawImage(c.canvas, r.x, r.y, r.w, r.h);
         const sel = selectedBody();
-        if (sel) {
-            const toXY = (Z, N) => [ox + (Z + 0.5) * cell, oy + (nMax - N + 0.5) * cell];
-            drawChainPath(sel, toXY, Math.max(1.2, cell * 0.7), Math.max(3, cell * 2.2));
-            const [x, y] = toXY(sel.Z, sel.N);
-            ctx.strokeStyle = C.text; ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(x, y, Math.max(3.5, cell * 2.4), 0, TAU); ctx.stroke();
-        }
+        if (!sel || sel.transient) return;
+        const cell = v.cell;
+        const toXY = (Z, N) => insetToScreen(r, Z, N);
+        ctx.save();
+        roundRect(ctx, r.x + 1, r.y + 1, r.w - 2, r.h - 2, 5); ctx.clip();
+        drawChainPath(sel, toXY, Math.max(1.2, Math.min(3, cell * 0.18 + 0.9)), Math.max(3, Math.min(9, cell * 0.5 + 3)));
+        const [x, y] = toXY(sel.Z, sel.N);
+        ctx.strokeStyle = C.text; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(x, y, Math.max(3.5, Math.min(cell * 2.4, cell * 0.5 + 5)), 0, TAU); ctx.stroke();
+        ctx.restore();
+        if (!zoomed) return;
+        // where the nucleus is: its proton number under its column, its neutron number beside its row
+        const tag = (t, tx, ty, align) => {
+            ctx.font = font(700, fs);
+            const tw = ctx.measureText(t).width;
+            const bx = Math.max(r.x + 3, Math.min(r.x + r.w - tw - 9, align === 'center' ? tx - tw / 2 - 3 : tx));
+            const by = Math.max(r.y + fs * 1.6, Math.min(r.y + r.h - fs - 7, ty - fs / 2 - 2));
+            roundRect(ctx, bx, by, tw + 6, fs + 4, 3);
+            ctx.fillStyle = C.panelSolid; ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
+            ctx.fillStyle = C.text; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.fillText(t, bx + 3, by + fs / 2 + 2.5);
+        };
+        tag('Z = ' + sel.Z, x, r.y + r.h - fs, 'center');
+        tag('N = ' + sel.N, r.x + 3, y, 'left');
     }
 
     // The decay path of a body on a chart: one arrow per step, in the colour of the decay, with a dark (or
@@ -1509,12 +1751,11 @@
         const rr = chartRects();
         chartView.open = true;
         const sel = selectedBody();
-        if (sel) {
-            // Frame the selected nucleus's decay path, with squares big enough to carry their mass numbers;
-            // if the whole path does not fit at that size, keep the nucleus itself in view.
-            let z0 = sel.Z, z1 = sel.Z, n0 = sel.N, n1 = sel.N;
-            sel.chain.forEach((c) => { z0 = Math.min(z0, c.Z); z1 = Math.max(z1, c.Z); n0 = Math.min(n0, c.N); n1 = Math.max(n1, c.N); });
-            const spanZ = Math.max(12, z1 - z0 + 6), spanN = Math.max(12, n1 - n0 + 6);
+        if (sel && !sel.transient) {
+            // Frame the selected nucleus's history, as the inset does, with squares big enough to carry their
+            // mass numbers; if the whole path does not fit at that size, keep the nucleus itself in view.
+            const { z0, z1, n0, n1 } = historyBox(sel);
+            const spanZ = Math.max(12, z1 - z0 + 6), spanN = Math.max(MIN_ROWS, n1 - n0 + 6);
             chartView.cell = Math.min(40, Math.max(20, Math.min(rr.area.w / spanZ, rr.area.h / spanN)));
             const halfZ = rr.area.w / 2 / chartView.cell - 1.5, halfN = rr.area.h / 2 / chartView.cell - 1.5;
             chartView.cZ = Math.max(sel.Z - halfZ, Math.min(sel.Z + halfZ, (z0 + z1) / 2));
@@ -1840,14 +2081,32 @@
         ctx.fillRect(0, 0, viewW, viewH);
         if (S.showChart) drawInsetChart();
         if (!bodies.length && !dragGhost) drawEmptyHint();
+        if (reflector && S.mirrorWalls) drawReflector();
         drawBin();
+        drawEffects(true);
         drawBodies();
         drawSparks();
-        drawEffects();
+        drawEffects(false);
         drawPanels();
         drawGhost();
         drawToast();
         if (chartView.open) drawExpandedChart();
+    }
+
+    // The chain-reaction core's neutron reflector: a faint dashed wall with its name.
+    function drawReflector() {
+        const r = reflector;
+        ctx.strokeStyle = hexA(C.modes.n, C.dark ? 0.55 : 0.6); ctx.lineWidth = 2;
+        ctx.setLineDash([6, 5]);
+        roundRect(ctx, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, 10);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = font(700, Math.max(10, fontPx * 0.8));
+        const t = 'neutron reflector', tw = ctx.measureText(t).width;
+        ctx.fillStyle = C.bg;
+        ctx.fillRect(r.x0 + 12, r.y0 - fontPx * 0.5, tw + 8, fontPx);
+        ctx.fillStyle = ink(C.modes.n); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(t, r.x0 + 16, r.y0);
     }
 
     function drawEmptyHint() {
@@ -1861,17 +2120,19 @@
 
     function drawBodies() {
         const sel = selectedBody();
-        const t = realTime;
         // order: transient particles on top
         const list = bodies.slice().sort((a, b) => (a.transient - b.transient) || (a.held - b.held));
         for (const b of list) {
-            let x = b.x, y = b.y;
-            if (!b.transient && !b.held) y += Math.sin(t * 1.3 + b.bob) * 0.8;
+            const x = b.x, y = b.y;
             const st = b.step;
+            // emitted particles fade out as they leave
+            const fade = b.transient && b.emitted && !S.keepParticles ? fadeOf(simTime - b.born, S.mirrorWalls && b.Z === 0 ? MIRROR_LIFE : 0) : 1;
+            if (fade <= 0) continue;
+            ctx.globalAlpha = fade;
             const scale = 1 + 0.08 * b.pulse;
-            // excited nucleus: a soft halo
+            // excited nucleus: a soft halo (a steady one for a long-lived isomer)
             if (b.excited > 0 || b.iso) {
-                const k = b.iso ? 0.55 + 0.15 * Math.sin(t * 3 + b.bob) : 1;
+                const k = b.excited > 0 ? 1 : 0.6;
                 const g = ctx.createRadialGradient(x, y, b.R * 0.6, x, y, b.R * 1.9 + 6);
                 g.addColorStop(0, hexA(C.gamma, 0.35 * k));
                 g.addColorStop(1, hexA(C.gamma, 0));
@@ -1882,22 +2143,24 @@
                 ctx.fillStyle = hexA(C.accent, C.dark ? 0.13 : 0.16);
                 ctx.beginPath(); ctx.arc(x, y, b.R + 9, 0, TAU); ctx.fill();
             }
-            // electron capture: an inner-shell electron spirals in
+            // electron capture: an inner-shell electron spirals in to the proton that takes it
             if (st && st.kind === 'ec' && !st.fired) {
-                const u = Math.min(1, st.t / (st.dur * 0.55));
+                const u = Math.min(1, st.t / (st.dur * FIRE_AT.ec));
+                const sv = st.sites[0] || { x: 0, y: 0 };
                 const shellR = b.R + 16 + rN * 2;
                 ctx.strokeStyle = hexA(C.electron, 0.45 * (1 - u * 0.5)); ctx.lineWidth = 1;
                 ctx.setLineDash([3, 4]);
                 ctx.beginPath(); ctx.arc(x, y, shellR, 0, TAU); ctx.stroke();
                 ctx.setLineDash([]);
-                const rr = shellR * (1 - u) + b.R * 0.3 * u;
-                const ang = st.dir + u * 5;
-                const ex = x + Math.cos(ang) * rr, ey = y + Math.sin(ang) * rr;
-                drawDot(ex, ey, Math.max(2.4, rN * 0.62), C.electron);
+                const ang = st.dir + u * 5, rr = shellR * (1 - u);
+                const ex = x + sv.x * u + Math.cos(ang) * rr, ey = y + sv.y * u + Math.sin(ang) * rr;
+                drawDot(ex, ey, Math.max(2.4, rN * 0.5), C.electron);
                 ctx.font = font(700, Math.max(10, fontPx * 0.85)); ctx.fillStyle = ink(C.electron);
                 ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                ctx.fillText('e\u207b', ex + 5, ey - 8);
+                ctx.fillText('e⁻', ex + 5, ey - 8);
             }
+            // a flying alpha, proton or neutron: its streak goes behind it
+            if (b.transient && b.trail && !b.held) drawTrail(b, x, y, false);
             // fission: the nucleus stretches into two lobes joined by a neck, then splits
             if (st && st.kind === 'fission' && !st.fired) {
                 const u = Math.min(1, st.t / (st.dur * 0.5));
@@ -1911,27 +2174,71 @@
             } else {
                 const w = b.sw * scale;
                 ctx.drawImage(b.sprite, x - w / 2, y - w / 2, w, w);
-            }
-            // the nucleon that changed in a beta decay or electron capture lights up
-            if (b.glow) {
-                const age = t - b.glow.t;
-                if (age > 0.7) b.glow = null;
-                else {
-                    const a = 1 - age / 0.7;
-                    const g = ctx.createRadialGradient(x + b.glow.x, y + b.glow.y, 0, x + b.glow.x, y + b.glow.y, rN * 3);
-                    g.addColorStop(0, hexA('#ffffff', 0.9 * a));
-                    g.addColorStop(0.4, hexA(b.glow.color, 0.6 * a));
-                    g.addColorStop(1, hexA(b.glow.color, 0));
-                    ctx.fillStyle = g;
-                    ctx.beginPath(); ctx.arc(x + b.glow.x, y + b.glow.y, rN * 3, 0, TAU); ctx.fill();
+                // a nucleus that has just gained or lost nucleons: the old look fades into the new one
+                if (b.prev) {
+                    const u = (simTime - b.prev.t) / 0.15;   // (quick: halfway, red and grey blend to pink)
+                    if (u >= 1 || u < 0) b.prev = null;
+                    else {
+                        const pw = b.prev.look.sw * scale;
+                        ctx.globalAlpha = fade * (1 - u);
+                        ctx.drawImage(b.prev.look.canvas, x - pw / 2, y - pw / 2, pw, pw);
+                        ctx.globalAlpha = fade;
+                    }
                 }
             }
+            drawChangingSites(b, x, y);
             if (b.transient) {
-                if (b.trail && !b.held) drawTrail(b, x, y);
+                if (b.trail && !b.held) drawTrail(b, x, y, true);
+                ctx.globalAlpha = 1;
                 continue;
             }
+            ctx.globalAlpha = 1;
             drawClockRing(b, x, y);
             if (!S.hideLabels) drawLabel(b, x, y, sel === b);
+        }
+    }
+
+    // The nucleon that changes in a beta decay or electron capture: it comes to the front with a growing glow
+    // while the decay builds up, then turns into the other kind of nucleon and sinks back.
+    function drawChangingSites(b, x, y) {
+        const st = b.step;
+        let sites = null, pre = 0, age = 0, color;
+        if (st && (st.kind === 'beta' || st.kind === 'ec') && !st.fired && st.sites) {
+            sites = st.sites;
+            pre = Math.min(1, st.t / (st.dur * FIRE_AT[st.kind]));
+            color = st.kind === 'ec' ? C.modes.e : (st.sign < 0 ? C.electron : C.positron);
+        } else if (b.glow) {
+            age = simTime - b.glow.t;
+            if (age > 1.1 || age < 0) { b.glow = null; return; }
+            sites = b.glow.sites; color = b.glow.color;
+        }
+        if (!sites || !sites.length) return;
+        const base = ctx.globalAlpha;
+        const sp = nucleonSprites(rN, dpr), ns = sp[0][0].width / dpr;
+        for (const sv of sites) {
+            const gx = x + sv.x, gy = y + sv.y;
+            const turn = pre ? 0 : Math.min(1, age / 0.3);
+            const show = pre ? Math.min(1, pre * 2.5) : (age < 0.7 ? 1 : Math.max(0, 1 - (age - 0.7) / 0.4));
+            const glowA = pre ? 0.4 + 0.4 * pre : 0.85 * show;
+            const gr = rN * 3.8;
+            const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
+            g.addColorStop(0, hexA('#ffffff', (pre ? 0.3 : 0.75) * glowA));
+            g.addColorStop(0.45, hexA(color, 0.6 * glowA));
+            g.addColorStop(1, hexA(color, 0));
+            ctx.fillStyle = g;
+            ctx.beginPath(); ctx.arc(gx, gy, gr, 0, TAU); ctx.fill();
+            // picked out: a little bigger than the rest, with a ring round it
+            const s = ns * (pre ? 1.2 + 0.2 * pre : 1.4 - 0.3 * Math.min(1, age / 0.9));
+            ctx.globalAlpha = base * show;
+            ctx.drawImage(sp[sv.to][SHADES - 1], gx - s / 2, gy - s / 2, s, s);
+            if (turn < 1) {
+                ctx.globalAlpha = base * show * (1 - turn);
+                ctx.drawImage(sp[sv.from][SHADES - 1], gx - s / 2, gy - s / 2, s, s);
+            }
+            ctx.globalAlpha = base * show;
+            ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(gx, gy, s * 0.62, 0, TAU); ctx.stroke();
+            ctx.globalAlpha = base;
         }
     }
 
@@ -1982,18 +2289,23 @@
             ctx.textAlign = 'center';
             ctx.fillText('Stable', x, y2);
         } else if (b.clock) {
+            // a stopwatch, then the count (one significant figure) right-aligned at a fixed point, so the
+            // digits stay put as it counts up
             const d = formatDuration(Math.pow(10, b.clock.logT));
-            // a stopwatch, then the number right-aligned at a fixed point so its digits stay put
+            const digits = d.wide[0] === '×' ? '0' : (/^(s|min|hours)$/.test(d.wide) ? '00' : '000');
             const icon = fontPx * 0.95;
-            const wNum = ctx.measureText('0.00').width, wUnit = ctx.measureText(' ' + d.unit).width;
-            const x0 = x - (icon + wNum + wUnit) / 2 + icon;
-            drawStopwatch(x0 - icon * 0.55, y2 - fontPx * 0.3, icon * 0.34);
-            ctx.textAlign = 'right';
+            const wNum = ctx.measureText(digits).width, wUnit = ctx.measureText(' ' + d.wide).width;
+            const right = x - (icon + wNum + wUnit) / 2 + icon + wNum;
             ctx.fillStyle = C.text;
-            ctx.fillText(d.num, x0 + wNum, y2);
+            ctx.font = font(700, Math.max(11, fontPx * 0.92));
+            const wn = ctx.measureText(d.num).width;
+            ctx.textAlign = 'right';
+            ctx.fillText(d.num, right, y2);
+            drawStopwatch(right - wn - icon * 0.6, y2 - fontPx * 0.3, icon * 0.34);
+            ctx.font = font(300, Math.max(11, fontPx * 0.92));
             ctx.textAlign = 'left';
             ctx.fillStyle = C.muted;
-            ctx.fillText(' ' + d.unit, x0 + wNum, y2);
+            ctx.fillText(' ' + d.unit, right, y2);
             b.labelW = Math.max(b.labelW, icon + wNum + wUnit);
             if (selected) {
                 ctx.textAlign = 'center';
@@ -2005,22 +2317,25 @@
         }
     }
 
-    // A flying alpha, proton or neutron: a fading streak behind it and its symbol.
-    function drawTrail(b, x, y) {
+    // A flying alpha, proton or neutron: a fading streak behind it, or (label) its symbol.
+    function drawTrail(b, x, y, label) {
         const sp = Math.hypot(b.vx, b.vy);
-        if (sp < 30) return;
+        if (sp < 20) return;
+        if (label) {
+            if (S.hideLabels) return;
+            ctx.font = font(700, Math.max(12, fontPx * 1.05)); ctx.fillStyle = b.trail.ink || ink(b.trail.color);
+            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.fillText(b.trail.text, x + b.R + 4, y - b.R - 4);
+            return;
+        }
         const ux = b.vx / sp, uy = b.vy / sp;
-        const len = Math.min(70, sp * 0.08 + 16);
+        const len = Math.min(70, sp * 0.25 + 18);
         const g = ctx.createLinearGradient(x, y, x - ux * len, y - uy * len);
-        g.addColorStop(0, hexA(b.trail.color, 0.7));
+        g.addColorStop(0, hexA(b.trail.color, 0.6));
         g.addColorStop(1, hexA(b.trail.color, 0));
         ctx.strokeStyle = g; ctx.lineWidth = Math.max(2, b.R * 0.8); ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(x - ux * b.R * 0.5, y - uy * b.R * 0.5); ctx.lineTo(x - ux * len, y - uy * len); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - ux * len, y - uy * len); ctx.stroke();
         ctx.lineCap = 'butt';
-        if (S.hideLabels) return;
-        ctx.font = font(700, Math.max(11, fontPx * 0.95)); ctx.fillStyle = ink(b.trail.color);
-        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-        ctx.fillText(b.trail.text, x + b.R + 4, y - b.R - 4);
     }
 
     function drawStopwatch(x, y, r) {
@@ -2044,61 +2359,67 @@
     }
 
     function drawSparks() {
-        const lw = Math.max(1.5, rN * 0.45);
-        const fsSmall = Math.max(10, fontPx * 0.85);
+        const lw = Math.max(1.5, rN * 0.4);
+        const fsSmall = Math.max(11, fontPx * 0.95);
+        ctx.font = font(700, fsSmall); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         for (const s of sparks) {
             if ((s.kind === 'nu' || s.kind === 'nubar') && !S.showNeutrinos) continue;
+            const a = fadeOf(s.age);
+            if (a <= 0) continue;
+            ctx.globalAlpha = a;
             const sp = Math.hypot(s.vx, s.vy) || 1;
             const ux = s.vx / sp, uy = s.vy / sp;
+            // the label shows once the particle is clear of the nucleus it left (and its label)
+            const labelled = !S.hideLabels && a > 0.3 && Math.hypot(s.x - s.ox, s.y - s.oy) > s.clear;
             if (s.kind === 'g') {
                 // a wave packet travelling along its path
-                const len = Math.max(26, rN * 7), amp = Math.max(3, rN * 0.9), k = TAU / Math.max(7, rN * 2);
+                const len = Math.max(26, rN * 6), amp = Math.max(3, rN * 0.75), k = TAU / Math.max(7, rN * 1.8);
                 ctx.strokeStyle = C.gamma; ctx.lineWidth = lw;
                 ctx.beginPath();
                 for (let i = 0; i <= 24; i++) {
                     const d = -len * i / 24;
                     const env = Math.sin(Math.PI * i / 24);
-                    const o = Math.sin(d * k + s.age * 40) * amp * env;
+                    const o = Math.sin(d * k + s.age * 18) * amp * env;
                     const px = s.x + ux * d - uy * o, py = s.y + uy * d + ux * o;
                     if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
                 }
                 ctx.stroke();
-                if (S.showDetails && s.energy > 0 && s.age < 0.9) {
-                    ctx.font = font(700, fsSmall); ctx.fillStyle = ink(C.gamma); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                    ctx.fillText(formatEnergy(s.energy), s.x + 6, s.y - 10);
+                if (labelled) {
+                    ctx.fillStyle = ink(C.gamma);
+                    ctx.fillText(S.showDetails && s.energy > 0 ? 'γ ' + formatEnergy(s.energy) : 'γ', s.x + 6, s.y - 10);
                 }
-                continue;
-            }
-            if (s.kind === 'nu' || s.kind === 'nubar') {
+            } else if (s.kind === 'nu' || s.kind === 'nubar') {
                 ctx.strokeStyle = C.neutrino; ctx.lineWidth = 1;
                 ctx.setLineDash([2, 4]);
                 ctx.beginPath(); ctx.moveTo(s.x - ux * 30, s.y - uy * 30); ctx.lineTo(s.x, s.y); ctx.stroke();
                 ctx.setLineDash([]);
                 ctx.fillStyle = C.neutrino;
-                ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(2, rN * 0.45), 0, TAU); ctx.fill();
-                if (s.age > 0.12 && s.age < 0.9 && !S.hideLabels) {
-                    ctx.font = font(700, fsSmall); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                    ctx.fillText(s.kind === 'nu' ? 'ν' : 'ν̄', s.x + 5, s.y - 8);
+                ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(2, rN * 0.4), 0, TAU); ctx.fill();
+                if (labelled) ctx.fillText(s.kind === 'nu' ? 'ν' : 'ν̄', s.x + 5, s.y - 8);
+            } else {
+                const col = s.kind === 'e-' ? C.electron : C.positron;
+                if (s.trail.length >= 4) {
+                    ctx.strokeStyle = hexA(col, 0.45); ctx.lineWidth = Math.max(1.5, rN * 0.35);
+                    ctx.beginPath(); ctx.moveTo(s.trail[0], s.trail[1]);
+                    for (let i = 2; i < s.trail.length; i += 2) ctx.lineTo(s.trail[i], s.trail[i + 1]);
+                    ctx.lineTo(s.x, s.y);
+                    ctx.stroke();
                 }
-                continue;
-            }
-            const col = s.kind === 'e-' ? C.electron : C.positron;
-            if (s.trail.length >= 4) {
-                ctx.strokeStyle = hexA(col, 0.45); ctx.lineWidth = Math.max(1.5, rN * 0.4);
-                ctx.beginPath(); ctx.moveTo(s.trail[0], s.trail[1]);
-                for (let i = 2; i < s.trail.length; i += 2) ctx.lineTo(s.trail[i], s.trail[i + 1]);
-                ctx.stroke();
-            }
-            drawDot(s.x, s.y, Math.max(2.4, rN * 0.62), col);
-            if (s.age > 0.12 && s.age < 0.9 && !S.hideLabels) {   // once clear of the nucleus's own label
-                ctx.font = font(700, fsSmall); ctx.fillStyle = ink(col); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                ctx.fillText(s.kind === 'e-' ? 'e⁻' : 'e⁺', s.x + 6, s.y - 9);
+                drawDot(s.x, s.y, Math.max(2.4, rN * 0.5), col);
+                if (labelled) {
+                    ctx.fillStyle = ink(col);
+                    ctx.fillText(s.kind === 'e-' ? 'e⁻' : 'e⁺', s.x + 6, s.y - 9);
+                }
             }
         }
+        ctx.globalAlpha = 1;
     }
 
-    function drawEffects() {
+    // under: the glow round a nucleus that is taking things in (drawn beneath it, so it is not washed out);
+    // otherwise everything else, on top.
+    function drawEffects(under) {
         for (const e of effects) {
+            if (under !== (e.kind === 'flash' && !!e.body)) continue;
             const u = e.age / e.life;
             if (e.kind === 'flash') {
                 const r = e.r * (0.6 + 0.8 * u);
@@ -2112,69 +2433,91 @@
                 ctx.globalAlpha = a;
                 ctx.font = font(700, fontPx * 1.05);
                 ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-                const w = ctx.measureText(e.text).width;
+                const text = e.count > 1 ? e.text + ' ×' + e.count : e.text;
+                const w = ctx.measureText(text).width;
                 const x = Math.max(w / 2 + 4, Math.min(viewW - w / 2 - 4, e.x));
                 const y = Math.max(fontPx + 4, e.y - e.rise - e.stack * fontPx * 1.3);
                 ctx.lineWidth = 3; ctx.strokeStyle = C.bg; ctx.lineJoin = 'round';
-                ctx.strokeText(e.text, x, y);
+                ctx.strokeText(text, x, y);
                 ctx.fillStyle = ink(e.color);
-                ctx.fillText(e.text, x, y);
+                ctx.fillText(text, x, y);
                 ctx.globalAlpha = 1;
             }
         }
     }
 
-    // Top-left: the decay equations (newest first) and the selected nucleus's details.
+    // Top left: the carbon-dating count and the selected nucleus's details. Under the chart: the equations.
     function drawPanels() {
         const pad = layout.pad;
         let y = pad;
         panelRects = [];
         const maxW = (layout.tall || !S.showChart ? viewW : layout.inset.x) - pad * 2 - 4;
-        if (S.showEquations) {
-            const fs = Math.max(12, Math.min(16, viewW / 70));
-            const lineH = fs * 1.75;
-            const items = eqLog.slice(-4).reverse();
-            const showQ = S.showDetails;
-            const widths = items.map((it) => drawEquation(ctx, it.eq, 0, 0, fs, false) + (showQ ? qWidth(it.eq, fs) : 0));
-            const w = Math.min(maxW, Math.max(fs * 10, ...widths) + fs * 1.4);
-            const h = items.length ? items.length * lineH + fs * 0.6 : lineH + fs * 0.4;
-            roundRect(ctx, pad, y, w, h, 6);
-            ctx.fillStyle = C.panel; ctx.fill();
-            ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.stroke();
-            panelRects.push({ x: pad, y, w, h });
-            ctx.save();
-            ctx.beginPath(); ctx.rect(pad, y, w, h); ctx.clip();
-            if (!items.length) {
-                ctx.font = font(300, fs * 0.9); ctx.fillStyle = C.muted; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-                ctx.fillText('Decay equations appear here', pad + fs * 0.7, y + h / 2);
-            }
-            items.forEach((it, i) => {
-                const ly = y + fs * 0.3 + lineH * (i + 0.5) + fs * 0.32;
-                ctx.globalAlpha = i === 0 ? 1 : Math.max(0.35, 0.8 - i * 0.15);
-                ctx.fillStyle = it.color;
-                ctx.fillRect(pad + fs * 0.3, ly - fs * 0.75, 3, fs * 1.05);
-                ctx.fillStyle = C.text;
-                const ew = drawEquation(ctx, it.eq, pad + fs * 0.75, ly, fs, true);
-                if (showQ) {
-                    ctx.font = font(300, fs * 0.8); ctx.fillStyle = C.muted; ctx.textAlign = 'left';
-                    ctx.fillText(qText(it.eq), pad + fs * 0.75 + ew + fs * 0.8, ly);
-                }
-            });
-            ctx.restore();
-            ctx.globalAlpha = 1;
-            y += h + pad * 0.7;
-        }
+        if (batch) y = drawBatchPanel(pad, y, maxW) + pad * 0.7;
         const sel = selectedBody();
         if (S.showDetails && sel && !sel.transient) drawDetails(sel, pad, y, maxW);
+        if (S.showEquations) drawEquations();
+    }
+    function panelBox(x, y, w, h) {
+        roundRect(ctx, x, y, w, h, 6);
+        ctx.fillStyle = C.panel; ctx.fill();
+        ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.stroke();
+        panelRects.push({ x, y, w, h });
+    }
+
+    // The latest decay equations, newest first (lit up briefly when it arrives), right-aligned under the chart.
+    function drawEquations() {
+        const L = layout.eq;
+        const items = eqLog.slice(-L.lines).reverse();
+        if (!items.length) return;
+        const showQ = S.showDetails;
+        let fs = layout.eqFs;
+        const widest = (f) => Math.max(...items.map((it) => drawEquation(ctx, it.eq, 0, 0, f, false) + (showQ ? qWidth(it.eq, f) : 0)));
+        let ew = widest(fs);
+        if (ew + fs * 1.4 > L.maxW) { fs = Math.max(11, fs * (L.maxW - fs * 1.4) / ew); ew = widest(fs); }
+        const lineH = fs * 1.7;
+        const w = Math.min(L.maxW, ew + fs * 1.4), h = items.length * lineH + fs * 0.5;
+        const x = L.right - w, y = L.fromTop ? L.top : L.bottom - h;
+        panelBox(x, y, w, h);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+        items.forEach((it, i) => {
+            const top = y + fs * 0.25 + lineH * i;
+            const ly = top + lineH * 0.5 + fs * 0.32;
+            const age = realTime - it.t;
+            if (i === 0 && age < 2) {
+                ctx.fillStyle = hexA(it.color[0] === '#' ? it.color : C.accent, 0.16 * (1 - age / 2));
+                ctx.fillRect(x + 1, top, w - 2, lineH);
+            }
+            ctx.globalAlpha = i === 0 ? 1 : Math.max(0.4, 0.78 - i * 0.14);
+            ctx.fillStyle = it.color;
+            ctx.fillRect(x + fs * 0.3, ly - fs * 0.75, 3, fs * 1.05);
+            ctx.fillStyle = C.text;
+            const ew2 = drawEquation(ctx, it.eq, x + fs * 0.75, ly, fs, true);
+            if (showQ) {
+                ctx.font = font(300, fs * 0.8); ctx.fillStyle = C.muted; ctx.textAlign = 'left';
+                ctx.fillText(qText(it.eq), x + fs * 0.75 + ew2 + fs * 0.8, ly);
+            }
+            ctx.globalAlpha = 1;
+        });
+        ctx.restore();
     }
     function qText(eq) { return 'Q = ' + formatEnergy(eq.Q); }
     function qWidth(eq, fs) { ctx.font = font(300, fs * 0.8); return ctx.measureText(qText(eq)).width + fs * 0.8; }
+
+    // A nucleon as a small ball (for text in the panels), centred on (x, y).
+    function drawNucleonIcon(type, x, y, r) {
+        const sp = nucleonSprites(r, dpr);
+        const c = sp[type][SHADES - 1];
+        ctx.drawImage(c, x - c.width / dpr / 2, y - c.height / dpr / 2, c.width / dpr, c.height / dpr);
+    }
 
     function drawDetails(b, x, y, maxW) {
         const info = b.info;
         const fs = Math.max(11, Math.min(14, viewW / 85));
         const lines = [];
-        lines.push([b.Z + ' protons, ' + b.N + ' neutrons' + (b.Z > 0 ? '  (N/Z = ' + (b.N / b.Z).toFixed(2) + ')' : ''), C.text]);
+        // the first line is the make-up, with a proton and a neutron for a key
+        const pText = b.Z + (b.Z === 1 ? ' proton' : ' protons'), nText = b.N + (b.N === 1 ? ' neutron' : ' neutrons');
+        const ratio = b.Z > 0 ? '   N/Z = ' + (b.N / b.Z).toFixed(2) : '';
         if (info.stable) lines.push(['Stable' + (info.known ? '' : ' (model)'), C.text]);
         else {
             lines.push(['Half-life: ' + formatHalfLife(info.hl) + (info.estimated ? ' (estimated)' : ''), C.text]);
@@ -2189,16 +2532,14 @@
         if (b.iso) lines.push(['Excited (metastable) state, ' + formatEnergy(info.isoE) + ' above the ground state', C.muted]);
         const lineH = fs * 1.45;
         const titleFs = fs * 1.15;
+        const ball = fs * 0.42, gap = fs * 0.5;
         ctx.font = font(300, fs);
-        let w = 0;
+        let w = ball * 4 + gap * 3 + ctx.measureText(pText + nText + ratio).width;
         lines.forEach(([t]) => { w = Math.max(w, ctx.measureText(t).width); });
         ctx.font = font(700, titleFs);
         w = Math.min(maxW, Math.max(w, ctx.measureText(info.name).width + titleFs * 3.2) + fs * 1.6);
-        const h = titleFs * 1.7 + lines.length * lineH + fs * 0.4;
-        roundRect(ctx, x, y, w, h, 6);
-        ctx.fillStyle = C.panel; ctx.fill();
-        ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.stroke();
-        panelRects.push({ x, y, w, h });
+        const h = titleFs * 1.7 + (lines.length + 1) * lineH + fs * 0.4;
+        panelBox(x, y, w, h);
         ctx.save();
         ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
         ctx.fillStyle = C.text;
@@ -2209,12 +2550,73 @@
         ctx.fillStyle = C.muted;
         drawNotation(ctx, b.Z, b.N, b.iso, x + fs * 0.8 + nw + fs * 0.8, ty, titleFs, true);
         ctx.font = font(300, fs);
+        let lx = x + fs * 0.8;
+        const y1 = ty + titleFs * 0.45 + lineH;
+        const part = (type, t) => {
+            drawNucleonIcon(type, lx + ball, y1 - fs * 0.33, ball);
+            lx += ball * 2 + fs * 0.3;
+            ctx.fillStyle = C.text; ctx.fillText(t, lx, y1);
+            lx += ctx.measureText(t).width + gap;
+        };
+        part(1, pText); part(0, nText);
+        ctx.fillStyle = C.muted; ctx.fillText(ratio.trim(), lx, y1);
         lines.forEach(([t, col], i) => {
             ctx.fillStyle = col;
-            ctx.textAlign = 'left';
-            ctx.fillText(t, x + fs * 0.8, ty + titleFs * 0.45 + lineH * (i + 1));
+            ctx.fillText(t, x + fs * 0.8, y1 + lineH * (i + 1));
         });
         ctx.restore();
+    }
+
+    // The carbon-dating count: how many of the sample are left, after how many half-lives, and a graph of
+    // the count against the halving curve. Returns the bottom of the panel.
+    function drawBatchPanel(x, y, maxW) {
+        const fs = Math.max(11, Math.min(14, viewW / 85));
+        const left = bodies.filter((b) => batch.ids.has(b.id) && b.Z === batch.Z && b.N === batch.N).length;
+        const halves = batch.t / batch.hl;
+        if (left !== batch.last) { batch.points.push([halves, left]); batch.last = left; }
+        const title = batch.name + ' left: ' + left + ' of ' + batch.total;
+        const yrs = batch.t / YEAR;
+        const sub = halves.toFixed(1) + ' half-lives  ·  ' + (yrs >= 1 ? Number(yrs.toPrecision(2)).toLocaleString('en-GB') : '0') + ' years';
+        const gw = fs * 14, gh = fs * 4.6;
+        ctx.font = font(700, fs * 1.05);
+        let w = ctx.measureText(title).width;
+        ctx.font = font(300, fs * 0.92);
+        w = Math.min(maxW, Math.max(w, ctx.measureText(sub).width, gw + fs * 1.5) + fs * 1.6);
+        const h = fs * 3.3 + gh + fs * 1.9;
+        panelBox(x, y, w, h);
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        ctx.font = font(700, fs * 1.05); ctx.fillStyle = C.text;
+        ctx.fillText(title, x + fs * 0.8, y + fs * 1.45);
+        ctx.font = font(300, fs * 0.92); ctx.fillStyle = C.muted;
+        ctx.fillText(sub, x + fs * 0.8, y + fs * 2.75);
+        // the graph: count (up) against half-lives 0 to 5 (across)
+        const gx = x + fs * 1.6, gy = y + fs * 3.4, X = (u) => gx + Math.min(5, u) / 5 * gw, Y = (n) => gy + gh - n / batch.total * gh;
+        ctx.strokeStyle = C.border; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + gh); ctx.lineTo(gx + gw, gy + gh); ctx.stroke();
+        ctx.font = font(300, fs * 0.75); ctx.fillStyle = C.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        for (let i = 1; i <= 5; i++) {
+            ctx.beginPath(); ctx.moveTo(X(i), gy + gh); ctx.lineTo(X(i), gy + gh + 3); ctx.stroke();
+            ctx.fillText(String(i), X(i), gy + gh + 4);
+        }
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(batch.total), gx - 4, Y(batch.total));
+        ctx.fillText('0', gx - 4, Y(0));
+        // expected: halves every half-life
+        ctx.setLineDash([3, 3]); ctx.strokeStyle = C.muted;
+        ctx.beginPath();
+        for (let i = 0; i <= 40; i++) { const u = i / 8; const px = X(u), py = Y(batch.total * Math.pow(0.5, u)); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }
+        ctx.stroke(); ctx.setLineDash([]);
+        // counted
+        ctx.strokeStyle = C.modes.b; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(X(0), Y(batch.total));
+        let n = batch.total;
+        batch.points.forEach(([u, c]) => { ctx.lineTo(X(u), Y(n)); ctx.lineTo(X(u), Y(c)); n = c; });
+        ctx.lineTo(X(halves), Y(n));
+        ctx.stroke();
+        drawDot(X(halves), Y(n), 3, C.modes.b);
+        ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillStyle = C.muted; ctx.font = font(300, fs * 0.75);
+        ctx.fillText('half-lives', gx + gw, gy + gh + fs * 1.85);
+        return y + h;
     }
 
     function drawBin() {
@@ -2270,14 +2672,23 @@
         const a = u < 0.08 ? u / 0.08 : (u > 0.8 ? (1 - u) / 0.2 : 1);
         ctx.globalAlpha = a;
         ctx.font = font(700, fontPx);
-        const w = Math.min(viewW - 20, ctx.measureText(toast.text).width + fontPx * 2);
-        const h = fontPx * 2.2;
+        // one line if it fits, else wrapped onto two or three
+        const maxW = viewW - 20 - fontPx * 2;
+        const lines = [];
+        toast.text.split(' ').forEach((word) => {
+            const last = lines[lines.length - 1];
+            if (last != null && ctx.measureText(last + ' ' + word).width <= maxW) lines[lines.length - 1] = last + ' ' + word;
+            else lines.push(word);
+        });
+        const shown = lines.slice(0, 3).map((t) => fitText(t, maxW));
+        const w = Math.min(viewW - 20, Math.max(...shown.map((t) => ctx.measureText(t).width)) + fontPx * 2);
+        const lh = fontPx * 1.3, h = lh * shown.length + fontPx * 0.9;
         const x = (viewW - w) / 2, y = viewH - h - layout.pad;
-        roundRect(ctx, x, y, w, h, h / 2);
+        roundRect(ctx, x, y, w, h, Math.min(h / 2, fontPx * 1.1));
         ctx.fillStyle = C.panelSolid; ctx.fill();
         ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.stroke();
         ctx.fillStyle = C.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(fitText(toast.text, w - fontPx), viewW / 2, y + h / 2 + 0.5);
+        shown.forEach((t, i) => ctx.fillText(t, viewW / 2, y + fontPx * 0.45 + lh * (i + 0.5) + 0.5));
         ctx.globalAlpha = 1;
     }
 
@@ -2394,14 +2805,17 @@
         if (overBin(p.x, p.y) || !p.inside || overToolbar(e)) { poof(b); return; }
         const t = findDropTarget(b.x, b.y, b, b.R);
         if (t) { if (combine(t, b)) { selectedId = t.id; } return; }
-        throwBody(b, d.samples);
+        // a flick: the thrown nucleus is selected, so the chart and the info bar follow what it takes in
+        if (throwBody(b, d.samples)) selectedId = b.id;
     }
 
+    // Set a released body moving at the speed of the pointer's last moments (in real time, whatever the
+    // simulation speed). Returns true for a real throw.
     function throwBody(b, samples) {
-        if (samples.length < 2) return;
+        if (samples.length < 2) return false;
         const now = performance.now();
         const recent = samples.filter((s) => now - s[0] < 120);
-        if (recent.length < 2) return;
+        if (recent.length < 2) return false;
         const a = recent[0], c = recent[recent.length - 1];
         const dt = Math.max(0.016, (c[0] - a[0]) / 1000);
         let vx = (c[1] - a[1]) / dt, vy = (c[2] - a[2]) / dt;
@@ -2409,7 +2823,9 @@
         const max = Math.max(viewW, viewH) * 2.5;
         if (sp > max) { vx *= max / sp; vy *= max / sp; }
         b.vx = vx; b.vy = vy;
-        if (sp > 250) b.projectileUntil = realTime + 1.5;
+        b.thrown = true;
+        b.ignore = null;
+        return sp > 250;
     }
 
     function poof(b) {
@@ -2496,12 +2912,13 @@
     // A free spot for something added with a tap (as far as possible from everything else).
     function freeSpot() {
         const wr = workRect();
-        const inset = S.showChart ? layout.inset : null;
+        const avoid = panelRects.slice();
+        if (S.showChart) avoid.push(layout.inset);
         let best = { x: viewW * 0.4, y: viewH * 0.45 }, bd = -1;
         for (let i = 0; i < 40; i++) {
             const x = wr.x0 + 40 + Math.random() * (wr.x1 - wr.x0 - 80);
             const y = wr.y0 + 40 + Math.random() * (wr.y1 - wr.y0 - 100);
-            if (inset && x > inset.x - 40 && x < inset.x + inset.w + 40 && y > inset.y - 50 && y < inset.y + inset.h + 40) continue;
+            if (avoid.some((r) => x > r.x - 40 && x < r.x + r.w + 40 && y > r.y - 50 && y < r.y + r.h + 40)) continue;
             let d = 1e9;
             for (const b of bodies) d = Math.min(d, Math.hypot(b.x - x, b.y - y) - b.R);
             if (d > bd) { bd = d; best = { x, y }; }
@@ -2509,7 +2926,21 @@
         return best;
     }
 
-    // --- the tray (palette strip) ---
+    // --- the tray: one column of particles and nuclei beside the canvas (a row under it in portrait) ---
+    // A small picture of a nuclide for the tray, sized by its mass number.
+    function trayIcon(Z, N) {
+        const A = Z + N, arr = arrangement(A);
+        const size = 9 + 2.3 * Math.cbrt(A);                   // CSS px across
+        const k = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+        const look = renderNucleus(Z, N, size / 2 / (arr.radius * SPACING + 1), k);
+        const c = look.canvas;
+        c.className = 'nuc-icon';
+        c.setAttribute('aria-hidden', 'true');
+        c.style.width = c.style.height = look.sw + 'px';
+        c.style.margin = (-(look.sw - size) / 2) + 'px';      // the sprite has a little room round the ball
+        return c;
+    }
+
     function buildPalette() {
         if (!ui.palette) return;
         ui.palette.innerHTML = '';
@@ -2520,14 +2951,22 @@
             const particle = pr.Z + pr.N === 1;
             btn.className = 'nuc-item' + (particle ? ' nuc-particle' : '');
             const desc = info.stable ? 'stable' : modesSummary(info, false) + ', half-life ' + formatHalfLife(info.hl);
-            btn.title = (particle ? info.name : info.name + ': ' + desc) + (pr.note && !particle ? ' (' + pr.note + ')' : '') + '. Drag onto the canvas, or tap to add.';
+            btn.title = (particle ? info.name : info.name + ': ' + desc) + (pr.note && !particle ? ' (' + pr.note + ')' : '');
             btn.setAttribute('aria-label', 'Add ' + info.name);
-            const cls = chartClass(info);
-            if (particle) {
-                btn.innerHTML = '<span class="nuc-ball nuc-ball-' + (pr.Z ? 'p' : 'n') + '" aria-hidden="true"></span><span class="nuc-item-text">' + (pr.Z ? 'p' : 'n') + '</span>';
-            } else {
-                btn.innerHTML = '<span class="nuc-item-text"><sup>' + (pr.Z + pr.N) + (pr.iso ? 'm' : '') + '</sup>' + elementSymbol(pr.Z) + '</span>' +
-                    '<span class="nuc-mode nuc-mode-' + cls + '" aria-hidden="true"></span>';
+            const icon = document.createElement('span');
+            icon.className = 'nuc-icon-box';
+            icon.appendChild(trayIcon(pr.Z, pr.N));
+            btn.appendChild(icon);
+            const text = document.createElement('span');
+            text.className = 'nuc-item-text';
+            if (particle) text.textContent = pr.Z ? 'p' : 'n';
+            else text.innerHTML = '<sup>' + (pr.Z + pr.N) + (pr.iso ? 'm' : '') + '</sup>' + elementSymbol(pr.Z);
+            btn.appendChild(text);
+            if (!particle) {
+                const dot = document.createElement('span');
+                dot.className = 'nuc-mode nuc-mode-' + chartClass(info);
+                dot.setAttribute('aria-hidden', 'true');
+                btn.appendChild(dot);
             }
             bindPaletteItem(btn, pr);
             ui.palette.appendChild(btn);
@@ -2542,7 +2981,8 @@
             start = { x: e.clientX, y: e.clientY, t: performance.now() };
             samples = [];
             try { btn.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-            e.preventDefault();
+            // (not for touch: the tray scrolls under a finger, along its length)
+            if (e.pointerType === 'mouse') e.preventDefault();
         });
         btn.addEventListener('pointermove', (e) => {
             if (e.pointerId !== pid) return;
@@ -2592,6 +3032,181 @@
         if (b) { selectedId = b.id; b.pulse = 1; }
     }
 
+    // The tray folds away to a slim strip, giving the canvas the room; each viewer's choice is remembered.
+    const TRAY_KEY = 'nuclearTrayCollapsed';
+    function setTrayCollapsed(collapsed, remember) {
+        const host = ui.toolbar ? ui.toolbar.closest('.nuclear-sim') : null;
+        if (host) host.classList.toggle('nuc-tray-collapsed', collapsed);
+        if (ui.trayToggle) {
+            ui.trayToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            const label = collapsed ? 'Show the particles and nuclei' : 'Hide the particles and nuclei';
+            ui.trayToggle.title = label;
+            ui.trayToggle.setAttribute('aria-label', label);
+        }
+        if (remember) {
+            try { localStorage.setItem(TRAY_KEY, collapsed ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+            // the canvas area changes: the page measures its layout again
+            window.dispatchEvent(new Event('resize'));
+        }
+    }
+    function bindTray() {
+        let collapsed = false;
+        try { collapsed = localStorage.getItem(TRAY_KEY) === '1'; } catch (e) { /* storage unavailable */ }
+        setTrayCollapsed(collapsed, false);
+        if (ui.trayToggle) {
+            ui.trayToggle.addEventListener('click', () => {
+                setTrayCollapsed(ui.trayToggle.getAttribute('aria-expanded') === 'true', true);
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Setups: ready-made scenes, chosen in the settings panel. Each one replaces the scene.
+    // ------------------------------------------------------------------
+    let scheduled = [];             // [{ at (simulation time), fn }]: the setups' timed steps
+    const later = (s, fn) => scheduled.push({ at: simTime + s, fn });
+
+    // Positions for up to n nuclei, each given a cw x ch box (nucleus and label), in the space the chart and
+    // the equations leave (and clear of `avoid`; within `area` if given), nearest the middle first.
+    function setupSlots(n, cw, ch, avoid, area) {
+        const pad = layout.pad, inset = layout.inset;
+        const blocked = avoid ? [avoid] : [];
+        if (!layout.tall) {
+            if (S.showChart) blocked.push({ x0: inset.x - 8, y0: 0, x1: viewW, y1: viewH });
+            else if (S.showEquations) blocked.push({ x0: viewW * 0.55, y0: viewH * 0.6, x1: viewW, y1: viewH });
+        } else {
+            if (S.showChart) blocked.push({ x0: inset.x - 8, y0: inset.y - 8, x1: viewW, y1: viewH });
+            if (S.showEquations) blocked.push({ x0: 0, y0: layout.eq.top - 6, x1: viewW, y1: viewH });
+        }
+        const A = area || { x0: pad, y0: pad, x1: viewW - pad, y1: viewH - pad };
+        const cols = Math.max(1, Math.floor((A.x1 - A.x0) / cw)), rows = Math.max(1, Math.floor((A.y1 - A.y0) / ch));
+        const ox = (A.x0 + A.x1 - cols * cw) / 2, oy = (A.y0 + A.y1 - rows * ch) / 2;
+        const slots = [];
+        for (let j = 0; j < rows; j++) {
+            for (let i = 0; i < cols; i++) {
+                const x0 = ox + i * cw, y0 = oy + j * ch;
+                if (blocked.some((r) => x0 < r.x1 && x0 + cw > r.x0 && y0 < r.y1 && y0 + ch > r.y0)) continue;
+                slots.push({ x: x0 + cw / 2, y: y0 + ch * 0.38, row: j, col: i });
+            }
+        }
+        if (!slots.length) return [{ x: viewW * 0.3, y: viewH * 0.35, row: 0, col: 0 }];
+        const mx = slots.reduce((s, p) => s + p.x, 0) / slots.length, my = slots.reduce((s, p) => s + p.y, 0) / slots.length;
+        slots.sort((a, b) => Math.hypot(a.x - mx, (a.y - my) * 1.3) - Math.hypot(b.x - mx, (b.y - my) * 1.3));
+        return slots.slice(0, n);
+    }
+    const readingOrder = (pts) => pts.sort((a, b) => (a.row - b.row) || (a.col - b.col));
+    // The box a nucleus of this kind needs with its label, for setupSlots.
+    function slotSize(Z, N) {
+        const R = nuclideLook(Z, N).R;
+        ctx.font = font(700, fontPx);
+        const lw = ctx.measureText(nuclideName(Z, N, 0)).width;
+        return [Math.max(2 * R + 16, lw + 22), 2 * R + 20 + fontPx * 2.6];
+    }
+    function setToggle(el, on) {
+        if (el && el.checked !== on) { el.checked = on; el.dispatchEvent(new Event('change')); }
+    }
+    // A setting a setup needs (on or off): set for it, and put back when the scene is replaced.
+    let setupToggles = [];
+    function setupNeeds(el, on) {
+        const want = on !== false;
+        if (!el || el.checked === want) return;
+        setToggle(el, want);
+        setupToggles.push([el, !want]);
+    }
+
+    const SETUPS = {
+        // U-235 in a box whose walls reflect neutrons; one neutron is fired in
+        chain() {
+            setupNeeds(ui.mirrorWalls);
+            const [cw, ch] = slotSize(92, 143);
+            // (on a tall canvas, in the column beside the chart, so the reflector is a plain box)
+            const side = layout.tall && S.showChart;
+            const pts = setupSlots(layout.tall ? 9 : 14, cw, ch, null, side ? { x0: layout.pad, y0: layout.pad, x1: layout.inset.x - 8, y1: (S.showEquations ? layout.eq.top : viewH) - 6 } : null);
+            const us = pts.map((p) => addBody(92, 143, 0, p.x, p.y)).filter(Boolean);
+            // a reflector round the core keeps the neutrons among the nuclei, as in a reactor
+            const m = layout.pad * 0.5;
+            reflector = {
+                x0: Math.max(m, Math.min(...pts.map((p) => p.x)) - cw / 2 - m), x1: Math.min(viewW - m, Math.max(...pts.map((p) => p.x)) + cw / 2 + m),
+                y0: Math.max(m, Math.min(...pts.map((p) => p.y)) - ch * 0.38 - m), y1: Math.min(viewH - m, Math.max(...pts.map((p) => p.y)) + ch * 0.62 + m),
+            };
+            showToast('One neutron splits a uranium-235 nucleus, and the neutrons it frees split more', 6);
+            // the first neutron comes in from the left, from outside the reflector, aimed at the nearest nucleus
+            later(0.6, () => {
+                const live = us.filter((u) => bodies.indexOf(u) >= 0 && !busy(u));
+                if (!live.length) return;
+                const t = live.reduce((a, b) => (b.x < a.x ? b : a));
+                const x = Math.min(t.x - t.R - radBase() * SPEED.n * 0.6, reflector ? reflector.x0 - 20 : viewW);
+                const n = launchNeutron(Math.max(layout.pad + 6, x), t.y, 0, []);
+                n.forceFission = true;
+            });
+        },
+        // a single U-238, followed on the chart down to lead-206
+        series() {
+            setupNeeds(ui.showEquations);
+            const [cw, ch] = slotSize(92, 146);
+            const p = setupSlots(1, cw, ch)[0];
+            const b = addBody(92, 146, 0, p.x, p.y);
+            if (b) selectedId = b.id;
+            showToast('Uranium-238 decays by 8 α and 6 β⁻ decays to stable lead-206. Raise the speed to see it all', 7);
+        },
+        // twenty C-14 nuclei on one steady clock: half are left after each half-life (twenty identical
+        // decay labels would only hide the count)
+        dating() {
+            setupNeeds(ui.showTags, false);
+            const fs = Math.max(11, Math.min(14, viewW / 85));
+            const [cw, ch] = slotSize(6, 8);
+            const pts = setupSlots(layout.tall ? 12 : 20, cw, ch, { x0: 0, y0: 0, x1: fs * 18, y1: fs * 10.5 });
+            const hl = getInfo(6, 8, 0).hl;
+            batch = { Z: 6, N: 8, name: 'Carbon-14', total: 0, ids: new Set(), t: 0, hl, rate: hl / 3, points: [], last: 0 };
+            readingOrder(pts).forEach((p) => { const b = addBody(6, 8, 0, p.x, p.y); if (b) batch.ids.add(b.id); });
+            batch.total = batch.last = batch.ids.size;
+            showToast('Here one half-life (5,700 years) takes 3 seconds: watch the sample halve', 6);
+        },
+        // carbon-9 to carbon-16: too few neutrons, beta+; too many, beta-
+        carbon() {
+            const [cw, ch] = slotSize(6, 8);
+            const pts = readingOrder(setupSlots(8, cw, ch));
+            pts.forEach((p, i) => addBody(6, 3 + i, 0, p.x, p.y));
+            showToast('Too few neutrons: β⁺ decay. Too many: β⁻ decay. Only carbon-12 and -13 are stable', 7);
+        },
+        // deuterium and tritium in pairs; the first pair is pushed together
+        fusion() {
+            const [cw, ch] = slotSize(1, 2);
+            const pts = readingOrder(setupSlots(3, cw * 2.2, ch));
+            const pairs = pts.map((p) => [addBody(1, 1, 0, p.x - cw * 0.55, p.y), addBody(1, 2, 0, p.x + cw * 0.55, p.y)]);
+            showToast('Deuterium + tritium make helium-5, which throws out a neutron at once. Drag the others together', 7);
+            later(0.9, () => {
+                const [d, t] = pairs[0] || [];
+                if (!d || !t || bodies.indexOf(d) < 0 || bodies.indexOf(t) < 0) return;
+                const dx = t.x - d.x, dy = t.y - d.y, dist = Math.hypot(dx, dy) || 1;
+                const v = Math.max(400, dist / 0.6 * 1.6);
+                d.vx = dx / dist * v; d.vy = dy / dist * v;
+                d.projectileUntil = simTime + 2;
+            });
+        },
+        // fluorine-18, the PET tracer: positrons, then pairs of 511 keV gamma rays
+        pet() {
+            setupNeeds(ui.showDetails);
+            // well spread (each positron needs room to fly and annihilate) and added one after another, so
+            // they do not all decay at once
+            const [cw, ch] = slotSize(9, 9);
+            const pts = setupSlots(layout.tall ? 3 : 4, cw * 2, ch * 1.4, { x0: 0, y0: 0, x1: 330, y1: 150 });
+            pts.forEach((p, i) => later(i * 0.8, () => {
+                const b = addBody(9, 9, 0, p.x, p.y);
+                if (b && !i) selectedId = b.id;
+            }));
+            showToast('Each positron meets an electron: two 511 keV gamma rays fly apart, which a PET scanner detects', 7);
+        },
+    };
+    function runSetup(name) {
+        if (!SETUPS[name]) return;
+        resetScene(false);
+        SETUPS[name]();
+        // on a narrow screen the settings sheet covers the canvas: close it to watch
+        const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
+        if (document.body.classList.contains('sim-panel-sheet') && panel && panel.classList.contains('panel-open') && toggle) toggle.click();
+    }
+
     // ------------------------------------------------------------------
     // Settings panel and readouts
     // ------------------------------------------------------------------
@@ -2599,7 +3214,7 @@
         if (ui.speed) {
             const upd = () => {
                 S.speed = parseFloat(ui.speed.value) || 1;
-                if (ui.speedVal) ui.speedVal.textContent = S.speed.toFixed(2);
+                if (ui.speedVal) ui.speedVal.textContent = S.speed.toFixed(1);
             };
             ui.speed.addEventListener('input', upd);
             upd();
@@ -2613,8 +3228,10 @@
             el.addEventListener('change', () => {
                 S[k] = el.checked;
                 if (k === 'showChart' && !S.showChart) chartView.open = false;
+                if (k === 'showChart' || k === 'showEquations') computeLayout();
             });
         });
+        ui.setups.forEach((btn) => btn.addEventListener('click', () => runSetup(btn.getAttribute('data-setup'))));
         if (ui.element) {
             for (let Z = 1; Z <= 118; Z++) {
                 const o = document.createElement('option');
@@ -2676,7 +3293,10 @@
     }
 
     function resetScene(withStart) {
-        bodies = []; sparks = []; effects = []; eqLog = []; toast = null;
+        bodies = []; sparks = []; effects = []; eqLog = []; toast = null; batch = null; scheduled = []; reflector = null;
+        // settings the last setup turned on for itself go off again
+        setupToggles.forEach(([el, was]) => setToggle(el, was));
+        setupToggles = [];
         selectedId = 0; drags.clear(); dragGhost = null; chartView.open = false;
         if (withStart && viewW > 0) {
             START_SCENE.forEach((s) => {
@@ -2700,13 +3320,14 @@
         viewW = w; viewH = h; dpr = newDpr;
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
-        rN = Math.max(2.6, Math.min(5.2, Math.min(viewW, viewH * 2) / 180));
+        rN = Math.max(3.2, Math.min(7, Math.min(viewW, viewH * 2) / 150));
         fontPx = Math.max(12, Math.min(14, viewW / 85));
         computeLayout();
-        buildNucleonSprites();
+        refreshLooks();
         if (oldW > 0) {
-            bodies.forEach((b) => { b.x *= viewW / oldW; b.y *= viewH / oldH; buildSprite(b); });
-            sparks.forEach((s) => { s.x *= viewW / oldW; s.y *= viewH / oldH; });
+            bodies.forEach((b) => { b.x *= viewW / oldW; b.y *= viewH / oldH; });
+            sparks.forEach((s) => { s.x *= viewW / oldW; s.y *= viewH / oldH; s.ox *= viewW / oldW; s.oy *= viewH / oldH; });
+            if (reflector) reflector = { x0: reflector.x0 * viewW / oldW, x1: reflector.x1 * viewW / oldW, y0: reflector.y0 * viewH / oldH, y1: reflector.y1 * viewH / oldH };
             // a phone turned between portrait and landscape: once the layout has settled, spread out again
             if (wasTall !== null && wasTall !== layout.tall) {
                 clearTimeout(spreadTimer);
@@ -2715,6 +3336,13 @@
         }
         render();
         return true;
+    }
+    // The nucleon size or the theme changed: draw every nucleus again.
+    function refreshLooks() {
+        lookCache.clear();
+        nucleonCache.clear();
+        bodies.forEach((b) => { applyLook(b); b.prev = null; });
+        if (dragGhost) applyLook(dragGhost.body);
     }
 
     // After the canvas turns between tall and wide (a phone rotated), the chart moves to another corner:
@@ -2747,14 +3375,26 @@
     const MAX_FRAME_DT = 0.05;
     let lastTs = 0, fpsFrames = 0, fpsTime = 0;
     const perf = { frameMs: 0, worst: 0 };
+    // One step: dt of real time, which is dt x speed of simulation time.
+    function step(dt) {
+        const dtSim = dt * S.speed;
+        realTime += dt;
+        simTime += dtSim;
+        if (scheduled.length) {
+            const due = scheduled.filter((a) => simTime >= a.at);
+            scheduled = scheduled.filter((a) => simTime < a.at);
+            due.forEach((a) => a.fn());
+        }
+        updateBodies(dtSim, dtSim * DECADES_PER_S, dt);
+        updateSparks(dtSim, dt);
+        updateInsetView(dt);
+    }
     function frame(ts) {
         requestAnimationFrame(frame);   // first, so the loop keeps going whatever happens below
         const dt = lastTs && !frozen ? Math.min(MAX_FRAME_DT, (ts - lastTs) / 1000) : 0;
         lastTs = ts;
         const t0 = performance.now();
-        realTime += dt;
-        updateBodies(dt, dt * DECADES_PER_S * S.speed);
-        updateSparks(dt);
+        step(dt);
         render();
         updateReadouts();
         const ms = performance.now() - t0;
@@ -2771,7 +3411,7 @@
     // ------------------------------------------------------------------
     function bodySummary(b) {
         return {
-            id: b.id, Z: b.Z, N: b.N, iso: b.iso, name: b.info.name, x: b.x, y: b.y, R: b.R, stable: b.info.stable,
+            id: b.id, Z: b.Z, N: b.N, iso: b.iso, name: b.info.name, x: b.x, y: b.y, R: b.R, vx: b.vx, vy: b.vy, stable: b.info.stable,
             transient: b.transient, busy: !!(b.step || b.steps.length), clock: b.clock ? Object.assign({}, b.clock) : null,
             chain: b.chain.map((c) => shortName(c.Z, c.N, c.iso) + (c.code ? '(' + c.code + ')' : '')),
         };
@@ -2805,41 +3445,49 @@
             beginDecay(b, code);
             return true;
         },
-        // Throw a neutron at a body from the left
+        // Fire a neutron at a body from the left
         fireNeutron: (id, forceFission) => {
             const t = bodies.find((o) => o.id === id);
             if (!t) return false;
-            const n = addBody(0, 1, 0, Math.max(10, t.x - 160), t.y);
-            if (!n) return false;
-            n.vx = 900; n.vy = 0; n.projectileUntil = realTime + 2;
+            const n = launchNeutron(Math.max(10, t.x - 160), t.y, 0, []);
             n.forceFission = !!forceFission;
+            return true;
+        },
+        // Throw a body (as a flick would) at vx, vy px/s
+        fling: (id, vx, vy) => {
+            const b = bodies.find((o) => o.id === id);
+            if (!b) return false;
+            b.vx = vx; b.vy = vy; b.thrown = true; b.ignore = null;
             return true;
         },
         combine: (idA, idB) => {
             const a = bodies.find((o) => o.id === idA), b = bodies.find((o) => o.id === idB);
             return a && b ? combine(a, b) : false;
         },
+        setup: (name) => runSetup(name),
+        setups: () => Object.keys(SETUPS),
+        batch: () => (batch ? { total: batch.total, left: bodies.filter((b) => batch.ids.has(b.id) && b.Z === batch.Z && b.N === batch.N).length, halves: batch.t / batch.hl } : null),
         setSpeed: (v) => { if (ui.speed) { ui.speed.value = v; ui.speed.dispatchEvent(new Event('input')); } else S.speed = v; },
         setShow: (name, on) => {
             const el = { chart: ui.showChart, tags: ui.showTags, neutrinos: ui.showNeutrinos, equations: ui.showEquations, details: ui.showDetails, notation: ui.notation, keep: ui.keepParticles, mirror: ui.mirrorWalls }[name];
             if (el) { el.checked = !!on; el.dispatchEvent(new Event('change')); }
         },
         hideLabels: (v) => { S.hideLabels = !!v; },   // for pictures of the canvas (e.g. the home-page tile)
+        nucleonSize: (r) => { rN = r; refreshLooks(); },   // (likewise; the next resize sets it back)
         openChart: (open) => { if (open) openChart(); else chartView.open = false; },
         pickChart: (Z, N) => { chartView.pick = { Z, N }; },
         // Centre the expanded chart on (Z, N) with squares `cell` px across; where (Z, N) is on the canvas.
         setChartView: (Z, N, cell) => { chartView.cZ = Z; chartView.cN = N; chartView.cell = cell; clampChartView(chartRects()); },
         chartPoint: (Z, N) => chartToScreen(chartRects(), Z, N),
         chartButtons: () => { const r = chartRects(); return { add: r.add, close: r.close, fit: r.fit, area: r.area }; },
+        // The inset's view now and where it is heading: the chart point at its centre and the square size.
+        insetView: () => ({ now: Object.assign({}, insetView), target: layout ? insetTarget(layout.inset) : null, full: layout ? insetFullView(layout.inset) : null }),
+        panels: () => panelRects.map((r) => Object.assign({}, r)),
         pause: (v) => { paused = v === undefined ? !paused : !!v; return paused; },
         freeze: (v) => { frozen = !!v; },
         // Run the simulation synchronously (no drawing) for `seconds` of real time.
         advance: (seconds) => {
-            for (let t = 0; t < seconds; t += 1 / 30) {
-                realTime += 1 / 30;
-                updateBodies(1 / 30, DECADES_PER_S * S.speed / 30);
-                updateSparks(1 / 30);
-            }
+            for (let t = 0; t < seconds; t += 1 / 30) step(1 / 30);
             return bodies.length;
         },
         // Statistics of the random choices (for tests): branch counts, and decay times in s.
@@ -2862,11 +3510,20 @@
             });
             return out;
         },
+        // The packing of A nucleons (for tests): radius and the smallest spacing, in nucleon spacings, and
+        // which sites hold protons for Z.
+        packing: (A, Z) => {
+            const a = arrangement(A);
+            let dmin = Infinity;
+            for (let i = 0; i < a.A; i++) for (let j = i + 1; j < a.A; j++) dmin = Math.min(dmin, Math.hypot(a.x[i] - a.x[j], a.y[i] - a.y[j], a.z[i] - a.z[j]));
+            const sites = Array.from(siteTypes(a, Z || 0));
+            return { A: a.A, radius: a.radius, dmin, protons: sites.reduce((s, v) => s + v, 0), sites };
+        },
         formatDuration: durationText,
         formatHalfLife,
         equations: () => eqLog.map((e) => ({ code: e.eq.code, Q: e.eq.Q, lhs: e.eq.lhs, rhs: e.eq.rhs })),
         sparks: () => sparks.map((s) => s.kind),
-        state: () => ({ viewW, viewH, dpr, rN, fontPx, bodies: bodies.length, sparks: sparks.length, selected: selectedId, chartOpen: chartView.open, layout, settings: Object.assign({}, S) }),
+        state: () => ({ viewW, viewH, dpr, rN, fontPx, bodies: bodies.length, sparks: sparks.length, selected: selectedId, chartOpen: chartView.open, layout, settings: Object.assign({}, S), simTime, realTime }),
         perf: () => ({ frameMs: perf.frameMs, worstMs: perf.worst }),
         resetPerf: () => { perf.worst = 0; },
         estimate: (Z, N) => estimate(Z, N),
@@ -2887,6 +3544,7 @@
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && chartView.open) chartView.open = false; });
     canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && !drags.size) canvas.style.cursor = 'default'; });
     bindControls();
+    bindTray();
     buildPalette();
     resizeCanvas();
     resetScene(true);
@@ -2895,8 +3553,7 @@
     window.addEventListener('resize', resizeCanvas);
     new MutationObserver(() => {
         readPalette();
-        buildNucleonSprites();
-        bodies.forEach(buildSprite);
+        refreshLooks();
         insetCache = null;
         buildPalette();
         render();

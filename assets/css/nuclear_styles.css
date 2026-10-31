@@ -1,10 +1,10 @@
 /* --- Nuclear decay simulation page styles (loaded after simulation_styles.css) --- */
 
 .nuclear-sim {
-    --nuc-btn: 42px;                                    /* tray button size */
-    --nuc-cols: 3;                                      /* buttons per row in the side column */
-    /* tray column beside the canvas: buttons, 4px gaps, padding and border */
-    --nuc-side-w: calc(var(--nuc-cols) * (var(--nuc-btn) + 4px) + 10px);
+    --nuc-btn: 40px;                                    /* tray button height */
+    --nuc-side-open: 94px;                              /* the tray column beside the canvas... */
+    --nuc-side-closed: 30px;                            /* ...and folded to a strip */
+    --nuc-side-w: var(--nuc-side-open);
     --nuc-side-gap: 8px;
     /* decay-mode colours (as on the chart) */
     --nuc-stable: #24272c;
@@ -13,8 +13,8 @@
     --nuc-alpha: #e2b711;
     --nuc-fission: #2fae64;
     --nuc-gamma: #c2459f;
-    --nuc-proton: #ec6f8d;
-    --nuc-neutron: #93a0b2;
+    --nuc-proton-emitter: #de3a4d;
+    --nuc-neutron-emitter: #8c63d6;
 }
 
 html.dark-mode .nuclear-sim {
@@ -24,8 +24,12 @@ html.dark-mode .nuclear-sim {
     --nuc-alpha: #f2d14f;
     --nuc-fission: #5fcf8c;
     --nuc-gamma: #e07ad0;
-    --nuc-proton: #f2849e;
-    --nuc-neutron: #aeb8c6;
+    --nuc-proton-emitter: #ef5a6a;
+    --nuc-neutron-emitter: #a985ea;
+}
+
+.nuclear-sim.nuc-tray-collapsed {
+    --nuc-side-w: var(--nuc-side-closed);
 }
 
 @media (pointer: coarse) {
@@ -35,13 +39,14 @@ html.dark-mode .nuclear-sim {
 }
 
 /* ---------- The tray: particles and ready-made nuclei ----------
-   Portrait / narrow: under the canvas. Landscape: a column beside it (see the media query below). */
+   Portrait / narrow: one row under the canvas that scrolls sideways. Landscape: one column beside the
+   canvas that scrolls up and down (see the media query below). Either folds away with its toggle. */
 .nuc-toolbar {
     display: flex;
-    flex-direction: column;
-    gap: 5px;
+    align-items: stretch;
+    gap: 4px;
     margin-top: 0.5em;
-    padding: 5px;
+    padding: 4px;
     box-sizing: border-box;
     background-color: var(--color-bg-alt);
     border: 1px solid var(--color-border);
@@ -50,25 +55,89 @@ html.dark-mode .nuclear-sim {
     line-height: 1.3;
 }
 
+.nuc-toolbar .nuc-tray-toggle {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6em;
+    width: 30px;
+    height: auto;
+    min-height: 30px;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    font-family: inherit;
+    font-size: 0.75em;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border: 0;
+    border-radius: 4px;
+    box-shadow: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.nuc-toolbar .nuc-tray-toggle .icon {
+    font-size: 1.15em;
+    opacity: 0.8;
+    transform: rotate(-90deg);                          /* a row: the chevron points down, to fold it away */
+    transition: transform 0.2s ease;
+}
+
+.nuc-tray-label {
+    display: none;
+    opacity: 0.75;
+}
+
+@media (hover: hover) {
+    .nuc-toolbar .nuc-tray-toggle:hover {
+        color: var(--color-accent) !important;
+        background-color: var(--color-bg-button-active-overlay);
+        box-shadow: none;
+    }
+}
+
+.nuc-toolbar .nuc-tray-toggle:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+}
+
 .nuc-palette {
     display: flex;
-    flex-wrap: wrap;
+    flex: 1 1 auto;
     gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
 }
 
 .nuc-toolbar .nuc-item {
     -webkit-appearance: none;
     appearance: none;
     position: relative;
+    flex: 0 0 auto;
     display: inline-flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 3px;
-    height: var(--nuc-btn);
-    min-width: var(--nuc-btn);
+    width: 52px;
+    height: 54px;
     margin: 0;
-    padding: 0 4px;
+    padding: 0 3px;
     box-sizing: border-box;
+    overflow: visible;
+    font-family: inherit;
     font-size: 1em;
     font-weight: 700;
     letter-spacing: 0;
@@ -81,7 +150,7 @@ html.dark-mode .nuclear-sim {
     border-radius: 4px;
     box-shadow: inset 0 0 0 1px var(--color-border);
     cursor: grab;
-    touch-action: none;                 /* a drag from here goes to the canvas, it doesn't scroll the page */
+    touch-action: pan-x;                /* a sideways swipe scrolls the row; a drag up goes to the canvas */
     -webkit-user-select: none;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
@@ -95,13 +164,29 @@ html.dark-mode .nuclear-sim {
 
 .nuc-toolbar .nuc-item:focus-visible {
     outline: 2px solid var(--color-accent);
-    outline-offset: 1px;
+    outline-offset: -2px;
 }
 
 .nuc-toolbar .nuc-item.is-dragging {
     box-shadow: inset 0 0 0 2px var(--color-accent);
     background-color: var(--color-bg-button-active-overlay);
     cursor: grabbing;
+}
+
+/* The nucleus itself, drawn by the simulation (bigger for heavier nuclei) */
+.nuc-icon-box {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+}
+
+.nuc-icon {
+    display: block;
+    flex: 0 0 auto;
+    pointer-events: none;
 }
 
 .nuc-item-text sup {
@@ -116,8 +201,8 @@ html.dark-mode .nuclear-sim {
 /* A small dot in the corner: how the nuclide decays (the chart's colours) */
 .nuc-mode {
     position: absolute;
-    right: 3px;
-    bottom: 3px;
+    right: 4px;
+    top: 4px;
     width: 6px;
     height: 6px;
     border-radius: 50%;
@@ -129,30 +214,25 @@ html.dark-mode .nuclear-sim {
 .nuc-mode-a { background-color: var(--nuc-alpha); }
 .nuc-mode-f { background-color: var(--nuc-fission); }
 .nuc-mode-i { background-color: var(--nuc-gamma); }
+.nuc-mode-p { background-color: var(--nuc-proton-emitter); }
+.nuc-mode-n { background-color: var(--nuc-neutron-emitter); }
 
-/* Proton and neutron: a shaded ball and the letter */
-.nuc-ball {
-    display: block;
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    flex: 0 0 auto;
+/* Folded away: a slim bar that unfolds it again */
+.nuc-tray-collapsed .nuc-palette {
+    display: none;
 }
 
-.nuc-ball-p {
-    background: radial-gradient(circle at 35% 32%, #ffd6df 0, var(--nuc-proton) 45%, #a8445c 100%);
+.nuc-tray-collapsed .nuc-toolbar .nuc-tray-toggle {
+    flex: 1 1 auto;
+    width: auto;
 }
 
-.nuc-ball-n {
-    background: radial-gradient(circle at 35% 32%, #f4f6f9 0, var(--nuc-neutron) 45%, #5f6977 100%);
+.nuc-tray-collapsed .nuc-tray-label {
+    display: inline;
 }
 
-.nuc-hint {
-    margin: 0;
-    padding: 0 0.2em;
-    font-size: 0.95em;
-    line-height: 1.35;
-    opacity: 0.8;
+.nuc-tray-collapsed .nuc-toolbar .nuc-tray-toggle .icon {
+    transform: rotate(90deg);
 }
 
 /* Phones in portrait: the canvas stays (nearly) as wide as the screen even where the tray and info bar
@@ -167,26 +247,6 @@ html.dark-mode .nuclear-sim {
         .nuclear-sim .simulation-main-content {
             --sim-canvas-max-h: max(14em, calc(100svh - var(--sim-above-h) - var(--sim-below-h) - var(--sim-fit-gap)), calc((100vw - 2 * var(--sim-page-gutter)) * 1.05));
         }
-    }
-}
-
-/* Short phones: no room for the hint under the tray */
-@media (max-width: 600px) and (max-height: 760px) {
-    .nuc-hint {
-        display: none;
-    }
-}
-
-/* Phones: the tray fills two even rows */
-@media (max-width: 600px) {
-    .nuc-toolbar .nuc-item {
-        flex: 1 1 calc(100% / 7 - 4px);
-        min-width: 0;
-        padding: 0 2px;
-    }
-
-    .nuc-hint {
-        font-size: 0.9em;
     }
 }
 
@@ -211,46 +271,62 @@ html.dark-mode .nuclear-sim {
         grid-area: info;
     }
 
-    /* As tall as the canvas beside it, never taller; scrolls if the buttons need more room. */
+    /* As tall as the canvas beside it, never taller; the buttons scroll if they need more room. */
     .nuc-toolbar {
         grid-area: tools;
-        justify-content: flex-start;
-        gap: 8px;
+        flex-direction: column;
         margin-top: 0;
         min-height: 0;
         contain: size;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        scrollbar-width: thin;
+        overflow: hidden;
+    }
+
+    .nuc-toolbar .nuc-tray-toggle {
+        justify-content: space-between;
+        width: 100%;
+        min-height: 28px;
+        padding: 0 7px 0 8px;
+    }
+
+    .nuc-tray-label {
+        display: inline;
+    }
+
+    .nuc-toolbar .nuc-tray-toggle .icon {
+        transform: none;                                /* a column: the chevron points left, to fold it away */
     }
 
     .nuc-palette {
-        display: grid;
-        grid-template-columns: repeat(var(--nuc-cols), minmax(0, 1fr));
+        flex-direction: column;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     .nuc-toolbar .nuc-item {
-        min-width: 0;
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 6px;
         width: 100%;
+        height: var(--nuc-btn);
+        padding: 0 6px 0 4px;
+        touch-action: pan-y;            /* a swipe up or down scrolls the column; a drag sideways goes to the canvas */
     }
 
-    .nuc-hint {
-        font-size: 0.9em;
-        line-height: 1.4;
-        padding: 0 2px;
+    .nuc-tray-collapsed .nuc-toolbar .nuc-tray-toggle {
+        flex-direction: column;
+        justify-content: flex-start;
+        gap: 12px;
+        height: 100%;
+        padding: 8px 0;
     }
 
-    /* Phones held sideways: no room for the hint */
-    @media (max-height: 540px) {
-        .nuc-hint {
-            display: none;
-        }
+    .nuc-tray-collapsed .nuc-toolbar .nuc-tray-toggle .icon {
+        order: -1;
+        transform: rotate(180deg);
+    }
 
-        /* ...and beside a docked settings panel, a two-wide column leaves the canvas more width */
-        body.sim-panel-side.sim-panel-active .nuclear-sim {
-            --nuc-cols: 2;
-        }
+    .nuc-tray-collapsed .nuc-tray-label {
+        writing-mode: vertical-rl;
     }
 
     /* Fullscreen: the grid fills the space above the fixed info bar */
@@ -271,6 +347,61 @@ html.dark-mode .nuclear-sim {
     margin-top: -0.3em;
     font-size: 0.8em;
     opacity: 0.75;
+}
+
+.sim-controls-content .nuc-add-caption {
+    margin: 0.1em 0 -0.2em 0;
+    font-size: 0.8em;
+    opacity: 0.75;
+}
+
+/* Ready-made scenes: two to a row */
+.nuc-setups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4em;
+}
+
+.sim-controls-content .nuc-setup {
+    -webkit-appearance: none;
+    appearance: none;
+    display: flex;
+    align-items: center;
+    min-height: 2.9em;
+    height: auto;
+    margin: 0;
+    padding: 0.4em 0.7em;
+    overflow: visible;
+    font-family: inherit;
+    font-size: 0.85em;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0;
+    text-align: left;
+    text-transform: none;
+    white-space: normal;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border: 0;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .sim-controls-content .nuc-setup:hover {
+        color: var(--color-accent) !important;
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+.sim-controls-content .nuc-setup:active {
+    background-color: var(--color-bg-button-active-overlay);
+}
+
+.sim-controls-content .nuc-setup:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
 }
 
 .nuc-add-row {
@@ -294,6 +425,7 @@ html.dark-mode .nuclear-sim {
     height: 2.6em;
     margin: 0;
     padding: 0 1.2em;
+    font-family: inherit;
     font-size: 0.9em;
     font-weight: 700;
     line-height: 1;
