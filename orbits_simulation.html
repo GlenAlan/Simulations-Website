@@ -1,0 +1,424 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Orbits &amp; Gravity Simulation | Newton's Law &amp; Kepler's Laws | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Interactive orbit simulation: drag stars, planets and moons, set their velocities and see Newton's law of gravitation and all three of Kepler's laws at work." />
+		<meta name="keywords" content="orbits, gravity, Newton's law of universal gravitation, Kepler's laws, planetary motion, elliptical orbits, equal areas in equal times, orbital period, escape velocity, centre of mass, n-body simulation, physics simulation, interactive physics" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/orbits_simulation.html" />
+		<meta property="og:title" content="Orbits &amp; Gravity Simulation | Simulations.Science" />
+		<meta property="og:description" content="Drag stars and planets, set their velocities and watch Newton's gravity and Kepler's laws at work." />
+		<meta property="og:image" content="https://simulations.science/images/orbits.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/orbits_simulation.html" />
+		<meta name="twitter:title" content="Orbits &amp; Gravity Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="Drag stars and planets, set their velocities and watch Newton's gravity and Kepler's laws at work." />
+		<meta name="twitter:image" content="https://simulations.science/images/orbits.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/orbits_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Orbits & Gravity Simulation",
+			"description": "An interactive n-body gravity simulation in real units (AU, years, solar masses): drag stars, planets, moons and comets into place, set their velocities, view the motion from any body, and see Newton's law of universal gravitation and Kepler's three laws of planetary motion measured live.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/orbits_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"about": [
+				{
+					"@type": "Thing",
+					"name": "Newton's Law of Universal Gravitation",
+					"description": "Every two masses attract each other with a force F = Gm1m2/r², proportional to both masses and inversely proportional to the square of their separation"
+				},
+				{
+					"@type": "Thing",
+					"name": "Kepler's Laws of Planetary Motion",
+					"description": "Orbits are ellipses with the star at one focus, a planet sweeps out equal areas in equal times, and the square of the period is proportional to the cube of the semi-major axis"
+				},
+				{
+					"@type": "Thing",
+					"name": "Orbital Mechanics",
+					"description": "Circular and elliptical orbits, orbital speed, escape velocity, gravity assists and the centre of mass of a system of bodies"
+				},
+				{
+					"@type": "Thing",
+					"name": "Frames of Reference",
+					"description": "How the same motion looks when viewed from the centre of mass or from one of the moving bodies"
+				}
+			],
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/orbits.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "orbits, gravity, Newton's law of universal gravitation, Kepler's laws, planetary motion, elliptical orbits, orbital period, escape velocity, n-body simulation, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Orbits & Gravity Simulation",
+					"item": "https://simulations.science/orbits_simulation.html"
+				}
+			]
+		}
+		</script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/orbits_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>
+							<li itemprop="name"><a href="convection_simulation.html" itemprop="url">Convection</a></li>
+							<li itemprop="name"><a href="conduction_simulation.html" itemprop="url">Conduction</a></li>
+							<li itemprop="name"><a href="radiation_simulation.html" itemprop="url">Radiation</a></li>
+							<li itemprop="name"><a href="buoyancy_simulation.html" itemprop="url">Buoyancy</a></li>
+							<li itemprop="name"><a href="pressure_simulation.html" itemprop="url">Pressure</a></li>
+							<li itemprop="name"><a href="maxwell_demon_simulation.html" itemprop="url">Maxwell's Demon</a></li>
+							<li itemprop="name"><a href="nuclear_decay_simulation.html" itemprop="url">Nuclear Decay</a></li>
+							<li itemprop="name"><a href="relativity_simulation.html" itemprop="url">Special Relativity</a></li>
+							<li itemprop="name"><a href="orbits_simulation.html" itemprop="url">Orbits &amp; Gravity</a></li>
+							<li itemprop="name"><a href="sitemap.html" itemprop="url">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Orbits &amp; Gravity Simulation</h1>
+
+							<div class="simulation-area-wrapper orbits-sim">
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group sim-speed-control">
+											<label>Simulation speed: <span id="speedVal" class="sim-value" style="--chars: 4">1.0</span>&times;
+												<input type="range" id="speedSlider" min="0.1" max="5" step="0.1" value="1">
+											</label>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="sceneLabel">Scene</p>
+											<select id="sceneSelect" aria-labelledby="sceneLabel">
+												<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
+												<option value="ellipse">Elliptical orbit</option>
+												<option value="inner">Inner planets</option>
+												<option value="comet">Comet and Earth</option>
+												<option value="earth-moon">Earth &amp; Moon</option>
+												<option value="moon">Planet with a moon</option>
+												<option value="binary">Binary stars</option>
+												<option value="figure8">Three stars: figure of eight</option>
+												<option value="slingshot">Slingshot (gravity assist)</option>
+												<option value="empty">A lone star (build your own)</option>
+											</select>
+										</div>
+										<div class="sim-control-group" id="orbitGroup">
+											<p class="sim-control-group-label" id="orbitGroupLabel">Orbit of Earth</p>
+											<label>Eccentricity: <span id="eccVal" class="sim-value" style="--chars: 4">0.00</span> <span class="orb-sub" id="eccName">(circle)</span>
+												<input type="range" id="eccSlider" min="0" max="0.95" step="0.01" value="0" aria-describedby="eccNote">
+											</label>
+											<p class="orb-note" id="eccNote">Relaunches it with the same average distance: 0 is a circle, near 1 a long thin ellipse.</p>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Show</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="forceToggle" checked>
+												<label for="forceToggle"><span class="orb-key orb-key-force" aria-hidden="true"></span>Gravity forces</label>
+												<input type="checkbox" id="velocityToggle" checked>
+												<label for="velocityToggle"><span class="orb-key orb-key-velocity" aria-hidden="true"></span>Velocities</label>
+												<input type="checkbox" id="labelsToggle" checked>
+												<label for="labelsToggle">Names</label>
+											</div>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Kepler's laws</p>
+											<div class="sim-checkbox-group sim-chips orb-kepler-chips">
+												<input type="checkbox" id="kepler1Toggle">
+												<label for="kepler1Toggle" title="1st law: an orbit is an ellipse with the star at one focus">1st: Ellipse</label>
+												<input type="checkbox" id="kepler2Toggle">
+												<label for="kepler2Toggle" title="2nd law: equal areas are swept out in equal times">2nd: Equal areas</label>
+												<input type="checkbox" id="kepler3Toggle">
+												<label for="kepler3Toggle" title="3rd law: the period squared is proportional to the semi-major axis cubed">3rd: T² &prop; a³</label>
+											</div>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="frameLabel">View from</p>
+											<select id="frameSelect" aria-labelledby="frameLabel">
+												<option value="com" selected>Centre of mass (no body)</option>
+											</select>
+											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
+												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
+											</label>
+										</div>
+										<details class="sim-controls-more">
+											<summary>More options</summary>
+											<div class="sim-control-group">
+												<p class="sim-control-group-label" id="placementLabel">Bodies you drop or move</p>
+												<select id="placementSelect" aria-labelledby="placementLabel">
+													<option value="circular" selected>Start on a circular orbit</option>
+													<option value="keep">Keep their velocity</option>
+													<option value="rest">Start at rest (in this view)</option>
+												</select>
+											</div>
+											<div class="sim-control-group">
+												<p class="sim-control-group-label">Also show</p>
+												<div class="sim-checkbox-group">
+													<input type="checkbox" id="comToggle">
+													<label for="comToggle">Centre of mass</label>
+													<input type="checkbox" id="previewToggle" checked>
+													<label for="previewToggle">Predicted orbit while dragging</label>
+												</div>
+											</div>
+											<div class="sim-control-group">
+												<p class="sim-control-group-label">Collisions</p>
+												<div class="sim-checkbox-group">
+													<input type="checkbox" id="mergeToggle" checked>
+													<label for="mergeToggle">Bodies merge when they touch</label>
+												</div>
+											</div>
+										</details>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/10; --aspect-ratio-portrait: 1/1;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Stars, planets and moons moving under gravity, with their trails"></canvas>
+											</div>
+											<button type="button" class="orb-frame-chip" id="frameChip" hidden title="Go back to the centre-of-mass view">
+												<span class="icon solid fa-crosshairs" aria-hidden="true"></span><span>Viewed from <strong id="frameChipName">Earth</strong></span><span class="icon solid fa-times orb-frame-chip-x" aria-hidden="true"></span>
+											</button>
+											<div class="orb-popover" id="bodyPopover" role="dialog" aria-labelledby="popName" hidden>
+												<div class="orb-pop-head">
+													<span class="orb-pop-dot" id="popDot" aria-hidden="true"></span>
+													<input type="text" id="popName" class="orb-pop-name" maxlength="18" aria-label="Name" spellcheck="false" autocomplete="off">
+													<button type="button" class="orb-pop-close" id="popClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
+												</div>
+												<div class="orb-pop-actions">
+													<button type="button" id="popLock" aria-pressed="false"><span class="icon solid fa-crosshairs" aria-hidden="true"></span><span id="popLockText">View from here</span></button>
+													<button type="button" id="popCircular" title="Give it the speed for a circular orbit"><span class="icon fa-circle" aria-hidden="true"></span>Circular</button>
+													<button type="button" id="popDelete" class="orb-pop-delete" title="Delete this body" aria-label="Delete this body"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
+												</div>
+												<div class="orb-pop-fields">
+													<label>Mass: <span class="orb-pop-val" id="popMassVal">1.00 M⊕</span>
+														<input type="range" id="popMass" min="-14" max="6.6" step="0.01" value="0">
+													</label>
+													<label>Speed: <span class="orb-pop-val" id="popSpeedVal">29.8 km/s</span>
+														<input type="range" id="popSpeed" min="0" max="1000" step="1" value="500" aria-describedby="popSpeedNote">
+													</label>
+													<p class="orb-pop-note" id="popSpeedNote">&nbsp;</p>
+													<label>Radius: <span class="orb-pop-val" id="popRadiusVal">6,371 km</span>
+														<input type="range" id="popRadius" min="0" max="6.3" step="0.01" value="3.8">
+													</label>
+													<div class="orb-pop-colours" id="popColours" role="radiogroup" aria-label="Colour"></div>
+												</div>
+												<p class="orb-pop-info" id="popInfo" aria-live="polite">&nbsp;</p>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<div class="orb-toolbar" id="orbToolbar" role="toolbar" aria-label="Add bodies">
+											<p class="orb-toolbar-label" id="paletteLabel">Add a body</p>
+											<div class="orb-palette" id="bodyPalette" role="group" aria-labelledby="paletteLabel"></div>
+											<button type="button" class="orb-fit" id="fitViewBtn" title="Fit everything in view" aria-label="Fit everything in view"><span class="icon solid fa-expand-arrows-alt" aria-hidden="true"></span><span class="orb-fit-text">Fit view</span></button>
+											<p class="orb-hint" id="orbHint" aria-live="polite"></p>
+										</div>
+										<div class="sim-info-bar" id="statsBar">
+											<div class="stats-container">
+												<div class="orb-subject" id="statSubject" title="The readouts are for this body (click or tap a body to choose it)">
+													<span class="orb-subject-dot" id="statSubjectDot" aria-hidden="true"></span><span class="orb-subject-name" id="statSubjectName">Earth</span><span class="orb-subject-around" id="statSubjectAround">around the Sun</span>
+												</div>
+												<div class="stats-box" title="Time since the start">
+													<strong>Time:</strong> <span id="statTime" class="sim-value" style="--chars: 5">0.00</span> <span id="statTimeUnit">yr</span>
+												</div>
+												<div class="stats-box" title="Distance from the body it orbits">
+													<strong>Distance:</strong> <span id="statDist" class="sim-value" style="--chars: 7">&ndash;</span> <span id="statDistUnit">AU</span>
+												</div>
+												<div class="stats-box" title="Speed relative to the body it orbits">
+													<strong>Speed:</strong> <span id="statSpeed" class="sim-value" style="--chars: 5">&ndash;</span> km/s
+												</div>
+												<div class="stats-box" title="Gravitational pull of the body it orbits: F = Gm₁m₂/r²">
+													<strong>Gravity:</strong> <span id="statForce" class="sim-value" style="--chars: 8">&ndash;</span> N
+												</div>
+											</div>
+											<div class="sim-info-actions">
+												<button type="button" id="pauseBtn" class="sim-icon-button" aria-label="Pause" title="Pause (Space)" aria-pressed="false">
+													<span class="icon solid fa-pause"></span>
+												</button>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Graphs">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart the scene" title="Restart">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+											</div>
+										</div>
+									</div>
+									<div id="charts-container" style="display: none;">
+										<div class="sim-charts-row">
+											<div class="chart-box">
+												<canvas id="energyChart" role="img" aria-label="Kinetic, potential and total energy of the system over time"></canvas>
+											</div>
+											<div class="chart-box">
+												<canvas id="orbitChart" role="img" aria-label="Distance and speed of the chosen body over time"></canvas>
+											</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>Every mass pulls on every other mass. This simulation adds up those pulls for every pair of bodies, many times per orbit, in real units: distances in AU (Earth to Sun), times in years, masses in Suns and Earths.</p>
+
+											<h4>What you're seeing</h4>
+											<ul>
+												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun. <strong>Teal arrows:</strong> velocities.</li>
+												<li><strong>Trails</strong> show recent paths. Body sizes are not to scale; otherwise the planets would be invisible dots.</li>
+											</ul>
+
+											<h4>The key idea</h4>
+											<p>Newton's law of gravitation, <em>F</em> = <em>G</em><em>m</em><sub>1</sub><em>m</em><sub>2</sub>/<em>r</em><sup>2</sup>: twice the distance, a quarter of the pull. A planet is always falling towards the Sun, but it moves sideways so fast that it keeps missing. That gives Kepler's laws: orbits are ellipses with the Sun at one focus (1st), a planet sweeps out equal areas in equal times (2nd), and <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> is the same for every planet of a star (3rd).</p>
+
+											<h4>Things to try</h4>
+											<ul>
+												<li>Raise the eccentricity and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
+												<li>Drop more planets and turn on the 3rd law to compare their periods.</li>
+												<li>In "Planet with a moon", view from the planet: the star circles it, as the Sun seems to circle Earth.</li>
+												<li>Drag a velocity past the escape circle to fling a body away.</li>
+											</ul>
+
+											<h4>How to use it</h4>
+											<p>Drag bodies from the strip into space. Drag a body to move it; right-drag it (or drag its arrow tip) to set its velocity. Double-click or double-tap a body to edit it or view from it. Drag empty space to pan; scroll or pinch to zoom. Space pauses. <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-chart-bar"></span> shows energy graphs and <span class="icon solid fa-sync-alt"></span> restarts.</p>
+										</div>
+									</details>
+								</div>
+							</div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script src="assets/js/orbits_core.js" defer></script> <!-- Simulation specific logic -->
+	</body>
+</html>
