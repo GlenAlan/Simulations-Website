@@ -1,13 +1,19 @@
 // Maxwell's Demon simulation.
 //
-// A 2D hard-disk gas in a box divided by a wall with a gate. All collisions
-// (particle-particle and particle-wall) are elastic, so total kinetic energy is
-// conserved and the speeds settle into a Maxwell-Boltzmann distribution.
-// Colour shows speed: red particles are faster than the median speed of the
-// starting gas, blue ones slower, so a particle changes colour when a
-// collision speeds it up or slows it down. In automatic mode the demon opens
+// A 2D gas in a box divided by a wall with a gate. The starting speeds follow
+// a Maxwell-Boltzmann distribution: half the particles come from above its
+// median speed (fast, red) and half from below it (slow, blue). Colour always
+// shows the current speed against that fixed median, and the demon uses the
+// same test, so what you see is what it sorts by. In automatic mode it opens
 // the gate only for fast particles moving left -> right and slow particles
 // moving right -> left, so the right chamber heats up and the left cools.
+//
+// Bounces off the walls are elastic and keep each particle's speed, so by
+// default (particles pass through each other) every particle keeps its colour
+// and the sorting is plain to see. With "Particles collide" on, elastic
+// particle-particle collisions share energy out: speeds and colours keep
+// changing and each chamber relaxes to its own Maxwell-Boltzmann distribution,
+// but the chamber temperatures still drift apart.
 
 // --- DOM Element References ---
 const canvas = document.getElementById('simulationCanvas');
@@ -20,6 +26,7 @@ const speedValEl = document.getElementById('speedVal');
 const gateSizeSlider = document.getElementById('gateSizeSlider');
 const gateSizeValEl = document.getElementById('gateSizeVal');
 const demonModeSelector = document.getElementById('demonModeSelector');
+const collisionsCheckbox = document.getElementById('particleCollisions');
 const showChartsCheckbox = document.getElementById('showCharts');
 const chartsContainer = document.getElementById('charts-container');
 
@@ -84,6 +91,7 @@ let nPerColor = perColourFromSlider();
 let speedMultiplier = speedFromSlider();
 let gateSizePercent = gateSizeSlider ? +gateSizeSlider.value : 25;
 let demonMode = demonModeSelector ? demonModeSelector.value : 'automatic';
+let particlesCollide = collisionsCheckbox ? collisionsCheckbox.checked : false; // off: every particle keeps its speed and colour
 
 // --- Simulation State (struct of arrays for speed) ---
 let particleCount = 0;
@@ -424,8 +432,10 @@ function runSinglePhysicsStep(dt) {
         posX[i] += velX[i] * dt;
         posY[i] += velY[i] * dt;
     }
-    buildGrid();
-    resolveCollisions(gateTop, gateBottom);
+    if (particlesCollide) {
+        buildGrid();
+        resolveCollisions(gateTop, gateBottom);
+    }
     enforceBoundaries(gateTop, gateBottom);
     currentSimulationTime += dt;
     observeGate();
@@ -1024,6 +1034,13 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     if (demonModeSelector) demonModeSelector.addEventListener('change', () => applyDemonMode(true));
     applyDemonMode(false);
+
+    // Collisions can be switched mid-run: the gas carries on from where it is
+    if (collisionsCheckbox) {
+        collisionsCheckbox.addEventListener('change', () => {
+            particlesCollide = collisionsCheckbox.checked;
+        });
+    }
 
     if (showChartsCheckbox && chartsContainer) {
         showChartsCheckbox.addEventListener('change', () => applyChartsVisibility(true));

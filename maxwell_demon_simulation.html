@@ -211,6 +211,11 @@
 												<input type="range" id="particleCount" min="10" max="1000" step="10" value="200" aria-describedby="particleCountNote">
 											</label>
 											<p class="mx-control-note" id="particleCountNote">Half start fast, half slow. Changing this restarts.</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="particleCollisions" aria-describedby="particleCollisionsNote">
+												<label for="particleCollisions">Particles collide</label>
+											</div>
+											<p class="mx-control-note" id="particleCollisionsNote">Off: each particle keeps its speed and colour. On: collisions share energy out, so colours keep changing.</p>
 										</div>
 									</div>
 								</div>
@@ -280,8 +285,8 @@
 											<p>In 1867 James Clerk Maxwell imagined a tiny "demon" guarding a door between two boxes of gas. By letting only fast molecules through one way and slow ones the other, it could make one side hot and the other cold without doing any work, apparently breaking the second law of thermodynamics.</p>
 											<h4>What you're seeing</h4>
 											<ul>
-												<li>Gas particles collide elastically. <strong class="mx-fast">Red</strong> ones are faster than the starting median speed, <strong class="mx-slow">blue</strong> ones slower; collisions keep changing their speeds and colours.</li>
-												<li>The demon opens the gate only for fast particles going one way and slow ones going the other.</li>
+												<li><strong class="mx-fast">Red</strong> particles are fast and <strong class="mx-slow">blue</strong> ones slow: half the gas starts above its median speed and half below. Each one bounces off the walls without losing speed and, unless <em>Particles collide</em> is on, passes straight through the others, so it keeps its colour.</li>
+												<li>The demon opens the gate only for red particles going one way and blue ones going the other, so the reds gather on one side and the blues on the other.</li>
 												<li><span class="icon solid fa-thermometer-half"></span> shows each chamber's temperature (average kinetic energy) relative to the start.</li>
 											</ul>
 											<h4>The key idea</h4>
@@ -290,6 +295,7 @@
 											<ul>
 												<li>Watch the temperatures drift apart, or open the charts (<span class="icon solid fa-chart-bar"></span>).</li>
 												<li>Be the demon: choose <em>Manual</em> in the settings (<span class="icon solid fa-cog"></span>), then press and hold on the simulation (mouse, touch or pen), or hold Space, to open the gate. Can you beat the automatic demon?</li>
+												<li>Turn on <em>Particles collide</em> in the settings for a more realistic gas. Collisions share energy out, so particles keep speeding up and slowing down (and changing colour) and each chamber stays a mix. The demon still lets only fast ones one way and slow ones the other, so the temperatures still drift apart.</li>
 												<li>Try a wider gate, more particles or a higher speed.</li>
 											</ul>
 											<p><span class="icon solid fa-expand"></span> toggles fullscreen and <span class="icon solid fa-sync-alt"></span> restarts.</p>
