@@ -2337,9 +2337,11 @@
         if (settings.k1) drawEllipseLaw(C, subj);
         drawDragPreviews(C);
         drawEditPreview(C);
+        drawGravityUnder(C, subj);   // (Hill sphere, Roche limit and pull lines: see "Mutual gravity made visible")
         drawBodies(C);
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
+        drawGravityOver(C, subj);
         drawLabels(C);
         drawOffscreen(C);
         drawFlashes();
@@ -2957,6 +2959,613 @@
         ctx.moveTo(x, y); ctx.arc(x, y, r, Math.PI / 2, Math.PI); ctx.closePath(); ctx.fill();
     }
 
+    // ------------------------------------------------------------------
+    // Mutual gravity made visible. Every body pulls on every other: the chosen body's menu has a
+    // Gravity tab listing the strongest pulls on it (the info bar's Gravity tooltip names them too);
+    // pull lines split its force arrow into one arrow per body pulling on it, joined tip to tail so
+    // that they add up to the force arrow (vector addition), with a faint dashed line to each of those
+    // bodies; its Hill sphere and Roche limit can be drawn; and a small legend gives the arrows' scales.
+    //   Each pull is Newton's F = G m1 m2 / r^2 along the line between the pair (softened between pieces
+    //   of one torn-apart body, as in the physics). A pull's share of the net force is its part along
+    //   the net force, (F_i . F) / |F|^2: the shares add up to exactly 100%, and one that pulls partly
+    //   against the rest has a negative share (forces add as arrows, not as numbers).
+    //   The strongest PULL_TOP pullers are picked ten times a second, in one pass over the bodies. Each
+    //   frame only their pulls are worked out again, from where they are now, and the rest are drawn as
+    //   one grey "others" arrow: the net force less those, so the chain always ends exactly at the tip
+    //   of the force arrow, whatever the tree or relativity added to it.
+    //   The chain is drawn at the force arrow's own scale (px per newton at its length, a straight
+    //   proportion, so the arrows really add up), unless one pull is much bigger than the net force
+    //   (pulls that nearly cancel, as on a moon passing between its planet and the star), or the force
+    //   is too weak for its arrow to show (a probe, an asteroid): then the chain is drawn at a scale of
+    //   its own, and its sum is a thin dashed arrow along the force arrow.
+    //   Hill sphere: r_H = a (1 - e) cbrt(m / 3M) round the chosen body, for its orbit round its primary
+    //   (mass M). Beyond it the primary's tidal pull beats the body's own gravity, so a moon of its own
+    //   must stay inside. The formula needs m much less than M, so it is only drawn for bodies under a
+    //   tenth of their primary's mass, and only for bound orbits. Roche limit: d = 2.44 R cbrt(M / m)
+    //   from the primary, the distance checkTides uses: closer in, the primary's tides would tear apart
+    //   a fluid body held together only by its own gravity. Not for star remnants or probes, which
+    //   checkTides never tears apart either. Both are measured ten times a second and drawn at their
+    //   true size every frame, so they keep up with the zoom; one too small to see says "zoom in".
+    //   Legend: a round speed and a round force near the scene's reference arrows, drawn at exactly the
+    //   lengths the arrows use (arrowLength and forceLength), above the scale bar; it fades while a
+    //   body is under it.
+    // ------------------------------------------------------------------
+    const PULL_TOP = 5;                   // pulls named in the menu and drawn as pull lines (the rest: "others")
+    const PULL_EVERY_MS = 100;            // the strongest pullers are picked again ten times a second
+    const HILL_MAX = 0.1;                 // Hill spheres only for bodies under this fraction of their primary's mass
+    const LIMITS_EVERY_MS = 100;
+    Object.assign(settings, { pulls: false, limits: false });
+    const pulls = {
+        bid: null, list: null, n: -1, t: -Infinity,   // whose pulls, the bodies array and its length then, and when
+        k: 0, rest: 0,                                // how many are named, and how many others there are
+        who: new Array(PULL_TOP).fill(null),
+        f: new Float64Array(PULL_TOP), fx: new Float64Array(PULL_TOP), fy: new Float64Array(PULL_TOP),
+        tx: 0, ty: 0,                                 // all the pulls added up: the net force (exact)
+        ox: 0, oy: 0,                                 // the others added up
+        cx: new Float64Array(PULL_TOP), cy: new Float64Array(PULL_TOP),   // this frame's pulls of the named ones
+        panelT: 0, panelBid: null, panelOn: false,    // the menu's list: when last written, for whom, and was it showing
+        rows: []
+    };
+    const pp = { x: 0, y: 0 };        // pairPull's result (no allocation)
+    // The chain as drawn this frame: its start and end, the force arrow's tip, its scale (px per M_sun
+    // AU / yr^2), and what chainLink needs (the body's centre, line width, font size, names placed)
+    const chainOut = {
+        drawn: false, x0: 0, y0: 0, ex: 0, ey: 0, tipX: 0, tipY: 0, k: 0, squeezed: false, links: 0,
+        named: 0, bx: 0, by: 0, w: 1, fs: 11
+    };
+    const chainLabels = [{ x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }];
+    const lim = {
+        bid: null, t: -Infinity, hill: 0, roche: 0, p: null, inside: false,
+        hillText: '', rocheText: '', notes: [],
+        hShown: false, hState: '', hx: 0, hy: 0, hR: 0, rShown: false, rState: '', rx: 0, ry: 0, rR: 0
+    };
+    const legend = {
+        t: -Infinity, alpha: 1, covered: false, vSqueezed: false, shown: false, right: false,
+        kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0
+    };
+    const LEGEND_SQUEEZE = 'longer arrows are squeezed';
+    const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+    // The pull of q on b (M_sun AU / yr^2) into pp; returns its size
+    function pairPull(b, q) {
+        const dx = q.x - b.x, dy = q.y - b.y;
+        const r2 = dx * dx + dy * dy;
+        let s2 = r2;
+        if (b.grp && b.grp === q.grp) { const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e; }
+        if (!(s2 > 0)) { pp.x = 0; pp.y = 0; return 0; }
+        const k = (G * b.m * q.m) / (s2 * Math.sqrt(s2));
+        pp.x = k * dx; pp.y = k * dy;
+        return k * Math.sqrt(r2);
+    }
+
+    // The strongest pullers on b (kept sorted, strongest first) and all the pulls added up; at most
+    // ten times a second unless fresh
+    function gatherPulls(b, fresh) {
+        const now = performance.now();
+        if (!fresh && pulls.bid === b.id && pulls.list === bodies && pulls.n === bodies.length && now - pulls.t < PULL_EVERY_MS) return pulls;
+        pulls.bid = b.id; pulls.list = bodies; pulls.n = bodies.length; pulls.t = now;
+        const who = pulls.who, f = pulls.f, fx = pulls.fx, fy = pulls.fy;
+        let k = 0, tx = 0, ty = 0;
+        for (const q of bodies) {
+            if (q === b) continue;
+            const m = pairPull(b, q);
+            tx += pp.x; ty += pp.y;
+            if (k === PULL_TOP && !(m > f[k - 1])) continue;
+            let i = k < PULL_TOP ? k++ : PULL_TOP - 1;
+            while (i > 0 && f[i - 1] < m) { who[i] = who[i - 1]; f[i] = f[i - 1]; fx[i] = fx[i - 1]; fy[i] = fy[i - 1]; i--; }
+            who[i] = q; f[i] = m; fx[i] = pp.x; fy[i] = pp.y;
+        }
+        for (let i = k; i < PULL_TOP; i++) who[i] = null;
+        let ox = tx, oy = ty;
+        for (let i = 0; i < k; i++) { ox -= fx[i]; oy -= fy[i]; }
+        pulls.k = k; pulls.rest = bodies.length - 1 - k;
+        pulls.tx = tx; pulls.ty = ty; pulls.ox = ox; pulls.oy = oy;
+        return pulls;
+    }
+
+    // A pull's share of the net force (x, y: the pull), from the last gatherPulls
+    function pullShare(x, y) {
+        const T2 = pulls.tx * pulls.tx + pulls.ty * pulls.ty;
+        return T2 > 0 ? (x * pulls.tx + y * pulls.ty) / T2 : 0;
+    }
+
+    // "100%", "99.98%", "0.0031%", "-83%": enough figures to show that small pulls aren't nothing
+    function fmtShare(s) {
+        const pct = 100 * s, a = Math.abs(pct);
+        if (a < 1e-4) return '<0.0001%';
+        let t;
+        if (a >= 1000) t = Math.round(a).toLocaleString('en-US');
+        else if (a >= 100.05) t = a.toFixed(a >= 199.5 ? 0 : 1);
+        else if (a >= 99) t = a.toFixed(2);
+        else if (a >= 10) t = a.toFixed(1);
+        else t = String(+a.toPrecision(2));
+        t = t.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+        return `${pct < 0 ? '−' : ''}${t}%`;
+    }
+
+    // A radius in plain words: "18,400 km", "1.50 million km", "0.215 AU"
+    function fmtReach(au) {
+        const km = au * AU_KM;
+        if (scene.units !== 'km' && au >= 0.1) return `${+au.toPrecision(3)} AU`;
+        if (km >= 1e6) return `${(km / 1e6).toPrecision(3)} million km`;
+        if (km >= 100) return `${(+km.toPrecision(3)).toLocaleString('en-US')} km`;
+        return `${+km.toPrecision(2)} km`;
+    }
+
+    // The info bar's Gravity tooltip: what the readout is, then all the pulls and their shares
+    function pullsTitle(b, base) {
+        if (!b || bodies.length < 2) return base;
+        const P = gatherPulls(b);
+        const T = Math.hypot(P.tx, P.ty);
+        if (!(T > 0)) return base;
+        const n = Math.min(P.k, 3), parts = [];
+        for (let i = 0; i < n; i++) parts.push(`${theName(P.who[i])} ${fmtShare(pullShare(P.fx[i], P.fy[i]))}`);
+        const more = P.k - n + P.rest;
+        if (more) parts.push(`${more} more`);
+        if (!orbitingBody(b)) return `${base}: ${parts.join(', ')}`;
+        return `${base}. All the pulls on it add up to ${fmtSci(forceToNewtons(T), 2)} N: ${parts.join(', ')}`;
+    }
+
+    // ---- The menu's Gravity tab: who pulls on this body ----
+    function buildPullRows() {
+        const tbody = ui.popPullRows;
+        if (!tbody) return;
+        tbody.textContent = '';
+        pulls.rows = [];
+        for (let i = 0; i <= PULL_TOP; i++) {
+            const tr = document.createElement('tr');
+            const th = document.createElement('th'), dot = document.createElement('span'), name = document.createElement('span');
+            const force = document.createElement('td'), share = document.createElement('td');
+            th.scope = 'row';
+            dot.className = 'orb-pull-dot';
+            dot.setAttribute('aria-hidden', 'true');
+            th.append(dot, name);
+            tr.append(th, force, share);
+            if (i === PULL_TOP) tr.className = 'orb-pull-others';
+            tr.hidden = true;
+            tbody.appendChild(tr);
+            pulls.rows.push({ tr, dot, name, force, share });
+        }
+    }
+
+    // A few times a second while the tab is showing (straight away when it opens or the body changes)
+    function updatePullPanel(force) {
+        const on = !!(ui.popPullRows && popBody && ui.pop && !ui.pop.hidden && edit.tab === 'pull');
+        const wasOn = pulls.panelOn;
+        pulls.panelOn = on;
+        if (!on) return;
+        const now = performance.now();
+        if (!force && wasOn && pulls.panelBid === popBody.id && now - pulls.panelT < 200) return;
+        pulls.panelT = now; pulls.panelBid = popBody.id;
+        const b = popBody;
+        setText(ui.popPullHead, `Who pulls on ${theName(b)}`);
+        const P = bodies.length > 1 ? gatherPulls(b) : null;
+        let against = false;
+        for (let i = 0; i <= PULL_TOP; i++) {
+            const row = pulls.rows[i];
+            const others = i === PULL_TOP;
+            const q = P && !others && i < P.k ? P.who[i] : null;
+            const show = !!(others ? P && P.rest > 0 : q);
+            if (row.tr.hidden === show) row.tr.hidden = !show;
+            if (!show) continue;
+            const x = others ? P.ox : P.fx[i], y = others ? P.oy : P.fy[i];
+            const s = pullShare(x, y);
+            if (s < -1e-6) against = true;   // (only if the minus shows: fmtShare's smallest is 0.0001%)
+            if (others) {
+                setText(row.name, `${P.rest.toLocaleString('en-US')} ${P.rest === 1 ? 'other' : 'others'}, together`);
+            } else {
+                row.dot.style.background = q.color;
+                setText(row.name, q.name);
+            }
+            setText(row.force, `${fmtSci(forceToNewtons(others ? Math.hypot(x, y) : P.f[i]), 2)} N`);
+            setText(row.share, fmtShare(s));
+        }
+        setText(ui.popPullNet, P ? `${fmtSci(forceToNewtons(Math.hypot(P.tx, P.ty)), 2)} N` : '–');
+        let note;
+        if (!P || !P.k) note = `Nothing else here pulls on ${theName(b)}.`;
+        else {
+            // Newton's 3rd law: the strongest puller is pulled back just as hard
+            note = `${capital(theName(b))} pulls back on ${theName(P.who[0])} just as hard, ${fmtSci(forceToNewtons(P.f[0]), 2)} N (Newton's 3rd law).`;
+            if (against) note = `A minus share pulls against the others. ${note}`;
+        }
+        setText(ui.popPullNote, note);
+    }
+
+    // ---- Pull lines ----
+    // A faint dashed line from the chosen body to each of its strongest pullers (stronger: bolder)
+    function drawPullTethers(C, b) {
+        if (bodies.length < 2) return;
+        const P = gatherPulls(b);
+        if (!P.k) return;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        const far = 4 * (viewW + viewH);
+        ctx.lineWidth = 1.3;
+        ctx.setLineDash([3, 5]);
+        for (let i = P.k - 1; i >= 0; i--) {
+            const q = P.who[i];
+            const qx = sx(q.dx), qy = sy(q.dy);
+            const dx = qx - x, dy = qy - y, d = Math.hypot(dx, dy);
+            const rq = q.minor && !isChosen(q) ? 2 : drawRadius(q);
+            if (!(d > r + rq + 6)) continue;
+            const ux = dx / d, uy = dy / d, end = Math.min(d - rq - 3, far);
+            // (full strength for the strongest, faintest four powers of ten weaker)
+            const s = clamp(1 + Math.log10(P.f[i] / P.f[0]) / 4, 0, 1);
+            ctx.globalAlpha = 0.22 + 0.5 * s;
+            ctx.strokeStyle = bodyStroke(q.color, C.dark);
+            ctx.beginPath();
+            ctx.moveTo(x + ux * (r + 3), y + uy * (r + 3));
+            ctx.lineTo(x + ux * end, y + uy * end);
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+    }
+
+    // Each strongest pull as an arrow in its puller's colour, then the others in grey, tip to tail from
+    // the base of the force arrow: they end at its tip. Long enough arrows are named.
+    function drawPullChain(C, b) {
+        chainOut.drawn = false;
+        if (bodies.length < 2) return;
+        const Fm = Math.hypot(b.fx, b.fy);
+        if (!(Fm > 0)) return;
+        const L = forceLength(Fm);
+        const P = gatherPulls(b);
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        const ux = b.fx / Fm, uy = -b.fy / Fm;
+        const x0 = x + ux * r, y0 = y + uy * r;
+        let sumX = 0, sumY = 0, big = 0;
+        for (let i = 0; i < P.k; i++) {
+            const m = pairPull(b, P.who[i]);
+            P.cx[i] = pp.x; P.cy[i] = pp.y;
+            sumX += pp.x; sumY += pp.y;
+            if (m > big) big = m;
+        }
+        const ox = b.fx - sumX, oy = b.fy - sumY;
+        big = Math.max(big, Math.hypot(ox, oy));
+        let k = L / Fm;
+        const cap = 160 * sizeScale;   // (1.6 times the longest force arrow)
+        // (a pull far too weak for its force arrow to show, on a probe or an asteroid, is drawn larger)
+        const tiny = L < 16 * sizeScale;
+        if (tiny) k = (40 * sizeScale) / Fm;
+        const squeezed = tiny || big * k > cap;
+        if (big * k > cap) k = cap / big;
+        // (thinner than the force arrow, so where one pull is nearly all of it the pink shows round it)
+        const wNet = clamp(2 * sizeScale, 1.5, 2.4), w = 0.55 * wNet;
+        // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
+        // drawn at a scale of its own (then dashed and thin)
+        const ex = x0 + b.fx * k, ey = y0 - b.fy * k;
+        if (squeezed) {
+            ctx.setLineDash([4, 3]);
+            arrow(x0, y0, ex, ey, C.force, w);
+            ctx.setLineDash([]);
+        } else if (!settings.forces) {
+            arrow(x0, y0, ex, ey, C.force, wNet);
+        }
+        const c = chainOut;
+        c.x0 = x0; c.y0 = y0; c.ex = x0; c.ey = y0; c.links = 0; c.named = 0;
+        c.bx = x; c.by = y; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
+        ctx.font = font(c.fs);
+        for (let i = 0; i < P.k; i++) chainLink(C, P.cx[i] * k, -P.cy[i] * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
+        chainLink(C, ox * k, -oy * k, C.subtle, P.rest ? 'others' : '', null);
+        c.drawn = true; c.tipX = x0 + ux * L; c.tipY = y0 + uy * L; c.k = k; c.squeezed = squeezed;
+    }
+
+    // One pull of the chain, from where the last ended (chainOut.ex, ey), and its puller's name beside
+    // it: on the side away from the body, not where that body's own name already is, nor over another
+    function chainLink(C, lx, ly, color, label, q) {
+        const c = chainOut;
+        const len = Math.hypot(lx, ly);
+        const px = c.ex, py = c.ey;
+        c.ex += lx; c.ey += ly;
+        if (len < 2) return;
+        arrow(px, py, px + lx, py + ly, color, c.w);
+        c.links++;
+        if (!label || !settings.labels || len < 40 || c.named >= chainLabels.length || cleanRender) return;
+        const fs = c.fs;
+        let nx = -ly / len, ny = lx / len;
+        const mx = px + lx / 2, my = py + ly / 2;
+        if (nx * (mx - c.bx) + ny * (my - c.by) < 0) { nx = -nx; ny = -ny; }
+        const tx = mx + nx * (fs * 0.9 + 2), ty = my + ny * (fs * 0.9 + 2);
+        const tw = ctx.measureText(label).width / 2 + 3;
+        if (q && Math.hypot(sx(q.dx) - tx, sy(q.dy) - ty) < drawRadius(q) + tw + 24) return;
+        for (let j = 0; j < c.named; j++) {
+            const o = chainLabels[j];
+            if (Math.abs(o.x - tx) < o.w + tw && Math.abs(o.y - ty) < fs + 2) return;
+        }
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = hexA(C.bg, 0.8);
+        ctx.lineWidth = 3;
+        ctx.fillStyle = C.label;
+        ctx.strokeText(label, tx, ty);
+        ctx.fillText(label, tx, ty);
+        const o = chainLabels[c.named++];
+        o.x = tx; o.y = ty; o.w = tw;
+    }
+
+    // ---- Hill sphere and Roche limit ----
+    function measureLimits(b) {
+        const now = performance.now();
+        if (lim.bid === b.id && now - lim.t < LIMITS_EVERY_MS) return;
+        lim.bid = b.id; lim.t = now;
+        lim.hill = lim.roche = 0; lim.p = null; lim.inside = false;
+        lim.hillText = lim.rocheText = '';
+        lim.notes.length = 0;   // (each: the card's line, and a shorter one for small canvases)
+        if (bodies.length < 2) { lim.notes.push(['On its own: no Hill sphere or Roche limit', 'On its own: neither']); return; }
+        if (!orbitingBody(b)) { lim.notes.push([`${capital(theName(b))} is the heaviest here: choose a body that orbits it`, 'Choose a body that orbits another']); return; }
+        if (b.m < 1e-17) { lim.notes.push(['A probe\'s own gravity is far too weak for either', 'None for a probe']); return; }
+        const p = b.primary;
+        lim.p = p;
+        const el = elementsOf(b, p);
+        if (b.m > HILL_MAX * p.m) lim.notes.push([`No Hill sphere: it is over a tenth of ${theName(p)}'s mass`, 'No Hill sphere: too heavy']);
+        else if (!el.bound || !b.bound) lim.notes.push([`No Hill sphere: it isn't bound to ${theName(p)}`, 'No Hill sphere: not bound']);
+        else {
+            lim.hill = el.a * (1 - el.e) * Math.cbrt(b.m / (3 * p.m));
+            lim.hillText = `Hill sphere: ${fmtReach(lim.hill)}`;
+        }
+        if (isCompact(b)) lim.notes.push(['No Roche limit: it is too dense for tides to tear apart', 'No Roche limit: too dense']);
+        else {
+            lim.roche = (ROCHE * b.R * Math.cbrt(p.m / b.m)) / AU_KM;
+            lim.inside = lim.roche <= p.R / AU_KM;
+            lim.rocheText = `Roche limit: ${fmtReach(lim.roche)}`;
+        }
+    }
+
+    // The dashed circles, at their true size (under the bodies). Each is 'ok', 'small' (hidden under
+    // the disc: zoom in) or 'big' (far larger than the view: zoom out).
+    function drawLimitCircles(C, b) {
+        measureLimits(b);
+        lim.hShown = lim.rShown = false;
+        lim.hState = lim.rState = '';
+        const big = 4 * (viewW + viewH);
+        const state = (R, r) => (R <= r + 3 ? 'small' : R >= big ? 'big' : 'ok');
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 5]);
+        if (lim.hill > 0) {
+            lim.hx = sx(b.dx); lim.hy = sy(b.dy); lim.hR = lim.hill * scale;
+            lim.hState = state(lim.hR, drawRadius(b));
+            lim.hShown = lim.hState === 'ok';
+            if (lim.hShown) {
+                ctx.strokeStyle = hexA(bodyStroke(b.color, C.dark), 0.9);
+                ctx.beginPath();
+                ctx.arc(lim.hx, lim.hy, lim.hR, 0, TAU);
+                ctx.stroke();
+            }
+        }
+        const p = lim.p;
+        if (lim.roche > 0 && p) {
+            lim.rx = sx(p.dx); lim.ry = sy(p.dy); lim.rR = lim.roche * scale;
+            lim.rState = state(lim.rR, drawRadius(p));
+            lim.rShown = lim.rState === 'ok';
+            if (lim.rShown) {
+                ctx.strokeStyle = hexA(C.force, 0.9);
+                ctx.beginPath();
+                ctx.arc(lim.rx, lim.ry, lim.rR, 0, TAU);
+                ctx.stroke();
+            }
+        }
+        ctx.setLineDash([]);
+    }
+
+    // A circle's name: above it (or below), else where it crosses the view nearest the middle
+    function circleLabel(C, cx, cy, R, below, text, fs) {
+        ctx.font = font(fs);
+        const w = ctx.measureText(text).width;
+        let x = cx, top = NaN;
+        for (const s of below ? [1, -1] : [-1, 1]) {
+            const t = s < 0 ? cy - R - 4 - fs : cy + R + 4;
+            if (cx >= 0 && cx <= viewW && t >= 4 && t + fs <= viewH - 30) { top = t; break; }
+        }
+        if (isNaN(top)) {
+            const dx = viewW / 2 - cx, dy = viewH / 2 - cy, d = Math.hypot(dx, dy);
+            if (!(d > 0)) return;
+            x = cx + (dx / d) * R; top = cy + (dy / d) * R + 4;
+            if (x < 0 || x > viewW || top < 4 || top + fs > viewH - 30) return;
+        }
+        x = clamp(x, 4 + w / 2, Math.max(4 + w / 2, viewW - 4 - w / 2));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.strokeStyle = hexA(C.bg, 0.85);
+        ctx.lineWidth = 3;
+        ctx.fillStyle = C.label;
+        ctx.strokeText(text, x, top);
+        ctx.fillText(text, x, top);
+    }
+
+    // Each circle named on it (its size and meaning are on the card)
+    function drawLimitLabels(C, b) {
+        if (cleanRender) return;
+        const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
+        if (lim.hShown) circleLabel(C, lim.hx, lim.hy, lim.hR, false, 'Hill sphere', fs);
+        if (lim.rShown) circleLabel(C, lim.rx, lim.ry, lim.rR, true, 'Roche limit', fs);
+    }
+
+    // The card (with the Kepler cards, top right): each size, what it means, and why one is missing
+    // or can't be seen at this zoom
+    function limitCardLines(b, compact) {
+        if (!b) return null;
+        const C = colours();
+        const p = lim.p;
+        const lines = [];
+        const plain = (t) => [[t, false, C.subtle]];
+        if (lim.hill > 0) {
+            lines.push([[compact ? 'Hill sphere: ' : `Hill sphere of ${theName(b)}: `, true], [fmtReach(lim.hill)]]);
+            if (!compact) lines.push(plain('its own moons must orbit inside it'));
+        }
+        if (lim.roche > 0 && p) {
+            // (one line on a small canvas)
+            lines.push([[compact ? 'Roche limit: ' : `Roche limit round ${theName(p)}: `, true], [fmtReach(lim.roche) + (compact && lim.inside ? ` (inside ${theName(p)})` : '')]]);
+            if (!compact) {
+                lines.push(plain(lim.inside ? `less than ${theName(p)}'s radius: ${theName(b)} would hit it first`
+                    : `closer in, tides ${settings.realistic ? 'tear' : 'would tear'} ${theName(b)} apart`));
+            }
+        }
+        for (const n of lim.notes) lines.push(plain(n[compact ? 1 : 0]));
+        // Too small to see (under the discs) or far too big for the view
+        const what = (h, r) => (h && r ? 'them' : h ? 'the Hill sphere' : 'the Roche limit');
+        const hs = lim.hill > 0 && lim.hState === 'small', rs = lim.roche > 0 && !lim.inside && lim.rState === 'small';
+        const hb = lim.hill > 0 && lim.hState === 'big', rb = lim.roche > 0 && lim.rState === 'big';
+        if (hs || rs) lines.push(plain(`Zoom in to see ${what(hs, rs)}`));
+        if (hb || rb) lines.push(plain(`Zoom out to see ${what(hb, rb)}`));
+        return lines;
+    }
+
+    // ---- Drawn from renderFrame: under the bodies, and over the force arrows ----
+    function drawGravityUnder(C, subj) {
+        updatePullPanel(false);
+        if (!subj) return;
+        if (settings.limits) drawLimitCircles(C, subj);
+        if (settings.pulls) drawPullTethers(C, subj);
+    }
+
+    function drawGravityOver(C, subj) {
+        if (!subj) { chainOut.drawn = false; return; }
+        if (settings.pulls) drawPullChain(C, subj); else chainOut.drawn = false;
+        if (settings.limits) drawLimitLabels(C, subj);
+    }
+
+    // ---- Arrow legend (bottom left, above the scale bar) ----
+    // The 1, 2 or 5 x 10^n nearest x (on a log scale)
+    function niceNearest(x) {
+        if (!(x > 0)) return 0;
+        const pow = Math.pow(10, Math.floor(Math.log10(x)));
+        let best = pow, bestD = Infinity;
+        for (const c of [1, 2, 5, 10]) {
+            const d = Math.abs(Math.log(c * pow / x));
+            if (d < bestD) { bestD = d; best = c * pow; }
+        }
+        return +best.toPrecision(1);
+    }
+
+    function legendSpeedText(kms) {
+        if (kms < 0.1) return `${+(kms * 1000).toPrecision(2)} m/s`;
+        return `${(+kms.toPrecision(2)).toLocaleString('en-US')} km/s`;
+    }
+
+    function drawArrowLegend(C) {
+        legend.shown = false;
+        const showV = settings.velocities, showF = settings.forces;
+        if (cleanRender || !bodies.length || !(showV || showF)) return;
+        const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
+        const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
+        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
+        if (showV) {
+            const kms = niceNearest(0.7 * vRef * AUYR_KMS);
+            if (kms !== legend.kms) { legend.kms = kms; legend.vText = legendSpeedText(kms); }
+            legend.vPx = arrowLength(kms / AUYR_KMS);
+        }
+        if (showF) {
+            const N = niceNearest(0.8 * forceToNewtons(forceRef));
+            if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
+            legend.fPx = forceLength(N / forceToNewtons(1));
+        }
+        const now = performance.now();
+        const rows = (showV ? 1 : 0) + (showF ? 1 : 0);
+        ctx.font = font(fs);
+        const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
+        const textW = Math.max(showV ? ctx.measureText(legend.vText).width : 0, showF ? ctx.measureText(legend.fText).width : 0);
+        // A velocity arrow over three medium lengths, or any force arrow, is shorter than in proportion
+        const squeeze = showF || (showV && legend.vSqueezed);
+        const w = Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
+        const bottom = viewH - 12 - fs - 10;
+        const top = bottom - (rows + (squeeze ? 1 : 0)) * lh;
+        // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
+        legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
+        const left = legend.right ? viewW - 12 - w : 12;
+        // Fade while a body (not a swarm's dot) is under it: checked ten times a second
+        if (now - legend.t > 100) {
+            legend.t = now;
+            legend.covered = false;
+            legend.vSqueezed = false;
+            const fv = showV ? frameVelocity() : null;
+            for (const b of bodies) {
+                if (b.minor && !isChosen(b)) continue;
+                const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b) + 4;
+                if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
+                if (fv && Math.hypot(b.vx - fv.x, b.vy - fv.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
+            }
+        }
+        legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
+        // (the arrows as drawArrows draws them: the same width and lengths)
+        const aw = clamp(2 * sizeScale, 1.5, 2.4);
+        ctx.globalAlpha = legend.alpha;
+        let y = top + lh / 2;
+        const tx = left + arrowW + 8;
+        if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
+        if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
+        if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
+        ctx.globalAlpha = 1;
+        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w;
+    }
+
+    // A legend row: an arrow px long (if any), then its text at tx
+    function legendRow(C, left, y, px, width, color, tx, text) {
+        if (color) arrow(left, y, left + px, y, color, width);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = hexA(C.bg, 0.8);
+        ctx.lineWidth = 3;
+        ctx.fillStyle = C.subtle;
+        ctx.strokeText(text, tx, y + 0.5);
+        ctx.fillText(text, tx, y + 0.5);
+    }
+
+    // ---- Switching them on and off: the settings, the menu's buttons and G ----
+    function syncGravityControls() {
+        if (ui.pullsToggle) ui.pullsToggle.checked = settings.pulls;
+        if (ui.limitsToggle) ui.limitsToggle.checked = settings.limits;
+        if (ui.popPullLines) ui.popPullLines.setAttribute('aria-pressed', settings.pulls ? 'true' : 'false');
+        if (ui.popPullLimits) ui.popPullLimits.setAttribute('aria-pressed', settings.limits ? 'true' : 'false');
+    }
+
+    // On: say what they show in the hint line (read out: it is a live region)
+    function setPullLines(on) {
+        settings.pulls = !!on;
+        syncGravityControls();
+        const b = bodyById(selectedId);
+        if (!settings.pulls) setHint();
+        else if (!b) setHint(null, '<strong>Pull lines:</strong> choose a body to see who pulls on it.');
+        else {
+            const who = escapeHtml(theName(b));
+            setHint(null, `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${who}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`);
+        }
+    }
+
+    function setLimits(on) {
+        settings.limits = !!on;
+        lim.bid = null;
+        syncGravityControls();
+        const b = bodyById(selectedId);
+        if (!settings.limits) setHint();
+        else if (b && orbitingBody(b) && b.m >= 1e-17) {
+            const who = escapeHtml(theName(b)), p = escapeHtml(theName(b.primary));
+            setHint(null, `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`);
+        } else setHint(null, '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.');
+    }
+
+    function onGravityKey(e) {
+        if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.isComposing || typingIn(e.target)) return;
+        if (e.key !== 'g' && e.key !== 'G') return;
+        setPullLines(!settings.pulls);
+        e.preventDefault();
+    }
+
+    function bindGravity() {
+        Object.assign(ui, {
+            pullsToggle: byId('pullsToggle'), limitsToggle: byId('limitsToggle'),
+            popPullHead: byId('popPullHead'), popPullRows: byId('popPullRows'), popPullNet: byId('popPullNet'),
+            popPullNote: byId('popPullNote'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
+        });
+        TAB_OF.popTabPull = 'pull';
+        buildPullRows();
+        if (ui.pullsToggle) ui.pullsToggle.addEventListener('change', () => setPullLines(ui.pullsToggle.checked));
+        if (ui.limitsToggle) ui.limitsToggle.addEventListener('change', () => setLimits(ui.limitsToggle.checked));
+        if (ui.popPullLines) ui.popPullLines.addEventListener('click', () => setPullLines(!settings.pulls));
+        if (ui.popPullLimits) ui.popPullLimits.addEventListener('click', () => setLimits(!settings.limits));
+        document.addEventListener('keydown', onGravityKey);
+        syncGravityControls();
+    }
+
     // A conic (relative orbit) around the primary at screen point (cx, cy).
     function traceConic(cx, cy, el, maxR) {
         ctx.beginPath();
@@ -3168,7 +3777,9 @@
         if (fl) y = drawCard(C, fl, y, cfs) + 5;
         if (settings.k1) y = drawCard(C, kepler1Lines(subj, compact), y, cfs) + 5;
         if (settings.k2) y = drawCard(C, kepler2Lines(subj, compact), y, cfs) + 5;
-        if (settings.k3) drawKepler3Card(C, subj, y, cfs, compact);
+        if (settings.k3) y = drawKepler3Card(C, subj, y, cfs, compact) + 5;
+        if (settings.limits) y = drawCard(C, limitCardLines(subj, compact), y, cfs) + 5;
+        drawArrowLegend(C);
     }
 
     // The flyby card: the chosen body's speed relative to the star before and after it passed the
@@ -3844,7 +4455,7 @@
         setTitle(ui.statPeriodBox, tip);
         setTitle(statBox(ui.statDist), `Distance from ${where}`);
         setTitle(statBox(ui.statSpeed), `Speed relative to ${where}`);
-        setTitle(statBox(ui.statForce), pull);
+        setTitle(statBox(ui.statForce), pullsTitle(b, pull));   // (and every pull's share: see pullsTitle)
     }
 
     // ------------------------------------------------------------------
@@ -4670,8 +5281,8 @@
             if (panel) panel.hidden = !on;
             if (on && focus) t.focus();
         }
-        // (the steps don't apply to the Body tab)
-        if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body');
+        // (the steps don't apply to the Body and Gravity tabs)
+        if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
     }
 
     function openEditor(b, tab, focus) {
@@ -6664,6 +7275,63 @@
             steps: perf.steps, speedRatio: perf.ratio, quality: perf.quality, bodies: bodies.length, slowedDown
         })
     });
+
+    // Mutual gravity made visible (see that section): who pulls on a body, the overlays, the legend
+    (function () {
+        const api = window.orbitsSimulation;
+        const named = (name) => (name ? bodies.find((q) => q.name === name) : bodyById(selectedId)) || null;
+        Object.assign(api, {
+            // Every other body's pull on it, strongest first: newtons and share of the net force
+            pulls(name) {
+                const b = named(name);
+                if (!b) return null;
+                gatherPulls(b, true);
+                const list = [];
+                for (const q of bodies) {
+                    if (q === b) continue;
+                    const m = pairPull(b, q);
+                    list.push({ name: q.name, N: forceToNewtons(m), share: pullShare(pp.x, pp.y) });
+                }
+                return list.sort((p, q) => q.N - p.N);
+            },
+            setOverlays(o) {
+                if (o && o.pulls !== undefined) setPullLines(o.pulls);
+                if (o && o.limits !== undefined) setLimits(o.limits);
+                return api.overlays();
+            },
+            // What the overlays and the Gravity tab show now (sizes in km, lengths in CSS px)
+            overlays() {
+                const b = bodyById(selectedId);
+                const out = { pulls: settings.pulls, limits: settings.limits, body: b ? b.name : null };
+                if (b && bodies.length > 1) {
+                    const P = gatherPulls(b, true);
+                    out.net = {
+                        N: forceToNewtons(Math.hypot(P.tx, P.ty)), arrowN: forceToNewtons(Math.hypot(b.fx, b.fy)),
+                        named: P.who.slice(0, P.k).map((q, i) => ({ name: q.name, N: forceToNewtons(P.f[i]), share: pullShare(P.fx[i], P.fy[i]) })),
+                        others: { count: P.rest, N: forceToNewtons(Math.hypot(P.ox, P.oy)), share: pullShare(P.ox, P.oy) }
+                    };
+                }
+                if (b) {
+                    lim.bid = null;
+                    measureLimits(b);
+                    out.hill = { km: lim.hill * AU_KM, shown: settings.limits && lim.hShown, px: lim.hR, text: lim.hillText };
+                    out.roche = { km: lim.roche * AU_KM, around: lim.p ? lim.p.name : null, inside: lim.inside, shown: settings.limits && lim.rShown, px: lim.rR, text: lim.rocheText };
+                    out.notes = lim.notes.map((n) => n[0]);
+                }
+                out.chain = Object.assign({}, chainOut);
+                out.legend = Object.assign({}, legend);
+                const txt = (el) => (el ? el.textContent : null);
+                out.panel = {
+                    head: txt(ui.popPullHead), net: txt(ui.popPullNet), note: txt(ui.popPullNote),
+                    rows: pulls.rows.filter((r) => !r.tr.hidden).map((r) => [r.name.textContent, r.force.textContent, r.share.textContent])
+                };
+                out.forceTitle = ui.statForce && statBox(ui.statForce) ? statBox(ui.statForce).title : null;
+                out.hint = ui.hint ? ui.hint.textContent : null;
+                return out;
+            }
+        });
+    })();
+    bindGravity();
 
     // ------------------------------------------------------------------
     // Start
