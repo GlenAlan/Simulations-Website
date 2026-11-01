@@ -4944,11 +4944,15 @@
         });
         // A press on the canvas gives it the keyboard (so Enter, N and Z act on it next), unless you are
         // working in the body's menu (leaving one of its fields would apply what is half typed)
-        canvas.addEventListener('pointerdown', () => {
+        // (A finger's press shows no ring: the browser counts the focus given here as visible, and on a
+        // phone a pink ring round the canvas after every tap only clutters it. A key brings it back.)
+        canvas.addEventListener('pointerdown', (e) => {
+            canvas.classList.toggle('orb-touch-focus', (e.pointerType || 'mouse') !== 'mouse');
             const a = document.activeElement;
             if (a === canvas || (ui.pop && ui.pop.contains(a))) return;
             canvas.focus({ preventScroll: true });
         });
+        document.addEventListener('keydown', () => canvas.classList.remove('orb-touch-focus'), true);
         // A body chosen on the canvas shows in the list straight away (after the canvas's own handler)
         canvas.addEventListener('pointerup', () => setTimeout(() => { if (nav.visible && selectedId !== nav.shownSel) navReveal(); }, 0));
         setInterval(navTick, NAV_TICK_MS);

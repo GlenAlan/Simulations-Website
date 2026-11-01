@@ -2157,6 +2157,11 @@ html:not(.dark-mode) .orbits-sim .sim-chips input[type="checkbox"]:not(:checked)
     outline-offset: -3px;
 }
 
+/* (not after a finger's press: see bindNavigation in orbits_core.js) */
+#simulationCanvas.orb-touch-focus:focus-visible {
+    outline: none;
+}
+
 /* "? Help" in the settings' heading, beside the close button */
 .sim-controls-header .orb-keys-btn {
     -webkit-appearance: none;
