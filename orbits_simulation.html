@@ -235,11 +235,14 @@
 											<div class="sim-checkbox-group">
 												<input type="checkbox" id="forceToggle" checked>
 												<label for="forceToggle"><span class="orb-key orb-key-force" aria-hidden="true"></span>Gravity forces</label>
+												<input type="checkbox" id="pullsToggle" aria-describedby="pullsNote">
+												<label for="pullsToggle" title="Pull lines (G)"><span class="orb-key orb-key-pulls" aria-hidden="true"></span>Pull lines</label>
 												<input type="checkbox" id="velocityToggle" checked>
 												<label for="velocityToggle"><span class="orb-key orb-key-velocity" aria-hidden="true"></span>Velocities</label>
 												<input type="checkbox" id="labelsToggle" checked>
 												<label for="labelsToggle">Names</label>
 											</div>
+											<p class="orb-note" id="pullsNote">Pull lines show who pulls on the chosen body, one arrow each<span class="orb-keys-note"> (G)</span>.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Kepler's laws</p>
@@ -278,6 +281,8 @@
 													<label for="comToggle">Centre of mass</label>
 													<input type="checkbox" id="previewToggle" checked>
 													<label for="previewToggle">Predicted path while moving a body or paused</label>
+													<input type="checkbox" id="limitsToggle">
+													<label for="limitsToggle" title="How far out its moons can orbit, and how close it can go before tides tear it apart">Hill sphere and Roche limit</label>
 												</div>
 											</div>
 											<div class="sim-control-group">
@@ -315,6 +320,7 @@
 													<button type="button" role="tab" id="popTabVel" aria-controls="popPanelVel" aria-selected="true">Velocity</button>
 													<button type="button" role="tab" id="popTabOrbit" aria-controls="popPanelOrbit" aria-selected="false" tabindex="-1">Orbit</button>
 													<button type="button" role="tab" id="popTabBody" aria-controls="popPanelBody" aria-selected="false" tabindex="-1">Body</button>
+													<button type="button" role="tab" id="popTabPull" aria-controls="popPanelPull" aria-selected="false" tabindex="-1">Gravity</button>
 												</div>
 												<div class="orb-pop-panels">
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelVel" aria-labelledby="popTabVel">
@@ -399,6 +405,21 @@
 															<div class="orb-pop-colours" id="popColours" role="radiogroup" aria-label="Colour"></div>
 														</div>
 														<p class="orb-pop-info" id="popInfo" aria-live="polite">&nbsp;</p>
+													</div>
+													<div class="orb-pop-panel" role="tabpanel" id="popPanelPull" aria-labelledby="popTabPull" hidden>
+														<table class="orb-pull-table">
+															<thead><tr><th scope="col" id="popPullHead">Who pulls on it</th><th scope="col">Force</th><th scope="col" title="How much of the net force each pull gives">Share</th></tr></thead>
+															<tbody id="popPullRows"></tbody>
+															<tfoot><tr><th scope="row">Net force</th><td id="popPullNet">&ndash;</td><td>100%</td></tr></tfoot>
+														</table>
+														<p class="orb-pop-note orb-pull-note" id="popPullNote">&nbsp;</p>
+														<div class="orb-field">
+															<span class="orb-field-label" id="popPullShowLabel">Show</span>
+															<div class="orb-seg" role="group" aria-labelledby="popPullShowLabel">
+																<button type="button" id="popPullLines" aria-pressed="false" title="One arrow for each body's pull, joined tip to tail (G)">Pull lines</button>
+																<button type="button" id="popPullLimits" aria-pressed="false" title="Its Hill sphere and Roche limit">Hill &amp; Roche</button>
+															</div>
+														</div>
 													</div>
 												</div>
 												<div class="orb-pop-step">
@@ -494,6 +515,7 @@
 											<h4>What you're seeing</h4>
 											<ul>
 												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun. <strong>Teal arrows:</strong> velocities.</li>
+												<li><strong>Pull lines</strong> (G) split the chosen body's pink arrow into one arrow for each body pulling on it, joined tip to tail.</li>
 												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless realistic physics is on).</li>
 											</ul>
 
