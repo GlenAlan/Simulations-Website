@@ -2020,19 +2020,20 @@
         if (c < 0 || r < 0 || c >= GW || r >= GH) return;
         grid[r * GW + c] = v;
     }
+    // A brush n cm wide paints a disc n cells across, centred on the nearest cell centre (n odd) or
+    // cell corner (n even), so a stroke is n cells wide wherever in a cell the pointer is. (Centred
+    // on the pointer itself, a 2 cm stroke along a row of cells painted just that one row.)
+    function brushCentre(u, size) { return size % 2 ? Math.floor(u) + 0.5 : Math.round(u); }
     function paintDisc(x, y, size, v) {
-        const cx = x / CELL, cy = y / CELL;
-        if (size <= 1) { setCell(Math.floor(cx), Math.floor(cy), v); return; }
-        const rad = size / 2;
-        const rr = rad * rad;
-        let painted = false;
-        for (let r = Math.floor(cy - rad); r <= Math.ceil(cy + rad); r++) {
-            for (let c = Math.floor(cx - rad); c <= Math.ceil(cx + rad); c++) {
+        if (size <= 1) { setCell(Math.floor(x / CELL), Math.floor(y / CELL), v); return; }
+        const cx = brushCentre(x / CELL, size), cy = brushCentre(y / CELL, size);
+        const rad = size / 2, rr = rad * rad;
+        for (let r = Math.floor(cy - rad); r < Math.ceil(cy + rad); r++) {
+            for (let c = Math.floor(cx - rad); c < Math.ceil(cx + rad); c++) {
                 const dx = c + 0.5 - cx, dy = r + 0.5 - cy;
-                if (dx * dx + dy * dy <= rr) { setCell(c, r, v); painted = true; }
+                if (dx * dx + dy * dy <= rr) setCell(c, r, v);
             }
         }
-        if (!painted) setCell(Math.floor(cx), Math.floor(cy), v);
     }
     function paintLine(x0, y0, x1, y1, size, v) {
         const dist = Math.hypot(x1 - x0, y1 - y0);
@@ -3709,12 +3710,15 @@
         }
         if (pointer.type !== 'mouse' && !pointer.down) return;
         if (tool === 'brush' || tool === 'eraser') {
+            // centred where the brush paints (see paintDisc), not on the pointer itself
+            const s1 = Math.max(size, 1);
+            const px = brushCentre(pointer.x / CELL, s1) * CELL, py = brushCentre(pointer.y / CELL, s1) * CELL;
             const r = Math.max(size / 2, 0.5) * CELL * scale;
             ctx.strokeStyle = tool === 'eraser' ? pal.text : MATERIALS[settings.material].color;
             ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(wx(pointer.x), wy(pointer.y), r, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(wx(px), wy(py), r, 0, Math.PI * 2); ctx.stroke();
             ctx.strokeStyle = pal.halo; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.arc(wx(pointer.x), wy(pointer.y), r + 1.5, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(wx(px), wy(py), r + 1.5, 0, Math.PI * 2); ctx.stroke();
         }
     }
 
