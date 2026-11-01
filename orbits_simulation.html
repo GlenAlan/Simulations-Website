@@ -193,6 +193,11 @@
 												<input type="range" id="speedSlider" min="0" max="23" step="1" value="11" aria-describedby="speedNote" title="Simulation speed ([ slower, ] faster)">
 											</label>
 											<p class="orb-note" id="speedNote">1 yr every 6 s</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="reverseToggle" aria-describedby="reverseNote">
+												<label for="reverseToggle" title="Run time backwards (B)">Run backwards</label>
+											</div>
+											<p class="orb-note" id="reverseNote">Newton's laws work both ways: every body retraces its path.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="sceneLabel">Scene</p>
@@ -307,6 +312,7 @@
 													<option value="circular" selected>Start on a circular orbit</option>
 													<option value="keep">Keep their velocity</option>
 													<option value="rest">Start at rest (in this view)</option>
+													<option value="throw">Throw it (the speed you let go at)</option>
 												</select>
 											</div>
 											<div class="sim-control-group">
@@ -594,6 +600,9 @@
 
 											<h4>Missions</h4>
 											<p>Seven missions, easy to hard, are at the end of the scene list (or press <span class="icon solid fa-rocket"></span> Missions in the settings). Each gives your probe a goal, such as reaching Mars or parking at Jupiter's L4 point, and a fuel budget measured as the change of speed (&Delta;<em>v</em>) its engine can give. Only burns of the engine may change anything, and each one uses fuel; Undo gives it back. Par, the &Delta;<em>v</em> of the classic route, comes from <em>v</em><sup>2</sup> = <em>GM</em>(2/<em>r</em> &minus; 1/<em>a</em>), and the closer you get to it the more stars you earn.</p>
+
+											<h4>Running time backwards</h4>
+											<p>Newton's laws work just as well backwards: reverse every velocity and each body retraces its path. Tick <em>Run backwards</em> (or press B) and the clock counts down as the bodies go back along their trails; the velocity arrows still show each body's velocity, so now they point against its motion. In a chaotic system such as "Three stars: chaos", the tiny rounding errors of any computer grow at every close encounter, so after a long run the backward motion drifts away from the true past, and faint dashed discs show where the stars really were. A merger, or a star torn apart, can't run backwards by itself: the simulation puts the bodies back as they were just before.</p>
 
 											<h4>Things to try</h4>
 											<ul>

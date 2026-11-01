@@ -238,7 +238,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? It\'s chaos: nudge one star a hair and the dance ends differently.',
+            tip: 'Three stars start at rest. Who gets thrown out? It\'s chaos: nudge one star a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#f2849e', at: [-200, -100] },
@@ -968,15 +968,17 @@
     const timeUnit = () => scene.time || (scene.units === 'km' ? 'd' : 'yr');
     const timeInSeconds = () => timeUnit() === 's';
     function fmtTime(yr) {
+        // (the clock goes below zero when time runs backwards past the start)
+        const a = Math.abs;
         if (timeInSeconds()) {
             const s = yr * YEAR_S;
-            return { v: s < 100 ? s.toFixed(2) : s < 1000 ? s.toFixed(1) : Math.round(s).toLocaleString('en-US'), u: 's' };
+            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : Math.round(s).toLocaleString('en-US'), u: 's' };
         }
         if (timeUnit() === 'd') {
             const d = yr * DAYS_PER_YEAR;
-            return { v: d < 1000 ? d.toFixed(1) : Math.round(d).toLocaleString('en-US'), u: 'days' };
+            return { v: a(d) < 1000 ? d.toFixed(1) : Math.round(d).toLocaleString('en-US'), u: 'days' };
         }
-        return { v: yr < 100 ? yr.toFixed(2) : yr < 1000 ? yr.toFixed(1) : Math.round(yr).toLocaleString('en-US'), u: 'yr' };
+        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : Math.round(yr).toLocaleString('en-US'), u: 'yr' };
     }
     // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
@@ -1815,6 +1817,7 @@
     // The survivor is the heavier body, or the black hole if there is one (it swallows the other from
     // the inside, whatever their masses).
     function mergeBodies(a, b) {
+        noteIrreversible('merge');   // (running backwards: a copy of the system from just before)
         const bh = (q) => q.kind === 'blackhole';
         const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
         const auto = autoColoured(big);   // (a star's colour follows its mass: see starColour)
@@ -1890,6 +1893,7 @@
     function disrupt(L, H) {
         const n = Math.min(FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
+        noteIrreversible('tear');   // (running backwards: a copy of the system from just before)
         noteTornApart(L, H);       // (the stability timer)
         const d = Math.hypot(L.x - H.x, L.y - H.y);
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
@@ -2538,6 +2542,7 @@
     let lastAdvance = { steps: 0, timedOut: false };
     function advance(simDt, maxSteps, budgetMs) {
         noteRun();   // (edit history: the first run after a change)
+        checkPast();   // (running backwards: an edit starts a new history)
         if (forcesDirty) computeForces();
         acc += simDt;
         let steps = 0;
@@ -2546,29 +2551,27 @@
         const every = bodies.length > 60 ? 1 : 8;
         let timedOut = false;
         while (!maxSteps || steps < maxSteps) {
-            refreshPairs();
-            const dt = nextDt;
+            const dt = stepSize();   // (the close pairs and the next step; running back, the logged ones)
             if (!(dt > 0) || acc < dt) break;
             // (stop if the next step, at the average cost so far, would overrun the budget)
             if (!maxSteps && steps % every === 0 && steps > 0) {
                 const used = performance.now() - t0;
                 if (used + used / steps > budget) { timedOut = true; break; }
             }
-            step(dt);
-            simTime += dt;
+            step(timeDir * dt);
+            simTime += timeDir * dt;
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
             if (checkTides()) { refreshBodyLists(); }
-            trackPeriods(simTime);
-            k2Step(simTime);
+            afterStep(dt);
+            // (the clock these measure by runs forwards whichever way time goes)
+            trackPeriods(timeDir * simTime);
+            k2Step(timeDir * simTime);
             flybyStep();
-            relativityStep(dt);
+            relativityStep(timeDir * dt);   // (the energy carried off by waves counts down when time runs back)
             missionStep();   // (missions: crashes, the time limit and the goal)
-            if (simTime >= nextSampleT || (simTime - lastSampleT > sampleDt / 32 && trailBending())) {
-                recordSample();
-                while (nextSampleT <= simTime) nextSampleT += sampleDt;
-            }
+            sampleTrails();
         }
         slowedDown = timedOut || (!!maxSteps && steps >= maxSteps);
         if (slowedDown) acc = 0;   // couldn't keep up: slow down rather than take bigger steps
@@ -2915,13 +2918,15 @@
         return false;
     }
 
-    // The first sample at or after time t (binary search over the kept samples)
+    // The first sample at or after time t (binary search over the kept samples). While a backward run is
+    // being recorded the samples' times fall instead (trailDir -1): then the first at or before t.
     function sampleAtTime(t) {
-        let lo = Math.max(0, sampleCount - TRAIL_CAP + 1), hi = sampleCount - 1;
-        if (hi < lo || sampleTimes[hi % TRAIL_CAP] < t) return sampleCount;
+        let lo = Math.max(trailFloor, sampleCount - TRAIL_CAP + 1), hi = sampleCount - 1;
+        const s = trailDir;
+        if (hi < lo || s * sampleTimes[hi % TRAIL_CAP] < s * t) return sampleCount;
         while (lo < hi) {
             const mid = (lo + hi) >> 1;
-            if (sampleTimes[mid % TRAIL_CAP] < t) lo = mid + 1; else hi = mid;
+            if (s * sampleTimes[mid % TRAIL_CAP] < s * t) lo = mid + 1; else hi = mid;
         }
         return lo;
     }
@@ -2934,6 +2939,7 @@
     // ------------------------------------------------------------------
     function loadScene(key) {
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
+        setReverse(false, true);   // (a new or restarted scene runs forwards)
         const def = SCENES[key] || SCENES['sun-earth'];
         settings.scene = SCENES[key] ? key : 'sun-earth';
         scene = def;
@@ -4118,10 +4124,14 @@
     }
 
     // Set the velocity of a body that was just dropped or moved, by the "bodies you drop or move" option.
-    function launch(b, isNew) {
+    // d: the drag that moved it (for a throw: the pointer's speed as it let go).
+    function launch(b, isNew, d) {
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
             if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
+        } else if (settings.placement === 'throw') {
+            const v = throwVelocity(d || chipThrow, performance.now());
+            b.vx = v[0]; b.vy = v[1];
         } else if (settings.placement === 'rest' || isNew) {
             const fv = frameVelocity();
             b.vx = fv.x; b.vy = fv.y;
@@ -4298,6 +4308,7 @@
         placeCloseUp();
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
+        drawPast(C);
         drawTrails(C);
         drawMissionMarks(C);
         drawFlybyGhost(C);
@@ -4328,7 +4339,7 @@
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
-        const first = sampleAtTime(simTime - years);
+        const first = sampleAtTime(simTime - trailDir * years);
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L && !L.trail) return;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
@@ -4363,7 +4374,7 @@
                 ctx.globalAlpha = 0.08 + 0.72 * f;
                 ctx.beginPath();
                 traceTrail(tr, ks, ke, (1.2 + 2 * (1 - f)) / perf.quality);
-                if (ke === sampleCount) ctx.lineTo(sx(b.dx), sy(b.dy));
+                if (ke === sampleCount && !b.ghost) ctx.lineTo(sx(b.dx), sy(b.dy));   // (b.ghost: see drawPast)
                 ctx.stroke();
             }
         }
@@ -6113,6 +6124,7 @@
             }
         }
         if (settings.placement === 'rest') { const fv = frameVelocity(); return { v: [fv.x, fv.y] }; }
+        if (settings.placement === 'throw') return { v: throwVelocity(d || dragOf(b), performance.now()) };
         return { v: [b.vx, b.vy] };
     }
 
@@ -6124,7 +6136,7 @@
         // Worked out again when anything changes, but at most 20 times a second while the others move.
         // While drawing, it takes at most PREDICT_MS a frame and carries on in the next ones (the path so
         // far is shown meanwhile).
-        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : 'c', settings.realistic, settings.merge, bodies.length].join('|');
+        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
         const now = performance.now();
         const same = pred.key.split('|')[0] === String(b.id);
         if (pred.pts && (key === pred.key || (!paused && same && (now - pred.t < 50 || (pred.job && now - pred.t < 400))))) {
@@ -6177,7 +6189,7 @@
             }
             const dt = PREDICT_ETA * Math.sqrt(tmin);
             const x0 = me.x, y0 = me.y;
-            tmin = yoshida(list, dt, () => gravity(list));
+            tmin = yoshida(list, timeDir * dt, () => gravity(list));   // (where it will go: its past, if time runs backwards)
             t += dt;
             // Hit something? (closest approach along the step, as in checkMerges)
             let hit = null;
@@ -6510,7 +6522,7 @@
     const pace = { t: 0, sim: 0, scene: null, ratio: 1, behind: false };
     function measurePace() {
         const now = lastFrameTs || performance.now();
-        const sim = simTime + acc;
+        const sim = timeDir * simTime + acc;   // (time gained the way it is running)
         const dReal = (now - pace.t) / 1000, dSim = sim - pace.sim;
         const want = settings.speed * rate() * dReal;
         // Start again after a pause, a new scene, a jump back in time or a long gap (a hidden tab)
@@ -6522,12 +6534,13 @@
     }
 
     // The note in the canvas's top-left corner: paused, the new speed just after a key changed it, or
-    // the speed actually reached when it falls short of the chosen one
+    // the speed actually reached when it falls short of the chosen one; and whether time runs backwards
     function timeNotice() {
-        if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
-        if (paused) return 'Paused';
-        if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running at ${fmtFactor(pace.ratio * settings.speed)}×`;
-        return null;
+        const back = timeDir < 0 ? 'Running backwards' : '';
+        if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
+        if (paused) return back ? 'Paused · running backwards' : 'Paused';
+        if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
+        return back || null;
     }
 
     // Every frame: the achieved speed, the caption (it changes with the scene) and the step button
@@ -6553,7 +6566,7 @@
         }
         computePrimaries();
         updateDrawnPositions();
-        return simTime > t0;
+        return simTime !== t0;   // (a step back while time runs backwards)
     }
 
     // [ and ] change the speed; "." steps (pausing first if it is running). Not while typing, nor with
@@ -7614,6 +7627,7 @@
             setHint('drop');
         }
         if (!d.moved) return;
+        traceDrag(d, e.clientX, e.clientY, e);   // (for a throw)
         const r = canvas.getBoundingClientRect();
         d.over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
         d.cx = e.clientX - r.left; d.cy = e.clientY - r.top;
@@ -7632,7 +7646,9 @@
         setTimeout(() => { d.btn.dataset.dragged = ''; }, 400);
         if (d.over) {
             updateDrawnPositions();
+            chipThrow = d;   // (thrown as it is let go, if bodies are thrown)
             const b = addBody(d.kind, wx(d.cx), wy(d.cy));
+            chipThrow = null;
             if (b && d.kind === 'custom') openPopover(b);
         }
         setHint();
@@ -7659,7 +7675,7 @@
         let h = html || missionHint(kind) || (kind ? null : carryOnHint());   // (a mission's hint, or an autosave on offer: see "Save and share")
         if (!h) {
             const v = settings.velocities;
-            if (kind === 'drop') h = '<strong>Drop it in space</strong> to add it.';
+            if (kind === 'drop') h = `<strong>Drop it in space</strong> to add it.${throwTip(true)}`;
             else if (coarse()) {
                 h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong>, or tap <strong>Edit</strong> to set its orbit.'
                     : '<strong>Drag</strong> a body into space or around it. Tap a body, then <strong>Edit</strong> to set its speed and orbit.';
@@ -7681,8 +7697,8 @@
             const p = pr && pr.p;
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
-                : settings.placement === 'rest' ? 'starts at rest in this view' : 'keeps its velocity';
-            setHint(null, `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.`);
+                : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
+            setHint(null, `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip()}`);
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
@@ -7876,7 +7892,7 @@
                 resetTracking(b);
                 k2.bid = null;
             } else if (d.mode === 'move' && d.moved) {
-                launch(b, false);
+                launch(b, false, d);
             }
         }
         b.aim = null;
@@ -7906,6 +7922,537 @@
         drags.clear();
         pinch = null;
         freeze = null;
+    }
+
+    // ------------------------------------------------------------------
+    // Running time backwards
+    //   Newton's laws don't mind which way time runs: reverse every velocity and a planet goes back
+    //   round its orbit. So running backwards is just taking the steps with negative time, and the
+    //   clock counts down. Kick-drift-kick leapfrog, its Yoshida composition and the Kepler drift of a
+    //   close pair are all symmetric in time for a given step: a step forward and the same step back
+    //   land exactly where they began. But the adaptive step is chosen from where the bodies are at the
+    //   start of each step (the other end, going back), and close pairs start and end with hysteresis.
+    //   So every step's size and close pairs are logged (a number and an index each, the newest
+    //   STEP_LOG kept: 1.5 MB at most), and going back replays them in reverse order. The motion then
+    //   retraces its path to within rounding errors: back at the start, a few parts in 10^12 after a
+    //   hundred orbits (each step's rounding, about 10^-16, spread round the orbit as a planet that is
+    //   a hair faster drifts ahead). Without the log it would be parts in 10^8. Further back than the
+    //   log reaches (or past the start), the steps are chosen afresh, as going forwards.
+    //   Rounding errors are tiny, but in a chaotic system, like the three stars of the Pythagorean
+    //   problem, each close encounter multiplies them, so after a long run the backward motion drifts
+    //   away from the true past, as physics predicts. The trails are the record of that past: going
+    //   back over its trail a body takes it up again, and once a body has visibly left it, a ghost
+    //   shows where it really was (read from the two trail samples either side of now), and the hint
+    //   line says why. There is no other copy of the past to compare with: the trails (300 samples per
+    //   reference period) are already one, and cost nothing more.
+    //   Merges and tidal break-ups can't run backwards: two bodies that merge never come apart by
+    //   themselves. So the system is copied just before each one (the newest EVENT_MAX, compact copies
+    //   as for undo, keeping the very body objects so their trails come back too). When running back
+    //   reaches that moment the copy is put back and the step that brought them together is retraced:
+    //   the collision un-happens and the run carries on back from just before it. If the copy has been
+    //   forgotten, the run stops there with a note. Bodies that touch while running back still merge.
+    //   An edit (or undo, run again, a restart, or switching realistic physics) starts a new history:
+    //   what came before it isn't the past of the system as it is now.
+    //   Hooks: stepSize, afterStep and sampleTrails in advance (the trails sampled either way in time,
+    //   see sampleAtTime), noteIrreversible in mergeBodies and disrupt, the clock-based measurements
+    //   (periods, Kepler's 2nd law) fed time running forwards, drawPast in renderFrame, and timeDir in
+    //   the time controls, the prediction, frame and runAgain.
+    // ------------------------------------------------------------------
+    let timeDir = 1;                      // 1: time runs forwards; -1: backwards
+    let trailDir = 1;                     // which way in time the kept trail samples run
+    let trailFloor = 0;                   // samples before this number may have been written over
+    let trailEpoch = -1;                  // hist.epoch when trailFloor was last good
+    const STEP_LOG = 1 << 17;             // steps logged for an exact retrace
+    const LOG_MASK = STEP_LOG - 1;
+    const PAIR_SETS = 4096;               // different sets of close pairs logged (beyond: chosen afresh going back)
+    const EVENT_MAX = 200;                // merges and break-ups remembered...
+    const EVENT_BODIES = 20000;           // ...and at most this many bodies in their copies
+    const RETRACE_NEAR = 1e-3;            // back at a merger's moment: within this fraction of its step
+    const past = {
+        key: null,                        // the edit history's state when this history began (pastKey)
+        from: 0,                          // trail samples from this number on were taken during it
+        dt: null, pairs: null, head: 0, count: 0, replay: false,   // the step log: signed steps, pair sets
+        sets: [[]], last: [], set: 0,     // the pair sets (as body ids), and the last step's pairs and set
+        events: [], pending: null, wall: null,
+        dropped: false,                   // the sample after the newest kept one was dropped (still readable)
+        ghosted: false, drift: false, gap: 0, noted: false, noteTimer: 0   // (gap: the widest, px)
+    };
+    Object.assign(ui, { reverse: byId('reverseToggle') });
+
+    // The edit history's state: it changes with every edit, undo, run again, restart or new scene (the
+    // "run again" copy is retaken, or the trail samples start again), and while a body is dragged
+    function pastKey() {
+        const rw = hist.rw;
+        return `${hist.epoch}|${hist.rwStale}|${!!hist.pending}|${rw ? `${rw.t}|${rw.samples}` : ''}|${settings.realistic}`;
+    }
+
+    // At the start of each advance: has the system been changed since this history began?
+    function checkPast() {
+        const key = pastKey();
+        if (key === past.key) return;
+        past.key = key;
+        past.head = past.count = 0;
+        past.replay = false;
+        past.sets.length = 1; past.last = []; past.set = 0;
+        past.events.length = 0; past.pending = null; past.wall = null;
+        // (the sample just taken at this moment belongs to it)
+        past.from = sampleCount > 0 && sampleTimes[(sampleCount - 1) % TRAIL_CAP] === simTime ? sampleCount - 1 : sampleCount;
+        past.dropped = false;
+    }
+
+    // The next step. If the newest logged step went the other way, that step again with its close
+    // pairs, so it is retraced exactly; otherwise the pairs and the adaptive step chosen now.
+    function stepSize() {
+        past.replay = false;
+        if (past.count > 0) {
+            const k = (past.head - 1) & LOG_MASK, s = past.dt[k];
+            if (s * timeDir < 0) {
+                usePairs(past.pairs[k]);
+                past.replay = true;
+                return -s * timeDir;
+            }
+        }
+        refreshPairs();
+        return nextDt;
+    }
+
+    // Follow logged set idx of close pairs (-1: too many sets were logged to keep this one: choose afresh)
+    function usePairs(idx) {
+        const want = idx >= 0 ? past.sets[idx] : null;
+        if (!want) { refreshPairs(); return; }
+        const has = (ia, ib) => mainPairs.some((p) => (p.a.id === ia && p.b.id === ib) || (p.a.id === ib && p.b.id === ia));
+        if (want.length === mainPairs.length && want.every(([ia, ib]) => has(ia, ib))) {
+            if (forcesDirty) computeForces();
+            return;
+        }
+        for (const b of bodies) b.kep = null;
+        mainPairs.length = 0;
+        for (const [ia, ib] of want) {
+            const a = bodyById(ia), b = bodyById(ib);
+            if (a && b && !a.kep && !b.kep) { const q = { a, b, touch: false, fast: false }; mainPairs.push(q); a.kep = q; b.kep = q; }
+        }
+        computeForces();   // (a pair's own pull is left out of the kicks)
+    }
+
+    // The index of the set of close pairs the last step used (logging a new set if they changed)
+    function pairSetIndex() {
+        const L = past.last;
+        let same = L.length === mainPairs.length;
+        for (let i = 0; same && i < L.length; i++) same = L[i] === mainPairs[i];
+        if (same) return past.set;
+        past.last = mainPairs.slice();
+        if (!mainPairs.length) return (past.set = 0);
+        if (past.sets.length >= PAIR_SETS) return (past.set = -1);
+        past.sets.push(mainPairs.map((p) => [p.a.id, p.b.id]));
+        return (past.set = past.sets.length - 1);
+    }
+
+    // After each step (from advance): log it (or take a replayed one off the log), and keep track of
+    // merges and break-ups: copy the system before a new one, or undo the newest when back at its moment
+    function afterStep(dt) {
+        if (past.replay) {
+            past.head--; past.count--; past.replay = false;
+        } else {
+            if (!past.dt) { past.dt = new Float64Array(STEP_LOG); past.pairs = new Int32Array(STEP_LOG); }
+            const k = past.head & LOG_MASK;
+            past.dt[k] = timeDir * dt;
+            past.pairs[k] = pairSetIndex();
+            past.head++;
+            if (past.count < STEP_LOG) past.count++;
+        }
+        if (past.pending) {
+            commitEvent(dt);
+        } else if (past.events.length) {
+            const ev = past.events[past.events.length - 1];
+            if (ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) undoEvent(ev);
+        }
+        const w = past.wall;
+        if (w && w.dir === -timeDir && w.dir * (simTime - w.t) <= 0) {
+            past.wall = null;
+            setPaused(true);
+            acc = 0;
+            pastNote('<strong>Stopped:</strong> two bodies merged about now, too long ago for the simulation to remember how to take them apart.', 8000);
+        }
+    }
+
+    // Just before a merge (kind 'merge') or a tidal break-up ('tear'): copy the system, once a step
+    function noteIrreversible(kind) {
+        if (past.pending) return;
+        past.pending = { kind, snap: snapshot(), objs: bodies.slice(), sel: selectedId, frame: frameId };
+    }
+
+    function commitEvent(dt) {
+        const ev = past.pending;
+        past.pending = null;
+        Object.assign(ev, { t: simTime, dt, dir: timeDir, selAfter: selectedId, frameAfter: frameId });
+        past.events.push(ev);
+        let rows = 0;
+        for (const e of past.events) rows += e.snap.n;
+        while (past.events.length > EVENT_MAX || (rows > EVENT_BODIES && past.events.length > 1)) {
+            const old = past.events.shift();
+            rows -= old.snap.n;
+            past.wall = { t: old.t, dir: old.dir };   // (running back can't get past this one)
+        }
+    }
+
+    // Back at the moment of a merge or break-up: the bodies as they were just before (the same objects,
+    // with their trails), then the step that brought them together retraced. (It isn't looked at for
+    // contacts: they touched along it.)
+    function undoEvent(ev) {
+        past.events.pop();
+        const s = ev.snap, num = s.num, had = new Set(bodies), list = [];
+        for (let i = 0; i < s.n; i++) {
+            const b = ev.objs[i], o = i * SNAP_W;
+            b.m = num[o + 1]; b.R = num[o + 2];
+            b.x = b.px = num[o + 3]; b.y = b.py = num[o + 4];
+            b.vx = num[o + 5]; b.vy = num[o + 6];
+            b.grp = num[o + 7] || null;
+            b.name = s.names[i]; b.kind = s.kinds[i]; b.color = s.colors[i];
+            b.held = null; b.aim = null; b.track = null; b.kep = null; b.ghost = null;
+            list.push(b);
+        }
+        bodies = list;
+        mainPairs.length = 0;
+        for (const [ia, ib, fast] of s.pairs) {
+            const a = list.find((q) => q.id === ia), b = list.find((q) => q.id === ib);
+            if (a && b) { const q = { a, b, touch: false, fast: !!fast }; mainPairs.push(q); a.kep = q; b.kep = q; }
+        }
+        groupEnergy.clear();
+        for (const [id, u] of s.groupE) groupEnergy.set(id, u);
+        // The choice of body (and the view) passes back to the one it came from
+        if (selectedId === ev.selAfter) selectedId = ev.sel;
+        if (frameId === ev.frameAfter) frameId = ev.frame;
+        simTime = ev.t;
+        // Trail samples from that moment on go: the body that was swallowed has none there. One that
+        // comes back where the trails have started again (going the other way) starts its own afresh.
+        if (trailDir === ev.dir) {
+            while (sampleCount > trailFloor && ev.dir * (sampleTimes[(sampleCount - 1) % TRAIL_CAP] - ev.t) >= 0) dropSample();
+        } else {
+            for (const b of list) if (!had.has(b)) b.trailStart = sampleCount;
+        }
+        past.dropped = false;   // (the sample after the newest kept one has nothing for the bodies that came back)
+        k2.bid = null;
+        resetFlyby();
+        computeForces();
+        // The step itself, off the log too if it is there
+        if (past.count > 0 && past.dt[(past.head - 1) & LOG_MASK] === ev.dir * ev.dt) { past.head--; past.count--; }
+        step(-ev.dir * ev.dt);
+        simTime -= ev.dir * ev.dt;
+        acc = Math.max(0, acc - ev.dt);
+        computePrimaries();
+        refreshBodyLists();
+        const back = list.filter((b) => !had.has(b));
+        for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
+        const name = back.length ? escapeHtml(back[0].name) : 'A body';
+        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself, so it is put back as it was just before.`
+            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself, so the bodies are put back as they were just before they met.`;
+        pastNote(note, 6000);
+    }
+
+    // The trails after a step, either way in time. The kept samples always run one way (trailDir).
+    // Going that way, one is added every sampleDt (and on a sharp bend). Going the other way, the
+    // bodies go back over their trails, so the samples they pass are dropped (their numbers stay in
+    // the buffers until written over: drawPast reads the newest one dropped). When none are left, the
+    // trails start again the new way.
+    function sampleTrails() {
+        syncTrails();
+        if (trailDir !== timeDir) {
+            while (sampleCount > trailFloor && timeDir * (sampleTimes[(sampleCount - 1) % TRAIL_CAP] - simTime) < 0) dropSample();
+            if (sampleCount > trailFloor) return;
+            trailFloor = sampleCount;
+            for (const b of bodies) if (b.trailStart < sampleCount) b.trailStart = sampleCount;
+            trailDir = timeDir;
+            recordSample();
+            past.dropped = false;
+            nextSampleT = simTime + timeDir * sampleDt;
+            return;
+        }
+        if (timeDir * (simTime - nextSampleT) >= 0 || (timeDir * (simTime - lastSampleT) > sampleDt / 32 && trailBending())) {
+            recordSample();
+            past.dropped = false;
+            while (timeDir * (nextSampleT - simTime) <= 0) nextSampleT += timeDir * sampleDt;
+        }
+    }
+
+    // The samples were started again elsewhere (a new scene, an undo): they run the way time does now
+    function syncTrails() {
+        if (trailEpoch === hist.epoch) return;
+        trailEpoch = hist.epoch;
+        trailFloor = 0;
+        if (sampleCount <= 1 && trailDir !== timeDir) { trailDir = timeDir; nextSampleT = lastSampleT + timeDir * sampleDt; }
+    }
+
+    // Drop the newest trail sample. The trail buffers are rings, so a body's oldest good sample is set by
+    // the newest ever written: that limit is kept in its trailStart (and trailFloor for the shared ones).
+    function dropSample() {
+        const n = sampleCount - 1;
+        for (const b of bodies) {
+            if (b.trail) b.trailStart = Math.max(b.trailStart, sampleCount - (b.trail.length >> 1) + 1);
+            if (b.trailStart > n) b.trailStart = n;
+        }
+        trailFloor = Math.max(trailFloor, sampleCount - TRAIL_CAP + 1);
+        sampleCount = n;
+        past.dropped = true;
+        lastSampleT = n > trailFloor ? sampleTimes[(n - 1) % TRAIL_CAP] : simTime;
+        nextSampleT = lastSampleT + trailDir * sampleDt;
+    }
+
+    // Running back over its trail, where each body really was at this moment (between the newest kept
+    // sample and the one just dropped). A body the backward run has visibly taken away from it gets a
+    // ghost there (a faint disc with a dashed edge), joined to it by a dotted line, and its trail stops at
+    // the ghost (b.ghost, read by drawTrails). A body that has merged with another in the drifted run
+    // back keeps its ghost, named. The first time in a run, the hint line says why.
+    function drawPast(C) {
+        syncTrails();
+        if (past.ghosted) { for (const b of bodies) b.ghost = null; past.ghosted = false; }
+        past.drift = false;
+        past.gap = 0;
+        drawThrowArrow(C);
+        const k = sampleCount - 1;
+        if (trailDir === timeDir || !past.dropped || k < Math.max(trailFloor, past.from) || cleanRender) return;
+        const kt = k % TRAIL_CAP, kt1 = (k + 1) % TRAIL_CAP;
+        const t0 = sampleTimes[kt], t1 = sampleTimes[kt1];
+        const f = t1 !== t0 ? clamp((simTime + lag - t0) / (t1 - t0), 0, 1) : 0;
+        // Relative to where the frame's origin was then, as the trails are drawn
+        const L = frameId !== null ? bodyById(frameId) : null;
+        let ox, oy;
+        if (L) {
+            if (!L.trail || trailFirst(L) > k) return;
+            const i0 = trailIndex(L.trail, k), i1 = trailIndex(L.trail, k + 1);
+            ox = L.trail[i0] + f * (L.trail[i1] - L.trail[i0]); oy = L.trail[i0 + 1] + f * (L.trail[i1 + 1] - L.trail[i0 + 1]);
+        } else {
+            ox = comTrail[2 * kt] + f * (comTrail[2 * kt1] - comTrail[2 * kt]); oy = comTrail[2 * kt + 1] + f * (comTrail[2 * kt1 + 1] - comTrail[2 * kt + 1]);
+        }
+        const live = freeze ? liveFrameOrigin() : F;
+        const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        const where = (b) => {
+            const T = b.trail, i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1);
+            return { x: offX + (T[i0] + f * (T[i1] - T[i0]) - ox) * scale, y: offY - (T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy) * scale };
+        };
+        const usable = (b) => !b.held && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
+        for (const b of bodies) {
+            if (!usable(b)) continue;
+            const g = where(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+            const gap = Math.hypot(g.x - x, g.y - y);
+            past.gap = Math.max(past.gap, gap);
+            if (gap <= Math.max(5, 0.8 * r)) continue;
+            b.ghost = g;
+            past.ghosted = past.drift = true;
+            const rr = drawGhost(C, b, g, r);
+            if (gap > rr + r + 4) {
+                const ux = (x - g.x) / gap, uy = (y - g.y) / gap;
+                ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
+                ctx.globalAlpha = 0.45;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([1.5, 4]);
+                ctx.beginPath();
+                ctx.moveTo(g.x + ux * rr, g.y + uy * rr);
+                ctx.lineTo(x - ux * (r + 2), y - uy * (r + 2));
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.globalAlpha = 1;
+            }
+        }
+        // Bodies merged away in this run (they are in the copies kept to undo it), named
+        if (past.events.some((e) => e.dir === timeDir)) {
+            const alive = new Set(bodies), gone = new Set();
+            for (const e of past.events) if (e.dir === timeDir) for (const b of e.objs) if (!alive.has(b) && gone.size < 12 && usable(b)) gone.add(b);
+            ctx.font = font(clamp(Math.min(viewW, viewH) / 48, 10, 12));
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            for (const b of gone) {
+                const g = where(b), rr = drawGhost(C, b, g, drawRadius(b));
+                ctx.fillStyle = C.subtle;
+                ctx.fillText(b.name, g.x, g.y - rr - 3);
+                past.drift = true;
+            }
+        }
+        if (past.drift && !past.noted) {
+            past.noted = true;
+            pastNote('<strong>Drifted from the true past.</strong> Tiny rounding errors grow fast in chaos, so the bodies no longer retrace their paths. Faint dashed discs show where they really were.', 9000);
+        }
+    }
+
+    // A ghost: a faint disc with a dashed edge (not the dashed ring round the chosen body). Its radius.
+    function drawGhost(C, b, g, r) {
+        const rr = Math.max(r, 4) + 2;
+        ctx.fillStyle = b.color;
+        ctx.globalAlpha = 0.22;
+        ctx.beginPath();
+        ctx.arc(g.x, g.y, rr, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.9;
+        ctx.setLineDash([2, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        return rr;
+    }
+
+    // A note in the hint line (read out by screen readers) for a while
+    function pastNote(html, ms) {
+        setHint(null, html);
+        clearTimeout(past.noteTimer);
+        past.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, ms || 5000);
+    }
+
+    // Time forwards (on false) or backwards (on true). The time still owed to the integrator was owed
+    // the other way, and the measurements that run with the clock (periods, Kepler's 2nd law sectors,
+    // the flyby card) start again; the history, the trails and any merges to undo carry on.
+    function setReverse(on, quiet) {
+        if (on && mission.def && mission.status === 'flying') {
+            missionNote('<strong>Mission rules:</strong> in a mission, time only runs forwards (Undo takes a burn back).');
+            on = false;
+        }
+        const dir = on ? -1 : 1;
+        if (dir !== timeDir) {
+            timeDir = dir;
+            acc = 0; lag = 0;
+            pace.scene = null;
+            for (const b of bodies) b.track = null;
+            k2.bid = null;
+            resetFlyby();
+            pred.key = '';
+            edit.previewDirty = true;
+            past.noted = false;
+            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> the clock counts down and every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
+        }
+        syncReverseUi();
+    }
+
+    function syncReverseUi() {
+        const back = timeDir < 0;
+        if (ui.reverse && ui.reverse.checked !== back) ui.reverse.checked = back;
+        if (ui.step) {
+            const label = back ? 'Step back' : 'Step forward';
+            if (ui.step.getAttribute('aria-label') !== label) {
+                ui.step.setAttribute('aria-label', label);
+                ui.step.title = `${label} a moment (.)`;
+                const icon = ui.step.querySelector('.icon');
+                if (icon) { icon.classList.toggle('fa-step-forward', !back); icon.classList.toggle('fa-step-backward', back); }
+            }
+        }
+    }
+
+    // The settings' "Run backwards" box, and B (not while typing, nor with Ctrl, Cmd or Alt); and the
+    // moment a thrown body is let go
+    function bindPlayControls() {
+        window.addEventListener('pointerup', onThrowUp, true);
+        if (ui.reverse) ui.reverse.addEventListener('change', () => setReverse(ui.reverse.checked));
+        window.addEventListener('keydown', (e) => {
+            if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
+            if (e.key !== 'b' && e.key !== 'B') return;
+            if (!e.repeat) setReverse(timeDir > 0);
+            e.preventDefault();
+        });
+        syncReverseUi();
+    }
+
+    // ------------------------------------------------------------------
+    // Throwing a body ("Bodies you drop or move": "Throw it"). Let go of a body moved on the canvas, or
+    // dropped from the palette, and it keeps moving across the screen as fast as the pointer was: the
+    // pointer's speed over its last THROW_MS (px/s) over the screen speed of 1 AU/yr (px per AU for the
+    // zoom, times simulated years per real second for the speed; backwards in time, the other way),
+    // relative to the view. A pointer hardly moving as it lets go (resting it a moment first counts)
+    // is a careful placement: the body starts at rest in the view. While it is dragged, the predicted
+    // path shows the throw (releaseVelocity), and a body from the palette shows its velocity arrow.
+    // ------------------------------------------------------------------
+    const THROW_MS = 100;                 // the pointer's speed is taken over its last 100 ms
+    const THROW_MIN = 60, THROW_MIN_TOUCH = 120;   // px/s: slower is a careful placement (fingers wobble as they lift)
+    const THROW_MAX = 4000;               // px/s: faster flicks count as this fast
+    const THROW_C = 0.05;                 // and no throw is faster than 5% of the speed of light
+    let chipThrow = null;                 // a palette drag being let go
+
+    // Where the pointer was lately (canvas or page px, with the event's time: on a phone the handler
+    // can run a frame or two after the touch it reports)
+    function traceDrag(d, x, y, e) {
+        const now = performance.now();
+        const t = e && Math.abs(e.timeStamp - now) < 1000 ? e.timeStamp : now;
+        const tr = d.trace || (d.trace = []);
+        tr.push({ t, x, y });
+        while (tr.length > 2 && t - tr[1].t > 2 * THROW_MS) tr.shift();
+        return t;
+    }
+
+    // Letting go: the last point, and when (seen before the handlers that place the body)
+    function onThrowUp(e) {
+        const d = drags.get(e.pointerId);
+        if (d && d.mode === 'move') { const pt = canvasPoint(e); d.upT = traceDrag(d, pt.x, pt.y, e); }
+        const c = paletteDrag;
+        if (c && c.id === e.pointerId && c.moved) c.upT = traceDrag(c, e.clientX, e.clientY, e);
+    }
+
+    // The pointer's velocity as it is let go (px/s, screen y down), or null if it is hardly moving.
+    // now: the time it is let go (or the present, while it is still held).
+    function flickPx(d, now) {
+        const tr = d && d.trace;
+        if (!tr || tr.length < 2) return null;
+        if (d.upT) now = d.upT;
+        const end = tr[tr.length - 1];
+        const t0 = Math.max(now - THROW_MS, tr[0].t), span = now - t0;
+        if (!(span >= 8)) return null;
+        // where it was at t0
+        let i = tr.length - 1;
+        while (i > 0 && tr[i - 1].t >= t0) i--;
+        let x0 = tr[0].x, y0 = tr[0].y;
+        if (i > 0) {
+            const a = tr[i - 1], b = tr[i];
+            const f = b.t > a.t ? clamp((t0 - a.t) / (b.t - a.t), 0, 1) : 1;
+            x0 = a.x + f * (b.x - a.x); y0 = a.y + f * (b.y - a.y);
+        }
+        let vx = ((end.x - x0) * 1000) / span, vy = ((end.y - y0) * 1000) / span;
+        const v = Math.hypot(vx, vy);
+        if (v < ((d.type || lastPointerType) === 'mouse' ? THROW_MIN : THROW_MIN_TOUCH)) return null;
+        if (v > THROW_MAX) { vx *= THROW_MAX / v; vy *= THROW_MAX / v; }
+        return { x: vx, y: vy };
+    }
+
+    // The world velocity a throw gives (AU/yr): the view's own velocity, plus the pointer's
+    function throwVelocity(d, now) {
+        const fv = frameVelocity();
+        const u = flickPx(d, now);
+        if (!u) return [fv.x, fv.y];
+        const k = timeDir * scale * Math.max(settings.speed * rate(), 1e-30);   // px/s on the screen per AU/yr
+        let vx = u.x / k, vy = -u.y / k;
+        const v = Math.hypot(vx, vy), cap = THROW_C * C_LIGHT;
+        if (v > cap) { vx *= cap / v; vy *= cap / v; }
+        return [fv.x + vx, fv.y + vy];
+    }
+
+    function dragOf(b) {
+        for (const d of drags.values()) if (d.body === b) return d;
+        return null;
+    }
+
+    // The hint while a body is moved, when it will be thrown: "flies off at 12 km/s ..."
+    function throwHint(d) {
+        const now = performance.now();
+        if (!flickPx(d, now)) return 'stays put in this view. <strong>Flick</strong> it as you let go to throw it';
+        const v = throwVelocity(d, now), fv = frameVelocity();
+        const s = fmtSpeedKms(Math.hypot(v[0] - fv.x, v[1] - fv.y) * AUYR_KMS);
+        return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
+    }
+
+    // ...and how to find throwing, if it is off
+    function throwTip(drop) {
+        if (settings.placement !== 'throw') return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
+        return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
+    }
+
+    // A body being dragged from the palette: the velocity it would be thrown with
+    function drawThrowArrow(C) {
+        const d = paletteDrag;
+        if (!d || !d.over || !d.moved || settings.placement !== 'throw' || cleanRender) return;
+        const now = performance.now();
+        if (!flickPx(d, now)) return;
+        const v = throwVelocity(d, now), fv = frameVelocity();
+        const vx = v[0] - fv.x, vy = v[1] - fv.y, s = Math.hypot(vx, vy);
+        const k = KINDS[d.kind] || KINDS.custom;
+        const r = Math.max(symbolicSize(d.kind, k.m, k.R) * sizeScale, 4), L = arrowLength(s);
+        const ux = vx / s, uy = -vy / s;   // (like every velocity arrow: backwards in time, against the motion)
+        arrow(d.cx + ux * r, d.cy + uy * r, d.cx + ux * (r + L), d.cy + uy * (r + L), C.velocity, clamp(2 * sizeScale, 1.5, 2.4));
     }
 
     // Held bodies stay where they are held in the (possibly frozen) frame while others move.
@@ -7992,6 +8539,7 @@
         }
         const dx = pt.x - d.x, dy = pt.y - d.y;
         d.x = pt.x; d.y = pt.y;
+        traceDrag(d, pt.x, pt.y, e);   // (for a throw: where the pointer was lately)
         const far = Math.hypot(pt.x - d.x0, pt.y - d.y0) > (d.type === 'mouse' ? 3 : 8);
         if (d.mode === 'pinch') {
             const pts = [...drags.values()].filter((q) => q.mode === 'pinch');
@@ -8255,7 +8803,7 @@
             chartsNextDraw = now + 100;
         }
         const every = scene.Tref / 60;
-        if (simTime - lastChartSample < every) return;
+        if (Math.abs(simTime - lastChartSample) < every) return;   // (either way in time)
         lastChartSample = simTime;
         const label = fmtTime(simTime).v;
         const E = systemEnergy();
@@ -9732,6 +10280,7 @@
         flushEdit();
         if (dragging() || !canRunAgain()) return false;
         restoreSnapshot(hist.rw, 'rewind');
+        setReverse(false, true);   // (running again always plays forwards)
         hist.rwFresh = true;
         hist.open = null;
         setPaused(false);
@@ -11134,17 +11683,17 @@
         let steps = 0;
         if (!paused && dtReal > 0) {
             const want = dtReal * settings.speed * rate();
-            const before = simTime + acc;
+            const before = timeDir * simTime + acc;
             steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));
             applyHolds();
             perf.req += want;
-            perf.got += simTime + acc - before;
+            perf.got += timeDir * simTime + acc - before;
         } else {
             slowedDown = false;
             if (forcesDirty) computeForces();
         }
         const t1 = performance.now();
-        lag = paused ? 0 : clamp(acc, 0, nextDt);
+        lag = paused ? 0 : timeDir * clamp(acc, 0, nextDt);   // (drawn a moment back if time runs backwards)
         if (bodies.length <= SWARM_N || ts >= primNext) { computePrimaries(); primNext = ts + 100; }
         stepViewAnimation(dtReal);
         updateScale();
@@ -11675,6 +12224,81 @@
         }
     });
     bindShare();
+
+    // Running backwards and throwing (see "Running time backwards" and "Throwing a body")
+    Object.assign(window.orbitsSimulation, {
+        setReverse(on) { setReverse(!!on); return timeDir < 0; },
+        // Which way time runs, and what is kept for running back
+        reverse: () => ({
+            on: timeDir < 0, logged: past.count, events: past.events.map((e) => ({ t: e.t, kind: e.kind, dir: e.dir })),
+            trailDir, samples: sampleCount, from: past.from, drift: past.drift, gapPx: past.gap,
+            ghosts: bodies.filter((b) => b.ghost).map((b) => b.name)
+        }),
+        // A throw: body `name` dragged dx, dy px across the screen in the last ms milliseconds and let go
+        // (as with "Throw it", whatever the option is set to). Its velocity relative to the view after,
+        // and the speed the pointer's gives (AU/yr; km/s).
+        flick(name, dx, dy, ms) {
+            const b = bodies.find((q) => q.name === name);
+            if (!b || b.held) return null;
+            const was = settings.placement;
+            settings.placement = 'throw';
+            updateDrawnPositions();
+            const x0 = sx(b.dx), y0 = sy(b.dy), now = performance.now();
+            const d = { id: -1, mode: 'move', moved: true, body: b, type: 'mouse', x: x0, y: y0, trace: [] };
+            startHold(b, d);
+            const n = Math.max(2, Math.ceil(ms / 8));
+            for (let i = 0; i <= n; i++) d.trace.push({ t: now - ms + (ms * i) / n, x: x0 + (dx * i) / n, y: y0 + (dy * i) / n });
+            b.held.offX += dx / scale;
+            b.held.offY -= dy / scale;
+            applyHolds();
+            endHold(d, true);
+            settings.placement = was;
+            const fv = frameVelocity(), v = Math.hypot(b.vx - fv.x, b.vy - fv.y);
+            const want = Math.hypot(dx, dy) / (ms / 1000) / (scale * settings.speed * rate());
+            return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: b.vx - fv.x, vy: b.vy - fv.y };
+        },
+        // Run forwards `years`, then back to where it began; how far each body ends from where it was
+        // (and its speed from what it was), relative to its distance and speed from the centre of mass.
+        // exact false: forget the step log first, so the way back takes steps chosen afresh (and ends with
+        // a short step onto the starting time).
+        roundTrip(years, exact) {
+            setPaused(true);
+            const api = window.orbitsSimulation;
+            noteRun();
+            checkPast();
+            const t0 = simTime, c0 = totals(bodies), head0 = past.head;
+            const start = new Map(bodies.map((b) => [b.id, { x: b.x - c0.x, y: b.y - c0.y, vx: b.vx - c0.vx, vy: b.vy - c0.vy, name: b.name }]));
+            const tw = performance.now();
+            api.advance(years);
+            const forwardMs = performance.now() - tw, tEnd = simTime, logged = past.head - head0;
+            setReverse(true, true);
+            if (exact === false) past.head = past.count = 0;
+            const tb = performance.now();
+            api.advance(Math.max(0, tEnd - t0 - (exact === false ? 0 : 1e-9 * Math.abs(tEnd))));
+            // the last step or two onto the starting time
+            for (let i = 0; i < 1000 && past.count > 0 && past.head > head0; i++) {
+                const dt = stepSize();
+                if (!past.replay) break;
+                step(-dt); simTime -= dt; afterStep(dt);
+            }
+            // (without the log, or past its oldest step: steps chosen afresh, the last one short)
+            for (let i = 0; i < 1e6 && simTime > t0; i++) { refreshPairs(); const dt = Math.min(nextDt, simTime - t0); step(-dt); simTime -= dt; }
+            const backMs = performance.now() - tb;
+            computeForces(); computePrimaries();
+            setReverse(false, true);
+            const c1 = totals(bodies);
+            let pos = 0, vel = 0, posAU = 0;
+            for (const b of bodies) {
+                const s = start.get(b.id);
+                if (!s) continue;
+                const r = Math.hypot(s.x, s.y) || 1, v = Math.hypot(s.vx, s.vy) || 1;
+                const dp = Math.hypot(b.x - c1.x - s.x, b.y - c1.y - s.y), dv = Math.hypot(b.vx - c1.vx - s.vx, b.vy - c1.vy - s.vy);
+                posAU = Math.max(posAU, dp); pos = Math.max(pos, dp / r); vel = Math.max(vel, dv / v);
+            }
+            return { years: tEnd - t0, timeLeft: simTime - t0, logged, pos, vel, posAU, bodies: bodies.length, lost: start.size - bodies.filter((b) => start.has(b.id)).length, forwardMs, backMs };
+        }
+    });
+    bindPlayControls();
 
     // ------------------------------------------------------------------
     // Start
