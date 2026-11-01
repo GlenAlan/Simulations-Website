@@ -210,6 +210,7 @@
 												<option value="tde">Star and black hole</option>
 												<option value="trojans">Jupiter's Trojans and Hildas</option>
 												<option value="moondisc">A moon forming</option>
+												<option value="random">Random system</option>
 												<option value="empty">A lone star (build your own)</option>
 											</select>
 										</div>
@@ -278,6 +279,8 @@
 													<label for="comToggle">Centre of mass</label>
 													<input type="checkbox" id="previewToggle" checked>
 													<label for="previewToggle">Predicted path while moving a body or paused</label>
+													<input type="checkbox" id="stabilityToggle">
+													<label for="stabilityToggle">Stability timer: how long until a body is flung out or two collide</label>
 												</div>
 											</div>
 											<div class="sim-control-group">
@@ -287,7 +290,25 @@
 													<label for="mergeToggle">Bodies merge when their surfaces touch</label>
 												</div>
 											</div>
+											<div class="sim-control-group">
+												<p class="sim-control-group-label" id="csvLabel">Download data (CSV)</p>
+												<div class="orb-csv-row" role="group" aria-labelledby="csvLabel">
+													<button type="button" data-csv="kepler" aria-describedby="csvNote" title="Each orbiting body's distance a, period T and T²/a³">Kepler's 3rd law</button>
+													<button type="button" data-csv="graphs" aria-describedby="csvNote" title="Energy, distance and speed over time, as on the graphs">Graphs</button>
+													<button type="button" data-csv="bodies" aria-describedby="csvNote" title="Every body's mass, position and velocity now">All bodies</button>
+												</div>
+												<p class="orb-note" id="csvNote" aria-live="polite">Tables for a spreadsheet, with units in the headings.</p>
+											</div>
 										</details>
+										<div class="sim-control-group orb-share-group">
+											<p class="sim-control-group-label" id="shareLabel">Save and share</p>
+											<div class="orb-share-row" role="group" aria-labelledby="shareLabel">
+												<button type="button" id="shareLinkBtn" aria-describedby="shareNote" aria-label="Copy a link to this setup" title="Copy a link to this setup, to share or keep"><span class="icon solid fa-link" aria-hidden="true"></span>Copy a link</button>
+												<button type="button" id="randomSystemBtn" aria-describedby="shareNote" title="A new random star with planets: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
+											</div>
+											<p class="orb-note" id="shareNote" aria-live="polite">A link opens this exact setup. A random system: will its planets last?</p>
+											<input type="text" id="shareLinkField" class="orb-share-field" readonly hidden aria-label="Link to this setup" spellcheck="false" autocomplete="off">
+										</div>
 									</div>
 								</div>
 
@@ -475,6 +496,10 @@
 											<div class="chart-box">
 												<canvas id="orbitChart" role="img" aria-label="Distance and speed of the chosen body over time"></canvas>
 											</div>
+										</div>
+										<div class="orb-chart-actions">
+											<span class="orb-chart-note" id="chartCsvNote" aria-live="polite"></span>
+											<button type="button" class="orb-chart-csv" id="chartCsvBtn" title="The graphs' data as a table for a spreadsheet"><span class="icon solid fa-download" aria-hidden="true"></span>Download data (CSV)</button>
 										</div>
 									</div>
 									<div class="sim-action-buttons-overlay">

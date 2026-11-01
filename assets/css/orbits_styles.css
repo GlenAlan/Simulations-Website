@@ -1437,3 +1437,198 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         overflow-y: auto;
     }
 }
+
+/* ---------- Save and share: copy a link, random systems, CSV downloads, carry on ----------
+   Buttons in the settings like "Set its period and distances": text with an icon, the panel's
+   colours, a ring when focused. "Carry on where you left off" is a button inside the hint line,
+   which turns into a row while it holds one (it keeps its height on phones). */
+.sim-controls-content .orb-share-row,
+.sim-controls-content .orb-csv-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sim-controls-content .orb-share-row button,
+.sim-controls-content .orb-csv-row button,
+#charts-container .orb-chart-csv {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: auto;
+    min-height: 36px;
+    margin: 0;
+    padding: 0.3em 0.75em;
+    font-size: 0.85em;
+    font-weight: 400;
+    line-height: 1.2;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    background-color: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.sim-controls-content .orb-share-row .icon,
+#charts-container .orb-chart-csv .icon {
+    color: var(--color-accent);
+}
+
+.sim-controls-content .orb-share-row button:focus-visible,
+.sim-controls-content .orb-csv-row button:focus-visible,
+#charts-container .orb-chart-csv:focus-visible,
+.orb-toolbar .orb-carry-on:focus-visible,
+.orb-toolbar .orb-carry-x:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (hover: hover) {
+    .sim-controls-content .orb-share-row button:hover,
+    .sim-controls-content .orb-csv-row button:hover,
+    #charts-container .orb-chart-csv:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+/* The link, to copy by hand where the clipboard can't be used */
+.sim-controls-content .orb-share-field {
+    width: 100%;
+    height: 36px;
+    padding: 0 0.6em;
+    font-size: 0.8em;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.sim-controls-content .orb-share-field:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.sim-controls-content .orb-share-field[hidden] {
+    display: none;
+}
+
+/* Under the graphs: "Download data (CSV)" on the right, with what it did beside it */
+.orb-chart-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4em 0.75em;
+    margin-top: 0.5em;
+    font-size: 0.85em;
+}
+
+.orb-chart-note {
+    flex: 1 1 12em;
+    min-width: 0;
+    opacity: 0.85;
+}
+
+#charts-container .orb-chart-csv {
+    flex: 0 0 auto;
+    font-size: 1em;
+}
+
+/* "Carry on where you left off  x" in the hint line, and where the tool column has room, what it was
+   ("Inner planets, 6 bodies, 2 hours ago") on a line of its own */
+.orb-hint:has(.orb-carry-on) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: center;
+    gap: 4px 6px;
+    -webkit-line-clamp: none;
+    line-clamp: none;
+}
+
+.orb-toolbar .orb-carry-on {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 30px;
+    padding: 0.2em 0.7em;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: left;
+    white-space: normal;
+}
+
+.orb-toolbar .orb-carry-on .icon {
+    flex: 0 0 auto;
+    color: var(--color-accent);
+}
+
+.orb-toolbar .orb-carry-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    order: 1;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    box-shadow: none;
+    background-color: transparent;
+}
+
+.orb-carry-what {
+    display: none;
+    order: 2;
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (orientation: landscape) and (min-width: 640px) {
+    .orb-carry-what {
+        display: block;
+    }
+
+    /* (phones held sideways have no hint line: the offer gets one, as small as it can be) */
+    @media (max-height: 540px) {
+        .orb-hint:has(.orb-carry-on) {
+            min-height: 0;
+        }
+
+        .orb-carry-what {
+            display: none;
+        }
+    }
+}
+
+@media (pointer: coarse) {
+    .sim-controls-content .orb-share-row button,
+    .sim-controls-content .orb-csv-row button,
+    #charts-container .orb-chart-csv,
+    .sim-controls-content .orb-share-field {
+        min-height: 42px;
+    }
+
+    .orb-toolbar .orb-carry-on {
+        min-height: 40px;
+    }
+
+    .orb-toolbar .orb-carry-x {
+        width: 40px;
+        height: 40px;
+    }
+}
+
+/* A tablet held upright has only two lines of hint: it grows a little while the offer is there */
+@media (pointer: coarse) and (min-width: 601px) and (orientation: portrait) {
+    .orb-hint:has(.orb-carry-on) {
+        height: auto;
+        min-height: 2.7em;
+    }
+}
