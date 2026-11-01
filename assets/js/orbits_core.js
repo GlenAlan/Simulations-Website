@@ -3014,6 +3014,7 @@
         clearHint('missionNote');
         showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
+        stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
     }
 
     // ------------------------------------------------------------------
@@ -10289,7 +10290,7 @@
         running: false, sig: '', scene: '', t0: 0, lastT: 0, ended: null, rEject: Infinity,
         unbound: new Map(),          // id -> the simulated time it was first seen unbound from the rest
         boundAtStart: new Set(),     // ids of the bodies bound to the rest when the timer started
-        counts: false, label: '', restartedAt: -Infinity, goalNoted: false,
+        counts: false, label: '', restartedAt: -Infinity, goalNoted: false, auto: false,
         best: { yr: 0, label: '' }, bestBefore: { yr: 0, label: '' }, bestDirty: false, bestSavedAt: 0
     };
     const graphData = [];            // the graphs' points at full precision, since they last started
@@ -10536,9 +10537,20 @@
         }
     }
 
-    function setStability(on) {
+    // auto: switched on by a random system, rather than by the user (see stabilitySceneLoaded); once
+    // the user has switched it on, it stays theirs
+    function setStability(on, auto) {
+        const users = settings.stability && !stab.auto;
         settings.stability = !!on;
+        stab.auto = settings.stability && !!auto && !users;
         if (ui.stability) ui.stability.checked = settings.stability;
+    }
+
+    // A random system switches the timer on for itself: another scene switches it off again (the
+    // collisions of "A moon forming" or the chaos of three stars aren't a stability challenge), unless
+    // the user switched it on
+    function stabilitySceneLoaded(key) {
+        if (stab.auto && !isRandomKey(key)) setStability(false);
     }
 
     function loadRandomSystem(seed) {
@@ -10546,7 +10558,7 @@
         showRandomOption(key);
         if (ui.scene) ui.scene.value = key;
         loadScene(key);
-        setStability(true);
+        setStability(true, true);
         return key;
     }
 
@@ -10556,7 +10568,7 @@
         const key = randomSceneKey(newRandomSeed());
         showRandomOption(key);
         ui.scene.value = key;
-        setStability(true);
+        setStability(true, true);
     }
 
     // ------------------------------------------------------------------
@@ -11262,7 +11274,7 @@
         onClick(ui.chartCsvBtn, () => downloadCsv('graphs', ui.chartCsvNote));
         if (ui.stability) {
             ui.stability.checked = settings.stability;
-            ui.stability.addEventListener('change', () => { settings.stability = ui.stability.checked; });
+            ui.stability.addEventListener('change', () => setStability(ui.stability.checked));
         }
         if (ui.shareField) ui.shareField.addEventListener('focus', () => ui.shareField.select());
         // (capture, on the list's parent: before the list's own change listener)
