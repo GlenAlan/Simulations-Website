@@ -8853,8 +8853,8 @@
         const v = settings.velocities;
         let h;
         if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong>, or tap <strong>Edit</strong> to change it.'
-                : '<strong>Drag</strong> a body into space or around it. Tap a body, then tap <strong>Edit</strong> to change it.';
+            h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
+                : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
         } else {
             h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
                 : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
@@ -8872,7 +8872,11 @@
         hintKey = h;
         ui.hint.innerHTML = h;
         // (a long message, cut short on a phone, opens out when tapped; a new one starts closed)
-        if (hints.open) { hints.open = false; ui.hint.classList.remove('is-open'); }
+        if (hints.open) {
+            hints.open = false;
+            ui.hint.classList.remove('is-open', 'is-spilling');
+            ui.hint.style.marginBottom = '';
+        }
         hintClampCheck();
     }
 
@@ -8904,10 +8908,19 @@
         });
     }
 
+    // Opened, the line spills over what is below it rather than pushing it down (so the canvas keeps
+    // its size), except in the tool column beside the canvas, which has room for it to grow
     function toggleHintOpen() {
         if (!ui.hint || !(hints.open || ui.hint.classList.contains('is-cut'))) return false;
         hints.open = !hints.open;
+        const h0 = ui.hint.offsetHeight;
+        const column = window.matchMedia && window.matchMedia('(orientation: landscape) and (min-width: 640px)').matches && !(sideways && sideways.matches);
+        ui.hint.style.marginBottom = '';
         ui.hint.classList.toggle('is-open', hints.open);
+        ui.hint.classList.toggle('is-spilling', hints.open && !column);
+        const spill = hints.open && !column ? ui.hint.offsetHeight - h0 : 0;
+        if (spill > 0) ui.hint.style.marginBottom = `${-spill}px`;
+        else ui.hint.classList.remove('is-spilling');
         hintClampCheck();
         return true;
     }

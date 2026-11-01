@@ -238,6 +238,17 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     overflow: visible;
 }
 
+/* (spilling over what is below it: on top, on the toolbar's own background) */
+.orb-hint.is-spilling {
+    z-index: 30;
+    margin-left: -6px;
+    margin-right: -6px;
+    padding: 0 6px 6px;
+    background-color: var(--color-bg-alt);
+    border-radius: 0 0 var(--sim-radius, 6px) var(--sim-radius, 6px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
+}
+
 .orb-hint.is-open::after {
     content: " Less \25B4";
     font-weight: 700;
