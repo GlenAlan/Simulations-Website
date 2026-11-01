@@ -2472,16 +2472,18 @@
             : `L${i + 1}, 60° ${where} ${b}: not stable, as ${b} is too heavy compared with ${a}.`;
     }
 
-    // Small diamonds labelled L1 to L5 (under the bodies). One hidden under A or B, or crowding another,
-    // is left out.
+    // Small diamonds labelled L1 to L5 (over the bodies' dots, under their names and arrows). One hidden
+    // under A or B, or crowding another, is left out, and all of them while the pair is too close
+    // together on the screen to tell the points apart (zoom in to see them).
     let lagrangeShown = [];      // the markers drawn this frame: { x, y, i, text }
     function drawLagrangePoints(C) {
         lagrangeShown = [];
         if (!settings.lagrange) return;
         const Q = lagrangePair();
         if (!Q) return;
-        const pts = lagrangePoints(Q, true);
         const ax = sx(Q.A.dx), ay = sy(Q.A.dy), bx = sx(Q.B.dx), by = sy(Q.B.dy);
+        if (Math.hypot(bx - ax, by - ay) < 60) return;
+        const pts = lagrangePoints(Q, true);
         const ra = drawRadius(Q.A) + 6, rb = drawRadius(Q.B) + 6;
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         ctx.font = font(fs);
