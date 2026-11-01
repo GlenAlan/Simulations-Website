@@ -836,8 +836,9 @@
             const ul = Math.hypot(ux, uy);
             if (!(ul > 0)) continue;
             ux /= ul; uy /= ul;
-            // Behind: against its sideways motion round the star (screen y points down)
-            const vx = b.vx - star.vx, vy = star.vy - b.vy;
+            // Behind: against its sideways motion round the star (screen y points down; the world velocity
+            // turned as the view is, as the dust's path round the star is turned with everything else)
+            const rv = turnVec(b.vx - star.vx, b.vy - star.vy), vx = rv.x, vy = -rv.y;
             const along = vx * ux + vy * uy;
             let nx = along * ux - vx, ny = along * uy - vy;
             const nl = Math.hypot(nx, ny);
@@ -856,7 +857,7 @@
             glow(x, y, 0, drawRadius(b) + (3 + 6 * u) * sizeScale, C.dark ? b.color : bodyStroke(b.color, false), 0.5);
             ctx.globalAlpha = 1;
             tailInfo.drawn++;
-            if (b.id === selectedId) { tailInfo.strength = u; tailInfo.star = star.name; tailInfo.ionPx = ion; }
+            if (b.id === selectedId) { Object.assign(tailInfo, { strength: u, star: star.name, ionPx: ion, ux, uy, nx, ny }); }
         }
         ctx.globalAlpha = 1;
     }
@@ -3041,7 +3042,7 @@
             const vx = p ? (p.a.m * p.a.vx + p.b.m * p.b.vx) / M : b.vx, vy = p ? (p.a.m * p.a.vy + p.b.m * p.b.vy) / M : b.vy;
             b.dx = b.x + vx * lag; b.dy = b.y + vy * lag;
         }
-        F = freeze ? { x: freeze.x, y: freeze.y } : liveFrameOrigin();
+        F = freeze ? frozenOrigin(simTime + lag) : liveFrameOrigin();
         turnDrawnPositions();   // (a rotating frame turns them about F: see "Rotating frame")
         // A held body stays exactly where it is held in the view
         for (const b of bodies) {
@@ -3051,12 +3052,21 @@
 
     // The frame origin from the integrator's positions (no extrapolation)
     function stateFrameOrigin() {
-        if (freeze) return { x: freeze.x, y: freeze.y };
+        if (freeze) return frozenOrigin(simTime);
         if (turn.on) { const P = turnPair(); if (P) return pairCentre(P, false); }
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.x, y: L.y };
         const c = totals(bodies);
         return { x: c.x, y: c.y };
+    }
+
+    // The frame's origin while frozen (a body it moves with is being dragged), at time t: it carries on at
+    // the velocity it had when the drag began (a centre of mass that drifts, after a throw say, keeps
+    // drifting, so the rest of the view doesn't slide while the body is held), less the dragged body's
+    // own part, which the drag takes over (freeze: { x, y, vx, vy, t, phi }, see startHold)
+    function frozenOrigin(t) {
+        const dt = t - freeze.t;
+        return { x: freeze.x + freeze.vx * dt, y: freeze.y + freeze.vy * dt, phi: freeze.phi };
     }
 
     const sx = (x) => viewW / 2 + (x - F.x - view.panX) * scale;
@@ -3323,14 +3333,28 @@
     function turnPoint(x, y) { const v = turnVec(x - F.x, y - F.y); return { x: F.x + v.x, y: F.y + v.y }; }
     function unturnPoint(x, y) { const v = unturnVec(x - F.x, y - F.y); return { x: F.x + v.x, y: F.y + v.y }; }
 
+    // How far the view will be turned dt years from now (for a place predicted ahead, such as a mission's
+    // closest approach): in a rotating frame the pair will have turned on, by its two-body orbit
+    function turnAngleIn(dt) {
+        const P = turnPair();
+        if (!P || !dt) return turn.phi;
+        keplerDrift(P.B.x - P.A.x, P.B.y - P.A.y, P.B.vx - P.A.vx, P.B.vy - P.A.vy, G * (P.A.m + P.B.m), dt);
+        return turn.alpha - Math.atan2(KY, KX);
+    }
+
     // Where the frame's origin is and how far the view is turned, taken before a change (see keepScreen)
     const viewOrigin = () => ({ x: F.x, y: F.y, phi: turn.phi });
     // After a change that moved the frame's origin or turned the view (drawn positions already worked
     // out again): keep everything on the screen where it was. The pan takes up the move, turned as the
-    // view is; the turn goes into the dying turn, so the view then glides round to its new angle.
-    function keepScreen(before) {
+    // view is; the turn goes into the dying turn, so the view then glides round to its new angle. With
+    // stay, a rotating frame instead takes the new angle as its line's direction on the screen, so the
+    // view doesn't turn at all (one of the pair has been dragged to a new place).
+    function keepScreen(before, stay) {
         const d = before.phi !== undefined ? wrapAngle(before.phi - turn.phi) : 0;
-        if (Math.abs(d) > 1e-9) { addEase(d); updateDrawnPositions(); }
+        if (Math.abs(d) > 1e-9) {
+            if (stay && turn.on) turn.up = wrapAngle(turn.up + d); else addEase(d);
+            updateDrawnPositions();
+        }
         const v = turnVec(before.x - F.x, before.y - F.y);
         view.panX += v.x;
         view.panY += v.y;
@@ -3371,6 +3395,19 @@
         leaveTurning();
         turn.easeAmt = gone ? 0 : wrapAngle(turn.phi);
         turn.easeT = performance.now();
+        syncFrameUi();
+    }
+
+    // A link or the autosave keeps a rotating frame (B is its frame): [id of A, the line's direction]
+    const turnSetup = () => (turnPair() ? [turn.aId, +turn.up.toFixed(6)] : undefined);
+    // ...and opening one puts it back as it was, with frameId already set to B and no glide (its pan is
+    // in the turned view, so it must be turned just as it was): t { a, up }, or null for none
+    function restoreTurning(t) {
+        const A = t ? bodyById(t.a) : null, B = frameId !== null ? bodyById(frameId) : null;
+        Object.assign(turn, A && B && A !== B ? { on: true, aId: A.id, bId: B.id, up: wrapAngle(t.up) } : { on: false, aId: null, bId: null });
+        turn.easeAmt = 0;
+        pred.key = '';
+        markPreview();
         syncFrameUi();
     }
 
@@ -3519,6 +3556,21 @@
             turnTrailCS[j + 1] = sa * ct - ca * st;   // sin(alpha - theta_k)
         }
         return { oT: turnTrailO, cs: turnTrailCS, first: k0 };
+    }
+
+    // Running back (see drawPast): where the frame's origin was between trail samples k and k + 1 (f of
+    // the way), and how that moment's places turn into the view, as turnedTrails does for each sample:
+    // { ox, oy, c, s } (no ox: the ordinary origin, while an ordinary frame glides square). Null when the
+    // view isn't turned; 'none' when the pair's own samples don't reach back that far.
+    function turnedSampleFrame(k, f) {
+        const P = turnPair();
+        if (!P) return turn.phi ? { c: turn.c, s: turn.s } : null;
+        const TA = P.A.trail, TB = P.B.trail;
+        if (!TA || !TB || trailFirst(P.A) > k || trailFirst(P.B) > k) return 'none';
+        const at = (T, j) => { const i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1); return T[i0 + j] + f * (T[i1 + j] - T[i0 + j]); };
+        const ax = at(TA, 0), ay = at(TA, 1), bx = at(TB, 0), by = at(TB, 1), M = P.A.m + P.B.m;
+        const a = turn.alpha - Math.atan2(by - ay, bx - ax);
+        return { ox: (P.A.m * ax + P.B.m * bx) / M, oy: (P.A.m * ay + P.B.m * by) / M, c: Math.cos(a), s: Math.sin(a) };
     }
 
     // traceTrail for a turned view: the same, with each point turned
@@ -4493,11 +4545,13 @@
     function orbitBox(b, p, el) {
         const M = b.m + p.m;
         let cx, cy, k;
-        if (frameId === p.id) { cx = p.dx; cy = p.dy; k = 1; }
-        else if (frameId === b.id) { cx = b.dx; cy = b.dy; k = -1; }
+        // (a rotating frame is centred on its pair, not on its body B: the orbit is drawn round the pair's
+        // centre of mass, turned as the view is)
+        if (frameId === p.id && !turn.on) { cx = p.dx; cy = p.dy; k = 1; }
+        else if (frameId === b.id && !turn.on) { cx = b.dx; cy = b.dy; k = -1; }
         else { cx = (b.m * b.dx + p.m * p.dx) / M; cy = (b.m * b.dy + p.m * p.dy) / M; k = p.m / M; }
         const A = Math.abs(k) * el.a, B = A * Math.sqrt(Math.max(0, 1 - el.e * el.e));
-        const w = k < 0 ? el.w + Math.PI : el.w;
+        const w = (k < 0 ? el.w + Math.PI : el.w) + turn.phi;
         const ca = Math.cos(w), sa = Math.sin(w);
         // the ellipse's centre is a·e from its focus, away from the closest point
         const ox = cx - el.e * A * ca - F.x, oy = cy - el.e * A * sa - F.y;
@@ -4541,7 +4595,8 @@
         if (el && el.bound && !crowd.length && el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12)) {
             let from = null;
             // (not the partner of the heavier star of a binary: that orbits b itself)
-            if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id) { setFrame(p.id); from = p; }
+            // (nor when the view turns with its planet, which then stands still)
+            if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id && !turnUses(p)) { setFrame(p.id); from = p; }
             fitBox(orbitBox(b, p, el), glide);
             return { how: 'orbit', around: p, from, with: [] };
         }
@@ -6008,7 +6063,9 @@
         const L = forceLength(Fm);
         const P = gatherPulls(b);
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-        const ux = b.fx / Fm, uy = -b.fy / Fm;
+        // (forces are world vectors: on the screen they are turned as the view is, by turn.c and turn.s)
+        const tc = turn.c, ts = turn.s;
+        const ux = (tc * b.fx - ts * b.fy) / Fm, uy = -(ts * b.fx + tc * b.fy) / Fm;
         const x0 = x + ux * r, y0 = y + uy * r;
         let sumX = 0, sumY = 0, big = 0;
         for (let i = 0; i < P.k; i++) {
@@ -6030,7 +6087,7 @@
         const wNet = clamp(2 * sizeScale, 1.5, 2.4), w = 0.55 * wNet;
         // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
         // drawn at a scale of its own (then dashed and thin)
-        const ex = x0 + b.fx * k, ey = y0 - b.fy * k;
+        const ex = x0 + (tc * b.fx - ts * b.fy) * k, ey = y0 - (ts * b.fx + tc * b.fy) * k;
         if (squeezed) {
             ctx.setLineDash([4, 3]);
             arrow(x0, y0, ex, ey, C.force, w);
@@ -6042,8 +6099,10 @@
         c.x0 = x0; c.y0 = y0; c.ex = x0; c.ey = y0; c.links = 0; c.named = 0;
         c.bx = x; c.by = y; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         ctx.font = font(c.fs);
-        for (let i = 0; i < P.k; i++) chainLink(C, P.cx[i] * k, -P.cy[i] * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
-        chainLink(C, ox * k, -oy * k, C.subtle, P.rest ? 'others' : '', null);
+        for (let i = 0; i < P.k; i++) {
+            chainLink(C, (tc * P.cx[i] - ts * P.cy[i]) * k, -(ts * P.cx[i] + tc * P.cy[i]) * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
+        }
+        chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
         c.drawn = true; c.tipX = x0 + ux * L; c.tipY = y0 + uy * L; c.k = k; c.squeezed = squeezed;
     }
 
@@ -6279,7 +6338,9 @@
                 if (b.minor && !isChosen(b)) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b) + 4;
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
-                if (fv && Math.hypot(b.vx - fv.x, b.vy - fv.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
+                // (the velocity as its arrow shows it: in a rotating frame, relative to the frame where the body is)
+                const u = fv && turn.on ? frameVelocity(b.x, b.y) : fv;
+                if (fv && Math.hypot(b.vx - u.x, b.vy - u.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
             }
         }
         legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
@@ -6903,12 +6964,21 @@
     // once round, left the view far behind or hit something, so Jupiter's pull on a probe, or the star's
     // on a moon, is included. The path is drawn relative to the body it orbits (or to the body the view
     // is locked on), which is how an orbit is usually pictured.
+    //   Smooth: a path is worked out in the background, PREDICT_MS a frame, and only shown once it is
+    //   whole; until then the last whole one stays (pred.shown), so a path never flickers or grows. A
+    //   dragged body's path is worked out again as soon as the last is done (every frame or two); one
+    //   moving on with the others, at most every PREDICT_EVERY_MS. In between, each frame the shown path
+    //   is drawn from where the body is now (anchoredPath): the stretch it has covered since is left off
+    //   (or for a closed orbit moved round to the end), and the rest is shifted to start at the body.
     // ------------------------------------------------------------------
     const PREDICT_ETA = 0.012;
     const PREDICT_PAIRS = 4e5;
     const PREDICT_MS = 3;                 // while drawing: ms of prediction a frame (it carries on in the next)
+    const PREDICT_EVERY_MS = 100;         // a path whose body moves on with the others: worked out again this often
     const PREDICT_ALL = 24, PREDICT_HEAVY = 8;
-    const pred = { key: '', t: 0, pts: null, end: null, refId: null, job: null };
+    // The path being worked out (pts, its points' times ts after t0 in simulated years, bid: whose) and
+    // the last whole one (shown); force: start again now (an edit, see previewPath)
+    const pred = { key: '', t: 0, pts: null, ts: null, t0: 0, bid: null, loop: 0, end: null, refId: null, job: null, shown: null, force: false };
     let inRender = false;
 
     // The bodies copied for a prediction: all of them, or in a crowded scene only those whose pull on
@@ -6954,17 +7024,22 @@
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
         // (in a rotating frame the path is worked out as seen turning with the pair: see turnedSeen)
         const ref = turn.on ? null : L || (p && p.m >= b.m ? p : null);
-        // Worked out again when anything changes, but at most 20 times a second while the others move.
-        // While drawing, it takes at most PREDICT_MS a frame and carries on in the next ones (the path so
-        // far is shown meanwhile).
         const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
         const now = performance.now();
-        const same = pred.key.split('|')[0] === String(b.id);
-        if (pred.pts && (key === pred.key || (!paused && same && (now - pred.t < 50 || (pred.job && now - pred.t < 400))))) {
-            if (pred.job) runPrediction(inRender ? PREDICT_MS : Infinity);
-            return pred;
-        }
-        pred.key = key; pred.t = now; pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
+        // The one being worked out carries on; a new one starts when something has changed: at once
+        // after a reset or an edit, for another body, or while paused; for a dragged body once the last
+        // is whole (or has taken too long); for one moving on with the others, at most every
+        // PREDICT_EVERY_MS (anchoredPath keeps it with its body in between)
+        if (pred.job) runPrediction(inRender ? PREDICT_MS : Infinity);
+        const reset = !pred.key || pred.force || pred.bid !== b.id;
+        const due = reset || (key !== pred.key && (!pred.job || now - pred.t > 400) && (paused || b.held || now - pred.t >= PREDICT_EVERY_MS));
+        if (due) startPrediction(b, rel, ref, key, now);
+        return pred.shown && pred.shown.bid === b.id ? pred.shown : pred;
+    }
+
+    function startPrediction(b, rel, ref, key, now) {
+        pred.key = key; pred.t = now; pred.force = false; pred.bid = b.id; pred.t0 = simTime; pred.loop = 0;
+        pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
         const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
@@ -6989,16 +7064,16 @@
         const budget = Math.min(20000, Math.floor(PREDICT_PAIRS / (3 * pairs)));
         const pts = seen(me);
         pred.pts = pts;
+        pred.ts = [0];
         pred.end = 'cut';   // (until it finishes: the path so far, with no arrowhead at its end)
         pred.job = { list, me, origin, seen, pr, tMax, rMax, budget, k: 0, t: 0, lx: pts[0], ly: pts[1], ang: Math.atan2(pts[1], pts[0]), swept: 0, tmin: gravity(list) };
         runPrediction(inRender ? PREDICT_MS : Infinity);
-        return pred;
     }
 
     // Carry the prediction on for up to ms milliseconds (it ends when the path closes, hits something,
     // leaves the view or uses up its budget)
     function runPrediction(ms) {
-        const job = pred.job, list = job.list, me = job.me, pts = pred.pts, pr = job.pr;
+        const job = pred.job, list = job.list, me = job.me, pts = pred.pts, ts = pred.ts, pr = job.pr;
         const t0 = performance.now();
         const px = 1.5 / scale;   // keep points about 1.5 px apart
         let { lx, ly, ang, swept, t, tmin } = job;
@@ -7029,14 +7104,23 @@
             let da = a - ang;
             if (da > Math.PI) da -= TAU; else if (da < -Math.PI) da += TAU;
             swept += da; ang = a;
-            if (hit) { pts.push(x, y); end = 'hit'; break; }
-            if (Math.abs(x - lx) + Math.abs(y - ly) > px) { pts.push(x, y); lx = x; ly = y; }
+            if (hit) { pts.push(x, y); ts.push(t); end = 'hit'; break; }
+            // (each point with its time, and where it first comes right round: one lap, for anchoredPath)
+            const lap = !pred.loop && Math.abs(swept) >= TAU;
+            if (lap || Math.abs(x - lx) + Math.abs(y - ly) > px) { pts.push(x, y); ts.push(t); lx = x; ly = y; }
+            if (lap) pred.loop = ts.length - 1;
             if (Math.abs(swept) > TAU * 1.02) { end = 'closed'; break; }
             if (Math.hypot(x, y) > job.rMax && !(pr && pr.el.bound)) { end = 'away'; break; }
         }
         pts.push(...job.seen(me));
+        ts.push(t);
         pred.end = end || 'open';
         pred.job = null;
+        // Whole: shown from now on, in place of the last (which it grows out of: see blendedPath)
+        const old = pred.shown && pred.shown.bid === pred.bid ? pred.shown : null;
+        if (old) old.from = null;
+        const t1 = performance.now();
+        pred.shown = { bid: pred.bid, pts, ts, t0: pred.t0, loop: pred.end === 'closed' ? pred.loop : 0, end: pred.end, refId: pred.refId, t: t1, from: old, blend0: t1 };
     }
 
     // While dragging: the path the body would follow if let go now.
@@ -7055,7 +7139,7 @@
     function drawPredictedPath(C, b, pp) {
         const ref = pp.refId !== null ? bodyById(pp.refId) : null;
         const o = ref ? { x: ref.dx, y: ref.dy } : liveFrameOrigin();
-        const pts = turnedPath(pp);   // (turned as the view is)
+        const pts = anchoredPath(b, pp, blendedPath(b, pp), o);   // (turned as the view is, and from where the body is now)
         const col = C.dark ? hexA(b.color, 0.8) : bodyStroke(b.color, false);
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = col;
@@ -7093,6 +7177,60 @@
                 ctx.fill();
             }
         }
+    }
+
+    // A path's points turned as drawn, and for its first PATH_BLEND_MS grown smoothly out of the path it
+    // replaced (pp.from): each point moves from where the old path was at the same moment (matched by the
+    // points' times, both counted from now) to its own place, so a new path never jumps in.
+    const PATH_BLEND_MS = 90;
+    function blendedPath(b, pp) {
+        const pts = turnedPath(pp), old = pp.from;
+        if (!old) return pts;
+        const w = (performance.now() - pp.blend0) / PATH_BLEND_MS;
+        const ots = old.ts, on = ots ? ots.length : 0, ts = pp.ts;
+        if (!(w < 1) || !ts || ts.length * 2 !== pts.length || on < 2 || old.refId !== pp.refId) { pp.from = null; return pts; }
+        const ops = turnedPath(old);
+        if (ops.length !== 2 * on) { pp.from = null; return pts; }
+        const keep = 1 - w * w * (3 - 2 * w);   // (eased: the old path's share)
+        const off = b.held ? 0 : timeDir * (pp.t0 - old.t0);
+        const out = pts.slice();
+        for (let i = 0, j = 0; i < ts.length; i++) {
+            const t = ts[i] + off;
+            if (t > ots[on - 1]) break;   // (beyond the old path's end: the new one as it is)
+            while (j < on - 2 && ots[j + 1] < t) j++;
+            const f = t <= ots[j] ? 0 : ots[j + 1] > ots[j] ? Math.min(1, (t - ots[j]) / (ots[j + 1] - ots[j])) : 0;
+            const ox = ops[2 * j] + f * (ops[2 * j + 2] - ops[2 * j]), oy = ops[2 * j + 1] + f * (ops[2 * j + 3] - ops[2 * j + 1]);
+            out[2 * i] += keep * (ox - out[2 * i]);
+            out[2 * i + 1] += keep * (oy - out[2 * i + 1]);
+        }
+        return out;
+    }
+
+    // A path's points (pts, relative to o and turned as drawn) from where body b is drawn now. Time having
+    // run on since the path was worked out (from pp.t0), the body has covered its first stretch: that is
+    // left off, or for a closed orbit (one lap, to pp.loop) moved round to the end; and the rest is
+    // shifted so that it starts exactly at the body. A dragged body (held, so no time passes for it)
+    // takes its whole path with it until the next one is ready. So the path stays with the body every
+    // frame, and the next one, worked out from there, lands where this one already is.
+    function anchoredPath(b, pp, pts, o) {
+        const n = pts.length >> 1, ts = pp.ts;
+        if (!ts || ts.length !== n || n < 2 || pp.bid !== b.id) return pts;
+        const loop = pp.loop > 0 && pp.loop < n ? pp.loop : 0, last = loop || n - 1;
+        let tau = b.held ? 0 : timeDir * (simTime + lag - pp.t0);
+        if (!(tau > 0)) tau = 0;
+        if (loop) tau %= ts[loop]; else if (tau > ts[last]) tau = ts[last];
+        let lo = 0, hi = last;   // ts[lo] <= tau < ts[hi]
+        while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ts[m] <= tau) lo = m; else hi = m; }
+        const f = ts[lo + 1] > ts[lo] ? clamp((tau - ts[lo]) / (ts[lo + 1] - ts[lo]), 0, 1) : 0;
+        const qx = pts[2 * lo] + f * (pts[2 * lo + 2] - pts[2 * lo]), qy = pts[2 * lo + 1] + f * (pts[2 * lo + 3] - pts[2 * lo + 1]);
+        const bx = b.dx - o.x, by = b.dy - o.y, dx = bx - qx, dy = by - qy;
+        const out = [bx, by];
+        for (let k = lo + 1; k <= last; k++) out.push(pts[2 * k] + dx, pts[2 * k + 1] + dy);
+        if (loop) {
+            for (let k = 1; k <= lo; k++) out.push(pts[2 * k] + dx, pts[2 * k + 1] + dy);
+            out.push(bx, by);
+        }
+        return out;
     }
 
     // The two-body orbit a held or aimed body would have around its primary on release (for the hint
@@ -8196,9 +8334,8 @@
     // The predicted path (predictPath's, drawn as while aiming) of the body in the menu, of the chosen
     // body for two seconds after a push from the keyboard, and of the chosen body while paused (if
     // predicted paths are on). It is started again only when something has changed (while running, ten
-    // times a second at most); like every prediction made while drawing, it takes at most PREDICT_MS a
-    // frame and carries on in the next frames until the path is whole.
-    const PREVIEW_EVERY_MS = 100;
+    // times a second at most); like every prediction made while drawing, it is worked out PREDICT_MS a
+    // frame in the background, and the last whole path is shown meanwhile (see predictPath).
     function markPreview() { edit.previewDirty = true; }
 
     function previewBody() {
@@ -8224,17 +8361,19 @@
             const s = bodiesSum();
             if (s !== edit.sum) { edit.sum = s; edit.previewDirty = true; }
         }
-        const P = edit.preview;
-        // (an unfinished prediction is carried on every frame, PREDICT_MS at a time, until it is whole)
-        const going = !!(pred.job && P && P.bid === b.id && P.end === 'cut');
-        if (P && P.bid === b.id && !going && (paused ? P.paused && !edit.previewDirty : now - P.t < PREVIEW_EVERY_MS)) return P;
-        // The body's own velocity, given to predictPath as an aim (which it reads) for this call only
+        // The body's own velocity, given to predictPath as an aim (which it reads) for this call only. It
+        // decides when to start a path again (at once after an edit, else at most every
+        // PREDICT_EVERY_MS) and hands back the last whole one, which drawPredictedPath keeps with the body.
         const fv = frameVelocity();
         b.aim = { vx: b.vx - fv.x, vy: b.vy - fv.y, k: 1, ref: null, frameV: fv, snap: null };
-        if (edit.previewDirty || !P || P.bid !== b.id) pred.key = '';
+        if (edit.previewDirty) pred.force = true;
         let pp;
         try { pp = predictPath(b, null); } finally { b.aim = null; }
-        edit.preview = { bid: b.id, pts: pp.pts, end: pp.end, refId: pp.refId, t: going ? P.t : now, cost: performance.now() - now, paused };
+        const P = edit.preview, same = !!(P && P.src === pp && P.bid === b.id);
+        edit.preview = {
+            src: pp, bid: b.id, pts: pp.pts, ts: pp.ts, t0: pp.t0, loop: pp.loop, end: pp.end, refId: pp.refId, from: pp.from, blend0: pp.blend0,
+            t: same ? P.t : now, cost: same ? P.cost : performance.now() - now, paused
+        };
         edit.previewDirty = false;
         return edit.preview;
     }
@@ -8552,7 +8691,8 @@
     // ------------------------------------------------------------------
     const drags = new Map();   // pointerId -> drag state
     let pinch = null;
-    let lastTap = { t: 0, x: 0, y: 0, id: null };
+    let lastTap = { t: 0, x: 0, y: 0, id: null, quick: false };
+    const TAP_MS = 250;        // a press longer than this isn't a tap (for double-clicks and double-taps)
     let longPressTimer = 0;
     // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
     const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
@@ -8694,8 +8834,14 @@
         beginGesture(b, d.mode);   // (edit history: the whole drag is one step, from before the body is held)
         updateDrawnPositions();
         // A frame that moves with this body must stand still while it is dragged
-        // (a rotating frame moves with both of its pair, and freezes its angle too)
-        if (!freeze && (frameId === null || frameId === b.id || turnUses(b))) freeze = { x: F.x, y: F.y, phi: turn.phi };
+        // (a rotating frame moves with both of its pair, and freezes its angle too). It carries on at the
+        // centre of mass's velocity, so nothing else slides if the whole system is drifting; and a glide
+        // of the view under way stops here: the view stays still while a body is held.
+        if (!freeze && (frameId === null || frameId === b.id || turnUses(b))) {
+            const c = totals(bodies);
+            freeze = { x: F.x, y: F.y, phi: turn.phi, vx: c.vx, vy: c.vy, t: simTime + lag };
+        }
+        view.anim = null;
         b.held = { offX: b.dx - F.x, offY: b.dy - F.y };
         d.frameV = frameVelocity(b.x, b.y);
         applyHolds();
@@ -8726,11 +8872,13 @@
         forcesDirty = true;
         const stillHeld = bodies.some((c) => c.held);
         if (freeze && !stillHeld) {
-            const fz = freeze;
+            // Let go: the frame follows its origin again with nothing on the screen moving (the body you
+            // view from stays where it was dropped, rather than the view gliding to put it back in the
+            // middle; a rotating frame keeps its pair's line where it now is on the screen)
+            const fz = { x: F.x, y: F.y, phi: freeze.phi };   // (the frozen origin now)
             freeze = null;
             updateDrawnPositions();
-            keepScreen(fz);   // (and a rotating frame's angle glides on from where it was frozen)
-            if (frameId !== null) view.anim = { zoom: view.zoom, panX: 0, panY: 0 };
+            keepScreen(fz, true);
         }
         computeForces();
         computePrimaries();
@@ -9045,11 +9193,18 @@
         } else {
             ox = comTrail[2 * kt] + f * (comTrail[2 * kt1] - comTrail[2 * kt]); oy = comTrail[2 * kt + 1] + f * (comTrail[2 * kt1 + 1] - comTrail[2 * kt + 1]);
         }
+        // (a turned view: seen from the turning pair as it was then, and turned as that moment's trail
+        // samples are; see turnedSampleFrame)
+        const tq = turnedSampleFrame(k, f);
+        if (tq === 'none') return;
+        if (tq && tq.ox !== undefined) { ox = tq.ox; oy = tq.oy; }
+        const rc = tq ? tq.c : 1, rs = tq ? tq.s : 0;
         const live = freeze ? liveFrameOrigin() : F;
         const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const where = (b) => {
             const T = b.trail, i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1);
-            return { x: offX + (T[i0] + f * (T[i1] - T[i0]) - ox) * scale, y: offY - (T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy) * scale };
+            const rx = T[i0] + f * (T[i1] - T[i0]) - ox, ry = T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy;
+            return { x: offX + (rc * rx - rs * ry) * scale, y: offY - (rs * rx + rc * ry) * scale };
         };
         const usable = (b) => !b.held && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
         for (const b of bodies) {
@@ -9231,16 +9386,26 @@
         return { x: vx, y: vy };
     }
 
-    // The world velocity a throw gives (AU/yr): the view's own velocity, plus the pointer's
+    // The view's own velocity where a throw lets go of its body (a body being moved, or the drop point of
+    // one from the palette): in a rotating frame it depends on the place (see frameVelocity)
+    function throwBase(d) {
+        if (d && d.body) return frameVelocity(d.body.x, d.body.y);
+        if (d && d.cx !== undefined) { const w = unturnPoint(wx(d.cx), wy(d.cy)); return frameVelocity(w.x, w.y); }
+        return frameVelocity();
+    }
+
+    // The world velocity a throw gives (AU/yr): the view's own velocity, plus the pointer's (along the
+    // screen, so in a turned view turned back into the world's directions, as an aimed arrow is)
     function throwVelocity(d, now) {
-        const fv = frameVelocity();
+        const fv = throwBase(d);
         const u = flickPx(d, now);
         if (!u) return [fv.x, fv.y];
         const k = timeDir * scale * Math.max(settings.speed * rate(), 1e-30);   // px/s on the screen per AU/yr
         let vx = u.x / k, vy = -u.y / k;
         const v = Math.hypot(vx, vy), cap = THROW_C * C_LIGHT;
         if (v > cap) { vx *= cap / v; vy *= cap / v; }
-        return [fv.x + vx, fv.y + vy];
+        const w = unturnVec(vx, vy);
+        return [fv.x + w.x, fv.y + w.y];
     }
 
     function dragOf(b) {
@@ -9252,7 +9417,7 @@
     function throwHint(d) {
         const now = performance.now();
         if (!flickPx(d, now)) return 'stays put in this view. <strong>Flick</strong> it as you let go to throw it';
-        const v = throwVelocity(d, now), fv = frameVelocity();
+        const v = throwVelocity(d, now), fv = throwBase(d);
         const s = fmtSpeedKms(Math.hypot(v[0] - fv.x, v[1] - fv.y) * AUYR_KMS);
         return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
     }
@@ -9269,8 +9434,8 @@
         if (!d || !d.over || !d.moved || settings.placement !== 'throw' || cleanRender) return;
         const now = performance.now();
         if (!flickPx(d, now)) return;
-        const v = throwVelocity(d, now), fv = frameVelocity();
-        const vx = v[0] - fv.x, vy = v[1] - fv.y, s = Math.hypot(vx, vy);
+        const v = throwVelocity(d, now), fv = throwBase(d);
+        const rel = turnVec(v[0] - fv.x, v[1] - fv.y), vx = rel.x, vy = rel.y, s = Math.hypot(vx, vy);   // (turned as the view is)
         const k = KINDS[d.kind] || KINDS.custom;
         const r = Math.max(symbolicSize(d.kind, k.m, k.R) * sizeScale, 4), L = arrowLength(s);
         const ux = vx / s, uy = -vy / s;   // (like every velocity arrow: backwards in time, against the motion)
@@ -9320,7 +9485,7 @@
         const b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
-        const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button };
+        const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
         if (handleBody) {
             d.mode = 'aim';
             d.body = handleBody;
@@ -9438,8 +9603,11 @@
             // the centre of mass again)
             const now = performance.now();
             const b = d.body;
-            const dbl = now - lastTap.t < 380 && Math.hypot(d.x0 - lastTap.x, d.y0 - lastTap.y) < (d.type === 'mouse' ? 8 : 26) && lastTap.id === (b ? b.id : null);
-            lastTap = { t: dbl ? 0 : now, x: d.x0, y: d.y0, id: b ? b.id : null };
+            // (only two quick presses: a press held still a while, as when a drag is started but the
+            // body hardly moves, isn't half of a double-click)
+            const quick = now - d.downT < TAP_MS;
+            const dbl = quick && lastTap.quick && now - lastTap.t < 380 && Math.hypot(d.x0 - lastTap.x, d.y0 - lastTap.y) < (d.type === 'mouse' ? 8 : 26) && lastTap.id === (b ? b.id : null);
+            lastTap = { t: dbl ? 0 : now, x: d.x0, y: d.y0, id: b ? b.id : null, quick };
             if (b) {
                 if (popBody && popBody !== b) closePopover();
                 selectBody(b.id);
@@ -9812,7 +9980,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : ''].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -10009,7 +10177,9 @@
             vw: [s.zoom, s.panX, s.panY],
             sca: [s.forceRef, s.vRef, s.energyExp, s.trail, s.com ? 1 : 0],
             cc: s.customCount, pr: s.pairs, ge: s.groupE,
-            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement }
+            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement },
+            // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
+            ro: turnSetup()
         };
     }
 
@@ -10088,6 +10258,7 @@
             num, names, kinds, colors, n, t: Math.max(0, fin(d.t, 0)), samples: 0, epoch: -1,
             customCount: Number.isInteger(d.cc) && d.cc >= 0 ? d.cc : 0,
             scene: key, sel: idOf(d.sel), frame: idOf(d.fr), pairs, groupE,
+            turn: Array.isArray(d.ro) && idOf(d.ro[0]) !== null && idOf(d.fr) !== null && d.ro[0] !== d.fr ? { a: d.ro[0], up: fin(d.ro[1], 0) } : null,
             forceRef: fin(sca[0], 0) > 0 ? sca[0] : 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,
             energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
@@ -10197,6 +10368,7 @@
         const has = (id) => id !== null && bodies.some((b) => b.id === id);
         selectedId = has(s.sel) ? s.sel : defaultSubject();
         frameId = has(s.frame) ? s.frame : null;
+        restoreTurning(s.turn && has(s.turn.a) ? s.turn : null);   // (a rotating frame, as it was: no glide)
         view.zoom = s.zoom; view.panX = s.panX; view.panY = s.panY; view.anim = null;
         k2.bid = null;
         refreshBodyLists();
@@ -12231,12 +12403,18 @@
         }
         const p = mission.pred, c = bodyById(mission.craftId);
         const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
-        const tx = ghost ? cx + p.tx * scale : 0, ty = ghost ? cy - p.ty * scale : 0;
-        // (not when it would sit on the target as it is now: they are about to meet)
+        // (the places predicted are world offsets from R at that time: turned as the view will be turned
+        // then, so in a rotating frame they are seen from the pair as it will be)
+        const ga = ghost ? turnAngleIn(p.t - simTime) : 0, gc = Math.cos(ga), gs = Math.sin(ga);
+        const tx = ghost ? cx + (gc * p.tx - gs * p.ty) * scale : 0, ty = ghost ? cy - (gs * p.tx + gc * p.ty) * scale : 0;
+        const kx = ghost ? cx + (gc * p.cx - gs * p.cy) * scale : 0, ky = ghost ? cy - (gs * p.cx + gc * p.cy) * scale : 0;
+        // (not when it would sit on the target as it is now: they are about to meet; in a frame turning
+        // with the target, where it stands still, when the probe is about to reach its closest point)
         const nowX = g.l4 ? sx(R.dx + 0.5 * (T.dx - R.dx) - Math.sqrt(3) / 2 * (T.dy - R.dy)) : T ? sx(T.dx) : 0;
         const nowY = g.l4 ? sy(R.dy + Math.sqrt(3) / 2 * (T.dx - R.dx) + 0.5 * (T.dy - R.dy)) : T ? sy(T.dy) : 0;
-        if (ghost && Math.hypot(tx - nowX, ty - nowY) > 24) {
-            const kx = cx + p.cx * scale, ky = cy - p.cy * scale;
+        const soon = ghost && (turnUses(T) ? Math.hypot(kx - sx(c.dx), ky - sy(c.dy)) <= 24 : Math.hypot(tx - nowX, ty - nowY) <= 24);
+        mission.ghostPx = ghost ? { tx, ty, kx, ky, shown: !soon } : null;   // (for testing)
+        if (ghost && !soon) {
             if (Math.hypot(tx - kx, ty - ky) > 9) {
                 ctx.strokeStyle = C.faint;
                 ctx.lineWidth = 1;
@@ -12325,7 +12503,7 @@
             burns: mission.log.length / 2, log: mission.log.slice(), time: simTime, paused,
             result: mission.result ? Object.assign({}, mission.result) : null, best: bestOf(d.id),
             goal: Object.assign({ type: g.type }, g, g.V ? { V: toKms(g.V) } : {}), now,
-            closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime } : null,
+            closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
             panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null
         };
     }
@@ -13076,9 +13254,11 @@
             applyHolds();
             endHold(d, true);
             settings.placement = was;
-            const fv = frameVelocity(), v = Math.hypot(b.vx - fv.x, b.vy - fv.y);
+            // (relative to the view where it is, along the screen's directions: see viewVelocity)
+            updateDrawnPositions();
+            const rel = viewVelocity(b, frameVelocity()), v = Math.hypot(rel.x, rel.y);
             const want = Math.hypot(dx, dy) / (ms / 1000) / (scale * settings.speed * rate());
-            return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: b.vx - fv.x, vy: b.vy - fv.y };
+            return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: rel.x, vy: rel.y };
         },
         // Run forwards `years`, then back to where it began; how far each body ends from where it was
         // (and its speed from what it was), relative to its distance and speed from the centre of mass.
