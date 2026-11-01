@@ -3731,7 +3731,7 @@
             ctx.lineWidth = 3;
             ctx.strokeStyle = halo;
             ctx.strokeText(name, tx, ty);
-            ctx.fillStyle = C.subtle;
+            ctx.fillStyle = C.label;   // (as the bodies' names: over the well's shading the fainter grey was hard to read)
             ctx.fillText(name, tx, ty);
             ctx.lineWidth = 1.4;
             ctx.strokeStyle = C.dark ? 'rgba(224,224,224,0.75)' : 'rgba(40,40,40,0.7)';
