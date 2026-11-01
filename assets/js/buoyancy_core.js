@@ -2472,7 +2472,7 @@
         }
         // height labels every 10 cm
         g.fillStyle = pal.gridLabel;
-        g.font = Math.round(clamp(cssW / 70, 8, 12) * dpr) + 'px "Source Sans Pro", Helvetica, sans-serif';
+        g.font = Math.round(clamp(cssW / 70, 9, 12) * dpr) + 'px "Source Sans Pro", Helvetica, sans-serif';
         g.textBaseline = 'bottom';
         g.textAlign = 'left';
         for (let r = 10; r < GH; r += 10) {
@@ -3609,16 +3609,24 @@
     // A small key in the top-left corner: [swatch] label ... value (values right-aligned in a
     // column as wide as `valueTemplate`, so changing numbers never shift anything)
     function drawInfoBox(rows, valueTemplate, right) {
-        const fs = clamp(cssW / 70, 10, 13);
-        ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
-        const lineH = Math.round(fs * 1.4);
-        let lw = 0, vw = valueTemplate ? ctx.measureText(valueTemplate).width : 0;
-        for (const r of rows) {
-            lw = Math.max(lw, ctx.measureText(r[1]).width);
-            if (r[2]) vw = Math.max(vw, ctx.measureText(r[2]).width);
+        // 11 px at least (phones), and smaller only if the widest line would not fit the canvas
+        let fs = clamp(cssW / 70, 11, 13), lw = 0, vw = 0, bw = 0;
+        const pad = 7, sw = r0Swatch(rows) ? 18 : 0;
+        for (let pass = 0; pass < 2; pass++) {
+            ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
+            lw = 0; vw = valueTemplate ? ctx.measureText(valueTemplate).width : 0;
+            for (const r of rows) {
+                lw = Math.max(lw, ctx.measureText(r[1]).width);
+                if (r[2]) vw = Math.max(vw, ctx.measureText(r[2]).width);
+            }
+            const fixed = pad * 2 + (sw ? sw + pad : 0) + (vw > 0 ? 10 : 0);
+            bw = fixed + lw + vw;
+            if (bw <= cssW - 16 || pass) break;
+            fs = Math.max(8, fs * (cssW - 16 - fixed) / (lw + vw));
         }
-        const pad = 7, sw = r0Swatch(rows) ? 18 : 0, gap = vw > 0 ? 10 : 0;
-        const bw = pad * 2 + (sw ? sw + pad : 0) + lw + gap + vw, bh = rows.length * lineH + pad;
+        const lineH = Math.round(fs * 1.4);
+        const gap = vw > 0 ? 10 : 0;
+        const bh = rows.length * lineH + pad;
         const x0 = right ? Math.max(8, Math.floor(cssW - 8 - bw)) : 8, y0 = 8;
         ctx.fillStyle = pal.panel;
         ctx.strokeStyle = pal.panelBorder;
@@ -3686,7 +3694,7 @@
     const ON_LIQUID_TEXT = '#ffffff', ON_LIQUID_HALO = 'rgba(0,0,0,0.55)';
 
     function drawLiquidLabel(liq) {
-        const fs = clamp(cssW / 60, 9, 13);
+        const fs = clamp(cssW / 60, 10, 13);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
@@ -3705,7 +3713,7 @@
     function drawScaleBar() {
         const len = 0.1 * scale;
         const x = 10, y = cssH - 10;
-        const fs = clamp(cssW / 70, 8, 12);
+        const fs = clamp(cssW / 70, 10, 12);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
         for (let pass = 0; pass < 2; pass++) {
             ctx.strokeStyle = pass === 0 ? ON_LIQUID_HALO : ON_LIQUID_TEXT;
