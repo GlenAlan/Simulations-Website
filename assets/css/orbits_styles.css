@@ -727,8 +727,9 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     outline-offset: 1px;
 }
 
+/* (dark text on the accent, as on the missions' Start: white on it is too faint to read, 2.5:1) */
 .orb-popover button[aria-pressed="true"] {
-    color: #ffffff !important;
+    color: #16181c !important;
     background-color: var(--color-accent);
     box-shadow: none;
 }
@@ -1445,6 +1446,30 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     }
 }
 
+/* Desktop: the buttons sit at the end of the chosen body's row, which has room to spare, so the five
+   readouts have the bar's whole width on the row below and stay on one row, even with the settings
+   docked beside the canvas (at 1440 x 900 the buttons beside both rows pushed Period onto a row of
+   its own). The row keeps the buttons' height, and a long name gives way before reaching them. */
+@media screen and (min-width: 900px) and (min-height: 541px) and (pointer: fine) {
+    /* (fullscreen's bar is fixed, which places the buttons just as well) */
+    .orbits-sim .sim-info-bar:not(.fullscreen-style) {
+        position: relative;
+    }
+
+    .orbits-sim .stats-container > .orb-subject {
+        min-height: 44px;
+        padding-right: calc(var(--orb-bar-acts, 330px) + 0.5em);
+        box-sizing: border-box;
+    }
+
+    .orbits-sim .sim-info-bar > .sim-info-actions {
+        position: absolute;
+        top: 0.3em;
+        right: 0.3em;
+        flex-wrap: nowrap;
+    }
+}
+
 /* Tool column: undo and redo (icons) share a row with "Fit view", leaving the palette one row more.
    The hint keeps room for five lines but may grow (to eight) for a scene's longer tip: only the
    palette above it, which scrolls, gets shorter, so no chip moves. */
@@ -1478,11 +1503,15 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         display: none;
     }
 
+    /* (the page's text grows on wide screens but the column doesn't: capped, like the chips' names,
+       so "Fit view" stays inside its button) */
     .orb-toolbar .orb-fit {
         grid-area: fit;
         width: auto;
         min-width: 0;
         padding: 0 0.4em;
+        gap: 0.4em;
+        font-size: min(1em, 13px);
     }
 
     .orb-hint {
@@ -1970,6 +1999,37 @@ html.dark-mode .orb-date-input {
 html.dark-mode .orbits-sim,
 html.dark-mode .orb-help {
     --orb-focus: var(--color-accent);
+}
+
+/* Light theme contrast (WCAG AA). The page's pink is too pale for text on the light greys (2.3:1),
+   so values shown in pink take a darker pink (5:1 or more); and secondary text, a 75% grey there
+   (3.7:1), is 90% (5:1). */
+html:not(.dark-mode) .orbits-sim .sim-controls-content label > .sim-value,
+html:not(.dark-mode) .orbits-sim .sim-controls-content label > span:not([class]),
+html:not(.dark-mode) .orbits-sim .orb-pop-val,
+html:not(.dark-mode) .orbits-sim .orb-popover input.orb-spin-input,
+html:not(.dark-mode) .orbits-sim .orb-mission-stars {
+    color: #b03a5b;
+}
+
+html:not(.dark-mode) .orbits-sim #pauseBtn[aria-pressed="true"] {
+    color: #b03a5b !important;
+}
+
+html:not(.dark-mode) .orbits-sim .orb-toolbar-label,
+html:not(.dark-mode) .orbits-sim .orb-group-label,
+html:not(.dark-mode) .orbits-sim .orb-subject-around,
+html:not(.dark-mode) .orbits-sim .orb-pop-note,
+html:not(.dark-mode) .orbits-sim .orb-field-sub,
+html:not(.dark-mode) .orbits-sim .orb-spin-unit,
+html:not(.dark-mode) .orbits-sim .orb-pop-tabs button:not([aria-selected="true"]),
+html:not(.dark-mode) .orbits-sim .orb-pull-table thead th,
+html:not(.dark-mode) .orbits-sim .orb-mission-kicker,
+html:not(.dark-mode) .orbits-sim .sim-controls-content .orb-note,
+html:not(.dark-mode) .orbits-sim .sim-controls-content label .orb-sub,
+html:not(.dark-mode) .orbits-sim .sim-controls-content .sim-control-group-label,
+html:not(.dark-mode) .orbits-sim .sim-chips input[type="checkbox"]:not(:checked) + label {
+    opacity: 0.9;
 }
 
 /* Hidden, but read by screen readers */

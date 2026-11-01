@@ -3014,6 +3014,7 @@
         clearHint('missionNote');
         showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
+        stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
     }
 
     // ------------------------------------------------------------------
@@ -3730,7 +3731,7 @@
             ctx.lineWidth = 3;
             ctx.strokeStyle = halo;
             ctx.strokeText(name, tx, ty);
-            ctx.fillStyle = C.subtle;
+            ctx.fillStyle = C.label;   // (as the bodies' names: over the well's shading the fainter grey was hard to read)
             ctx.fillText(name, tx, ty);
             ctx.lineWidth = 1.4;
             ctx.strokeStyle = C.dark ? 'rgba(224,224,224,0.75)' : 'rgba(40,40,40,0.7)';
@@ -4631,6 +4632,22 @@
         return { how: 'near', around: null, from: null, with: [] };
     }
 
+    // After its orbit is reshaped (the eccentricity slider, or a new period or distances in the menu's
+    // Orbit tab): if the whole orbit no longer fits, zoom out just enough to show it as well as what is
+    // in view now (never in, and nothing else moves)
+    function keepOrbitInView(b) {
+        const p = b && b.primary && b.primary !== b && bodies.includes(b.primary) ? b.primary : null;
+        const el = p ? elementsOf(b, p) : null;
+        if (!el || !el.bound || !viewW || !viewH || !(el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12))) return;
+        updateDrawnPositions();
+        const o = orbitBox(b, p, el);   // (relative to the frame origin, with a margin)
+        const xa = wx(0) - F.x, xb = wx(viewW) - F.x, ya = wy(0) - F.y, yb = wy(viewH) - F.y;
+        const v = [Math.min(xa, xb), Math.max(xa, xb), Math.min(ya, yb), Math.max(ya, yb)];
+        if (o[0] >= v[0] && o[1] <= v[1] && o[2] >= v[2] && o[3] <= v[3]) return;
+        const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        fitBox([Math.min(o[0], v[0]), Math.max(o[1], v[1]), Math.min(o[2], v[2]), Math.max(o[3], v[3])], glide);
+    }
+
     function zoomChosen() {
         const b = bodyById(selectedId);
         const z = zoomToBody(b);
@@ -4999,6 +5016,17 @@
         return c;
     }
 
+    // The note under "Bodies you drop or move" says what the chosen option does (see launch)
+    const PLACEMENT_NOTES = {
+        circular: 'Each starts on a circular orbit round the body it would orbit there.',
+        keep: 'A body you move keeps its velocity; a new one starts at rest.',
+        rest: 'Each starts at rest in this view, then falls.',
+        throw: 'Flick a body as you let go, and it keeps your speed.'
+    };
+    function syncPlacementNote() {
+        setText(byId('placementNote'), PLACEMENT_NOTES[settings.placement] || PLACEMENT_NOTES.circular);
+    }
+
     // Set the velocity of a body that was just dropped or moved, by the "bodies you drop or move" option.
     // d: the drag that moved it (for a throw: the pointer's speed as it let go).
     function launch(b, isNew, d) {
@@ -5140,11 +5168,13 @@
         return dark ? {
             dark, bg: '#16181c', text: '#e0e0e0', subtle: 'rgba(224,224,224,0.55)', label: 'rgba(224,224,224,0.62)', faint: 'rgba(224,224,224,0.28)',
             force: '#f2849e', velocity: '#7bd0c1', kepler: '#8499e7', sectorA: 'rgba(174,133,202,0.34)', sectorB: 'rgba(174,133,202,0.18)',
-            sectorLine: 'rgba(174,133,202,0.75)', card: 'rgba(30,32,37,0.93)', cardLine: 'rgba(255,255,255,0.12)', outline: 'rgba(0,0,0,0)'
+            sectorLine: 'rgba(174,133,202,0.75)', card: 'rgba(30,32,37,0.93)', cardLine: 'rgba(255,255,255,0.12)', outline: 'rgba(0,0,0,0)',
+            burn: '#ffb454'
         } : {
             dark, bg: '#f4f6f8', text: '#3d3d3d', subtle: 'rgba(50,50,50,0.68)', label: 'rgba(40,40,40,0.78)', faint: 'rgba(60,60,60,0.3)',
             force: '#e0607e', velocity: '#2a9d8f', kepler: '#5b6fd6', sectorA: 'rgba(150,100,190,0.30)', sectorB: 'rgba(150,100,190,0.15)',
-            sectorLine: 'rgba(130,85,175,0.75)', card: 'rgba(255,255,255,0.94)', cardLine: 'rgba(0,0,0,0.12)', outline: 'rgba(0,0,0,0.28)'
+            sectorLine: 'rgba(130,85,175,0.75)', card: 'rgba(255,255,255,0.94)', cardLine: 'rgba(0,0,0,0.12)', outline: 'rgba(0,0,0,0.28)',
+            burn: '#a85f00'
         };
     }
 
@@ -5871,7 +5901,31 @@
                 arrow(x + ((h.x - x) / hl) * r, y + ((h.y - y) / hl) * r, h.x, h.y, hotColour, w);
                 ctx.globalAlpha = 1;
             }
+            if (b.aim && b.aim.burn) drawBurn(C, b, w);
         }
+    }
+
+    // A burn being aimed in a mission (see beginAim): an arrow from where the velocity arrow's tip was
+    // when it was grabbed, along the change of velocity at the burn's own scale (so it follows the
+    // pointer), with its size beside it
+    function drawBurn(C, b, w) {
+        const a = b.aim, B = a.burn;
+        let dx = a.vx - B.vx, dy = a.vy - B.vy, ox = B.vx, oy = B.vy;
+        if (turn.phi && !a.turn) { ({ x: dx, y: dy } = turnVec(dx, dy)); ({ x: ox, y: oy } = turnVec(ox, oy)); }   // (as velocityTip)
+        const L = Math.hypot(dx, dy) * B.k;
+        if (L < 3) return;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b), o = Math.hypot(ox, oy);
+        const x0 = o > 0 ? x + (ox / o) * (r + o * a.k) : x, y0 = o > 0 ? y - (oy / o) * (r + o * a.k) : y;
+        const x1 = x0 + dx * B.k, y1 = y0 - dy * B.k;
+        arrow(x0, y0, x1, y1, C.burn, w * 1.5);
+        const dv = fmtSpeedKms(Math.hypot(dx, dy) * AUYR_KMS);
+        ctx.font = font(Math.round(12 * Math.max(sizeScale, 0.9)), true);
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = dx >= 0 ? 'left' : 'right';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = C.bg;
+        ctx.fillStyle = C.burn;
+        fillTextInside(`Δv ${dv.v} ${dv.u}`, x1 + (dx >= 0 ? 8 : -8), y1 - (dy >= 0 ? 8 : -8), true);
     }
 
     // The centre-of-mass marker (its label is placed with the bodies' names)
@@ -7758,24 +7812,39 @@
     let popLastInput = 0;
     let popNextUpdate = 0;
 
+    // The colours are a radio group: named, one stop of the Tab key (the chosen colour), and the arrow
+    // keys choose the next or previous one
+    const SWATCH_NAMES = ['Yellow', 'Orange', 'Pink', 'Magenta', 'Lavender', 'Blue', 'Sky blue', 'Teal', 'Sand', 'Grey'];
     function buildSwatches() {
         if (!ui.popColours) return;
         ui.popColours.textContent = '';
-        for (const c of SWATCHES) {
+        SWATCHES.forEach((c, i) => {
             const s = document.createElement('button');
             s.type = 'button';
             s.className = 'orb-swatch';
             s.style.background = c;
             s.dataset.color = c;
             s.setAttribute('role', 'radio');
-            s.setAttribute('aria-label', `Colour ${c}`);
+            s.setAttribute('aria-label', SWATCH_NAMES[i] || c);
+            s.title = SWATCH_NAMES[i] || c;
+            s.tabIndex = -1;
             s.addEventListener('click', () => {
                 if (!popBody) return;
                 popBody.color = c;
                 updatePopover(true);
             });
             ui.popColours.appendChild(s);
-        }
+        });
+        ui.popColours.addEventListener('keydown', (e) => {
+            const all = Array.from(ui.popColours.querySelectorAll('.orb-swatch')), i = all.indexOf(e.target);
+            if (i < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+            const n = all.length, step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+            const j = step ? (i + step + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+            if (j < 0) return;
+            e.preventDefault();
+            all[j].focus();
+            all[j].click();
+        });
     }
 
     // The menu opens on the Body tab (in a mission, the probe's on Velocity, where its engine is); a
@@ -7891,7 +7960,11 @@
         setText(ui.popSpeedNote, lf ? `${lf.slice(2, -1)} · ${note}` : note);
         ui.popCircular.disabled = !sr.p;
         // Colour swatches
-        ui.popColours.querySelectorAll('.orb-swatch').forEach((s) => s.setAttribute('aria-checked', s.dataset.color === b.color ? 'true' : 'false'));
+        const sw = Array.from(ui.popColours.querySelectorAll('.orb-swatch')), on = sw.find((s) => s.dataset.color === b.color);
+        sw.forEach((s) => {
+            s.setAttribute('aria-checked', s === on ? 'true' : 'false');
+            s.tabIndex = s === (on || sw[0]) ? 0 : -1;   // (a colour of its own, as a star's: the stop is on the first)
+        });
         // Newton's law for this body and its primary, and its orbit
         let info = '';
         if (sr.p) {
@@ -8211,6 +8284,7 @@
             ux = -s.uy * s.sense * v; uy = s.ux * s.sense * v;
         }
         applyEdit(b, () => setRelative(b, s, rx, ry, ux, uy));
+        keepOrbitInView(b);
     }
 
     // New closest and farthest distances (rp <= ra; ra = Infinity: an escaping orbit that keeps its
@@ -8236,6 +8310,7 @@
         const vr = (s.vr < 0 ? -1 : 1) * Math.sqrt(Math.max(0, mu * (2 / r - 1 / a) - vt * vt));
         const k = r / s.r, tx = -s.uy * s.sense, ty = s.ux * s.sense;
         applyEdit(b, () => setRelative(b, s, s.rx * k, s.ry * k, vr * s.ux + vt * tx, vr * s.uy + vt * ty));
+        keepOrbitInView(b);
     }
 
     // The way the other bodies go round p (or p round its own primary): 1 anticlockwise, -1 clockwise,
@@ -8499,7 +8574,7 @@
         if (!t || !t.tagName) return false;
         if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
         if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
-        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"]'));
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette'));
     }
 
     function onEditorKey(e) {
@@ -8733,6 +8808,44 @@
             box.append(head, chips);
             ui.palette.appendChild(box);
         }
+        paletteRove(ui.palette.querySelector('.orb-chip'));
+        if (!ui.palette.dataset.keys) {
+            ui.palette.dataset.keys = '1';
+            ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
+            ui.palette.addEventListener('keydown', onPaletteKey);
+        }
+    }
+
+    // The keyboard: the palette is one stop of the Tab key (as in a toolbar), not fifteen. The arrow
+    // keys move between its chips (up and down to the nearest chip in the row above or below), Home and
+    // End go to the first and last, and the chip last used keeps the stop.
+    function paletteRove(to) {
+        if (!ui.palette || !to) return;
+        for (const c of ui.palette.querySelectorAll('.orb-chip')) c.tabIndex = c === to ? 0 : -1;
+    }
+
+    function onPaletteKey(e) {
+        const c = e.target.closest && e.target.closest('.orb-chip');
+        if (!c || e.altKey || e.ctrlKey || e.metaKey) return;
+        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled);
+        const i = list.indexOf(c);
+        if (i < 0) return;
+        let to = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') to = list[clamp(i + (e.key === 'ArrowRight' ? 1 : -1), 0, list.length - 1)];
+        else if (e.key === 'Home' || e.key === 'End') to = list[e.key === 'Home' ? 0 : list.length - 1];
+        else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const down = e.key === 'ArrowDown', r = c.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+            let best = Infinity;
+            for (const q of list) {
+                const s = q.getBoundingClientRect(), dy = s.top + s.height / 2 - y;
+                if (down ? dy < 4 : dy > -4) continue;
+                const cost = Math.abs(dy) * 4 + Math.abs(s.left + s.width / 2 - x);
+                if (cost < best) { best = cost; to = q; }
+            }
+            if (!to) to = c;
+        } else return;
+        e.preventDefault();
+        if (to !== c) { to.focus(); to.scrollIntoView({ block: 'nearest' }); }
     }
 
     function paletteChip(kind) {
@@ -8886,7 +8999,8 @@
             h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
                 : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
         }
-        if (hints.intro) h += ' <strong>New:</strong> Missions, in <span class="icon solid fa-cog" role="img" aria-label="the settings" title="Settings"></span>';
+        // (the gear kept on the line of the word before it)
+        if (hints.intro) h += ' <strong>New:</strong> Missions, in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
         return h;
     }
 
@@ -8992,6 +9106,8 @@
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
             showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
+        } else if (b.aim && b.aim.burn) {
+            showHint('drag', burnHint(b, d));
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
@@ -9076,9 +9192,20 @@
     // speed relative to the body it orbits, it snaps to it. If that body moves fast through the view
     // (a moon seen from the star) or the arrow would be tiny, the velocity is aimed relative to that body
     // instead, with the circular speed as the arrow's unit.
+    //   In a mission the probe's arrow aims a burn instead: the pointer drags out the change of velocity
+    // (drawn as its own arrow, see drawBurn) at a scale where the whole fuel budget is MISSION_TANK_PX of
+    // drag, whatever the mission. At the arrow's own scale a pixel is about half a km/s, so a twitch would
+    // spend the tank; this way a Hohmann burn is a drag of a few centimetres, and Shift is ten times finer.
     // ------------------------------------------------------------------
     const FINE = 0.1;
     const SNAP_PX = 6;
+    const MISSION_TANK_PX = 200;
+
+    // px of drag per AU/yr of burn for the mission's probe (0: not a mission's probe)
+    function burnScale(b) {
+        if (!mission.def || b.id !== mission.craftId || !(mission.def.budget > 0)) return 0;
+        return (MISSION_TANK_PX * sizeScale) / (mission.def.budget / AUYR_KMS);
+    }
 
     function beginAim(b, d, pt) {
         startHold(b, d);
@@ -9104,6 +9231,21 @@
         d.grabX = pt.x - tip.x; d.grabY = pt.y - tip.y;
         d.fine = null;
         d.start = { x: pt.x, y: pt.y, vx: b.aim.vx, vy: b.aim.vy, coarse: false };
+        const bk = burnScale(b);
+        if (bk) b.aim.burn = { k: bk, vx: b.aim.vx, vy: b.aim.vy, from: null };
+    }
+
+    // A mission's burn: the velocity as grabbed plus the pointer's movement at the burn's scale (a tenth
+    // of it while Shift is held, from where Shift went down or up, so nothing jumps)
+    function moveBurn(d, pt, shift) {
+        const b = d.body, a = b.aim, B = a.burn, fine = !!shift;
+        if (!B.from) B.from = { x: d.start.x, y: d.start.y, vx: B.vx, vy: B.vy, fine };
+        else if (B.from.fine !== fine) B.from = { x: pt.x, y: pt.y, vx: a.vx, vy: a.vy, fine };
+        const s = (fine ? FINE : 1) / B.k;
+        a.vx = B.from.vx + (pt.x - B.from.x) * s;
+        a.vy = B.from.vy - (pt.y - B.from.y) * s;
+        a.snap = null;
+        if (!fine) snapAim(b);
     }
 
     // The world velocity the aimed velocity is measured from
@@ -9116,6 +9258,7 @@
 
     function moveAim(d, pt, shift) {
         const b = d.body, a = b.aim;
+        if (a.burn) { moveBurn(d, pt, shift); return; }
         if (shift) {
             // Fine: a tenth of the pointer's movement, from where Shift was pressed (or from where the
             // drag began, if Shift was down from the start)
@@ -9153,7 +9296,7 @@
         const av = aimedVelocity(b);   // (the world velocity aimed)
         const vc = Math.sqrt((G * (b.m + p.m)) / r), ve = Math.SQRT2 * vc;
         const ux = av.x - p.vx, uy = av.y - p.vy;
-        const tol = SNAP_PX / a.k;
+        const tol = SNAP_PX / (a.burn ? a.burn.k : a.k);   // (a mission's burn: px of the burn's own arrow)
         let to = null;
         for (const s of [1, -1]) {
             const cx = (-s * ry / r) * vc, cy = (s * rx / r) * vc;
@@ -10234,7 +10377,7 @@
         running: false, sig: '', scene: '', t0: 0, lastT: 0, ended: null, rEject: Infinity,
         unbound: new Map(),          // id -> the simulated time it was first seen unbound from the rest
         boundAtStart: new Set(),     // ids of the bodies bound to the rest when the timer started
-        counts: false, label: '', restartedAt: -Infinity, goalNoted: false,
+        counts: false, label: '', restartedAt: -Infinity, goalNoted: false, auto: false,
         best: { yr: 0, label: '' }, bestBefore: { yr: 0, label: '' }, bestDirty: false, bestSavedAt: 0
     };
     const graphData = [];            // the graphs' points at full precision, since they last started
@@ -10318,7 +10461,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : ''].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -10481,9 +10624,20 @@
         }
     }
 
-    function setStability(on) {
+    // auto: switched on by a random system, rather than by the user (see stabilitySceneLoaded); once
+    // the user has switched it on, it stays theirs
+    function setStability(on, auto) {
+        const users = settings.stability && !stab.auto;
         settings.stability = !!on;
+        stab.auto = settings.stability && !!auto && !users;
         if (ui.stability) ui.stability.checked = settings.stability;
+    }
+
+    // A random system switches the timer on for itself: another scene switches it off again (the
+    // collisions of "A moon forming" or the chaos of three stars aren't a stability challenge), unless
+    // the user switched it on
+    function stabilitySceneLoaded(key) {
+        if (stab.auto && !isRandomKey(key)) setStability(false);
     }
 
     function loadRandomSystem(seed) {
@@ -10491,7 +10645,7 @@
         showRandomOption(key);
         if (ui.scene) ui.scene.value = key;
         loadScene(key);
-        setStability(true);
+        setStability(true, true);
         return key;
     }
 
@@ -10501,7 +10655,7 @@
         const key = randomSceneKey(newRandomSeed());
         showRandomOption(key);
         ui.scene.value = key;
-        setStability(true);
+        setStability(true, true);
     }
 
     // ------------------------------------------------------------------
@@ -10515,7 +10669,11 @@
             vw: [s.zoom, s.panX, s.panY],
             sca: [s.forceRef, s.vRef, s.energyExp, s.trail, s.com ? 1 : 0],
             cc: s.customCount, pr: s.pairs, ge: s.groupE,
-            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement },
+            // (sh: what is shown; the last four came later, so an older link reads them as off)
+            set: {
+                sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
+            },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
             ro: turnSetup()
         };
@@ -10607,9 +10765,10 @@
             sp: fin(raw.sp, 0) > 0 ? clamp(raw.sp, SPEED_STOPS[0], SPEED_STOPS[SPEED_STOPS.length - 1]) : settings.speed,
             re: flag(raw.re, false), me: flag(raw.me, true),
             k: [flagAt(raw.k, 0, false), flagAt(raw.k, 1, false), flagAt(raw.k, 2, false)],
-            sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true)],
+            sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true),
+                flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
-            pl: ['circular', 'keep', 'rest'].includes(raw.pl) ? raw.pl : 'circular'
+            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular'
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -10729,9 +10888,15 @@
         check(ui.merge, 'merge', set.me);
         check(ui.k1, 'k1', set.k[0]); check(ui.k2, 'k2', set.k[1]); check(ui.k3, 'k3', set.k[2]);
         check(ui.forces, 'forces', set.sh[0]); check(ui.velocities, 'velocities', set.sh[1]); check(ui.labels, 'labels', set.sh[2]);
+        // (quietly: the note that the setup opened is what the hint line says)
+        settings.pulls = set.sh[3]; settings.limits = set.sh[6]; lim.bid = null;
+        syncGravityControls();
+        setWell(set.sh[4]);
+        setLagrange(set.sh[5]);
         setStability(set.st);
         settings.placement = set.pl;
         if (ui.placement) ui.placement.value = set.pl;
+        syncPlacementNote();
         forcesDirty = true;
         pred.key = '';
     }
@@ -11207,7 +11372,7 @@
         onClick(ui.chartCsvBtn, () => downloadCsv('graphs', ui.chartCsvNote));
         if (ui.stability) {
             ui.stability.checked = settings.stability;
-            ui.stability.addEventListener('change', () => { settings.stability = ui.stability.checked; });
+            ui.stability.addEventListener('change', () => setStability(ui.stability.checked));
         }
         if (ui.shareField) ui.shareField.addEventListener('focus', () => ui.shareField.select());
         // (capture, on the list's parent: before the list's own change listener)
@@ -12222,6 +12387,29 @@
         } else return;
         applyEdit(b, () => { b.vx = R.vx + vx; b.vy = R.vy + vy; });
     }
+    // The hint line while the probe's arrow is aimed (see beginAim): the burn, which way it points
+    // (relative to the reference body), and the fuel it would leave
+    function burnHint(b, d) {
+        const def = mission.def, R = bodyById(mission.refId), av = aimedVelocity(b);
+        const dvx = av.x - b.vx, dvy = av.y - b.vy, dv = toKms(Math.hypot(dvx, dvy));
+        const left = Math.max(0, def.budget - mission.used), B = b.aim.burn;
+        if (!(dv >= 0.005)) return `<strong>Drag out a burn</strong> from the arrow's tip: along the arrow speeds you up, against it slows you down. Fuel: ${f1(left)} km/s.`;
+        let way = '';
+        if (R) {
+            const vx = b.vx - R.vx, vy = b.vy - R.vy, v = Math.hypot(vx, vy), rx = b.x - R.x, ry = b.y - R.y, r = Math.hypot(rx, ry);
+            const along = v > 0 ? (dvx * vx + dvy * vy) / v : 0, out = r > 0 ? (dvx * rx + dvy * ry) / r : 0;
+            way = Math.abs(along) >= Math.abs(out) ? (along > 0 ? ' forwards' : ' backwards') : (out > 0 ? ' outwards' : ' inwards');
+        }
+        const s = fmtSpeedKms(dv);
+        let h = `<strong>Burn ${s.v} ${s.u}${way}:</strong> `;
+        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left, so it stops when the tank runs dry.`
+            : `${f1(left - dv)} of ${f1(def.budget)} km/s of fuel left after it.`;
+        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Exactly the speed for a circular orbit.' : ' Exactly the escape speed.';
+        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
+        else if (aimFineTouch(d)) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+        return h;
+    }
+
     // (nudge's way in: a step is a fraction of the speed relative to the reference body)
     function missionNudge(b, kind, step) {
         if (!mission.def || b.id !== mission.craftId) return false;
@@ -12940,16 +13128,7 @@
             });
             ui.ecc.addEventListener('change', () => {
                 eccDrag = null;
-                // Zoom out if the new orbit no longer fits
-                const b = bodyById(selectedId);
-                if (b && b.primary) {
-                    const el = elementsOf(b, b.primary);
-                    const apo = el.bound ? el.a * (1 + el.e) : el.r;
-                    updateDrawnPositions();
-                    const cx = sx(b.primary.dx), cy = sy(b.primary.dy);
-                    const R = apo * scale;
-                    if (cx - R < 0 || cx + R > viewW || cy - R < 0 || cy + R > viewH) fitAll();
-                }
+                keepOrbitInView(bodyById(selectedId));   // (zoom out if the new orbit no longer fits)
             });
         }
         if (ui.trail) {
@@ -12962,7 +13141,8 @@
         if (ui.frameChip) ui.frameChip.addEventListener('click', () => setFrame(null));
         if (ui.placement) {
             ui.placement.value = settings.placement;
-            ui.placement.addEventListener('change', () => { settings.placement = ui.placement.value; });
+            ui.placement.addEventListener('change', () => { settings.placement = ui.placement.value; syncPlacementNote(); });
+            syncPlacementNote();
         }
         if (ui.fit) ui.fit.addEventListener('click', fitAll);
         if (ui.pause) ui.pause.addEventListener('click', () => setPaused(!paused));
@@ -13009,6 +13189,13 @@
             hints.intro = false;
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            refreshHint();
+        }, true);
+        // (for the keyboard, a key pressed in the simulation, other than moving about with Tab)
+        window.addEventListener('keydown', (e) => {
+            if (!hints.intro || ['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+            if (!(e.target && e.target.closest && e.target.closest('.simulation-area-wrapper'))) return;
+            hints.intro = false;
             refreshHint();
         }, true);
         bindHint();
