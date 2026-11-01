@@ -2672,12 +2672,12 @@
         blendS.fill(0, 0, np + 1); blendD.fill(0, 0, np + 1);
         blendSW.fill(0, 0, np + 1); blendST.fill(0, 0, np + 1); blendE.fill(0, 0, np + 1);
         // a ramp from height T where the surface meets the opening at xc into the cavity (dir: +1 to
-        // the right), D long, and a little way the other way too (where the opening slants, the cavity
-        // reaches beyond the point where the surface meets it)
-        const ramp = (xc, dir, D, w0, T) => {
+        // the right), D long, and Db the other way too (where the opening slants, the cavity reaches
+        // beyond the point where the surface meets it; a ramp cut short there stands as a cliff)
+        const ramp = (xc, dir, D, w0, T, Db) => {
             for (let k = 0; k <= np; k++) {
                 const u = (X0 + DX * k - xc) * dir;
-                const w = w0 * (u >= 0 ? 1 - smoothstep(0, D, u) : 1 - smoothstep(0, 0.03, -u));
+                const w = w0 * (u >= 0 ? 1 - smoothstep(0, D, u) : 1 - smoothstep(0, Db, -u));
                 if (w <= 0) continue;
                 if (w > blendS[k]) blendS[k] = w;
                 blendSW[k] += w; blendST[k] += w * T;
@@ -2725,14 +2725,14 @@
                     const fade = lipFade(along + seg * t);
                     const Sc = surfaceAt(xc), Lc = cavityLevelAt(cv, xc);
                     const D = clamp(0.02 + 2 * Math.abs(Sc - Lc), 0.02, 0.3);
-                    if (side * fade > 1e-3) ramp(xc, dirIn, D, side * fade, Sc);
+                    if (side * fade > 1e-3) ramp(xc, dirIn, D, side * fade, Sc, D);
                     const wd = downF * cv.ventS * fade * smoothstep(0, 0.005, Lc - Sc);
                     if (wd > 1e-3) {
                         // towards the side under water, and the stretch with air under it (up to
                         // where the opening goes under again, or ends)
                         const sub = g1 <= 0 ? 1 : -1;
                         const dx = cpX[i] - cpX[i - 1];
-                        ramp(xc, Math.abs(dx) > 1e-9 ? sub * Math.sign(dx) : dirIn, D, wd, Sc);
+                        ramp(xc, Math.abs(dx) > 1e-9 ? sub * Math.sign(dx) : dirIn, D, wd, Sc, 0.03);
                         let j = g1 <= 0 ? i - 1 : i;
                         while (j > 0 && j < m - 1 && cpG[j + (g1 <= 0 ? -1 : 1)] > 0) j += g1 <= 0 ? -1 : 1;
                         cap(xc, cpX[j], wd);
@@ -2745,10 +2745,16 @@
                 for (let q = 0; q < nr; q++) {
                     const r = runs[q];
                     const xa = Math.min(r.sx, r.ex), xb = Math.max(r.sx, r.ex);
+                    // (beyond its ends, where the cavity reaches past the opening, the surface falls
+                    // back to the pool's over a distance that grows with the step, as a ramp does:
+                    // not as a cliff)
+                    const own = (x) => cv.V <= 0 ? cv.ymin : (cavFull(cv) ? cv.ymax : cavityLevelAt(cv, x));
+                    const Da = clamp(0.015 + 2 * (openingSurface(cv, xa) - own(xa)), 0.015, 0.3);
+                    const Db = clamp(0.015 + 2 * (openingSurface(cv, xb) - own(xb)), 0.015, 0.3);
                     for (let k = 0; k <= np; k++) {
                         const x = X0 + DX * k;
                         const d = x < xa ? xa - x : (x > xb ? x - xb : 0);
-                        const w = down * (1 - smoothstep(0, 0.015, d));
+                        const w = down * (1 - smoothstep(0, x < xa ? Da : Db, d));
                         if (w > blendD[k]) blendD[k] = w;
                     }
                 }
