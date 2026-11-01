@@ -197,7 +197,7 @@
 												<input type="checkbox" id="reverseToggle" aria-describedby="reverseNote">
 												<label for="reverseToggle" title="Run time backwards (B)">Run backwards</label>
 											</div>
-											<p class="orb-note" id="reverseNote">Newton's laws work both ways: every body retraces its path.</p>
+											<p class="orb-note" id="reverseNote">Newton's laws work both ways: every body retraces its path<span class="orb-keys-note"> (B)</span>.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="sceneLabel">Scene</p>
@@ -227,6 +227,10 @@
 												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
 												<p class="orb-note" id="startDateNote">The planets start where they really were, or will be, on this day (1800 to 2050).</p>
 											</div>
+											<div class="orb-scene-row" id="sceneButtons" role="group" aria-label="Other ways to start">
+												<button type="button" id="randomSystemBtn" aria-describedby="missionsNote" title="A new star with planets each time: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
+											</div>
+											<p class="orb-note" id="missionsNote">Missions: fly a probe to a goal on a fuel budget. Random system: a new star with planets; how long will they last?</p>
 										</div>
 										<details class="sim-controls-more orb-bodies" id="bodiesGroup">
 											<summary><span>Bodies <span class="orb-bodies-count" id="bodiesCount"></span></span></summary>
@@ -246,30 +250,13 @@
 												<div class="orb-bodies-actions" id="bodiesActions" role="group" aria-label="Chosen body" hidden>
 													<button type="button" data-act="zoom" title="Zoom to its orbit (Z)"><span class="icon solid fa-search-plus" aria-hidden="true"></span>Zoom</button>
 													<button type="button" data-act="view" aria-pressed="false" title="View the motion from it (double-click)"><span class="icon solid fa-crosshairs" aria-hidden="true"></span>View from</button>
-													<button type="button" data-act="edit" aria-haspopup="dialog" title="Set its velocity, orbit, mass and colour (Enter)"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Edit</button>
+													<button type="button" data-act="edit" aria-haspopup="dialog" title="Its mass, colour, velocity and orbit (Enter)"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Edit</button>
 													<button type="button" data-act="delete" aria-label="Delete" title="Delete this body (Delete)"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
 												</div>
 												<p class="orb-bodies-empty" id="bodiesEmpty" hidden>No body has that name.</p>
 											</div>
-											<p class="orb-note" id="bodiesNote">Choose a body for its buttons; double-click one to view from it.<span class="orb-keys-note"> N and Shift+N step through them, and ? lists every key.</span><span class="orb-sr-only"> In the list the arrow keys choose a body, Enter opens its menu and Delete deletes it.</span></p>
+											<p class="orb-note" id="bodiesNote">Choose a body for its buttons; double-click one to view from it.<span class="orb-keys-note"> N and Shift+N step through them.</span><span class="orb-sr-only"> In the list the arrow keys choose a body, Enter opens its menu and Delete deletes it.</span></p>
 										</details>
-										<div class="sim-control-group">
-											<p class="sim-control-group-label">Physics</p>
-											<div class="sim-checkbox-group">
-												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
-												<label for="realisticToggle">Realistic physics</label>
-											</div>
-											<p class="orb-note" id="realisticNote">True sizes, Einstein's relativity (orbits slowly turn; close black holes and neutron stars spiral together as gravitational waves carry off energy), and tides that tear stars apart.</p>
-										</div>
-										<div class="sim-control-group" id="orbitGroup">
-											<p class="sim-control-group-label" id="orbitGroupLabel">Orbit of Earth</p>
-											<label>Eccentricity: <span id="eccVal" class="sim-value" style="--chars: 4">0.00</span> <span class="orb-sub" id="eccName">(circle)</span>
-												<input type="range" id="eccSlider" min="0" max="0.95" step="0.01" value="0" aria-describedby="eccNote">
-											</label>
-											<p class="orb-note" id="eccNote">Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.</p>
-											<p class="orb-note orb-orbit-facts" id="orbitFacts"></p>
-											<button type="button" class="orb-edit-orbit" id="editOrbitBtn" aria-haspopup="dialog"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Set its period and distances</button>
-										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Show</p>
 											<div class="sim-checkbox-group">
@@ -282,42 +269,62 @@
 												<input type="checkbox" id="labelsToggle" checked>
 												<label for="labelsToggle">Names</label>
 												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
-												<label for="wellToggle" title="Each body's gravity well, as shading and contour lines (W)">Gravity well</label>
+												<label for="wellToggle" title="Gravity well (W)">Gravity well</label>
 											</div>
-											<p class="orb-note" id="pullsNote">Pull lines show who pulls on the chosen body, one arrow each<span class="orb-keys-note"> (G)</span>.</p>
-											<p class="orb-note" id="wellNote" hidden>Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong.</p>
-										</div>
-										<div class="sim-control-group">
-											<p class="sim-control-group-label">Kepler's laws</p>
-											<div class="sim-checkbox-group sim-chips orb-kepler-chips">
-												<input type="checkbox" id="kepler1Toggle">
-												<label for="kepler1Toggle" title="1st law: an orbit is an ellipse with the star at one focus">1st: Ellipse</label>
-												<input type="checkbox" id="kepler2Toggle">
-												<label for="kepler2Toggle" title="2nd law: equal areas are swept out in equal times">2nd: Equal areas</label>
-												<input type="checkbox" id="kepler3Toggle">
-												<label for="kepler3Toggle" title="3rd law: the period squared is proportional to the semi-major axis cubed">3rd: T² &prop; a³</label>
-											</div>
-										</div>
-										<div class="sim-control-group">
-											<p class="sim-control-group-label" id="frameLabel">View from</p>
-											<select id="frameSelect" aria-labelledby="frameLabel">
-												<option value="com" selected>Centre of mass (no body)</option>
-											</select>
-											<p class="orb-note" id="turnNote" aria-live="polite" hidden></p>
+											<p class="orb-note" id="pullsNote">Pull lines split the chosen body's force into one arrow for each body pulling on it<span class="orb-keys-note"> (G)</span>.</p>
+											<p class="orb-note" id="wellNote">Gravity well: how deep each body's pull reaches, as shading and contour lines<span class="orb-keys-note"> (W)</span>.</p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
 										</div>
-										<details class="sim-controls-more">
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Kepler's laws</p>
+											<div class="sim-checkbox-group sim-chips orb-kepler-chips">
+												<input type="checkbox" id="kepler1Toggle" aria-describedby="keplerNote">
+												<label for="kepler1Toggle" title="1st law: an orbit is an ellipse with the star at one focus">1st: Ellipse</label>
+												<input type="checkbox" id="kepler2Toggle" aria-describedby="keplerNote">
+												<label for="kepler2Toggle" title="2nd law: equal areas are swept out in equal times">2nd: Equal areas</label>
+												<input type="checkbox" id="kepler3Toggle" aria-describedby="keplerNote">
+												<label for="kepler3Toggle" title="3rd law: the period squared is proportional to the semi-major axis cubed">3rd: T² &prop; a³</label>
+											</div>
+											<p class="orb-note" id="keplerNote">Each law draws on the chosen body's orbit and measures it in a card, top right.</p>
+										</div>
+										<div class="sim-control-group" id="orbitGroup">
+											<p class="sim-control-group-label" id="orbitGroupLabel">Orbit of Earth</p>
+											<label>Eccentricity: <span id="eccVal" class="sim-value" style="--chars: 4">0.00</span> <span class="orb-sub" id="eccName">(circle)</span>
+												<input type="range" id="eccSlider" min="0" max="0.95" step="0.01" value="0" aria-describedby="eccNote">
+											</label>
+											<p class="orb-note" id="eccNote">Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.</p>
+											<p class="orb-note orb-orbit-facts" id="orbitFacts"></p>
+											<button type="button" class="orb-edit-orbit" id="editOrbitBtn" aria-haspopup="dialog"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Set its period and distances</button>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="frameLabel">View from</p>
+											<select id="frameSelect" aria-labelledby="frameLabel" aria-describedby="frameNote turnNote">
+												<option value="com" selected>Centre of mass (no body)</option>
+											</select>
+											<p class="orb-note" id="frameNote">Watch the motion from any body, or turn with one as it orbits.</p>
+											<p class="orb-note" id="turnNote" aria-live="polite" hidden></p>
+										</div>
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Physics</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
+												<label for="realisticToggle">Realistic physics</label>
+											</div>
+											<p class="orb-note" id="realisticNote">True sizes, Einstein's relativity (orbits slowly turn, black holes spiral together) and tides that tear stars apart.</p>
+										</div>
+										<details class="sim-controls-more" id="moreOptions">
 											<summary>More options</summary>
 											<div class="sim-control-group">
 												<p class="sim-control-group-label" id="placementLabel">Bodies you drop or move</p>
-												<select id="placementSelect" aria-labelledby="placementLabel">
+												<select id="placementSelect" aria-labelledby="placementLabel" aria-describedby="placementNote">
 													<option value="circular" selected>Start on a circular orbit</option>
 													<option value="keep">Keep their velocity</option>
 													<option value="rest">Start at rest (in this view)</option>
 													<option value="throw">Throw it (the speed you let go at)</option>
 												</select>
+												<p class="orb-note" id="placementNote">Throw it: flick a body as you let go, and it keeps your speed.</p>
 											</div>
 											<div class="sim-control-group">
 												<p class="sim-control-group-label">Also show</p>
@@ -325,14 +332,15 @@
 													<input type="checkbox" id="comToggle">
 													<label for="comToggle">Centre of mass</label>
 													<input type="checkbox" id="previewToggle" checked>
-													<label for="previewToggle">Predicted path while moving a body or paused</label>
+													<label for="previewToggle">Predicted path (while moving a body, or paused)</label>
 													<input type="checkbox" id="limitsToggle">
 													<label for="limitsToggle" title="How far out its moons can orbit, and how close it can go before tides tear it apart">Hill sphere and Roche limit</label>
-													<input type="checkbox" id="stabilityToggle">
-													<label for="stabilityToggle">Stability timer: how long until a body is flung out or two collide</label>
 													<input type="checkbox" id="lagrangeToggle">
 													<label for="lagrangeToggle" title="L1 to L5: where a small body can keep pace with the chosen body as it orbits">Lagrange points</label>
+													<input type="checkbox" id="stabilityToggle">
+													<label for="stabilityToggle" title="How long until a body is flung out or two collide">Stability timer</label>
 												</div>
+												<p class="orb-note" id="alsoNote">The Hill sphere, Roche limit and Lagrange points are the chosen body's. The stability timer runs until a body is flung out or two collide.</p>
 											</div>
 											<div class="sim-control-group">
 												<p class="sim-control-group-label">Collisions</p>
@@ -355,9 +363,8 @@
 											<p class="sim-control-group-label" id="shareLabel">Save and share</p>
 											<div class="orb-share-row" role="group" aria-labelledby="shareLabel">
 												<button type="button" id="shareLinkBtn" aria-describedby="shareNote" aria-label="Copy a link to this setup" title="Copy a link to this setup, to share or keep"><span class="icon solid fa-link" aria-hidden="true"></span>Copy a link</button>
-												<button type="button" id="randomSystemBtn" aria-describedby="shareNote" title="A new random star with planets: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
 											</div>
-											<p class="orb-note" id="shareNote" aria-live="polite">A link opens this exact setup. A random system: will its planets last?</p>
+											<p class="orb-note" id="shareNote" aria-live="polite">A link opens this exact setup. Your work is also saved in this browser as you go.</p>
 											<input type="text" id="shareLinkField" class="orb-share-field" readonly hidden aria-label="Link to this setup" spellcheck="false" autocomplete="off">
 										</div>
 									</div>

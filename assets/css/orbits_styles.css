@@ -1893,6 +1893,60 @@ html.dark-mode .orb-date-input {
     }
 }
 
+/* Under the scene list, two other ways to start, side by side: the missions and a random system */
+.sim-controls-content .orb-scene-row {
+    display: flex;
+    gap: 6px;
+    margin: 0.5em 0 0;
+}
+
+.sim-controls-content .orb-scene-row .orb-mission-btn,
+.sim-controls-content .orb-scene-row #randomSystemBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 34px;
+    margin: 0;
+    padding: 0 0.6em;
+    font-size: 0.85em;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    background-color: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.sim-controls-content .orb-scene-row .icon {
+    color: var(--color-accent);
+}
+
+.sim-controls-content .orb-scene-row button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.sim-controls-content .orb-scene-row + .orb-note {
+    margin-top: 0.3em;
+}
+
+@media (hover: hover) {
+    .sim-controls-content .orb-scene-row button:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+@media (pointer: coarse) {
+    .sim-controls-content .orb-scene-row .orb-mission-btn,
+    .sim-controls-content .orb-scene-row #randomSystemBtn {
+        height: 42px;
+    }
+}
+
 /* ---------- Finding your way: the "Bodies" list, zoom to an orbit, the keyboard, the help ----------
    The list is a collapsed group in the settings (like "More options"); its rows are placed by the
    script (only those in sight exist), the chosen one taller by its line of buttons. The help is a

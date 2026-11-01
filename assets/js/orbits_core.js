@@ -3247,7 +3247,7 @@
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote') });
+    Object.assign(ui, { turnNote: byId('turnNote'), frameNote: byId('frameNote') });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -3466,10 +3466,12 @@
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
+            if (ui.frameNote) ui.frameNote.hidden = !!P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
                 const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
-                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}`);
+                const lag = settings.lagrange ? '' : ' Lagrange points are in More options.';
+                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}${lag}`);
             }
         }
     }
@@ -3988,19 +3990,25 @@
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
+    // (its note in the settings says what it is, and once it is on, how to read it)
+    const WELL_NOTE_OFF = 'Gravity well: how deep each body\'s pull reaches, as shading and contour lines';
+    const WELL_NOTE_ON = 'Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong';
     function setWell(on, fromKey) {
         settings.well = !!on;
         if (ui.wellToggle) ui.wellToggle.checked = settings.well;
-        if (ui.wellNote) ui.wellNote.hidden = !settings.well;
+        if (ui.wellNote && ui.wellNote.firstChild && ui.wellNote.firstChild.nodeType === 3) {
+            ui.wellNote.firstChild.nodeValue = settings.well ? WELL_NOTE_ON : WELL_NOTE_OFF;
+        }
         well.sig = '';
         if (fromKey) {
-            historyNote(settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
-                : '<strong>Gravity well hidden.</strong> W shows it again.');
-        }
+            showHint('note', settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
+                : '<strong>Gravity well hidden.</strong> W shows it again.', { ms: 6000, tag: 'well' });
+        } else if (!settings.well) clearHint('note', 'well');
     }
     function setLagrange(on) {
         settings.lagrange = !!on;
         if (ui.lagrangeToggle) ui.lagrangeToggle.checked = settings.lagrange;
+        syncTurnUi();   // (the rotating view's note points to them while they are off)
     }
 
     // W: the gravity well on or off (not while typing in a field)
@@ -12421,20 +12429,27 @@
             // (clicks and drags in it stay away from the canvas and the page)
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
-        // In the settings, under the scene list: a button into the missions, and a line saying what they are
+        // In the settings, under the scene list: a button into the missions (beside "Random system"),
+        // and the line saying what they are
         if (ui.scene) {
             const group = ui.scene.closest('.sim-control-group') || ui.scene.parentElement;
+            const row = byId('sceneButtons');
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'orb-mission-btn';
             btn.id = 'missionsBtn';
             btn.setAttribute('aria-describedby', 'missionsNote');
+            btn.title = `${MISSIONS.length} missions, easy to hard (also at the end of the scene list)`;
             btn.innerHTML = '<span class="icon solid fa-rocket" aria-hidden="true"></span>Missions';
-            const note = document.createElement('p');
-            note.className = 'orb-note';
-            note.id = 'missionsNote';
-            note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
-            group.append(btn, note);
+            let note = byId('missionsNote');
+            if (!note) {
+                note = document.createElement('p');
+                note.className = 'orb-note';
+                note.id = 'missionsNote';
+                note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
+                group.append(note);
+            }
+            if (row) row.prepend(btn); else group.insertBefore(btn, note);
             ui.missionsBtn = btn;
             btn.addEventListener('click', openMissions);
             const og = document.createElement('optgroup');
