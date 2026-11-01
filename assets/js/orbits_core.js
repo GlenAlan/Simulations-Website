@@ -259,7 +259,8 @@
             ]
         },
         // A neutron star on an elliptical orbit 750 to 2,250 km from a black hole, once every 0.3 s. With
-        // realistic physics, general relativity turns the ellipse by 16 degrees an orbit.
+        // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
+        // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
             units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
             tip: 'Turn on Realistic physics in the settings: relativity makes the orbit swing round, a rosette instead of an ellipse.',
