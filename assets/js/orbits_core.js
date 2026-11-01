@@ -205,7 +205,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: 'Double-click the giant planet to view from it: then the star circles the planet, as the Sun seems to circle Earth.',
+            tip: 'View from the giant planet (double-click or double-tap it): then the star circles the planet, as the Sun seems to circle Earth.',
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -230,7 +230,7 @@
                 const x1 = 0.97000436, y1 = -0.24308753, vx3 = -0.93240737, vy3 = -0.86473146;
                 return [
                     { kind: 'sun', name: 'Star A', at: [x1, y1], v: [-vx3 / 2 * vs, -vy3 / 2 * vs] },
-                    { kind: 'sun', name: 'Star B', color: '#f2849e', at: [-x1, -y1], v: [-vx3 / 2 * vs, -vy3 / 2 * vs] },
+                    { kind: 'sun', name: 'Star B', color: '#ff9a52', at: [-x1, -y1], v: [-vx3 / 2 * vs, -vy3 / 2 * vs] },
                     { kind: 'sun', name: 'Star C', color: '#7ecaf6', at: [0, 0], v: [vx3 * vs, vy3 * vs] }
                 ];
             })()
@@ -242,10 +242,10 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? It\'s chaos: nudge one star a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
+            tip: 'Three stars start at rest. Who gets thrown out? Nudge one a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
-                { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#f2849e', at: [-200, -100] },
+                { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
                 { kind: 'sun', name: 'Star C', m: 5, R: 2.3e6, color: '#8fb8ff', at: [100, -100] }
             ]
         },
@@ -294,7 +294,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter\'s pull herds 500 asteroids: the Trojans stay 60° ahead of it and 60° behind it, and the Hildas trace a triangle that turns with it. Set View from to "Rotating with Jupiter and the Sun" to see them stand still.',
+            tip: 'Jupiter herds 500 asteroids: Trojans 60° ahead of and behind it, and Hildas in a triangle that turns with it. In View from, choose "Rotating with Jupiter and the Sun" to see them stand still.',
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -323,7 +323,7 @@
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
             units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. Turn on Realistic physics to see tides tear apart clumps that stray too close to Earth.',
+            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. With Realistic physics on, tides tear apart clumps that stray too close to Earth.',
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -343,7 +343,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Realistic physics (in the settings) is on. Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
+            tip: 'Realistic physics is on (in the settings). Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -369,7 +369,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Realistic physics (in the settings) is on: gravitational waves carry off energy, so the black holes spiral together and merge.',
+                tip: 'Realistic physics is on (in the settings): gravitational waves carry off energy, so the black holes spiral together and merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -938,6 +938,7 @@
         let exp = Math.floor(Math.log10(Math.abs(x)));
         let mant = x / Math.pow(10, exp);
         if (Math.abs(+mant.toFixed(digits)) >= 10) { mant /= 10; exp += 1; }
+        if (exp === 0) return mant.toFixed(digits);   // (not "4.72×10⁰")
         return `${mant.toFixed(digits)}×10${String(exp).split('').map((c) => SUP[c]).join('')}`;
     }
     // Three significant figures, plain for moderate values
@@ -2277,7 +2278,7 @@
         // (said in the hint line too, which screen readers announce)
         const kind = big.kind === 'blackhole' ? 'black hole' : big.kind === 'neutron' ? 'neutron star' : 'body';
         const lost = m1 + m2 - big.m;
-        setHint(null, `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`);
+        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
         // A black hole rings as it settles, at the frequency and damping of its main (l = m = 2) mode:
         // omega = 0.3737 c^3/(GM), damping time GM/(0.0890 c^3) (Berti, Cardoso & Will 2006)
         if (big.kind === 'blackhole') {
@@ -3008,7 +3009,10 @@
         syncEccentricity(true);
         resetFlyby();
         syncDatedScene();   // (the start date and the Date box, for a scene with a start date)
-        setHint(null, def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
+        // (the last scene's notes go with it; this one's tip shows until the canvas or palette is used)
+        clearHint('note');
+        clearHint('missionNote');
+        showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
     }
 
@@ -3244,7 +3248,7 @@
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote') });
+    Object.assign(ui, { turnNote: byId('turnNote'), frameNote: byId('frameNote') });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -3376,7 +3380,7 @@
         markPreview();
         syncFrameUi();
         updatePopover(true);
-        historyNote(`<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`);
+        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`, { ms: 7000 });
         return true;
     }
 
@@ -3463,10 +3467,12 @@
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
+            if (ui.frameNote) ui.frameNote.hidden = !!P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
                 const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
-                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}`);
+                const lag = settings.lagrange ? '' : ' Lagrange points are in More options.';
+                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}${lag}`);
             }
         }
     }
@@ -3985,19 +3991,25 @@
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
+    // (its note in the settings says what it is, and once it is on, how to read it)
+    const WELL_NOTE_OFF = 'Gravity well: how deep each body\'s pull reaches, as shading and contour lines';
+    const WELL_NOTE_ON = 'Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong';
     function setWell(on, fromKey) {
         settings.well = !!on;
         if (ui.wellToggle) ui.wellToggle.checked = settings.well;
-        if (ui.wellNote) ui.wellNote.hidden = !settings.well;
+        if (ui.wellNote && ui.wellNote.firstChild && ui.wellNote.firstChild.nodeType === 3) {
+            ui.wellNote.firstChild.nodeValue = settings.well ? WELL_NOTE_ON : WELL_NOTE_OFF;
+        }
         well.sig = '';
         if (fromKey) {
-            historyNote(settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
-                : '<strong>Gravity well hidden.</strong> W shows it again.');
-        }
+            showHint('note', settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
+                : '<strong>Gravity well hidden.</strong> W shows it again.', { ms: 6000, tag: 'well' });
+        } else if (!settings.well) clearHint('note', 'well');
     }
     function setLagrange(on) {
         settings.lagrange = !!on;
         if (ui.lagrangeToggle) ui.lagrangeToggle.checked = settings.lagrange;
+        syncTurnUi();   // (the rotating view's note points to them while they are off)
     }
 
     // W: the gravity well on or off (not while typing in a field)
@@ -4031,7 +4043,7 @@
         const m = lagrangeAt(pt.x, pt.y, 18);
         if (!m) return;
         const comma = m.text.indexOf(',');
-        historyNote(`<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`);
+        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
     }
 
     function bindWell() {
@@ -4908,6 +4920,7 @@
         k2.bid = null;
         resetOrbitChart();
         syncEccentricity(true);
+        refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
     function removeBody(b, heir) {
@@ -4981,7 +4994,7 @@
 
     let customCount = 0;
     function nextCustomColour() {
-        const c = ['#ae85ca', '#7bd0c1', '#c75b9b', '#8499e7', '#f2849e'][customCount % 5];
+        const c = ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
         customCount++;
         return c;
     }
@@ -5614,18 +5627,81 @@
         return { l, t, r: l + w, b: t + fs };
     }
 
+    // What the canvas's edges carry, which the off-screen pointers keep clear of: the time notice and
+    // the "Viewed from" chip (top left), the cards (top right), the scale bar and legend (bottom left)
+    // and "Sizes not to scale" (bottom right), as drawn last frame. Rectangles [left, top, right, bottom].
+    const edges = { scaleRight: 160, noteLeft: Infinity, strip: Infinity };
+    function edgeKeepOut() {
+        const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
+        let top = 0;
+        if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([0, 0, Math.min(viewW, 240), top]); }
+        const t = timeNotice();
+        if (t) {
+            ctx.font = font(fs, true);
+            out.push([0, top, 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
+        }
+        if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
+        const strip = Math.min(edges.strip, viewH - fs - 18);
+        out.push([0, strip, Math.min(viewW, edges.scaleRight + 6), viewH]);
+        out.push([Math.min(edges.noteLeft, viewW - 120) - 6, strip, viewW, viewH]);
+        if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
+        return out;
+    }
+
+    // Slide a pointer at (ex, ey) on the edge along it until it, and h px either side of it along the
+    // edge (where its name goes), are clear of every rectangle. Returns [x, y, clear]: on a small
+    // canvas a stretch of edge may have no room left, and then the pointer goes without its name.
+    function clearOfEdges(ex, ey, zones, inset, h) {
+        const onSide = ex <= inset + 0.5 || ex >= viewW - inset - 0.5;
+        const x0 = ex, y0 = ey;
+        for (let pass = 0; pass < 7; pass++) {
+            const z = onSide ? zones.find((r) => ex >= r[0] && ex <= r[2] && ey + h > r[1] && ey - h < r[3])
+                : zones.find((r) => ey >= r[1] && ey <= r[3] && ex + h > r[0] && ex - h < r[2]);
+            if (!z) return [ex, ey, true];
+            if (pass === 6) break;
+            if (onSide) {
+                // up or down the side, whichever is nearer and still on the canvas
+                const up = z[1] - h - 2, down = z[3] + h + 2;
+                ey = (up >= inset && (ey - up <= down - ey || down > viewH - inset)) ? up : Math.min(down, viewH - inset);
+            } else {
+                const lt = z[0] - h - 2, rt = z[2] + h + 2;
+                ex = (lt >= inset && (ex - lt <= rt - ex || rt > viewW - inset)) ? lt : Math.min(rt, viewW - inset);
+            }
+        }
+        return [x0, y0, false];
+    }
+
+    // A name's width in the pointers' font (kept: the same few names are measured every frame)
+    const nameWidths = new Map();
+    function nameWidth(name, fs) {
+        const key = `${fs}|${name}`;
+        let w = nameWidths.get(key);
+        if (w === undefined) {
+            if (nameWidths.size > 500) nameWidths.clear();
+            w = ctx.measureText(name).width;
+            nameWidths.set(key, w);
+        }
+        return w;
+    }
+
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         const cx = viewW / 2, cy = viewH / 2;
         const inset = 12;
+        let zones = null;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             if (b.grp || (b.minor && !isChosen(b)) || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
             const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
-            const ex = cx + dx * k, ey = cy + dy * k;
+            if (!zones) zones = cleanRender ? [] : edgeKeepOut();
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+            // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
+            ctx.font = font(fs);
+            const nw = settings.labels ? nameWidth(b.name, fs) : 0;
+            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : nw / 2 + 6;
+            const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
             ctx.beginPath();
@@ -5635,13 +5711,17 @@
             ctx.closePath();
             ctx.fill();
             ctx.globalAlpha = 1;
-            if (settings.labels) {
+            let half = 10;
+            if (settings.labels && clear) {
                 ctx.font = font(fs);
                 ctx.fillStyle = C.subtle;
                 ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
                 ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
                 ctx.fillText(b.name, ex - ux * 12, ey - uy * 12);
+                half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
             }
+            // (the next pointer along this edge keeps clear of this one and its name)
+            zones.push([ex - half - 4, ey - fs - 14, ex + half + 4, ey + fs + 14]);
         }
     }
 
@@ -5873,7 +5953,7 @@
     };
     const legend = {
         t: -Infinity, alpha: 1, covered: false, vSqueezed: false, shown: false, right: false,
-        kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0
+        kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0, top: 0
     };
     const LEGEND_SQUEEZE = 'longer arrows are squeezed';
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -6316,14 +6396,20 @@
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
         const now = performance.now();
-        const rows = (showV ? 1 : 0) + (showF ? 1 : 0);
         ctx.font = font(fs);
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
-        const textW = Math.max(showV ? ctx.measureText(legend.vText).width : 0, showF ? ctx.measureText(legend.fText).width : 0);
+        const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
+        const textW = Math.max(vTW, fTW);
+        // On a small canvas the two arrows share one row, just above the scale bar, and the note that
+        // longer arrows are squeezed is left out (the About section says so); elsewhere a row each
+        const tight = viewW < 560 || viewH < 320;
+        const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
+        const oneRow = tight && rowW <= viewW * 0.8;
         // A velocity arrow over three medium lengths, or any force arrow, is shorter than in proportion
-        const squeeze = showF || (showV && legend.vSqueezed);
-        const w = Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
-        const bottom = viewH - 12 - fs - 10;
+        const squeeze = !tight && (showF || (showV && legend.vSqueezed));
+        const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
+        const w = oneRow ? rowW : Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
+        const bottom = viewH - 12 - fs - (tight ? 6 : 10);
         const top = bottom - (rows + (squeeze ? 1 : 0)) * lh;
         // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
         legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
@@ -6348,12 +6434,18 @@
         const aw = clamp(2 * sizeScale, 1.5, 2.4);
         ctx.globalAlpha = legend.alpha;
         let y = top + lh / 2;
-        const tx = left + arrowW + 8;
-        if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
-        if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
-        if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
+        if (oneRow) {
+            let x = left;
+            if (showV) { legend.vy = y; legendRow(C, x, y, legend.vPx, aw, C.velocity, x + legend.vPx + 6, legend.vText); x += legend.vPx + 6 + vTW + 14; }
+            if (showF) { legend.fy = y; legendRow(C, x, y, legend.fPx, aw, C.force, x + legend.fPx + 6, legend.fText); }
+        } else {
+            const tx = left + arrowW + 8;
+            if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
+            if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
+            if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
+        }
         ctx.globalAlpha = 1;
-        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w;
+        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w; legend.top = top;
     }
 
     // A legend row: an arrow px long (if any), then its text at tx
@@ -6377,28 +6469,29 @@
     }
 
     // On: say what they show in the hint line (read out: it is a live region)
+    // (the note names whichever body is chosen while it shows)
     function setPullLines(on) {
         settings.pulls = !!on;
         syncGravityControls();
-        const b = bodyById(selectedId);
-        if (!settings.pulls) setHint();
-        else if (!b) setHint(null, '<strong>Pull lines:</strong> choose a body to see who pulls on it.');
-        else {
-            const who = escapeHtml(theName(b));
-            setHint(null, `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${who}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`);
-        }
+        if (!settings.pulls) { clearHint('note', 'pulls'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
+            return `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${escapeHtml(theName(b))}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`;
+        }, { ms: 9000, tag: 'pulls' });
     }
 
     function setLimits(on) {
         settings.limits = !!on;
         lim.bid = null;
         syncGravityControls();
-        const b = bodyById(selectedId);
-        if (!settings.limits) setHint();
-        else if (b && orbitingBody(b) && b.m >= 1e-17) {
+        if (!settings.limits) { clearHint('note', 'limits'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!(b && orbitingBody(b) && b.m >= 1e-17)) return '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.';
             const who = escapeHtml(theName(b)), p = escapeHtml(theName(b.primary));
-            setHint(null, `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`);
-        } else setHint(null, '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.');
+            return `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`;
+        }, { ms: 9000, tag: 'limits' });
     }
 
     function onGravityKey(e) {
@@ -6607,9 +6700,13 @@
         ctx.fillStyle = C.subtle;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(scaleLabel(nice), x0 + len + 6, y0 + 2);
+        const sl = scaleLabel(nice), note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+        ctx.fillText(sl, x0 + len + 6, y0 + 2);
         ctx.textAlign = 'right';
-        ctx.fillText(settings.realistic ? 'Sizes to scale' : 'Sizes not to scale', viewW - pad - 2, y0 + 2);
+        ctx.fillText(note, viewW - pad - 2, y0 + 2);
+        edges.scaleRight = x0 + len + 6 + ctx.measureText(sl).width;
+        edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
 
@@ -6628,21 +6725,111 @@
             ctx.fillText(t, x + w / 2, y + (fs + 10) / 2 + 0.5);
         }
 
-        // Kepler cards stack down the top-right corner (shorter on small canvases)
-        const compact = viewW < 560;
-        const cfs = compact ? clamp(fs - 0.5, 10, 12) : fs;
-        let y = pad;
-        if (frameId !== null && viewW < 520) y = 48;
-        y = drawMissionCard(C, y, cfs, compact);
-        const fl = flybyLines(compact);
-        if (fl) y = drawCard(C, fl, y, cfs) + 5;
-        y = drawStabilityCard(C, y, cfs, compact);
-        if (settings.k1) y = drawCard(C, kepler1Lines(subj, compact), y, cfs) + 5;
-        if (settings.k2) y = drawCard(C, kepler2Lines(subj, compact), y, cfs) + 5;
-        if (settings.k3) y = drawKepler3Card(C, subj, y, cfs, compact) + 5;
-        if (settings.limits) y = drawCard(C, limitCardLines(subj, compact), y, cfs) + 5;
-        y = drawRelativityCard(C, subj, y, cfs, compact) + 5;
+        drawCardStack(C, subj, fs, pad);
         drawArrowLegend(C);
+    }
+
+    // ---- The cards down the top-right corner ----
+    // Top first, in this order: the mission, a flyby, the stability timer, relativity, Kepler's 1st, 2nd
+    // and 3rd laws, the Hill sphere and Roche limit. The stack never covers much of the canvas: when it
+    // would grow past its cap (about 60% of the height, and clear of the scale bar), the lowest cards
+    // turn compact (a line or two) first, the mission, a flyby and relativity last; if it is still too
+    // tall the lowest fold into one last line that names them, and any left compact that now fit are
+    // shown in full again. (Small canvases show compact cards from the start.) The layout is worked out
+    // a few times a second, by drawing the cards where nothing shows, and kept in between.
+    const CARD_ORDER = ['mission', 'flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
+    const CARD_NAMES = { mission: 'mission', flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
+    const CARD_KEEP = new Set(['mission', 'flyby', 'relativity']);
+    const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0, over: false };
+
+    // One card at y (compact or not): returns where the next one goes (y itself if it has nothing to show)
+    function drawOneCard(C, id, subj, y, fs, compact) {
+        let b = y;
+        if (id === 'mission') b = drawMissionCard(C, y, fs, compact);
+        else if (id === 'flyby') { const fl = flybyLines(compact); if (fl) b = drawCard(C, fl, y, fs) + 5; }
+        else if (id === 'stability') b = drawStabilityCard(C, y, fs, compact);
+        else if (id === 'relativity') { const e = drawRelativityCard(C, subj, y, fs, compact); if (e > y) b = e + 5; }
+        else if (settings[id]) {
+            const lines = id === 'k1' ? kepler1Lines(subj, compact) : id === 'k2' ? kepler2Lines(subj, compact) : id === 'limits' ? limitCardLines(subj, compact) : null;
+            if (id === 'k3') b = drawKepler3Card(C, subj, y, fs, compact) + 5;
+            else if (lines && lines.length) b = drawCard(C, lines, y, fs) + 5;
+        }
+        return b > y ? b : y;
+    }
+
+    // Which cards turn compact and which fold away, to keep the stack under cap px
+    function layoutCards(C, subj, fs, small, cap) {
+        const full = {}, comp = {}, ids = [];
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, 0, 0);
+        ctx.clip();   // (measured by drawing them where nothing shows)
+        for (const id of CARD_ORDER) {
+            const h = drawOneCard(C, id, subj, 0, fs, small);
+            if (h <= 0) continue;
+            ids.push(id);
+            full[id] = h;
+            comp[id] = small ? h : drawOneCard(C, id, subj, 0, fs, true);
+        }
+        ctx.restore();
+        const compact = {};
+        let total = 0;
+        for (const id of ids) { compact[id] = small; total += full[id]; }
+        // (the mission, a flyby and relativity are what the moment is about: they turn compact last)
+        const squeeze = (keep) => {
+            for (let i = ids.length - 1; i >= 0 && total > cap; i--) {
+                const id = ids[i];
+                if (!compact[id] && !(keep && CARD_KEEP.has(id))) { total += comp[id] - full[id]; compact[id] = true; }
+            }
+        };
+        squeeze(true);
+        const folded = [], foldH = Math.round(fs * 1.4) + 15;
+        for (let i = ids.length - 1; i >= 1 && total > cap; i--) {
+            total -= compact[ids[i]] ? comp[ids[i]] : full[ids[i]];
+            if (!folded.length) total += foldH;
+            folded.unshift(ids[i]);
+        }
+        squeeze(false);
+        // (with some folded away, the cards left may have room to be shown in full again, top first)
+        if (folded.length && !small) {
+            for (const id of ids) {
+                if (folded.includes(id) || !compact[id] || total + full[id] - comp[id] > cap) continue;
+                total += full[id] - comp[id];
+                compact[id] = false;
+            }
+        }
+        return { compact, folded };
+    }
+
+    function drawCardStack(C, subj, fs, pad) {
+        const small = viewW < 560;
+        const cfs = small ? clamp(fs - 0.5, 10, 12) : fs;
+        const y0 = frameId !== null && viewW < 520 ? 48 : pad;
+        const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
+        const now = performance.now();
+        const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${mission.def ? mission.def.id : ''}|${selectedId}|${C.dark}`;
+        // (worked out again when what is switched on changes, and twice a second while the stack is
+        // over its cap or has had to give way; a stack that fits as it is costs nothing more)
+        const squeezed = cards.folded.length > 0 || (!small && CARD_ORDER.some((id) => cards.compact[id]));
+        if (sig !== cards.sig || ((cards.over || squeezed) && now - cards.at > 500)) {
+            Object.assign(cards, layoutCards(C, subj, cfs, small, cap));
+            cards.sig = sig;
+            cards.at = now;
+        }
+        cards.left = Infinity;
+        cards.bottom = 0;
+        let y = y0;
+        for (const id of CARD_ORDER) {
+            if (cards.folded.includes(id)) continue;
+            y = drawOneCard(C, id, subj, y, cfs, cards.compact[id] !== undefined ? cards.compact[id] : small);
+        }
+        if (cards.folded.length) {
+            const n = cards.folded.length;
+            const text = small ? `+${n} more` : `+${n} more: ${cards.folded.map((id) => CARD_NAMES[id]).join(', ')}`;
+            y = drawCard(C, [[[text, false, C.subtle]]], y, cfs) + 5;
+        }
+        cards.bottom = y > y0 ? y : 0;
+        cards.over = y - y0 > cap + 1;
     }
 
     // The flyby card: the chosen body's speed relative to the star before and after it passed the
@@ -6787,6 +6974,7 @@
     }
 
     function cardBox(C, x, y, w, h) {
+        if (x < cards.left) cards.left = x;   // (where the stack reaches: off-screen pointers keep clear)
         roundRect(x, y, w, h, 5);
         ctx.fillStyle = C.card;
         ctx.fill();
@@ -6877,7 +7065,10 @@
         const title = compact || !P ? '3rd law' : `3rd law: orbits of ${P.name}`;
         const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
-        const cells = rows.slice(0, compact ? 5 : 8).map((r) => {
+        // Up to 10 rows (5 compact); past that, the last row says how many more there are
+        const most = compact ? 5 : 10, shown = rows.length > most ? most - 1 : rows.length;
+        const more = rows.length - shown;
+        const cells = rows.slice(0, shown).map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
             const Tv = r.T * tf;
@@ -6886,6 +7077,7 @@
             const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
+        if (more > 0) cells.push({ name: `+${more} more`, body: null, cols: ['', '', ''] });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
@@ -6933,12 +7125,14 @@
             ly += lh;
             ctx.font = font(fs);
             for (const c of cells) {
-                ctx.fillStyle = c.body.color;
-                ctx.beginPath();
-                ctx.arc(x + 13, ly, 3, 0, TAU);
-                ctx.fill();
+                if (c.body) {
+                    ctx.fillStyle = c.body.color;
+                    ctx.beginPath();
+                    ctx.arc(x + 13, ly, 3, 0, TAU);
+                    ctx.fill();
+                }
                 ctx.textAlign = 'left';
-                ctx.fillStyle = C.text;
+                ctx.fillStyle = c.body ? C.text : C.subtle;
                 ctx.fillText(c.name, x + 10 + dot, ly);
                 if (c.cols) {
                     ctx.textAlign = 'right';
@@ -7584,8 +7778,12 @@
         }
     }
 
-    function openPopover(b) {
+    // The menu opens on the Body tab (in a mission, the probe's on Velocity, where its engine is); a
+    // menu already open keeps its tab when another body is chosen
+    function openPopover(b, tab) {
         if (!ui.pop || !b) return;
+        if (tab) selectTab(tab);
+        else if (ui.pop.hidden) selectTab(mission.def && b.id === mission.craftId ? 'vel' : 'body');
         popBody = b;
         selectBody(b.id);
         ui.pop.hidden = false;
@@ -7764,7 +7962,15 @@
             syncEccentricity(true);
         });
         ui.popName.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.popName.blur(); });
+        // Dragged, the sliders snap to round values; stepped with the keys they don't (a snap would
+        // pull each small step straight back)
+        let keyed = false;
+        for (const el of [ui.popMass, ui.popRadius, ui.popSpeed]) {
+            el.addEventListener('keydown', () => { keyed = true; });
+            el.addEventListener('pointerdown', () => { keyed = false; });
+        }
         const snapLog = (v, snaps) => {
+            if (keyed) return v;
             for (const s of snaps) if (Math.abs(v - Math.log10(s)) < 0.04) return Math.log10(s);
             return v;
         };
@@ -7793,7 +7999,7 @@
             const sr = speedRelative(b);
             let vNew = (parseFloat(ui.popSpeed.value) / 1000) * popSpeedMax;
             // Snap to the exact circular or escape speed within a step of the slider
-            if (sr.p) {
+            if (sr.p && !keyed) {
                 const { vc, ve } = speedsAround(b, sr.p);
                 for (const s of [vc, ve]) if (Math.abs(vNew - s) < 0.006 * popSpeedMax) vNew = s;
             }
@@ -7848,7 +8054,7 @@
     });
 
     const edit = {
-        tab: 'vel',          // the menu's open tab: vel, orbit or body
+        tab: 'body',         // the menu's open tab: body, vel, orbit or pull
         step: 0.01,          // steppers and pushes: a fraction of the value (10%, 1% or 0.1%)
         sense: 1, senseBid: null,   // the way round chosen for a body at rest
         shown: {},           // field -> the text last written into it (a field is applied only if that changed)
@@ -8228,12 +8434,20 @@
         }
         // (the steps don't apply to the Body and Gravity tabs)
         if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
+        // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
+        // unless that would take it past the bottom
+        if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet')) {
+            const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
+            const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
+            const fits = ph <= cr.height - 12;
+            const minY = fits ? 6 : 6 - cr.top, maxY = fits ? cr.height - 6 : window.innerHeight - cr.top - 6;
+            if (isFinite(top)) ui.pop.style.top = `${Math.round(oy + clamp(top, minY, Math.max(minY, maxY - ph)))}px`;
+        }
     }
 
     function openEditor(b, tab, focus) {
         if (!b) return;
-        if (tab) selectTab(tab);
-        openPopover(b);
+        openPopover(b, tab);
         if (focus) {
             const t = ui.popTabs.find((q) => q.getAttribute('aria-selected') === 'true');
             if (t) t.focus({ preventScroll: true });
@@ -8583,7 +8797,7 @@
             }
             const k = KINDS[d.kind];
             ghostEl.style.background = d.kind === 'custom' ? '#ae85ca' : k.color;
-            setHint('drop');
+            setHint('drop');   // (the drag layer, until it is let go)
         }
         if (!d.moved) return;
         traceDrag(d, e.clientX, e.clientY, e);   // (for a throw)
@@ -8610,7 +8824,8 @@
             chipThrow = null;
             if (b && d.kind === 'custom') openPopover(b);
         }
-        setHint();
+        throwTipSeen(d);
+        clearHint('drag');
     }
 
     function onChipCancel(e) {
@@ -8619,7 +8834,7 @@
         paletteDrag = null;
         d.btn.classList.remove('is-dragging');
         if (ghostEl) ghostEl.style.display = 'none';
-        setHint();
+        clearHint('drag');
     }
 
     // ------------------------------------------------------------------
@@ -8629,24 +8844,143 @@
     const coarse = () => lastPointerType !== 'mouse';
     let hintKey = '';
 
-    function setHint(kind, html) {
-        if (!ui.hint) return;
-        let h = html || missionHint(kind) || (kind ? null : carryOnHint());   // (a mission's hint, or an autosave on offer: see "Save and share")
-        if (!h) {
-            const v = settings.velocities;
-            if (kind === 'drop') h = `<strong>Drop it in space</strong> to add it.${throwTip(true)}`;
-            else if (coarse()) {
-                h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong>, or tap <strong>Edit</strong> to set its orbit.'
-                    : '<strong>Drag</strong> a body into space or around it. Tap a body, then <strong>Edit</strong> to set its speed and orbit.';
-            } else {
-                h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to set its orbit; <strong>arrow keys</strong> push it.'
-                    : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to set its speed and orbit; <strong>arrow keys</strong> push it.';
-            }
+    // One message at a time, by priority. Each layer holds { html, tag }; html may be a function, read
+    // again whenever the line is refreshed, so a note that names the chosen body follows the choice.
+    //   drag         what an active drag or aim will do, until it ends
+    //   missionNote  in a mission: a burn, a refusal, an undone burn, the result (a few seconds)
+    //   (mission)    the mission's own guidance
+    //   note         fresh feedback from a switch or an action (a few seconds)
+    //   tip          the scene's tip, until the first press on the canvas or the palette
+    //   (offer)      "Carry on where you left off", for a while after the page opens
+    //   (help)       the usual help; when the page opens, with a pointer to the missions
+    const hints = { drag: null, missionNote: null, note: null, tip: null, intro: false, open: false };
+    const hintTimers = {};
+
+    function showHint(layer, html, opts) {
+        const o = opts || {};
+        clearTimeout(hintTimers[layer]);
+        const h = html ? { html, tag: o.tag || '' } : null;
+        hints[layer] = h;
+        if (h && o.ms) hintTimers[layer] = setTimeout(() => { if (hints[layer] === h) { hints[layer] = null; refreshHint(); } }, o.ms);
+        refreshHint();
+    }
+
+    // Take a layer down (only if it still holds that tag, when one is given)
+    function clearHint(layer, tag) {
+        const h = hints[layer];
+        if (!h || (tag && h.tag !== tag)) return;
+        clearTimeout(hintTimers[layer]);
+        hints[layer] = null;
+        refreshHint();
+    }
+
+    const hintHtml = (h) => (h ? (typeof h.html === 'function' ? h.html() : h.html) : '');
+
+    function usualHint() {
+        const v = settings.velocities;
+        let h;
+        if (coarse()) {
+            h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
+                : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
+        } else {
+            h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
+                : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
         }
+        if (hints.intro) h += ' <strong>New:</strong> Missions, in <span class="icon solid fa-cog" role="img" aria-label="the settings" title="Settings"></span>';
+        return h;
+    }
+
+    // Write the line from the top layer that has something to say
+    function refreshHint() {
+        if (!ui.hint) return;
+        const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
+            || hintHtml(hints.note) || hintHtml(hints.tip) || carryOnHint() || usualHint();
         if (h === hintKey) return;
         hintKey = h;
         ui.hint.innerHTML = h;
+        // (a long message, cut short on a phone, opens out when tapped; a new one starts closed)
+        if (hints.open) {
+            hints.open = false;
+            ui.hint.classList.remove('is-open', 'is-spilling');
+            ui.hint.style.marginBottom = '';
+        }
+        hintClampCheck();
     }
+
+    // The older way in: setHint() refreshes, setHint('drop') is a drag from the palette, html a note
+    function setHint(kind, html) {
+        if (kind === 'drop') showHint('drag', `<strong>Drop it in space</strong> to add it.${throwTip(true)}`);
+        else if (html) showHint('note', html, { ms: 6000 });
+        else refreshHint();
+    }
+
+    // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
+    let hintClampQueued = false;
+    function hintClampCheck() {
+        if (!ui.hint || hintClampQueued) return;
+        hintClampQueued = true;
+        requestAnimationFrame(() => {
+            hintClampQueued = false;
+            const cut = !hints.open && ui.hint.offsetParent !== null && ui.hint.scrollHeight > ui.hint.clientHeight + 2;
+            ui.hint.classList.toggle('is-cut', cut);
+            const opens = cut || hints.open;
+            if (opens) {
+                ui.hint.setAttribute('role', 'button');
+                ui.hint.tabIndex = 0;
+                ui.hint.setAttribute('aria-expanded', hints.open ? 'true' : 'false');
+                ui.hint.title = hints.open ? 'Show less' : 'Show all of it';
+            } else if (ui.hint.hasAttribute('role')) {
+                ['role', 'tabindex', 'aria-expanded', 'title'].forEach((a) => ui.hint.removeAttribute(a));
+            }
+        });
+    }
+
+    // Opened, the line spills over what is below it rather than pushing it down (so the canvas keeps
+    // its size), except in the tool column beside the canvas, which has room for it to grow
+    function toggleHintOpen() {
+        if (!ui.hint || !(hints.open || ui.hint.classList.contains('is-cut'))) return false;
+        hints.open = !hints.open;
+        const h0 = ui.hint.offsetHeight;
+        const column = window.matchMedia && window.matchMedia('(orientation: landscape) and (min-width: 640px)').matches && !(sideways && sideways.matches);
+        ui.hint.style.marginBottom = '';
+        ui.hint.classList.toggle('is-open', hints.open);
+        ui.hint.classList.toggle('is-spilling', hints.open && !column);
+        const spill = hints.open && !column ? ui.hint.offsetHeight - h0 : 0;
+        if (spill > 0) ui.hint.style.marginBottom = `${-spill}px`;
+        else ui.hint.classList.remove('is-spilling');
+        hintClampCheck();
+        return true;
+    }
+
+    function bindHint() {
+        if (!ui.hint) return;
+        ui.hint.addEventListener('click', (e) => {
+            if (e.target.closest && e.target.closest('button')) return;   // (the carry-on offer's own buttons)
+            toggleHintOpen();
+        });
+        ui.hint.addEventListener('keydown', (e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && e.target === ui.hint && toggleHintOpen()) { e.preventDefault(); e.stopPropagation(); }
+        });
+        window.addEventListener('resize', hintClampCheck);
+        if (sideways) {
+            if (sideways.addEventListener) sideways.addEventListener('change', placeHint); else if (sideways.addListener) sideways.addListener(placeHint);
+            placeHint();
+        }
+    }
+
+    // Phones held sideways: the tool column beside the canvas has no room for the hint line, so it goes
+    // under the canvas (between the palette and the info bar: see orbits_styles.css)
+    const sideways = window.matchMedia ? window.matchMedia('(orientation: landscape) and (min-width: 640px) and (max-height: 540px)') : null;
+    function placeHint() {
+        const toolbar = byId('orbToolbar'), wrap = canvas.closest('.sim-canvas-wrapper');
+        if (!ui.hint || !toolbar || !wrap) return;
+        if (sideways.matches) { if (ui.hint.previousElementSibling !== wrap) wrap.after(ui.hint); }
+        else if (ui.hint.parentElement !== toolbar) toolbar.appendChild(ui.hint);
+        hintClampCheck();
+    }
+
+    // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
+    let throwTipShown = false;
 
     function dragHint(d) {
         const b = d.body;
@@ -8657,12 +8991,12 @@
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
-            setHint(null, `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip()}`);
+            showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
             const av = aimedVelocity(b), v = fmtSpeedKms(Math.hypot(av.x - (L ? L.vx : totals(bodies).vx), av.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
-            setHint(null, `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
+            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
             const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
@@ -8675,7 +9009,7 @@
             if (!snap && !fineTouch) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
             if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
             else if (fineTouch) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
-            setHint(null, h);
+            showHint('drag', h);
         }
     }
 
@@ -8883,7 +9217,9 @@
         computeForces();
         computePrimaries();
         syncEccentricity(true);
-        setHint();
+        throwTipSeen(d);
+        clearHint('drag');
+        clearHint('tip');
         endGesture(d.mode === 'move' || apply);
     }
 
@@ -8892,6 +9228,7 @@
         drags.clear();
         pinch = null;
         freeze = null;
+        if (hints.drag && !paletteDrag) { hints.drag = null; refreshHint(); }
     }
 
     // ------------------------------------------------------------------
@@ -9270,9 +9607,7 @@
 
     // A note in the hint line (read out by screen readers) for a while
     function pastNote(html, ms) {
-        setHint(null, html);
-        clearTimeout(past.noteTimer);
-        past.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, ms || 5000);
+        showHint('note', html, { ms: ms || 5000 });
     }
 
     // Time forwards (on false) or backwards (on true). The time still owed to the integrator was owed
@@ -9422,11 +9757,16 @@
         return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
     }
 
-    // ...and how to find throwing, if it is off
-    function throwTip(drop) {
-        if (settings.placement !== 'throw') return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
-        return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
+    // ...and how to find throwing, if it is off: during the first drag of a visit only (d: the drag)
+    function throwTip(drop, d) {
+        if (settings.placement === 'throw') return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
+        const g = d || paletteDrag;
+        if (throwTipShown && !(g && g.throwTipped)) return '';
+        if (g) g.throwTipped = true;
+        return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
     }
+    // (at the end of a drag: the pointer to throwing has been seen)
+    function throwTipSeen(d) { if (d && d.throwTipped) throwTipShown = true; }
 
     // A body being dragged from the palette: the velocity it would be thrown with
     function drawThrowArrow(C) {
@@ -9923,9 +10263,7 @@
     // A note in the hint line for ms milliseconds (shares the history's timer, so notes don't cut each
     // other short or linger)
     function timedHint(html, ms) {
-        setHint(null, html);
-        clearTimeout(hist.noteTimer);
-        hist.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, ms);
+        showHint('note', html, { ms });
     }
 
     // A note under a button for a few seconds, then its usual text again
@@ -10090,7 +10428,7 @@
             const q = orbitState(c.M + mc, outer.a * (1 + outer.e) * span(3, 8), span(0, 0.35), 360 * rnd(), 360 * rnd());
             const fi = mc / (c.M + mc), fc = c.M / (c.M + mc);
             for (const b of list) { b.x -= fi * q.x; b.y -= fi * q.y; b.vx -= fi * q.vx; b.vy -= fi * q.vy; }
-            list.push({ kind: red ? 'dwarf' : 'sun', name: 'Star B', m: mc, R: 696000 * Math.pow(mc, 0.8), color: red ? '#f2849e' : '#ffd166',
+            list.push({ kind: red ? 'dwarf' : 'sun', name: 'Star B', m: mc, R: 696000 * Math.pow(mc, 0.8), color: red ? '#ff9a52' : '#ffd166',
                 x: c.x + fc * q.x, y: c.y + fc * q.y, vx: c.vx + fc * q.vx, vy: c.vy + fc * q.vy });
             list[0].name = 'Star A';
             companion = true;
@@ -10541,7 +10879,8 @@
             + '<button type="button" class="orb-carry-x" aria-label="No thanks" title="No thanks"><span class="icon solid fa-times" aria-hidden="true"></span></button>';
         clearTimeout(share.offerTimer);
         share.offerTimer = setTimeout(endOffer, OFFER_MS);
-        setHint();
+        hints.intro = false;   // (one thing at a time: the offer, not the missions' introduction too)
+        refreshHint();
     }
 
     // The hint line's usual text while the offer stands (so a tap elsewhere doesn't take it away)
@@ -10549,11 +10888,10 @@
 
     function endOffer() {
         if (!share.offer) return;
-        const was = share.offerHtml;
         share.offer = null;
         share.offerHtml = '';
         clearTimeout(share.offerTimer);
-        if (hintKey === was) setHint();
+        refreshHint();
     }
 
     function onHintClick(e) {
@@ -11094,6 +11432,7 @@
         if (!p || p.gesture) return;
         hist.pending = null;
         const what = describeEdit(p.snap);
+        hist.as = '';
         if (what) commitStep(p.snap, what, true);
     }
 
@@ -11104,7 +11443,7 @@
         if (dragging() || hist.pending) return;
         hist.pending = {
             snap: snapshot(), gesture: true, target: b.id, key: mode,
-            label: mode === 'aim' ? `change ${b.name}'s velocity` : `move ${b.name}`
+            label: mode === 'aim' ? (mission.def && b.id === mission.craftId ? `fire ${b.name}'s engine` : `change ${b.name}'s velocity`) : `move ${b.name}`
         };
     }
 
@@ -11188,6 +11527,10 @@
         }
         if (!main) return null;
         const n = s.names[main.i];
+        // (the eccentricity slider only turns the velocity, but what it changes is the orbit's shape;
+        // in a mission a change to the probe's velocity is a burn)
+        if (hist.as === 'shape' && (main.key === 'velocity' || main.key === 'speed')) return { key: 'shape', target: main.b.id, label: `change ${n}'s orbit shape` };
+        if (mission.def && main.b.id === mission.craftId && (main.key === 'velocity' || main.key === 'speed')) return { key: 'velocity', target: main.b.id, label: `fire ${n}'s engine` };
         const label = {
             mass: `change ${n}'s mass`, radius: `change ${n}'s radius`, orbit: `change ${n}'s orbit`, move: `move ${n}`,
             speed: `change ${n}'s speed`, velocity: `change ${n}'s velocity`, name: `rename ${n}`, colour: `change ${n}'s colour`
@@ -11294,11 +11637,10 @@
         historyNote(`<strong>Deleted ${escapeHtml(name)}.</strong> ${KEYS_MOD}Z brings it back.`);
     }
 
-    // A short note in the hint line (read out by screen readers too), until the next one or a few seconds
-    function historyNote(html) {
-        setHint(null, html);
-        clearTimeout(hist.noteTimer);
-        hist.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, 4000);
+    // A short note in the hint line (read out by screen readers too), until the next one or a few
+    // seconds. In a mission it says how the mission is going, so it shows over the mission's guidance.
+    function historyNote(html, ms) {
+        showHint(mission.def ? 'missionNote' : 'note', html, { ms: ms || 4000 });
     }
 
     function updateHistoryUi() {
@@ -12102,8 +12444,9 @@
         // (the undo note, put up just after this, says how much fuel came back)
         if (how === 'undo' && Math.abs(usedBefore - m.used) > 1e-9) {
             setTimeout(() => {
-                if (!mission.def || !/^<strong>(Undone|Redone)/.test(hintKey)) return;
-                historyNote(`${hintKey} Fuel left: ${f1(Math.max(0, mission.def.budget - mission.used))} km/s.`);
+                const h = hints.missionNote;
+                if (!mission.def || !h || typeof h.html !== 'string' || !/^<strong>(Undone|Redone)/.test(h.html)) return;
+                historyNote(`${h.html}. Fuel left: ${f1(Math.max(0, mission.def.budget - mission.used))} km/s.`);
             }, 0);
         }
     }
@@ -12176,20 +12519,27 @@
             // (clicks and drags in it stay away from the canvas and the page)
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
-        // In the settings, under the scene list: a button into the missions, and a line saying what they are
+        // In the settings, under the scene list: a button into the missions (beside "Random system"),
+        // and the line saying what they are
         if (ui.scene) {
             const group = ui.scene.closest('.sim-control-group') || ui.scene.parentElement;
+            const row = byId('sceneButtons');
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'orb-mission-btn';
             btn.id = 'missionsBtn';
             btn.setAttribute('aria-describedby', 'missionsNote');
+            btn.title = `${MISSIONS.length} missions, easy to hard (also at the end of the scene list)`;
             btn.innerHTML = '<span class="icon solid fa-rocket" aria-hidden="true"></span>Missions';
-            const note = document.createElement('p');
-            note.className = 'orb-note';
-            note.id = 'missionsNote';
-            note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
-            group.append(btn, note);
+            let note = byId('missionsNote');
+            if (!note) {
+                note = document.createElement('p');
+                note.className = 'orb-note';
+                note.id = 'missionsNote';
+                note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
+                group.append(note);
+            }
+            if (row) row.prepend(btn); else group.insertBefore(btn, note);
             ui.missionsBtn = btn;
             btn.addEventListener('click', openMissions);
             const og = document.createElement('optgroup');
@@ -12205,12 +12555,12 @@
         setTimeout(introduceMissions, 0);
     }
 
-    // When the page opens, the hint line also points to the missions, until the first press anywhere
-    // (which puts the usual hint back)
+    // When the page opens, the usual hint also points to the missions, until the first press anywhere
+    // (unless "Carry on where you left off" is on offer: one thing at a time)
     function introduceMissions() {
-        if (mission.def || !ui.hint) return;
-        setHint();
-        setHint(null, `${hintKey} <strong>New:</strong> Missions, in <span class="icon solid fa-cog" role="img" aria-label="the settings" title="Settings"></span>`);
+        if (mission.def || !ui.hint || share.offer) return;
+        hints.intro = true;
+        refreshHint();
     }
 
     // "3. Escape the Sun ★★☆"
@@ -12323,9 +12673,9 @@
         if (mission.status === 'won') {
             const r = mission.result;
             if (c) flashes.push({ x: c.x, y: c.y, t: performance.now(), color: colours().velocity, r0: drawRadius(c), grow: 40 });
-            historyNote(`<strong>Mission complete!</strong> ${r.stars} of 3 stars: ${f1(r.used)} km/s of fuel (par ${f1(d.par)}).`);
+            historyNote(`<strong>Mission complete!</strong> ${r.stars} of 3 stars: ${f1(r.used)} km/s of fuel (par ${f1(d.par)}).`, 8000);
         } else {
-            historyNote(`<strong>${byId('missionTitle').textContent}.</strong> ${d.fail[mission.reason] || d.fail.time || ''}`);
+            historyNote(`<strong>${byId('missionTitle').textContent}.</strong> ${d.fail[mission.reason] || d.fail.time || ''}`, 10000);
         }
     }
 
@@ -12345,10 +12695,7 @@
         if (mission.status === 'flying') refreshPrediction(false);
         if ((mission.status === 'won' || mission.status === 'lost') && !mission.resultShown) showResult();
         quietFlyby();
-        if (hintKey === mission.hintShown) {
-            const h = missionHintText();
-            if (h && h !== hintKey) setHint();
-        }
+        refreshHint();   // (the guidance follows the mission's progress; the line only changes if it does)
     }
 
     // ---- Drawing ----
@@ -12562,7 +12909,7 @@
             el.addEventListener('change', () => { settings[key] = el.checked; if (after) after(); });
         };
         bindCheck(ui.forces, 'forces');
-        bindCheck(ui.velocities, 'velocities', () => setHint());
+        bindCheck(ui.velocities, 'velocities', () => refreshHint());
         bindCheck(ui.labels, 'labels');
         bindCheck(ui.realistic, 'realistic', () => { forcesDirty = true; pred.key = ''; });
         bindCheck(ui.k1, 'k1');
@@ -12588,6 +12935,7 @@
                 eccLastInput = performance.now();
                 const e = parseFloat(ui.ecc.value);
                 showEccentricity(e);
+                hist.as = 'shape';   // (named so in the edit history)
                 applyEccentricity(e);
             });
             ui.ecc.addEventListener('change', () => {
@@ -12654,10 +13002,16 @@
 
         // Recolour when the theme changes (palette chips use fixed colours, the canvas redraws itself)
         new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        // The first press anywhere ends the missions' introduction; a press on the canvas or the
+        // palette (getting on with it) ends the scene's tip too. Notes run out by themselves.
         window.addEventListener('pointerdown', (e) => {
             lastPointerType = e.pointerType || 'mouse';
-            setHint();
+            hints.intro = false;
+            const t = e.target;
+            if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            refreshHint();
         }, true);
+        bindHint();
     }
 
     // ------------------------------------------------------------------
@@ -12788,7 +13142,7 @@
         select(name) { const b = bodies.find((q) => q.name === name); if (b) selectBody(b.id); },
         lock(name) { const b = name ? bodies.find((q) => q.name === name) : null; setFrame(b ? b.id : null); },
         add(kind, x, y) { const b = addBody(kind, x, y); return b ? bodyInfo(b) : null; },
-        setEccentricity(e) { if (ui.ecc) ui.ecc.value = String(e); applyEccentricity(e); eccDrag = null; },
+        setEccentricity(e) { if (ui.ecc) ui.ecc.value = String(e); hist.as = 'shape'; applyEccentricity(e); eccDrag = null; },
         set(name, props) {
             const b = bodies.find((q) => q.name === name);
             if (!b) return;
