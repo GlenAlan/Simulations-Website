@@ -2931,9 +2931,13 @@
                 const grow = wt * smoothstep(0.002, 0.012, aMax);
                 if (grow < 1e-3) continue;
                 // the dome over an opening facing up: no bigger than the air under it can make, and
-                // under the tank's surface
+                // under the tank's surface, unless the liquid over the stretch is too thin to hold it
+                // down (an opening just gone under): then it breaks through, as the air does, rather
+                // than leaving a sliver of liquid lying over it (drawn clipped to the tank's liquid)
                 const im = n >> 1;
-                const dome = Math.max(0, Math.min(0.35 * L, 2 * aMax, outside(xs[im]) - zs[im] - 0.003));
+                const layer = outside(xs[im]) - zs[im];
+                const thru = 0.05 * smoothstep(0.02, 0.006, layer);
+                const dome = Math.max(0, Math.min(0.35 * L, 2 * aMax, layer - 0.003 + thru));
                 const qx = new Float64Array(n), qz = new Float64Array(n);
                 for (let i = 0; i < n; i++) {
                     const a = Math.max(0, zs[i] - own(xs[i]));
@@ -2943,11 +2947,11 @@
                     const toLip = Math.min(lipA ? al[i] : Infinity, lipB ? L - al[i] : Infinity);
                     if (toLip < Infinity) dd *= smoothstep(0, Math.max(CELL, 0.5 * aMax), toLip);
                     let d = grow * (dd * (1 - up) + dome * Math.sin(Math.PI * al[i] / L) * up);
-                    // (never out through the tank's surface)
-                    if (ny > 1e-3) d = Math.min(d, Math.max(0, (outside(xs[i] + nx * d) - 0.002 - zs[i]) / ny));
+                    // (not out through the tank's surface, but as above)
+                    if (ny > 1e-3) d = Math.min(d, Math.max(0, (outside(xs[i] + nx * d) - 0.002 + thru - zs[i]) / ny));
                     qx[i] = xs[i] + nx * d; qz[i] = zs[i] + ny * d;
                 }
-                out.push({ xs, zs, qx, qz, nx, ny });
+                out.push({ xs, zs, qx, qz, nx, ny, thru });
             }
         }
         return out;
@@ -3008,7 +3012,24 @@
     const bulgeList = [];
     function drawAirBulges(cv, c, s, own, liq) {
         for (const b of airBulges(cv, c, s, own, 1 / scale, bulgeList)) {
-            const { xs, zs, qx, qz, nx, ny } = b, n = xs.length;
+            const { xs, zs, qx, qz, nx, ny, thru } = b, n = xs.length;
+            // (where it breaks through the tank's surface, nothing of it shows above: clipped to the
+            // liquid, going by the level beyond the opening's ends wherever the curve dips below it)
+            let clip = null;
+            if (thru > 0) {
+                const xa = Math.min(...xs, ...qx), xb = Math.max(...xs, ...qx);
+                clip = new Path2D();
+                const X0 = Math.floor(wx(xa)) - 2, X1 = Math.ceil(wx(xb)) + 2;
+                clip.moveTo(X0, cssH + 2);
+                for (let X = X0; X <= X1 + 1; X += 2) {
+                    const x = X / scale;
+                    clip.lineTo(X, wy(Math.max(surfaceAt(x), cv.sL + (cv.sR - cv.sL) * (x - cv.fx0) / cv.fspan - thru)));
+                }
+                clip.lineTo(X1 + 2, cssH + 2);
+                clip.closePath();
+                ctx.save();
+                ctx.clip(clip);
+            }
             // (its inner edge reaches 2 px into the cavity: two fills sharing an edge leave a seam)
             const p = new Path2D(), edge = new Path2D();
             const kx = -2 * nx, ky = 2 * ny;
@@ -3026,6 +3047,7 @@
             ctx.lineWidth = 1.5;
             ctx.stroke(edge);
             ctx.globalAlpha = 1;
+            if (clip) ctx.restore();
         }
     }
 
