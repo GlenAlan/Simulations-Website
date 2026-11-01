@@ -7899,8 +7899,9 @@
     // Beside the body on wider screens (kept on screen, it may overlap the palette); on phones in
     // portrait a sheet along the bottom of the screen, with the page scrolled so the canvas shows above it.
     // On phones held sideways (the info bar in a column beside the canvas) a sheet down one side of the
-    // screen: over the info column, whose readouts it repeats, or over the palette if the body is on the
-    // right; the side is chosen as it opens and kept while it is open.
+    // screen: over the palette, which isn't needed while a body is changed (so play, the readouts and
+    // the cards stay in view), or over the info column if the body is on the left; the side is chosen
+    // as it opens and kept while it is open.
     const SIDE_SHEET_MQ = '(orientation: landscape) and (min-width: 640px) and (max-height: 540px)';
     function positionPopover(b, opening) {
         const sheet = window.innerWidth < 600 && window.innerHeight > window.innerWidth;
@@ -7913,8 +7914,10 @@
             ui.pop.style.top = '';
             const cr = canvas.getBoundingClientRect(), x = cr.left + sx(b.dx), w = ui.pop.offsetWidth;
             if (opening || !was) {
+                // (with the settings open beside the canvas the palette has stepped aside: then over them)
+                const bc = document.body.classList, settingsOpen = bc.contains('sim-panel-active') && bc.contains('sim-panel-side');
                 const rightOk = x < window.innerWidth - w - 16, leftOk = x > w + 16;
-                ui.pop.classList.toggle('on-left', !rightOk && (leftOk || x > window.innerWidth / 2));
+                ui.pop.classList.toggle('on-left', settingsOpen ? !rightOk && leftOk : leftOk || (!rightOk && x > window.innerWidth / 2));
             }
             // (the canvas in full view beside it, with the page's header scrolled away)
             if (opening && !document.body.classList.contains('sim-fullscreen-active')) {

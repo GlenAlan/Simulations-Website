@@ -699,9 +699,9 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     box-shadow: var(--sim-sheet-shadow);
 }
 
-/* Phones held sideways: a sheet down one side of the screen, the height of the screen, over the info
-   column (or over the palette when the body is on the right: see positionPopover in orbits_core.js),
-   so it never sits across the middle of the canvas or half over a column */
+/* Phones held sideways: a sheet down one side of the screen, the height of the screen, over the palette
+   (or over the info column when the body is on the left: see positionPopover in orbits_core.js), so it
+   never sits across the middle of the canvas or half over a column */
 .orb-popover.is-side {
     position: fixed;
     top: 0;
