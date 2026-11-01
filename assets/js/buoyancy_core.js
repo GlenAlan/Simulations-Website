@@ -393,14 +393,18 @@
 
         // 3b. The stair-steps of a curved or slanted outline leave notches a cell or two deep inside
         // the hull. They are part of the outside, not pockets that hold liquid: a group of open cells
-        // that all touch the outside, or only a handful of cells, goes back to the outside.
+        // that all touch the outside, or only a handful of cells, goes back to the outside, and so does
+        // a thin layer along a slanted edge (the strip between a slanted or slightly bent leg's steps
+        // and the hull's straight edge over them: on average no more than 2.5 cells deep, nowhere more
+        // than 4). (A tray two cells deep keeps its liquid: its edge to the outside is one straight
+        // row or column.)
         if (nOpen > 0) {
-            const seen = new Uint8Array(NL);
+            const seen = new Uint8Array(NL), dep = new Uint8Array(NL), q2 = new Int32Array(NL);
             for (let li0 = 0; li0 < NL; li0++) {
                 if (ltype[li0] !== T_OPEN || seen[li0]) continue;
                 qh = 0; qt = 0;
                 queue[qt++] = li0; seen[li0] = 1;
-                let inner = false;
+                let inner = false, n2 = 0, er0 = LH, er1 = -1, ec0 = LW, ec1 = -1;
                 while (qh < qt) {
                     const li = queue[qh++];
                     let edge = false;
@@ -410,8 +414,25 @@
                         else if (ltype[nb] === T_OPEN && !seen[nb]) { seen[nb] = 1; queue[qt++] = nb; }
                     }
                     if (!edge) inner = true;
+                    else {
+                        dep[li] = 1; q2[n2++] = li;
+                        const lr = (li / LW) | 0, lc = li - lr * LW;
+                        if (lr < er0) er0 = lr; if (lr > er1) er1 = lr;
+                        if (lc < ec0) ec0 = lc; if (lc > ec1) ec1 = lc;
+                    }
                 }
-                if (!inner || qt <= 4) {
+                // how deep the group reaches in from the outside (nEdge cells touch it)
+                const nEdge = n2;
+                let maxDep = 1;
+                for (let h = 0; h < n2; h++) {
+                    const li = q2[h];
+                    for (let q = 0; q < 4; q++) {
+                        const nb = q === 0 ? li - 1 : q === 1 ? li + 1 : q === 2 ? li - LW : li + LW;
+                        if (ltype[nb] === T_OPEN && seen[nb] && !dep[nb]) { dep[nb] = dep[li] + 1; if (dep[nb] > maxDep) maxDep = dep[nb]; q2[n2++] = nb; }
+                    }
+                }
+                const thin =maxDep <= 4 && qt <= 2.5 * nEdge && er1 > er0 && ec1 > ec0;
+                if (!inner || qt <= 4 || thin) {
                     for (let k = 0; k < qt; k++) ltype[queue[k]] = T_EXT;
                     nOpen -= qt;
                 }
@@ -2901,6 +2922,56 @@
         }
         return out;
     }
+    // The tank's liquid under an opening that faces down. The tank's surface curve runs on under the
+    // object, where it means nothing, and the waves can leave it in a trough there, below the opening:
+    // with no material to hide it, a gap of air would show between the liquid in the hull and the
+    // tank's. Under such an opening the tank's liquid reaches up to the opening, or, where the opening
+    // is clear of the water, to the level just beyond the opening's ends (both continuous as the body
+    // moves). lev is the surface drawn inside.
+    function drawUnderOpenings(cv, c, s, lev, liq) {
+        const px1 = 1 / scale;
+        for (const ch of cv.chains) {
+            if (!ch.wide) continue;
+            let ny = s * ch.nbx + c * ch.nby;
+            ny /= Math.hypot(c * ch.nbx - s * ch.nby, ny) || 1;
+            const downF = smoothstep(0.35, 0.7, -ny);
+            if (downF < 1e-3) continue;
+            const m = chainPoints(ch, c, s);
+            if (m < 2) continue;
+            const sE = (x) => cv.sL + (cv.sR - cv.sL) * (x - cv.fx0) / cv.fspan;
+            let any = false;
+            const tops = new Float64Array(m), bots = new Float64Array(m);
+            for (let i = 0; i < m; i++) {
+                const x = cpX[i], S = surfaceAt(x);
+                bots[i] = S;
+                tops[i] = S + downF * Math.max(0, Math.min(cpZ[i], sE(x)) - S);
+                if (tops[i] > S + 0.5 * px1) any = true;
+            }
+            if (!any) continue;
+            // (reaching a pixel into the hull where its liquid comes down to the opening, so no seam
+            // shows; and a little under the tank's surface)
+            const p = new Path2D(), top = new Path2D();
+            let open = false;
+            for (let i = 0; i < m; i++) {
+                const into = lev(cpX[i]) >= cpZ[i] ? px1 : 0;
+                const y = wy(Math.min(tops[i] + into, cpZ[i] + into));
+                if (i === 0) p.moveTo(wx(cpX[i]), y); else p.lineTo(wx(cpX[i]), y);
+                // where the opening is clear of the water the band's top is a surface: outline it
+                if (cpZ[i] - tops[i] > px1 && tops[i] > bots[i] + 0.5 * px1) {
+                    if (!open) { top.moveTo(wx(cpX[i]), wy(tops[i])); open = true; } else top.lineTo(wx(cpX[i]), wy(tops[i]));
+                } else open = false;
+            }
+            for (let i = m - 1; i >= 0; i--) p.lineTo(wx(cpX[i]), wy(bots[i]) + 2);
+            p.closePath();
+            fillLiquid(p);
+            ctx.strokeStyle = liq.surface;
+            ctx.globalAlpha = 0.85;
+            ctx.lineWidth = 1.5;
+            ctx.stroke(top);
+            ctx.globalAlpha = 1;
+        }
+    }
+
     // ... drawn as air, outlined like a surface
     const bulgeList = [];
     function drawAirBulges(cv, c, s, own, liq) {
@@ -3034,7 +3105,9 @@
             }
             ctx.restore();
 
-            // 2b. Trapped air reaching an opening under water bulges out past it
+            // 2b. The tank's liquid up to an opening facing down; trapped air reaching an opening under
+            //     water bulges out past it
+            drawUnderOpenings(cv, c, s, lev, liq);
             drawAirBulges(cv, c, s, lev, liq);
 
             // 3. Liquid leaving into the air: over a lip it runs over it as a tongue, then falls; out of a
