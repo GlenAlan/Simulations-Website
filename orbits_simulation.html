@@ -199,6 +199,7 @@
 												<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
 												<option value="ellipse">Elliptical orbit</option>
 												<option value="inner">Inner planets</option>
+												<option value="solar">The Solar System on a date</option>
 												<option value="comet">Comet and Earth</option>
 												<option value="earth-moon">Earth &amp; Moon</option>
 												<option value="moon">Planet with a moon</option>
@@ -212,6 +213,11 @@
 												<option value="moondisc">A moon forming</option>
 												<option value="empty">A lone star (build your own)</option>
 											</select>
+											<div class="orb-date" id="startDateRow" hidden>
+												<label for="startDateInput">Start date</label>
+												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
+												<p class="orb-note" id="startDateNote">The planets start where they really were, or will be, on this day (1800 to 2050).</p>
+											</div>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Physics</p>
@@ -502,6 +508,9 @@
 
 											<h4>Realistic physics</h4>
 											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Its pieces still pull on each other, so some may gather into clumps again. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
+
+											<h4>The Solar System on a date</h4>
+											<p>The planets start where they really were, or will be, on the start date, worked out from NASA JPL's table of the planets' orbits for 1800 to 2050 (E. M. Standish's &ldquo;Keplerian Elements for Approximate Positions of the Major Planets&rdquo;), with masses from the International Astronomical Union. From then on it is the simulation's own gravity that moves them. The real orbits are tilted a few degrees to Earth's (Pluto's 17&deg;); here each is laid flat, keeping its size, shape and period.</p>
 
 											<h4>Things to try</h4>
 											<ul>
