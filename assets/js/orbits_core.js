@@ -336,6 +336,485 @@
     };
 
     // ------------------------------------------------------------------
+    // Star colours from temperature. A main-sequence star's surface temperature follows from its mass:
+    // the Stefan-Boltzmann law, L = 4 pi R^2 sigma T^4, with the main-sequence fits L ~ M^3.5 (the
+    // mass-luminosity relation; e.g. N. Duric, Advanced Astrophysics, 2004) and R ~ M^0.74 gives
+    // T ~ (L / R^2)^(1/4) = M^0.505, so T = 5778 K x (M / M_sun)^0.505. That is a rough fit: 3,100 K for a
+    // red dwarf of 0.3 M_sun and 22,700 K for 15 M_sun, where real stars are nearer 3,400 K and 30,000 K.
+    //   The colour of a blackbody at T is Tanner Helland's fit to Mitchell Charity's blackbody colour
+    // table ("How to convert temperature (K) to RGB", tannerhelland.com, 2012). Seen from space the Sun
+    // is white (the fit gives it 255, 242, 231) and other stars are pale too, but this page, like most
+    // pictures, draws the Sun a warm yellow (#ffd166). So the colours are deepened (each channel taken
+    // 1.3 times as far from white) and, near the Sun's temperature, shifted towards that yellow by the
+    // Sun's own difference from it, fading out within about a third of its temperature either way: a
+    // star of the Sun's mass keeps its yellow, lighter stars run through gold and orange to red, heavier
+    // ones through cream and white to blue. The brightest channel is then set to full (stars shine).
+    //   Colours are worked out once per mass bucket (COLOUR_STEPS per factor of ten) and kept, so the
+    // glow sprites, which are keyed by colour, stay few. Red giants, white dwarfs, neutron stars and black
+    // holes are not on the main sequence and keep their kind's look; custom bodies keep their colours.
+    // A star takes the colour of its mass when it comes from the palette (the palette's stars are given
+    // it below) and when its mass changes (the menu's mass slider, or a merger), unless the user picked
+    // another: a colour counts as picked when it is neither its kind's colour nor the colour of its mass.
+    // That is worked out from the body's own colour and mass, which undo puts back, so nothing else needs
+    // keeping.
+    // ------------------------------------------------------------------
+    const T_SUN = 5778;                   // K
+    const MASS_TEMP_POWER = 0.505;
+    const COLOUR_STEPS = 40;              // colours per factor of ten in mass (6% apart in mass, 3% in temperature)
+    const DEEPEN = 1.3;
+    const SUN_TINT_COOL = 0.35, SUN_TINT_HOT = 0.3;   // how far the Sun's yellow reaches (in ln T)
+    const KEEPS_LOOK = { redgiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, custom: 1 };
+    const KIND_COLOUR = {};               // each kind's colour as first defined: the scenes were designed with these
+    for (const k of Object.keys(KINDS)) KIND_COLOUR[k] = KINDS[k].color;
+    const starColourCache = new Map();
+
+    // Helland's blackbody colour at T kelvin, [r, g, b] from 0 to 255
+    function blackbodyRgb(T) {
+        const t = T / 100;
+        const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
+        const g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+        const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+        return [r, g, b].map((v) => Math.min(255, Math.max(0, v)));
+    }
+
+    // The colour a star at T kelvin is drawn in (see above)
+    function temperatureColour(T) {
+        const bb = blackbodyRgb(T), b0 = blackbodyRgb(T_SUN);
+        const sun = parseInt(KIND_COLOUR.sun.slice(1), 16);
+        const lnT = Math.log(T / T_SUN), s = lnT < 0 ? SUN_TINT_COOL : SUN_TINT_HOT;
+        const w = Math.exp(-(lnT / s) * (lnT / s));
+        const deepen = (v) => 255 - DEEPEN * (255 - v);
+        const c = [0, 1, 2].map((i) => deepen(bb[i]) + w * (((sun >> (16 - 8 * i)) & 255) - deepen(b0[i])));
+        const top = Math.max(c[0], c[1], c[2], 1);
+        return `#${c.map((v) => Math.round(Math.min(255, Math.max(0, (v * 255) / top))).toString(16).padStart(2, '0')).join('')}`;
+    }
+
+    // Main-sequence surface temperature (K) of a star of m solar masses, and the colour it is drawn in
+    const temperatureOf = (m) => T_SUN * Math.pow(m, MASS_TEMP_POWER);
+    function starColour(m) {
+        const k = Math.round(Math.log10(Math.max(m, 1e-6)) * COLOUR_STEPS);
+        let c = starColourCache.get(k);
+        if (!c) {
+            c = temperatureColour(temperatureOf(Math.pow(10, k / COLOUR_STEPS)));
+            starColourCache.set(k, c);
+        }
+        return c;
+    }
+
+    // The colour a body's mass gives it: a star's from its temperature, anything lighter its kind's
+    function colourForMass(b) {
+        return b.m >= STAR_MASS ? starColour(b.m) : (KINDS[b.kind] || KINDS.custom).color;
+    }
+    // Does its colour follow its mass (not picked by the user)?
+    function autoColoured(b) {
+        if (KEEPS_LOOK[b.kind]) return false;
+        const k = KINDS[b.kind];
+        return b.color === KIND_COLOUR[b.kind] || (!!k && b.color === k.color) || (b.m >= STAR_MASS && b.color === starColour(b.m));
+    }
+    // Make a change to b's mass (in change); its colour follows unless the user picked one
+    function withStarColour(b, change) {
+        const auto = autoColoured(b);
+        change();
+        if (auto && !KEEPS_LOOK[b.kind]) b.color = colourForMass(b);
+    }
+
+    // The palette's stars get the colour of their mass (the Sun's stays #ffd166)...
+    for (const k of Object.keys(KINDS)) {
+        if (KINDS[k].m >= STAR_MASS && !KEEPS_LOOK[k]) KINDS[k].color = starColour(KINDS[k].m);
+    }
+    // ...but the scenes keep the colours they were designed with
+    for (const key of Object.keys(SCENES)) {
+        for (const s of SCENES[key].bodies) {
+            if (!s.color && KINDS[s.kind] && KINDS[s.kind].color !== KIND_COLOUR[s.kind]) s.color = KIND_COLOUR[s.kind];
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The Solar System on a date: the Sun, the eight planets and Pluto (a dwarf planet) where they
+    // really were, or will be, on the start date chosen in the settings (today to begin with).
+    //   Positions come from JPL's "Keplerian Elements for Approximate Positions of the Major Planets"
+    // (E. M. Standish, JPL Solar System Dynamics, https://ssd.jpl.nasa.gov/planets/approx_pos.html),
+    // Table 1: each orbit's mean elements at J2000 (1 Jan 2000, 12:00) and their rates of change per
+    // century, fitted to JPL's DE405 ephemeris over 1800 to 2050 (to within 15" to 10' in direction).
+    // Pluto has since been taken off that page; its row is the one the table first gave. For a date, each
+    // element is its J2000 value plus its rate times the centuries since; Kepler's equation
+    // M = E - e sin E gives the eccentric anomaly E from the mean anomaly M (mean longitude less the
+    // longitude of perihelion), and from E the position on the ellipse, (a(cos E - e), b sin E) from the
+    // Sun with x towards perihelion. The velocity is the two-body orbit's there (see solarSystemBodies
+    // and planetState for what each orbit is taken round, and its size).
+    //   Flat: the simulation is in two dimensions, the plane of Earth's orbit (the ecliptic), and the other
+    // orbits are tilted from it by a few degrees (Mercury 7, Pluto 17). Dropping each planet's height above
+    // the plane (projecting) would shorten a tilted orbit unevenly, changing its energy and so its period
+    // (Mercury's by 1.5 to 3%, Pluto's by 10 to 16%, depending on where they are). Instead each orbit is
+    // turned flat about the line where it crosses the plane: its size, shape and period, and the planet's
+    // distance and speed, stay exactly right, and its direction from the Sun is off by at most about
+    // i^2/4 radians: 0.2 degrees for Mercury, 0.05 or less for the other planets, 1.3 for Pluto.
+    //   Masses: the IAU 2009 System of Astronomical Constants (Luzum et al. 2011, Celest. Mech. Dyn.
+    // Astron. 110, 293), as the Sun's mass over each planet's with its moons; Earth on its own (Earth/Moon
+    // 81.30057), and Pluto with Charon (1.46 x 10^22 kg, from New Horizons). Radii: IAU mean radii.
+    // The table gives the Earth-Moon centre of mass ("EM Bary"); Earth stands there without the Moon,
+    // which at this scale would be under a pixel from it (and shrink Earth's disc to a dot).
+    //   As in every scene, the centre of mass of the whole system is then put at rest at the origin: the
+    // Sun starts with its own wobble (about 13 m/s, mostly from Jupiter) and nothing drifts away.
+    // ------------------------------------------------------------------
+    const JD_UNIX = 2440587.5;            // Julian date of 1 Jan 1970, 00:00 UTC
+    const JD_J2000 = 2451545.0;           // 1 Jan 2000, 12:00
+    const TO_RAD = Math.PI / 180;
+    const jdFromMs = (ms) => JD_UNIX + ms / 86400000;
+    const msFromJd = (jd) => (jd - JD_UNIX) * 86400000;
+    const jdOfDate = (y, m, d) => jdFromMs(Date.UTC(y, m - 1, d));
+    const JD_MIN = jdOfDate(1800, 1, 1), JD_MAX = jdOfDate(2050, 12, 31);   // the table's range
+
+    Object.assign(KINDS, {
+        saturn: { name: 'Saturn', m: 1 / 3497.9018, R: 58232, color: '#e3c47a', info: 'the ringed giant planet' },
+        uranus: { name: 'Uranus', m: 1 / 22902.98, R: 25362, color: '#9ad8dc', info: 'an ice giant' },
+        neptune: { name: 'Neptune', m: 1 / 19412.26, R: 24622, color: '#6f8ff0', info: 'the farthest planet' },
+        pluto: { name: 'Pluto', m: 1 / 1.3605e8, R: 1188, color: '#c9a98c', info: 'a dwarf planet' }
+    });
+
+    // Kind, mass (M_sun), radius (km), then a (AU), e, I, L, longitude of perihelion, longitude of the
+    // ascending node (degrees) at J2000, and their rates per century
+    const PLANET_TABLE = [
+        ['mercury', 1 / 6023600, 2439.4, 0.38709927, 0.20563593, 7.00497902, 252.25032350, 77.45779628, 48.33076593,
+            0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081],
+        ['venus', 1 / 408523.71, 6051.8, 0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255,
+            0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418],
+        ['earth', 81.300569 / (82.300569 * 328900.56), 6371.0, 1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0,
+            0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0],
+        ['mars', 1 / 3098703.59, 3389.5, 1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891,
+            0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343],
+        ['jupiter', 1 / 1047.348644, 69911, 5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909,
+            -0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106],
+        ['saturn', 1 / 3497.9018, 58232, 9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448,
+            -0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794],
+        ['uranus', 1 / 22902.98, 25362, 19.18916464, 0.04725744, 0.77263783, 313.23810451, 170.95427630, 74.01692503,
+            -0.00196176, -0.00004397, -0.00242939, 428.48202785, 0.40805281, 0.04240589],
+        ['neptune', 1 / 19412.26, 24622, 30.06992276, 0.00859048, 1.77004347, -55.12002969, 44.96476227, 131.78422574,
+            0.00026291, 0.00005105, 0.00035372, 218.45945325, -0.32241464, -0.00508664],
+        ['pluto', 1 / 1.3605e8, 1188.3, 39.48211675, 0.24882730, 17.14001206, 238.92903833, 224.06891629, 110.30393684,
+            -0.00031596, 0.00005170, 0.00004818, 145.20780515, -0.04062942, -0.01183482]
+    ];
+
+    // A planet's position (AU) and velocity (AU/yr) at Julian date jd from the table: flat (x, y, vx, vy,
+    // as in the scene) and, for comparison, JPL's true ecliptic coordinates (x3, y3, z3). Without inner,
+    // as the table has it (mu = G(M_sun + m)). With inner (the mass it orbits, in M_sun), as the scene
+    // starts it: the orbit's size comes from its mean motion (the rate of L) by Kepler's third law,
+    // a^3 = G(inner + m) / n^2, rather than the table's a. Both are fits, and they disagree slightly (by
+    // 1 part in 100,000 for Mercury, 3 in 10,000 for Saturn going round the Sun and Jupiter); this way
+    // the planets keep pace with the table's mean motion, and after a century of the simulation's own
+    // gravity (Mercury's 415 orbits) each is still within about a degree of where the table puts it.
+    function planetState(row, jd, inner) {
+        const T = (jd - JD_J2000) / 36525;
+        const el = (i) => row[3 + i] + row[9 + i] * T;
+        const n = (row[12] * TO_RAD) / 100;   // mean motion, radians per year
+        const a = inner ? Math.cbrt((G * (inner + row[1])) / (n * n)) : el(0);
+        const e = el(1), incl = el(2) * TO_RAD, L = el(3), peri = el(4), node = el(5);
+        const M = ((((L - peri) % 360) + 540) % 360 - 180) * TO_RAD;   // -180 to 180 degrees
+        let E = M + e * Math.sin(M);
+        for (let k = 0; k < 30; k++) {
+            const dE = (M - (E - e * Math.sin(E))) / (1 - e * Math.cos(E));
+            E += dE;
+            if (Math.abs(dE) < 1e-13) break;
+        }
+        const b = a * Math.sqrt(1 - e * e);
+        const px = a * (Math.cos(E) - e), py = b * Math.sin(E);
+        const Edot = Math.sqrt((G * ((inner || 1) + row[1])) / (a * a * a)) / (1 - e * Math.cos(E));   // dE/dt
+        const pvx = -a * Math.sin(E) * Edot, pvy = b * Math.cos(E) * Edot;
+        // Flat: perihelion at its longitude in the ecliptic
+        const cp = Math.cos(peri * TO_RAD), sp = Math.sin(peri * TO_RAD);
+        // True: turned by the argument of perihelion, the inclination and the node (JPL's step 5)
+        const w = (peri - node) * TO_RAD, O = node * TO_RAD;
+        const cw = Math.cos(w), sw = Math.sin(w), cO = Math.cos(O), sO = Math.sin(O), ci = Math.cos(incl), si = Math.sin(incl);
+        return {
+            x: cp * px - sp * py, y: sp * px + cp * py, vx: cp * pvx - sp * pvy, vy: sp * pvx + cp * pvy,
+            x3: (cw * cO - sw * sO * ci) * px + (-sw * cO - cw * sO * ci) * py,
+            y3: (cw * sO + sw * cO * ci) * px + (-sw * sO + cw * cO * ci) * py,
+            z3: sw * si * px + cw * si * py
+        };
+    }
+
+    // The scene's bodies for a start date (relative to the Sun; loading the scene moves them to the centre
+    // of mass). Each planet's orbit is taken round the centre of mass of the Sun and the planets inside
+    // it, with their mass (Jacobi coordinates, as in planetary codes): from out there they pull almost as
+    // one body at that point. The Sun itself swings round Jupiter's way at about 12 m/s, so an orbit taken
+    // round the Sun alone would start Saturn and the planets beyond with the wrong energy, their periods
+    // out by up to 1%. The Sun's offset from that point (under 0.006 AU) moves them by under 0.04 degrees.
+    function solarSystemBodies(jd) {
+        const list = [{ kind: 'sun' }];
+        let M = 1, X = 0, Y = 0, VX = 0, VY = 0;   // mass, position and velocity of the bodies inside
+        for (const row of PLANET_TABLE) {
+            const m = row[1], s = planetState(row, jd, M);
+            const x = X + s.x, y = Y + s.y, vx = VX + s.vx, vy = VY + s.vy;
+            list.push({ kind: row[0], m, R: row[2], at: [x, y], v: [vx, vy] });
+            X = (M * X + m * x) / (M + m); Y = (M * Y + m * y) / (M + m);
+            VX = (M * VX + m * vx) / (M + m); VY = (M * VY + m * vy) / (M + m);
+            M += m;
+        }
+        return list;
+    }
+
+    // Today (local calendar), within the table's range
+    function todayJd() {
+        const now = new Date();
+        return Math.min(JD_MAX, Math.max(JD_MIN, jdOfDate(now.getFullYear(), now.getMonth() + 1, now.getDate())));
+    }
+    // jd: the start date of the scene as loaded (undo steps keep it); chosen: the date it is loaded for next
+    const startDate = { jd: todayJd(), chosen: 0 };
+    startDate.chosen = startDate.jd;
+
+    // Scenes with dated: true start on the start date, and the info bar shows the date
+    SCENES.solar = {
+        units: 'au', Tref: 1, subject: 3, dated: true, box: [-1.8, 1.8, -1.8, 1.8],
+        tip: 'Real positions on the start date (change it in the settings). Fit view shows the outer planets. Orbits lie flat here; the real ones tilt a few degrees.',
+        get bodies() { return solarSystemBodies(startDate.chosen); }
+    };
+
+    // 'YYYY-MM-DD' to a Julian date (00:00 UTC), or NaN; and back
+    function parseIsoDate(text) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text || '').trim());
+        if (!m) return NaN;
+        const y = +m[1], mo = +m[2], d = +m[3];
+        const t = Date.UTC(y, mo - 1, d), dt = new Date(t);
+        return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? jdFromMs(t) : NaN;
+    }
+    function isoDate(jd) {
+        const d = new Date(msFromJd(jd));
+        const two = (n) => String(n).padStart(2, '0');
+        return `${String(d.getUTCFullYear()).padStart(4, '0')}-${two(d.getUTCMonth() + 1)}-${two(d.getUTCDate())}`;
+    }
+
+    // A Julian date as "3 Jan 2027" (detail 'day'), "Jan 2027" ('month') or "2027" ('year')
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    function fmtDate(jd, detail) {
+        const d = new Date(msFromJd(jd));
+        const y = d.getUTCFullYear();
+        if (!isFinite(y)) return '–';
+        if (detail === 'year') return String(y);
+        const mon = MONTHS[d.getUTCMonth()];
+        return detail === 'month' ? `${mon} ${y}` : `${d.getUTCDate()} ${mon} ${y}`;
+    }
+
+    // The day is shown only while it can be read (slow or paused); faster, the month, then the year
+    function dateDetail() {
+        const daysPerSecond = paused ? 0 : settings.speed * rate() * DAYS_PER_YEAR;
+        return daysPerSecond <= 20 ? 'day' : daysPerSecond <= 200 ? 'month' : 'year';
+    }
+
+    // What the info bar's Time box shows: the date in a dated scene (the time since the start in its
+    // tooltip), otherwise the time since the start
+    function timeReadout() {
+        if (!scene.dated) return fmtTime(simTime);
+        const start = fmtDate(startDate.jd, 'day');
+        setTitle(statBox(ui.statTime), simTime * DAYS_PER_YEAR < 1 ? `Date in the simulation, which started on ${start}`
+            : `Date in the simulation: ${fmtDuration(simTime)} after its start on ${start}`);
+        return { v: fmtDate(startDate.jd + simTime * DAYS_PER_YEAR, dateDetail()), u: '' };
+    }
+
+    // The settings' start date shows only for a dated scene; the Time box becomes a Date box
+    Object.assign(ui, { dateRow: byId('startDateRow'), startDate: byId('startDateInput'), dateNote: byId('startDateNote') });
+    function showDateUi() {
+        const on = !!scene.dated;
+        if (ui.dateRow && ui.dateRow.hidden === on) ui.dateRow.hidden = !on;
+        if (ui.startDate && document.activeElement !== ui.startDate) {
+            ui.startDate.value = isoDate(startDate.chosen);
+            markDateField(true);
+        }
+        if (ui.statTime) ui.statTime.style.setProperty('--chars', on ? '11' : '6');
+        const box = statBox(ui.statTime), label = box && box.querySelector('strong');
+        if (label) label.textContent = on ? 'Date:' : 'Time:';
+        if (!on) setTitle(box, 'Time since the start');
+    }
+    // After a scene is loaded (from loadScene)
+    function syncDatedScene() {
+        startDate.jd = startDate.chosen;
+        showDateUi();
+    }
+    // After an undo, redo or "run again" (from restoreSnapshot): the snapshot's start date comes back
+    function restoreStartDate(s) {
+        if (s.startJD) startDate.jd = startDate.chosen = s.startJD;
+        showDateUi();
+    }
+
+    // A new start date reloads a dated scene, as an undo step (even if nothing else had changed), keeping
+    // the view, the trails' length and the chosen and viewed-from bodies
+    function setStartDate(jd) {
+        const day = Math.min(JD_MAX, Math.max(JD_MIN, jd));
+        if (!scene.dated) { startDate.chosen = startDate.jd = day; showDateUi(); return; }
+        const nameOf = (id) => { const b = id !== null ? bodyById(id) : null; return b ? b.name : null; };
+        const keep = { zoom: view.zoom, panX: view.panX, panY: view.panY, trail: settings.trailIndex, sel: nameOf(selectedId), frame: nameOf(frameId) };
+        const top = hist.undo[hist.undo.length - 1];
+        startDate.chosen = day;
+        hist.cleanLoad = false;   // (so the reload is an undo step: noteSceneLoad makes none for a scene restarted untouched)
+        loadScene(settings.scene);
+        const st = hist.undo[hist.undo.length - 1];
+        if (st && st !== top) { st.label = 'change the start date'; updateHistoryUi(); }
+        Object.assign(view, { zoom: keep.zoom, panX: keep.panX, panY: keep.panY, anim: null });
+        settings.trailIndex = keep.trail;
+        if (ui.trail) ui.trail.value = String(keep.trail);
+        updateTrailLabel();
+        const named = (n) => bodies.find((b) => b.name === n) || null;
+        if (keep.sel && named(keep.sel)) selectedId = named(keep.sel).id;
+        frameId = keep.frame && named(keep.frame) ? named(keep.frame).id : null;
+        syncFrameUi();
+        syncEccentricity(true);
+    }
+
+    // The date field: a date is used once it has been left alone for a moment (typing a year passes
+    // through others: 0002, 0020, 0202, 2026), at once on Enter or on leaving the field. One outside the
+    // table's years is marked, and said so in the note under the field, until it is put right (leaving the
+    // field puts the scene's date back).
+    let dateTimer = 0;
+    const DATE_NOTE = ui.dateNote ? ui.dateNote.textContent : '';
+    function markDateField(ok) {
+        if (ok) ui.startDate.removeAttribute('aria-invalid'); else ui.startDate.setAttribute('aria-invalid', 'true');
+        setText(ui.dateNote, ok ? DATE_NOTE : 'Choose a day from 1800 to 2050.');
+    }
+    function applyDateField() {
+        clearTimeout(dateTimer);
+        const jd = parseIsoDate(ui.startDate.value);
+        const ok = jd >= JD_MIN && jd <= JD_MAX;
+        markDateField(ok);
+        if (ok && jd !== startDate.chosen) setStartDate(jd);
+        return ok;
+    }
+    if (ui.startDate) {
+        const later = () => { clearTimeout(dateTimer); dateTimer = setTimeout(applyDateField, 450); };
+        ui.startDate.addEventListener('input', later);
+        ui.startDate.addEventListener('change', later);
+        ui.startDate.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyDateField(); } });
+        ui.startDate.addEventListener('blur', () => { if (!applyDateField()) showDateUi(); });
+    }
+
+    // ------------------------------------------------------------------
+    // Comet tails. Near a star a comet's ice turns to gas (from about 3 to 5 AU from a star like the Sun),
+    // and the gas and dust it gives off are pushed away from the star. The gas, made into ions by the
+    // star's ultraviolet light, is swept straight out by the stellar wind: a thin, straight ion tail
+    // pointing directly away from the star, blue from glowing CO+ ions. Dust grains are pushed only gently,
+    // by the light itself, so they keep much of the comet's own motion and fall behind it on slightly wider
+    // orbits: a broad, curved, yellowish dust tail of reflected starlight, bending back along the orbit.
+    // Both grow longer and brighter closer in. A star's light at the comet goes as L / d^2, with
+    // L ~ M^3.5 on the main sequence, so distances are measured in "Sun-like" AU, d / sqrt(L): a tail
+    // starts at TAIL_FAR of those and is fully grown at TAIL_FULL. The tails have real lengths (up to a
+    // third of an AU, as for a bright comet), so they shrink as you zoom out, and never take more than a
+    // quarter of the view.
+    //   Cheap: only comets near a star get them (and not the dots of a crowded scene), and each tail is a
+    // picture drawn once per colour, then stretched and turned into place: no gradients or arrays per frame.
+    // ------------------------------------------------------------------
+    const TAIL_FAR = 4, TAIL_FULL = 0.6;  // Sun-like AU
+    const ION_AU = 0.45, DUST_AU = 0.28;  // tail lengths at full strength (AU)
+    const TAIL_W = 256, ION_H = 32, DUST_H = 160, DUST_Y0 = 40, DUST_BEND = 60;   // the pictures (px)
+    const TAIL_COLOURS = { dark: { ion: '#8cc4ff', dust: '#ffe2a6' }, light: { ion: '#2f6fd0', dust: '#b5852a' } };
+    const tailStars = [];
+    const tailPictures = new Map();
+    const tailInfo = { drawn: 0, strength: 0, star: null, ionPx: 0 };   // the last frame's (for testing)
+
+    // A tail's picture: pointing along +x from its head at (0, y0), fading towards its end; nested
+    // layers, each a little narrower, make it brightest along the middle with soft edges. The dust tail
+    // widens and bends towards +y (a quadratic curve).
+    function tailPicture(kind, color) {
+        const key = kind + color;
+        let pic = tailPictures.get(key);
+        if (pic) return pic;
+        const ion = kind === 'ion';
+        const H = ion ? ION_H : DUST_H, y0 = ion ? ION_H / 2 : DUST_Y0;
+        pic = document.createElement('canvas');
+        pic.width = TAIL_W; pic.height = H;
+        const g = pic.getContext('2d');
+        const fade = g.createLinearGradient(0, 0, TAIL_W, 0);
+        fade.addColorStop(0, hexA(color, 1));
+        fade.addColorStop(0.4, hexA(color, 0.6));
+        fade.addColorStop(1, hexA(color, 0));
+        g.fillStyle = fade;
+        g.globalAlpha = 0.2;
+        for (let layer = 0; layer < 8; layer++) {
+            const f = 1 - layer / 9;
+            g.beginPath();
+            if (ion) {
+                g.moveTo(0, y0 - 4 * f); g.lineTo(TAIL_W, y0 - f * 14); g.lineTo(TAIL_W, y0 + f * 14); g.lineTo(0, y0 + 4 * f);
+            } else {
+                for (let side = -1; side <= 1; side += 2) {
+                    for (let i = 0; i <= 16; i++) {
+                        const s = side < 0 ? i / 16 : 1 - i / 16;
+                        const cx = 2 * s * (1 - s) * 0.55 * TAIL_W + s * s * TAIL_W, cy = y0 + s * s * DUST_BEND;
+                        const tx = 2 * (1 - 2 * s) * 0.55 * TAIL_W + 2 * s * TAIL_W, ty = 2 * s * DUST_BEND;
+                        const tl = Math.hypot(tx, ty), hw = side * f * (6 + 46 * s);
+                        g.lineTo(cx - (ty / tl) * hw, cy + (tx / tl) * hw);
+                    }
+                }
+            }
+            g.closePath();
+            g.fill();
+        }
+        tailPictures.set(key, pic);
+        return pic;
+    }
+
+    // Draw a tail picture with its head at (x, y), along (ux, uy), its +y side towards (nx, ny): len px
+    // long, and wide px across for each of the picture's (a long tail is narrower for its length than a
+    // short one, which still needs a few pixels' width to be seen)
+    function drawTailPicture(pic, x, y, ux, uy, nx, ny, len, wide, y0) {
+        const k = len / TAIL_W;
+        ctx.setTransform(dpr * ux * k, dpr * uy * k, dpr * nx * wide, dpr * ny * wide, dpr * (x - nx * wide * y0), dpr * (y - ny * wide * y0));
+        ctx.drawImage(pic, 0, 0);
+    }
+
+    // Before the bodies (from renderFrame), so they are drawn on top
+    function drawCometTails(C) {
+        tailInfo.drawn = 0; tailInfo.strength = 0; tailInfo.star = null; tailInfo.ionPx = 0;
+        let comets = 0;
+        for (const b of bodies) if (b.kind === 'comet' && !b.grp && (!b.minor || isChosen(b))) comets++;
+        if (!comets) return;
+        tailStars.length = 0;
+        for (const s of bodies) if (isStar(s)) tailStars.push(s);
+        if (!tailStars.length) return;
+        const pal = C.dark ? TAIL_COLOURS.dark : TAIL_COLOURS.light;
+        const maxPx = 0.25 * Math.min(viewW, viewH);
+        for (const b of bodies) {
+            if (b.kind !== 'comet' || b.grp || (b.minor && !isChosen(b))) continue;
+            // The star that lights it most (the largest L / d^2)
+            let star = null, best = 0;
+            for (const s of tailStars) {
+                const dx = b.dx - s.dx, dy = b.dy - s.dy;
+                const q = Math.pow(s.m, 3.5) / (dx * dx + dy * dy);
+                if (q > best) { best = q; star = s; }
+            }
+            const dSun = 1 / Math.sqrt(best);   // its distance in Sun-like AU
+            if (!star || !(dSun < TAIL_FAR)) continue;
+            const u = Math.min(1, (TAIL_FAR - dSun) / (TAIL_FAR - TAIL_FULL));
+            const ion = Math.min(ION_AU * u * scale, maxPx);
+            const x = sx(b.dx), y = sy(b.dy);
+            if (ion < 4 || x < -ion - 20 || x > viewW + ion + 20 || y < -ion - 20 || y > viewH + ion + 20) continue;
+            // Away from the star (on screen)
+            let ux = x - sx(star.dx), uy = y - sy(star.dy);
+            const ul = Math.hypot(ux, uy);
+            if (!(ul > 0)) continue;
+            ux /= ul; uy /= ul;
+            // Behind: against its sideways motion round the star (screen y points down)
+            const vx = b.vx - star.vx, vy = star.vy - b.vy;
+            const along = vx * ux + vy * uy;
+            let nx = along * ux - vx, ny = along * uy - vy;
+            const nl = Math.hypot(nx, ny);
+            if (nl > 0) { nx /= nl; ny /= nl; } else { nx = -uy; ny = ux; }
+            // (on a dark page the tails add light, as gas and dust lit by the star do)
+            if (C.dark) ctx.globalCompositeOperation = 'lighter';
+            const dust = Math.min(DUST_AU * u * scale, maxPx);
+            ctx.globalAlpha = 0.6 * u;
+            drawTailPicture(tailPicture('dust', pal.dust), x, y, ux, uy, nx, ny, dust, clamp(dust / 120, 0.15, 0.6), DUST_Y0);
+            ctx.globalAlpha = 0.8 * u;
+            drawTailPicture(tailPicture('ion', pal.ion), x, y, ux, uy, nx, ny, ion, clamp(ion / 150, 0.2, 0.6), ION_H / 2);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.globalCompositeOperation = 'source-over';
+            // The coma: a haze of gas round the head
+            ctx.globalAlpha = u;
+            glow(x, y, 0, drawRadius(b) + (3 + 6 * u) * sizeScale, C.dark ? b.color : bodyStroke(b.color, false), 0.5);
+            ctx.globalAlpha = 1;
+            tailInfo.drawn++;
+            if (b.id === selectedId) { tailInfo.strength = u; tailInfo.star = star.name; tailInfo.ionPx = ion; }
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    // ------------------------------------------------------------------
     // Settings and state
     // ------------------------------------------------------------------
     const settings = {
@@ -1279,6 +1758,7 @@
     function mergeBodies(a, b) {
         const bh = (q) => q.kind === 'blackhole';
         const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
+        const auto = autoColoured(big);   // (a star's colour follows its mass: see starColour)
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
@@ -1293,6 +1773,7 @@
         big.track = null;
         removeBody(small, big);
         collapseIfTooHeavy(big);
+        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
     }
 
     // ------------------------------------------------------------------
@@ -1847,6 +2328,7 @@
         resetCharts();
         syncEccentricity(true);
         resetFlyby();
+        syncDatedScene();   // (the start date and the Date box, for a scene with a start date)
         setHint(null, def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
     }
 
@@ -2337,6 +2819,7 @@
         if (settings.k1) drawEllipseLaw(C, subj);
         drawDragPreviews(C);
         drawEditPreview(C);
+        drawCometTails(C);
         drawGravityUnder(C, subj);   // (Hill sphere, Roche limit and pull lines: see "Mutual gravity made visible")
         drawBodies(C);
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
@@ -4339,7 +4822,7 @@
     function setText(el, t) { if (el && el.textContent !== t) el.textContent = t; }
 
     function updateReadouts() {
-        const tm = fmtTime(simTime);
+        const tm = timeReadout();   // (the date, in a scene with a start date)
         setText(ui.statTime, tm.v);
         setText(ui.statTimeUnit, tm.u);
         updateTimeControls();
@@ -4830,7 +5313,7 @@
             if (!b) return;
             popLastInput = performance.now();
             const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH));
-            keepView(() => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); });
+            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); }));
             resetTracking(b);
             computeForces();
             computePrimaries();
@@ -6378,7 +6861,8 @@
             pairs: mainPairs.map((q) => [q.a.id, q.b.id, q.fast ? 1 : 0]), groupE: Array.from(groupEnergy),
             // The scene's own scales and settings: put back only when a change of scene is undone
             forceRef, vRef, energyExp, trail: settings.trailIndex, com: settings.com,
-            zoom: view.zoom, panX: view.panX, panY: view.panY
+            zoom: view.zoom, panX: view.panX, panY: view.panY,
+            startJD: startDate.jd   // (the start date of a scene that has one)
         });
     }
 
@@ -6397,6 +6881,7 @@
         // The trails are still good if no time has passed since the snapshot (an edit undone while paused)
         const keepTrails = sameScene && !jump && s.epoch === hist.epoch && s.samples === sampleCount;
         if (!sameScene) sceneFromSnapshot(s);
+        restoreStartDate(s);
         const old = new Map(bodies.map((b) => [b.id, b]));
         const list = [];
         let maxId = 0;
@@ -7332,6 +7817,40 @@
         });
     })();
     bindGravity();
+
+    // The Solar System scene's start date, star colours and comet tails (for testing; dates as 'YYYY-MM-DD')
+    Object.assign(window.orbitsSimulation, {
+        // A new start date (1800 to 2050): reloads a scene with one, as the settings' field does
+        setStartDate(iso) {
+            const jd = parseIsoDate(iso);
+            if (!(jd >= JD_MIN && jd <= JD_MAX)) return null;
+            setStartDate(jd);
+            return window.orbitsSimulation.date();
+        },
+        // The start date, the date now in the simulation and what the info bar shows (null if the scene has none)
+        date() {
+            if (!scene.dated) return null;
+            const jd = startDate.jd + simTime * DAYS_PER_YEAR;
+            return { start: isoDate(startDate.jd), now: isoDate(jd), jd, years: simTime, shown: ui.statTime ? ui.statTime.textContent : null };
+        },
+        // The colour a main-sequence star of this mass (M_sun) is drawn in, and its temperature (K)
+        starColour: (m) => starColour(m),
+        starTemperature: (m) => temperatureOf(m),
+        // Where JPL's table puts a planet on a date: heliocentric, flat as in the scene (x, y, lon) and in
+        // true ecliptic coordinates (lon3, lat3), in AU and degrees
+        planetAt(name, iso) {
+            const row = PLANET_TABLE.find((r) => KINDS[r[0]].name === name);
+            const jd = parseIsoDate(iso);
+            if (!row || !(jd > 0)) return null;
+            const s = planetState(row, jd), deg = (v) => ((v / TO_RAD) % 360 + 360) % 360;
+            return {
+                x: s.x, y: s.y, vx: s.vx, vy: s.vy, r: Math.hypot(s.x, s.y), lon: deg(Math.atan2(s.y, s.x)),
+                lon3: deg(Math.atan2(s.y3, s.x3)), lat3: Math.atan2(s.z3, Math.hypot(s.x3, s.y3)) / TO_RAD, r3: Math.hypot(s.x3, s.y3, s.z3)
+            };
+        },
+        // The comet tails drawn in the last frame (and the chosen comet's strength, 0 to 1, and the star lighting it)
+        tails: () => Object.assign({}, tailInfo)
+    });
 
     // ------------------------------------------------------------------
     // Start

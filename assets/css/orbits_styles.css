@@ -1546,3 +1546,60 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     background: linear-gradient(90deg, #e0b48a 0 48%, #7ecaf6 48% 100%);
     color: #7ecaf6;
 }
+
+/* ---------- The Solar System scene: its start date ----------
+   Under the scene list, only for a scene with a start date. Styled like the selects above it (a
+   bordered box, the accent on focus), at least 40 px tall for a finger; the native date picker follows
+   the theme. */
+.orb-date {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+}
+
+.orb-date[hidden] {
+    display: none;
+}
+
+.sim-controls-content .orb-date label {
+    font-size: 0.9em;
+}
+
+.orb-date-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 2.6em;
+    min-height: 40px;
+    padding: 0 0.75em;
+    font: inherit;
+    font-size: 0.95em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    color-scheme: light;
+}
+
+html.dark-mode .orb-date-input {
+    color-scheme: dark;
+}
+
+.orb-date-input:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.orb-date-input:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.orb-date-input[aria-invalid="true"] {
+    border-color: #d9485f;
+}
+
+.sim-controls-content .orb-date .orb-note {
+    margin-top: 0;
+}
