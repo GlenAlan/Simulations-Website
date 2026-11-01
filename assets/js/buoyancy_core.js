@@ -2951,7 +2951,7 @@
                     if (ny > 1e-3) d = Math.min(d, Math.max(0, (outside(xs[i] + nx * d) - 0.002 + thru - zs[i]) / ny));
                     qx[i] = xs[i] + nx * d; qz[i] = zs[i] + ny * d;
                 }
-                out.push({ xs, zs, qx, qz, nx, ny, thru });
+                out.push({ xs, zs, qx, qz, nx, ny, thru, grow });
             }
         }
         return out;
@@ -3012,7 +3012,7 @@
     const bulgeList = [];
     function drawAirBulges(cv, c, s, own, liq) {
         for (const b of airBulges(cv, c, s, own, 1 / scale, bulgeList)) {
-            const { xs, zs, qx, qz, nx, ny, thru } = b, n = xs.length;
+            const { xs, zs, qx, qz, nx, ny, thru, grow } = b, n = xs.length;
             // (where it breaks through the tank's surface, nothing of it shows above: clipped to the
             // liquid, going by the level beyond the opening's ends wherever the curve dips below it)
             let clip = null;
@@ -3042,8 +3042,10 @@
             p.closePath();
             ctx.fillStyle = bgGradient;
             ctx.fill(p);
+            // (its edge comes in with it: drawn in full while it is still lying along the opening, it
+            // would be a straight line there)
             ctx.strokeStyle = liq.surface;
-            ctx.globalAlpha = 0.85;
+            ctx.globalAlpha = 0.85 * Math.min(1, 2 * grow);
             ctx.lineWidth = 1.5;
             ctx.stroke(edge);
             ctx.globalAlpha = 1;
