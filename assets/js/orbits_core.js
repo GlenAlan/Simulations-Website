@@ -3218,6 +3218,818 @@
         return best ? best.id : null;
     }
 
+    // ------------------------------------------------------------------
+    // Finding your way: the "Bodies" list in the settings, zooming to an orbit, choosing bodies from
+    // the keyboard, the help sheet of keys and gestures, and what a screen reader is told.
+    //   The list is virtualised: only the rows in sight (and the one the keyboard is on) are in the
+    //   page, a few row elements reused as it scrolls, so 1,000 bodies cost no more than ten. Its values
+    //   are brought up to date four times a second, and only while it is open. Its order is worked out
+    //   again when bodies come or go, the order is changed, or every two seconds for orders that change
+    //   as things move, but not while the pointer or the keyboard is in it, so rows don't jump under a
+    //   click. A swarm's light bodies, and the pieces of a torn-apart body, are grouped by name
+    //   ("Trojan 1…300"), closed until opened. It is an ARIA tree of flat rows (aria-level, -setsize
+    //   and -posinset) with the focus kept on the tree (aria-activedescendant), since the rows are
+    //   reused; moving along it chooses each body, as clicking one does. The chosen body's row grows a
+    //   line of buttons: zoom to its orbit, view from it, edit it, delete it.
+    //   Keys, not while typing: ? the help; N and Shift+N the next or previous body in "heaviest first"
+    //   order (each body followed by what orbits it, so a moon comes after its planet); Z zoom to the
+    //   chosen body's orbit; Enter on the canvas its menu. N and Z only while the simulation is in use
+    //   (as for R and Delete), so they don't act while you read the page.
+    // ------------------------------------------------------------------
+    Object.assign(ui, {
+        bodiesGroup: byId('bodiesGroup'), bodiesCount: byId('bodiesCount'), bodiesFind: byId('bodiesFind'),
+        bodiesSort: byId('bodiesSort'), bodiesWrap: byId('bodiesWrap'), bodiesTree: byId('bodiesTree'),
+        bodiesSizer: byId('bodiesSizer'), bodiesActions: byId('bodiesActions'), bodiesEmpty: byId('bodiesEmpty'),
+        popZoom: byId('popZoom'), keysBtn: byId('keysHelpBtn'), keysHelp: byId('keysHelp'),
+        keysClose: byId('keysHelpClose'), announcer: byId('orbAnnounce')
+    });
+    const NAV_ROW_H = 44;          // px: a row of the list (its name line and its values line)
+    const NAV_TICK_MS = 250;       // the list's values, the canvas's description: four times a second
+    const NAV_RESORT_MS = 2000;    // orders that change as things move are worked out again this often
+    const NAV_LABEL_MS = 2000;     // the canvas's summary for screen readers, at most this often
+    const NAV_GROUP_MIN = 4;       // swarm bodies or pieces that share a name are grouped from this many
+    const nav = {
+        rows: [],              // the list's rows in order: bodies, and groups ({ isGroup: true, ... })
+        groups: new Map(),     // name -> a group of swarm bodies or pieces
+        order: [],             // bodies in "heaviest first" order (reused)
+        gid: 0, build: 0, stamp: 0, renames: 0,
+        sig: '', builtAt: 0, dirty: true,
+        sort: 'mass', find: '',
+        slots: [], extra: null, // row elements, reused as the list scrolls (extra: the keyboard's row when out of sight)
+        active: null,          // the row the keyboard is on
+        shownSel: null,        // the chosen body as the list last showed it
+        selIdx: -1, total: -1, com: null,
+        visible: false, hover: false, scrollQueued: false, renderId: 0,
+        actH: 42,              // px: the chosen row's line of buttons
+        inUse: false,          // the simulation (or its settings) was the last thing pressed or focused
+        popOpener: null, helpOpener: null,   // where the focus goes back to when the menu or the help closes
+        labelNext: 0, announceTimer: 0, announced: '', cost: 0
+    };
+
+    // ---- Facts about a body, as the info bar gives them ----
+    // What it goes round, and its distance, speed and period from that (the heaviest body's from the
+    // centre of mass, com); the period measured over its last orbit once it has one.
+    function bodyFacts(b, com) {
+        const p = b.primary;
+        const top = !p || (p.primary === b && b.m > p.m);
+        const o = top ? com : p;
+        const f = { top, dist: Math.hypot(b.x - o.x, b.y - o.y), speed: Math.hypot(b.vx - o.vx, b.vy - o.vy), T: Infinity, around: '' };
+        if (bodies.length < 2) f.around = 'on its own';
+        else if (top) f.around = 'around the centre of mass';
+        else f.around = `${b.bound ? 'around' : 'escaping'} ${theName(p)}`;
+        if (p && b.bound) {
+            const tr = !top && b.track;
+            f.T = tr && tr.done > 0 && tr.pid === p.id ? tr.T : elementsOf(b, p).T;
+        }
+        return f;
+    }
+
+    const distText = (au) => { const d = fmtDistance(au); return `${d.v} ${d.u}`; };
+    const speedText = (v) => { const s = fmtSpeedKms(v * AUYR_KMS); return `${s.v} ${s.u}`; };
+    // (screen readers read "M⊕" as symbols)
+    const massWords = (m) => fmtMass(m).replace(' M☉', ' solar masses').replace(' M⊕', ' Earth masses');
+
+    // "Mars, around the Sun, 1.524 AU, period 1.88 yr": what is announced when a body is chosen
+    function describeBody(b, f) {
+        const g = f || bodyFacts(b, totals(bodies));
+        if (bodies.length < 2) return `${b.name}, on its own`;
+        if (g.top) {
+            const partner = isFinite(g.T) && b.primary ? `, going round with ${theName(b.primary)} every ${fmtDuration(g.T, true)}` : '';
+            return `${b.name}, the heaviest body${partner}`;
+        }
+        return `${b.name}, ${g.around}, ${distText(g.dist)}${isFinite(g.T) ? `, period ${fmtDuration(g.T, true)}` : ''}`;
+    }
+
+    // ---- Orders ----
+    // A name split into what it starts with and its number ("Trojan 17": "Trojan", 17), for grouping
+    // and for sorting by name with 2 before 10. Worked out again only when the name changes.
+    function navNameParts(b) {
+        if (b.navName === b.name) return;
+        b.navName = b.name;
+        const m = /^(.*?)\s*(\d+)$/.exec(b.name);
+        b.navBase = m && m[1] ? m[1] : b.name;
+        b.navNum = m && m[1] ? +m[2] : 1;
+    }
+    function byName(a, b) {
+        navNameParts(a); navNameParts(b);
+        return a.navBase.localeCompare(b.navBase) || a.navNum - b.navNum || a.id - b.id;
+    }
+
+    // Every body, heaviest first, each followed by what orbits it (heaviest first, equal masses nearest
+    // first): Sun, Jupiter, Earth, Moon, Venus... A body hangs under its primary only if that comes
+    // first (heavier, or as heavy and older), so a binary's heavier star leads and nothing loops.
+    // Sets each body's navD (distance from what it hangs under, or from the centre of mass) and
+    // navDepth (how far down it hangs).
+    function systemOrder(out) {
+        const stamp = ++nav.stamp;
+        for (const b of bodies) b.navStamp = stamp;
+        const com = totals(bodies);
+        const parentOf = (b) => {
+            const p = b.primary;
+            return p && p !== b && p.navStamp === stamp && (p.m > b.m || (p.m === b.m && p.id < b.id)) ? p : null;
+        };
+        for (const b of bodies) {
+            const o = parentOf(b) || com;
+            b.navD = Math.hypot(b.x - o.x, b.y - o.y);
+        }
+        const sorted = bodies.slice().sort((a, b) => b.m - a.m || a.navD - b.navD || a.id - b.id);
+        const kids = new Map();
+        const roots = [];
+        for (const b of sorted) {
+            const p = parentOf(b);
+            if (!p) { roots.push(b); continue; }
+            let k = kids.get(p.id);
+            if (!k) kids.set(p.id, k = []);
+            k.push(b);
+        }
+        out.length = 0;
+        const visit = (b, depth) => {
+            b.navDepth = depth;
+            out.push(b);
+            const k = kids.get(b.id);
+            if (k) for (const c of k) visit(c, depth + 1);
+        };
+        for (const r of roots) visit(r, 0);
+        return out;
+    }
+
+    // The bodies in the list's order (by name, distance from what each orbits, or period: shortest
+    // first, the escaping and the heaviest last)
+    function navSorted() {
+        const out = nav.order;
+        if (nav.sort === 'mass') return systemOrder(out);
+        out.length = 0;
+        const com = totals(bodies);
+        for (const b of bodies) {
+            b.navDepth = 0;
+            if (nav.sort !== 'name') { const f = bodyFacts(b, com); b.navD = f.dist; b.navT = f.T; }
+            out.push(b);
+        }
+        if (nav.sort === 'name') out.sort(byName);
+        else if (nav.sort === 'distance') out.sort((a, b) => a.navD - b.navD || byName(a, b));
+        else out.sort((a, b) => a.navT - b.navT || a.navD - b.navD || byName(a, b));
+        return out;
+    }
+
+    // ---- The list's rows ----
+    const grouped = (b) => !!(b.minor || b.grp);
+
+    function navRowAt(r, i, level, pos, indent) {
+        r.navIdx = i; r.navBuild = nav.build; r.navLevel = level; r.navPos = pos; r.navIndent = indent;
+    }
+
+    // Work out the rows: in order, a group's row in the place of its first member (followed by its
+    // members if it is open), every other body (that matches what is typed in "Find") on its own row
+    function navBuild() {
+        nav.build++;
+        const list = navSorted();
+        const find = nav.find.trim().toLowerCase();
+        for (const g of nav.groups.values()) g.members.length = 0;
+        for (const b of list) {
+            navNameParts(b);
+            if (find || !grouped(b)) continue;
+            let g = nav.groups.get(b.navBase);
+            if (!g) {
+                g = { isGroup: true, gid: ++nav.gid, base: b.navBase, members: [], open: false, lo: 0, hi: 0 };
+                nav.groups.set(b.navBase, g);
+            }
+            g.members.push(b);
+        }
+        const rows = nav.rows;
+        rows.length = 0;
+        const indentOf = (b) => (nav.sort === 'mass' && !find ? Math.min(b.navDepth, 3) : 0);
+        let top = 0;
+        for (const b of list) {
+            if (find && !b.name.toLowerCase().includes(find)) continue;
+            const g = !find && grouped(b) ? nav.groups.get(b.navBase) : null;
+            if (g && g.members.length >= NAV_GROUP_MIN) {
+                if (g.members[0] !== b) continue;
+                g.lo = Infinity; g.hi = -Infinity;
+                for (const m of g.members) { g.lo = Math.min(g.lo, m.navNum); g.hi = Math.max(g.hi, m.navNum); }
+                navRowAt(g, rows.length, 1, ++top, indentOf(b));
+                rows.push(g);
+                if (g.open) {
+                    g.members.forEach((m, k) => { navRowAt(m, rows.length, 2, k + 1, g.navIndent + 1); m.navSize = g.members.length; rows.push(m); });
+                }
+                continue;
+            }
+            navRowAt(b, rows.length, 1, ++top, indentOf(b));
+            rows.push(b);
+        }
+        for (const r of rows) if (r.navLevel === 1) r.navSize = top;
+        nav.dirty = false;
+        nav.builtAt = performance.now();
+        if (nav.active && !navHas(nav.active)) nav.active = null;
+    }
+
+    const navHas = (r) => !!r && r.navBuild === nav.build && nav.rows[r.navIdx] === r;
+
+    // Has the set of bodies changed (added, removed, merged, renamed, or a swarm body grown big enough
+    // to be named)? A few additions a body, no allocations.
+    function navSignature() {
+        let ids = 0, small = 0;
+        for (const b of bodies) {
+            ids += b.id;
+            if (grouped(b)) small++;
+            if (b.navName !== b.name) { navNameParts(b); nav.renames++; }
+        }
+        return `${bodies.length}|${ids}|${small}|${nav.renames}`;
+    }
+
+    // Row layout: the chosen body's row is taller by its line of buttons
+    const navRowTop = (i, sel) => i * NAV_ROW_H + (sel >= 0 && i > sel ? nav.actH : 0);
+    function navIndexAt(y, sel) {
+        const after = (sel + 1) * NAV_ROW_H;
+        return Math.floor((sel >= 0 && y >= after ? Math.max(after, y - nav.actH) : y) / NAV_ROW_H);
+    }
+    function navSelIndex() {
+        const b = bodyById(selectedId);
+        return b && navHas(b) ? b.navIdx : -1;
+    }
+
+    function navRowEl() {
+        const el = document.createElement('div');
+        el.className = 'orb-bl-row';
+        el.setAttribute('role', 'treeitem');
+        el.hidden = true;
+        el.innerHTML = '<span class="orb-bl-dot" aria-hidden="true"></span><span class="orb-bl-line"><span class="orb-bl-name"></span> <span class="orb-bl-around"></span></span>'
+            + '<span class="orb-bl-mass" aria-hidden="true"></span><span class="orb-bl-vals" aria-hidden="true"></span>';
+        el.navDot = el.children[0];
+        el.navName = el.children[1].children[0];
+        el.navAround = el.children[1].children[1];
+        el.navMass = el.children[2];
+        el.navVals = el.children[3];
+        ui.bodiesTree.appendChild(el);
+        return el;
+    }
+
+    function setAttr(el, name, v) {
+        const s = String(v);
+        if (el.getAttribute(name) !== s) el.setAttribute(name, s);
+    }
+
+    // Put row r (at index i) into element el; values: work out its numbers again (the 4 Hz update);
+    // label: rewrite what a screen reader reads for it (it is read when the keyboard reaches it, so it
+    // isn't changed while the keyboard is on it, which would have it read out again and again)
+    function navFill(el, r, i, sel, values, label) {
+        const isG = !!r.isGroup;
+        const key = isG ? `g${r.gid}` : `b${r.id}`;
+        const fresh = el.navKey !== key;
+        if (fresh) {
+            el.navKey = key;
+            el.id = `orbBl-${key}`;
+            el.classList.toggle('is-group', isG);
+            if (isG) el.removeAttribute('aria-selected'); else el.removeAttribute('aria-expanded');
+        }
+        el.navRow = r;
+        el.navSeen = nav.renderId;
+        if (el.hidden) el.hidden = false;
+        const y = navRowTop(i, sel);
+        if (el.navTop !== y) { el.navTop = y; el.style.transform = `translateY(${y}px)`; }
+        if (el.navIndentShown !== r.navIndent) { el.navIndentShown = r.navIndent; el.style.setProperty('--orb-bl-indent', r.navIndent); }
+        setAttr(el, 'aria-level', r.navLevel);
+        setAttr(el, 'aria-posinset', r.navPos);
+        setAttr(el, 'aria-setsize', r.navSize);
+        const chosen = !isG && r.id === selectedId;
+        if (isG) setAttr(el, 'aria-expanded', r.open ? 'true' : 'false');
+        else setAttr(el, 'aria-selected', chosen ? 'true' : 'false');
+        el.classList.toggle('is-chosen', chosen);
+        el.classList.toggle('is-active', r === nav.active);
+        // (the keyboard's row keeps its words while the tree has the focus)
+        const reading = r === nav.active && document.activeElement === ui.bodiesTree;
+        if (fresh || values || label) navValues(el, r, fresh || label || (values && !reading));
+    }
+
+    function navValues(el, r, label) {
+        const com = nav.com || (nav.com = totals(bodies));
+        let name, around, mass = '', vals, words;
+        if (r.isGroup) {
+            const ms = r.members;
+            let lo = Infinity, hi = 0, p = ms[0].primary, same = true;
+            for (const m of ms) {
+                const f = m.primary && m.primary !== m ? m.primary : com;
+                const d = Math.hypot(m.x - f.x, m.y - f.y);
+                if (d < lo) lo = d;
+                if (d > hi) hi = d;
+                if (m.primary !== p || !m.bound) same = false;
+            }
+            setBg(el.navDot, ms[0].color);
+            // ("Trojan 1…300"; just "Fragment" for the pieces of a torn-apart body, which share one name)
+            const span = r.lo < r.hi;
+            name = span ? `${r.base} ${r.lo}…${r.hi}` : r.base;
+            around = same && p ? `around ${theName(p)}` : '';
+            const hiD = fmtDistance(hi), loD = fmtDistance(lo);
+            vals = `${ms.length} bodies · ${loD.u === hiD.u ? loD.v : (hiD.u === 'km' ? fmtKm(lo * AU_KM) : lo.toFixed(3))}–${hiD.v} ${hiD.u}`;
+            words = `${span ? `${r.base} ${r.lo} to ${r.hi}` : r.base}, ${ms.length} bodies${around ? `, ${around}` : ''}`;
+        } else {
+            const f = bodyFacts(r, com);
+            setBg(el.navDot, r.color);
+            name = r.name;
+            around = f.around;
+            const period = isFinite(f.T) ? fmtDuration(f.T, true) : '';
+            mass = fmtMass(r.m);
+            vals = `${distText(f.dist)} · ${speedText(f.speed)}${period ? ` · ${period}` : ''}`;
+            words = `${r.name}, ${around}, ${distText(f.dist)}, ${speedText(f.speed)}${period ? `, period ${period}` : ''}, mass ${massWords(r.m)}`;
+        }
+        setText(el.navName, name);
+        setText(el.navAround, around);
+        setText(el.navMass, mass);
+        setText(el.navVals, vals);
+        if (label || !el.getAttribute('aria-label')) setAttr(el, 'aria-label', words);
+    }
+    // (the dot's colour as its colour too: a group's second dot is drawn in it)
+    function setBg(el, c) { if (el.navBg !== c) { el.navBg = c; el.style.background = c; el.style.color = c; } }
+
+    // Show the rows in sight (and the keyboard's row), the chosen row's buttons, and the tree's state
+    function navRender(values) {
+        const tree = ui.bodiesTree;
+        if (!tree) return;
+        nav.renderId++;
+        const rows = nav.rows, n = rows.length;
+        const sel = navSelIndex();
+        nav.selIdx = sel;
+        const total = n * NAV_ROW_H + (sel >= 0 ? nav.actH : 0);
+        if (nav.total !== total) { nav.total = total; ui.bodiesSizer.style.height = `${total}px`; }
+        const h = tree.clientHeight, y = tree.scrollTop;
+        const i0 = Math.max(0, navIndexAt(y, sel) - 2), i1 = Math.min(n - 1, navIndexAt(y + h, sel) + 2);
+        const count = Math.max(0, i1 - i0 + 1);
+        while (nav.slots.length < count) nav.slots.push(navRowEl());
+        const K = nav.slots.length;
+        // Row i goes into slot i mod K, so a row that stays in sight as the list scrolls keeps its element
+        for (let i = i0; i <= i1; i++) navFill(nav.slots[i % K], rows[i], i, sel, values, false);
+        const ai = navHas(nav.active) ? nav.active.navIdx : -1;
+        if (!nav.extra) nav.extra = navRowEl();
+        if (ai >= 0 && (ai < i0 || ai > i1)) navFill(nav.extra, rows[ai], ai, sel, values, false);
+        for (const el of nav.slots.concat(nav.extra)) {
+            if (el.navSeen === nav.renderId || el.hidden) continue;
+            el.hidden = true;
+            el.removeAttribute('id');
+            el.navKey = null;
+        }
+        const activeEl = ai >= 0 ? byId(`orbBl-${nav.active.isGroup ? `g${nav.active.gid}` : `b${nav.active.id}`}`) : null;
+        if (activeEl) setAttr(tree, 'aria-activedescendant', activeEl.id); else tree.removeAttribute('aria-activedescendant');
+        tree.classList.toggle('has-active', !!activeEl);
+        if (ui.bodiesEmpty) ui.bodiesEmpty.hidden = n > 0;
+        navPlaceActions(sel, y);
+    }
+
+    // The chosen row's buttons, over the bottom of its row (outside the tree, which may hold only rows)
+    function navPlaceActions(sel, y) {
+        const act = ui.bodiesActions;
+        if (!act) return;
+        const b = sel >= 0 ? nav.rows[sel] : null;
+        if (!b) { if (!act.hidden) act.hidden = true; return; }
+        if (act.hidden) act.hidden = false;
+        const top = navRowTop(sel, sel) + NAV_ROW_H - y;
+        if (act.navTop !== top) { act.navTop = top; act.style.transform = `translateY(${top}px)`; }
+        const w = `${ui.bodiesTree.clientWidth}px`;
+        if (act.style.width !== w) act.style.width = w;
+        setAttr(act, 'aria-label', b.name);
+        const view = act.querySelector('[data-act="view"]'), del = act.querySelector('[data-act="delete"]');
+        setAttr(view, 'aria-pressed', frameId === b.id ? 'true' : 'false');
+        view.title = frameId === b.id ? 'Go back to the centre-of-mass view (double-click)' : 'View the motion from it (double-click)';
+        if (del.disabled !== bodies.length < 2) del.disabled = bodies.length < 2;
+    }
+
+    function navEnsureVisible(i) {
+        const tree = ui.bodiesTree;
+        if (!tree || i < 0) return;
+        const sel = navSelIndex();
+        const top = navRowTop(i, sel), bottom = top + NAV_ROW_H + (i === sel ? nav.actH : 0);
+        if (top < tree.scrollTop) tree.scrollTop = top;
+        else if (bottom > tree.scrollTop + tree.clientHeight) tree.scrollTop = Math.min(top, bottom - tree.clientHeight);
+    }
+
+    // The keyboard's row moves to r; a body's row chooses it, as clicking does
+    function navActivate(r) {
+        if (!navHas(r)) return;
+        nav.active = r;
+        if (!r.isGroup && r.id !== selectedId) {
+            if (popBody && popBody !== r) closePopover();
+            selectBody(r.id);
+        }
+        nav.shownSel = selectedId;
+        navRender(false);
+        navEnsureVisible(r.navIdx);
+        navRender(false);
+        // (fresh numbers for the screen reader, before it reads the row)
+        const el = byId(`orbBl-${r.isGroup ? `g${r.gid}` : `b${r.id}`}`);
+        if (el) navValues(el, r, true);
+    }
+
+    function navToggle(g, open) {
+        g.open = open;
+        nav.active = g;
+        navBuild();
+        navRender(true);
+        navEnsureVisible(g.navIdx);
+        navRender(false);
+    }
+
+    // The chosen body changed somewhere else (the canvas, N, an undo): open its group if it is in a
+    // closed one, put the keyboard's row on it and scroll it into sight
+    function navReveal() {
+        nav.shownSel = selectedId;
+        if (nav.dirty) navBuild();
+        const b = bodyById(selectedId);
+        if (b && !navHas(b) && !nav.find && grouped(b)) {
+            navNameParts(b);
+            const g = nav.groups.get(b.navBase);
+            if (g && !g.open) { g.open = true; navBuild(); }
+        }
+        if (b && navHas(b)) nav.active = b;
+        navRender(false);
+        if (b && navHas(b)) { navEnsureVisible(b.navIdx); navRender(false); }
+    }
+
+    function navListVisible() {
+        const g = ui.bodiesGroup;
+        if (!g || !g.open) return false;
+        const panel = g.closest('.sim-controls-panel');
+        return !panel || panel.classList.contains('panel-open');
+    }
+
+    // Four times a second: the count in the list's heading, the canvas's summary, and while the list
+    // is open its order (if needed), the chosen body and the numbers in sight
+    function navTick() {
+        const t0 = performance.now();
+        if (ui.bodiesCount) setText(ui.bodiesCount, `(${bodies.length})`);
+        if (t0 >= nav.labelNext && document.activeElement !== canvas) { nav.labelNext = t0 + NAV_LABEL_MS; updateCanvasLabel(); }
+        const vis = navListVisible();
+        if (vis) {
+            const sig = navSignature();
+            if (sig !== nav.sig) { nav.sig = sig; nav.dirty = true; }
+            const busy = nav.hover || (ui.bodiesWrap && ui.bodiesWrap.contains(document.activeElement));
+            if (!nav.dirty && nav.sort !== 'name' && !busy && t0 - nav.builtAt > NAV_RESORT_MS) nav.dirty = true;
+            nav.com = totals(bodies);
+            if (!nav.visible || selectedId !== nav.shownSel) navReveal();
+            else if (nav.dirty) navBuild();
+            navRender(true);
+            nav.cost += 0.2 * (performance.now() - t0 - nav.cost);
+        }
+        nav.visible = vis;
+    }
+
+    // ---- Zoom to an orbit ----
+    // The box (relative to the frame origin) round b's orbit around p as it is drawn: round the pair's
+    // centre of mass, round p if the view is from p, or p's path round b if the view is from b.
+    function orbitBox(b, p, el) {
+        const M = b.m + p.m;
+        let cx, cy, k;
+        if (frameId === p.id) { cx = p.dx; cy = p.dy; k = 1; }
+        else if (frameId === b.id) { cx = b.dx; cy = b.dy; k = -1; }
+        else { cx = (b.m * b.dx + p.m * p.dx) / M; cy = (b.m * b.dy + p.m * p.dy) / M; k = p.m / M; }
+        const A = Math.abs(k) * el.a, B = A * Math.sqrt(Math.max(0, 1 - el.e * el.e));
+        const w = k < 0 ? el.w + Math.PI : el.w;
+        const ca = Math.cos(w), sa = Math.sin(w);
+        // the ellipse's centre is a·e from its focus, away from the closest point
+        const ox = cx - el.e * A * ca - F.x, oy = cy - el.e * A * sa - F.y;
+        const hx = Math.sqrt(A * A * ca * ca + B * B * sa * sa), hy = Math.sqrt(A * A * sa * sa + B * B * ca * ca);
+        const pad = 0.12 * Math.max(hx, hy);
+        return [ox - hx - pad, ox + hx + pad, oy - hy - pad, oy + hy + pad];
+    }
+
+    // The bodies that pull b off its orbit round p: those whose pull on b, less their pull on p (what
+    // changes the orbit), is more than a tenth of p's pull. The Sun's on the Moon is a hundredth of
+    // Earth's in this sense; in a dance of three equal stars each pulls about as hard as the other.
+    function disturbers(b, p) {
+        const rx = b.x - p.x, ry = b.y - p.y;
+        const r2 = rx * rx + ry * ry;
+        const own = (b.m + p.m) / Math.max(r2, 1e-30);
+        const out = [];
+        for (const q of bodies) {
+            if (q === b || q === p) continue;
+            const bx = q.x - b.x, by = q.y - b.y, px = q.x - p.x, py = q.y - p.y;
+            const db = Math.pow(bx * bx + by * by, 1.5), dp = Math.pow(px * px + py * py, 1.5);
+            if (!(db > 0 && dp > 0)) continue;
+            const ax = q.m * (bx / db - px / dp), ay = q.m * (by / db - py / dp);
+            if (Math.hypot(ax, ay) > 0.1 * own) out.push(q);
+        }
+        return out;
+    }
+
+    // Glide the view to fit b's orbit round what it orbits. A moon of a planet that moves through the
+    // view is seen from its planet, or its orbit would slide out of sight in moments. Where there is
+    // no such orbit to show (the heaviest body, one escaping, or one pulled about by others as hard
+    // as by what it orbits, as in the three-star scenes) it gets its neighbourhood instead: itself with
+    // the bodies pulling on it, or out to its nearest neighbour. Returns what it did (for the announcement).
+    function zoomToBody(b) {
+        if (!b) return null;
+        // (a jump rather than a glide for those who ask their system for less motion)
+        const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        updateDrawnPositions();
+        const p = b.primary && b.primary !== b && bodies.includes(b.primary) ? b.primary : null;
+        const el = p && b.bound ? elementsOf(b, p) : null;
+        const crowd = p ? disturbers(b, p) : [];
+        if (el && el.bound && !crowd.length && el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12)) {
+            let from = null;
+            // (not the partner of the heavier star of a binary: that orbits b itself)
+            if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id) { setFrame(p.id); from = p; }
+            fitBox(orbitBox(b, p, el), glide);
+            return { how: 'orbit', around: p, from, with: [] };
+        }
+        const cx = b.dx - F.x, cy = b.dy - F.y;
+        if (crowd.length) {
+            const all = crowd.concat(p);
+            let x0 = cx, x1 = cx, y0 = cy, y1 = cy;
+            for (const q of all) {
+                x0 = Math.min(x0, q.dx - F.x); x1 = Math.max(x1, q.dx - F.x);
+                y0 = Math.min(y0, q.dy - F.y); y1 = Math.max(y1, q.dy - F.y);
+            }
+            const pad = 0.15 * Math.max(x1 - x0, y1 - y0);
+            fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], glide);
+            return { how: 'near', around: null, from: null, with: all };
+        }
+        let near = Infinity;
+        for (const q of bodies) if (q !== b) near = Math.min(near, Math.hypot(q.dx - b.dx, q.dy - b.dy));
+        const r = isFinite(near) && near > 0 ? 1.25 * near : 0.5 * (scene.box[1] - scene.box[0]);
+        fitBox([cx - r, cx + r, cy - r, cy + r], glide);
+        return { how: 'near', around: null, from: null, with: [] };
+    }
+
+    function zoomChosen() {
+        const b = bodyById(selectedId);
+        const z = zoomToBody(b);
+        if (!z) return null;
+        const whose = theName(b);
+        const others = z.with.length && z.with.length <= 3 ? z.with.map(theName) : null;
+        announce(z.how === 'orbit' ? `Zoomed to ${whose}'s orbit round ${theName(z.around)}${z.from ? `, viewed from ${theName(z.from)}` : ''}`
+            : others ? `Zoomed in round ${whose}, with ${others.length > 1 ? `${others.slice(0, -1).join(', ')} and ${others[others.length - 1]}` : others[0]}, which pull on it`
+                : z.with.length ? `Zoomed in round ${whose} and the bodies pulling on it` : `Zoomed in round ${whose}`);
+        return z;
+    }
+
+    // ---- Choosing from the keyboard ----
+    function chooseNext(dir) {
+        if (!bodies.length) return null;
+        const order = systemOrder(nav.order);
+        const n = order.length;
+        const i = order.findIndex((q) => q.id === selectedId);
+        const next = order[i < 0 ? (dir > 0 ? 0 : n - 1) : (i + (dir > 0 ? 1 : n - 1)) % n];
+        if (popBody && popBody !== next) closePopover();
+        selectBody(next.id);
+        if (nav.visible) navReveal();
+        announce(describeBody(next));
+        return next;
+    }
+
+    // Its menu, with the focus in it; when the menu closes the focus goes back to opener
+    function editChosen(opener) {
+        const b = bodyById(selectedId);
+        if (!b) return;
+        nav.popOpener = opener || null;
+        openEditor(b, null, true);
+    }
+
+    // Said by screen readers (politely, after what they are reading). Emptied first, so the same words
+    // twice in a row are read twice.
+    function announce(text) {
+        if (!ui.announcer) return;
+        nav.announced = text;
+        ui.announcer.textContent = '';
+        clearTimeout(nav.announceTimer);
+        nav.announceTimer = setTimeout(() => { ui.announcer.textContent = text; }, 60);
+    }
+
+    // The canvas's name for screen readers: the scene, its bodies, the chosen one and the view. No
+    // numbers, so it changes only when something does (a changed name is read out again).
+    function sceneSummary() {
+        const opt = ui.scene ? ui.scene.options[ui.scene.selectedIndex] : null;
+        const named = [];
+        let small = 0;
+        for (const b of bodies) { if (grouped(b)) small++; else named.push(b); }
+        named.sort((a, b) => b.m - a.m);
+        const names = named.slice(0, 6).map((b) => b.name);
+        if (named.length > 6) names.push(`${named.length - 6} more`);
+        if (small) names.push(`${small} small ${small === 1 ? 'body' : 'bodies'}`);
+        const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join('');
+        const n = bodies.length;
+        let s = `Orbit simulation${opt ? `, ${opt.textContent}` : ''}. ${n} ${n === 1 ? 'body' : 'bodies'}: ${list}.`;
+        const b = bodyById(selectedId);
+        if (b) s += ` Chosen: ${b.name}, ${bodyFacts(b, totals(bodies)).around}.`;
+        const L = frameId !== null ? bodyById(frameId) : null;
+        if (L) s += ` Viewed from ${theName(L)}.`;
+        if (paused) s += ' Paused.';
+        return s;
+    }
+    function updateCanvasLabel() {
+        setAttr(canvas, 'aria-label', sceneSummary());
+    }
+
+    // ---- The help: keys and gestures ----
+    function openHelp() {
+        const d = ui.keysHelp;
+        if (!d || d.open) return;
+        const a = document.activeElement;
+        nav.helpOpener = a && a !== document.body ? a : canvas;
+        if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
+        if (ui.keysClose) ui.keysClose.focus();
+    }
+    function closeHelp() {
+        const d = ui.keysHelp;
+        if (!d || !d.open) return;
+        if (typeof d.close === 'function') d.close(); else { d.removeAttribute('open'); helpClosed(); }
+    }
+    function helpClosed() {
+        const o = nav.helpOpener;
+        nav.helpOpener = null;
+        if (o && o.isConnected && o.getClientRects().length) o.focus({ preventScroll: true });
+        else canvas.focus({ preventScroll: true });
+    }
+
+    // While the help is open nothing else hears the keys (it is modal): Escape or ? closes it, and Tab
+    // goes round its own buttons
+    function onHelpKey(e) {
+        const d = ui.keysHelp;
+        if (!d || !d.open) return;
+        e.stopImmediatePropagation();
+        if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); closeHelp(); return; }
+        if (e.key !== 'Tab') return;
+        const items = Array.from(d.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled);
+        if (!items.length) { e.preventDefault(); return; }
+        const i = items.indexOf(document.activeElement);
+        const j = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : (i < 0 || i === items.length - 1 ? 0 : i + 1);
+        e.preventDefault();
+        items[j].focus();
+    }
+
+    function onNavKey(e) {
+        if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
+        const key = e.key;
+        if (key === '?') { e.preventDefault(); openHelp(); return; }
+        const inUse = nav.inUse || !!popBody || document.body.classList.contains('sim-fullscreen-active');
+        if ((key === 'n' || key === 'N') && inUse) {
+            e.preventDefault();
+            chooseNext(e.shiftKey ? -1 : 1);
+        } else if ((key === 'z' || key === 'Z') && !e.shiftKey && inUse) {
+            e.preventDefault();
+            if (!e.repeat) zoomChosen();
+        } else if (key === 'Enter' && e.target === canvas) {
+            e.preventDefault();
+            editChosen(canvas);
+        }
+    }
+
+    // The list's own keys (an ARIA tree): up and down, Home, End, Page Up and Down move (and choose);
+    // right opens a group (or goes into it), left closes it (or goes up to it); Enter opens a group or
+    // the body's menu. (Delete is the page's: it deletes the chosen body, the one the keyboard is on.)
+    function onTreeKey(e) {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const rows = nav.rows, n = rows.length;
+        if (!n) return;
+        const i = navHas(nav.active) ? nav.active.navIdx : -1;
+        const r = i >= 0 ? rows[i] : null;
+        const page = Math.max(1, Math.floor(ui.bodiesTree.clientHeight / NAV_ROW_H) - 1);
+        let j = -1;
+        switch (e.key) {
+            case 'ArrowDown': j = Math.min(n - 1, i + 1); break;
+            case 'ArrowUp': j = Math.max(0, i - 1); break;
+            case 'Home': j = 0; break;
+            case 'End': j = n - 1; break;
+            case 'PageDown': j = Math.min(n - 1, Math.max(0, i) + page); break;
+            case 'PageUp': j = Math.max(0, i - page); break;
+            case 'ArrowRight':
+                if (r && r.isGroup) { if (!r.open) navToggle(r, true); else j = i + 1; }
+                break;
+            case 'ArrowLeft':
+                if (r && r.isGroup && r.open) navToggle(r, false);
+                else if (r && r.navLevel === 2) { for (j = i - 1; j > 0 && !rows[j].isGroup; j--); }
+                break;
+            case 'Enter':
+                if (r && r.isGroup) navToggle(r, !r.open);
+                else if (r) navEdit(ui.bodiesTree);
+                break;
+            default: return;
+        }
+        e.preventDefault();
+        if (j >= 0) navActivate(rows[j]);
+    }
+
+    // Edit from the list. On a phone the settings sheet closes first (the menu is a sheet too), and the
+    // focus goes back to the canvas.
+    function navEdit(opener) {
+        const panel = ui.bodiesGroup ? ui.bodiesGroup.closest('.sim-controls-panel') : null;
+        const toggle = document.querySelector('.sim-panel-toggle-button');
+        const sheet = panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet');
+        if (sheet) toggle.click();
+        editChosen(sheet ? canvas : opener);
+    }
+
+    function onListAction(act, btn) {
+        const b = bodyById(selectedId);
+        if (!b) return;
+        if (act === 'zoom') zoomChosen();
+        else if (act === 'view') {
+            setFrame(frameId === b.id ? null : b.id);
+            announce(frameId === b.id ? `Viewing from ${theName(b)}` : 'Viewing from the centre of mass');
+        } else if (act === 'edit') navEdit(btn);
+        else if (act === 'delete') deleteChosen();
+        navRender(false);
+    }
+
+    function bindNavigation() {
+        const tree = ui.bodiesTree;
+        nav.actH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 48 : 42;
+        if (tree) {
+            tree.style.setProperty('--orb-bl-row', `${NAV_ROW_H}px`);
+            tree.style.setProperty('--orb-bl-act', `${nav.actH}px`);
+            if (ui.bodiesWrap) ui.bodiesWrap.style.setProperty('--orb-bl-act', `${nav.actH}px`);
+            const rowOf = (e) => { const el = e.target.closest('.orb-bl-row'); return el && navHas(el.navRow) ? el.navRow : null; };
+            tree.addEventListener('click', (e) => {
+                const r = rowOf(e);
+                if (!r) return;
+                if (r.isGroup) navToggle(r, !r.open); else navActivate(r);
+            });
+            tree.addEventListener('dblclick', (e) => {
+                const r = rowOf(e);
+                if (!r || r.isGroup) return;
+                setFrame(frameId === r.id ? null : r.id);
+                navRender(false);
+            });
+            tree.addEventListener('keydown', onTreeKey);
+            // (the keyboard starts on the chosen body)
+            tree.addEventListener('focus', () => {
+                if (navHas(nav.active)) return;
+                const b = bodyById(selectedId);
+                nav.active = b && navHas(b) ? b : nav.rows[0] || null;
+                navRender(false);
+            });
+            tree.addEventListener('scroll', () => {
+                if (nav.scrollQueued) return;
+                nav.scrollQueued = true;
+                requestAnimationFrame(() => { nav.scrollQueued = false; if (nav.visible) navRender(false); });
+            }, { passive: true });
+        }
+        if (ui.bodiesWrap) {
+            ui.bodiesWrap.addEventListener('pointerenter', () => { nav.hover = true; });
+            ui.bodiesWrap.addEventListener('pointerleave', () => { nav.hover = false; });
+        }
+        if (ui.bodiesActions) {
+            ui.bodiesActions.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-act]');
+                if (btn) onListAction(btn.dataset.act, btn);
+            });
+            // (a button of a row scrolled out of sight is brought back into it when it gets the focus)
+            ui.bodiesActions.addEventListener('focusin', () => navEnsureVisible(nav.selIdx));
+        }
+        if (ui.bodiesFind) {
+            ui.bodiesFind.addEventListener('input', () => {
+                nav.find = ui.bodiesFind.value;
+                navBuild();
+                if (tree) tree.scrollTop = 0;
+                navReveal();
+            });
+        }
+        if (ui.bodiesSort) {
+            ui.bodiesSort.addEventListener('change', () => {
+                nav.sort = ui.bodiesSort.value;
+                navBuild();
+                navReveal();
+            });
+        }
+        if (ui.bodiesGroup) {
+            ui.bodiesGroup.addEventListener('toggle', () => { nav.dirty = true; nav.visible = false; navTick(); });
+        }
+        if (ui.popZoom) ui.popZoom.addEventListener('click', () => { if (popBody) { selectBody(popBody.id); zoomChosen(); } });
+        // The menu gives the focus back to whatever opened it from the keyboard
+        if (ui.pop) {
+            ui.pop.addEventListener('focusout', () => setTimeout(() => {
+                if (!ui.pop.hidden || !nav.popOpener) return;
+                const o = nav.popOpener;
+                nav.popOpener = null;
+                const a = document.activeElement;
+                if ((!a || a === document.body) && o.isConnected && o.getClientRects().length) o.focus({ preventScroll: true });
+            }, 0));
+        }
+        // The help
+        if (ui.keysBtn) ui.keysBtn.addEventListener('click', openHelp);
+        if (ui.keysClose) ui.keysClose.addEventListener('click', closeHelp);
+        if (ui.keysHelp) {
+            ui.keysHelp.addEventListener('close', helpClosed);
+            // (a click on the dimmed page around it closes it)
+            ui.keysHelp.addEventListener('click', (e) => { if (e.target === ui.keysHelp) closeHelp(); });
+        }
+        window.addEventListener('keydown', onHelpKey, true);
+        document.addEventListener('keydown', onNavKey);
+        // In use: the simulation or its settings were the last thing pressed or focused
+        const inSim = (el) => !!(el && el.closest && el.closest('.simulation-area-wrapper'));
+        window.addEventListener('pointerdown', (e) => { nav.inUse = inSim(e.target); }, true);
+        document.addEventListener('focusin', (e) => {
+            if (e.target !== document.body) nav.inUse = inSim(e.target);
+            if (e.target === canvas) updateCanvasLabel();
+        });
+        // A press on the canvas gives it the keyboard (so Enter, N and Z act on it next), unless you are
+        // working in the body's menu (leaving one of its fields would apply what is half typed)
+        canvas.addEventListener('pointerdown', () => {
+            const a = document.activeElement;
+            if (a === canvas || (ui.pop && ui.pop.contains(a))) return;
+            canvas.focus({ preventScroll: true });
+        });
+        // A body chosen on the canvas shows in the list straight away (after the canvas's own handler)
+        canvas.addEventListener('pointerup', () => setTimeout(() => { if (nav.visible && selectedId !== nav.shownSel) navReveal(); }, 0));
+        setInterval(navTick, NAV_TICK_MS);
+    }
+
     function selectBody(id) {
         if (id === selectedId) return;
         selectedId = id;
@@ -6499,7 +7311,7 @@
         if (!t || !t.tagName) return false;
         if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
         if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
-        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"]'));
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"]'));
     }
 
     function onEditorKey(e) {
@@ -9732,6 +10544,45 @@
         // Turn the radiation reaction off or on (for tests: realistic physics always has it)
         setWaves(v) { gwOn = !!v; forcesDirty = true; }
     });
+
+    // Finding your way (see "Finding your way" above): the list's rows in sight, choosing the next
+    // body, zooming to an orbit, and what screen readers are told
+    Object.assign(window.orbitsSimulation, {
+        // The rows the list shows now (in sight, in order): { name, group, level, around, mass, values, chosen, expanded, label }
+        list() {
+            navTick();
+            const tree = ui.bodiesTree;
+            if (!tree || !nav.visible) return [];
+            const top = tree.scrollTop, bottom = top + tree.clientHeight;
+            return Array.from(tree.querySelectorAll('.orb-bl-row:not([hidden])'))
+                .filter((el) => el.navTop + NAV_ROW_H > top && el.navTop < bottom)
+                .sort((a, b) => a.navTop - b.navTop)
+                .map((el) => ({
+                    name: el.navName.textContent, group: el.classList.contains('is-group'), level: +el.getAttribute('aria-level'),
+                    around: el.navAround.textContent, mass: el.navMass.textContent, values: el.navVals.textContent,
+                    chosen: el.getAttribute('aria-selected') === 'true', expanded: el.getAttribute('aria-expanded'),
+                    label: el.getAttribute('aria-label'), active: el.classList.contains('is-active')
+                }));
+        },
+        listInfo: () => ({ rows: nav.rows.length, elements: nav.slots.length + (nav.extra ? 1 : 0), open: nav.visible, cost: nav.cost, sort: nav.sort, find: nav.find }),
+        // dir 1: the next body, -1 the one before; returns its name
+        chooseNext(dir) { const b = chooseNext(dir === -1 ? -1 : 1); return b ? b.name : null; },
+        // Zoom to a body's orbit (it is chosen); returns how, round what, and the view's target
+        zoomTo(name) {
+            const b = name ? bodies.find((q) => q.name === name) : bodyById(selectedId);
+            if (!b) return null;
+            selectBody(b.id);
+            const z = zoomChosen();
+            return {
+                how: z.how, around: z.around ? z.around.name : null, viewedFrom: z.from ? z.from.name : null,
+                with: z.with.map((q) => q.name), target: view.anim ? Object.assign({}, view.anim) : null
+            };
+        },
+        describe(name) { const b = name ? bodies.find((q) => q.name === name) : bodyById(selectedId); return b ? describeBody(b) : null; },
+        a11y: () => ({ canvasLabel: sceneSummary(), announced: nav.announced, helpOpen: !!(ui.keysHelp && ui.keysHelp.open) }),
+        help(open) { if (open === false) closeHelp(); else openHelp(); }
+    });
+    bindNavigation();
 
     // ------------------------------------------------------------------
     // Start
