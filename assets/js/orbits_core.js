@@ -3747,6 +3747,19 @@
         return best;
     }
 
+    // A tap on a Lagrange point's marker (by touch) reads its note, even among a swarm's dots, such as
+    // the Trojans crowded round L4 and L5: only a body with a name (or the chosen one) near it comes first
+    const LAGRANGE_TAP = 18;
+    function namedBodyAt(x, y, tol) {
+        let best = null, bestD = Infinity;
+        for (const b of bodies) {
+            if (b.minor && !isChosen(b)) continue;
+            const d = Math.hypot(sx(b.dx) - x, sy(b.dy) - y) - drawRadius(b);
+            if (d < tol && d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
     // ------------------------------------------------------------------
     // Gravity well: the potential Phi = -sum G m / sqrt(r^2 + eps^2) of the heavier bodies (a light swarm
     // body's dimple is far too small to see), drawn as a contour map. In a rotating frame it is the
@@ -4040,8 +4053,8 @@
         lagrangeDown = null;
         if (!down || (e.pointerType || 'mouse') === 'mouse' || !lagrangeShown.length) return;
         const pt = canvasPoint(e);
-        if (Math.hypot(pt.x - down.x, pt.y - down.y) > 10 || bodyAt(pt.x, pt.y, 12)) return;
-        const m = lagrangeAt(pt.x, pt.y, 18);
+        if (Math.hypot(pt.x - down.x, pt.y - down.y) > 10 || namedBodyAt(pt.x, pt.y, 12)) return;
+        const m = lagrangeAt(pt.x, pt.y, LAGRANGE_TAP);
         if (!m) return;
         const comma = m.text.indexOf(',');
         showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
@@ -10063,7 +10076,9 @@
         const right = e.button === 2;
         // The chosen body's handle first, then a body, then another body's arrow tip
         let handleBody = right ? null : onHandle(pt.x, pt.y, touch ? GRAB_TOUCH : GRAB_MOUSE);
-        const b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
+        let b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
+        // (by touch a Lagrange point's marker wins over a swarm's unnamed dots: the tap reads its note)
+        if (b && touch && b.minor && !isChosen(b) && lagrangeShown.length && lagrangeAt(pt.x, pt.y, LAGRANGE_TAP) && !namedBodyAt(pt.x, pt.y, tol)) b = null;
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
