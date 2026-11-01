@@ -2740,6 +2740,20 @@ dialog.orb-help::backdrop {
     }
 }
 
+/* ---------- About: "How to use it" in short groups, each headed by a quiet label ---------- */
+.description-area p.orb-howto-group {
+    margin: 0.9em 0 0.3em;
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.85;
+}
+
+.description-area h4 + p.orb-howto-group {
+    margin-top: 0;
+}
+
 /* ---------- Phones held sideways (and other short, wide windows): the info bar beside the canvas ----------
    Three columns: the palette, the canvas and the info bar. Under the canvas the bar took half the
    screen's height; beside it, it costs only width. It also takes its height from the canvas row and

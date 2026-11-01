@@ -205,7 +205,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: 'Double-click the giant planet to view from it: then the star circles the planet, as the Sun seems to circle Earth.',
+            tip: 'View from the giant planet (double-click or double-tap it): then the star circles the planet, as the Sun seems to circle Earth.',
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -242,7 +242,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? It\'s chaos: nudge one star a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
+            tip: 'Three stars start at rest. Who gets thrown out? Nudge one a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -294,7 +294,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter\'s pull herds 500 asteroids: the Trojans stay 60° ahead of it and 60° behind it, and the Hildas trace a triangle that turns with it. Set View from to "Rotating with Jupiter and the Sun" to see them stand still.',
+            tip: 'Jupiter herds 500 asteroids: Trojans 60° ahead of and behind it, and Hildas in a triangle that turns with it. In View from, choose "Rotating with Jupiter and the Sun" to see them stand still.',
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -323,7 +323,7 @@
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
             units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. Turn on Realistic physics to see tides tear apart clumps that stray too close to Earth.',
+            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. With Realistic physics on, tides tear apart clumps that stray too close to Earth.',
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -343,7 +343,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Realistic physics (in the settings) is on. Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
+            tip: 'Realistic physics is on (in the settings). Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -369,7 +369,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Realistic physics (in the settings) is on: gravitational waves carry off energy, so the black holes spiral together and merge.',
+                tip: 'Realistic physics is on (in the settings): gravitational waves carry off energy, so the black holes spiral together and merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }

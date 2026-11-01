@@ -524,7 +524,7 @@
 											<div class="stats-container">
 												<div class="orb-subject" id="statSubject" title="The readouts are for this body (click or tap a body to choose it)">
 													<span class="orb-subject-dot" id="statSubjectDot" aria-hidden="true"></span><span class="orb-subject-name" id="statSubjectName">Earth</span><span class="orb-subject-around" id="statSubjectAround">around the Sun</span>
-													<button type="button" class="orb-subject-edit" id="statSubjectEdit" aria-haspopup="dialog" aria-expanded="false" aria-label="Edit this body: its velocity, orbit, mass and colour" title="Set its velocity, orbit, mass and colour"><span class="icon solid fa-sliders-h" aria-hidden="true"></span><span class="orb-subject-edit-text">Edit</span></button>
+													<button type="button" class="orb-subject-edit" id="statSubjectEdit" aria-haspopup="dialog" aria-expanded="false" aria-label="Edit this body: its mass, colour, velocity and orbit" title="Its mass, colour, velocity and orbit (Enter)"><span class="icon solid fa-sliders-h" aria-hidden="true"></span><span class="orb-subject-edit-text">Edit</span></button>
 												</div>
 												<div class="stats-box" title="Time since the start">
 													<strong>Time:</strong> <span id="statTime" class="sim-value" style="--chars: 6">0.00</span> <span id="statTimeUnit">yr</span>
@@ -595,14 +595,66 @@
 
 											<h4>What you're seeing</h4>
 											<ul>
-												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun. <strong>Teal arrows:</strong> velocities.</li>
+												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun. <strong>Teal arrows:</strong> velocities. The key in the bottom corner gives each arrow's scale.</li>
 												<li><strong>Pull lines</strong> (G) split the chosen body's pink arrow into one arrow for each body pulling on it, joined tip to tail.</li>
 												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless realistic physics is on).</li>
+												<li><strong>Cards</strong> in the top-right corner measure what you have switched on (Kepler's laws, the Hill sphere, the stability timer, a mission). If they would cover too much of the canvas, the lowest turn compact, then fold into a "+2 more" line.</li>
 												<li><strong>Flat, in 2D:</strong> everything moves in one plane, as if seen from straight above. Real orbits are tilted a little to each other (the planets' by a few degrees), so in space bodies usually pass above or below one another. The tilt hardly changes an orbit's size, shape or period, and gravity still falls off as 1/<em>r</em><sup>2</sup>; but here nothing can pass over anything else, so close passes and collisions happen more often than they would in space.</li>
 											</ul>
 
 											<h4>The key idea</h4>
 											<p>Newton's law of gravitation, <em>F</em> = <em>G</em><em>m</em><sub>1</sub><em>m</em><sub>2</sub>/<em>r</em><sup>2</sup>: twice the distance, a quarter of the pull. A planet is always falling towards the Sun, but it moves sideways so fast that it keeps missing. That gives Kepler's laws: orbits are ellipses with the Sun at one focus (1st), a planet sweeps out equal areas in equal times (2nd), and <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> is the same for every planet of a star (3rd).</p>
+
+											<h4>How to use it</h4>
+											<p class="orb-howto-group">Build and move</p>
+											<ul>
+												<li><strong>Add a body:</strong> drag it from the strip into space, or click or tap it to add it at a free spot. Drag a body to move it. Drag empty space to pan; scroll or pinch to zoom; <span class="icon solid fa-expand-arrows-alt"></span> Fit view brings everything back into view.</li>
+												<li><strong>Aim a velocity:</strong> drag the tip of a body's teal arrow (hold Shift for fine control; on a touch screen, hold the tip still for a moment first). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go.</li>
+												<li><strong>Throw a body:</strong> in More options choose <em>Throw it</em>, then flick a body (or one from the strip) as you let go: it keeps the speed of your pointer.</li>
+											</ul>
+											<p class="orb-howto-group">Choose and change a body</p>
+											<ul>
+												<li><strong>Choose a body:</strong> click or tap it. The info bar shows its distance, speed, pull and period (with a tick once the period has been measured over a whole orbit). Double-click or double-tap a body to view the motion from it.</li>
+												<li><strong>Its menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body (or press Enter). <em>Body</em> sets its mass, size and colour; <em>Velocity</em> takes a typed speed and direction (0&deg; is sideways, as in a circle; + is outward) or a push; <em>Orbit</em> sets its period, which scales the whole orbit, or its closest and farthest distances, which keep it where it is; <em>Gravity</em> lists who pulls on it. The arrow keys push the chosen body: &uarr; faster, &darr; slower, &rarr; outward, &larr; inward (Shift finer, Alt coarser).</li>
+												<li><strong>Find a body:</strong> open the settings and <em>Bodies</em> to list them all, with what each orbits, its mass, distance, speed and period. Find one by name, sort them, and choose one for buttons to zoom to its orbit, view from it, edit or delete it. N and Shift+N step through the bodies, heaviest first with moons after their planet; Z zooms to the chosen body's orbit.</li>
+											</ul>
+											<p class="orb-howto-group">Time</p>
+											<ul>
+												<li><strong>Speed:</strong> Space pauses. [ and ] (or the slider in the settings) go from a hundredth of normal speed to a hundred times; the note under the slider says what that means in real time. <span class="icon solid fa-step-forward"></span> or the . key moves on a moment at a time.</li>
+												<li><strong>Run backwards:</strong> tick <em>Run backwards</em> under the speed (or press B) and the clock counts down while every body retraces its path.</li>
+												<li><strong>Try again:</strong> <span class="icon solid fa-undo"></span> Undo (Ctrl+Z, or &#8984;Z on a Mac) takes back a change, a whole drag or slider sweep at a time, and <span class="icon solid fa-redo"></span> Redo (Ctrl+Y) puts it back; even Restart and a change of scene can be undone. <span class="icon solid fa-history"></span> (or R) runs the motion again from your last change, always forwards, so you can tweak a velocity, watch and try again. Delete removes the chosen body.</li>
+											</ul>
+											<p class="orb-howto-group">See gravity at work</p>
+											<ul>
+												<li><strong>Kepler's laws:</strong> each switch draws its law on the chosen body's orbit and measures it in a card.</li>
+												<li><strong>Who pulls:</strong> press G, or turn on <em>Pull lines</em>, to split the chosen body's force arrow into one arrow for each body pulling on it. The menu's <em>Gravity</em> tab lists the pulls, their sizes and their shares of the net force.</li>
+												<li><strong>Gravity wells and rotating views:</strong> turn on <em>Gravity well</em> (or press W) to see each body's well as shading and contour lines. In <em>View from</em>, choose "Rotating with &hellip;" to turn with the chosen body and what it orbits; arrows then show velocities in that turning view. <em>Lagrange points</em> (in More options) marks L1 to L5: hover over or tap one to read about it.</li>
+												<li><strong>Realistic physics:</strong> with it on, a card measures how far the chosen body's orbit turns each time round, against Einstein's formula, and follows the gravitational waves of close black holes and neutron stars.</li>
+											</ul>
+											<p class="orb-howto-group">Scenes, missions and sharing</p>
+											<ul>
+												<li><strong>Scenes:</strong> choose one in the settings; many open with a tip in the line under the canvas (tap <em>More</em> to read a long one on a phone). In "The Solar System on a date", pick any start date from 1800 to 2050: the info bar then shows the date as the planets move. Crowded scenes show their small bodies as dots, without names or arrows: click one to follow it.</li>
+												<li><strong>Missions:</strong> press <span class="icon solid fa-rocket"></span> Missions in the settings, or pick one at the end of the scene list. Only your probe's engine can change anything: burn with the arrow keys, the menu's pushes or its arrow. Every burn uses fuel, Undo gives it back, and the card shows what's left.</li>
+												<li><strong>Random systems:</strong> <span class="icon solid fa-dice"></span> Random system, beside Missions, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Its number goes into a shared link.</li>
+												<li><strong>Save and share:</strong> <span class="icon solid fa-link"></span> Copy a link, at the end of the settings, copies a link to this exact setup; opening it shows the same setup, paused, and Undo goes back. Your work is also saved in this browser as you go: next time, "Carry on where you left off" appears under the canvas for a while. <em>Download data (CSV)</em>, in More options or under the graphs, saves Kepler's 3rd law table, the graphs' data or every body's position and velocity for a spreadsheet.</li>
+												<li><strong>Buttons:</strong> <span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-chart-bar"></span> shows energy graphs, <span class="icon solid fa-sync-alt"></span> restarts the scene, and ? (or Help in the settings) lists every key and gesture.</li>
+											</ul>
+
+											<h4>Things to try</h4>
+											<ul>
+												<li>Raise the eccentricity and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
+												<li>Press Edit, open the Orbit tab and give Earth a period of 2 years: Kepler's 3rd law moves its orbit out to 1.59 AU.</li>
+												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Download the table (More options) and plot <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>: a straight line through the origin.</li>
+												<li>Set the Solar System's start date to your birthday and see where the planets were.</li>
+												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>
+												<li>In "Inner planets", choose the Sun and open its Gravity tab: each planet pulls on the Sun exactly as hard as the Sun pulls on it.</li>
+												<li>In "Slingshot", press G as the probe passes Jupiter: Jupiter's pull and the Sun's add up, tip to tail. Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
+												<li>In "Jupiter's Trojans and Hildas", set View from to "Rotating with Jupiter and the Sun": the Trojans swing slowly round L4 and L5, and the Hildas' triangle stands still.</li>
+												<li>Run "Three stars: chaos" until one star is flung out, then run it backwards (B): rounding errors grow until the stars miss their true past.</li>
+												<li>In the mission "Escape the Sun", burn at the far end of your orbit, then Undo and burn at the closest point: the same push does far more when you're moving fast.</li>
+												<li>Make a random system and speed it up: will its planets last 10,000 years?</li>
+												<li>Open "Mercury's orbit turns" and speed it up: the card measures the 43&Prime; a century by which relativity turns Mercury's orbit.</li>
+											</ul>
 
 											<h4>Realistic physics</h4>
 											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Its pieces still pull on each other, so some may gather into clumps again. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
@@ -619,29 +671,6 @@
 
 											<h4>Gravity wells and rotating views</h4>
 											<p>Turn on <strong>Gravity well</strong> (or press W) to see each body's well as a map: darker is deeper, and each line joins points at the same depth, like the contour lines of a map of hills. Where the lines crowd together, the slope is steep and the pull is strong. In <strong>View from</strong>, a <strong>rotating</strong> view turns with a body and the body it orbits, so both stand still. Velocity arrows then show motion as seen in that turning view, and the well includes the outward push you feel on a roundabout. It gains hilltops 60&deg; ahead of and behind the body, and passes on the line through the pair: the five <strong>Lagrange points</strong> (under More options), where a small body can keep pace with the pair. Surprisingly, the hilltops L4 and L5 are the stable ones: a body that starts to roll off is steered round by the turning (the Coriolis effect), which is why Jupiter's Trojan asteroids gather there. For an elliptical orbit the view keeps the pair on one line, so the body slides in and out along it.</p>
-
-											<h4>Things to try</h4>
-											<ul>
-												<li>Raise the eccentricity and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
-												<li>Drop more planets and turn on the 3rd law to compare their periods.</li>
-												<li>In "Slingshot", Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
-												<li>Run "Three stars: chaos", then nudge one star and run it again.</li>
-												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>
-											<li>Press Edit and give Earth a period of 2 years: Kepler's 3rd law moves its orbit out to 1.59 AU.</li>
-											<li>In "Jupiter's Trojans and Hildas", asteroids 60&deg; ahead of and behind Jupiter keep their places while the Hildas trace a turning triangle.</li>
-											<li>In "A moon forming", hundreds of moonlets pull on each other, collide and stick until a moon has grown.</li>
-											</ul>
-
-											<h4>How to use it</h4>
-											<ul>
-												<li><strong>Add and move bodies:</strong> drag them from the strip into space (or click one to add it at a free spot), and drag a body to move it. Drag empty space to pan; scroll or pinch to zoom. Click or tap a body to choose it: the info bar shows its distance, speed, pull and period (with a tick once the period has been measured over a whole orbit). Double-click or double-tap a body to view the motion from it.</li>
-												<li><strong>Aim a velocity:</strong> drag the tip of its arrow (hold Shift for fine control; on a touch screen, hold the tip still for a moment before dragging). It snaps to the exact circular and escape speeds. The arrow keys push the chosen body: &uarr; faster, &darr; slower, &rarr; outward, &larr; inward (Shift finer, Alt coarser).</li>
-												<li><strong>Exact values:</strong> press <span class="icon solid fa-sliders-h"></span> Edit (or right-click or long-press a body) for its menu. On the Velocity tab, type a speed and direction (0&deg; is sideways, as in a circle; + is outward) or use the &minus; and + buttons and the pushes. On the Orbit tab, set its period, which scales the whole orbit, or its closest and farthest distances, which keep it where it is. The dashed line shows where it will go.</li>
-												<li><strong>Time:</strong> Space pauses. [ and ] slow it down or speed it up, from a hundredth of normal speed to a hundred times; the note under the speed slider says what that means in real time. While paused, <span class="icon solid fa-step-forward"></span> or the . key moves on a moment at a time.</li>
-												<li><strong>Try again:</strong> <span class="icon solid fa-undo"></span> Undo (Ctrl+Z, or &#8984;Z on a Mac) takes back a change, a whole drag or slider sweep at a time, and <span class="icon solid fa-redo"></span> Redo (Ctrl+Y) puts it back; even Restart and a change of scene can be undone. <span class="icon solid fa-history"></span> (or R) runs the motion again from your last change, exactly as before, so you can tweak a velocity, watch and try again. Delete removes the chosen body.</li>
-												<li><strong>Crowded scenes</strong> show their small bodies as dots, without names or arrows: click one to follow it.</li>
-												<li><span class="icon solid fa-cog"></span> opens the settings, <span class="icon solid fa-expand"></span> goes fullscreen, <span class="icon solid fa-chart-bar"></span> shows energy graphs and <span class="icon solid fa-sync-alt"></span> restarts the scene from its original setup.</li>
-											</ul>
 										</div>
 									</details>
 								</div>
@@ -651,17 +680,18 @@
 											<h2 id="keysHelpTitle">Keys and gestures</h2>
 											<button type="button" class="orb-help-close" id="keysHelpClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
 										</div>
-										<p class="orb-help-intro" id="keysHelpIntro">The keys work once you have clicked or tabbed into the simulation, but not while you are typing in a box.</p>
+										<p class="orb-help-intro" id="keysHelpIntro">The keys work once you have clicked or tabbed into the simulation, but not while you are typing in a box. Everything here can also be done with the buttons and the settings.</p>
 										<div class="orb-help-groups">
 											<div class="orb-help-group orb-help-touch">
 												<h3 id="helpTouchTitle">On a touch screen</h3>
 												<dl>
 													<div><dt>Tap a body</dt><dd>Choose it: the info bar shows its distance, speed and period</dd></div>
 													<div><dt>Double-tap a body</dt><dd>View the motion from it (double-tap empty space to go back)</dd></div>
-													<div><dt>Long-press a body</dt><dd>Open its menu: speed, orbit, mass and colour</dd></div>
+													<div><dt>Long-press a body</dt><dd>Open its menu: its mass and colour, velocity, orbit and pulls</dd></div>
 													<div><dt>Drag a body</dt><dd>Move it</dd></div>
 													<div><dt>Drag an arrow's tip</dt><dd>Aim its velocity. Hold the tip still for a moment first for fine aim</dd></div>
 													<div><dt>Drag space · pinch</dt><dd>Move around · zoom in or out</dd></div>
+													<div><dt>Tap a long tip</dt><dd>Read all of it (a tip cut short ends in <em>More</em>)</dd></div>
 												</dl>
 											</div>
 											<div class="orb-help-group">
@@ -669,7 +699,7 @@
 												<dl>
 													<div><dt><kbd>N</kbd> · <kbd>Shift</kbd>+<kbd>N</kbd></dt><dd>Choose the next or previous body: heaviest first, moons after their planet</dd></div>
 													<div><dt><kbd>Z</kbd></dt><dd>Zoom to the chosen body's orbit</dd></div>
-													<div><dt>Bodies list</dt><dd>In the settings: find a body by name, zoom to it or view from it</dd></div>
+													<div><dt>Bodies list</dt><dd>In the settings: find a body by name, then zoom to it, view from it, edit or delete it</dd></div>
 													<div><dt>Click · double-click</dt><dd>Choose a body · view the motion from it</dd></div>
 													<div><dt>Drag space · scroll</dt><dd>Move around · zoom in or out</dd></div>
 													<div><dt><kbd>Tab</kbd></dt><dd>Move between the simulation and its buttons</dd></div>
@@ -679,10 +709,10 @@
 												<h3 id="helpChangeTitle">Change a body</h3>
 												<dl>
 													<div><dt><kbd>Enter</kbd> · right-click</dt><dd>Open the chosen body's menu</dd></div>
-													<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Push it faster or slower</dd></div>
+													<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Push it faster or slower (in a mission, fire the probe's engine)</dd></div>
 													<div><dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>Push it outward or inward (with <kbd>Shift</kbd> finer, <kbd>Alt</kbd> coarser)</dd></div>
 													<div><dt>Drag</dt><dd>Move a body, or aim it by its arrow's tip (hold <kbd>Shift</kbd> for fine aim)</dd></div>
-													<div><dt><kbd>Delete</kbd></dt><dd>Delete the chosen body</dd></div>
+													<div><dt><kbd>Delete</kbd></dt><dd>Delete the chosen body (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back)</dd></div>
 												</dl>
 											</div>
 											<div class="orb-help-group">
@@ -690,19 +720,19 @@
 												<dl>
 													<div><dt><kbd>Space</kbd></dt><dd>Pause or play</dd></div>
 													<div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Slower · faster</dd></div>
-													<div><dt><kbd>.</kbd></dt><dd>Step forward a moment (while paused)</dd></div>
-													<div><dt><kbd>B</kbd></dt><dd>Run backwards</dd></div>
-													<div><dt><kbd>R</kbd></dt><dd>Run again from your last change</dd></div>
+													<div><dt><kbd>.</kbd></dt><dd>Pause, then step forward a moment at a time</dd></div>
+													<div><dt><kbd>B</kbd></dt><dd>Run backwards, or forwards again</dd></div>
+													<div><dt><kbd>R</kbd></dt><dd>Run again from your last change (always forwards)</dd></div>
 													<div><dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></dt><dd>Undo · redo (on a Mac <kbd>⌘</kbd>+<kbd>Z</kbd> · <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>Z</kbd>)</dd></div>
 												</dl>
 											</div>
 											<div class="orb-help-group">
 												<h3 id="helpShowTitle">Show</h3>
 												<dl>
-													<div><dt><kbd>G</kbd></dt><dd>Pull lines</dd></div>
-													<div><dt><kbd>W</kbd></dt><dd>Gravity well</dd></div>
+													<div><dt><kbd>G</kbd></dt><dd>Pull lines: who pulls on the chosen body</dd></div>
+													<div><dt><kbd>W</kbd></dt><dd>Gravity well: shading and contour lines</dd></div>
 													<div><dt><kbd>F</kbd></dt><dd>Frame rate</dd></div>
-													<div><dt><kbd>?</kbd></dt><dd>This list</dd></div>
+													<div><dt><kbd>?</kbd></dt><dd>This list (or <em>Help</em> in the settings)</dd></div>
 													<div><dt><kbd>Esc</kbd></dt><dd>Close a menu, the settings or fullscreen</dd></div>
 												</dl>
 											</div>
