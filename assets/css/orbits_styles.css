@@ -1478,11 +1478,15 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         display: none;
     }
 
+    /* (the page's text grows on wide screens but the column doesn't: capped, like the chips' names,
+       so "Fit view" stays inside its button) */
     .orb-toolbar .orb-fit {
         grid-area: fit;
         width: auto;
         min-width: 0;
         padding: 0 0.4em;
+        gap: 0.4em;
+        font-size: min(1em, 13px);
     }
 
     .orb-hint {
