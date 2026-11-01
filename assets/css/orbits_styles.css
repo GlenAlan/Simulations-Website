@@ -727,8 +727,9 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     outline-offset: 1px;
 }
 
+/* (dark text on the accent, as on the missions' Start: white on it is too faint to read, 2.5:1) */
 .orb-popover button[aria-pressed="true"] {
-    color: #ffffff !important;
+    color: #16181c !important;
     background-color: var(--color-accent);
     box-shadow: none;
 }
@@ -1974,6 +1975,37 @@ html.dark-mode .orb-date-input {
 html.dark-mode .orbits-sim,
 html.dark-mode .orb-help {
     --orb-focus: var(--color-accent);
+}
+
+/* Light theme contrast (WCAG AA). The page's pink is too pale for text on the light greys (2.3:1),
+   so values shown in pink take a darker pink (5:1 or more); and secondary text, a 75% grey there
+   (3.7:1), is 90% (5:1). */
+html:not(.dark-mode) .orbits-sim .sim-controls-content label > .sim-value,
+html:not(.dark-mode) .orbits-sim .sim-controls-content label > span:not([class]),
+html:not(.dark-mode) .orbits-sim .orb-pop-val,
+html:not(.dark-mode) .orbits-sim .orb-popover input.orb-spin-input,
+html:not(.dark-mode) .orbits-sim .orb-mission-stars {
+    color: #b03a5b;
+}
+
+html:not(.dark-mode) .orbits-sim #pauseBtn[aria-pressed="true"] {
+    color: #b03a5b !important;
+}
+
+html:not(.dark-mode) .orbits-sim .orb-toolbar-label,
+html:not(.dark-mode) .orbits-sim .orb-group-label,
+html:not(.dark-mode) .orbits-sim .orb-subject-around,
+html:not(.dark-mode) .orbits-sim .orb-pop-note,
+html:not(.dark-mode) .orbits-sim .orb-field-sub,
+html:not(.dark-mode) .orbits-sim .orb-spin-unit,
+html:not(.dark-mode) .orbits-sim .orb-pop-tabs button:not([aria-selected="true"]),
+html:not(.dark-mode) .orbits-sim .orb-pull-table thead th,
+html:not(.dark-mode) .orbits-sim .orb-mission-kicker,
+html:not(.dark-mode) .orbits-sim .sim-controls-content .orb-note,
+html:not(.dark-mode) .orbits-sim .sim-controls-content label .orb-sub,
+html:not(.dark-mode) .orbits-sim .sim-controls-content .sim-control-group-label,
+html:not(.dark-mode) .orbits-sim .sim-chips input[type="checkbox"]:not(:checked) + label {
+    opacity: 0.9;
 }
 
 /* Hidden, but read by screen readers */
