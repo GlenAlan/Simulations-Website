@@ -6459,7 +6459,8 @@
         stab.unbound.clear();
         for (const b of bodies) {
             ext = Math.max(ext, Math.hypot(b.x - c.x, b.y - c.y));
-            if (restEnergy(b, c) < 0) stab.boundAtStart.add(b.id);
+            // (a planet of one star of a wide pair can seem unbound from the rest as a whole)
+            if (b.bound || restEnergy(b, c) < 0) stab.boundAtStart.add(b.id);
         }
         Object.assign(stab, {
             running: true, scene: settings.scene, t0: simTime, lastT: simTime, ended: null, goalNoted: false, bestBefore: Object.assign({}, stab.best),
