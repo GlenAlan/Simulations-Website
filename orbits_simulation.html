@@ -192,6 +192,11 @@
 												<input type="range" id="speedSlider" min="0" max="23" step="1" value="11" aria-describedby="speedNote" title="Simulation speed ([ slower, ] faster)">
 											</label>
 											<p class="orb-note" id="speedNote">1 yr every 6 s</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="reverseToggle" aria-describedby="reverseNote">
+												<label for="reverseToggle" title="Run time backwards (B)">Run backwards</label>
+											</div>
+											<p class="orb-note" id="reverseNote">Newton's laws work both ways: every body retraces its path.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="sceneLabel">Scene</p>
@@ -269,6 +274,7 @@
 													<option value="circular" selected>Start on a circular orbit</option>
 													<option value="keep">Keep their velocity</option>
 													<option value="rest">Start at rest (in this view)</option>
+													<option value="throw">Throw it (the speed you let go at)</option>
 												</select>
 											</div>
 											<div class="sim-control-group">
@@ -502,6 +508,9 @@
 
 											<h4>Realistic physics</h4>
 											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Its pieces still pull on each other, so some may gather into clumps again. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
+
+											<h4>Running time backwards</h4>
+											<p>Newton's laws work just as well backwards: reverse every velocity and each body retraces its path. Tick <em>Run backwards</em> (or press B) and the clock counts down as the bodies go back along their trails; the velocity arrows still show each body's velocity, so now they point against its motion. In a chaotic system such as "Three stars: chaos", the tiny rounding errors of any computer grow at every close encounter, so after a long run the backward motion drifts away from the true past, and faint dashed discs show where the stars really were. A merger, or a star torn apart, can't run backwards by itself: the simulation puts the bodies back as they were just before.</p>
 
 											<h4>Things to try</h4>
 											<ul>
