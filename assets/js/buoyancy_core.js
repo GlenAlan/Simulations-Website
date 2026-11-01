@@ -4101,6 +4101,12 @@
             dropBtn.setAttribute('aria-pressed', mode === 'sim' ? 'true' : 'false');
             dropBtn.title = mode === 'sim' ? 'Drop the object again from where it was drawn' : 'Drop the object into the liquid';
         }
+        const resetBtn = document.getElementById('resetSimulationBtn');
+        if (resetBtn) {
+            const t = mode === 'sim' ? 'Drop the object again' : 'Drop the object';
+            resetBtn.title = t;
+            resetBtn.setAttribute('aria-label', t);
+        }
         if (editBtn) editBtn.setAttribute('aria-pressed', mode === 'sim' ? 'false' : 'true');
         canvas.style.cursor = mode === 'sim' ? 'default' : 'crosshair';
         hintHold = 0;
@@ -4228,10 +4234,8 @@
         on('editBtn', () => { if (mode === 'sim') enterEditMode(); });
         on('clearBtn', () => { pushUndo(); grid.fill(0); dropUnchangedUndo(); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
         on('undoBtn', () => undo());
-        on('resetSimulationBtn', () => {
-            if (mode === 'sim') dropObject();
-            else { clearWaves(); drawDirty = true; }
-        });
+        // (while drawing it drops the drawing, like Drop: it used to only calm waves there are none of)
+        on('resetSimulationBtn', () => dropObject());
 
         const liqSel = document.getElementById('liquidSelector');
         if (liqSel) {
