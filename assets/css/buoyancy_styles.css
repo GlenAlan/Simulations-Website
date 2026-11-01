@@ -8,7 +8,9 @@
     --buoy-side-gap: 8px;
 }
 
-@media (pointer: coarse) {
+/* (main.css raises the page's font size on wide screens: the buttons grow with it, so "Draw" and
+   "Drop" still fit) */
+@media (pointer: coarse), (min-width: 1681px) {
     .buoyancy-sim {
         --buoy-btn: 40px;
     }
@@ -121,7 +123,8 @@
 }
 
 /* Material swatches and drawing tools: dimmed while the object is being simulated (picking one
-   goes back to drawing) */
+   goes back to drawing). Only the swatches and icons dim, and only so far that they keep 3:1;
+   the size's text stays at full contrast. */
 .buoy-mats { order: 5; }
 .buoy-tools { order: 6; }
 .buoy-size { order: 2; }
@@ -129,16 +132,13 @@
 .buoy-break { order: 4; flex-basis: 100%; height: 0; }
 
 .buoy-toolbar.is-sim .buoy-mats,
-.buoy-toolbar.is-sim .buoy-tools,
-.buoy-toolbar.is-sim .buoy-size,
-.buoy-toolbar.is-sim #undoBtn {
-    opacity: 0.55;
+.buoy-toolbar.is-sim .buoy-tools {
+    opacity: 0.72;
 }
 
 @media (hover: hover) {
     .buoy-toolbar.is-sim .buoy-mats:hover,
-    .buoy-toolbar.is-sim .buoy-tools:hover,
-    .buoy-toolbar.is-sim .buoy-size:hover {
+    .buoy-toolbar.is-sim .buoy-tools:hover {
         opacity: 1;
     }
 }
@@ -213,7 +213,6 @@
     padding: 0 0.15em;
     font-size: 0.95em;
     line-height: 1.35;
-    opacity: 0.85;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
