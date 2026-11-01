@@ -7584,8 +7584,12 @@
         }
     }
 
-    function openPopover(b) {
+    // The menu opens on the Body tab (in a mission, the probe's on Velocity, where its engine is); a
+    // menu already open keeps its tab when another body is chosen
+    function openPopover(b, tab) {
         if (!ui.pop || !b) return;
+        if (tab) selectTab(tab);
+        else if (ui.pop.hidden) selectTab(mission.def && b.id === mission.craftId ? 'vel' : 'body');
         popBody = b;
         selectBody(b.id);
         ui.pop.hidden = false;
@@ -7848,7 +7852,7 @@
     });
 
     const edit = {
-        tab: 'vel',          // the menu's open tab: vel, orbit or body
+        tab: 'body',         // the menu's open tab: body, vel, orbit or pull
         step: 0.01,          // steppers and pushes: a fraction of the value (10%, 1% or 0.1%)
         sense: 1, senseBid: null,   // the way round chosen for a body at rest
         shown: {},           // field -> the text last written into it (a field is applied only if that changed)
@@ -8232,8 +8236,7 @@
 
     function openEditor(b, tab, focus) {
         if (!b) return;
-        if (tab) selectTab(tab);
-        openPopover(b);
+        openPopover(b, tab);
         if (focus) {
             const t = ui.popTabs.find((q) => q.getAttribute('aria-selected') === 'true');
             if (t) t.focus({ preventScroll: true });
