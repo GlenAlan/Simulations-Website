@@ -12253,7 +12253,9 @@
     // ---- Burns, and keeping everything else as it was ----
     const missionCraft = () => (mission.def ? bodyById(mission.craftId) : null);
 
-    // A note in the hint line for something a mission doesn't allow (the same one at most every 1.5 s)
+    // A note in the hint line for something a mission doesn't allow (the same one at most every 1.5 s).
+    // A burn's note waits until one has been up for RULES_MS (see noteBurn).
+    const RULES_MS = 2500;
     function missionNote(html) {
         const now = performance.now();
         if (html === mission.refusedText && now - mission.refusedAt < 1500) return;
@@ -12372,7 +12374,10 @@
     function noteBurn(dv, cut) {
         mission.burst += dv;
         clearTimeout(mission.burstTimer);
-        mission.burstTimer = setTimeout(() => {
+        mission.burstTimer = setTimeout(function showBurn() {
+            // (a "Mission rules" note put up a moment ago keeps the line long enough to be read first)
+            const h = hints.missionNote, wait = RULES_MS - (performance.now() - mission.refusedAt);
+            if (h && h.html === mission.refusedText && wait > 0) { mission.burstTimer = setTimeout(showBurn, wait); return; }
             const d = mission.def, burst = mission.burst;
             mission.burst = 0;
             if (!d || mission.status === 'won' || mission.status === 'lost') return;
