@@ -7785,24 +7785,39 @@
     let popLastInput = 0;
     let popNextUpdate = 0;
 
+    // The colours are a radio group: named, one stop of the Tab key (the chosen colour), and the arrow
+    // keys choose the next or previous one
+    const SWATCH_NAMES = ['Yellow', 'Orange', 'Pink', 'Magenta', 'Lavender', 'Blue', 'Sky blue', 'Teal', 'Sand', 'Grey'];
     function buildSwatches() {
         if (!ui.popColours) return;
         ui.popColours.textContent = '';
-        for (const c of SWATCHES) {
+        SWATCHES.forEach((c, i) => {
             const s = document.createElement('button');
             s.type = 'button';
             s.className = 'orb-swatch';
             s.style.background = c;
             s.dataset.color = c;
             s.setAttribute('role', 'radio');
-            s.setAttribute('aria-label', `Colour ${c}`);
+            s.setAttribute('aria-label', SWATCH_NAMES[i] || c);
+            s.title = SWATCH_NAMES[i] || c;
+            s.tabIndex = -1;
             s.addEventListener('click', () => {
                 if (!popBody) return;
                 popBody.color = c;
                 updatePopover(true);
             });
             ui.popColours.appendChild(s);
-        }
+        });
+        ui.popColours.addEventListener('keydown', (e) => {
+            const all = Array.from(ui.popColours.querySelectorAll('.orb-swatch')), i = all.indexOf(e.target);
+            if (i < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+            const n = all.length, step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+            const j = step ? (i + step + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+            if (j < 0) return;
+            e.preventDefault();
+            all[j].focus();
+            all[j].click();
+        });
     }
 
     // The menu opens on the Body tab (in a mission, the probe's on Velocity, where its engine is); a
@@ -7918,7 +7933,11 @@
         setText(ui.popSpeedNote, lf ? `${lf.slice(2, -1)} · ${note}` : note);
         ui.popCircular.disabled = !sr.p;
         // Colour swatches
-        ui.popColours.querySelectorAll('.orb-swatch').forEach((s) => s.setAttribute('aria-checked', s.dataset.color === b.color ? 'true' : 'false'));
+        const sw = Array.from(ui.popColours.querySelectorAll('.orb-swatch')), on = sw.find((s) => s.dataset.color === b.color);
+        sw.forEach((s) => {
+            s.setAttribute('aria-checked', s === on ? 'true' : 'false');
+            s.tabIndex = s === (on || sw[0]) ? 0 : -1;   // (a colour of its own, as a star's: the stop is on the first)
+        });
         // Newton's law for this body and its primary, and its orbit
         let info = '';
         if (sr.p) {
@@ -8526,7 +8545,7 @@
         if (!t || !t.tagName) return false;
         if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
         if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
-        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"]'));
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette'));
     }
 
     function onEditorKey(e) {
@@ -8760,6 +8779,44 @@
             box.append(head, chips);
             ui.palette.appendChild(box);
         }
+        paletteRove(ui.palette.querySelector('.orb-chip'));
+        if (!ui.palette.dataset.keys) {
+            ui.palette.dataset.keys = '1';
+            ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
+            ui.palette.addEventListener('keydown', onPaletteKey);
+        }
+    }
+
+    // The keyboard: the palette is one stop of the Tab key (as in a toolbar), not fifteen. The arrow
+    // keys move between its chips (up and down to the nearest chip in the row above or below), Home and
+    // End go to the first and last, and the chip last used keeps the stop.
+    function paletteRove(to) {
+        if (!ui.palette || !to) return;
+        for (const c of ui.palette.querySelectorAll('.orb-chip')) c.tabIndex = c === to ? 0 : -1;
+    }
+
+    function onPaletteKey(e) {
+        const c = e.target.closest && e.target.closest('.orb-chip');
+        if (!c || e.altKey || e.ctrlKey || e.metaKey) return;
+        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled);
+        const i = list.indexOf(c);
+        if (i < 0) return;
+        let to = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') to = list[clamp(i + (e.key === 'ArrowRight' ? 1 : -1), 0, list.length - 1)];
+        else if (e.key === 'Home' || e.key === 'End') to = list[e.key === 'Home' ? 0 : list.length - 1];
+        else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const down = e.key === 'ArrowDown', r = c.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+            let best = Infinity;
+            for (const q of list) {
+                const s = q.getBoundingClientRect(), dy = s.top + s.height / 2 - y;
+                if (down ? dy < 4 : dy > -4) continue;
+                const cost = Math.abs(dy) * 4 + Math.abs(s.left + s.width / 2 - x);
+                if (cost < best) { best = cost; to = q; }
+            }
+            if (!to) to = c;
+        } else return;
+        e.preventDefault();
+        if (to !== c) { to.focus(); to.scrollIntoView({ block: 'nearest' }); }
     }
 
     function paletteChip(kind) {
@@ -8913,7 +8970,8 @@
             h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
                 : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
         }
-        if (hints.intro) h += ' <strong>New:</strong> Missions, in <span class="icon solid fa-cog" role="img" aria-label="the settings" title="Settings"></span>';
+        // (the gear kept on the line of the word before it)
+        if (hints.intro) h += ' <strong>New:</strong> Missions, in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
         return h;
     }
 
@@ -13109,6 +13167,13 @@
             hints.intro = false;
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            refreshHint();
+        }, true);
+        // (for the keyboard, a key pressed in the simulation, other than moving about with Tab)
+        window.addEventListener('keydown', (e) => {
+            if (!hints.intro || ['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+            if (!(e.target && e.target.closest && e.target.closest('.simulation-area-wrapper'))) return;
+            hints.intro = false;
             refreshHint();
         }, true);
         bindHint();
