@@ -2877,11 +2877,14 @@
         out.length = 0;
         const wt = 1 - cv.ventS;
         if (wt < 1e-3 || cv.V >= cv.area) return out;
+        const outside = (x) => cv.sL + (cv.sR - cv.sL) * (x - cv.fx0) / cv.fspan;
         for (const ch of cv.chains) {
             if (!ch.wide) continue;
             const m = chainPoints(ch, c, s);
-            // stretches with air inside and the tank's liquid outside
-            if (!bandRuns(m, own, surfaceAt)) continue;
+            // stretches with air inside and the tank's liquid outside (going by the level just beyond the
+            // opening's ends, as the physics does: the tank's surface curve under the object means nothing,
+            // and a wave trough moving there would make the air jump)
+            if (!bandRuns(m, own, outside)) continue;
             let nx = c * ch.nbx - s * ch.nby, ny = s * ch.nbx + c * ch.nby;
             const nl = Math.hypot(nx, ny) || 1;
             nx /= nl; ny /= nl;
@@ -2903,7 +2906,7 @@
                 // the dome over an opening facing up: no bigger than the air under it can make, and
                 // under the tank's surface
                 const im = n >> 1;
-                const dome = Math.max(0, Math.min(0.35 * L, 2 * aMax, surfaceAt(xs[im]) - zs[im] - 0.003));
+                const dome = Math.max(0, Math.min(0.35 * L, 2 * aMax, outside(xs[im]) - zs[im] - 0.003));
                 const qx = new Float64Array(n), qz = new Float64Array(n);
                 for (let i = 0; i < n; i++) {
                     const a = Math.max(0, zs[i] - own(xs[i]));
@@ -2914,7 +2917,7 @@
                     if (toLip < Infinity) dd *= smoothstep(0, Math.max(CELL, 0.5 * aMax), toLip);
                     let d = grow * (dd * (1 - up) + dome * Math.sin(Math.PI * al[i] / L) * up);
                     // (never out through the tank's surface)
-                    if (ny > 1e-3) d = Math.min(d, Math.max(0, (surfaceAt(xs[i] + nx * d) - 0.002 - zs[i]) / ny));
+                    if (ny > 1e-3) d = Math.min(d, Math.max(0, (outside(xs[i] + nx * d) - 0.002 - zs[i]) / ny));
                     qx[i] = xs[i] + nx * d; qz[i] = zs[i] + ny * d;
                 }
                 out.push({ xs, zs, qx, qz, nx, ny });
@@ -2942,9 +2945,11 @@
             let any = false;
             const tops = new Float64Array(m), bots = new Float64Array(m);
             for (let i = 0; i < m; i++) {
-                const x = cpX[i], S = surfaceAt(x);
+                // (nothing where the tank's surface already reaches the opening: there the band is
+                // empty, at the opening)
+                const x = cpX[i], t = Math.min(cpZ[i], sE(x)), S = Math.min(surfaceAt(x), t);
                 bots[i] = S;
-                tops[i] = S + downF * Math.max(0, Math.min(cpZ[i], sE(x)) - S);
+                tops[i] = S + downF * (t - S);
                 if (tops[i] > S + 0.5 * px1) any = true;
             }
             if (!any) continue;
