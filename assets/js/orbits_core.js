@@ -836,8 +836,9 @@
             const ul = Math.hypot(ux, uy);
             if (!(ul > 0)) continue;
             ux /= ul; uy /= ul;
-            // Behind: against its sideways motion round the star (screen y points down)
-            const vx = b.vx - star.vx, vy = star.vy - b.vy;
+            // Behind: against its sideways motion round the star (screen y points down; the world velocity
+            // turned as the view is, as the dust's path round the star is turned with everything else)
+            const rv = turnVec(b.vx - star.vx, b.vy - star.vy), vx = rv.x, vy = -rv.y;
             const along = vx * ux + vy * uy;
             let nx = along * ux - vx, ny = along * uy - vy;
             const nl = Math.hypot(nx, ny);
@@ -856,7 +857,7 @@
             glow(x, y, 0, drawRadius(b) + (3 + 6 * u) * sizeScale, C.dark ? b.color : bodyStroke(b.color, false), 0.5);
             ctx.globalAlpha = 1;
             tailInfo.drawn++;
-            if (b.id === selectedId) { tailInfo.strength = u; tailInfo.star = star.name; tailInfo.ionPx = ion; }
+            if (b.id === selectedId) { Object.assign(tailInfo, { strength: u, star: star.name, ionPx: ion, ux, uy, nx, ny }); }
         }
         ctx.globalAlpha = 1;
     }
@@ -3323,6 +3324,15 @@
     function turnPoint(x, y) { const v = turnVec(x - F.x, y - F.y); return { x: F.x + v.x, y: F.y + v.y }; }
     function unturnPoint(x, y) { const v = unturnVec(x - F.x, y - F.y); return { x: F.x + v.x, y: F.y + v.y }; }
 
+    // How far the view will be turned dt years from now (for a place predicted ahead, such as a mission's
+    // closest approach): in a rotating frame the pair will have turned on, by its two-body orbit
+    function turnAngleIn(dt) {
+        const P = turnPair();
+        if (!P || !dt) return turn.phi;
+        keplerDrift(P.B.x - P.A.x, P.B.y - P.A.y, P.B.vx - P.A.vx, P.B.vy - P.A.vy, G * (P.A.m + P.B.m), dt);
+        return turn.alpha - Math.atan2(KY, KX);
+    }
+
     // Where the frame's origin is and how far the view is turned, taken before a change (see keepScreen)
     const viewOrigin = () => ({ x: F.x, y: F.y, phi: turn.phi });
     // After a change that moved the frame's origin or turned the view (drawn positions already worked
@@ -3371,6 +3381,19 @@
         leaveTurning();
         turn.easeAmt = gone ? 0 : wrapAngle(turn.phi);
         turn.easeT = performance.now();
+        syncFrameUi();
+    }
+
+    // A link or the autosave keeps a rotating frame (B is its frame): [id of A, the line's direction]
+    const turnSetup = () => (turnPair() ? [turn.aId, +turn.up.toFixed(6)] : undefined);
+    // ...and opening one puts it back as it was, with frameId already set to B and no glide (its pan is
+    // in the turned view, so it must be turned just as it was): t { a, up }, or null for none
+    function restoreTurning(t) {
+        const A = t ? bodyById(t.a) : null, B = frameId !== null ? bodyById(frameId) : null;
+        Object.assign(turn, A && B && A !== B ? { on: true, aId: A.id, bId: B.id, up: wrapAngle(t.up) } : { on: false, aId: null, bId: null });
+        turn.easeAmt = 0;
+        pred.key = '';
+        markPreview();
         syncFrameUi();
     }
 
@@ -3519,6 +3542,21 @@
             turnTrailCS[j + 1] = sa * ct - ca * st;   // sin(alpha - theta_k)
         }
         return { oT: turnTrailO, cs: turnTrailCS, first: k0 };
+    }
+
+    // Running back (see drawPast): where the frame's origin was between trail samples k and k + 1 (f of
+    // the way), and how that moment's places turn into the view, as turnedTrails does for each sample:
+    // { ox, oy, c, s } (no ox: the ordinary origin, while an ordinary frame glides square). Null when the
+    // view isn't turned; 'none' when the pair's own samples don't reach back that far.
+    function turnedSampleFrame(k, f) {
+        const P = turnPair();
+        if (!P) return turn.phi ? { c: turn.c, s: turn.s } : null;
+        const TA = P.A.trail, TB = P.B.trail;
+        if (!TA || !TB || trailFirst(P.A) > k || trailFirst(P.B) > k) return 'none';
+        const at = (T, j) => { const i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1); return T[i0 + j] + f * (T[i1 + j] - T[i0 + j]); };
+        const ax = at(TA, 0), ay = at(TA, 1), bx = at(TB, 0), by = at(TB, 1), M = P.A.m + P.B.m;
+        const a = turn.alpha - Math.atan2(by - ay, bx - ax);
+        return { ox: (P.A.m * ax + P.B.m * bx) / M, oy: (P.A.m * ay + P.B.m * by) / M, c: Math.cos(a), s: Math.sin(a) };
     }
 
     // traceTrail for a turned view: the same, with each point turned
@@ -4493,11 +4531,13 @@
     function orbitBox(b, p, el) {
         const M = b.m + p.m;
         let cx, cy, k;
-        if (frameId === p.id) { cx = p.dx; cy = p.dy; k = 1; }
-        else if (frameId === b.id) { cx = b.dx; cy = b.dy; k = -1; }
+        // (a rotating frame is centred on its pair, not on its body B: the orbit is drawn round the pair's
+        // centre of mass, turned as the view is)
+        if (frameId === p.id && !turn.on) { cx = p.dx; cy = p.dy; k = 1; }
+        else if (frameId === b.id && !turn.on) { cx = b.dx; cy = b.dy; k = -1; }
         else { cx = (b.m * b.dx + p.m * p.dx) / M; cy = (b.m * b.dy + p.m * p.dy) / M; k = p.m / M; }
         const A = Math.abs(k) * el.a, B = A * Math.sqrt(Math.max(0, 1 - el.e * el.e));
-        const w = k < 0 ? el.w + Math.PI : el.w;
+        const w = (k < 0 ? el.w + Math.PI : el.w) + turn.phi;
         const ca = Math.cos(w), sa = Math.sin(w);
         // the ellipse's centre is a·e from its focus, away from the closest point
         const ox = cx - el.e * A * ca - F.x, oy = cy - el.e * A * sa - F.y;
@@ -4541,7 +4581,8 @@
         if (el && el.bound && !crowd.length && el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12)) {
             let from = null;
             // (not the partner of the heavier star of a binary: that orbits b itself)
-            if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id) { setFrame(p.id); from = p; }
+            // (nor when the view turns with its planet, which then stands still)
+            if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id && !turnUses(p)) { setFrame(p.id); from = p; }
             fitBox(orbitBox(b, p, el), glide);
             return { how: 'orbit', around: p, from, with: [] };
         }
@@ -6008,7 +6049,9 @@
         const L = forceLength(Fm);
         const P = gatherPulls(b);
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-        const ux = b.fx / Fm, uy = -b.fy / Fm;
+        // (forces are world vectors: on the screen they are turned as the view is, by turn.c and turn.s)
+        const tc = turn.c, ts = turn.s;
+        const ux = (tc * b.fx - ts * b.fy) / Fm, uy = -(ts * b.fx + tc * b.fy) / Fm;
         const x0 = x + ux * r, y0 = y + uy * r;
         let sumX = 0, sumY = 0, big = 0;
         for (let i = 0; i < P.k; i++) {
@@ -6030,7 +6073,7 @@
         const wNet = clamp(2 * sizeScale, 1.5, 2.4), w = 0.55 * wNet;
         // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
         // drawn at a scale of its own (then dashed and thin)
-        const ex = x0 + b.fx * k, ey = y0 - b.fy * k;
+        const ex = x0 + (tc * b.fx - ts * b.fy) * k, ey = y0 - (ts * b.fx + tc * b.fy) * k;
         if (squeezed) {
             ctx.setLineDash([4, 3]);
             arrow(x0, y0, ex, ey, C.force, w);
@@ -6042,8 +6085,10 @@
         c.x0 = x0; c.y0 = y0; c.ex = x0; c.ey = y0; c.links = 0; c.named = 0;
         c.bx = x; c.by = y; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         ctx.font = font(c.fs);
-        for (let i = 0; i < P.k; i++) chainLink(C, P.cx[i] * k, -P.cy[i] * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
-        chainLink(C, ox * k, -oy * k, C.subtle, P.rest ? 'others' : '', null);
+        for (let i = 0; i < P.k; i++) {
+            chainLink(C, (tc * P.cx[i] - ts * P.cy[i]) * k, -(ts * P.cx[i] + tc * P.cy[i]) * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
+        }
+        chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
         c.drawn = true; c.tipX = x0 + ux * L; c.tipY = y0 + uy * L; c.k = k; c.squeezed = squeezed;
     }
 
@@ -6279,7 +6324,9 @@
                 if (b.minor && !isChosen(b)) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b) + 4;
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
-                if (fv && Math.hypot(b.vx - fv.x, b.vy - fv.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
+                // (the velocity as its arrow shows it: in a rotating frame, relative to the frame where the body is)
+                const u = fv && turn.on ? frameVelocity(b.x, b.y) : fv;
+                if (fv && Math.hypot(b.vx - u.x, b.vy - u.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
             }
         }
         legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
@@ -9045,11 +9092,18 @@
         } else {
             ox = comTrail[2 * kt] + f * (comTrail[2 * kt1] - comTrail[2 * kt]); oy = comTrail[2 * kt + 1] + f * (comTrail[2 * kt1 + 1] - comTrail[2 * kt + 1]);
         }
+        // (a turned view: seen from the turning pair as it was then, and turned as that moment's trail
+        // samples are; see turnedSampleFrame)
+        const tq = turnedSampleFrame(k, f);
+        if (tq === 'none') return;
+        if (tq && tq.ox !== undefined) { ox = tq.ox; oy = tq.oy; }
+        const rc = tq ? tq.c : 1, rs = tq ? tq.s : 0;
         const live = freeze ? liveFrameOrigin() : F;
         const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const where = (b) => {
             const T = b.trail, i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1);
-            return { x: offX + (T[i0] + f * (T[i1] - T[i0]) - ox) * scale, y: offY - (T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy) * scale };
+            const rx = T[i0] + f * (T[i1] - T[i0]) - ox, ry = T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy;
+            return { x: offX + (rc * rx - rs * ry) * scale, y: offY - (rs * rx + rc * ry) * scale };
         };
         const usable = (b) => !b.held && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
         for (const b of bodies) {
@@ -9231,16 +9285,26 @@
         return { x: vx, y: vy };
     }
 
-    // The world velocity a throw gives (AU/yr): the view's own velocity, plus the pointer's
+    // The view's own velocity where a throw lets go of its body (a body being moved, or the drop point of
+    // one from the palette): in a rotating frame it depends on the place (see frameVelocity)
+    function throwBase(d) {
+        if (d && d.body) return frameVelocity(d.body.x, d.body.y);
+        if (d && d.cx !== undefined) { const w = unturnPoint(wx(d.cx), wy(d.cy)); return frameVelocity(w.x, w.y); }
+        return frameVelocity();
+    }
+
+    // The world velocity a throw gives (AU/yr): the view's own velocity, plus the pointer's (along the
+    // screen, so in a turned view turned back into the world's directions, as an aimed arrow is)
     function throwVelocity(d, now) {
-        const fv = frameVelocity();
+        const fv = throwBase(d);
         const u = flickPx(d, now);
         if (!u) return [fv.x, fv.y];
         const k = timeDir * scale * Math.max(settings.speed * rate(), 1e-30);   // px/s on the screen per AU/yr
         let vx = u.x / k, vy = -u.y / k;
         const v = Math.hypot(vx, vy), cap = THROW_C * C_LIGHT;
         if (v > cap) { vx *= cap / v; vy *= cap / v; }
-        return [fv.x + vx, fv.y + vy];
+        const w = unturnVec(vx, vy);
+        return [fv.x + w.x, fv.y + w.y];
     }
 
     function dragOf(b) {
@@ -9252,7 +9316,7 @@
     function throwHint(d) {
         const now = performance.now();
         if (!flickPx(d, now)) return 'stays put in this view. <strong>Flick</strong> it as you let go to throw it';
-        const v = throwVelocity(d, now), fv = frameVelocity();
+        const v = throwVelocity(d, now), fv = throwBase(d);
         const s = fmtSpeedKms(Math.hypot(v[0] - fv.x, v[1] - fv.y) * AUYR_KMS);
         return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
     }
@@ -9269,8 +9333,8 @@
         if (!d || !d.over || !d.moved || settings.placement !== 'throw' || cleanRender) return;
         const now = performance.now();
         if (!flickPx(d, now)) return;
-        const v = throwVelocity(d, now), fv = frameVelocity();
-        const vx = v[0] - fv.x, vy = v[1] - fv.y, s = Math.hypot(vx, vy);
+        const v = throwVelocity(d, now), fv = throwBase(d);
+        const rel = turnVec(v[0] - fv.x, v[1] - fv.y), vx = rel.x, vy = rel.y, s = Math.hypot(vx, vy);   // (turned as the view is)
         const k = KINDS[d.kind] || KINDS.custom;
         const r = Math.max(symbolicSize(d.kind, k.m, k.R) * sizeScale, 4), L = arrowLength(s);
         const ux = vx / s, uy = -vy / s;   // (like every velocity arrow: backwards in time, against the motion)
@@ -9812,7 +9876,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : ''].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -10009,7 +10073,9 @@
             vw: [s.zoom, s.panX, s.panY],
             sca: [s.forceRef, s.vRef, s.energyExp, s.trail, s.com ? 1 : 0],
             cc: s.customCount, pr: s.pairs, ge: s.groupE,
-            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement }
+            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement },
+            // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
+            ro: turnSetup()
         };
     }
 
@@ -10088,6 +10154,7 @@
             num, names, kinds, colors, n, t: Math.max(0, fin(d.t, 0)), samples: 0, epoch: -1,
             customCount: Number.isInteger(d.cc) && d.cc >= 0 ? d.cc : 0,
             scene: key, sel: idOf(d.sel), frame: idOf(d.fr), pairs, groupE,
+            turn: Array.isArray(d.ro) && idOf(d.ro[0]) !== null && idOf(d.fr) !== null && d.ro[0] !== d.fr ? { a: d.ro[0], up: fin(d.ro[1], 0) } : null,
             forceRef: fin(sca[0], 0) > 0 ? sca[0] : 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,
             energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
@@ -10197,6 +10264,7 @@
         const has = (id) => id !== null && bodies.some((b) => b.id === id);
         selectedId = has(s.sel) ? s.sel : defaultSubject();
         frameId = has(s.frame) ? s.frame : null;
+        restoreTurning(s.turn && has(s.turn.a) ? s.turn : null);   // (a rotating frame, as it was: no glide)
         view.zoom = s.zoom; view.panX = s.panX; view.panY = s.panY; view.anim = null;
         k2.bid = null;
         refreshBodyLists();
@@ -12231,12 +12299,18 @@
         }
         const p = mission.pred, c = bodyById(mission.craftId);
         const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
-        const tx = ghost ? cx + p.tx * scale : 0, ty = ghost ? cy - p.ty * scale : 0;
-        // (not when it would sit on the target as it is now: they are about to meet)
+        // (the places predicted are world offsets from R at that time: turned as the view will be turned
+        // then, so in a rotating frame they are seen from the pair as it will be)
+        const ga = ghost ? turnAngleIn(p.t - simTime) : 0, gc = Math.cos(ga), gs = Math.sin(ga);
+        const tx = ghost ? cx + (gc * p.tx - gs * p.ty) * scale : 0, ty = ghost ? cy - (gs * p.tx + gc * p.ty) * scale : 0;
+        const kx = ghost ? cx + (gc * p.cx - gs * p.cy) * scale : 0, ky = ghost ? cy - (gs * p.cx + gc * p.cy) * scale : 0;
+        // (not when it would sit on the target as it is now: they are about to meet; in a frame turning
+        // with the target, where it stands still, when the probe is about to reach its closest point)
         const nowX = g.l4 ? sx(R.dx + 0.5 * (T.dx - R.dx) - Math.sqrt(3) / 2 * (T.dy - R.dy)) : T ? sx(T.dx) : 0;
         const nowY = g.l4 ? sy(R.dy + Math.sqrt(3) / 2 * (T.dx - R.dx) + 0.5 * (T.dy - R.dy)) : T ? sy(T.dy) : 0;
-        if (ghost && Math.hypot(tx - nowX, ty - nowY) > 24) {
-            const kx = cx + p.cx * scale, ky = cy - p.cy * scale;
+        const soon = ghost && (turnUses(T) ? Math.hypot(kx - sx(c.dx), ky - sy(c.dy)) <= 24 : Math.hypot(tx - nowX, ty - nowY) <= 24);
+        mission.ghostPx = ghost ? { tx, ty, kx, ky, shown: !soon } : null;   // (for testing)
+        if (ghost && !soon) {
             if (Math.hypot(tx - kx, ty - ky) > 9) {
                 ctx.strokeStyle = C.faint;
                 ctx.lineWidth = 1;
@@ -12325,7 +12399,7 @@
             burns: mission.log.length / 2, log: mission.log.slice(), time: simTime, paused,
             result: mission.result ? Object.assign({}, mission.result) : null, best: bestOf(d.id),
             goal: Object.assign({ type: g.type }, g, g.V ? { V: toKms(g.V) } : {}), now,
-            closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime } : null,
+            closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
             panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null
         };
     }
@@ -13076,9 +13150,11 @@
             applyHolds();
             endHold(d, true);
             settings.placement = was;
-            const fv = frameVelocity(), v = Math.hypot(b.vx - fv.x, b.vy - fv.y);
+            // (relative to the view where it is, along the screen's directions: see viewVelocity)
+            updateDrawnPositions();
+            const rel = viewVelocity(b, frameVelocity()), v = Math.hypot(rel.x, rel.y);
             const want = Math.hypot(dx, dy) / (ms / 1000) / (scale * settings.speed * rate());
-            return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: b.vx - fv.x, vy: b.vy - fv.y };
+            return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: rel.x, vy: rel.y };
         },
         // Run forwards `years`, then back to where it began; how far each body ends from where it was
         // (and its speed from what it was), relative to its distance and speed from the centre of mass.
