@@ -3524,7 +3524,10 @@
         const B = body;
         forceView();
         const weight = fv.W;
-        const kPx = (0.17 * cssH) / Math.max((B.mass + B.waterMass) * settings.gravity, 1e-6);
+        // One scale for the whole run: the object's own weight is 17% of the canvas height. (Scaled
+        // by its mass with the liquid it holds, a flooding hull's arrows shrank while the forces
+        // they show stayed the same.)
+        const kPx = (0.17 * cssH) / Math.max(B.mass * settings.gravity, 1e-6);
         const maxLen = 0.42 * cssH;
         const cx = wx(fv.cx), cy = wy(fv.cy);
         const A = settings.arrows;
