@@ -11336,6 +11336,7 @@
         if (!p || p.gesture) return;
         hist.pending = null;
         const what = describeEdit(p.snap);
+        hist.as = '';
         if (what) commitStep(p.snap, what, true);
     }
 
@@ -11430,6 +11431,8 @@
         }
         if (!main) return null;
         const n = s.names[main.i];
+        // (the eccentricity slider only turns the velocity, but what it changes is the orbit's shape)
+        if (hist.as === 'shape' && (main.key === 'velocity' || main.key === 'speed')) return { key: 'shape', target: main.b.id, label: `change ${n}'s orbit shape` };
         const label = {
             mass: `change ${n}'s mass`, radius: `change ${n}'s radius`, orbit: `change ${n}'s orbit`, move: `move ${n}`,
             speed: `change ${n}'s speed`, velocity: `change ${n}'s velocity`, name: `rename ${n}`, colour: `change ${n}'s colour`
@@ -12827,6 +12830,7 @@
                 eccLastInput = performance.now();
                 const e = parseFloat(ui.ecc.value);
                 showEccentricity(e);
+                hist.as = 'shape';   // (named so in the edit history)
                 applyEccentricity(e);
             });
             ui.ecc.addEventListener('change', () => {
@@ -13033,7 +13037,7 @@
         select(name) { const b = bodies.find((q) => q.name === name); if (b) selectBody(b.id); },
         lock(name) { const b = name ? bodies.find((q) => q.name === name) : null; setFrame(b ? b.id : null); },
         add(kind, x, y) { const b = addBody(kind, x, y); return b ? bodyInfo(b) : null; },
-        setEccentricity(e) { if (ui.ecc) ui.ecc.value = String(e); applyEccentricity(e); eccDrag = null; },
+        setEccentricity(e) { if (ui.ecc) ui.ecc.value = String(e); hist.as = 'shape'; applyEccentricity(e); eccDrag = null; },
         set(name, props) {
             const b = bodies.find((q) => q.name === name);
             if (!b) return;
