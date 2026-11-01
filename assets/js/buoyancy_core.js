@@ -2009,12 +2009,27 @@
     function pushUndo() {
         undoStack.push(grid.slice());
         if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+        syncUndo();
+    }
+    // An edit that changed nothing (a shape over cells already that material, the same ready-made
+    // object again, clearing an empty tank) leaves no step, or Undo would seem to do nothing.
+    function dropUnchangedUndo() {
+        const top = undoStack[undoStack.length - 1];
+        if (!top) return;
+        for (let i = 0; i < grid.length; i++) if (top[i] !== grid[i]) return;
+        undoStack.pop();
+        syncUndo();
     }
     function undo() {
         if (!undoStack.length) return;
         grid.set(undoStack.pop());
+        syncUndo();
         if (mode !== 'draw') enterEditMode();
         drawDirty = true;
+    }
+    function syncUndo() {
+        const b = document.getElementById('undoBtn');
+        if (b) b.setAttribute('aria-disabled', undoStack.length ? 'false' : 'true');
     }
     function setCell(c, r, v) {
         if (c < 0 || r < 0 || c >= GW || r >= GH) return;
@@ -2177,6 +2192,7 @@
         pushUndo();
         grid.fill(0);
         p.build();
+        dropUnchangedUndo();
         drawDirty = true;
         if (!opts || opts.drop !== false) dropObject();
         else enterEditMode();
@@ -3980,7 +3996,10 @@
             const b = shapeBounds(pointer.startX, pointer.startY, x, y, e.shiftKey);
             const v = pointer.button === 2 ? 0 : settings.material;
             forEachShapeCell(tool, b.cA, b.rA, b.cB, b.rB, BRUSH_SIZES[settings.brushIndex], (c, r) => setCell(c, r, v));
+            dropUnchangedUndo();
             drawDirty = true;
+        } else if (tool === 'brush' || tool === 'eraser') {
+            dropUnchangedUndo();
         }
         if (pointer.type !== 'mouse') pointer.inside = false;
     }
@@ -4088,7 +4107,7 @@
         const on = (id, fn) => { const n = document.getElementById(id); if (n) n.addEventListener('click', fn); };
         on('dropBtn', () => dropObject());
         on('editBtn', () => { if (mode === 'sim') enterEditMode(); });
-        on('clearBtn', () => { pushUndo(); grid.fill(0); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
+        on('clearBtn', () => { pushUndo(); grid.fill(0); dropUnchangedUndo(); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
         on('undoBtn', () => undo());
         on('resetSimulationBtn', () => {
             if (mode === 'sim') dropObject();
@@ -4255,6 +4274,7 @@
         handleResize();
         loadPreset('pine');
         undoStack.length = 0;
+        syncUndo();
         requestAnimationFrame(frame);
     }
 
