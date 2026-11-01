@@ -2263,6 +2263,11 @@
             panelBorder: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'
         };
         ARROWS.net.color = pal.net;
+        // Arrows sit on a halo (dark in the dark theme, white in the light one): the bright colours
+        // that stand out on dark would be 1.6-3:1 on white, so the light theme has deeper ones (4.2:1
+        // or more). The keys in the settings follow (buoyancy_styles.css).
+        const ac = dark ? ['#ff5f5f', '#2fe39b', '#ffc53d', '#c58cff'] : ['#d32f2f', '#0b8a55', '#b26a00', '#7e47d1'];
+        ['weight', 'buoyancy', 'drag', 'contact'].forEach((k, i) => { ARROWS[k].color = ac[i]; });
         gradientKey = '';
         textureKey = '';
         gridLayerDirty = true;

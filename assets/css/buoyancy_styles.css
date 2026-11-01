@@ -417,6 +417,16 @@
     flex: 0 0 auto;
 }
 
+/* the arrows' colours: deeper in the light theme, where they sit on a white halo (buoyancy_core.js) */
+.buoy-key-weight { background: #d32f2f; }
+.buoy-key-buoyancy { background: #0b8a55; }
+.buoy-key-drag { background: #b26a00; }
+.buoy-key-contact { background: #7e47d1; }
+html.dark-mode .buoy-key-weight { background: #ff5f5f; }
+html.dark-mode .buoy-key-buoyancy { background: #2fe39b; }
+html.dark-mode .buoy-key-drag { background: #ffc53d; }
+html.dark-mode .buoy-key-contact { background: #c58cff; }
+
 /* the net force is drawn dashed, so its key is a dashed line (as in the key on the canvas) */
 .buoy-key.buoy-key-net {
     height: 0;
