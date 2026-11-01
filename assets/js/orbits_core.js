@@ -2277,7 +2277,7 @@
         // (said in the hint line too, which screen readers announce)
         const kind = big.kind === 'blackhole' ? 'black hole' : big.kind === 'neutron' ? 'neutron star' : 'body';
         const lost = m1 + m2 - big.m;
-        setHint(null, `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`);
+        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
         // A black hole rings as it settles, at the frequency and damping of its main (l = m = 2) mode:
         // omega = 0.3737 c^3/(GM), damping time GM/(0.0890 c^3) (Berti, Cardoso & Will 2006)
         if (big.kind === 'blackhole') {
@@ -3008,7 +3008,10 @@
         syncEccentricity(true);
         resetFlyby();
         syncDatedScene();   // (the start date and the Date box, for a scene with a start date)
-        setHint(null, def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
+        // (the last scene's notes go with it; this one's tip shows until the canvas or palette is used)
+        clearHint('note');
+        clearHint('missionNote');
+        showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
     }
 
@@ -3376,7 +3379,7 @@
         markPreview();
         syncFrameUi();
         updatePopover(true);
-        historyNote(`<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`);
+        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`, { ms: 7000 });
         return true;
     }
 
@@ -4031,7 +4034,7 @@
         const m = lagrangeAt(pt.x, pt.y, 18);
         if (!m) return;
         const comma = m.text.indexOf(',');
-        historyNote(`<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`);
+        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
     }
 
     function bindWell() {
@@ -4908,6 +4911,7 @@
         k2.bid = null;
         resetOrbitChart();
         syncEccentricity(true);
+        refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
     function removeBody(b, heir) {
@@ -6377,28 +6381,29 @@
     }
 
     // On: say what they show in the hint line (read out: it is a live region)
+    // (the note names whichever body is chosen while it shows)
     function setPullLines(on) {
         settings.pulls = !!on;
         syncGravityControls();
-        const b = bodyById(selectedId);
-        if (!settings.pulls) setHint();
-        else if (!b) setHint(null, '<strong>Pull lines:</strong> choose a body to see who pulls on it.');
-        else {
-            const who = escapeHtml(theName(b));
-            setHint(null, `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${who}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`);
-        }
+        if (!settings.pulls) { clearHint('note', 'pulls'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
+            return `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${escapeHtml(theName(b))}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`;
+        }, { ms: 9000, tag: 'pulls' });
     }
 
     function setLimits(on) {
         settings.limits = !!on;
         lim.bid = null;
         syncGravityControls();
-        const b = bodyById(selectedId);
-        if (!settings.limits) setHint();
-        else if (b && orbitingBody(b) && b.m >= 1e-17) {
+        if (!settings.limits) { clearHint('note', 'limits'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!(b && orbitingBody(b) && b.m >= 1e-17)) return '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.';
             const who = escapeHtml(theName(b)), p = escapeHtml(theName(b.primary));
-            setHint(null, `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`);
-        } else setHint(null, '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.');
+            return `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`;
+        }, { ms: 9000, tag: 'limits' });
     }
 
     function onGravityKey(e) {
@@ -8586,7 +8591,7 @@
             }
             const k = KINDS[d.kind];
             ghostEl.style.background = d.kind === 'custom' ? '#ae85ca' : k.color;
-            setHint('drop');
+            setHint('drop');   // (the drag layer, until it is let go)
         }
         if (!d.moved) return;
         traceDrag(d, e.clientX, e.clientY, e);   // (for a throw)
@@ -8613,7 +8618,8 @@
             chipThrow = null;
             if (b && d.kind === 'custom') openPopover(b);
         }
-        setHint();
+        throwTipSeen(d);
+        clearHint('drag');
     }
 
     function onChipCancel(e) {
@@ -8622,7 +8628,7 @@
         paletteDrag = null;
         d.btn.classList.remove('is-dragging');
         if (ghostEl) ghostEl.style.display = 'none';
-        setHint();
+        clearHint('drag');
     }
 
     // ------------------------------------------------------------------
@@ -8632,24 +8638,115 @@
     const coarse = () => lastPointerType !== 'mouse';
     let hintKey = '';
 
-    function setHint(kind, html) {
-        if (!ui.hint) return;
-        let h = html || missionHint(kind) || (kind ? null : carryOnHint());   // (a mission's hint, or an autosave on offer: see "Save and share")
-        if (!h) {
-            const v = settings.velocities;
-            if (kind === 'drop') h = `<strong>Drop it in space</strong> to add it.${throwTip(true)}`;
-            else if (coarse()) {
-                h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong>, or tap <strong>Edit</strong> to set its orbit.'
-                    : '<strong>Drag</strong> a body into space or around it. Tap a body, then <strong>Edit</strong> to set its speed and orbit.';
-            } else {
-                h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to set its orbit; <strong>arrow keys</strong> push it.'
-                    : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to set its speed and orbit; <strong>arrow keys</strong> push it.';
-            }
+    // One message at a time, by priority. Each layer holds { html, tag }; html may be a function, read
+    // again whenever the line is refreshed, so a note that names the chosen body follows the choice.
+    //   drag         what an active drag or aim will do, until it ends
+    //   missionNote  in a mission: a burn, a refusal, an undone burn, the result (a few seconds)
+    //   (mission)    the mission's own guidance
+    //   note         fresh feedback from a switch or an action (a few seconds)
+    //   tip          the scene's tip, until the first press on the canvas or the palette
+    //   (offer)      "Carry on where you left off", for a while after the page opens
+    //   (help)       the usual help; when the page opens, with a pointer to the missions
+    const hints = { drag: null, missionNote: null, note: null, tip: null, intro: false, open: false };
+    const hintTimers = {};
+
+    function showHint(layer, html, opts) {
+        const o = opts || {};
+        clearTimeout(hintTimers[layer]);
+        const h = html ? { html, tag: o.tag || '' } : null;
+        hints[layer] = h;
+        if (h && o.ms) hintTimers[layer] = setTimeout(() => { if (hints[layer] === h) { hints[layer] = null; refreshHint(); } }, o.ms);
+        refreshHint();
+    }
+
+    // Take a layer down (only if it still holds that tag, when one is given)
+    function clearHint(layer, tag) {
+        const h = hints[layer];
+        if (!h || (tag && h.tag !== tag)) return;
+        clearTimeout(hintTimers[layer]);
+        hints[layer] = null;
+        refreshHint();
+    }
+
+    const hintHtml = (h) => (h ? (typeof h.html === 'function' ? h.html() : h.html) : '');
+
+    function usualHint() {
+        const v = settings.velocities;
+        let h;
+        if (coarse()) {
+            h = v ? '<strong>Drag</strong> a body into space. Tap a body, then drag its <strong>arrow tip</strong>, or tap <strong>Edit</strong> to change it.'
+                : '<strong>Drag</strong> a body into space or around it. Tap a body, then tap <strong>Edit</strong> to change it.';
+        } else {
+            h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
+                : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
         }
+        if (hints.intro) h += ' <strong>New:</strong> Missions, in <span class="icon solid fa-cog" role="img" aria-label="the settings" title="Settings"></span>';
+        return h;
+    }
+
+    // Write the line from the top layer that has something to say
+    function refreshHint() {
+        if (!ui.hint) return;
+        const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
+            || hintHtml(hints.note) || hintHtml(hints.tip) || carryOnHint() || usualHint();
         if (h === hintKey) return;
         hintKey = h;
         ui.hint.innerHTML = h;
+        // (a long message, cut short on a phone, opens out when tapped; a new one starts closed)
+        if (hints.open) { hints.open = false; ui.hint.classList.remove('is-open'); }
+        hintClampCheck();
     }
+
+    // The older way in: setHint() refreshes, setHint('drop') is a drag from the palette, html a note
+    function setHint(kind, html) {
+        if (kind === 'drop') showHint('drag', `<strong>Drop it in space</strong> to add it.${throwTip(true)}`);
+        else if (html) showHint('note', html, { ms: 6000 });
+        else refreshHint();
+    }
+
+    // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
+    let hintClampQueued = false;
+    function hintClampCheck() {
+        if (!ui.hint || hintClampQueued) return;
+        hintClampQueued = true;
+        requestAnimationFrame(() => {
+            hintClampQueued = false;
+            const cut = !hints.open && ui.hint.offsetParent !== null && ui.hint.scrollHeight > ui.hint.clientHeight + 2;
+            ui.hint.classList.toggle('is-cut', cut);
+            const opens = cut || hints.open;
+            if (opens) {
+                ui.hint.setAttribute('role', 'button');
+                ui.hint.tabIndex = 0;
+                ui.hint.setAttribute('aria-expanded', hints.open ? 'true' : 'false');
+                ui.hint.title = hints.open ? 'Show less' : 'Show all of it';
+            } else if (ui.hint.hasAttribute('role')) {
+                ['role', 'tabindex', 'aria-expanded', 'title'].forEach((a) => ui.hint.removeAttribute(a));
+            }
+        });
+    }
+
+    function toggleHintOpen() {
+        if (!ui.hint || !(hints.open || ui.hint.classList.contains('is-cut'))) return false;
+        hints.open = !hints.open;
+        ui.hint.classList.toggle('is-open', hints.open);
+        hintClampCheck();
+        return true;
+    }
+
+    function bindHint() {
+        if (!ui.hint) return;
+        ui.hint.addEventListener('click', (e) => {
+            if (e.target.closest && e.target.closest('button')) return;   // (the carry-on offer's own buttons)
+            toggleHintOpen();
+        });
+        ui.hint.addEventListener('keydown', (e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && e.target === ui.hint && toggleHintOpen()) { e.preventDefault(); e.stopPropagation(); }
+        });
+        window.addEventListener('resize', hintClampCheck);
+    }
+
+    // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
+    let throwTipShown = false;
 
     function dragHint(d) {
         const b = d.body;
@@ -8660,12 +8757,12 @@
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
-            setHint(null, `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip()}`);
+            showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
             const av = aimedVelocity(b), v = fmtSpeedKms(Math.hypot(av.x - (L ? L.vx : totals(bodies).vx), av.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
-            setHint(null, `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
+            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
             const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
@@ -8678,7 +8775,7 @@
             if (!snap && !fineTouch) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
             if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
             else if (fineTouch) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
-            setHint(null, h);
+            showHint('drag', h);
         }
     }
 
@@ -8886,7 +8983,9 @@
         computeForces();
         computePrimaries();
         syncEccentricity(true);
-        setHint();
+        throwTipSeen(d);
+        clearHint('drag');
+        clearHint('tip');
         endGesture(d.mode === 'move' || apply);
     }
 
@@ -8895,6 +8994,7 @@
         drags.clear();
         pinch = null;
         freeze = null;
+        if (hints.drag && !paletteDrag) { hints.drag = null; refreshHint(); }
     }
 
     // ------------------------------------------------------------------
@@ -9273,9 +9373,7 @@
 
     // A note in the hint line (read out by screen readers) for a while
     function pastNote(html, ms) {
-        setHint(null, html);
-        clearTimeout(past.noteTimer);
-        past.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, ms || 5000);
+        showHint('note', html, { ms: ms || 5000 });
     }
 
     // Time forwards (on false) or backwards (on true). The time still owed to the integrator was owed
@@ -9425,11 +9523,16 @@
         return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
     }
 
-    // ...and how to find throwing, if it is off
-    function throwTip(drop) {
-        if (settings.placement !== 'throw') return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
-        return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
+    // ...and how to find throwing, if it is off: during the first drag of a visit only (d: the drag)
+    function throwTip(drop, d) {
+        if (settings.placement === 'throw') return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
+        const g = d || paletteDrag;
+        if (throwTipShown && !(g && g.throwTipped)) return '';
+        if (g) g.throwTipped = true;
+        return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
     }
+    // (at the end of a drag: the pointer to throwing has been seen)
+    function throwTipSeen(d) { if (d && d.throwTipped) throwTipShown = true; }
 
     // A body being dragged from the palette: the velocity it would be thrown with
     function drawThrowArrow(C) {
@@ -9926,9 +10029,7 @@
     // A note in the hint line for ms milliseconds (shares the history's timer, so notes don't cut each
     // other short or linger)
     function timedHint(html, ms) {
-        setHint(null, html);
-        clearTimeout(hist.noteTimer);
-        hist.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, ms);
+        showHint('note', html, { ms });
     }
 
     // A note under a button for a few seconds, then its usual text again
@@ -10544,7 +10645,8 @@
             + '<button type="button" class="orb-carry-x" aria-label="No thanks" title="No thanks"><span class="icon solid fa-times" aria-hidden="true"></span></button>';
         clearTimeout(share.offerTimer);
         share.offerTimer = setTimeout(endOffer, OFFER_MS);
-        setHint();
+        hints.intro = false;   // (one thing at a time: the offer, not the missions' introduction too)
+        refreshHint();
     }
 
     // The hint line's usual text while the offer stands (so a tap elsewhere doesn't take it away)
@@ -10552,11 +10654,10 @@
 
     function endOffer() {
         if (!share.offer) return;
-        const was = share.offerHtml;
         share.offer = null;
         share.offerHtml = '';
         clearTimeout(share.offerTimer);
-        if (hintKey === was) setHint();
+        refreshHint();
     }
 
     function onHintClick(e) {
@@ -11297,11 +11398,10 @@
         historyNote(`<strong>Deleted ${escapeHtml(name)}.</strong> ${KEYS_MOD}Z brings it back.`);
     }
 
-    // A short note in the hint line (read out by screen readers too), until the next one or a few seconds
-    function historyNote(html) {
-        setHint(null, html);
-        clearTimeout(hist.noteTimer);
-        hist.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, 4000);
+    // A short note in the hint line (read out by screen readers too), until the next one or a few
+    // seconds. In a mission it says how the mission is going, so it shows over the mission's guidance.
+    function historyNote(html, ms) {
+        showHint(mission.def ? 'missionNote' : 'note', html, { ms: ms || 4000 });
     }
 
     function updateHistoryUi() {
@@ -12105,8 +12205,9 @@
         // (the undo note, put up just after this, says how much fuel came back)
         if (how === 'undo' && Math.abs(usedBefore - m.used) > 1e-9) {
             setTimeout(() => {
-                if (!mission.def || !/^<strong>(Undone|Redone)/.test(hintKey)) return;
-                historyNote(`${hintKey} Fuel left: ${f1(Math.max(0, mission.def.budget - mission.used))} km/s.`);
+                const h = hints.missionNote;
+                if (!mission.def || !h || typeof h.html !== 'string' || !/^<strong>(Undone|Redone)/.test(h.html)) return;
+                historyNote(`${h.html} Fuel left: ${f1(Math.max(0, mission.def.budget - mission.used))} km/s.`);
             }, 0);
         }
     }
@@ -12208,12 +12309,12 @@
         setTimeout(introduceMissions, 0);
     }
 
-    // When the page opens, the hint line also points to the missions, until the first press anywhere
-    // (which puts the usual hint back)
+    // When the page opens, the usual hint also points to the missions, until the first press anywhere
+    // (unless "Carry on where you left off" is on offer: one thing at a time)
     function introduceMissions() {
-        if (mission.def || !ui.hint) return;
-        setHint();
-        setHint(null, `${hintKey} <strong>New:</strong> Missions, in <span class="icon solid fa-cog" role="img" aria-label="the settings" title="Settings"></span>`);
+        if (mission.def || !ui.hint || share.offer) return;
+        hints.intro = true;
+        refreshHint();
     }
 
     // "3. Escape the Sun ★★☆"
@@ -12326,9 +12427,9 @@
         if (mission.status === 'won') {
             const r = mission.result;
             if (c) flashes.push({ x: c.x, y: c.y, t: performance.now(), color: colours().velocity, r0: drawRadius(c), grow: 40 });
-            historyNote(`<strong>Mission complete!</strong> ${r.stars} of 3 stars: ${f1(r.used)} km/s of fuel (par ${f1(d.par)}).`);
+            historyNote(`<strong>Mission complete!</strong> ${r.stars} of 3 stars: ${f1(r.used)} km/s of fuel (par ${f1(d.par)}).`, 8000);
         } else {
-            historyNote(`<strong>${byId('missionTitle').textContent}.</strong> ${d.fail[mission.reason] || d.fail.time || ''}`);
+            historyNote(`<strong>${byId('missionTitle').textContent}.</strong> ${d.fail[mission.reason] || d.fail.time || ''}`, 10000);
         }
     }
 
@@ -12348,10 +12449,7 @@
         if (mission.status === 'flying') refreshPrediction(false);
         if ((mission.status === 'won' || mission.status === 'lost') && !mission.resultShown) showResult();
         quietFlyby();
-        if (hintKey === mission.hintShown) {
-            const h = missionHintText();
-            if (h && h !== hintKey) setHint();
-        }
+        refreshHint();   // (the guidance follows the mission's progress; the line only changes if it does)
     }
 
     // ---- Drawing ----
@@ -12565,7 +12663,7 @@
             el.addEventListener('change', () => { settings[key] = el.checked; if (after) after(); });
         };
         bindCheck(ui.forces, 'forces');
-        bindCheck(ui.velocities, 'velocities', () => setHint());
+        bindCheck(ui.velocities, 'velocities', () => refreshHint());
         bindCheck(ui.labels, 'labels');
         bindCheck(ui.realistic, 'realistic', () => { forcesDirty = true; pred.key = ''; });
         bindCheck(ui.k1, 'k1');
@@ -12657,10 +12755,16 @@
 
         // Recolour when the theme changes (palette chips use fixed colours, the canvas redraws itself)
         new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        // The first press anywhere ends the missions' introduction; a press on the canvas or the
+        // palette (getting on with it) ends the scene's tip too. Notes run out by themselves.
         window.addEventListener('pointerdown', (e) => {
             lastPointerType = e.pointerType || 'mouse';
-            setHint();
+            hints.intro = false;
+            const t = e.target;
+            if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            refreshHint();
         }, true);
+        bindHint();
     }
 
     // ------------------------------------------------------------------

@@ -210,6 +210,52 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     font-weight: 700;
 }
 
+/* A message too long for the line: "More" at its end, and a tap or Enter opens it out (it closes
+   again with a second tap, or when the next message comes) */
+.orb-hint.is-cut,
+.orb-hint.is-open {
+    position: relative;
+    cursor: pointer;
+}
+
+.orb-hint.is-cut::after {
+    content: "More \25BE";
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    padding-left: 1.6em;
+    font-weight: 700;
+    color: var(--color-accent);
+    background: linear-gradient(to right, transparent, var(--color-bg-alt) 1.4em);
+}
+
+.orb-hint.is-open {
+    height: auto;
+    max-height: none;
+    display: block;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    overflow: visible;
+}
+
+.orb-hint.is-open::after {
+    content: " Less \25B4";
+    font-weight: 700;
+    color: var(--color-accent);
+}
+
+/* (the accent pink is too pale for text on the light theme's grey) */
+html:not(.dark-mode) .orb-hint.is-cut::after,
+html:not(.dark-mode) .orb-hint.is-open::after {
+    color: #b03a5b;
+}
+
+.orb-hint:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
 /* The dragged body follows the pointer outside the canvas too. */
 .orb-drag-ghost {
     position: fixed;
