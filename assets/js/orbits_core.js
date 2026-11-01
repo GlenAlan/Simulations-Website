@@ -5671,6 +5671,19 @@
         return [x0, y0, false];
     }
 
+    // A name's width in the pointers' font (kept: the same few names are measured every frame)
+    const nameWidths = new Map();
+    function nameWidth(name, fs) {
+        const key = `${fs}|${name}`;
+        let w = nameWidths.get(key);
+        if (w === undefined) {
+            if (nameWidths.size > 500) nameWidths.clear();
+            w = ctx.measureText(name).width;
+            nameWidths.set(key, w);
+        }
+        return w;
+    }
+
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
@@ -5686,7 +5699,8 @@
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
             // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
             ctx.font = font(fs);
-            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : ctx.measureText(b.name).width / 2 + 6;
+            const nw = settings.labels ? nameWidth(b.name, fs) : 0;
+            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : nw / 2 + 6;
             const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
@@ -5704,7 +5718,7 @@
                 ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
                 ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
                 ctx.fillText(b.name, ex - ux * 12, ey - uy * 12);
-                half = Math.max(half, ctx.measureText(b.name).width / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
             }
             // (the next pointer along this edge keeps clear of this one and its name)
             zones.push([ex - half - 4, ey - fs - 14, ex + half + 4, ey + fs + 14]);
@@ -6726,7 +6740,7 @@
     const CARD_ORDER = ['mission', 'flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
     const CARD_NAMES = { mission: 'mission', flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
     const CARD_KEEP = new Set(['mission', 'flyby', 'relativity']);
-    const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0 };
+    const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0, over: false };
 
     // One card at y (compact or not): returns where the next one goes (y itself if it has nothing to show)
     function drawOneCard(C, id, subj, y, fs, compact) {
@@ -6794,7 +6808,10 @@
         const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
         const now = performance.now();
         const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${mission.def ? mission.def.id : ''}|${selectedId}|${C.dark}`;
-        if (sig !== cards.sig || now - cards.at > 300) {
+        // (worked out again when what is switched on changes, and twice a second while the stack is
+        // over its cap or has had to give way; a stack that fits as it is costs nothing more)
+        const squeezed = cards.folded.length > 0 || (!small && CARD_ORDER.some((id) => cards.compact[id]));
+        if (sig !== cards.sig || ((cards.over || squeezed) && now - cards.at > 500)) {
             Object.assign(cards, layoutCards(C, subj, cfs, small, cap));
             cards.sig = sig;
             cards.at = now;
@@ -6812,6 +6829,7 @@
             y = drawCard(C, [[[text, false, C.subtle]]], y, cfs) + 5;
         }
         cards.bottom = y > y0 ? y : 0;
+        cards.over = y - y0 > cap + 1;
     }
 
     // The flyby card: the chosen body's speed relative to the star before and after it passed the
@@ -12428,7 +12446,7 @@
             setTimeout(() => {
                 const h = hints.missionNote;
                 if (!mission.def || !h || typeof h.html !== 'string' || !/^<strong>(Undone|Redone)/.test(h.html)) return;
-                historyNote(`${h.html} Fuel left: ${f1(Math.max(0, mission.def.budget - mission.used))} km/s.`);
+                historyNote(`${h.html}. Fuel left: ${f1(Math.max(0, mission.def.budget - mission.used))} km/s.`);
             }, 0);
         }
     }
