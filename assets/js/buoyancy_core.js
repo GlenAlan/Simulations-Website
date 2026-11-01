@@ -3868,10 +3868,17 @@
         hintHold = performance.now() + 3500;
     }
     let hintHold = 0;
+    let hintPreview = 0;         // material swatch pointed at or focused (0: none)
     function refreshHint() {
         if (!el.hint || performance.now() < hintHold) return;
         let title, body;
-        if (mode === 'sim') {
+        const pm = hintPreview && (mode === 'sim' || hintPreview !== settings.material || settings.tool === 'eraser') ? MATERIALS[hintPreview] : null;
+        if (pm) {
+            const liq = LIQUIDS[settings.liquid];
+            title = pm.name + ', ' + pm.rho.toLocaleString('en-US') + ' kg/m³';
+            body = (pm.rho < liq.rho ? 'less dense than ' : 'denser than ') + liq.name.toLowerCase() + ' (' +
+                liq.rho.toLocaleString('en-US') + ' kg/m³).';
+        } else if (mode === 'sim') {
             title = 'Simulating';
             const touch = pointer.type !== 'mouse' || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
             if (touch && settings.rotation) body = 'Drag the object to lift or throw it; hold it with two fingers to turn it. Tap the liquid for waves.';
@@ -4059,19 +4066,41 @@
         refreshHint();
     }
 
+    // Each group (swatches, tools) is one stop for Tab, at its chosen button; the arrow keys move
+    // within it (see radioKeys).
     function syncToolButtons() {
         document.querySelectorAll('.buoy-mat').forEach((b) => {
             const on = +b.dataset.mat === settings.material && settings.tool !== 'eraser';
             b.classList.toggle('is-active', on);
             b.setAttribute('aria-checked', on ? 'true' : 'false');
+            b.tabIndex = +b.dataset.mat === settings.material ? 0 : -1;
         });
         document.querySelectorAll('.buoy-tool').forEach((b) => {
             const on = b.dataset.tool === settings.tool;
             b.classList.toggle('is-active', on);
             b.setAttribute('aria-checked', on ? 'true' : 'false');
+            b.tabIndex = on ? 0 : -1;
         });
         hintHold = 0;
         refreshHint();
+    }
+    // Arrow keys (and Home / End) move to the next button in a group of radio buttons and pick it
+    function radioKeys(group, sel) {
+        if (!group) return;
+        group.addEventListener('keydown', (e) => {
+            const items = Array.from(group.querySelectorAll(sel));
+            const i = items.indexOf(document.activeElement);
+            if (i < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+            let j = -1;
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') j = (i + 1) % items.length;
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') j = (i - 1 + items.length) % items.length;
+            else if (e.key === 'Home') j = 0;
+            else if (e.key === 'End') j = items.length - 1;
+            if (j < 0) return;
+            e.preventDefault();
+            items[j].focus();
+            items[j].click();
+        });
     }
 
     function setLiquid(key) {
@@ -4117,8 +4146,19 @@
                     if (mode === 'sim') enterEditMode();
                     syncToolButtons();
                 });
+                // the swatches are colours: pointing at one (or tabbing to it) names it in the hint
+                const preview = (on) => {
+                    if (on) hintPreview = i; else if (hintPreview === i) hintPreview = 0; else return;
+                    hintHold = 0;
+                    refreshHint();
+                };
+                b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') preview(true); });
+                b.addEventListener('pointerleave', () => preview(false));
+                b.addEventListener('focus', () => preview(true));
+                b.addEventListener('blur', () => preview(false));
                 palEl.appendChild(b);
             }
+            radioKeys(palEl, '.buoy-mat');
         }
         document.querySelectorAll('.buoy-tool').forEach((b) => {
             b.addEventListener('click', () => {
@@ -4127,6 +4167,7 @@
                 syncToolButtons();
             });
         });
+        radioKeys(document.querySelector('.buoy-tools'), '.buoy-tool');
         const sizeEl = document.getElementById('brushSize');
         if (sizeEl) {
             sizeEl.innerHTML = '';
@@ -4306,6 +4347,9 @@
     function start() {
         if (loopRunning) return;
         loopRunning = true;
+        // (until the first pointer event, the hints assume the device's main pointer: no
+        // "right-click erases" on a phone)
+        if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) pointer.type = 'touch';
         refreshPalette();
         setupUI();
         handleResize();
