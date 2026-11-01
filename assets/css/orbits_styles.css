@@ -2629,3 +2629,136 @@ dialog.orb-help::backdrop {
         min-height: 2.7em;
     }
 }
+
+/* ---------- Phones held sideways (and other short, wide windows): the info bar beside the canvas ----------
+   Three columns: the palette, the canvas and the info bar. Under the canvas the bar took half the
+   screen's height; beside it, it costs only width. It also takes its height from the canvas row and
+   never sets it (contain: size), so the canvas's size depends on the screen alone. Under the canvas,
+   the bar's height changed with its width (its readouts wrapping differently), its width with the
+   canvas's, and the canvas's height with the bar's: the two fed each other and the canvas flipped
+   between two sizes every frame. */
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim {
+        --orb-info-w: 172px;
+    }
+
+    .orbits-sim .simulation-display-container {
+        grid-template-columns: var(--orb-side-w) minmax(0, 1fr) var(--orb-info-w);
+        grid-template-areas: "tools canvas info";
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--orb-side-w) + var(--orb-info-w) + 2 * var(--orb-side-gap)));
+    }
+
+    .orbits-sim .sim-info-bar {
+        grid-area: info;
+        contain: size;
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        justify-content: flex-start;
+        gap: 6px;
+        min-height: 0;
+        margin: 0;
+        padding: 5px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+    }
+
+    .orbits-sim .stats-container {
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        flex: 0 0 auto;
+        gap: 2px;
+        min-width: 0;
+    }
+
+    .orbits-sim .stats-container > .orb-subject {
+        flex: 0 0 auto;
+        max-width: none;
+        padding: 0 0 3px;
+    }
+
+    .orbits-sim .orb-subject-name {
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+
+    /* Each readout a quiet row: its name on the left, the value on the right */
+    .orbits-sim .stats-container > .stats-box {
+        display: flex;
+        align-items: baseline;
+        gap: 0.3em;
+        padding: 0.1em 0.35em;
+        font-size: 0.72em;
+        white-space: nowrap;
+    }
+
+    .orbits-sim .stats-box > strong {
+        flex: 1 1 auto;
+    }
+
+    .orbits-sim .stats-box .sim-value {
+        min-width: 0;
+    }
+
+    /* Seven buttons in two rows of four, at the foot of the column */
+    .orbits-sim .sim-info-actions {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 2px;
+        flex: 0 0 auto;
+        margin: auto 0 0;
+    }
+
+    .orbits-sim .sim-info-actions .sim-action-buttons-overlay {
+        display: contents;
+    }
+
+    .orbits-sim .sim-info-actions .sim-icon-button,
+    .orbits-sim .sim-info-actions .sim-reset-button,
+    .orbits-sim .sim-info-actions .sim-show-charts-label,
+    .orbits-sim .sim-info-actions .sim-fullscreen-toggle,
+    .orbits-sim .sim-info-actions .sim-panel-toggle-button {
+        width: 100%;
+        height: 40px;
+    }
+
+    /* With the settings open beside them there is room for two columns only: the palette steps aside
+       until the settings close (the canvas would otherwise shrink to a strip) */
+    body.sim-panel-active.sim-panel-side .orbits-sim .orb-toolbar {
+        display: none;
+    }
+
+    body.sim-panel-active.sim-panel-side .orbits-sim .simulation-display-container {
+        grid-template-columns: minmax(0, 1fr) var(--orb-info-w);
+        grid-template-areas: "canvas info";
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--orb-info-w) + var(--orb-side-gap)));
+    }
+
+    /* Fullscreen: the same three columns fill the screen (the bar is no longer fixed along the bottom) */
+    body.sim-fullscreen-active .simulation-area-wrapper.orbits-sim {
+        height: 100%;
+    }
+
+    body.sim-fullscreen-active .orbits-sim .simulation-display-container {
+        grid-template-columns: var(--orb-side-w) minmax(0, 1fr) var(--orb-info-w);
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "tools canvas info";
+        column-gap: var(--orb-side-gap);
+    }
+
+    body.sim-fullscreen-active .orbits-sim .sim-info-bar.fullscreen-style {
+        position: static;
+        width: auto;
+        padding: 5px;
+        padding-bottom: calc(5px + env(safe-area-inset-bottom, 0px));
+        border-width: 1px;
+        border-radius: var(--sim-radius);
+        box-shadow: none;
+        z-index: auto;
+    }
+}
