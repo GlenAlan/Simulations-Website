@@ -5628,8 +5628,9 @@
     }
 
     // What the canvas's edges carry, which the off-screen pointers keep clear of: the time notice and
-    // the "Viewed from" chip (top left), the cards (top right, as drawn last frame), the scale bar and
-    // legend (bottom left) and "Sizes not to scale" (bottom right). Rectangles [left, top, right, bottom].
+    // the "Viewed from" chip (top left), the cards (top right), the scale bar and legend (bottom left)
+    // and "Sizes not to scale" (bottom right), as drawn last frame. Rectangles [left, top, right, bottom].
+    const edges = { scaleRight: 160, noteLeft: Infinity, strip: Infinity };
     function edgeKeepOut() {
         const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
         let top = 0;
@@ -5640,30 +5641,34 @@
             out.push([0, top, 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
         }
         if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
-        const strip = viewH - fs - 18;
-        out.push([0, strip, Math.min(viewW, 190), viewH]);
-        ctx.font = font(fs);
-        out.push([viewW - ctx.measureText('Sizes not to scale').width - 22, strip, viewW, viewH]);
+        const strip = Math.min(edges.strip, viewH - fs - 18);
+        out.push([0, strip, Math.min(viewW, edges.scaleRight + 6), viewH]);
+        out.push([Math.min(edges.noteLeft, viewW - 120) - 6, strip, viewW, viewH]);
         if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
         return out;
     }
 
-    // Slide a pointer at (ex, ey) on the edge along it, out of any rectangle it falls in
-    function clearOfEdges(ex, ey, zones, inset) {
+    // Slide a pointer at (ex, ey) on the edge along it until it, and h px either side of it along the
+    // edge (where its name goes), are clear of every rectangle. Returns [x, y, clear]: on a small
+    // canvas a stretch of edge may have no room left, and then the pointer goes without its name.
+    function clearOfEdges(ex, ey, zones, inset, h) {
         const onSide = ex <= inset + 0.5 || ex >= viewW - inset - 0.5;
-        for (let pass = 0; pass < 3; pass++) {
-            const z = zones.find((r) => ex >= r[0] && ex <= r[2] && ey >= r[1] && ey <= r[3]);
-            if (!z) break;
+        const x0 = ex, y0 = ey;
+        for (let pass = 0; pass < 7; pass++) {
+            const z = onSide ? zones.find((r) => ex >= r[0] && ex <= r[2] && ey + h > r[1] && ey - h < r[3])
+                : zones.find((r) => ey >= r[1] && ey <= r[3] && ex + h > r[0] && ex - h < r[2]);
+            if (!z) return [ex, ey, true];
+            if (pass === 6) break;
             if (onSide) {
                 // up or down the side, whichever is nearer and still on the canvas
-                const up = z[1] - 8, down = z[3] + 8;
+                const up = z[1] - h - 2, down = z[3] + h + 2;
                 ey = (up >= inset && (ey - up <= down - ey || down > viewH - inset)) ? up : Math.min(down, viewH - inset);
             } else {
-                const lt = z[0] - 8, rt = z[2] + 8;
+                const lt = z[0] - h - 2, rt = z[2] + h + 2;
                 ex = (lt >= inset && (ex - lt <= rt - ex || rt > viewW - inset)) ? lt : Math.min(rt, viewW - inset);
             }
         }
-        return [ex, ey];
+        return [x0, y0, false];
     }
 
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
@@ -5678,8 +5683,11 @@
             const dx = x - cx, dy = y - cy;
             const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
-            const [ex, ey] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset);
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+            // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
+            ctx.font = font(fs);
+            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : ctx.measureText(b.name).width / 2 + 6;
+            const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
             ctx.beginPath();
@@ -5689,13 +5697,17 @@
             ctx.closePath();
             ctx.fill();
             ctx.globalAlpha = 1;
-            if (settings.labels) {
+            let half = 10;
+            if (settings.labels && clear) {
                 ctx.font = font(fs);
                 ctx.fillStyle = C.subtle;
                 ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
                 ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
                 ctx.fillText(b.name, ex - ux * 12, ey - uy * 12);
+                half = Math.max(half, ctx.measureText(b.name).width / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
             }
+            // (the next pointer along this edge keeps clear of this one and its name)
+            zones.push([ex - half - 4, ey - fs - 14, ex + half + 4, ey + fs + 14]);
         }
     }
 
@@ -6674,9 +6686,13 @@
         ctx.fillStyle = C.subtle;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(scaleLabel(nice), x0 + len + 6, y0 + 2);
+        const sl = scaleLabel(nice), note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+        ctx.fillText(sl, x0 + len + 6, y0 + 2);
         ctx.textAlign = 'right';
-        ctx.fillText(settings.realistic ? 'Sizes to scale' : 'Sizes not to scale', viewW - pad - 2, y0 + 2);
+        ctx.fillText(note, viewW - pad - 2, y0 + 2);
+        edges.scaleRight = x0 + len + 6 + ctx.measureText(sl).width;
+        edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
 
@@ -6703,11 +6719,13 @@
     // Top first, in this order: the mission, a flyby, the stability timer, relativity, Kepler's 1st, 2nd
     // and 3rd laws, the Hill sphere and Roche limit. The stack never covers much of the canvas: when it
     // would grow past its cap (about 60% of the height, and clear of the scale bar), the lowest cards
-    // turn compact (a line or two) first; if it is still too tall they fold into one last line that
-    // names them. (Small canvases show compact cards from the start.) The layout is worked out a few
-    // times a second, by drawing the cards where nothing shows, and kept in between.
+    // turn compact (a line or two) first, the mission, a flyby and relativity last; if it is still too
+    // tall the lowest fold into one last line that names them, and any left compact that now fit are
+    // shown in full again. (Small canvases show compact cards from the start.) The layout is worked out
+    // a few times a second, by drawing the cards where nothing shows, and kept in between.
     const CARD_ORDER = ['mission', 'flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
     const CARD_NAMES = { mission: 'mission', flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
+    const CARD_KEEP = new Set(['mission', 'flyby', 'relativity']);
     const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0 };
 
     // One card at y (compact or not): returns where the next one goes (y itself if it has nothing to show)
@@ -6743,15 +6761,21 @@
         const compact = {};
         let total = 0;
         for (const id of ids) { compact[id] = small; total += full[id]; }
-        for (let i = ids.length - 1; i >= 0 && total > cap; i--) {
-            if (!compact[ids[i]]) { total += comp[ids[i]] - full[ids[i]]; compact[ids[i]] = true; }
-        }
+        // (the mission, a flyby and relativity are what the moment is about: they turn compact last)
+        const squeeze = (keep) => {
+            for (let i = ids.length - 1; i >= 0 && total > cap; i--) {
+                const id = ids[i];
+                if (!compact[id] && !(keep && CARD_KEEP.has(id))) { total += comp[id] - full[id]; compact[id] = true; }
+            }
+        };
+        squeeze(true);
         const folded = [], foldH = Math.round(fs * 1.4) + 15;
         for (let i = ids.length - 1; i >= 1 && total > cap; i--) {
-            total -= comp[ids[i]];
+            total -= compact[ids[i]] ? comp[ids[i]] : full[ids[i]];
             if (!folded.length) total += foldH;
             folded.unshift(ids[i]);
         }
+        squeeze(false);
         // (with some folded away, the cards left may have room to be shown in full again, top first)
         if (folded.length && !small) {
             for (const id of ids) {
