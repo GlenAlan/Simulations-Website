@@ -938,6 +938,7 @@
         let exp = Math.floor(Math.log10(Math.abs(x)));
         let mant = x / Math.pow(10, exp);
         if (Math.abs(+mant.toFixed(digits)) >= 10) { mant /= 10; exp += 1; }
+        if (exp === 0) return mant.toFixed(digits);   // (not "4.72×10⁰")
         return `${mant.toFixed(digits)}×10${String(exp).split('').map((c) => SUP[c]).join('')}`;
     }
     // Three significant figures, plain for moderate values
@@ -7919,7 +7920,15 @@
             syncEccentricity(true);
         });
         ui.popName.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.popName.blur(); });
+        // Dragged, the sliders snap to round values; stepped with the keys they don't (a snap would
+        // pull each small step straight back)
+        let keyed = false;
+        for (const el of [ui.popMass, ui.popRadius, ui.popSpeed]) {
+            el.addEventListener('keydown', () => { keyed = true; });
+            el.addEventListener('pointerdown', () => { keyed = false; });
+        }
         const snapLog = (v, snaps) => {
+            if (keyed) return v;
             for (const s of snaps) if (Math.abs(v - Math.log10(s)) < 0.04) return Math.log10(s);
             return v;
         };
@@ -7948,7 +7957,7 @@
             const sr = speedRelative(b);
             let vNew = (parseFloat(ui.popSpeed.value) / 1000) * popSpeedMax;
             // Snap to the exact circular or escape speed within a step of the slider
-            if (sr.p) {
+            if (sr.p && !keyed) {
                 const { vc, ve } = speedsAround(b, sr.p);
                 for (const s of [vc, ve]) if (Math.abs(vNew - s) < 0.006 * popSpeedMax) vNew = s;
             }
