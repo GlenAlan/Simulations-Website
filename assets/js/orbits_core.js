@@ -230,7 +230,7 @@
                 const x1 = 0.97000436, y1 = -0.24308753, vx3 = -0.93240737, vy3 = -0.86473146;
                 return [
                     { kind: 'sun', name: 'Star A', at: [x1, y1], v: [-vx3 / 2 * vs, -vy3 / 2 * vs] },
-                    { kind: 'sun', name: 'Star B', color: '#f2849e', at: [-x1, -y1], v: [-vx3 / 2 * vs, -vy3 / 2 * vs] },
+                    { kind: 'sun', name: 'Star B', color: '#ff9a52', at: [-x1, -y1], v: [-vx3 / 2 * vs, -vy3 / 2 * vs] },
                     { kind: 'sun', name: 'Star C', color: '#7ecaf6', at: [0, 0], v: [vx3 * vs, vy3 * vs] }
                 ];
             })()
@@ -245,7 +245,7 @@
             tip: 'Three stars start at rest. Who gets thrown out? It\'s chaos: nudge one star a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
-                { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#f2849e', at: [-200, -100] },
+                { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
                 { kind: 'sun', name: 'Star C', m: 5, R: 2.3e6, color: '#8fb8ff', at: [100, -100] }
             ]
         },
@@ -4985,7 +4985,7 @@
 
     let customCount = 0;
     function nextCustomColour() {
-        const c = ['#ae85ca', '#7bd0c1', '#c75b9b', '#8499e7', '#f2849e'][customCount % 5];
+        const c = ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
         customCount++;
         return c;
     }
@@ -10332,7 +10332,7 @@
             const q = orbitState(c.M + mc, outer.a * (1 + outer.e) * span(3, 8), span(0, 0.35), 360 * rnd(), 360 * rnd());
             const fi = mc / (c.M + mc), fc = c.M / (c.M + mc);
             for (const b of list) { b.x -= fi * q.x; b.y -= fi * q.y; b.vx -= fi * q.vx; b.vy -= fi * q.vy; }
-            list.push({ kind: red ? 'dwarf' : 'sun', name: 'Star B', m: mc, R: 696000 * Math.pow(mc, 0.8), color: red ? '#f2849e' : '#ffd166',
+            list.push({ kind: red ? 'dwarf' : 'sun', name: 'Star B', m: mc, R: 696000 * Math.pow(mc, 0.8), color: red ? '#ff9a52' : '#ffd166',
                 x: c.x + fc * q.x, y: c.y + fc * q.y, vx: c.vx + fc * q.vx, vy: c.vy + fc * q.vy });
             list[0].name = 'Star A';
             companion = true;
