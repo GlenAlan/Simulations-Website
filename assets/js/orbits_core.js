@@ -5590,6 +5590,9 @@
     function drawLabels(C) {
         if (!settings.labels) return;
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
+        // What the canvas's edges carry (the cards, the arrow key, the scale bar, the "Viewed from" chip):
+        // a name goes there only if it has nowhere else to go (and the chosen body's, never if it can help it)
+        const zones = cleanRender ? [] : edgeKeepOut();
         ctx.font = font(fs);
         ctx.lineWidth = 3;
         ctx.strokeStyle = hexA(C.bg, 0.8);
@@ -5606,16 +5609,22 @@
             const w = ctx.measureText(b.name).width;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
-            let best = null;
+            let best = null, offEdge = null, offOthers = null, first = null;
             for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
                 const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
                 const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
                 // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
                 const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
                     || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
-                if (!hit) { best = { box, ux, uy }; break; }
-                if (!best && chosen) best = { box, ux, uy, forced: true };
+                const edge = zones.some((z) => box.l < z[2] && box.r > z[0] && box.t < z[3] && box.b > z[1]);
+                const at = { box, ux, uy };
+                if (!hit && !edge) { best = at; break; }
+                if (!edge && !offEdge) offEdge = at;
+                if (!hit && !offOthers) offOthers = at;
+                if (!first) first = at;
             }
+            // (the chosen body's name stays clear of a card even if it has to go over a disc)
+            if (!best) best = chosen ? offEdge || offOthers || first : offOthers;
             if (!best) continue;
             placed.push(best.box);
             ctx.fillStyle = C.label;
@@ -12914,6 +12923,7 @@
         const g = d.goal, col = C.velocity, cx = sx(R.dx), cy = sy(R.dy);
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         ctx.save();
+        const zones = edgeKeepOut();
         ctx.font = font(fs);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
@@ -12925,7 +12935,21 @@
             ctx.arc(x, y, r, 0, TAU);
             ctx.stroke();
             ctx.setLineDash([]);
-            if (label && r > 14) { ctx.fillStyle = C.subtle; ctx.fillText(label, x, y + r + 3); }
+            if (!label || r <= 14) return;
+            // Under the ring, or over it, or just inside it: wherever it is on the canvas and clear of the
+            // cards, the arrow key and the scale bar (a ring that fills a phone's canvas reaches them)
+            const w = ctx.measureText(label).width;
+            const spots = [[x, y + r + 3], [x, y - r - 3 - fs], [x, y + r - 4 - fs], [x, y - r + 4],
+                [x - r + 9 + w / 2, y - fs / 2], [x + r - 9 - w / 2, y - fs / 2]];
+            let at = null;
+            for (const [cx0, ty] of spots) {
+                if (ty < 2 || ty + fs > viewH - 2) continue;
+                const lx = clamp(cx0, w / 2 + 4, viewW - w / 2 - 4), l = lx - w / 2, rr = lx + w / 2;
+                const clear = !zones.some((z) => l < z[2] && rr > z[0] && ty < z[3] && ty + fs > z[1]);
+                if (at === null || clear) at = [lx, ty];
+                if (clear) break;
+            }
+            if (at) { ctx.fillStyle = C.subtle; ctx.fillText(label, at[0], at[1]); }
         };
         if (g.type === 'orbit') {
             ctx.fillStyle = hexA(col, C.dark ? 0.08 : 0.1);
