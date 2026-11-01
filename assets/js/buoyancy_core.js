@@ -2132,20 +2132,21 @@
         forEachShapeCell(tool, cA, rA, cB, rB, thick, (c, r) => { if (!filter || filter(c, r)) setCell(c, r, m); });
     }
     // Positions are in grid cells (1 cm): the tank is 240 x 150 and the liquid starts 60 deep,
-    // so objects are drawn just above the surface around column 120.
+    // so objects are drawn just above the surface around column 120. `group` heads the list's
+    // sections.
     const PRESETS = [
-        { key: 'pine', label: 'Pine block', build() { fillRect(100, 72, 40, 25, MAT_ID.pine); } },
+        { key: 'pine', group: 'Solid blocks', label: 'Pine block', build() { fillRect(100, 72, 40, 25, MAT_ID.pine); } },
         { key: 'ice', label: 'Ice block', build() { fillRect(108, 70, 24, 24, MAT_ID.ice); } },
         { key: 'cork', label: 'Cork slab', build() { fillRect(100, 70, 40, 8, MAT_ID.cork); } },
         { key: 'steel', label: 'Steel block', build() { fillRect(110, 70, 20, 12, MAT_ID.steel); } },
         { key: 'nylon', label: 'Nylon block (sinks slowly)', build() { fillRect(110, 70, 20, 15, MAT_ID.nylon); } },
         { key: 'gold', label: 'Gold bar', build() { fillRect(112, 70, 16, 8, MAT_ID.gold); } },
-        { key: 'plank', label: 'Tall pine plank (stability)', build() { fillRect(117, 66, 6, 38, MAT_ID.pine); } },
+        { key: 'plank', group: 'Balance and stability', label: 'Tall pine plank', build() { fillRect(117, 66, 6, 38, MAT_ID.pine); } },
         { key: 'blend', label: 'Cork float with a steel weight', build() {
             fillRect(90, 73, 60, 10, MAT_ID.cork); fillRect(92, 70, 6, 3, MAT_ID.steel);
         } },
         { key: 'ball', label: 'Hollow steel ball (sealed)', build() { fillShape('ring', 95, 62, 144, 111, 1, MAT_ID.steel); } },
-        { key: 'boat', label: 'Steel boat (open hull)', build() {
+        { key: 'boat', group: 'Boats and hulls', label: 'Steel boat (open hull)', build() {
             const S = MAT_ID.steel;
             fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
         } },
@@ -2154,7 +2155,7 @@
             fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
             setCell(119, 48, 0);
         } },
-        { key: 'bulkheads', label: 'Boat with bulkheads (one compartment holed)', build() {
+        { key: 'bulkheads', label: 'Boat with bulkheads, one holed', build() {
             // the holed end compartment floods to the outside level; the others keep the boat afloat
             const A = MAT_ID.aluminium;
             fillRect(84, 48, 72, 1, A); fillRect(84, 49, 1, 18, A); fillRect(155, 49, 1, 18, A);
@@ -4199,10 +4200,16 @@
         }
         const presetSel = document.getElementById('presetSelector');
         if (presetSel) {
+            let og = presetSel;
             for (const p of PRESETS) {
+                if (p.group) {
+                    og = document.createElement('optgroup');
+                    og.label = p.group;
+                    presetSel.appendChild(og);
+                }
                 const o = document.createElement('option');
                 o.value = p.key; o.textContent = p.label;
-                presetSel.appendChild(o);
+                og.appendChild(o);
             }
             presetSel.addEventListener('change', () => {
                 if (presetSel.value) loadPreset(presetSel.value);

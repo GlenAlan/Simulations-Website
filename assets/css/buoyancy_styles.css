@@ -417,12 +417,28 @@
     flex: 0 0 auto;
 }
 
-.buoy-key-net {
-    background: #1d2329;
+/* the net force is drawn dashed, so its key is a dashed line (as in the key on the canvas) */
+.buoy-key.buoy-key-net {
+    height: 0;
+    border: 0;
+    border-radius: 0;
+    border-top: 3px dashed #1d2329;
 }
 
-html.dark-mode .buoy-key-net {
-    background: #ffffff;
+html.dark-mode .buoy-key.buoy-key-net {
+    border-top-color: #ffffff;
+}
+
+/* one-line notes under a control (as on the other simulation pages) */
+.sim-controls-content .buoy-note {
+    margin: -0.35em 0 0 0;
+    font-size: 0.8em;
+    line-height: 1.35;
+    opacity: 0.85;
+}
+
+.sim-controls-content .buoy-arrow-chips + .buoy-note {
+    margin-top: 0.4em;
 }
 
 .buoy-gravity-name {

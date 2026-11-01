@@ -188,10 +188,11 @@
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="presetLabel">Ready-made objects</p>
 											<div class="sim-select-container">
-												<select id="presetSelector" aria-labelledby="presetLabel">
+												<select id="presetSelector" aria-labelledby="presetLabel" aria-describedby="presetNote">
 													<option value="" selected>Choose one to drop&hellip;</option>
 												</select>
 											</div>
+											<p class="buoy-note" id="presetNote">Replaces your drawing; Undo brings it back.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="liquidLabel">Liquid</p>
@@ -204,8 +205,8 @@
 											</div>
 										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label">Force arrows</p>
-											<div class="sim-checkbox-group sim-chips buoy-arrow-chips">
+											<p class="sim-control-group-label" id="arrowsLabel">Force arrows</p>
+											<div class="sim-checkbox-group sim-chips buoy-arrow-chips" role="group" aria-labelledby="arrowsLabel" aria-describedby="arrowsNote">
 												<input type="checkbox" id="arrow_weight" checked>
 												<label for="arrow_weight"><span class="buoy-key" style="background:#ff5f5f"></span>Weight</label>
 												<input type="checkbox" id="arrow_buoyancy" checked>
@@ -217,6 +218,7 @@
 												<input type="checkbox" id="arrow_contact">
 												<label for="arrow_contact"><span class="buoy-key" style="background:#c58cff"></span>Contact</label>
 											</div>
+											<p class="buoy-note" id="arrowsNote">Drawn to scale; // marks an arrow cut short to fit.</p>
 											<div class="sim-checkbox-group">
 												<input type="checkbox" id="showMarkers">
 												<label for="showMarkers">Centre of mass and buoyancy</label>
