@@ -5016,6 +5016,17 @@
         return c;
     }
 
+    // The note under "Bodies you drop or move" says what the chosen option does (see launch)
+    const PLACEMENT_NOTES = {
+        circular: 'Each starts on a circular orbit round the body it would orbit there.',
+        keep: 'A body you move keeps its velocity; a new one starts at rest.',
+        rest: 'Each starts at rest in this view, then falls.',
+        throw: 'Flick a body as you let go, and it keeps your speed.'
+    };
+    function syncPlacementNote() {
+        setText(byId('placementNote'), PLACEMENT_NOTES[settings.placement] || PLACEMENT_NOTES.circular);
+    }
+
     // Set the velocity of a body that was just dropped or moved, by the "bodies you drop or move" option.
     // d: the drag that moved it (for a throw: the pointer's speed as it let go).
     function launch(b, isNew, d) {
@@ -10885,6 +10896,7 @@
         setStability(set.st);
         settings.placement = set.pl;
         if (ui.placement) ui.placement.value = set.pl;
+        syncPlacementNote();
         forcesDirty = true;
         pred.key = '';
     }
@@ -13129,7 +13141,8 @@
         if (ui.frameChip) ui.frameChip.addEventListener('click', () => setFrame(null));
         if (ui.placement) {
             ui.placement.value = settings.placement;
-            ui.placement.addEventListener('change', () => { settings.placement = ui.placement.value; });
+            ui.placement.addEventListener('change', () => { settings.placement = ui.placement.value; syncPlacementNote(); });
+            syncPlacementNote();
         }
         if (ui.fit) ui.fit.addEventListener('click', fitAll);
         if (ui.pause) ui.pause.addEventListener('click', () => setPaused(!paused));
