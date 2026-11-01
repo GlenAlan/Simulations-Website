@@ -3747,6 +3747,19 @@
         return best;
     }
 
+    // A tap on a Lagrange point's marker (by touch) reads its note, even among a swarm's dots, such as
+    // the Trojans crowded round L4 and L5: only a body with a name (or the chosen one) near it comes first
+    const LAGRANGE_TAP = 18;
+    function namedBodyAt(x, y, tol) {
+        let best = null, bestD = Infinity;
+        for (const b of bodies) {
+            if (b.minor && !isChosen(b)) continue;
+            const d = Math.hypot(sx(b.dx) - x, sy(b.dy) - y) - drawRadius(b);
+            if (d < tol && d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
     // ------------------------------------------------------------------
     // Gravity well: the potential Phi = -sum G m / sqrt(r^2 + eps^2) of the heavier bodies (a light swarm
     // body's dimple is far too small to see), drawn as a contour map. In a rotating frame it is the
@@ -4040,8 +4053,8 @@
         lagrangeDown = null;
         if (!down || (e.pointerType || 'mouse') === 'mouse' || !lagrangeShown.length) return;
         const pt = canvasPoint(e);
-        if (Math.hypot(pt.x - down.x, pt.y - down.y) > 10 || bodyAt(pt.x, pt.y, 12)) return;
-        const m = lagrangeAt(pt.x, pt.y, 18);
+        if (Math.hypot(pt.x - down.x, pt.y - down.y) > 10 || namedBodyAt(pt.x, pt.y, 12)) return;
+        const m = lagrangeAt(pt.x, pt.y, LAGRANGE_TAP);
         if (!m) return;
         const comma = m.text.indexOf(',');
         showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
@@ -4718,13 +4731,21 @@
     }
 
     // ---- The help: keys and gestures ----
-    function openHelp() {
+    // (on a touch screen the keys are folded away under the gestures, unless it was opened with a key)
+    function openHelp(byKey) {
         const d = ui.keysHelp;
         if (!d || d.open) return;
+        showHelpKeys(!!byKey);
         const a = document.activeElement;
         nav.helpOpener = a && a !== document.body ? a : canvas;
         if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
         if (ui.keysClose) ui.keysClose.focus();
+    }
+    function showHelpKeys(on) {
+        if (!ui.keysHelp) return;
+        ui.keysHelp.classList.toggle('keys-open', on);
+        const t = byId('helpKeysToggle');
+        if (t) t.setAttribute('aria-expanded', on ? 'true' : 'false');
     }
     function closeHelp() {
         const d = ui.keysHelp;
@@ -4746,7 +4767,7 @@
         e.stopImmediatePropagation();
         if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); closeHelp(); return; }
         if (e.key !== 'Tab') return;
-        const items = Array.from(d.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled);
+        const items = Array.from(d.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled && el.getClientRects().length);
         if (!items.length) { e.preventDefault(); return; }
         const i = items.indexOf(document.activeElement);
         const j = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : (i < 0 || i === items.length - 1 ? 0 : i + 1);
@@ -4757,7 +4778,7 @@
     function onNavKey(e) {
         if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
         const key = e.key;
-        if (key === '?') { e.preventDefault(); openHelp(); return; }
+        if (key === '?') { e.preventDefault(); openHelp(true); return; }
         const inUse = nav.inUse || !!popBody || document.body.classList.contains('sim-fullscreen-active');
         if ((key === 'n' || key === 'N') && inUse) {
             e.preventDefault();
@@ -4903,8 +4924,10 @@
             }, 0));
         }
         // The help
-        if (ui.keysBtn) ui.keysBtn.addEventListener('click', openHelp);
+        if (ui.keysBtn) ui.keysBtn.addEventListener('click', () => openHelp(false));
         if (ui.keysClose) ui.keysClose.addEventListener('click', closeHelp);
+        const keysToggle = byId('helpKeysToggle');
+        if (keysToggle) keysToggle.addEventListener('click', () => showHelpKeys(!ui.keysHelp.classList.contains('keys-open')));
         if (ui.keysHelp) {
             ui.keysHelp.addEventListener('close', helpClosed);
             // (a click on the dimmed page around it closes it)
@@ -4921,11 +4944,15 @@
         });
         // A press on the canvas gives it the keyboard (so Enter, N and Z act on it next), unless you are
         // working in the body's menu (leaving one of its fields would apply what is half typed)
-        canvas.addEventListener('pointerdown', () => {
+        // (A finger's press shows no ring: the browser counts the focus given here as visible, and on a
+        // phone a pink ring round the canvas after every tap only clutters it. A key brings it back.)
+        canvas.addEventListener('pointerdown', (e) => {
+            canvas.classList.toggle('orb-touch-focus', (e.pointerType || 'mouse') !== 'mouse');
             const a = document.activeElement;
             if (a === canvas || (ui.pop && ui.pop.contains(a))) return;
             canvas.focus({ preventScroll: true });
         });
+        document.addEventListener('keydown', () => canvas.classList.remove('orb-touch-focus'), true);
         // A body chosen on the canvas shows in the list straight away (after the canvas's own handler)
         canvas.addEventListener('pointerup', () => setTimeout(() => { if (nav.visible && selectedId !== nav.shownSel) navReveal(); }, 0));
         setInterval(navTick, NAV_TICK_MS);
@@ -5032,7 +5059,7 @@
     function launch(b, isNew, d) {
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
-            if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
+            if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : heldSense(b, p, d), isSatellite(p));
         } else if (settings.placement === 'throw') {
             const v = throwVelocity(d || chipThrow, performance.now());
             b.vx = v[0]; b.vy = v[1];
@@ -5051,6 +5078,15 @@
         const vc = Math.sqrt((G * (b.m + p.m)) / Math.max(r, 1e-12));
         if (Math.abs(h) > 0.05 * r * vc) return h < 0 ? -1 : 1;
         return orbitSense(p, b);
+    }
+
+    // The way a body moved by hand goes round p when it is let go: the way it went round before it was
+    // picked up (its velocity, kept while it is held, would go round the other way once it is carried
+    // past the far side of p), or round a new primary, the usual way there. d: the drag (see startHold).
+    function heldSense(b, p, d) {
+        const h = d || dragOf(b);
+        if (h && h.sense) return h.sense.pid === p.id ? h.sense.s : orbitSense(p, b);
+        return senseAround(b, p);
     }
 
     // A tap on a palette chip: put the body at a free spot around the heaviest body, in view.
@@ -5581,6 +5617,9 @@
     function drawLabels(C) {
         if (!settings.labels) return;
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
+        // What the canvas's edges carry (the cards, the arrow key, the scale bar, the "Viewed from" chip):
+        // a name goes there only if it has nowhere else to go (and the chosen body's, never if it can help it)
+        const zones = cleanRender ? [] : edgeKeepOut();
         ctx.font = font(fs);
         ctx.lineWidth = 3;
         ctx.strokeStyle = hexA(C.bg, 0.8);
@@ -5597,16 +5636,22 @@
             const w = ctx.measureText(b.name).width;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
-            let best = null;
+            let best = null, offEdge = null, offOthers = null, first = null;
             for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
                 const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
                 const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
                 // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
                 const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
                     || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
-                if (!hit) { best = { box, ux, uy }; break; }
-                if (!best && chosen) best = { box, ux, uy, forced: true };
+                const edge = zones.some((z) => box.l < z[2] && box.r > z[0] && box.t < z[3] && box.b > z[1]);
+                const at = { box, ux, uy };
+                if (!hit && !edge) { best = at; break; }
+                if (!edge && !offEdge) offEdge = at;
+                if (!hit && !offOthers) offOthers = at;
+                if (!first) first = at;
             }
+            // (the chosen body's name stays clear of a card even if it has to go over a disc)
+            if (!best) best = chosen ? offEdge || offOthers || first : offOthers;
             if (!best) continue;
             placed.push(best.box);
             ctx.fillStyle = C.label;
@@ -7257,7 +7302,7 @@
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
             if (p) {
-                const c = circularLaunch(b, p, d && d.isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
+                const c = circularLaunch(b, p, d && d.isNew ? orbitSense(p, b) : heldSense(b, p, d), isSatellite(p));
                 return { v: c.b, p, pv: c.p };
             }
         }
@@ -7870,9 +7915,35 @@
 
     // Beside the body on wider screens (kept on screen, it may overlap the palette); on phones in
     // portrait a sheet along the bottom of the screen, with the page scrolled so the canvas shows above it.
+    // On phones held sideways (the info bar in a column beside the canvas) a sheet down one side of the
+    // screen: over the palette, which isn't needed while a body is changed (so play, the readouts and
+    // the cards stay in view), or over the info column if the body is on the left; the side is chosen
+    // as it opens and kept while it is open.
+    const SIDE_SHEET_MQ = '(orientation: landscape) and (min-width: 640px) and (max-height: 540px)';
     function positionPopover(b, opening) {
         const sheet = window.innerWidth < 600 && window.innerHeight > window.innerWidth;
+        const side = !sheet && !!window.matchMedia && window.matchMedia(SIDE_SHEET_MQ).matches;
         ui.pop.classList.toggle('is-sheet', sheet);
+        if (side) {
+            const was = ui.pop.classList.contains('is-side');
+            ui.pop.classList.add('is-side');
+            ui.pop.style.left = '';
+            ui.pop.style.top = '';
+            const cr = canvas.getBoundingClientRect(), x = cr.left + sx(b.dx), w = ui.pop.offsetWidth;
+            if (opening || !was) {
+                // (with the settings open beside the canvas the palette has stepped aside: then over them)
+                const bc = document.body.classList, settingsOpen = bc.contains('sim-panel-active') && bc.contains('sim-panel-side');
+                const rightOk = x < window.innerWidth - w - 16, leftOk = x > w + 16;
+                ui.pop.classList.toggle('on-left', settingsOpen ? !rightOk && leftOk : leftOk || (!rightOk && x > window.innerWidth / 2));
+            }
+            // (the canvas in full view beside it, with the page's header scrolled away)
+            if (opening && !document.body.classList.contains('sim-fullscreen-active')) {
+                const delta = cr.top - Math.max(0, Math.min(8, window.innerHeight - cr.height));
+                if (Math.abs(delta) > 2) window.scrollBy({ top: delta, behavior: 'smooth' });
+            }
+            return;
+        }
+        ui.pop.classList.remove('is-side', 'on-left');
         if (sheet) {
             ui.pop.style.left = '';
             ui.pop.style.top = '';
@@ -8511,7 +8582,7 @@
         if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
-        if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet')) {
+        if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
             const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
             const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
             const fits = ph <= cr.height - 12;
@@ -8813,7 +8884,22 @@
             ui.palette.dataset.keys = '1';
             ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
             ui.palette.addEventListener('keydown', onPaletteKey);
+            ui.palette.addEventListener('scroll', paletteEdges, { passive: true });
+            if (typeof ResizeObserver !== 'undefined') new ResizeObserver(paletteEdges).observe(ui.palette);
+            else window.addEventListener('resize', paletteEdges);
         }
+        paletteEdges();
+    }
+
+    // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
+    // fades at an end only while there are more chips beyond it
+    const paletteScrolls = () => !!ui.palette && ui.palette.scrollWidth > ui.palette.clientWidth + 2;
+    function paletteEdges() {
+        const p = ui.palette;
+        if (!p) return;
+        const max = p.scrollWidth - p.clientWidth;
+        p.classList.toggle('at-start', p.scrollLeft <= 2);
+        p.classList.toggle('at-end', p.scrollLeft >= max - 2);
     }
 
     // The keyboard: the palette is one stop of the Tab key (as in a toolbar), not fifteen. The arrow
@@ -8901,6 +8987,9 @@
         const d = paletteDrag;
         if (!d || e.pointerId !== d.id) return;
         if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 6) {
+            // (in a row of chips that scrolls sideways, a sideways swipe by touch scrolls it: only a drag
+            // up or down carries the body out)
+            if (e.pointerType !== 'mouse' && paletteScrolls() && Math.abs(e.clientX - d.x0) > Math.abs(e.clientY - d.y0)) return;
             d.moved = true;
             d.btn.classList.add('is-dragging');
             if (!ghostEl) {
@@ -9093,6 +9182,28 @@
         hintClampCheck();
     }
 
+    // Turning a phone mid-session. Held sideways, the simulation fills the screen once the page's
+    // header has scrolled away (the layout fits it to the screen's height without the header); upright,
+    // it fits with the header. So if the simulation was in view as the phone turned, the page scrolls
+    // to where it fits, rather than leaving the header in view and the info column cut off below.
+    function bindTurn() {
+        const dc = canvas.closest('.simulation-display-container');
+        if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
+        let inView = false;
+        new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
+        const onTurn = () => {
+            if (!inView || document.body.classList.contains('sim-fullscreen-active')) return;
+            // (once the layout has settled at the new size)
+            // (with the body's menu open, as the menu places the page when it opens)
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (popBody && !ui.pop.hidden) { positionPopover(popBody, true); return; }
+                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY : 0;
+                window.scrollTo({ top: Math.max(0, Math.round(top)) });
+            }));
+        };
+        if (sideways.addEventListener) sideways.addEventListener('change', onTurn); else if (sideways.addListener) sideways.addListener(onTurn);
+    }
+
     // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
     let throwTipShown = false;
 
@@ -9172,12 +9283,13 @@
         if (Math.hypot(sx(b.dx) - x, sy(b.dy) - y) < drawRadius(b)) return null;
         return b;
     }
-    // ...or the tip of another body's arrow (long enough to tell apart from the body)
+    // ...or the tip of another body's arrow (long enough to tell apart from the body; not a swarm's dot or
+    // a piece, whose arrows aren't drawn unless it is the chosen body)
     function onArrowTip(x, y, tol) {
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor) continue;
             const tip = velocityTip(b);
             if (tip.len < 14) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
@@ -9319,6 +9431,9 @@
             freeze = { x: F.x, y: F.y, phi: turn.phi, vx: c.vx, vy: c.vy, t: simTime + lag };
         }
         view.anim = null;
+        // (the way it goes round now, for a drop on a circular orbit: see heldSense)
+        const p0 = placementPrimary(b.x, b.y, b.m, b);
+        d.sense = p0 ? { pid: p0.id, s: senseAround(b, p0) } : null;
         b.held = { offX: b.dx - F.x, offY: b.dy - F.y };
         d.frameV = frameVelocity(b.x, b.y);
         applyHolds();
@@ -9965,7 +10080,9 @@
         const right = e.button === 2;
         // The chosen body's handle first, then a body, then another body's arrow tip
         let handleBody = right ? null : onHandle(pt.x, pt.y, touch ? GRAB_TOUCH : GRAB_MOUSE);
-        const b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
+        let b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
+        // (by touch a Lagrange point's marker wins over a swarm's unnamed dots: the tap reads its note)
+        if (b && touch && b.minor && !isChosen(b) && lagrangeShown.length && lagrangeAt(pt.x, pt.y, LAGRANGE_TAP) && !namedBodyAt(pt.x, pt.y, tol)) b = null;
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
@@ -12241,7 +12358,9 @@
     // ---- Burns, and keeping everything else as it was ----
     const missionCraft = () => (mission.def ? bodyById(mission.craftId) : null);
 
-    // A note in the hint line for something a mission doesn't allow (the same one at most every 1.5 s)
+    // A note in the hint line for something a mission doesn't allow (the same one at most every 1.5 s).
+    // A burn's note waits until one has been up for RULES_MS (see noteBurn).
+    const RULES_MS = 2500;
     function missionNote(html) {
         const now = performance.now();
         if (html === mission.refusedText && now - mission.refusedAt < 1500) return;
@@ -12360,7 +12479,10 @@
     function noteBurn(dv, cut) {
         mission.burst += dv;
         clearTimeout(mission.burstTimer);
-        mission.burstTimer = setTimeout(() => {
+        mission.burstTimer = setTimeout(function showBurn() {
+            // (a "Mission rules" note put up a moment ago keeps the line long enough to be read first)
+            const h = hints.missionNote, wait = RULES_MS - (performance.now() - mission.refusedAt);
+            if (h && h.html === mission.refusedText && wait > 0) { mission.burstTimer = setTimeout(showBurn, wait); return; }
             const d = mission.def, burst = mission.burst;
             mission.burst = 0;
             if (!d || mission.status === 'won' || mission.status === 'lost') return;
@@ -12897,6 +13019,7 @@
         const g = d.goal, col = C.velocity, cx = sx(R.dx), cy = sy(R.dy);
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         ctx.save();
+        const zones = edgeKeepOut();
         ctx.font = font(fs);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
@@ -12908,7 +13031,21 @@
             ctx.arc(x, y, r, 0, TAU);
             ctx.stroke();
             ctx.setLineDash([]);
-            if (label && r > 14) { ctx.fillStyle = C.subtle; ctx.fillText(label, x, y + r + 3); }
+            if (!label || r <= 14) return;
+            // Under the ring, or over it, or just inside it: wherever it is on the canvas and clear of the
+            // cards, the arrow key and the scale bar (a ring that fills a phone's canvas reaches them)
+            const w = ctx.measureText(label).width;
+            const spots = [[x, y + r + 3], [x, y - r - 3 - fs], [x, y + r - 4 - fs], [x, y - r + 4],
+                [x - r + 9 + w / 2, y - fs / 2], [x + r - 9 - w / 2, y - fs / 2]];
+            let at = null;
+            for (const [cx0, ty] of spots) {
+                if (ty < 2 || ty + fs > viewH - 2) continue;
+                const lx = clamp(cx0, w / 2 + 4, viewW - w / 2 - 4), l = lx - w / 2, rr = lx + w / 2;
+                const clear = !zones.some((z) => l < z[2] && rr > z[0] && ty < z[3] && ty + fs > z[1]);
+                if (at === null || clear) at = [lx, ty];
+                if (clear) break;
+            }
+            if (at) { ctx.fillStyle = C.subtle; ctx.fillText(label, at[0], at[1]); }
         };
         if (g.type === 'orbit') {
             ctx.fillStyle = hexA(col, C.dark ? 0.08 : 0.1);
@@ -13199,6 +13336,7 @@
             refreshHint();
         }, true);
         bindHint();
+        bindTurn();
     }
 
     // ------------------------------------------------------------------

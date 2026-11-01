@@ -255,7 +255,7 @@
 												</div>
 												<p class="orb-bodies-empty" id="bodiesEmpty" hidden>No body has that name.</p>
 											</div>
-											<p class="orb-note" id="bodiesNote">Choose a body for its buttons; double-click one to view from it.<span class="orb-keys-note"> N and Shift+N step through them.</span><span class="orb-sr-only"> In the list the arrow keys choose a body, Enter opens its menu and Delete deletes it.</span></p>
+											<p class="orb-note" id="bodiesNote">Choose a body for its buttons<span class="orb-keys-note">; double-click one to view from it</span>.<span class="orb-keys-note"> N and Shift+N step through them.</span><span class="orb-sr-only"> In the list the arrow keys choose a body, Enter opens its menu and Delete deletes it.</span></p>
 										</details>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Show</p>
@@ -680,11 +680,12 @@
 											<h2 id="keysHelpTitle">Keys and gestures</h2>
 											<button type="button" class="orb-help-close" id="keysHelpClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
 										</div>
-										<p class="orb-help-intro" id="keysHelpIntro">The keys work once you have clicked or tabbed into the simulation, but not while you are typing in a box. Everything here can also be done with the buttons and the settings.</p>
+										<p class="orb-help-intro" id="keysHelpIntro"><span class="orb-keys-note">The keys work once you have clicked or tabbed into the simulation, but not while you are typing in a box. </span>Everything here can also be done with the buttons and the settings.</p>
 										<div class="orb-help-groups">
 											<div class="orb-help-group orb-help-touch">
 												<h3 id="helpTouchTitle">On a touch screen</h3>
 												<dl>
+													<div><dt>Drag from the strip</dt><dd>Add a body where you let go, or tap one to add it at a free spot. Swipe the strip sideways for more</dd></div>
 													<div><dt>Tap a body</dt><dd>Choose it: the info bar shows its distance, speed and period</dd></div>
 													<div><dt>Double-tap a body</dt><dd>View the motion from it (double-tap empty space to go back)</dd></div>
 													<div><dt>Long-press a body</dt><dd>Open its menu: its mass and colour, velocity, orbit and pulls</dd></div>
@@ -694,6 +695,7 @@
 													<div><dt>Tap a long tip</dt><dd>Read all of it (a tip cut short ends in <em>More</em>)</dd></div>
 												</dl>
 											</div>
+											<button type="button" class="orb-help-keys-toggle" id="helpKeysToggle" aria-expanded="false">Keys, with a keyboard<span class="orb-help-keys-chev" aria-hidden="true"></span></button>
 											<div class="orb-help-group">
 												<h3 id="helpChooseTitle">Choose and look</h3>
 												<dl>
