@@ -85,6 +85,7 @@
     // (So an upside-down cup rocking a fraction of a degree keeps its air.)
     const AIR_EPS = 0.25 * CELL;
     const WATER_SPIN = 0.5;       // share of the held liquid's own moment of inertia that turns with the hull
+    const FULL = 0.9995;          // a cavity holding this share of its area is full (it takes no more in)
     const BRUSH_SIZES = [1, 2, 3, 4, 6, 8, 12, 16];
     const T_EXT = 0, T_MAT = 1, T_SEALED = 2, T_OPEN = 3;
     const K_SEALED = 8;
@@ -786,6 +787,9 @@
         return A;
     }
 
+    // full as far as the flows (and the drawing) go
+    function cavFull(cv) { return cv.V >= cv.area * FULL; }
+
     // level of the held liquid for its volume (safeguarded Newton; starts from the last level)
     function solveLevel(cv) {
         const lo0 = cv.ymin - gExt, hi0 = cv.ymax + gExt;
@@ -868,8 +872,8 @@
 
             // ---- exchange with the tank through the openings ----
             const hin = cv.h;
-            const full = cv.V >= cv.area * 0.9995, empty = cv.V <= 0;
-            let QIt = 0, QOt = 0, qOutAir = 0, dIn = 0, dOut = 0, bub = 0, bubA = 0, ventGap = 0;
+            const full = cavFull(cv), empty = cv.V <= 0;
+            let QIt = 0, QOt = 0, qOutAir = 0, dIn = 0, dOut = 0, bub = 0, bubA = 0, ventGap = 0, topUp = false;
             const F = cv.faces;
             // The tank's surface is one curve across the whole tank, so over the object it means
             // nothing: liquid reaches an opening from beyond its ends, so the outside level at a
@@ -923,7 +927,8 @@
                         }
                     }
                     if (S > hin) {
-                        if (full || S <= z0) continue;
+                        if (S <= z0) continue;
+                        if (full) { topUp = true; continue; }
                         const fl = faceFlow(z0, z1, S, hin);
                         if (fl <= 0) continue;
                         const d = S - (z0 > hin ? z0 : hin);
@@ -967,6 +972,10 @@
                 ch.qI = QI; ch.qO = QO; ch.qoR = qo; ch.qoA = qoa;
                 QIt += QI; QOt += QO;
             }
+            // A cavity that is full as far as the flows go takes nothing more in, so with the outside
+            // liquid above its level it is filled up the last hair at once (left a hair short, it would
+            // stay so for good, a surface drawn along its rim)
+            if (topUp && cv.V < cv.area) { cv.V = cv.area; cv.h = ymax + gExt; }
             let QI = QIt, QO = QOt;
             const Wc = cv.Ws > CELL ? cv.Ws : CELL;
             // the last sliver of air under a submerged rim leaves as one final bubble
@@ -1239,7 +1248,7 @@
             cv.ripT += dtF;
             cv.rip *= ripDecay;
             cv.ventS += (cv.ventF - cv.ventS) * aVent;
-            if (cv.V <= 0 || cv.V >= cv.area || cv.Ws < 2 * CELL) { cv.phi *= 0.8; cv.phiV = 0; }
+            if (cv.V <= 0 || cavFull(cv) || cv.Ws < 2 * CELL) { cv.phi *= 0.8; cv.phiV = 0; }
             else {
                 const k = Math.PI / cv.Ws;
                 const d = Math.max(CELL, cv.V / cv.Ws);
@@ -2778,7 +2787,7 @@
     // bottom or top, so no surface line shows along its edge
     function ownLevelAt(cv, x, ext, px) {
         if (cv.V <= 0) return cv.ymin - ext - 3 * px;
-        if (cv.V >= cv.area) return cv.ymax + ext + 3 * px;
+        if (cavFull(cv)) return cv.ymax + ext + 3 * px;
         return cavityLevelAt(cv, x);
     }
 
@@ -2876,7 +2885,7 @@
     function airBulges(cv, c, s, own, px, out) {
         out.length = 0;
         const wt = 1 - cv.ventS;
-        if (wt < 1e-3 || cv.V >= cv.area) return out;
+        if (wt < 1e-3 || cavFull(cv)) return out;
         const outside = (x) => cv.sL + (cv.sR - cv.sL) * (x - cv.fx0) / cv.fspan;
         for (const ch of cv.chains) {
             if (!ch.wide) continue;
@@ -3073,7 +3082,7 @@
             ctx.save();
             ctx.clip(outline);
             const by0 = -2, by1 = Math.ceil(wy(cv.ymin - ext)) + 3;
-            const t = cv.ripT, rip = cv.V > 0 && cv.V < cv.area && cv.rip > 2e-5 ? cv.rip : 0;
+            const t = cv.ripT, rip = cv.V > 0 && !cavFull(cv) && cv.rip > 2e-5 ? cv.rip : 0;
             const yTop = cv.ymax + ext;
             let wet = false, dry = false;
             for (let i = 0; i <= np; i++) {
