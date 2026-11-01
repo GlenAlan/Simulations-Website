@@ -1160,9 +1160,11 @@
 
     // A stream as a ribbon: its centre line traced under gravity from (x, y) with velocity (vx, vy),
     // as wide as the flow q needs at its speed (narrowing as it speeds up; a rising one, traced only up
-    // to its top, may widen a little); stop(x, y) ends it where it lands
+    // to its top, may widen a little); stop(x, y) ends it where it lands. rbW is the width drawn (at
+    // least 1.2 px), rbT the width the flow has.
     const RB_MAX = 160;
     const rbX = new Float64Array(RB_MAX), rbY = new Float64Array(RB_MAX), rbW = new Float64Array(RB_MAX);
+    const rbT = new Float64Array(RB_MAX), rbS = new Float64Array(RB_MAX);
     const rbNX = new Float64Array(RB_MAX), rbNY = new Float64Array(RB_MAX);
     function traceStream(x, y, vx, vy, q, w0, stop, rising) {
         const g = settings.gravity, wMin = 1.2 / scale;
@@ -1172,7 +1174,8 @@
             const sp = Math.hypot(vx, vy);
             const w = sp > 1e-6 ? q / sp : w0;
             rbX[n] = x; rbY[n] = y;
-            rbW[n] = Math.max(wMin, Math.min(w, (rising ? 1.6 : 1) * w0));
+            rbT[n] = Math.min(w, (rising ? 1.6 : 1) * w0);
+            rbW[n] = Math.max(wMin, rbT[n]);
             if (sp > 0.03 || n === 0) { rbNX[n] = sp > 1e-9 ? -vy / sp : 0; rbNY[n] = sp > 1e-9 ? vx / sp : 1; }
             else { rbNX[n] = rbNX[n - 1]; rbNY[n] = rbNY[n - 1]; }
             n++;
@@ -2547,6 +2550,13 @@
     // side and faint streaks running along it; rounded at the end for the top of a fountain
     function drawStream(n, liq, speed, roundEnd) {
         if (n < 2) return;
+        // A trickle thinner than the 1.2 px it is drawn at shows only as much as it covers (by the
+        // width it has along most of its length): drawn at full strength, a few grams a second still
+        // over a submerged lip would hang down through the air inside as a hard line.
+        rbS.set(rbT.subarray(0, n));
+        const wMed = rbS.subarray(0, n).sort()[n >> 1];
+        const cov = clamp(wMed * scale / 1.2, 0, 1);
+        if (cov < 0.03) return;
         const p = new Path2D();
         for (let i = 0; i < n; i++) {
             const h = 0.5 * rbW[i], X = wx(rbX[i] + rbNX[i] * h), Y = wy(rbY[i] + rbNY[i] * h);
@@ -2562,6 +2572,7 @@
             p.lineTo(wx(rbX[i] - rbNX[i] * h), wy(rbY[i] - rbNY[i] * h));
         }
         p.closePath();
+        ctx.globalAlpha = cov;
         fillLiquid(p);
         const side = rbNY[0] >= 0 ? 1 : -1;
         const e = new Path2D();
@@ -2573,7 +2584,7 @@
         }
         ctx.lineJoin = 'round';
         ctx.strokeStyle = liq.surface;
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = 0.7 * cov;
         ctx.lineWidth = 1.2;
         ctx.stroke(e);
         // faint streaks running along a long, thick stream
@@ -2582,7 +2593,7 @@
             const cl = new Path2D();
             cl.moveTo(wx(rbX[0]), wy(rbY[0]));
             for (let i = 1; i < n; i++) cl.lineTo(wx(rbX[i]), wy(rbY[i]));
-            ctx.globalAlpha = 0.15;
+            ctx.globalAlpha = 0.15 * cov;
             ctx.lineWidth = Math.max(1, 0.15 * wPx);
             ctx.setLineDash([0.025 * scale, 0.04 * scale]);
             ctx.lineDashOffset = -simTime * Math.max(0.3, speed) * scale;
