@@ -3076,8 +3076,9 @@
                     const x = e ? r.ex : r.sx, z = e ? r.ez : r.sz, xo = e ? r.sx : r.ex;
                     const H = Math.min(sOut(x), sTop(x)) - z;
                     if (H < 0.5 * px1) continue;
-                    let dir = Math.sign(xo - x);
-                    if (Math.abs(xo - x) < 1e-4) dir = cv.cx >= x ? 1 : -1;
+                    // (over the lip towards the middle of the cavity: along the opening, as the far end
+                    // of the stretch lies, is out of it where the opening slants outwards)
+                    const dir = Math.sign(cv.cx - x) || Math.sign(xo - x) || 1;
                     // (starting just upstream of the lip, under the tank's liquid, so no edge shows)
                     nappes.push([x - dir * 1.5 * px1, z + 0.5 * H, dir * q / H, q, H]);
                 }
