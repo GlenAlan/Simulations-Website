@@ -10374,7 +10374,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : ''].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -10582,7 +10582,11 @@
             vw: [s.zoom, s.panX, s.panY],
             sca: [s.forceRef, s.vRef, s.energyExp, s.trail, s.com ? 1 : 0],
             cc: s.customCount, pr: s.pairs, ge: s.groupE,
-            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement },
+            // (sh: what is shown; the last four came later, so an older link reads them as off)
+            set: {
+                sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
+            },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
             ro: turnSetup()
         };
@@ -10674,9 +10678,10 @@
             sp: fin(raw.sp, 0) > 0 ? clamp(raw.sp, SPEED_STOPS[0], SPEED_STOPS[SPEED_STOPS.length - 1]) : settings.speed,
             re: flag(raw.re, false), me: flag(raw.me, true),
             k: [flagAt(raw.k, 0, false), flagAt(raw.k, 1, false), flagAt(raw.k, 2, false)],
-            sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true)],
+            sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true),
+                flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
-            pl: ['circular', 'keep', 'rest'].includes(raw.pl) ? raw.pl : 'circular'
+            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular'
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -10796,6 +10801,11 @@
         check(ui.merge, 'merge', set.me);
         check(ui.k1, 'k1', set.k[0]); check(ui.k2, 'k2', set.k[1]); check(ui.k3, 'k3', set.k[2]);
         check(ui.forces, 'forces', set.sh[0]); check(ui.velocities, 'velocities', set.sh[1]); check(ui.labels, 'labels', set.sh[2]);
+        // (quietly: the note that the setup opened is what the hint line says)
+        settings.pulls = set.sh[3]; settings.limits = set.sh[6]; lim.bid = null;
+        syncGravityControls();
+        setWell(set.sh[4]);
+        setLagrange(set.sh[5]);
         setStability(set.st);
         settings.placement = set.pl;
         if (ui.placement) ui.placement.value = set.pl;
