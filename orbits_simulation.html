@@ -239,7 +239,10 @@
 												<label for="velocityToggle"><span class="orb-key orb-key-velocity" aria-hidden="true"></span>Velocities</label>
 												<input type="checkbox" id="labelsToggle" checked>
 												<label for="labelsToggle">Names</label>
+												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
+												<label for="wellToggle" title="Each body's gravity well, as shading and contour lines (W)">Gravity well</label>
 											</div>
+											<p class="orb-note" id="wellNote" hidden>Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Kepler's laws</p>
@@ -257,6 +260,7 @@
 											<select id="frameSelect" aria-labelledby="frameLabel">
 												<option value="com" selected>Centre of mass (no body)</option>
 											</select>
+											<p class="orb-note" id="turnNote" aria-live="polite" hidden></p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
@@ -278,6 +282,8 @@
 													<label for="comToggle">Centre of mass</label>
 													<input type="checkbox" id="previewToggle" checked>
 													<label for="previewToggle">Predicted path while moving a body or paused</label>
+													<input type="checkbox" id="lagrangeToggle">
+													<label for="lagrangeToggle" title="L1 to L5: where a small body can keep pace with the chosen body as it orbits">Lagrange points</label>
 												</div>
 											</div>
 											<div class="sim-control-group">
@@ -502,6 +508,9 @@
 
 											<h4>Realistic physics</h4>
 											<p>Off, gravity is Newton's alone. On, every body is drawn at its true size (a ring marks the tiny ones); Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette (Mercury's turns too, by 43&Prime; a century); and a star or planet that strays inside the Roche limit of a much denser body is torn apart by tides. Its pieces still pull on each other, so some may gather into clumps again. Either way, bodies merge when their real surfaces touch and a black hole swallows anything that crosses its event horizon.</p>
+
+											<h4>Gravity wells and rotating views</h4>
+											<p>Turn on <strong>Gravity well</strong> (or press W) to see each body's well as a map: darker is deeper, and each line joins points at the same depth, like the contour lines of a map of hills. Where the lines crowd together, the slope is steep and the pull is strong. In <strong>View from</strong>, a <strong>rotating</strong> view turns with a body and the body it orbits, so both stand still. Velocity arrows then show motion as seen in that turning view, and the well includes the outward push you feel on a roundabout. It gains hilltops 60&deg; ahead of and behind the body, and passes on the line through the pair: the five <strong>Lagrange points</strong> (under More options), where a small body can keep pace with the pair. Surprisingly, the hilltops L4 and L5 are the stable ones: a body that starts to roll off is steered round by the turning (the Coriolis effect), which is why Jupiter's Trojan asteroids gather there. For an elliptical orbit the view keeps the pair on one line, so the body slides in and out along it.</p>
 
 											<h4>Things to try</h4>
 											<ul>
