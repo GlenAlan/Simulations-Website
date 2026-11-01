@@ -5618,17 +5618,58 @@
         return { l, t, r: l + w, b: t + fs };
     }
 
+    // What the canvas's edges carry, which the off-screen pointers keep clear of: the time notice and
+    // the "Viewed from" chip (top left), the cards (top right, as drawn last frame), the scale bar and
+    // legend (bottom left) and "Sizes not to scale" (bottom right). Rectangles [left, top, right, bottom].
+    function edgeKeepOut() {
+        const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
+        let top = 0;
+        if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([0, 0, Math.min(viewW, 240), top]); }
+        const t = timeNotice();
+        if (t) {
+            ctx.font = font(fs, true);
+            out.push([0, top, 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
+        }
+        if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
+        const strip = viewH - fs - 18;
+        out.push([0, strip, Math.min(viewW, 190), viewH]);
+        ctx.font = font(fs);
+        out.push([viewW - ctx.measureText('Sizes not to scale').width - 22, strip, viewW, viewH]);
+        if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
+        return out;
+    }
+
+    // Slide a pointer at (ex, ey) on the edge along it, out of any rectangle it falls in
+    function clearOfEdges(ex, ey, zones, inset) {
+        const onSide = ex <= inset + 0.5 || ex >= viewW - inset - 0.5;
+        for (let pass = 0; pass < 3; pass++) {
+            const z = zones.find((r) => ex >= r[0] && ex <= r[2] && ey >= r[1] && ey <= r[3]);
+            if (!z) break;
+            if (onSide) {
+                // up or down the side, whichever is nearer and still on the canvas
+                const up = z[1] - 8, down = z[3] + 8;
+                ey = (up >= inset && (ey - up <= down - ey || down > viewH - inset)) ? up : Math.min(down, viewH - inset);
+            } else {
+                const lt = z[0] - 8, rt = z[2] + 8;
+                ex = (lt >= inset && (ex - lt <= rt - ex || rt > viewW - inset)) ? lt : Math.min(rt, viewW - inset);
+            }
+        }
+        return [ex, ey];
+    }
+
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         const cx = viewW / 2, cy = viewH / 2;
         const inset = 12;
+        let zones = null;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             if (b.grp || (b.minor && !isChosen(b)) || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
             const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
-            const ex = cx + dx * k, ey = cy + dy * k;
+            if (!zones) zones = cleanRender ? [] : edgeKeepOut();
+            const [ex, ey] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset);
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
@@ -5877,7 +5918,7 @@
     };
     const legend = {
         t: -Infinity, alpha: 1, covered: false, vSqueezed: false, shown: false, right: false,
-        kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0
+        kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0, top: 0
     };
     const LEGEND_SQUEEZE = 'longer arrows are squeezed';
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -6320,14 +6361,20 @@
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
         const now = performance.now();
-        const rows = (showV ? 1 : 0) + (showF ? 1 : 0);
         ctx.font = font(fs);
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
-        const textW = Math.max(showV ? ctx.measureText(legend.vText).width : 0, showF ? ctx.measureText(legend.fText).width : 0);
+        const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
+        const textW = Math.max(vTW, fTW);
+        // On a small canvas the two arrows share one row, just above the scale bar, and the note that
+        // longer arrows are squeezed is left out (the About section says so); elsewhere a row each
+        const tight = viewW < 560 || viewH < 320;
+        const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
+        const oneRow = tight && rowW <= viewW * 0.8;
         // A velocity arrow over three medium lengths, or any force arrow, is shorter than in proportion
-        const squeeze = showF || (showV && legend.vSqueezed);
-        const w = Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
-        const bottom = viewH - 12 - fs - 10;
+        const squeeze = !tight && (showF || (showV && legend.vSqueezed));
+        const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
+        const w = oneRow ? rowW : Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
+        const bottom = viewH - 12 - fs - (tight ? 6 : 10);
         const top = bottom - (rows + (squeeze ? 1 : 0)) * lh;
         // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
         legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
@@ -6352,12 +6399,18 @@
         const aw = clamp(2 * sizeScale, 1.5, 2.4);
         ctx.globalAlpha = legend.alpha;
         let y = top + lh / 2;
-        const tx = left + arrowW + 8;
-        if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
-        if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
-        if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
+        if (oneRow) {
+            let x = left;
+            if (showV) { legend.vy = y; legendRow(C, x, y, legend.vPx, aw, C.velocity, x + legend.vPx + 6, legend.vText); x += legend.vPx + 6 + vTW + 14; }
+            if (showF) { legend.fy = y; legendRow(C, x, y, legend.fPx, aw, C.force, x + legend.fPx + 6, legend.fText); }
+        } else {
+            const tx = left + arrowW + 8;
+            if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
+            if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
+            if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
+        }
         ctx.globalAlpha = 1;
-        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w;
+        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w; legend.top = top;
     }
 
     // A legend row: an arrow px long (if any), then its text at tx
@@ -6633,21 +6686,99 @@
             ctx.fillText(t, x + w / 2, y + (fs + 10) / 2 + 0.5);
         }
 
-        // Kepler cards stack down the top-right corner (shorter on small canvases)
-        const compact = viewW < 560;
-        const cfs = compact ? clamp(fs - 0.5, 10, 12) : fs;
-        let y = pad;
-        if (frameId !== null && viewW < 520) y = 48;
-        y = drawMissionCard(C, y, cfs, compact);
-        const fl = flybyLines(compact);
-        if (fl) y = drawCard(C, fl, y, cfs) + 5;
-        y = drawStabilityCard(C, y, cfs, compact);
-        if (settings.k1) y = drawCard(C, kepler1Lines(subj, compact), y, cfs) + 5;
-        if (settings.k2) y = drawCard(C, kepler2Lines(subj, compact), y, cfs) + 5;
-        if (settings.k3) y = drawKepler3Card(C, subj, y, cfs, compact) + 5;
-        if (settings.limits) y = drawCard(C, limitCardLines(subj, compact), y, cfs) + 5;
-        y = drawRelativityCard(C, subj, y, cfs, compact) + 5;
+        drawCardStack(C, subj, fs, pad);
         drawArrowLegend(C);
+    }
+
+    // ---- The cards down the top-right corner ----
+    // Top first, in this order: the mission, a flyby, the stability timer, relativity, Kepler's 1st, 2nd
+    // and 3rd laws, the Hill sphere and Roche limit. The stack never covers much of the canvas: when it
+    // would grow past its cap (about 60% of the height, and clear of the scale bar), the lowest cards
+    // turn compact (a line or two) first; if it is still too tall they fold into one last line that
+    // names them. (Small canvases show compact cards from the start.) The layout is worked out a few
+    // times a second, by drawing the cards where nothing shows, and kept in between.
+    const CARD_ORDER = ['mission', 'flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
+    const CARD_NAMES = { mission: 'mission', flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
+    const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0 };
+
+    // One card at y (compact or not): returns where the next one goes (y itself if it has nothing to show)
+    function drawOneCard(C, id, subj, y, fs, compact) {
+        let b = y;
+        if (id === 'mission') b = drawMissionCard(C, y, fs, compact);
+        else if (id === 'flyby') { const fl = flybyLines(compact); if (fl) b = drawCard(C, fl, y, fs) + 5; }
+        else if (id === 'stability') b = drawStabilityCard(C, y, fs, compact);
+        else if (id === 'relativity') { const e = drawRelativityCard(C, subj, y, fs, compact); if (e > y) b = e + 5; }
+        else if (settings[id]) {
+            const lines = id === 'k1' ? kepler1Lines(subj, compact) : id === 'k2' ? kepler2Lines(subj, compact) : id === 'limits' ? limitCardLines(subj, compact) : null;
+            if (id === 'k3') b = drawKepler3Card(C, subj, y, fs, compact) + 5;
+            else if (lines && lines.length) b = drawCard(C, lines, y, fs) + 5;
+        }
+        return b > y ? b : y;
+    }
+
+    // Which cards turn compact and which fold away, to keep the stack under cap px
+    function layoutCards(C, subj, fs, small, cap) {
+        const full = {}, comp = {}, ids = [];
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, 0, 0);
+        ctx.clip();   // (measured by drawing them where nothing shows)
+        for (const id of CARD_ORDER) {
+            const h = drawOneCard(C, id, subj, 0, fs, small);
+            if (h <= 0) continue;
+            ids.push(id);
+            full[id] = h;
+            comp[id] = small ? h : drawOneCard(C, id, subj, 0, fs, true);
+        }
+        ctx.restore();
+        const compact = {};
+        let total = 0;
+        for (const id of ids) { compact[id] = small; total += full[id]; }
+        for (let i = ids.length - 1; i >= 0 && total > cap; i--) {
+            if (!compact[ids[i]]) { total += comp[ids[i]] - full[ids[i]]; compact[ids[i]] = true; }
+        }
+        const folded = [], foldH = Math.round(fs * 1.4) + 15;
+        for (let i = ids.length - 1; i >= 1 && total > cap; i--) {
+            total -= comp[ids[i]];
+            if (!folded.length) total += foldH;
+            folded.unshift(ids[i]);
+        }
+        // (with some folded away, the cards left may have room to be shown in full again, top first)
+        if (folded.length && !small) {
+            for (const id of ids) {
+                if (folded.includes(id) || !compact[id] || total + full[id] - comp[id] > cap) continue;
+                total += full[id] - comp[id];
+                compact[id] = false;
+            }
+        }
+        return { compact, folded };
+    }
+
+    function drawCardStack(C, subj, fs, pad) {
+        const small = viewW < 560;
+        const cfs = small ? clamp(fs - 0.5, 10, 12) : fs;
+        const y0 = frameId !== null && viewW < 520 ? 48 : pad;
+        const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
+        const now = performance.now();
+        const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${mission.def ? mission.def.id : ''}|${selectedId}|${C.dark}`;
+        if (sig !== cards.sig || now - cards.at > 300) {
+            Object.assign(cards, layoutCards(C, subj, cfs, small, cap));
+            cards.sig = sig;
+            cards.at = now;
+        }
+        cards.left = Infinity;
+        cards.bottom = 0;
+        let y = y0;
+        for (const id of CARD_ORDER) {
+            if (cards.folded.includes(id)) continue;
+            y = drawOneCard(C, id, subj, y, cfs, cards.compact[id] !== undefined ? cards.compact[id] : small);
+        }
+        if (cards.folded.length) {
+            const n = cards.folded.length;
+            const text = small ? `+${n} more` : `+${n} more: ${cards.folded.map((id) => CARD_NAMES[id]).join(', ')}`;
+            y = drawCard(C, [[[text, false, C.subtle]]], y, cfs) + 5;
+        }
+        cards.bottom = y > y0 ? y : 0;
     }
 
     // The flyby card: the chosen body's speed relative to the star before and after it passed the
@@ -6792,6 +6923,7 @@
     }
 
     function cardBox(C, x, y, w, h) {
+        if (x < cards.left) cards.left = x;   // (where the stack reaches: off-screen pointers keep clear)
         roundRect(x, y, w, h, 5);
         ctx.fillStyle = C.card;
         ctx.fill();
@@ -6882,7 +7014,10 @@
         const title = compact || !P ? '3rd law' : `3rd law: orbits of ${P.name}`;
         const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
-        const cells = rows.slice(0, compact ? 5 : 8).map((r) => {
+        // Up to 10 rows (5 compact); past that, the last row says how many more there are
+        const most = compact ? 5 : 10, shown = rows.length > most ? most - 1 : rows.length;
+        const more = rows.length - shown;
+        const cells = rows.slice(0, shown).map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
             const Tv = r.T * tf;
@@ -6891,6 +7026,7 @@
             const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
+        if (more > 0) cells.push({ name: `+${more} more`, body: null, cols: ['', '', ''] });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
@@ -6938,12 +7074,14 @@
             ly += lh;
             ctx.font = font(fs);
             for (const c of cells) {
-                ctx.fillStyle = c.body.color;
-                ctx.beginPath();
-                ctx.arc(x + 13, ly, 3, 0, TAU);
-                ctx.fill();
+                if (c.body) {
+                    ctx.fillStyle = c.body.color;
+                    ctx.beginPath();
+                    ctx.arc(x + 13, ly, 3, 0, TAU);
+                    ctx.fill();
+                }
                 ctx.textAlign = 'left';
-                ctx.fillStyle = C.text;
+                ctx.fillStyle = c.body ? C.text : C.subtle;
                 ctx.fillText(c.name, x + 10 + dot, ly);
                 if (c.cols) {
                     ctx.textAlign = 'right';
