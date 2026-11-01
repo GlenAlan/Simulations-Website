@@ -1446,6 +1446,30 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     }
 }
 
+/* Desktop: the buttons sit at the end of the chosen body's row, which has room to spare, so the five
+   readouts have the bar's whole width on the row below and stay on one row, even with the settings
+   docked beside the canvas (at 1440 x 900 the buttons beside both rows pushed Period onto a row of
+   its own). The row keeps the buttons' height, and a long name gives way before reaching them. */
+@media screen and (min-width: 900px) and (min-height: 541px) and (pointer: fine) {
+    /* (fullscreen's bar is fixed, which places the buttons just as well) */
+    .orbits-sim .sim-info-bar:not(.fullscreen-style) {
+        position: relative;
+    }
+
+    .orbits-sim .stats-container > .orb-subject {
+        min-height: 44px;
+        padding-right: calc(var(--orb-bar-acts, 330px) + 0.5em);
+        box-sizing: border-box;
+    }
+
+    .orbits-sim .sim-info-bar > .sim-info-actions {
+        position: absolute;
+        top: 0.3em;
+        right: 0.3em;
+        flex-wrap: nowrap;
+    }
+}
+
 /* Tool column: undo and redo (icons) share a row with "Fit view", leaving the palette one row more.
    The hint keeps room for five lines but may grow (to eight) for a scene's longer tip: only the
    palette above it, which scrolls, gets shorter, so no chip moves. */
