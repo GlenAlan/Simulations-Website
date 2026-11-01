@@ -8922,6 +8922,21 @@
             if ((e.key === 'Enter' || e.key === ' ') && e.target === ui.hint && toggleHintOpen()) { e.preventDefault(); e.stopPropagation(); }
         });
         window.addEventListener('resize', hintClampCheck);
+        if (sideways) {
+            if (sideways.addEventListener) sideways.addEventListener('change', placeHint); else if (sideways.addListener) sideways.addListener(placeHint);
+            placeHint();
+        }
+    }
+
+    // Phones held sideways: the tool column beside the canvas has no room for the hint line, so it goes
+    // under the canvas (between the palette and the info bar: see orbits_styles.css)
+    const sideways = window.matchMedia ? window.matchMedia('(orientation: landscape) and (min-width: 640px) and (max-height: 540px)') : null;
+    function placeHint() {
+        const toolbar = byId('orbToolbar'), wrap = canvas.closest('.sim-canvas-wrapper');
+        if (!ui.hint || !toolbar || !wrap) return;
+        if (sideways.matches) { if (ui.hint.previousElementSibling !== wrap) wrap.after(ui.hint); }
+        else if (ui.hint.parentElement !== toolbar) toolbar.appendChild(ui.hint);
+        hintClampCheck();
     }
 
     // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown

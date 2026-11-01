@@ -2744,8 +2744,50 @@ dialog.orb-help::backdrop {
 
     .orbits-sim .simulation-display-container {
         grid-template-columns: var(--orb-side-w) minmax(0, 1fr) var(--orb-info-w);
-        grid-template-areas: "tools canvas info";
+        grid-template-rows: auto auto;
+        grid-template-areas: "tools canvas info" "tools hint info";
         width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--orb-side-w) + var(--orb-info-w) + 2 * var(--orb-side-gap)));
+    }
+
+    /* The hint line, moved under the canvas (by placeHint in orbits_core.js): two lines, always the
+       same height, so the canvas's size still depends on the screen alone (until a long message is
+       opened out with a tap) */
+    .orbits-sim .simulation-display-container > .orb-hint {
+        grid-area: hint;
+        display: -webkit-box;
+        height: 2.7em;
+        min-height: 0;
+        max-height: none;
+        margin: 4px 0 0;
+        padding: 0 2px;
+        font-size: 0.8em;
+        line-height: 1.35;
+        overflow: hidden;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+    }
+
+    .orbits-sim .simulation-display-container > .orb-hint.is-open {
+        display: block;
+        height: auto;
+        -webkit-line-clamp: unset;
+        line-clamp: unset;
+    }
+
+    .orbits-sim .simulation-display-container > .orb-hint:has(.orb-carry-on) {
+        height: auto;
+        min-height: 2.7em;
+    }
+
+    .orbits-sim .simulation-display-container > .orb-hint.is-cut::after {
+        background: linear-gradient(to right, transparent, var(--color-bg) 1.4em);
+    }
+
+    .orbits-sim .simulation-display-container > .orb-hint.is-spilling {
+        margin-left: 0;
+        margin-right: 0;
+        padding: 0 2px 6px;
+        background-color: var(--color-bg);
     }
 
     .orbits-sim .sim-info-bar {
@@ -2760,20 +2802,23 @@ dialog.orb-help::backdrop {
         min-height: 0;
         margin: 0;
         padding: 5px;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        scrollbar-width: thin;
+        overflow: hidden;
     }
 
+    /* (the readouts scroll if the column is too short for them all: the buttons always show) */
     .orbits-sim .stats-container {
         display: flex;
         flex-direction: column;
         flex-wrap: nowrap;
         align-items: stretch;
-        flex: 0 0 auto;
+        flex: 1 1 auto;
         gap: 2px;
         min-width: 0;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
     }
 
     .orbits-sim .stats-container > .orb-subject {
@@ -2811,7 +2856,7 @@ dialog.orb-help::backdrop {
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 2px;
         flex: 0 0 auto;
-        margin: auto 0 0;
+        margin: 0;
     }
 
     .orbits-sim .sim-info-actions .sim-action-buttons-overlay {
@@ -2835,7 +2880,7 @@ dialog.orb-help::backdrop {
 
     body.sim-panel-active.sim-panel-side .orbits-sim .simulation-display-container {
         grid-template-columns: minmax(0, 1fr) var(--orb-info-w);
-        grid-template-areas: "canvas info";
+        grid-template-areas: "canvas info" "hint info";
         width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--orb-info-w) + var(--orb-side-gap)));
     }
 
@@ -2846,8 +2891,8 @@ dialog.orb-help::backdrop {
 
     body.sim-fullscreen-active .orbits-sim .simulation-display-container {
         grid-template-columns: var(--orb-side-w) minmax(0, 1fr) var(--orb-info-w);
-        grid-template-rows: minmax(0, 1fr);
-        grid-template-areas: "tools canvas info";
+        grid-template-rows: minmax(0, 1fr) auto;
+        grid-template-areas: "tools canvas info" "tools hint info";
         column-gap: var(--orb-side-gap);
     }
 
