@@ -2009,30 +2009,46 @@
     function pushUndo() {
         undoStack.push(grid.slice());
         if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+        syncUndo();
+    }
+    // An edit that changed nothing (a shape over cells already that material, the same ready-made
+    // object again, clearing an empty tank) leaves no step, or Undo would seem to do nothing.
+    function dropUnchangedUndo() {
+        const top = undoStack[undoStack.length - 1];
+        if (!top) return;
+        for (let i = 0; i < grid.length; i++) if (top[i] !== grid[i]) return;
+        undoStack.pop();
+        syncUndo();
     }
     function undo() {
         if (!undoStack.length) return;
         grid.set(undoStack.pop());
+        syncUndo();
         if (mode !== 'draw') enterEditMode();
         drawDirty = true;
+    }
+    function syncUndo() {
+        const b = document.getElementById('undoBtn');
+        if (b) b.setAttribute('aria-disabled', undoStack.length ? 'false' : 'true');
     }
     function setCell(c, r, v) {
         if (c < 0 || r < 0 || c >= GW || r >= GH) return;
         grid[r * GW + c] = v;
     }
+    // A brush n cm wide paints a disc n cells across, centred on the nearest cell centre (n odd) or
+    // cell corner (n even), so a stroke is n cells wide wherever in a cell the pointer is. (Centred
+    // on the pointer itself, a 2 cm stroke along a row of cells painted just that one row.)
+    function brushCentre(u, size) { return size % 2 ? Math.floor(u) + 0.5 : Math.round(u); }
     function paintDisc(x, y, size, v) {
-        const cx = x / CELL, cy = y / CELL;
-        if (size <= 1) { setCell(Math.floor(cx), Math.floor(cy), v); return; }
-        const rad = size / 2;
-        const rr = rad * rad;
-        let painted = false;
-        for (let r = Math.floor(cy - rad); r <= Math.ceil(cy + rad); r++) {
-            for (let c = Math.floor(cx - rad); c <= Math.ceil(cx + rad); c++) {
+        if (size <= 1) { setCell(Math.floor(x / CELL), Math.floor(y / CELL), v); return; }
+        const cx = brushCentre(x / CELL, size), cy = brushCentre(y / CELL, size);
+        const rad = size / 2, rr = rad * rad;
+        for (let r = Math.floor(cy - rad); r < Math.ceil(cy + rad); r++) {
+            for (let c = Math.floor(cx - rad); c < Math.ceil(cx + rad); c++) {
                 const dx = c + 0.5 - cx, dy = r + 0.5 - cy;
-                if (dx * dx + dy * dy <= rr) { setCell(c, r, v); painted = true; }
+                if (dx * dx + dy * dy <= rr) setCell(c, r, v);
             }
         }
-        if (!painted) setCell(Math.floor(cx), Math.floor(cy), v);
     }
     function paintLine(x0, y0, x1, y1, size, v) {
         const dist = Math.hypot(x1 - x0, y1 - y0);
@@ -2116,20 +2132,21 @@
         forEachShapeCell(tool, cA, rA, cB, rB, thick, (c, r) => { if (!filter || filter(c, r)) setCell(c, r, m); });
     }
     // Positions are in grid cells (1 cm): the tank is 240 x 150 and the liquid starts 60 deep,
-    // so objects are drawn just above the surface around column 120.
+    // so objects are drawn just above the surface around column 120. `group` heads the list's
+    // sections.
     const PRESETS = [
-        { key: 'pine', label: 'Pine block', build() { fillRect(100, 72, 40, 25, MAT_ID.pine); } },
+        { key: 'pine', group: 'Solid blocks', label: 'Pine block', build() { fillRect(100, 72, 40, 25, MAT_ID.pine); } },
         { key: 'ice', label: 'Ice block', build() { fillRect(108, 70, 24, 24, MAT_ID.ice); } },
         { key: 'cork', label: 'Cork slab', build() { fillRect(100, 70, 40, 8, MAT_ID.cork); } },
         { key: 'steel', label: 'Steel block', build() { fillRect(110, 70, 20, 12, MAT_ID.steel); } },
         { key: 'nylon', label: 'Nylon block (sinks slowly)', build() { fillRect(110, 70, 20, 15, MAT_ID.nylon); } },
         { key: 'gold', label: 'Gold bar', build() { fillRect(112, 70, 16, 8, MAT_ID.gold); } },
-        { key: 'plank', label: 'Tall pine plank (stability)', build() { fillRect(117, 66, 6, 38, MAT_ID.pine); } },
+        { key: 'plank', group: 'Balance and stability', label: 'Tall pine plank', build() { fillRect(117, 66, 6, 38, MAT_ID.pine); } },
         { key: 'blend', label: 'Cork float with a steel weight', build() {
             fillRect(90, 73, 60, 10, MAT_ID.cork); fillRect(92, 70, 6, 3, MAT_ID.steel);
         } },
         { key: 'ball', label: 'Hollow steel ball (sealed)', build() { fillShape('ring', 95, 62, 144, 111, 1, MAT_ID.steel); } },
-        { key: 'boat', label: 'Steel boat (open hull)', build() {
+        { key: 'boat', group: 'Boats and hulls', label: 'Steel boat (open hull)', build() {
             const S = MAT_ID.steel;
             fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
         } },
@@ -2138,7 +2155,7 @@
             fillRect(90, 48, 60, 1, S); fillRect(90, 49, 1, 18, S); fillRect(149, 49, 1, 18, S);
             setCell(119, 48, 0);
         } },
-        { key: 'bulkheads', label: 'Boat with bulkheads (one compartment holed)', build() {
+        { key: 'bulkheads', label: 'Boat with bulkheads, one holed', build() {
             // the holed end compartment floods to the outside level; the others keep the boat afloat
             const A = MAT_ID.aluminium;
             fillRect(84, 48, 72, 1, A); fillRect(84, 49, 1, 18, A); fillRect(155, 49, 1, 18, A);
@@ -2170,12 +2187,29 @@
             fillRect(78, 76, 3, 6, MAT_ID.cork); fillRect(159, 76, 3, 6, MAT_ID.cork);
         } }
     ];
+    // Moves the whole drawing d rows up (or down), as far as the tank allows
+    function shiftRows(d) {
+        let r0 = GH, r1 = -1;
+        for (let r = 0; r < GH; r++) {
+            for (let c = 0; c < GW; c++) if (grid[r * GW + c]) { if (r < r0) r0 = r; r1 = r; break; }
+        }
+        if (r1 < 0) return;
+        d = clamp(d, -r0, GH - 1 - r1);
+        if (!d) return;
+        const copy = grid.slice();
+        grid.fill(0);
+        for (let r = r0; r <= r1; r++) grid.set(copy.subarray(r * GW, (r + 1) * GW), (r + d) * GW);
+    }
     function loadPreset(key, opts) {
         const p = PRESETS.find((q) => q.key === key);
         if (!p) return false;
         pushUndo();
         grid.fill(0);
         p.build();
+        // They are placed for 60 cm of liquid. With another depth they go up or down by the
+        // difference, or a boat would start under the surface and swamp, or fall from high up.
+        shiftRows(Math.round((settings.liquidDepth - 0.6) / CELL));
+        dropUnchangedUndo();
         drawDirty = true;
         if (!opts || opts.drop !== false) dropObject();
         else enterEditMode();
@@ -2229,6 +2263,11 @@
             panelBorder: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'
         };
         ARROWS.net.color = pal.net;
+        // Arrows sit on a halo (dark in the dark theme, white in the light one): the bright colours
+        // that stand out on dark would be 1.6-3:1 on white, so the light theme has deeper ones (4.2:1
+        // or more). The keys in the settings follow (buoyancy_styles.css).
+        const ac = dark ? ['#ff5f5f', '#2fe39b', '#ffc53d', '#c58cff'] : ['#d32f2f', '#0b8a55', '#b26a00', '#7e47d1'];
+        ['weight', 'buoyancy', 'drag', 'contact'].forEach((k, i) => { ARROWS[k].color = ac[i]; });
         gradientKey = '';
         textureKey = '';
         gridLayerDirty = true;
@@ -2454,7 +2493,7 @@
         }
         // height labels every 10 cm
         g.fillStyle = pal.gridLabel;
-        g.font = Math.round(clamp(cssW / 70, 8, 12) * dpr) + 'px "Source Sans Pro", Helvetica, sans-serif';
+        g.font = Math.round(clamp(cssW / 70, 9, 12) * dpr) + 'px "Source Sans Pro", Helvetica, sans-serif';
         g.textBaseline = 'bottom';
         g.textAlign = 'left';
         for (let r = 10; r < GH; r += 10) {
@@ -3414,13 +3453,36 @@
         if (B.cavs.length) drawOutStreams();
     }
 
-    function drawArrow(x, y, fx, fy, color, kPx, maxLen) {
+    // how far from (x, y) along (ux, uy) the canvas goes on, less a margin m
+    function roomTo(x, y, ux, uy, m) {
+        let t = Infinity;
+        if (ux > 1e-9) t = Math.min(t, (cssW - m - x) / ux); else if (ux < -1e-9) t = Math.min(t, (m - x) / ux);
+        if (uy > 1e-9) t = Math.min(t, (cssH - m - y) / uy); else if (uy < -1e-9) t = Math.min(t, (m - y) / uy);
+        return t;
+    }
+    const ARROW_MIN = 30;      // px: an arrow cut short at the tank's edge is still this long
+    // Where an arrow for force (fx, fy) at (x, y) goes on screen: null if too short to show
+    function arrowPlan(x, y, fx, fy, kPx, maxLen) {
         const f = Math.hypot(fx, fy);
         let len = f * kPx;
-        if (len < 5) return;
+        if (len < 5) return null;
         let clipped = false;
         if (len > maxLen) { len = maxLen; clipped = true; }
         const ux = fx / f, uy = -fy / f;
+        // An arrow never runs off the canvas (the weight of an object lying on the floor used to point
+        // out of sight): it is cut short at the edge, with the break mark, and if that leaves less than
+        // ARROW_MIN it slides back along its own line of action, its head at the edge.
+        const room = roomTo(x, y, ux, uy, 3);
+        if (len > room) {
+            const L = Math.min(len, Math.max(room, ARROW_MIN));
+            if (L < len) clipped = true;
+            if (L > room) { x -= ux * (L - room); y -= uy * (L - room); }
+            len = L;
+        }
+        return { x, y, ux, uy, len, clipped };
+    }
+    function drawArrow(a, color, dashed) {
+        const { x, y, ux, uy, len, clipped } = a;
         const ex = x + ux * len, ey = y + uy * len;
         const head = Math.min(11, Math.max(6, len * 0.35));
         const hx = ex - ux * head, hy = ey - uy * head;
@@ -3429,9 +3491,12 @@
             ctx.strokeStyle = pass === 0 ? pal.halo : color;
             ctx.fillStyle = pass === 0 ? pal.halo : color;
             ctx.lineWidth = pass === 0 ? 5 : 2.5;
+            // (dashed, halo and all, so an arrow under it shows through the gaps)
+            if (dashed) ctx.setLineDash([6, 4]);
             ctx.beginPath();
             ctx.moveTo(x, y); ctx.lineTo(hx, hy);
             ctx.stroke();
+            if (dashed) ctx.setLineDash([]);
             ctx.beginPath();
             const hw = head * 0.5 + (pass === 0 ? 1.5 : 0);
             ctx.moveTo(ex + ux * (pass === 0 ? 2 : 0), ey + uy * (pass === 0 ? 2 : 0));
@@ -3440,7 +3505,7 @@
             ctx.closePath();
             ctx.fill();
             if (clipped) {
-                const mx = x + ux * len * 0.5, my = y + uy * len * 0.5;
+                const mx = x + ux * (len - head) * 0.5, my = y + uy * (len - head) * 0.5;
                 ctx.beginPath();
                 ctx.moveTo(mx + px * 6 - ux * 3, my + py * 6 - uy * 3); ctx.lineTo(mx - px * 6 - ux * 1, my - py * 6 - uy * 1);
                 ctx.moveTo(mx + px * 6 + ux * 1, my + py * 6 + uy * 1); ctx.lineTo(mx - px * 6 + ux * 3, my - py * 6 + uy * 3);
@@ -3507,24 +3572,33 @@
         const B = body;
         forceView();
         const weight = fv.W;
-        const kPx = (0.17 * cssH) / Math.max((B.mass + B.waterMass) * settings.gravity, 1e-6);
+        // One scale for the whole run: the object's own weight is 17% of the canvas height. (Scaled
+        // by its mass with the liquid it holds, a flooding hull's arrows shrank while the forces
+        // they show stayed the same.)
+        const kPx = (0.17 * cssH) / Math.max(B.mass * settings.gravity, 1e-6);
         const maxLen = 0.42 * cssH;
         const cx = wx(fv.cx), cy = wy(fv.cy);
         const A = settings.arrows;
-        if (A.buoyancy && disp.sub > 0) {
-            drawArrow(wx(fv.bx), wy(fv.by), fv.fbX, fv.fbY, ARROWS.buoyancy.color, kPx, maxLen);
-        }
-        if (A.weight) drawArrow(cx, cy, 0, -weight, ARROWS.weight.color, kPx, maxLen);
-        if (A.drag) drawArrow(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color, kPx, maxLen);
-        if (A.contact && disp.hasContact > 0.05) drawArrow(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color, kPx, maxLen);
-        if (A.net) drawArrow(cx, cy, disp.netX, disp.netY, ARROWS.net.color, kPx, maxLen);
+        // longest (as drawn) first, so a short arrow is never hidden under a long one on the same line
+        const list = [];
+        const add = (x, y, fx, fy, color, dashed) => {
+            const a = arrowPlan(x, y, fx, fy, kPx, maxLen);
+            if (a) { a.color = color; a.dashed = dashed; list.push(a); }
+        };
+        if (A.buoyancy && disp.sub > 0) add(wx(fv.bx), wy(fv.by), fv.fbX, fv.fbY, ARROWS.buoyancy.color);
+        if (A.weight) add(cx, cy, 0, -weight, ARROWS.weight.color);
+        if (A.drag) add(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color);
+        if (A.contact && disp.hasContact > 0.05) add(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color);
+        if (A.net) add(cx, cy, disp.netX, disp.netY, ARROWS.net.color, true);
+        list.sort((a, b) => b.len - a.len);
+        for (const a of list) drawArrow(a, a.color, a.dashed);
         if (!legendVals.ok) storeLegendValues();
         const L = legendVals;
         const rows = [];
         const N = (v) => fmtAuto(v) + ' N';
         if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(L.weight)]);
         if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(L.buoyancy)]);
-        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(L.net)]);
+        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(L.net), true]);
         if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(L.drag)]);
         if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(L.contact)]);
         if (B.cavs.length && L.carried > 0.01) {
@@ -3556,16 +3630,24 @@
     // A small key in the top-left corner: [swatch] label ... value (values right-aligned in a
     // column as wide as `valueTemplate`, so changing numbers never shift anything)
     function drawInfoBox(rows, valueTemplate, right) {
-        const fs = clamp(cssW / 70, 10, 13);
-        ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
-        const lineH = Math.round(fs * 1.4);
-        let lw = 0, vw = valueTemplate ? ctx.measureText(valueTemplate).width : 0;
-        for (const r of rows) {
-            lw = Math.max(lw, ctx.measureText(r[1]).width);
-            if (r[2]) vw = Math.max(vw, ctx.measureText(r[2]).width);
+        // 11 px at least (phones), and smaller only if the widest line would not fit the canvas
+        let fs = clamp(cssW / 70, 11, 13), lw = 0, vw = 0, bw = 0;
+        const pad = 7, sw = r0Swatch(rows) ? 18 : 0;
+        for (let pass = 0; pass < 2; pass++) {
+            ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
+            lw = 0; vw = valueTemplate ? ctx.measureText(valueTemplate).width : 0;
+            for (const r of rows) {
+                lw = Math.max(lw, ctx.measureText(r[1]).width);
+                if (r[2]) vw = Math.max(vw, ctx.measureText(r[2]).width);
+            }
+            const fixed = pad * 2 + (sw ? sw + pad : 0) + (vw > 0 ? 10 : 0);
+            bw = fixed + lw + vw;
+            if (bw <= cssW - 16 || pass) break;
+            fs = Math.max(8, fs * (cssW - 16 - fixed) / (lw + vw));
         }
-        const pad = 7, sw = r0Swatch(rows) ? 18 : 0, gap = vw > 0 ? 10 : 0;
-        const bw = pad * 2 + (sw ? sw + pad : 0) + lw + gap + vw, bh = rows.length * lineH + pad;
+        const lineH = Math.round(fs * 1.4);
+        const gap = vw > 0 ? 10 : 0;
+        const bh = rows.length * lineH + pad;
         const x0 = right ? Math.max(8, Math.floor(cssW - 8 - bw)) : 8, y0 = 8;
         ctx.fillStyle = pal.panel;
         ctx.strokeStyle = pal.panelBorder;
@@ -3591,7 +3673,9 @@
                 ctx.fillRect(sx + 3, yy - 4, sw - 6, 8);
             } else if (r[0]) {
                 ctx.strokeStyle = r[0]; ctx.lineWidth = 3;
+                if (r[3]) ctx.setLineDash([5, 3]);
                 ctx.beginPath(); ctx.moveTo(sx, yy); ctx.lineTo(sx + sw, yy); ctx.stroke();
+                ctx.setLineDash([]);
             }
             ctx.fillStyle = pal.text;
             ctx.textAlign = 'left';
@@ -3631,7 +3715,7 @@
     const ON_LIQUID_TEXT = '#ffffff', ON_LIQUID_HALO = 'rgba(0,0,0,0.55)';
 
     function drawLiquidLabel(liq) {
-        const fs = clamp(cssW / 60, 9, 13);
+        const fs = clamp(cssW / 60, 10, 13);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
@@ -3650,7 +3734,7 @@
     function drawScaleBar() {
         const len = 0.1 * scale;
         const x = 10, y = cssH - 10;
-        const fs = clamp(cssW / 70, 8, 12);
+        const fs = clamp(cssW / 70, 10, 12);
         ctx.font = fs + 'px "Source Sans Pro", Helvetica, sans-serif';
         for (let pass = 0; pass < 2; pass++) {
             ctx.strokeStyle = pass === 0 ? ON_LIQUID_HALO : ON_LIQUID_TEXT;
@@ -3701,20 +3785,34 @@
             ctx.strokeRect(b.cA * cellPx, (GH - b.rB - 1) * cellPx, (b.cB - b.cA + 1) * cellPx, (b.rB - b.rA + 1) * cellPx);
             ctx.setLineDash([]);
             const wcm = b.cB - b.cA + 1, hcm = b.rB - b.rA + 1;
+            const label = wcm + ' × ' + hcm + ' cm';
             ctx.font = '12px "Source Sans Pro", Helvetica, sans-serif';
             ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+            // beside the shape's top-right corner, or wherever it stays on the canvas, with a halo so
+            // it reads over the liquid too
+            const tw = ctx.measureText(label).width;
+            let lx = (b.cB + 1) * cellPx + 4, ly = (GH - b.rB - 1) * cellPx;
+            if (lx + tw > cssW - 4) lx = b.cA * cellPx - 4 - tw;
+            lx = clamp(lx, 4, cssW - 4 - tw);
+            if (ly < 16) ly = Math.min(cssH - 4, (GH - b.rA) * cellPx + 15);
+            ctx.lineWidth = 3; ctx.lineJoin = 'round';
+            ctx.strokeStyle = pal.halo;
+            ctx.strokeText(label, lx, ly);
             ctx.fillStyle = pal.text;
-            ctx.fillText(wcm + ' × ' + hcm + ' cm', (b.cB + 1) * cellPx + 4, (GH - b.rB - 1) * cellPx);
+            ctx.fillText(label, lx, ly);
             return;
         }
         if (pointer.type !== 'mouse' && !pointer.down) return;
         if (tool === 'brush' || tool === 'eraser') {
+            // centred where the brush paints (see paintDisc), not on the pointer itself
+            const s1 = Math.max(size, 1);
+            const px = brushCentre(pointer.x / CELL, s1) * CELL, py = brushCentre(pointer.y / CELL, s1) * CELL;
             const r = Math.max(size / 2, 0.5) * CELL * scale;
             ctx.strokeStyle = tool === 'eraser' ? pal.text : MATERIALS[settings.material].color;
             ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(wx(pointer.x), wy(pointer.y), r, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(wx(px), wy(py), r, 0, Math.PI * 2); ctx.stroke();
             ctx.strokeStyle = pal.halo; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.arc(wx(pointer.x), wy(pointer.y), r + 1.5, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(wx(px), wy(py), r + 1.5, 0, Math.PI * 2); ctx.stroke();
         }
     }
 
@@ -3811,10 +3909,17 @@
         hintHold = performance.now() + 3500;
     }
     let hintHold = 0;
+    let hintPreview = 0;         // material swatch pointed at or focused (0: none)
     function refreshHint() {
         if (!el.hint || performance.now() < hintHold) return;
         let title, body;
-        if (mode === 'sim') {
+        const pm = hintPreview && (mode === 'sim' || hintPreview !== settings.material || settings.tool === 'eraser') ? MATERIALS[hintPreview] : null;
+        if (pm) {
+            const liq = LIQUIDS[settings.liquid];
+            title = pm.name + ', ' + pm.rho.toLocaleString('en-US') + ' kg/m³';
+            body = (pm.rho < liq.rho ? 'less dense than ' : 'denser than ') + liq.name.toLowerCase() + ' (' +
+                liq.rho.toLocaleString('en-US') + ' kg/m³).';
+        } else if (mode === 'sim') {
             title = 'Simulating';
             const touch = pointer.type !== 'mouse' || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
             if (touch && settings.rotation) body = 'Drag the object to lift or throw it; hold it with two fingers to turn it. Tap the liquid for waves.';
@@ -3976,7 +4081,10 @@
             const b = shapeBounds(pointer.startX, pointer.startY, x, y, e.shiftKey);
             const v = pointer.button === 2 ? 0 : settings.material;
             forEachShapeCell(tool, b.cA, b.rA, b.cB, b.rB, BRUSH_SIZES[settings.brushIndex], (c, r) => setCell(c, r, v));
+            dropUnchangedUndo();
             drawDirty = true;
+        } else if (tool === 'brush' || tool === 'eraser') {
+            dropUnchangedUndo();
         }
         if (pointer.type !== 'mouse') pointer.inside = false;
     }
@@ -3993,25 +4101,53 @@
             dropBtn.setAttribute('aria-pressed', mode === 'sim' ? 'true' : 'false');
             dropBtn.title = mode === 'sim' ? 'Drop the object again from where it was drawn' : 'Drop the object into the liquid';
         }
+        const resetBtn = document.getElementById('resetSimulationBtn');
+        if (resetBtn) {
+            const t = mode === 'sim' ? 'Drop the object again' : 'Drop the object';
+            resetBtn.title = t;
+            resetBtn.setAttribute('aria-label', t);
+        }
         if (editBtn) editBtn.setAttribute('aria-pressed', mode === 'sim' ? 'false' : 'true');
         canvas.style.cursor = mode === 'sim' ? 'default' : 'crosshair';
         hintHold = 0;
         refreshHint();
     }
 
+    // Each group (swatches, tools) is one stop for Tab, at its chosen button; the arrow keys move
+    // within it (see radioKeys).
     function syncToolButtons() {
         document.querySelectorAll('.buoy-mat').forEach((b) => {
             const on = +b.dataset.mat === settings.material && settings.tool !== 'eraser';
             b.classList.toggle('is-active', on);
             b.setAttribute('aria-checked', on ? 'true' : 'false');
+            b.tabIndex = +b.dataset.mat === settings.material ? 0 : -1;
         });
         document.querySelectorAll('.buoy-tool').forEach((b) => {
             const on = b.dataset.tool === settings.tool;
             b.classList.toggle('is-active', on);
             b.setAttribute('aria-checked', on ? 'true' : 'false');
+            b.tabIndex = on ? 0 : -1;
         });
         hintHold = 0;
         refreshHint();
+    }
+    // Arrow keys (and Home / End) move to the next button in a group of radio buttons and pick it
+    function radioKeys(group, sel) {
+        if (!group) return;
+        group.addEventListener('keydown', (e) => {
+            const items = Array.from(group.querySelectorAll(sel));
+            const i = items.indexOf(document.activeElement);
+            if (i < 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+            let j = -1;
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') j = (i + 1) % items.length;
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') j = (i - 1 + items.length) % items.length;
+            else if (e.key === 'Home') j = 0;
+            else if (e.key === 'End') j = items.length - 1;
+            if (j < 0) return;
+            e.preventDefault();
+            items[j].focus();
+            items[j].click();
+        });
     }
 
     function setLiquid(key) {
@@ -4057,8 +4193,19 @@
                     if (mode === 'sim') enterEditMode();
                     syncToolButtons();
                 });
+                // the swatches are colours: pointing at one (or tabbing to it) names it in the hint
+                const preview = (on) => {
+                    if (on) hintPreview = i; else if (hintPreview === i) hintPreview = 0; else return;
+                    hintHold = 0;
+                    refreshHint();
+                };
+                b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') preview(true); });
+                b.addEventListener('pointerleave', () => preview(false));
+                b.addEventListener('focus', () => preview(true));
+                b.addEventListener('blur', () => preview(false));
                 palEl.appendChild(b);
             }
+            radioKeys(palEl, '.buoy-mat');
         }
         document.querySelectorAll('.buoy-tool').forEach((b) => {
             b.addEventListener('click', () => {
@@ -4067,6 +4214,7 @@
                 syncToolButtons();
             });
         });
+        radioKeys(document.querySelector('.buoy-tools'), '.buoy-tool');
         const sizeEl = document.getElementById('brushSize');
         if (sizeEl) {
             sizeEl.innerHTML = '';
@@ -4084,12 +4232,10 @@
         const on = (id, fn) => { const n = document.getElementById(id); if (n) n.addEventListener('click', fn); };
         on('dropBtn', () => dropObject());
         on('editBtn', () => { if (mode === 'sim') enterEditMode(); });
-        on('clearBtn', () => { pushUndo(); grid.fill(0); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
+        on('clearBtn', () => { pushUndo(); grid.fill(0); dropUnchangedUndo(); enterEditMode(); setHint('Cleared: pick a material and draw a new object (or undo)'); });
         on('undoBtn', () => undo());
-        on('resetSimulationBtn', () => {
-            if (mode === 'sim') dropObject();
-            else { clearWaves(); drawDirty = true; }
-        });
+        // (while drawing it drops the drawing, like Drop: it used to only calm waves there are none of)
+        on('resetSimulationBtn', () => dropObject());
 
         const liqSel = document.getElementById('liquidSelector');
         if (liqSel) {
@@ -4098,10 +4244,16 @@
         }
         const presetSel = document.getElementById('presetSelector');
         if (presetSel) {
+            let og = presetSel;
             for (const p of PRESETS) {
+                if (p.group) {
+                    og = document.createElement('optgroup');
+                    og.label = p.group;
+                    presetSel.appendChild(og);
+                }
                 const o = document.createElement('option');
                 o.value = p.key; o.textContent = p.label;
-                presetSel.appendChild(o);
+                og.appendChild(o);
             }
             presetSel.addEventListener('change', () => {
                 if (presetSel.value) loadPreset(presetSel.value);
@@ -4246,11 +4398,15 @@
     function start() {
         if (loopRunning) return;
         loopRunning = true;
+        // (until the first pointer event, the hints assume the device's main pointer: no
+        // "right-click erases" on a phone)
+        if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) pointer.type = 'touch';
         refreshPalette();
         setupUI();
         handleResize();
         loadPreset('pine');
         undoStack.length = 0;
+        syncUndo();
         requestAnimationFrame(frame);
     }
 

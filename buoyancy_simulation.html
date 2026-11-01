@@ -188,10 +188,11 @@
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="presetLabel">Ready-made objects</p>
 											<div class="sim-select-container">
-												<select id="presetSelector" aria-labelledby="presetLabel">
+												<select id="presetSelector" aria-labelledby="presetLabel" aria-describedby="presetNote">
 													<option value="" selected>Choose one to drop&hellip;</option>
 												</select>
 											</div>
+											<p class="buoy-note" id="presetNote">Replaces your drawing; Undo brings it back.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label" id="liquidLabel">Liquid</p>
@@ -204,19 +205,20 @@
 											</div>
 										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label">Force arrows</p>
-											<div class="sim-checkbox-group sim-chips buoy-arrow-chips">
+											<p class="sim-control-group-label" id="arrowsLabel">Force arrows</p>
+											<div class="sim-checkbox-group sim-chips buoy-arrow-chips" role="group" aria-labelledby="arrowsLabel" aria-describedby="arrowsNote">
 												<input type="checkbox" id="arrow_weight" checked>
-												<label for="arrow_weight"><span class="buoy-key" style="background:#ff5f5f"></span>Weight</label>
+												<label for="arrow_weight"><span class="buoy-key buoy-key-weight"></span>Weight</label>
 												<input type="checkbox" id="arrow_buoyancy" checked>
-												<label for="arrow_buoyancy"><span class="buoy-key" style="background:#2fe39b"></span>Buoyancy</label>
+												<label for="arrow_buoyancy"><span class="buoy-key buoy-key-buoyancy"></span>Buoyancy</label>
 												<input type="checkbox" id="arrow_net">
 												<label for="arrow_net"><span class="buoy-key buoy-key-net"></span>Net force</label>
 												<input type="checkbox" id="arrow_drag">
-												<label for="arrow_drag"><span class="buoy-key" style="background:#ffc53d"></span>Drag</label>
+												<label for="arrow_drag"><span class="buoy-key buoy-key-drag"></span>Drag</label>
 												<input type="checkbox" id="arrow_contact">
-												<label for="arrow_contact"><span class="buoy-key" style="background:#c58cff"></span>Contact</label>
+												<label for="arrow_contact"><span class="buoy-key buoy-key-contact"></span>Contact</label>
 											</div>
+											<p class="buoy-note" id="arrowsNote">Drawn to scale; // marks an arrow cut short to fit.</p>
 											<div class="sim-checkbox-group">
 												<input type="checkbox" id="showMarkers">
 												<label for="showMarkers">Centre of mass and buoyancy</label>
@@ -319,7 +321,7 @@
 											</ul>
 
 											<h4>How to use it</h4>
-											<p>Pick a material and a tool and drag on the tank to draw (a finger works too), then press <strong>Drop</strong>. Drag the object to lift or throw it (on a touchscreen, hold it with two fingers to turn it), or tap the liquid for waves. <span class="icon solid fa-cog"></span> opens the settings: liquid, ready-made objects, force arrows and gravity.</p>
+											<p>Pick a material and a tool and drag on the tank to draw (a finger works too), then press <strong>Drop</strong>. Drag the object to lift or throw it (on a touchscreen, hold it with two fingers to turn it), or tap the liquid for waves. <span class="icon solid fa-cog"></span> opens the settings: liquid, ready-made objects, force arrows and gravity. With a keyboard, the arrow keys move between materials and between tools, and Ctrl+Z undoes.</p>
 											<p>The model is 2D: every 1&nbsp;cm cell is cut along the liquid surface to find exactly what is submerged, and liquid inside a hull keeps a level surface and flows through its openings. Drag and waves are included; swirling flow is not.</p>
 										</div>
 									</details>

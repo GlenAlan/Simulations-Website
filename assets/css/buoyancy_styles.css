@@ -8,7 +8,9 @@
     --buoy-side-gap: 8px;
 }
 
-@media (pointer: coarse) {
+/* (main.css raises the page's font size on wide screens: the buttons grow with it, so "Draw" and
+   "Drop" still fit) */
+@media (pointer: coarse), (min-width: 1681px) {
     .buoyancy-sim {
         --buoy-btn: 40px;
     }
@@ -121,7 +123,8 @@
 }
 
 /* Material swatches and drawing tools: dimmed while the object is being simulated (picking one
-   goes back to drawing) */
+   goes back to drawing). Only the swatches and icons dim, and only so far that they keep 3:1;
+   the size's text stays at full contrast. */
 .buoy-mats { order: 5; }
 .buoy-tools { order: 6; }
 .buoy-size { order: 2; }
@@ -129,17 +132,26 @@
 .buoy-break { order: 4; flex-basis: 100%; height: 0; }
 
 .buoy-toolbar.is-sim .buoy-mats,
-.buoy-toolbar.is-sim .buoy-tools,
-.buoy-toolbar.is-sim .buoy-size,
-.buoy-toolbar.is-sim #undoBtn {
-    opacity: 0.55;
+.buoy-toolbar.is-sim .buoy-tools {
+    opacity: 0.72;
 }
 
 @media (hover: hover) {
     .buoy-toolbar.is-sim .buoy-mats:hover,
-    .buoy-toolbar.is-sim .buoy-tools:hover,
-    .buoy-toolbar.is-sim .buoy-size:hover {
+    .buoy-toolbar.is-sim .buoy-tools:hover {
         opacity: 1;
+    }
+}
+
+/* nothing to undo */
+.buoy-toolbar #undoBtn[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: default;
+}
+
+@media (hover: hover) {
+    .buoy-toolbar #undoBtn[aria-disabled="true"]:hover {
+        box-shadow: inset 0 0 0 1px var(--color-border);
     }
 }
 
@@ -201,7 +213,6 @@
     padding: 0 0.15em;
     font-size: 0.95em;
     line-height: 1.35;
-    opacity: 0.85;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -406,12 +417,38 @@
     flex: 0 0 auto;
 }
 
-.buoy-key-net {
-    background: #1d2329;
+/* the arrows' colours: deeper in the light theme, where they sit on a white halo (buoyancy_core.js) */
+.buoy-key-weight { background: #d32f2f; }
+.buoy-key-buoyancy { background: #0b8a55; }
+.buoy-key-drag { background: #b26a00; }
+.buoy-key-contact { background: #7e47d1; }
+html.dark-mode .buoy-key-weight { background: #ff5f5f; }
+html.dark-mode .buoy-key-buoyancy { background: #2fe39b; }
+html.dark-mode .buoy-key-drag { background: #ffc53d; }
+html.dark-mode .buoy-key-contact { background: #c58cff; }
+
+/* the net force is drawn dashed, so its key is a dashed line (as in the key on the canvas) */
+.buoy-key.buoy-key-net {
+    height: 3px;
+    border: 0;
+    border-radius: 0;
+    background: repeating-linear-gradient(90deg, #1d2329 0 4px, transparent 4px 7px);
 }
 
-html.dark-mode .buoy-key-net {
-    background: #ffffff;
+html.dark-mode .buoy-key.buoy-key-net {
+    background: repeating-linear-gradient(90deg, #ffffff 0 4px, transparent 4px 7px);
+}
+
+/* one-line notes under a control (as on the other simulation pages) */
+.sim-controls-content .buoy-note {
+    margin: -0.35em 0 0 0;
+    font-size: 0.8em;
+    line-height: 1.35;
+    opacity: 0.85;
+}
+
+.sim-controls-content .buoy-arrow-chips + .buoy-note {
+    margin-top: 0.4em;
 }
 
 .buoy-gravity-name {
