@@ -3042,7 +3042,7 @@
             const vx = p ? (p.a.m * p.a.vx + p.b.m * p.b.vx) / M : b.vx, vy = p ? (p.a.m * p.a.vy + p.b.m * p.b.vy) / M : b.vy;
             b.dx = b.x + vx * lag; b.dy = b.y + vy * lag;
         }
-        F = freeze ? { x: freeze.x, y: freeze.y } : liveFrameOrigin();
+        F = freeze ? frozenOrigin(simTime + lag) : liveFrameOrigin();
         turnDrawnPositions();   // (a rotating frame turns them about F: see "Rotating frame")
         // A held body stays exactly where it is held in the view
         for (const b of bodies) {
@@ -3052,12 +3052,21 @@
 
     // The frame origin from the integrator's positions (no extrapolation)
     function stateFrameOrigin() {
-        if (freeze) return { x: freeze.x, y: freeze.y };
+        if (freeze) return frozenOrigin(simTime);
         if (turn.on) { const P = turnPair(); if (P) return pairCentre(P, false); }
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.x, y: L.y };
         const c = totals(bodies);
         return { x: c.x, y: c.y };
+    }
+
+    // The frame's origin while frozen (a body it moves with is being dragged), at time t: it carries on at
+    // the velocity it had when the drag began (a centre of mass that drifts, after a throw say, keeps
+    // drifting, so the rest of the view doesn't slide while the body is held), less the dragged body's
+    // own part, which the drag takes over (freeze: { x, y, vx, vy, t, phi }, see startHold)
+    function frozenOrigin(t) {
+        const dt = t - freeze.t;
+        return { x: freeze.x + freeze.vx * dt, y: freeze.y + freeze.vy * dt, phi: freeze.phi };
     }
 
     const sx = (x) => viewW / 2 + (x - F.x - view.panX) * scale;
@@ -3337,10 +3346,15 @@
     const viewOrigin = () => ({ x: F.x, y: F.y, phi: turn.phi });
     // After a change that moved the frame's origin or turned the view (drawn positions already worked
     // out again): keep everything on the screen where it was. The pan takes up the move, turned as the
-    // view is; the turn goes into the dying turn, so the view then glides round to its new angle.
-    function keepScreen(before) {
+    // view is; the turn goes into the dying turn, so the view then glides round to its new angle. With
+    // stay, a rotating frame instead takes the new angle as its line's direction on the screen, so the
+    // view doesn't turn at all (one of the pair has been dragged to a new place).
+    function keepScreen(before, stay) {
         const d = before.phi !== undefined ? wrapAngle(before.phi - turn.phi) : 0;
-        if (Math.abs(d) > 1e-9) { addEase(d); updateDrawnPositions(); }
+        if (Math.abs(d) > 1e-9) {
+            if (stay && turn.on) turn.up = wrapAngle(turn.up + d); else addEase(d);
+            updateDrawnPositions();
+        }
         const v = turnVec(before.x - F.x, before.y - F.y);
         view.panX += v.x;
         view.panY += v.y;
@@ -8599,7 +8613,8 @@
     // ------------------------------------------------------------------
     const drags = new Map();   // pointerId -> drag state
     let pinch = null;
-    let lastTap = { t: 0, x: 0, y: 0, id: null };
+    let lastTap = { t: 0, x: 0, y: 0, id: null, quick: false };
+    const TAP_MS = 250;        // a press longer than this isn't a tap (for double-clicks and double-taps)
     let longPressTimer = 0;
     // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
     const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
@@ -8741,8 +8756,14 @@
         beginGesture(b, d.mode);   // (edit history: the whole drag is one step, from before the body is held)
         updateDrawnPositions();
         // A frame that moves with this body must stand still while it is dragged
-        // (a rotating frame moves with both of its pair, and freezes its angle too)
-        if (!freeze && (frameId === null || frameId === b.id || turnUses(b))) freeze = { x: F.x, y: F.y, phi: turn.phi };
+        // (a rotating frame moves with both of its pair, and freezes its angle too). It carries on at the
+        // centre of mass's velocity, so nothing else slides if the whole system is drifting; and a glide
+        // of the view under way stops here: the view stays still while a body is held.
+        if (!freeze && (frameId === null || frameId === b.id || turnUses(b))) {
+            const c = totals(bodies);
+            freeze = { x: F.x, y: F.y, phi: turn.phi, vx: c.vx, vy: c.vy, t: simTime + lag };
+        }
+        view.anim = null;
         b.held = { offX: b.dx - F.x, offY: b.dy - F.y };
         d.frameV = frameVelocity(b.x, b.y);
         applyHolds();
@@ -8773,11 +8794,13 @@
         forcesDirty = true;
         const stillHeld = bodies.some((c) => c.held);
         if (freeze && !stillHeld) {
-            const fz = freeze;
+            // Let go: the frame follows its origin again with nothing on the screen moving (the body you
+            // view from stays where it was dropped, rather than the view gliding to put it back in the
+            // middle; a rotating frame keeps its pair's line where it now is on the screen)
+            const fz = { x: F.x, y: F.y, phi: freeze.phi };   // (the frozen origin now)
             freeze = null;
             updateDrawnPositions();
-            keepScreen(fz);   // (and a rotating frame's angle glides on from where it was frozen)
-            if (frameId !== null) view.anim = { zoom: view.zoom, panX: 0, panY: 0 };
+            keepScreen(fz, true);
         }
         computeForces();
         computePrimaries();
@@ -9384,7 +9407,7 @@
         const b = handleBody ? null : bodyAt(pt.x, pt.y, tol);
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
-        const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button };
+        const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
         if (handleBody) {
             d.mode = 'aim';
             d.body = handleBody;
@@ -9502,8 +9525,11 @@
             // the centre of mass again)
             const now = performance.now();
             const b = d.body;
-            const dbl = now - lastTap.t < 380 && Math.hypot(d.x0 - lastTap.x, d.y0 - lastTap.y) < (d.type === 'mouse' ? 8 : 26) && lastTap.id === (b ? b.id : null);
-            lastTap = { t: dbl ? 0 : now, x: d.x0, y: d.y0, id: b ? b.id : null };
+            // (only two quick presses: a press held still a while, as when a drag is started but the
+            // body hardly moves, isn't half of a double-click)
+            const quick = now - d.downT < TAP_MS;
+            const dbl = quick && lastTap.quick && now - lastTap.t < 380 && Math.hypot(d.x0 - lastTap.x, d.y0 - lastTap.y) < (d.type === 'mouse' ? 8 : 26) && lastTap.id === (b ? b.id : null);
+            lastTap = { t: dbl ? 0 : now, x: d.x0, y: d.y0, id: b ? b.id : null, quick };
             if (b) {
                 if (popBody && popBody !== b) closePopover();
                 selectBody(b.id);
