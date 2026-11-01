@@ -9152,6 +9152,28 @@
         hintClampCheck();
     }
 
+    // Turning a phone mid-session. Held sideways, the simulation fills the screen once the page's
+    // header has scrolled away (the layout fits it to the screen's height without the header); upright,
+    // it fits with the header. So if the simulation was in view as the phone turned, the page scrolls
+    // to where it fits, rather than leaving the header in view and the info column cut off below.
+    function bindTurn() {
+        const dc = canvas.closest('.simulation-display-container');
+        if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
+        let inView = false;
+        new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
+        const onTurn = () => {
+            if (!inView || document.body.classList.contains('sim-fullscreen-active')) return;
+            // (once the layout has settled at the new size)
+            // (with the body's menu open, as the menu places the page when it opens)
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (popBody && !ui.pop.hidden) { positionPopover(popBody, true); return; }
+                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY : 0;
+                window.scrollTo({ top: Math.max(0, Math.round(top)) });
+            }));
+        };
+        if (sideways.addEventListener) sideways.addEventListener('change', onTurn); else if (sideways.addListener) sideways.addListener(onTurn);
+    }
+
     // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
     let throwTipShown = false;
 
@@ -13281,6 +13303,7 @@
             refreshHint();
         }, true);
         bindHint();
+        bindTurn();
     }
 
     // ------------------------------------------------------------------
