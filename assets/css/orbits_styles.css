@@ -345,6 +345,19 @@ html:not(.dark-mode) .orb-hint.is-open::after {
     }
 }
 
+/* Tablets held upright: the chips in even columns, so a short last row lines up with the rows above
+   (as flowing chips its few stretched wider than the rest) */
+@media (min-width: 601px) and (orientation: portrait) {
+    .orbits-sim .orb-palette {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(var(--orb-chip-w), 1fr));
+    }
+
+    .orbits-sim .orb-toolbar .orb-chip {
+        max-width: none;
+    }
+}
+
 /* ---------- Landscape: the palette in a column beside the canvas ----------
    The column has a fixed width, so the display container is made that much wider than the
    canvas (which the shared layout sizes from the screen height). */
