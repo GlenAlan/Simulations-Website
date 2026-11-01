@@ -297,6 +297,54 @@ html:not(.dark-mode) .orb-hint.is-open::after {
     }
 }
 
+/* Phones held upright: the chips in one row that scrolls sideways, so the canvas gets the room three
+   or four rows of chips took (the shared layout fits the canvas to what is left of the screen). A
+   sideways swipe scrolls the row; a drag up carries a body out onto the canvas (see onChipMove), and a
+   tap still adds one. The row fades at an edge with more chips beyond it (at-start and at-end are set
+   by paletteEdges in orbits_core.js). In a mission the chips can't be used, so they step aside. */
+@media (max-width: 600px) and (orientation: portrait) {
+    .orbits-sim .orb-palette {
+        --orb-fade-l: 16px;
+        --orb-fade-r: 36px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;
+        -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--orb-fade-l), #000 calc(100% - var(--orb-fade-r)), transparent);
+        mask-image: linear-gradient(to right, transparent, #000 var(--orb-fade-l), #000 calc(100% - var(--orb-fade-r)), transparent);
+    }
+
+    .orbits-sim .orb-palette::-webkit-scrollbar {
+        display: none;
+    }
+
+    .orbits-sim .orb-palette.at-start {
+        --orb-fade-l: 0px;
+    }
+
+    .orbits-sim .orb-palette.at-end {
+        --orb-fade-r: 0px;
+    }
+
+    .orbits-sim .orb-toolbar .orb-chip {
+        flex: 0 0 72px;
+        max-width: none;
+        scroll-snap-align: start;
+        touch-action: pan-x;
+    }
+
+    /* (a little more space between the groups: stars, dead stars, planets and moons, small bodies) */
+    .orbits-sim .orb-group + .orb-group .orb-group-chips > .orb-chip:first-child {
+        margin-left: 8px;
+    }
+
+    .orbits-sim.orb-mission-on .orb-palette {
+        display: none;
+    }
+}
+
 /* ---------- Landscape: the palette in a column beside the canvas ----------
    The column has a fixed width, so the display container is made that much wider than the
    canvas (which the shared layout sizes from the screen height). */

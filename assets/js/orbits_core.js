@@ -8854,7 +8854,22 @@
             ui.palette.dataset.keys = '1';
             ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
             ui.palette.addEventListener('keydown', onPaletteKey);
+            ui.palette.addEventListener('scroll', paletteEdges, { passive: true });
+            if (typeof ResizeObserver !== 'undefined') new ResizeObserver(paletteEdges).observe(ui.palette);
+            else window.addEventListener('resize', paletteEdges);
         }
+        paletteEdges();
+    }
+
+    // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
+    // fades at an end only while there are more chips beyond it
+    const paletteScrolls = () => !!ui.palette && ui.palette.scrollWidth > ui.palette.clientWidth + 2;
+    function paletteEdges() {
+        const p = ui.palette;
+        if (!p) return;
+        const max = p.scrollWidth - p.clientWidth;
+        p.classList.toggle('at-start', p.scrollLeft <= 2);
+        p.classList.toggle('at-end', p.scrollLeft >= max - 2);
     }
 
     // The keyboard: the palette is one stop of the Tab key (as in a toolbar), not fifteen. The arrow
@@ -8942,6 +8957,9 @@
         const d = paletteDrag;
         if (!d || e.pointerId !== d.id) return;
         if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 6) {
+            // (in a row of chips that scrolls sideways, a sideways swipe by touch scrolls it: only a drag
+            // up or down carries the body out)
+            if (e.pointerType !== 'mouse' && paletteScrolls() && Math.abs(e.clientX - d.x0) > Math.abs(e.clientY - d.y0)) return;
             d.moved = true;
             d.btn.classList.add('is-dragging');
             if (!ghostEl) {
