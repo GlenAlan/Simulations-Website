@@ -4718,13 +4718,21 @@
     }
 
     // ---- The help: keys and gestures ----
-    function openHelp() {
+    // (on a touch screen the keys are folded away under the gestures, unless it was opened with a key)
+    function openHelp(byKey) {
         const d = ui.keysHelp;
         if (!d || d.open) return;
+        showHelpKeys(!!byKey);
         const a = document.activeElement;
         nav.helpOpener = a && a !== document.body ? a : canvas;
         if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
         if (ui.keysClose) ui.keysClose.focus();
+    }
+    function showHelpKeys(on) {
+        if (!ui.keysHelp) return;
+        ui.keysHelp.classList.toggle('keys-open', on);
+        const t = byId('helpKeysToggle');
+        if (t) t.setAttribute('aria-expanded', on ? 'true' : 'false');
     }
     function closeHelp() {
         const d = ui.keysHelp;
@@ -4746,7 +4754,7 @@
         e.stopImmediatePropagation();
         if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); closeHelp(); return; }
         if (e.key !== 'Tab') return;
-        const items = Array.from(d.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled);
+        const items = Array.from(d.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled && el.getClientRects().length);
         if (!items.length) { e.preventDefault(); return; }
         const i = items.indexOf(document.activeElement);
         const j = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : (i < 0 || i === items.length - 1 ? 0 : i + 1);
@@ -4757,7 +4765,7 @@
     function onNavKey(e) {
         if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
         const key = e.key;
-        if (key === '?') { e.preventDefault(); openHelp(); return; }
+        if (key === '?') { e.preventDefault(); openHelp(true); return; }
         const inUse = nav.inUse || !!popBody || document.body.classList.contains('sim-fullscreen-active');
         if ((key === 'n' || key === 'N') && inUse) {
             e.preventDefault();
@@ -4903,8 +4911,10 @@
             }, 0));
         }
         // The help
-        if (ui.keysBtn) ui.keysBtn.addEventListener('click', openHelp);
+        if (ui.keysBtn) ui.keysBtn.addEventListener('click', () => openHelp(false));
         if (ui.keysClose) ui.keysClose.addEventListener('click', closeHelp);
+        const keysToggle = byId('helpKeysToggle');
+        if (keysToggle) keysToggle.addEventListener('click', () => showHelpKeys(!ui.keysHelp.classList.contains('keys-open')));
         if (ui.keysHelp) {
             ui.keysHelp.addEventListener('close', helpClosed);
             // (a click on the dimmed page around it closes it)
