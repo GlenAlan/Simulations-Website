@@ -429,14 +429,14 @@ html.dark-mode .buoy-key-contact { background: #c58cff; }
 
 /* the net force is drawn dashed, so its key is a dashed line (as in the key on the canvas) */
 .buoy-key.buoy-key-net {
-    height: 0;
+    height: 3px;
     border: 0;
     border-radius: 0;
-    border-top: 3px dashed #1d2329;
+    background: repeating-linear-gradient(90deg, #1d2329 0 4px, transparent 4px 7px);
 }
 
 html.dark-mode .buoy-key.buoy-key-net {
-    border-top-color: #ffffff;
+    background: repeating-linear-gradient(90deg, #ffffff 0 4px, transparent 4px 7px);
 }
 
 /* one-line notes under a control (as on the other simulation pages) */
