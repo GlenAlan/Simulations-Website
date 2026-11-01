@@ -11425,7 +11425,7 @@
         if (dragging() || hist.pending) return;
         hist.pending = {
             snap: snapshot(), gesture: true, target: b.id, key: mode,
-            label: mode === 'aim' ? `change ${b.name}'s velocity` : `move ${b.name}`
+            label: mode === 'aim' ? (mission.def && b.id === mission.craftId ? `fire ${b.name}'s engine` : `change ${b.name}'s velocity`) : `move ${b.name}`
         };
     }
 
@@ -11509,8 +11509,10 @@
         }
         if (!main) return null;
         const n = s.names[main.i];
-        // (the eccentricity slider only turns the velocity, but what it changes is the orbit's shape)
+        // (the eccentricity slider only turns the velocity, but what it changes is the orbit's shape;
+        // in a mission a change to the probe's velocity is a burn)
         if (hist.as === 'shape' && (main.key === 'velocity' || main.key === 'speed')) return { key: 'shape', target: main.b.id, label: `change ${n}'s orbit shape` };
+        if (mission.def && main.b.id === mission.craftId && (main.key === 'velocity' || main.key === 'speed')) return { key: 'velocity', target: main.b.id, label: `fire ${n}'s engine` };
         const label = {
             mass: `change ${n}'s mass`, radius: `change ${n}'s radius`, orbit: `change ${n}'s orbit`, move: `move ${n}`,
             speed: `change ${n}'s speed`, velocity: `change ${n}'s velocity`, name: `rename ${n}`, colour: `change ${n}'s colour`
