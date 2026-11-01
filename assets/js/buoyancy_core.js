@@ -2800,8 +2800,9 @@
     // Curtains: liquid going through stretches of a wide opening (band runs `pick` selects, flow q
     // shared by length and head) as streams that start as wide as the stretch, moving straight
     // through it, and thin as gravity speeds them up: emit(x, y, vx, vy, q, w) gets each one's start.
-    // hi(x) is the upper of the two surfaces the run lies between; px a pixel's size.
-    function addCurtains(ch, c, s, q, out, hi, pick, px, emit) {
+    // hi(x) is the upper of the two surfaces the run lies between; px a pixel's size; fade (0..1, 1 if
+    // left out) narrows them all.
+    function addCurtains(ch, c, s, q, out, hi, pick, px, emit, fade) {
         const nr = runs.length;
         let nx = c * ch.nbx - s * ch.nby, ny = s * ch.nbx + c * ch.nby;
         let wsum = 0;
@@ -2830,7 +2831,7 @@
             // curtain narrows away as the way through the stretch turns upwards, and as its flow dies
             // away (it starts as wide as the stretch, however little flows).
             const qr = q * ws[k] / wsum;
-            const w0 = L * (1 - smoothstep(0.05, 0.4, uz)) * smoothstep(0.5 * Q_MIN, 3 * Q_MIN, qr);
+            const w0 = L * (fade === undefined ? 1 : fade) * (1 - smoothstep(0.05, 0.4, uz)) * smoothstep(0.5 * Q_MIN, 3 * Q_MIN, qr);
             if (w0 < 0.5 * px) continue;
             // It leaves at the speed the head over the stretch gives it (Torricelli's), not just the
             // flow over the width: through the whole stretch (that flow is less only because the
@@ -3159,10 +3160,11 @@
                 // A wide opening has no jet. What flows in through it is the surface running on into
                 // the cavity (cavityBlend), a nappe over a lip, or, through a stretch with air under
                 // it inside, a curtain falling in (not into trapped air: that only creeps in as the air
-                // bubbles out).
+                // bubbles out). As the way out to the air closes the curtain narrows away, rather than
+                // hanging on as a sliver along the opening and a thread down from it under the bulge.
                 if (ch.wide) {
                     if (ch.sJ * cv.ventS > 0.5 * Q_MIN && bandRuns(chainPoints(ch, c, s), lev, sTop)) {
-                        addCurtains(ch, c, s, ch.sJ * cv.ventS, false, sTop, () => true, px1, fall);
+                        addCurtains(ch, c, s, ch.sJ * cv.ventS, false, sTop, () => true, px1, fall, smoothstep(0.1, 0.9, cv.ventS));
                     }
                     continue;
                 }
