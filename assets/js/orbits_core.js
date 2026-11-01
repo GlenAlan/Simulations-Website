@@ -8416,6 +8416,15 @@
         }
         // (the steps don't apply to the Body and Gravity tabs)
         if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
+        // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
+        // unless that would take it past the bottom
+        if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet')) {
+            const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
+            const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
+            const fits = ph <= cr.height - 12;
+            const minY = fits ? 6 : 6 - cr.top, maxY = fits ? cr.height - 6 : window.innerHeight - cr.top - 6;
+            if (isFinite(top)) ui.pop.style.top = `${Math.round(oy + clamp(top, minY, Math.max(minY, maxY - ph)))}px`;
+        }
     }
 
     function openEditor(b, tab, focus) {

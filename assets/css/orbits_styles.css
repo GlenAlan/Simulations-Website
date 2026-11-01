@@ -997,10 +997,10 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     }
 }
 
-/* ---------- Trajectory editor: the body's menu in tabs (Velocity, Orbit, Body) ----------
-   Typed values with their units and -/+ steppers, the way round, pushes and the step size. The tab
-   panels share one grid cell, so the menu keeps the height of the tallest (it doesn't jump about as
-   the tabs change). */
+/* ---------- Trajectory editor: the body's menu in tabs (Body, Velocity, Orbit, Gravity) ----------
+   Typed values with their units and -/+ steppers, the way round, pushes and the step size. Each tab
+   is as tall as it needs: the menu opens on Body, the shortest, so it covers as little of the canvas
+   (or, on a phone, of the screen) as it can; beside a body a taller tab keeps the menu's top still. */
 .orb-popover {
     width: 304px;
 }
@@ -1050,8 +1050,7 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 }
 
 .orb-pop-panel[hidden] {
-    display: block;
-    visibility: hidden;
+    display: none;
 }
 
 /* A row: a label on the left, its control on the right */
@@ -1225,9 +1224,9 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     border-top: 1px solid var(--color-border);
 }
 
-/* (the Body tab has nothing to step) */
+/* (the Body and Gravity tabs have nothing to step) */
 .orb-pop-step.is-idle {
-    visibility: hidden;
+    display: none;
 }
 
 /* The arrow keys only matter with a keyboard */
