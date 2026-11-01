@@ -7888,9 +7888,32 @@
 
     // Beside the body on wider screens (kept on screen, it may overlap the palette); on phones in
     // portrait a sheet along the bottom of the screen, with the page scrolled so the canvas shows above it.
+    // On phones held sideways (the info bar in a column beside the canvas) a sheet down one side of the
+    // screen: over the info column, whose readouts it repeats, or over the palette if the body is on the
+    // right; the side is chosen as it opens and kept while it is open.
+    const SIDE_SHEET_MQ = '(orientation: landscape) and (min-width: 640px) and (max-height: 540px)';
     function positionPopover(b, opening) {
         const sheet = window.innerWidth < 600 && window.innerHeight > window.innerWidth;
+        const side = !sheet && !!window.matchMedia && window.matchMedia(SIDE_SHEET_MQ).matches;
         ui.pop.classList.toggle('is-sheet', sheet);
+        if (side) {
+            const was = ui.pop.classList.contains('is-side');
+            ui.pop.classList.add('is-side');
+            ui.pop.style.left = '';
+            ui.pop.style.top = '';
+            const cr = canvas.getBoundingClientRect(), x = cr.left + sx(b.dx), w = ui.pop.offsetWidth;
+            if (opening || !was) {
+                const rightOk = x < window.innerWidth - w - 16, leftOk = x > w + 16;
+                ui.pop.classList.toggle('on-left', !rightOk && (leftOk || x > window.innerWidth / 2));
+            }
+            // (the canvas in full view beside it, with the page's header scrolled away)
+            if (opening && !document.body.classList.contains('sim-fullscreen-active')) {
+                const delta = cr.top - Math.max(0, Math.min(8, window.innerHeight - cr.height));
+                if (Math.abs(delta) > 2) window.scrollBy({ top: delta, behavior: 'smooth' });
+            }
+            return;
+        }
+        ui.pop.classList.remove('is-side', 'on-left');
         if (sheet) {
             ui.pop.style.left = '';
             ui.pop.style.top = '';
@@ -8529,7 +8552,7 @@
         if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
-        if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet')) {
+        if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
             const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
             const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
             const fits = ph <= cr.height - 12;

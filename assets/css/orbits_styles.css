@@ -651,6 +651,34 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     box-shadow: var(--sim-sheet-shadow);
 }
 
+/* Phones held sideways: a sheet down one side of the screen, the height of the screen, over the info
+   column (or over the palette when the body is on the right: see positionPopover in orbits_core.js),
+   so it never sits across the middle of the canvas or half over a column */
+.orb-popover.is-side {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
+    z-index: 10001;                     /* (over the page header's buttons, under the site menu) */
+    width: min(304px, 46vw);
+    max-width: none;
+    max-height: none;
+    padding: 8px calc(12px + env(safe-area-inset-right, 0px)) 10px 12px;
+    border-width: 0 0 0 1px;
+    border-radius: 14px 0 0 14px;
+    box-shadow: -6px 0 28px rgba(0, 0, 0, 0.35);
+}
+
+.orb-popover.is-side.on-left {
+    right: auto;
+    left: 0;
+    padding: 8px 12px 10px calc(12px + env(safe-area-inset-left, 0px));
+    border-width: 0 1px 0 0;
+    border-radius: 0 14px 14px 0;
+    box-shadow: 6px 0 28px rgba(0, 0, 0, 0.35);
+}
+
 .orb-popover *,
 .orb-popover *::before,
 .orb-popover *::after {
@@ -1258,7 +1286,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     grid-template-columns: 6em minmax(0, 1fr);
 }
 
-/* Phones held sideways: a little tighter, so more of it fits beside the canvas */
+/* Phones held sideways: a little tighter, so more of it fits beside the canvas (the side sheet, which
+   scrolls the height of the screen, keeps the touch-sized steppers and tabs) */
 @media (orientation: landscape) and (max-height: 540px) {
     .orb-popover:not(.is-sheet) {
         padding-top: 4px;
@@ -1269,11 +1298,11 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         margin-top: 4px;
     }
 
-    .orb-popover:not(.is-sheet) .orb-spin {
+    .orb-popover:not(.is-sheet):not(.is-side) .orb-spin {
         height: 34px;
     }
 
-    .orb-popover:not(.is-sheet) .orb-pop-tabs button {
+    .orb-popover:not(.is-sheet):not(.is-side) .orb-pop-tabs button {
         height: 32px;
     }
 
