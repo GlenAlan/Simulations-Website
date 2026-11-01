@@ -185,6 +185,7 @@
 								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
 									<div class="sim-controls-header">
 										<h3 id="simulationControlsPanelLabel">Controls</h3>
+										<button type="button" class="orb-keys-btn" id="keysHelpBtn" aria-haspopup="dialog" title="Keys and gestures (?)"><span class="orb-keys-q" aria-hidden="true">?</span>Help</button>
 									</div>
 									<div class="sim-controls-content">
 										<div class="sim-control-group sim-speed-control">
@@ -213,6 +214,31 @@
 												<option value="empty">A lone star (build your own)</option>
 											</select>
 										</div>
+										<details class="sim-controls-more orb-bodies" id="bodiesGroup">
+											<summary><span>Bodies <span class="orb-bodies-count" id="bodiesCount"></span></span></summary>
+											<div class="orb-bodies-tools">
+												<input type="search" id="bodiesFind" placeholder="Find a body" aria-label="Find a body by name" autocomplete="off" spellcheck="false" enterkeyhint="search">
+												<select id="bodiesSort" aria-label="Order of the list">
+													<option value="mass" selected>Heaviest first</option>
+													<option value="name">By name</option>
+													<option value="distance">By distance</option>
+													<option value="period">By period</option>
+												</select>
+											</div>
+											<div class="orb-bodies-wrap" id="bodiesWrap">
+												<div class="orb-bodies-tree" id="bodiesTree" role="tree" aria-label="Bodies" aria-describedby="bodiesNote" tabindex="0">
+													<div class="orb-bodies-sizer" id="bodiesSizer" role="none"></div>
+												</div>
+												<div class="orb-bodies-actions" id="bodiesActions" role="group" aria-label="Chosen body" hidden>
+													<button type="button" data-act="zoom" title="Zoom to its orbit (Z)"><span class="icon solid fa-search-plus" aria-hidden="true"></span>Zoom</button>
+													<button type="button" data-act="view" aria-pressed="false" title="View the motion from it (double-click)"><span class="icon solid fa-crosshairs" aria-hidden="true"></span>View from</button>
+													<button type="button" data-act="edit" aria-haspopup="dialog" title="Set its velocity, orbit, mass and colour (Enter)"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Edit</button>
+													<button type="button" data-act="delete" aria-label="Delete" title="Delete this body (Delete)"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
+												</div>
+												<p class="orb-bodies-empty" id="bodiesEmpty" hidden>No body has that name.</p>
+											</div>
+											<p class="orb-note" id="bodiesNote">Choose a body for its buttons; double-click one to view from it.<span class="orb-keys-note"> N and Shift+N step through them, and ? lists every key.</span><span class="orb-sr-only"> In the list the arrow keys choose a body, Enter opens its menu and Delete deletes it.</span></p>
+										</details>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Physics</p>
 											<div class="sim-checkbox-group">
@@ -295,8 +321,10 @@
 									<div class="simulation-display-container">
 										<div class="sim-canvas-wrapper">
 											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/10; --aspect-ratio-portrait: 1/1;">
-												<canvas id="simulationCanvas" class="sim-canvas" role="img" aria-label="Stars, planets and moons moving under gravity, with their trails"></canvas>
+												<canvas id="simulationCanvas" class="sim-canvas" role="application" tabindex="0" aria-roledescription="simulation" aria-label="Stars, planets and moons moving under gravity, with their trails" aria-describedby="canvasKeys"></canvas>
 											</div>
+											<p class="orb-sr-only" id="canvasKeys">N chooses the next body and Shift+N the one before. Enter opens the chosen body's menu, Z zooms to its orbit and the arrow keys push it. Space pauses. Question mark lists every key.</p>
+											<p class="orb-sr-only" id="orbAnnounce" aria-live="polite" aria-atomic="true"></p>
 											<button type="button" class="orb-frame-chip" id="frameChip" hidden title="Go back to the centre-of-mass view">
 												<span class="icon solid fa-crosshairs" aria-hidden="true"></span><span>Viewed from <strong id="frameChipName">Earth</strong></span><span class="icon solid fa-times orb-frame-chip-x" aria-hidden="true"></span>
 											</button>
@@ -309,6 +337,7 @@
 												<div class="orb-pop-actions">
 													<button type="button" id="popLock" aria-pressed="false"><span class="icon solid fa-crosshairs" aria-hidden="true"></span><span id="popLockText">View from here</span></button>
 													<button type="button" id="popCircular" title="Give it the speed for a circular orbit"><span class="icon fa-circle" aria-hidden="true"></span>Circular</button>
+														<button type="button" id="popZoom" class="orb-pop-zoom" title="Zoom to its orbit (Z)" aria-label="Zoom to its orbit"><span class="icon solid fa-search-plus" aria-hidden="true"></span></button>
 													<button type="button" id="popDelete" class="orb-pop-delete" title="Delete this body" aria-label="Delete this body"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
 												</div>
 												<div class="orb-pop-tabs" role="tablist" aria-label="What to change">
@@ -495,6 +524,7 @@
 											<ul>
 												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun. <strong>Teal arrows:</strong> velocities.</li>
 												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless realistic physics is on).</li>
+												<li><strong>Flat, in 2D:</strong> everything moves in one plane, as if seen from straight above. Real orbits are tilted a little to each other (the planets' by a few degrees), so in space bodies usually pass above or below one another. The tilt hardly changes an orbit's size, shape or period, and gravity still falls off as 1/<em>r</em><sup>2</sup>; but here nothing can pass over anything else, so close passes and collisions happen more often than they would in space.</li>
 											</ul>
 
 											<h4>The key idea</h4>
@@ -528,6 +558,70 @@
 										</div>
 									</details>
 								</div>
+								<dialog class="orb-help" id="keysHelp" aria-labelledby="keysHelpTitle" aria-describedby="keysHelpIntro">
+									<div class="orb-help-inner">
+										<div class="orb-help-head">
+											<h2 id="keysHelpTitle">Keys and gestures</h2>
+											<button type="button" class="orb-help-close" id="keysHelpClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
+										</div>
+										<p class="orb-help-intro" id="keysHelpIntro">The keys work once you have clicked or tabbed into the simulation, but not while you are typing in a box.</p>
+										<div class="orb-help-groups">
+											<div class="orb-help-group orb-help-touch">
+												<h3 id="helpTouchTitle">On a touch screen</h3>
+												<dl>
+													<div><dt>Tap a body</dt><dd>Choose it: the info bar shows its distance, speed and period</dd></div>
+													<div><dt>Double-tap a body</dt><dd>View the motion from it (double-tap empty space to go back)</dd></div>
+													<div><dt>Long-press a body</dt><dd>Open its menu: speed, orbit, mass and colour</dd></div>
+													<div><dt>Drag a body</dt><dd>Move it</dd></div>
+													<div><dt>Drag an arrow's tip</dt><dd>Aim its velocity. Hold the tip still for a moment first for fine aim</dd></div>
+													<div><dt>Drag space · pinch</dt><dd>Move around · zoom in or out</dd></div>
+												</dl>
+											</div>
+											<div class="orb-help-group">
+												<h3 id="helpChooseTitle">Choose and look</h3>
+												<dl>
+													<div><dt><kbd>N</kbd> · <kbd>Shift</kbd>+<kbd>N</kbd></dt><dd>Choose the next or previous body: heaviest first, moons after their planet</dd></div>
+													<div><dt><kbd>Z</kbd></dt><dd>Zoom to the chosen body's orbit</dd></div>
+													<div><dt>Bodies list</dt><dd>In the settings: find a body by name, zoom to it or view from it</dd></div>
+													<div><dt>Click · double-click</dt><dd>Choose a body · view the motion from it</dd></div>
+													<div><dt>Drag space · scroll</dt><dd>Move around · zoom in or out</dd></div>
+													<div><dt><kbd>Tab</kbd></dt><dd>Move between the simulation and its buttons</dd></div>
+												</dl>
+											</div>
+											<div class="orb-help-group">
+												<h3 id="helpChangeTitle">Change a body</h3>
+												<dl>
+													<div><dt><kbd>Enter</kbd> · right-click</dt><dd>Open the chosen body's menu</dd></div>
+													<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Push it faster or slower</dd></div>
+													<div><dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>Push it outward or inward (with <kbd>Shift</kbd> finer, <kbd>Alt</kbd> coarser)</dd></div>
+													<div><dt>Drag</dt><dd>Move a body, or aim it by its arrow's tip (hold <kbd>Shift</kbd> for fine aim)</dd></div>
+													<div><dt><kbd>Delete</kbd></dt><dd>Delete the chosen body</dd></div>
+												</dl>
+											</div>
+											<div class="orb-help-group">
+												<h3 id="helpTimeTitle">Time</h3>
+												<dl>
+													<div><dt><kbd>Space</kbd></dt><dd>Pause or play</dd></div>
+													<div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Slower · faster</dd></div>
+													<div><dt><kbd>.</kbd></dt><dd>Step forward a moment (while paused)</dd></div>
+													<div><dt><kbd>B</kbd></dt><dd>Run backwards</dd></div>
+													<div><dt><kbd>R</kbd></dt><dd>Run again from your last change</dd></div>
+													<div><dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></dt><dd>Undo · redo (on a Mac <kbd>⌘</kbd>+<kbd>Z</kbd> · <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>Z</kbd>)</dd></div>
+												</dl>
+											</div>
+											<div class="orb-help-group">
+												<h3 id="helpShowTitle">Show</h3>
+												<dl>
+													<div><dt><kbd>G</kbd></dt><dd>Pull lines</dd></div>
+													<div><dt><kbd>W</kbd></dt><dd>Gravity well</dd></div>
+													<div><dt><kbd>F</kbd></dt><dd>Frame rate</dd></div>
+													<div><dt><kbd>?</kbd></dt><dd>This list</dd></div>
+													<div><dt><kbd>Esc</kbd></dt><dd>Close a menu, the settings or fullscreen</dd></div>
+												</dl>
+											</div>
+										</div>
+									</div>
+								</dialog>
 							</div>
 						</div>
 					</div>

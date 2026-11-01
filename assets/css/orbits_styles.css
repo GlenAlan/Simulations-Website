@@ -1437,3 +1437,591 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         overflow-y: auto;
     }
 }
+
+/* ---------- Finding your way: the "Bodies" list, zoom to an orbit, the keyboard, the help ----------
+   The list is a collapsed group in the settings (like "More options"); its rows are placed by the
+   script (only those in sight exist), the chosen one taller by its line of buttons. The help is a
+   modal dialog. --orb-focus: the focus rings and the chosen row's mark, darker than the page's pink in
+   the light theme so they stand out from the pale background (3:1 or more). */
+.orbits-sim,
+.orb-help {
+    --orb-focus: #c43d63;
+}
+
+html.dark-mode .orbits-sim,
+html.dark-mode .orb-help {
+    --orb-focus: var(--color-accent);
+}
+
+/* Hidden, but read by screen readers */
+.orb-sr-only {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* The canvas takes the keyboard: a ring inside its edge while it has the focus from the keyboard */
+#simulationCanvas:focus {
+    outline: none;
+}
+
+#simulationCanvas:focus-visible {
+    outline: 3px solid var(--orb-focus);
+    outline-offset: -3px;
+}
+
+/* "? Help" in the settings' heading, beside the close button */
+.sim-controls-header .orb-keys-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    flex: 0 0 auto;
+    height: 30px;
+    margin: 0 0 0 auto;
+    padding: 0 0.65em 0 0.35em;
+    font-size: 0.8em;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border-radius: 15px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-keys-q {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    font-size: 13px;
+    font-weight: 900;
+    color: var(--color-bg);
+    background-color: var(--orb-focus);
+    border-radius: 50%;
+}
+
+@media (hover: hover) {
+    .sim-controls-header .orb-keys-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--orb-focus);
+    }
+}
+
+.sim-controls-header .orb-keys-btn:focus-visible {
+    outline: 2px solid var(--orb-focus);
+    outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+    .sim-controls-header .orb-keys-btn {
+        height: 40px;
+        border-radius: 20px;
+    }
+}
+
+/* The "Bodies" group: Find and the order on one line, then the list */
+.orb-bodies .orb-bodies-tools {
+    display: flex;
+    gap: 6px;
+}
+
+.orb-bodies .orb-bodies-tools input[type="search"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 2.4em;
+    margin: 0;
+    padding: 0 0.6em;
+    font-size: 0.9em;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    outline: none;
+}
+
+.orb-bodies .orb-bodies-tools input[type="search"]::placeholder {
+    color: var(--color-text);
+    opacity: 0.85;
+}
+
+.orb-bodies .orb-bodies-tools input[type="search"]:focus {
+    border-color: var(--orb-focus);
+    box-shadow: 0 0 0 1px var(--orb-focus);
+}
+
+.sim-controls-content .orb-bodies .orb-bodies-tools select {
+    flex: 0 0 auto;
+    width: 9.6em;
+    height: 2.4em;
+    font-size: 0.9em;
+}
+
+@media (pointer: coarse) {
+    .orb-bodies .orb-bodies-tools input[type="search"],
+    .sim-controls-content .orb-bodies .orb-bodies-tools select {
+        height: 40px;
+    }
+}
+
+.orb-bodies-count {
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    opacity: 0.85;
+}
+
+.orb-bodies-wrap {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.orb-bodies-tree {
+    position: relative;
+    min-height: var(--orb-bl-row, 44px);
+    max-height: clamp(9.5rem, 40vh, 17rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    outline: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+}
+
+.orb-bodies-tree:focus-visible:not(.has-active) {
+    box-shadow: inset 0 0 0 2px var(--orb-focus);
+}
+
+.orb-bodies-sizer {
+    width: 1px;
+}
+
+/* A row: its colour, name and what it orbits; under them its mass, distance, speed and period */
+.orb-bl-row {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    grid-template-rows: 20px 16px;
+    align-content: center;
+    column-gap: 8px;
+    box-sizing: border-box;
+    height: var(--orb-bl-row, 44px);
+    padding: 0 8px 0 calc(10px + var(--orb-bl-indent, 0) * 12px);
+    color: var(--color-text);
+    cursor: pointer;
+    border-bottom: 1px solid var(--color-bg-subtle);
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-bl-row[hidden] {
+    display: none;
+}
+
+.orb-bl-dot {
+    align-self: center;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.orb-bl-line,
+.orb-bl-vals {
+    grid-column: 2;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.orb-bl-line {
+    font-size: 0.9em;
+    line-height: 20px;
+}
+
+/* Its mass at the right of the name line (a swarm body's long one is what gives way last) */
+.orb-bl-mass {
+    grid-column: 3;
+    grid-row: 1;
+    padding-left: 6px;
+    font-size: 0.78em;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    opacity: 0.85;
+}
+
+.orb-bl-vals {
+    grid-column: 2 / 4;
+}
+
+.orb-bl-name {
+    font-weight: 700;
+}
+
+.orb-bl-around {
+    font-size: 0.92em;
+    opacity: 0.85;
+}
+
+.orb-bl-vals {
+    grid-row: 2;
+    font-size: 0.78em;
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
+}
+
+@media (hover: hover) {
+    .orb-bl-row:hover {
+        background-color: var(--color-bg-subtle);
+    }
+}
+
+/* The chosen body: marked at its left edge, and taller by its buttons */
+.orb-bl-row.is-chosen {
+    align-content: start;
+    padding-top: 4px;
+    height: calc(var(--orb-bl-row, 44px) + var(--orb-bl-act, 42px));
+    background-color: var(--color-bg-button-active-overlay);
+    box-shadow: inset 3px 0 0 var(--orb-focus);
+}
+
+.orb-bodies-tree:focus-visible .orb-bl-row.is-active {
+    outline: 2px solid var(--orb-focus);
+    outline-offset: -2px;
+}
+
+/* A group of swarm bodies or pieces: a chevron that turns when it is open */
+.orb-bl-row.is-group .orb-bl-line::before {
+    content: '\f054';
+    display: inline-block;
+    width: 1em;
+    font-family: 'Font Awesome 5 Free';
+    font-size: 0.75em;
+    font-weight: 900;
+    transition: transform 0.15s ease;
+}
+
+.orb-bl-row.is-group[aria-expanded="true"] .orb-bl-line::before {
+    transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .orb-bl-row.is-group .orb-bl-line::before {
+        transition: none;
+    }
+}
+
+/* (two dots, one behind the other: many bodies) */
+.orb-bl-row.is-group .orb-bl-dot {
+    box-shadow: 0 0 0 1.5px var(--color-bg), 4px -3px 0 0 currentColor;
+}
+
+.orb-bodies-actions {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    box-sizing: border-box;
+    height: var(--orb-bl-act, 42px);
+    padding: 0 8px 0 12px;
+}
+
+.orb-bodies-actions[hidden] {
+    display: none;
+}
+
+.orb-bodies-actions button {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4em;
+    min-width: 0;
+    height: calc(var(--orb-bl-act, 42px) - 8px);
+    margin: 0;
+    padding: 0 0.4em;
+    font-size: 0.8em;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-bodies-actions button .icon {
+    color: var(--orb-focus);
+}
+
+.orb-bodies-actions button[data-act="delete"] {
+    flex: 0 0 auto;
+    width: calc(var(--orb-bl-act, 42px) - 8px);
+    padding: 0;
+}
+
+.orb-bodies-actions button[data-act="delete"] .icon {
+    color: inherit;
+}
+
+.orb-bodies-actions button[aria-pressed="true"] {
+    color: var(--color-bg) !important;
+    background-color: var(--orb-focus);
+    box-shadow: none;
+}
+
+.orb-bodies-actions button[aria-pressed="true"] .icon {
+    color: inherit;
+}
+
+.orb-bodies-actions button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+@media (hover: hover) {
+    .orb-bodies-actions button:not(:disabled):hover {
+        box-shadow: inset 0 0 0 1px var(--orb-focus);
+    }
+
+    .orb-bodies-actions button[data-act="delete"]:not(:disabled):hover {
+        color: #ff5f5f !important;
+        box-shadow: inset 0 0 0 1px #ff5f5f;
+    }
+}
+
+.orb-bodies-actions button:focus-visible {
+    outline: 2px solid var(--orb-focus);
+    outline-offset: 1px;
+}
+
+.orb-bodies-empty {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 0 10px;
+    font-size: 0.85em;
+    line-height: var(--orb-bl-row, 44px);
+    opacity: 0.85;
+    pointer-events: none;
+}
+
+.orb-bodies-empty[hidden] {
+    display: none;
+}
+
+.orb-bodies > .orb-note {
+    margin-top: 0.5em;
+    font-size: 0.8em;
+    opacity: 0.85;
+}
+
+/* "Zoom to its orbit" in the body's menu: an icon, beside Delete */
+.orb-pop-actions .orb-pop-zoom {
+    flex: 0 0 34px;
+    padding: 0;
+}
+
+/* (four buttons share the row now: a little less padding, so "View from here" and "Circular" fit) */
+.orb-popover:not(.is-sheet) .orb-pop-actions {
+    gap: 4px;
+}
+
+.orb-popover:not(.is-sheet) .orb-pop-actions button:not(.orb-pop-zoom):not(.orb-pop-delete) {
+    padding: 0 0.5em;
+}
+
+/* The help: keys and gestures, in a dialog over the page */
+dialog.orb-help {
+    box-sizing: border-box;
+    width: min(46rem, calc(100vw - 24px));
+    max-width: none;
+    max-height: min(86vh, 48rem);
+    margin: auto;
+    padding: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    font-size: 15px;
+    line-height: 1.4;
+    color: var(--color-text);
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+@supports (height: 100svh) {
+    dialog.orb-help {
+        max-height: min(86svh, 48rem);
+    }
+}
+
+dialog.orb-help::backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.orb-help *,
+.orb-help *::before,
+.orb-help *::after {
+    box-sizing: border-box;
+}
+
+.orb-help-inner {
+    padding: 0 18px 16px;
+}
+
+.orb-help-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 -18px;
+    padding: 6px 6px 6px 18px;
+    background-color: var(--color-bg-alt);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.orb-help h2 {
+    margin: 0;
+    font-size: 0.8em;
+    font-weight: 900;
+    line-height: 1.3;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-text);
+}
+
+.orb-help .orb-help-close {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    padding: 0;
+    font-size: 16px;
+    letter-spacing: 0;
+    line-height: 1;
+    color: var(--color-text) !important;
+    background: transparent;
+    border-radius: 6px;
+    box-shadow: none;
+}
+
+@media (hover: hover) {
+    .orb-help .orb-help-close:hover {
+        box-shadow: inset 0 0 0 1px var(--orb-focus);
+    }
+}
+
+.orb-help .orb-help-close:focus-visible {
+    outline: 2px solid var(--orb-focus);
+    outline-offset: -2px;
+}
+
+.orb-help-intro {
+    margin: 10px 0 2px;
+    font-size: 0.88em;
+}
+
+.orb-help-groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+    column-gap: 28px;
+}
+
+/* The touch gestures come last, or first on a touch screen */
+.orb-help-touch {
+    order: 9;
+}
+
+@media (pointer: coarse) {
+    .orb-help-touch {
+        order: -1;
+    }
+}
+
+.orb-help h3 {
+    margin: 14px 0 4px;
+    font-size: 0.72em;
+    font-weight: 900;
+    line-height: 1.3;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-text);
+    opacity: 0.85;
+}
+
+.orb-help dl {
+    margin: 0;
+}
+
+.orb-help dl > div {
+    display: grid;
+    grid-template-columns: 8.6em minmax(0, 1fr);
+    gap: 10px;
+    padding: 5px 0;
+    border-top: 1px solid var(--color-border);
+}
+
+.orb-help dt,
+.orb-help dd {
+    margin: 0;
+    font-size: 0.88em;
+}
+
+.orb-help dt {
+    font-weight: 700;
+}
+
+.orb-help kbd {
+    display: inline-block;
+    min-width: 1.7em;
+    padding: 0 0.35em;
+    font-family: inherit;
+    font-size: 0.92em;
+    font-weight: 700;
+    line-height: 1.45;
+    text-align: center;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+}
