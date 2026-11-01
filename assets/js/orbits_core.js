@@ -35,6 +35,10 @@
  *
  * Frames: the view follows the centre of mass (an inertial frame) or is locked on a body. Trails are
  *   stored in inertial coordinates at shared sample times, so they can be redrawn relative to any body.
+ *   The view can also turn with a body and the body it orbits (a rotating frame): then the bodies'
+ *   drawn positions (dx, dy) are turned about the frame's origin, so they are NOT world positions; a
+ *   screen point goes back to the world through unturnPoint (see "Rotating frame" after syncFrameUi).
+ *   The gravity well (the potential as a contour map) and the Lagrange points are drawn there too.
  *
  * Each body's "primary" is the body it orbits: the most local heavier body that it is bound to and is
  *   inside the Hill sphere of (the Moon orbits Earth even though the Sun pulls it harder). Readouts, the
@@ -290,7 +294,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter\'s pull herds 500 asteroids: the Trojans stay 60° ahead of it and 60° behind it, and the Hildas trace a triangle that turns with it.',
+            tip: 'Jupiter\'s pull herds 500 asteroids: the Trojans stay 60° ahead of it and 60° behind it, and the Hildas trace a triangle that turns with it. Set View from to "Rotating with Jupiter and the Sun" to see them stand still.',
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -3011,6 +3015,7 @@
     // View
     // ------------------------------------------------------------------
     function liveFrameOrigin() {
+        if (turn.on) { const P = turnPair(); if (P) return pairCentre(P, true); }   // (a rotating frame: the pair's centre)
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.dx, y: L.dy };
         let M = 0, X = 0, Y = 0;
@@ -3018,7 +3023,9 @@
         return M > 0 ? { x: X / M, y: Y / M } : { x: 0, y: 0 };
     }
 
-    function frameVelocity() {
+    // (x, y): where, in a rotating frame, whose velocity depends on the place (see turnVelocityAt)
+    function frameVelocity(x, y) {
+        if (turn.on) { const v = turnVelocityAt(x, y); if (v) return v; }
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.vx, y: L.vy };
         const c = totals(bodies);
@@ -3035,6 +3042,7 @@
             b.dx = b.x + vx * lag; b.dy = b.y + vy * lag;
         }
         F = freeze ? { x: freeze.x, y: freeze.y } : liveFrameOrigin();
+        turnDrawnPositions();   // (a rotating frame turns them about F: see "Rotating frame")
         // A held body stays exactly where it is held in the view
         for (const b of bodies) {
             if (b.held) { b.dx = F.x + b.held.offX; b.dy = F.y + b.held.offY; }
@@ -3044,6 +3052,7 @@
     // The frame origin from the integrator's positions (no extrapolation)
     function stateFrameOrigin() {
         if (freeze) return { x: freeze.x, y: freeze.y };
+        if (turn.on) { const P = turnPair(); if (P) return pairCentre(P, false); }
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.x, y: L.y };
         const c = totals(bodies);
@@ -3127,7 +3136,7 @@
         for (const b of bodies) {
             add(b.dx - F.x, b.dy - F.y);
             if (b.bound && b.primary && b.primary.primary !== b) {
-                const el = elementsOf(b, b.primary);
+                const el = turnedElements(elementsOf(b, b.primary));
                 if (el && el.bound) {
                     const fp = b.primary.m / (b.m + b.primary.m);
                     const R = el.a * (1 + el.e) * fp;
@@ -3169,12 +3178,12 @@
     // Change the frame without the view jumping, then glide to the new centre.
     function setFrame(id) {
         updateDrawnPositions();
-        const before = { x: F.x, y: F.y };
+        const before = viewOrigin();
         frameId = id !== null && bodyById(id) ? id : null;
         freeze = null;
+        leaveTurning();   // (a rotating frame ends: the view glides back square)
         updateDrawnPositions();
-        view.panX += before.x - F.x;
-        view.panY += before.y - F.y;
+        keepScreen(before);
         view.anim = { zoom: view.anim ? view.anim.zoom : view.zoom, panX: 0, panY: 0 };
         syncFrameUi();
         updatePopover(true);
@@ -3187,6 +3196,806 @@
             ui.frameChip.hidden = !L;
             if (L && ui.frameChipName) ui.frameChipName.textContent = L.name;
         }
+        syncTurnUi();
+    }
+
+    // ------------------------------------------------------------------
+    // Rotating frame
+    //   "View from: Rotating with Jupiter and the Sun": the view turns with a body B and the body A it
+    //   orbits, so both stand still. Their centre of mass is the frame's origin, and the line from A to B
+    //   keeps one direction on the screen (turn.up: across, or upwards on a tall screen). The angle is
+    //   the pair's angle at each moment, so on an elliptical orbit B slides in and out along that line
+    //   (and the view turns faster while they are close, as Kepler's 2nd law says it must).
+    //   frameId is B (so the "Viewed from" chip, and the room the overlays leave for it, work as for a
+    //   body), turn.on is set and turn.aId is A.
+    //   The whole picture goes through one turn about the frame's origin F: drawn = F + R(phi)(world - F).
+    //   updateDrawnPositions turns the bodies' drawn positions (dx, dy) that way, so sx/sy/wx/wy stay a
+    //   plain shift and scale between that drawn view and the screen. Anything that turns a screen point
+    //   back into a world position (a drop, a drag) goes through unturnPoint, and world vectors drawn as
+    //   arrows are turned by turn.c and turn.s. Trails are kept in world coordinates at shared times, so
+    //   each sample is turned by the pair's angle at its own time, read from the pair's own trail
+    //   samples. Velocity arrows show velocities relative to the turning view, v - (V + Omega x (r - C)),
+    //   where V and C are the pair's centre-of-mass velocity and position and Omega how fast the pair
+    //   turns; an arrow aimed in the view is turned back into the world the same way when it is let go.
+    //   A sudden change of angle (switching frames, dropping one of the pair, an undo) goes into a turn
+    //   that dies away (turnEase), so the view glides round instead of jumping, also on the way back to
+    //   an ordinary frame (where phi is just that dying turn, and is 0 the rest of the time).
+    // ------------------------------------------------------------------
+    const TURN_REF = -1;          // a predicted path's refId when it was worked out in a rotating frame
+    const TURN_EASE_S = 0.25;     // s: how quickly a sudden turn of the view dies away
+    const turn = {
+        on: false,
+        aId: null, bId: null,     // the pair: B (also frameId) and the body A it orbits
+        up: 0,                    // the screen direction of the line from A to B (radians anticlockwise)
+        easeAmt: 0, easeT: 0,     // a turn that dies away, from time easeT (ms)
+        theta: 0,                 // the pair's direction in the world this frame
+        phi: 0, c: 1, s: 0,       // the view's turn this frame, and its cosine and sine
+        alpha: 0,                 // phi + theta: turns coordinates along the pair (A to B along +x) into the view
+        omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
+        options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
+    };
+    Object.assign(ui, { turnNote: byId('turnNote') });
+
+    const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
+
+    // The dying turn, now
+    function turnEase() {
+        if (!turn.easeAmt) return 0;
+        const v = turn.easeAmt * Math.exp(-(performance.now() - turn.easeT) / (1000 * TURN_EASE_S));
+        if (Math.abs(v) < 1e-4) { turn.easeAmt = 0; return 0; }
+        return v;
+    }
+    function addEase(d) {
+        turn.easeAmt = wrapAngle(turnEase() + d);
+        turn.easeT = performance.now();
+    }
+
+    // The turning pair { A, B }, or null (not turning, or one of them has gone)
+    function turnPair() {
+        if (!turn.on) return null;
+        // (B has merged into another body, which the view now follows as its heir: turn with that one)
+        if (frameId !== turn.bId && frameId !== null && frameId !== turn.aId && !bodyById(turn.bId) && bodyById(frameId)) turn.bId = frameId;
+        if (frameId !== turn.bId) return null;
+        const A = bodyById(turn.aId), B = bodyById(turn.bId);
+        return A && B ? { A, B } : null;
+    }
+    const turnBodies = () => { const P = turnPair(); return P ? [P.A, P.B] : []; };
+    const turnUses = (b) => !!(b && turn.on && (b.id === turn.aId || b.id === turn.bId));
+    // The body B goes round (if it is bound to one): the other half of a pair it can turn with
+    const turnPartner = (b) => (b && !b.grp && b.bound && b.primary && b.primary !== b ? b.primary : null);
+
+    // The pair's centre of mass, from the drawn (extrapolated) positions or the integrator's
+    function pairCentre(P, drawn) {
+        const M = P.A.m + P.B.m;
+        return drawn ? { x: (P.A.m * P.A.dx + P.B.m * P.B.dx) / M, y: (P.A.m * P.A.dy + P.B.m * P.B.dy) / M }
+            : { x: (P.A.m * P.A.x + P.B.m * P.B.x) / M, y: (P.A.m * P.A.y + P.B.m * P.B.y) / M };
+    }
+
+    // How fast the line from A to B turns (radians a year): the relative angular momentum over r^2
+    function pairOmega(P) {
+        const rx = P.B.x - P.A.x, ry = P.B.y - P.A.y, r2 = rx * rx + ry * ry;
+        return r2 > 0 ? (rx * (P.B.vy - P.A.vy) - ry * (P.B.vx - P.A.vx)) / r2 : 0;
+    }
+
+    // The velocity of the rotating frame itself at world point (x, y): the pair's centre-of-mass
+    // velocity plus Omega x (r - C); without a point, the centre of mass's alone
+    function turnVelocityAt(x, y) {
+        const P = turnPair();
+        if (!P) return null;
+        const M = P.A.m + P.B.m;
+        const vx = (P.A.m * P.A.vx + P.B.m * P.B.vx) / M, vy = (P.A.m * P.A.vy + P.B.m * P.B.vy) / M;
+        if (x === undefined || y === undefined) return { x: vx, y: vy };
+        const c = pairCentre(P, false), w = pairOmega(P);
+        return { x: vx - w * (y - c.y), y: vy + w * (x - c.x) };
+    }
+
+    // From updateDrawnPositions, once the drawn positions (still world positions, extrapolated) and the
+    // origin F are known: this frame's turn, and every drawn position turned by it about F
+    function turnDrawnPositions() {
+        let phi = turnEase();
+        if (turn.on) {
+            const P = turnPair();
+            if (!P) {
+                stopTurning();
+                phi = turnEase();
+            } else {
+                turn.theta = Math.atan2(P.B.dy - P.A.dy, P.B.dx - P.A.dx);
+                turn.omega = pairOmega(P);
+                phi += turn.up - turn.theta;
+            }
+        }
+        if (freeze && freeze.phi !== undefined) phi = freeze.phi;   // (one of the pair is being dragged)
+        phi = wrapAngle(phi);
+        turn.phi = phi; turn.c = Math.cos(phi); turn.s = Math.sin(phi);
+        turn.alpha = phi + (turn.on ? turn.theta : 0);
+        if (!phi) return;
+        const c = turn.c, s = turn.s;
+        for (const b of bodies) {
+            const x = b.dx - F.x, y = b.dy - F.y;
+            b.dx = F.x + c * x - s * y;
+            b.dy = F.y + s * x + c * y;
+        }
+    }
+
+    // World vectors and points into the drawn view and back
+    const turnVec = (x, y) => ({ x: turn.c * x - turn.s * y, y: turn.s * x + turn.c * y });
+    const unturnVec = (x, y) => ({ x: turn.c * x + turn.s * y, y: -turn.s * x + turn.c * y });
+    function turnPoint(x, y) { const v = turnVec(x - F.x, y - F.y); return { x: F.x + v.x, y: F.y + v.y }; }
+    function unturnPoint(x, y) { const v = unturnVec(x - F.x, y - F.y); return { x: F.x + v.x, y: F.y + v.y }; }
+
+    // Where the frame's origin is and how far the view is turned, taken before a change (see keepScreen)
+    const viewOrigin = () => ({ x: F.x, y: F.y, phi: turn.phi });
+    // After a change that moved the frame's origin or turned the view (drawn positions already worked
+    // out again): keep everything on the screen where it was. The pan takes up the move, turned as the
+    // view is; the turn goes into the dying turn, so the view then glides round to its new angle.
+    function keepScreen(before) {
+        const d = before.phi !== undefined ? wrapAngle(before.phi - turn.phi) : 0;
+        if (Math.abs(d) > 1e-9) { addEase(d); updateDrawnPositions(); }
+        const v = turnVec(before.x - F.x, before.y - F.y);
+        view.panX += v.x;
+        view.panY += v.y;
+    }
+
+    // View from a rotating frame turning with B and A (by default the body B orbits)
+    function startTurning(B, A) {
+        A = A || turnPartner(B);
+        if (!B || !A || A === B) return false;
+        updateDrawnPositions();
+        const before = viewOrigin();
+        frameId = B.id;
+        freeze = null;
+        Object.assign(turn, { on: true, aId: A.id, bId: B.id, up: viewH > 1.15 * viewW ? Math.PI / 2 : 0 });
+        updateDrawnPositions();
+        keepScreen(before);
+        view.anim = { zoom: view.anim ? view.anim.zoom : view.zoom, panX: 0, panY: 0 };
+        pred.key = '';
+        markPreview();
+        syncFrameUi();
+        updatePopover(true);
+        historyNote(`<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`);
+        return true;
+    }
+
+    // Choosing any other frame ends a rotating one (setFrame keeps the screen still; the turn glides off)
+    function leaveTurning() {
+        if (!turn.on) return;
+        Object.assign(turn, { on: false, aId: null, bId: null });
+        pred.key = '';
+        markPreview();
+    }
+
+    // One of the pair has gone (deleted, swallowed by the other, a new scene): an ordinary frame again, gliding square
+    // from where the view was, unless both have gone (a new scene), which simply starts square
+    function stopTurning() {
+        const gone = !bodyById(turn.aId) && !bodyById(turn.bId);
+        leaveTurning();
+        turn.easeAmt = gone ? 0 : wrapAngle(turn.phi);
+        turn.easeT = performance.now();
+        syncFrameUi();
+    }
+
+    // "View from": a rotating frame's option is turn:<id of B>
+    function pickTurning(value) {
+        const m = /^turn:(\d+)$/.exec(value || '');
+        if (!m) return false;
+        if (!startTurning(bodyById(parseInt(m[1], 10)))) syncFrameUi();   // (no longer possible: show the frame as it is)
+        return true;
+    }
+
+    // Which body the list offers to turn with: the chosen one if it orbits something, else the heaviest
+    // body that orbits a heavier one (Jupiter in the Trojans scene, even with the Sun chosen)
+    function turnCandidate() {
+        const s = bodyById(selectedId);
+        if (turnPartner(s)) return s;
+        let best = null;
+        for (const b of bodies) {
+            const p = turnPartner(b);
+            if (p && !b.minor && b.m <= p.m && (!best || b.m > best.m)) best = b;
+        }
+        return best;
+    }
+    const turnLabel = (B, A) => `Rotating with ${theName(B)} and ${theName(A)}`;
+
+    // The rotating frames in "View from" (after the bodies): the one in use, and the chosen body's
+    function turnOptions() {
+        const out = [];
+        const P = turnPair();
+        if (P) out.push([`turn:${P.B.id}`, turnLabel(P.B, P.A)]);
+        const c = turnCandidate();
+        if (c && !(P && c === P.B)) out.push([`turn:${c.id}`, turnLabel(c, turnPartner(c))]);
+        return out;
+    }
+    // Choosing another body changes what is offered (checked a few times a second while drawing)
+    function syncTurnOptions() {
+        const now = performance.now();
+        if (now < turn.optionsAt) return;
+        turn.optionsAt = now + 300;
+        const sig = turnOptions().map((o) => o.join('=')).join('|');
+        if (sig !== turn.options) { turn.options = sig; refreshBodyLists(); }
+    }
+
+    // The list, the chip ("Rotating with Jupiter and the Sun") and the note under the list
+    function syncTurnUi() {
+        const P = turnPair();
+        if (ui.frame && P) ui.frame.value = `turn:${P.B.id}`;
+        if (ui.frameChip && ui.frameChipName) {
+            const lead = ui.frameChipName.previousSibling;
+            const text = P ? 'Rotating with ' : 'Viewed from ';
+            if (lead && lead.nodeType === 3 && lead.nodeValue !== text) lead.nodeValue = text;
+            if (P) ui.frameChipName.textContent = theName(P.B);   // (short: the list names the pair)
+        }
+        if (ui.turnNote) {
+            ui.turnNote.hidden = !P;
+            if (P) {
+                const el = elementsOf(P.B, P.A);
+                const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
+                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}`);
+            }
+        }
+    }
+
+    // A body's velocity as drawn: relative to the turning view (minus the frame's own velocity where the
+    // body is), or in an ordinary frame relative to fv; turned as the view is
+    function viewVelocity(b, fv) {
+        const u = turn.on ? frameVelocity(b.x, b.y) : fv;
+        return turnVec(b.vx - u.x, b.vy - u.y);
+    }
+
+    // An arrow grabbed in a turned view is aimed as drawn (its numbers are along the view's directions,
+    // so it stays put on the screen while the view turns); aimedVelocity turns it back into the world,
+    // on top of the frame's own velocity where the body is (aimBase)
+    function turnAim(a) {
+        if (!turn.on && !turn.phi) return;
+        const v = turnVec(a.vx, a.vy);
+        a.vx = v.x; a.vy = v.y; a.turn = true;
+    }
+    function aimedVelocity(b) {
+        const a = b.aim, base = aimBase(b);
+        const v = a.turn ? unturnVec(a.vx, a.vy) : { x: a.vx, y: a.vy };
+        return { x: base.x + v.x, y: base.y + v.y };
+    }
+    function setAimedVelocity(b, vx, vy) {
+        const a = b.aim, base = aimBase(b);
+        const v = a.turn ? turnVec(vx - base.x, vy - base.y) : { x: vx - base.x, y: vy - base.y };
+        a.vx = v.x; a.vy = v.y;
+    }
+
+    // Orbit elements, and lists of world offsets, turned as the view is
+    function turnedElements(el) {
+        return el && turn.phi ? Object.assign({}, el, { w: el.w + turn.phi }) : el;
+    }
+    function turnedPoints(pts, angle) {
+        const a = angle === undefined ? turn.phi : angle;
+        if (!a) return pts;
+        const c = Math.cos(a), s = Math.sin(a), out = new Array(pts.length);
+        for (let i = 0; i + 1 < pts.length; i += 2) {
+            out[i] = c * pts[i] - s * pts[i + 1];
+            out[i + 1] = s * pts[i] + c * pts[i + 1];
+        }
+        return out;
+    }
+    // A predicted path's points: one worked out in a rotating frame is along the pair (turned by alpha),
+    // any other in world directions (turned by phi)
+    const turnedPath = (pp) => turnedPoints(pp.pts, pp.refId === TURN_REF ? turn.alpha : turn.phi);
+
+    // A prediction in a rotating frame (see predictPath): where a body of the copy is relative to the
+    // copy's turning pair, along the line from A to B (+x) and across it
+    function turnedSeen(src, list) {
+        const P = turnPair();
+        if (!P) return null;
+        const qa = list[src.indexOf(P.A)], qb = list[src.indexOf(P.B)];
+        if (!qa || !qb) return null;
+        return (q) => {
+            const M = qa.m + qb.m;
+            const rx = q.x - (qa.m * qa.x + qb.m * qb.x) / M, ry = q.y - (qa.m * qa.y + qb.m * qb.y) / M;
+            const dx = qb.x - qa.x, dy = qb.y - qa.y, d = Math.hypot(dx, dy) || 1;
+            const c = dx / d, s = dy / d;
+            return [c * rx + s * ry, c * ry - s * rx];
+        };
+    }
+
+    // Trails in a turned view (see drawTrails). In a rotating frame each sample is seen from the pair's
+    // centre of mass at that sample's time and turned by alpha - theta_k, theta_k being the pair's
+    // direction then (read from the pair's own samples): { oT (the centres), cs (cosines and sines),
+    // first (the first sample both of the pair have) }. While an ordinary frame glides square: one turn
+    // for every sample, { c, s }. Null when the view isn't turned.
+    const turnTrailO = new Float64Array(TRAIL_CAP * 2), turnTrailCS = new Float64Array(TRAIL_CAP * 2);
+    function turnedTrails(first) {
+        const P = turnPair();
+        if (!P) return turn.phi ? { oT: null, cs: null, c: turn.c, s: turn.s, first: 0 } : null;
+        const TA = P.A.trail, TB = P.B.trail;
+        if (!TA || !TB) return { oT: turnTrailO, cs: turnTrailCS, first: sampleCount };
+        const k0 = Math.max(first, trailFirst(P.A), trailFirst(P.B), sampleCount - TRAIL_CAP + 1);
+        const ma = P.A.m, mb = P.B.m, M = ma + mb;
+        const ca = Math.cos(turn.alpha), sa = Math.sin(turn.alpha);
+        for (let k = k0; k < sampleCount; k++) {
+            const ia = trailIndex(TA, k), ib = trailIndex(TB, k), j = 2 * (k % TRAIL_CAP);
+            const ax = TA[ia], ay = TA[ia + 1], bx = TB[ib], by = TB[ib + 1];
+            turnTrailO[j] = (ma * ax + mb * bx) / M;
+            turnTrailO[j + 1] = (ma * ay + mb * by) / M;
+            const dx = bx - ax, dy = by - ay, d = Math.hypot(dx, dy) || 1;
+            const ct = dx / d, st = dy / d;
+            turnTrailCS[j] = ca * ct + sa * st;       // cos(alpha - theta_k)
+            turnTrailCS[j + 1] = sa * ct - ca * st;   // sin(alpha - theta_k)
+        }
+        return { oT: turnTrailO, cs: turnTrailCS, first: k0 };
+    }
+
+    // traceTrail for a turned view: the same, with each point turned
+    function traceTurnedTrail(tr, ks, ke, minPx) {
+        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
+        const cs = tr.turn.cs, c0 = tr.turn.c, s0 = tr.turn.s;
+        const capT = T.length >> 1, capO = oT.length >> 1;
+        let i = 2 * (ks % capT), io = 2 * (ks % capO), j = 2 * (ks % TRAIL_CAP);
+        let c = cs ? cs[j] : c0, s = cs ? cs[j + 1] : s0;
+        let rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
+        let lx = offX + (c * rx - s * ry) * scale, ly = offY - (s * rx + c * ry) * scale;
+        let out = outcode(lx, ly), pen = true;
+        ctx.moveTo(lx, ly);
+        for (let k = ks + 1; k < ke; k += stride) {
+            if (k + stride >= ke) k = ke - 1;
+            i = 2 * (k % capT); io = 2 * (k % capO); j = 2 * (k % TRAIL_CAP);
+            if (cs) { c = cs[j]; s = cs[j + 1]; }
+            rx = T[i] - oT[io]; ry = T[i + 1] - oT[io + 1];
+            const x = offX + (c * rx - s * ry) * scale, y = offY - (s * rx + c * ry) * scale;
+            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
+            const o = outcode(x, y);
+            if (o & out) {
+                pen = false;
+            } else {
+                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
+                ctx.lineTo(x, y);
+            }
+            lx = x; ly = y; out = o;
+        }
+        if (!pen) ctx.moveTo(lx, ly);
+    }
+
+    // ------------------------------------------------------------------
+    // Lagrange points of a body B and the body A it orbits (A the heavier; mu = m_B / (m_A + m_B)), in
+    // units of the distance d between them now, along the line from A to B and measured from their
+    // centre of mass (A at -mu, B at 1 - mu). L1, L2 and L3 lie on that line, where in a frame turning
+    // with the pair the two pulls and the outward (centrifugal) push balance: the roots of
+    //   f(x) = x - (1 - mu)(x + mu)/|x + mu|^3 - mu(x - 1 + mu)/|x - 1 + mu|^3,
+    // a quintic on each stretch of the line: one between A and B (L1), one beyond B (L2) and one beyond
+    // A (L3). f runs from -infinity to +infinity across each stretch, so bisection finds each root to
+    // the last digit. L4 and L5 make equilateral triangles with A and B, 60 degrees ahead of B and
+    // behind it; they are stable only while mu is under 0.0385 (Routh's limit), and then small bodies
+    // gather round them, as the Trojans do round Jupiter's.
+    // ------------------------------------------------------------------
+    const ROUTH_MU = 0.0385;
+    const lagrangeMemo = { mu: NaN, pts: null };
+    function lagrangeUnits(mu) {
+        if (mu === lagrangeMemo.mu) return lagrangeMemo.pts;
+        const f = (x) => {
+            const a = x + mu, b = x - 1 + mu;
+            return x - (1 - mu) * a / Math.abs(a * a * a) - mu * b / Math.abs(b * b * b);
+        };
+        // (f(lo) < 0 < f(hi))
+        const root = (lo, hi) => {
+            for (let k = 0; k < 200 && hi - lo > 4e-16 * Math.max(1, Math.abs(lo)); k++) {
+                const m = 0.5 * (lo + hi);
+                if (f(m) < 0) lo = m; else hi = m;
+            }
+            return 0.5 * (lo + hi);
+        };
+        const tiny = 1e-12, h = Math.sqrt(3) / 2;
+        const pts = [
+            [root(-mu + tiny, 1 - mu - tiny), 0], [root(1 - mu + tiny, 2), 0], [root(-2, -mu - tiny), 0],
+            [0.5 - mu, h], [0.5 - mu, -h]
+        ];
+        lagrangeMemo.mu = mu;
+        lagrangeMemo.pts = pts;
+        return pts;
+    }
+
+    // The pair whose points are shown: the rotating frame's, else the one the list offers (the chosen
+    // body, if it orbits something). Only while they are bound to each other (and B isn't so light
+    // that L1 and L2 sit on it). { A (the heavier), B, mu, sense: 1 if B goes round anticlockwise }
+    function lagrangePair() {
+        const P = turnPair();
+        let B = P ? P.B : turnCandidate();
+        let A = P ? P.A : turnPartner(B);
+        if (!A || !B) return null;
+        if (B.m > A.m) [A, B] = [B, A];
+        const rx = B.x - A.x, ry = B.y - A.y, r = Math.hypot(rx, ry);
+        const vx = B.vx - A.vx, vy = B.vy - A.vy;
+        const mu = B.m / (A.m + B.m);
+        if (!(r > 0) || !(mu > 1e-15) || 0.5 * (vx * vx + vy * vy) - G * (A.m + B.m) / r >= 0) return null;
+        return { A, B, mu, sense: rx * vy - ry * vx < 0 ? -1 : 1 };
+    }
+
+    // The five points relative to A (AU, in world directions, or drawn ones with drawn), each with its
+    // place along the line from A to B and across it (+: ahead of B) in units of their distance
+    function lagrangePoints(Q, drawn) {
+        const ax = drawn ? Q.A.dx : Q.A.x, ay = drawn ? Q.A.dy : Q.A.y;
+        const dx = (drawn ? Q.B.dx : Q.B.x) - ax, dy = (drawn ? Q.B.dy : Q.B.y) - ay;
+        const d = Math.hypot(dx, dy), c = dx / d, s = dy / d;
+        return lagrangeUnits(Q.mu).map(([x, y]) => {
+            const u = (x + Q.mu) * d, v = y * Q.sense * d;
+            return { x: c * u - s * v, y: s * u + c * v, along: x + Q.mu, across: y, d };
+        });
+    }
+
+    // A short line about each point (a tooltip; tapped on a touch screen, in the hint line)
+    function lagrangeText(i, Q) {
+        const b = theName(Q.B), a = theName(Q.A);
+        if (i < 3) {
+            const where = [`between ${b} and ${a}`, `just beyond ${b}`, `on the far side of ${a}`][i];
+            return `L${i + 1}, ${where}: a body here keeps pace with ${b}, but drifts away if nudged.`;
+        }
+        const where = i === 3 ? 'ahead of' : 'behind';
+        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: a stable spot, where small bodies gather (like Jupiter's Trojans).`
+            : `L${i + 1}, 60° ${where} ${b}: not stable, as ${b} is too heavy compared with ${a}.`;
+    }
+
+    // Small diamonds labelled L1 to L5 (over the bodies' dots, under their names and arrows). One hidden
+    // under A or B, or crowding another, is left out, and all of them while the pair is too close
+    // together on the screen to tell the points apart (zoom in to see them).
+    let lagrangeShown = [];      // the markers drawn this frame: { x, y, i, text }
+    function drawLagrangePoints(C) {
+        lagrangeShown = [];
+        if (!settings.lagrange) return;
+        const Q = lagrangePair();
+        if (!Q) return;
+        const ax = sx(Q.A.dx), ay = sy(Q.A.dy), bx = sx(Q.B.dx), by = sy(Q.B.dy);
+        if (Math.hypot(bx - ax, by - ay) < 60) return;
+        const pts = lagrangePoints(Q, true);
+        const ra = drawRadius(Q.A) + 6, rb = drawRadius(Q.B) + 6;
+        const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
+        ctx.font = font(fs);
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = C.dark ? 'rgba(224,224,224,0.75)' : 'rgba(40,40,40,0.7)';
+        const halo = hexA(C.bg, 0.8);
+        pts.forEach((p, i) => {
+            const x = sx(Q.A.dx + p.x), y = sy(Q.A.dy + p.y);
+            if (x < -10 || x > viewW + 10 || y < -10 || y > viewH + 10) return;
+            if (Math.hypot(x - ax, y - ay) < ra || Math.hypot(x - bx, y - by) < rb) return;
+            if (lagrangeShown.some((q) => Math.hypot(q.x - x, q.y - y) < 14)) return;
+            const r = 4.5;
+            ctx.beginPath();
+            ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+            ctx.stroke();
+            lagrangeShown.push({ x, y, i, text: lagrangeText(i, Q) });
+            if (cleanRender) return;
+            // The name on the side away from the pair's centre; for L1 and L2, either side of B, to one
+            // side of the line (B's own name goes outwards)
+            const ox = sx(Q.A.dx + (Q.B.dx - Q.A.dx) * Q.mu), oy = sy(Q.A.dy + (Q.B.dy - Q.A.dy) * Q.mu);
+            let ux = x - ox, uy = y - oy;
+            if (i < 2) { ux = ay - by; uy = bx - ax; }
+            const len = Math.hypot(ux, uy) || 1;
+            ux /= len; uy /= len;
+            const name = `L${i + 1}`, w = ctx.measureText(name).width;
+            const tx = x + ux * 9 + (ux < -0.3 ? -w : ux > 0.3 ? 0 : -w / 2), ty = y + uy * 10;
+            ctx.textAlign = 'left';
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = halo;
+            ctx.strokeText(name, tx, ty);
+            ctx.fillStyle = C.subtle;
+            ctx.fillText(name, tx, ty);
+            ctx.lineWidth = 1.4;
+            ctx.strokeStyle = C.dark ? 'rgba(224,224,224,0.75)' : 'rgba(40,40,40,0.7)';
+        });
+    }
+
+    function lagrangeAt(x, y, tol) {
+        let best = null, bestD = tol;
+        for (const q of lagrangeShown) {
+            const d = Math.hypot(q.x - x, q.y - y);
+            if (d < bestD) { bestD = d; best = q; }
+        }
+        return best;
+    }
+
+    // ------------------------------------------------------------------
+    // Gravity well: the potential Phi = -sum G m / sqrt(r^2 + eps^2) of the heavier bodies (a light swarm
+    // body's dimple is far too small to see), drawn as a contour map. In a rotating frame it is the
+    // effective potential Phi - (1/2) Omega^2 |r - C|^2, which adds the outward push of the turning
+    // frame: its hills and saddles are the Lagrange points.
+    //   Why a contour map, not a rubber sheet: it stays flat and lined up with the bodies, trails and
+    //   arrows drawn over it (a warped sheet would put each body somewhere other than where it is
+    //   drawn), it shows the depth everywhere at once, and contour lines are already familiar from maps:
+    //   darker is deeper, each line joins points at the same depth (an equipotential), and where the
+    //   lines crowd together the slope, and so the pull, is steep.
+    //   Depth is compressed logarithmically, u = ln(-Phi / G), so one star's well doesn't swallow the
+    //   picture: round a single body the lines are circles whose radii go up in equal ratios, the same
+    //   pattern at any zoom. The lines are a round step of u apart (1, 2, 2.5 or 5 times a power of ten),
+    //   about WELL_LEVELS steps across the depths in view, so zooming in on a planet still shows its
+    //   small dimple on the side of its star's well. Lines closer together than the grid aren't drawn
+    //   (the shading shows them). In a rotating frame a few stronger lines pass through L1, L2 and L3
+    //   and round L4 and L5: the curves that bound the region round each body, the horseshoe and the
+    //   tadpoles that bodies can't cross without more energy.
+    //   eps is about a body's drawn radius, so its well bottoms out under its disc.
+    //   Worked out on a coarse grid (a point every WELL_CELL px, more when there are many bodies to add
+    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, drawn
+    //   smoothly scaled up, and the lines as paths. Again only when a body has moved a pixel or the view
+    //   has changed more than shifting and scaling the old picture can cover, and at most every few
+    //   frames if that is slow; in between, the old picture follows the zoom and pan.
+    // ------------------------------------------------------------------
+    const WELL_CELL = 7;          // px between grid points
+    const WELL_WORK = 240000;     // at most about this many body-point sums per picture
+    const WELL_BODIES = 24;       // the heaviest bodies that make the picture
+    const WELL_LEVELS = 9;        // about this many steps between contour lines across the depths in view
+    Object.assign(settings, { well: false, lagrange: false });
+    Object.assign(ui, { wellToggle: byId('wellToggle'), wellNote: byId('wellNote'), lagrangeToggle: byId('lagrangeToggle') });
+    const well = {
+        small: null, smallCtx: null, img: null,   // the shading, one pixel per grid point
+        lines: null, strong: null,        // the contour lines (Path2D, in the screen points of the view below)
+        view: null,                       // what it was worked out for (origin, pan, scale, size, margin, grid)
+        pos: [],                          // the screen positions of its bodies then
+        sig: '',                          // what forces a new picture when it changes (theme, size, frame, bodies)
+        omega: 0,                         // the rotating frame's rate then
+        t: 0, cost: 0, wait: 0, count: 0, // when it was last worked out, how long that took (ms), the wait before another
+        info: null                        // the grid and contour levels (for testing)
+    };
+
+    // The bodies that make the picture: the heaviest few that aren't light swarm bodies, or the turning pair
+    function wellBodies() {
+        let top = 0;
+        for (const b of bodies) if (b.m > top) top = b.m;
+        const list = bodies.filter((b) => ((!b.minor && b.m > 1e-12 * top) || turnUses(b)));
+        if (list.length > WELL_BODIES) {
+            list.sort((p, q) => q.m - p.m);
+            list.length = WELL_BODIES;
+        }
+        return list;
+    }
+
+    // Contour segments of level v across one grid cell: corners a (top left), b (top right), c (bottom
+    // right) and d (bottom left), top-left corner at (x, y), side h (marching squares; where opposite
+    // corners are both above, the centre decides which way the lines go)
+    function cellContour(p, x, y, h, a, b, c, d, v) {
+        const k = (a >= v ? 8 : 0) | (b >= v ? 4 : 0) | (c >= v ? 2 : 0) | (d >= v ? 1 : 0);
+        if (k === 0 || k === 15) return;
+        // where the level crosses each side (a side it doesn't cross is never used)
+        const tx = x + (h * (v - a)) / (b - a), ry = y + (h * (v - b)) / (c - b);
+        const bx = x + (h * (v - d)) / (c - d), ly = y + (h * (v - a)) / (d - a);
+        const seg = (x1, y1, x2, y2) => { p.moveTo(x1, y1); p.lineTo(x2, y2); };
+        switch (k) {
+            case 1: case 14: seg(x, ly, bx, y + h); break;
+            case 2: case 13: seg(bx, y + h, x + h, ry); break;
+            case 3: case 12: seg(x, ly, x + h, ry); break;
+            case 4: case 11: seg(tx, y, x + h, ry); break;
+            case 6: case 9: seg(tx, y, bx, y + h); break;
+            case 7: case 8: seg(x, ly, tx, y); break;
+            default: {   // 5 or 10: a saddle
+                const mid = (a + b + c + d) / 4 >= v;
+                if ((k === 5) === mid) { seg(x, ly, tx, y); seg(bx, y + h, x + h, ry); }
+                else { seg(tx, y, x + h, ry); seg(x, ly, bx, y + h); }
+            }
+        }
+    }
+
+    // A round step: 1, 2, 2.5 or 5 times a power of ten, the nearest to x (by ratio)
+    function roundStep(x) {
+        const e = Math.pow(10, Math.floor(Math.log10(x))), r = x / e;
+        return e * (r < 1.41 ? 1 : r < 2.24 ? 2 : r < 3.54 ? 2.5 : r < 7.07 ? 5 : 10);
+    }
+
+    function computeWell(C, src, P) {
+        const t0 = performance.now();
+        const margin = Math.round(0.15 * Math.max(viewW, viewH));
+        const W = viewW + 2 * margin, H = viewH + 2 * margin;
+        const n = src.length;
+        let cell = WELL_CELL;
+        while (cell < 16 && (W / cell) * (H / cell) * n > WELL_WORK) cell++;
+        const gw = Math.ceil(W / cell) + 1, gh = Math.ceil(H / cell) + 1;
+        // The bodies at their drawn places (the potential doesn't change when the view turns), softened
+        // by about their drawn radius; in a rotating frame, the outward push about the pair's centre
+        const bxs = new Float64Array(n), bys = new Float64Array(n), bms = new Float64Array(n), be2 = new Float64Array(n);
+        src.forEach((b, k) => {
+            const e = Math.max(drawRadius(b), 3) / scale;
+            bxs[k] = b.dx; bys[k] = b.dy; bms[k] = b.m; be2[k] = e * e;
+        });
+        const pc = P ? pairCentre(P, true) : { x: 0, y: 0 };
+        const om2 = P ? (turn.omega * turn.omega) / (2 * G) : 0;
+        // -Phi / G at a drawn point
+        const depth = (x, y) => {
+            let s = 0;
+            for (let k = 0; k < n; k++) {
+                const dx = x - bxs[k], dy = y - bys[k];
+                s += bms[k] / Math.sqrt(dx * dx + dy * dy + be2[k]);
+            }
+            if (om2) { const dx = x - pc.x, dy = y - pc.y; s += om2 * (dx * dx + dy * dy); }
+            return s;
+        };
+        // Grid point (i, j) is at screen point (i cell - margin, j cell - margin)
+        const x0 = F.x + view.panX + (-margin - viewW / 2) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
+        const step = cell / scale;
+        const U = new Float32Array(gw * gh);
+        let umin = Infinity, umax = -Infinity;
+        for (let j = 0; j < gh; j++) {
+            const y = y0 - j * step;
+            for (let i = 0; i < gw; i++) {
+                const u = Math.log(depth(x0 + i * step, y));
+                U[j * gw + i] = u;
+                if (u < umin) umin = u;
+                if (u > umax) umax = u;
+            }
+        }
+        const span = umax - umin;
+        const dz = span > 1e-9 ? roundStep(span / WELL_LEVELS) : 0;
+        // The stronger lines of a rotating frame: through L1 and L2 (round each body's own region) once
+        // that region (about the Hill radius, d (mu/3)^(1/3)) is a few grid cells across, and through L3
+        // and round L4 and L5 (the horseshoe and the tadpoles, about d sqrt(mu) wide) once they are too;
+        // any thinner and the grid would break them into dashes
+        const crit = [];
+        const Q = P ? lagrangePair() : null;
+        if (Q) {
+            const lp = lagrangePoints(Q, true);
+            const dpx = lp[0].d * scale, lu = lp.map((q) => Math.log(depth(Q.A.dx + q.x, Q.A.dy + q.y)));
+            if (dpx * Math.cbrt(Q.mu / 3) > 2 * cell) crit.push(lu[0], lu[1]);
+            const u4 = Math.min(lu[3], lu[4]);
+            if (dpx * Math.sqrt(Q.mu) > 3 * cell && lu[2] > u4) crit.push(lu[2], u4 + 0.3 * (lu[2] - u4), u4 + 0.65 * (lu[2] - u4));
+        }
+        // The shading: darker the deeper, from the shallowest ground in view (w = 0) to the deepest (1).
+        // On a light page, a blue-grey veil that thickens into the wells; on a dark one (already nearly
+        // black) the shallow ground is lifted a little and the wells sink to black.
+        if (!well.small || well.small.width !== gw || well.small.height !== gh) {
+            well.small = document.createElement('canvas');
+            well.small.width = gw; well.small.height = gh;
+            well.smallCtx = well.small.getContext('2d');
+            well.img = well.smallCtx.createImageData(gw, gh);
+        }
+        const data = well.img.data, dark = C.dark, W0 = 0.3;
+        for (let q = 0, o = 0; q < U.length; q++, o += 4) {
+            const w = span > 1e-9 ? (U[q] - umin) / span : 0;
+            if (!dark) {
+                data[o] = 20; data[o + 1] = 34; data[o + 2] = 72;
+                data[o + 3] = Math.round(62 * w);
+            } else if (w < W0) {
+                data[o] = data[o + 1] = 205; data[o + 2] = 225;
+                data[o + 3] = Math.round(20 * (1 - w / W0));
+            } else {
+                data[o] = data[o + 1] = data[o + 2] = 0;
+                data[o + 3] = Math.round(150 * (w - W0) / (1 - W0));
+            }
+        }
+        well.smallCtx.putImageData(well.img, 0, 0);
+        // The lines (marching squares; a cell that more than one ordinary line crosses is too steep to draw)
+        const lines = new Path2D(), strong = new Path2D();
+        for (let j = 0; j < gh - 1; j++) {
+            const y = j * cell - margin;
+            for (let i = 0; i < gw - 1; i++) {
+                const a = U[j * gw + i], b = U[j * gw + i + 1], c = U[(j + 1) * gw + i + 1], d = U[(j + 1) * gw + i];
+                const lo = Math.min(a, b, c, d), hi = Math.max(a, b, c, d);
+                const x = i * cell - margin;
+                if (dz) {
+                    const n0 = Math.ceil(lo / dz);
+                    if (n0 * dz <= hi && (n0 + 1) * dz > hi) cellContour(lines, x, y, cell, a, b, c, d, n0 * dz);
+                }
+                for (const v of crit) if (v > lo && v <= hi) cellContour(strong, x, y, cell, a, b, c, d, v);
+            }
+        }
+        well.lines = lines;
+        well.strong = crit.length ? strong : null;
+        well.view = { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh };
+        well.pos = src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }));
+        well.omega = P ? turn.omega : 0;
+        well.t = performance.now();
+        well.cost = well.t - t0;
+        well.wait = clamp(10 * well.cost, 0, 100);
+        well.count++;
+        well.info = { cell, grid: [gw, gh], bodies: n, step: dz, umin, umax, crit: crit.slice() };
+    }
+
+    // How the picture's screen points map onto the screen now: x' = k x + tx, y' = k y + ty
+    function wellMap(v) {
+        const k = scale / v.scale;
+        return {
+            k,
+            tx: viewW / 2 - (k * v.w) / 2 + scale * (v.fx + v.panX - F.x - view.panX),
+            ty: viewH / 2 - (k * v.h) / 2 - scale * (v.fy + v.panY - F.y - view.panY)
+        };
+    }
+
+    // Is the old picture still good enough to shift into place?
+    function wellStale(v, map, P) {
+        if (map.k < 0.85 || map.k > 1.18) return true;
+        // (the view must stay inside its margin, short of the outermost grid cell)
+        const slack = v.margin - 16;
+        if (-map.tx / map.k < -slack || (viewW - map.tx) / map.k > v.w + slack) return true;
+        if (-map.ty / map.k < -slack || (viewH - map.ty) / map.k > v.h + slack) return true;
+        for (const q of well.pos) {
+            if (Math.hypot(map.k * q.x + map.tx - sx(q.b.dx), map.k * q.y + map.ty - sy(q.b.dy)) > 1) return true;
+        }
+        return !!P && Math.abs(turn.omega - well.omega) > 0.003 * Math.abs(well.omega);
+    }
+
+    function drawGravityWell(C) {
+        syncTurnOptions();   // (not part of the picture: the rotating frames offered in "View from", checked from here as this runs every frame)
+        if (!settings.well || !bodies.length) return;
+        const src = wellBodies();
+        if (!src.length) return;
+        const P = turnPair();
+        const sig = [C.dark, viewW, viewH, dpr, P ? `${P.A.id}>${P.B.id}` : '-', src.map((b) => `${b.id}:${b.m}`).join(',')].join('|');
+        const forced = sig !== well.sig || !well.view;
+        if (forced || (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P))) {
+            computeWell(C, src, P);
+            well.sig = sig;
+        }
+        // The shading (smoothly scaled up from its grid) and the lines, shifted and scaled into place
+        const v = well.view, map = wellMap(v), c = v.cell;
+        ctx.save();
+        ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
+        ctx.lineWidth = 1 / map.k;
+        ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
+        ctx.stroke(well.lines);
+        if (well.strong) {
+            ctx.lineWidth = 1.3 / map.k;
+            ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
+            ctx.stroke(well.strong);
+        }
+        ctx.restore();
+    }
+
+    // ---- The switches, the W key, and the Lagrange points' tooltips ----
+    function setWell(on, fromKey) {
+        settings.well = !!on;
+        if (ui.wellToggle) ui.wellToggle.checked = settings.well;
+        if (ui.wellNote) ui.wellNote.hidden = !settings.well;
+        well.sig = '';
+        if (fromKey) {
+            historyNote(settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
+                : '<strong>Gravity well hidden.</strong> W shows it again.');
+        }
+    }
+    function setLagrange(on) {
+        settings.lagrange = !!on;
+        if (ui.lagrangeToggle) ui.lagrangeToggle.checked = settings.lagrange;
+    }
+
+    // W: the gravity well on or off (not while typing in a field)
+    function onWellKey(e) {
+        if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.repeat || typingIn(e.target)) return;
+        if (e.key !== 'w' && e.key !== 'W') return;
+        setWell(!settings.well, true);
+        e.preventDefault();
+    }
+
+    // A Lagrange point's line: a tooltip under the mouse, or in the hint line when tapped
+    let lagrangeTitle = false, lagrangeDown = null;
+    function onLagrangeHover(e) {
+        if (e.buttons || (!lagrangeShown.length && !lagrangeTitle)) return;
+        const pt = canvasPoint(e);
+        const m = lagrangeAt(pt.x, pt.y, 9);
+        if (m && !bodyAt(pt.x, pt.y, 4)) {
+            if (canvas.title !== m.text) canvas.title = m.text;
+            lagrangeTitle = true;
+        } else if (lagrangeTitle) {
+            canvas.removeAttribute('title');
+            lagrangeTitle = false;
+        }
+    }
+    function onLagrangeTap(e) {
+        const down = lagrangeDown;
+        lagrangeDown = null;
+        if (!down || (e.pointerType || 'mouse') === 'mouse' || !lagrangeShown.length) return;
+        const pt = canvasPoint(e);
+        if (Math.hypot(pt.x - down.x, pt.y - down.y) > 10 || bodyAt(pt.x, pt.y, 12)) return;
+        const m = lagrangeAt(pt.x, pt.y, 18);
+        if (!m) return;
+        const comma = m.text.indexOf(',');
+        historyNote(`<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`);
+    }
+
+    function bindWell() {
+        if (ui.wellToggle) {
+            ui.wellToggle.checked = settings.well;
+            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked));
+        }
+        if (ui.lagrangeToggle) {
+            ui.lagrangeToggle.checked = settings.lagrange;
+            ui.lagrangeToggle.addEventListener('change', () => setLagrange(ui.lagrangeToggle.checked));
+        }
+        document.addEventListener('keydown', onWellKey);
+        canvas.addEventListener('pointermove', onLagrangeHover);
+        canvas.addEventListener('pointerdown', (e) => { lagrangeDown = canvasPoint(e); });
+        canvas.addEventListener('pointerup', onLagrangeTap);
+        canvas.addEventListener('pointerleave', () => { if (lagrangeTitle) { canvas.removeAttribute('title'); lagrangeTitle = false; } });
     }
 
     // ------------------------------------------------------------------
@@ -3196,7 +4005,7 @@
         if (frameId !== null && !bodyById(frameId)) frameId = null;
         if (selectedId !== null && !bodyById(selectedId)) selectedId = defaultSubject();
         if (ui.frame) {
-            const opts = [['com', 'Centre of mass (no body)']].concat(bodies.filter((b) => (!b.grp && !b.minor) || b.id === frameId).map((b) => [String(b.id), b.name]));
+            const opts = [['com', 'Centre of mass (no body)']].concat(bodies.filter((b) => (!b.grp && !b.minor) || b.id === frameId).map((b) => [String(b.id), b.name]), turnOptions());
             const same = ui.frame.options.length === opts.length && opts.every((o, i) => ui.frame.options[i].value === o[0] && ui.frame.options[i].textContent === o[1]);
             if (!same) {
                 ui.frame.textContent = '';
@@ -4063,14 +4872,13 @@
         if (!b || missionRefuse('delete', b)) return;
         noteEdit();   // (edit history: an undo step)
         updateDrawnPositions();
-        const before = { x: F.x, y: F.y };
+        const before = viewOrigin();
         const wasFrame = frameId === b.id;
         removeBody(b, null);
         if (selectedId === null) selectedId = defaultSubject();
         if (wasFrame) frameId = null;
         updateDrawnPositions();
-        view.panX += before.x - F.x;
-        view.panY += before.y - F.y;
+        keepScreen(before);
         computePrimaries();
         refreshBodyLists();
         syncEccentricity(true);
@@ -4081,13 +4889,13 @@
     function keepView(fn) {
         noteEdit();   // (edit history: every edit made through here is an undo step)
         updateDrawnPositions();
-        const before = { x: F.x, y: F.y };
+        const before = viewOrigin();
         const burn = missionBegin();   // (missions: only the probe's burns are let through, and they use fuel)
         fn();
         missionEnd(burn);
         forcesDirty = true;
         updateDrawnPositions();
-        if (!freeze) { view.panX += before.x - F.x; view.panY += before.y - F.y; }
+        if (!freeze) keepScreen(before);   // (also keeps a rotating frame's angle: see keepScreen)
     }
 
     // ------------------------------------------------------------------
@@ -4101,7 +4909,7 @@
         let added = null;
         keepView(() => {
             b.x = x; b.y = y;
-            const fv = frameVelocity();
+            const fv = frameVelocity(x, y);
             b.vx = fv.x; b.vy = fv.y;
             bodies.push(b);
             computeForces();
@@ -4133,7 +4941,7 @@
             const v = throwVelocity(d || chipThrow, performance.now());
             b.vx = v[0]; b.vy = v[1];
         } else if (settings.placement === 'rest' || isNew) {
-            const fv = frameVelocity();
+            const fv = frameVelocity(b.x, b.y);
             b.vx = fv.x; b.vy = fv.y;
         }
         forcesDirty = true;
@@ -4175,7 +4983,8 @@
             }
         }
         if (!best) best = [cx, cy];
-        return addBody(kind, best[0], best[1]);
+        const w = unturnPoint(best[0], best[1]);   // (from the drawn view to the world)
+        return addBody(kind, w.x, w.y);
     }
 
     // ------------------------------------------------------------------
@@ -4306,6 +5115,7 @@
 
         computeDrawRadii();
         placeCloseUp();
+        drawGravityWell(C);   // (underneath everything: see "Gravity well")
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
         drawPast(C);
@@ -4318,6 +5128,7 @@
         drawCometTails(C);
         drawGravityUnder(C, subj);   // (Hill sphere, Roche limit and pull lines: see "Mutual gravity made visible")
         drawBodies(C);
+        drawLagrangePoints(C);
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
         drawGravityOver(C, subj);
@@ -4346,9 +5157,12 @@
         const live = freeze ? liveFrameOrigin() : F;
         const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const lw = clamp(1.6 * sizeScale, 1.2, 2);
-        const oT = L ? L.trail : comTrail;
-        const oFirst = L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1 };
+        // (a turned view: each sample turned by the angle at its own time, from the turning pair's own
+        // samples; see turnedTrails)
+        const turned = turnedTrails(first);
+        const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
+        const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned };
         for (const g of minorGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
@@ -4417,6 +5231,7 @@
     // the last) to the current path, skipping points within minPx of the last one drawn and stretches
     // wholly off one side of the canvas
     function traceTrail(tr, ks, ke, minPx) {
+        if (tr.turn) { traceTurnedTrail(tr, ks, ke, minPx); return; }
         const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
         const capT = T.length >> 1, capO = oT.length >> 1;
         let i = 2 * (ks % capT), io = 2 * (ks % capO);
@@ -4455,7 +5270,7 @@
         if (!b || flyby.bid !== b.id || !flyby.el0) return;
         const s = bodyById(flyby.sid), q = bodyById(flyby.pid);
         if (!s || !q) return;
-        const el = flyby.el0;
+        const el = turnedElements(flyby.el0);
         const cx = sx(s.dx), cy = sy(s.dy);
         ctx.globalAlpha = 0.5;
         ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
@@ -4834,10 +5649,12 @@
         let vx, vy, L;
         if (b.aim) {
             vx = b.aim.vx; vy = b.aim.vy;
+            if (turn.phi && !b.aim.turn) ({ x: vx, y: vy } = turnVec(vx, vy));   // (a world aim, drawn turned)
             L = Math.hypot(vx, vy) * b.aim.k;
         } else {
             const fv = frameV || frameVelocity();
             vx = b.vx - fv.x; vy = b.vy - fv.y;
+            if (turn.on || turn.phi) ({ x: vx, y: vy } = viewVelocity(b, fv));   // (as seen in a turned view)
             L = arrowLength(Math.hypot(vx, vy));
         }
         const v = Math.hypot(vx, vy);
@@ -4866,7 +5683,8 @@
     // Which way a body's name goes (screen direction): away from the pull on it
     function labelDirection(b) {
         const Fm = Math.hypot(b.fx, b.fy);
-        return Fm > 0 ? { x: -b.fx / Fm, y: b.fy / Fm } : { x: 0.6, y: 0.8 };
+        // (turn.c, turn.s: the world turned as the view is)
+        return Fm > 0 ? { x: -(turn.c * b.fx - turn.s * b.fy) / Fm, y: (turn.s * b.fx + turn.c * b.fy) / Fm } : { x: 0.6, y: 0.8 };
     }
 
     // Text kept inside the canvas whatever its alignment
@@ -4893,7 +5711,7 @@
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-                const ux = b.fx / Fm, uy = -b.fy / Fm;
+                const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;   // (turned with the view)
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
             }
         }
@@ -5571,7 +6389,7 @@
     function drawEllipseLaw(C, b) {
         const p = b && b.primary;
         if (!b || !p || (p.primary === b && b.m > p.m)) return;
-        const el = elementsOf(b, p);
+        const el = turnedElements(elementsOf(b, p));
         const cx = sx(p.dx), cy = sy(p.dy);
         const maxR = 3 * Math.max(viewW, viewH) / scale;
         ctx.lineWidth = 1.5;
@@ -5652,11 +6470,12 @@
         list.forEach((s) => {
             const n = s.pts.length / 2;
             if (n < 2) return;
+            const pts = turnedPoints(s.pts);   // (world offsets, turned as the view is)
             const live = s === k2.cur;
             ctx.fillStyle = s.n % 2 ? C.sectorA : C.sectorB;
             ctx.beginPath();
             ctx.moveTo(cx, cy);
-            for (let k = 0; k < n; k++) ctx.lineTo(cx + s.pts[2 * k] * scale, cy - s.pts[2 * k + 1] * scale);
+            for (let k = 0; k < n; k++) ctx.lineTo(cx + pts[2 * k] * scale, cy - pts[2 * k + 1] * scale);
             if (live) ctx.lineTo(sx(b.dx), sy(b.dy));
             ctx.closePath();
             ctx.fill();
@@ -5664,14 +6483,14 @@
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(cx, cy);
-            ctx.lineTo(cx + s.pts[0] * scale, cy - s.pts[1] * scale);
+            ctx.lineTo(cx + pts[0] * scale, cy - pts[1] * scale);
             ctx.stroke();
             // Area label inside finished sectors that are big enough on screen
             if (!live && k2.bound && !cleanRender) {
                 const m = Math.floor(n / 2);
-                const mx = s.pts[2 * m] * scale, my = -s.pts[2 * m + 1] * scale;
+                const mx = pts[2 * m] * scale, my = -pts[2 * m + 1] * scale;
                 const rpx = Math.hypot(mx, my);
-                const x0 = s.pts[0] * scale, y0 = -s.pts[1] * scale, x1 = s.pts[2 * n - 2] * scale, y1 = -s.pts[2 * n - 1] * scale;
+                const x0 = pts[0] * scale, y0 = -pts[1] * scale, x1 = pts[2 * n - 2] * scale, y1 = -pts[2 * n - 1] * scale;
                 const chord = Math.hypot(x1 - x0, y1 - y0);
                 if (rpx * chord > 1500 && chord > 30) {
                     ctx.font = font(fs);
@@ -5700,7 +6519,8 @@
             ctx.strokeStyle = f.color;
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(sx(f.x), sy(f.y), f.r0 + (f.grow || 30) * t, 0, TAU);
+            const q = turnPoint(f.x, f.y);   // (a world point, drawn turned)
+            ctx.arc(sx(q.x), sy(q.y), f.r0 + (f.grow || 30) * t, 0, TAU);
             ctx.stroke();
         }
         ctx.globalAlpha = 1;
@@ -6097,7 +6917,7 @@
     function predictionBodies(b, p, ref) {
         if (bodies.length <= PREDICT_ALL) return bodies;
         const src = bodies.slice().sort((q, r) => r.m - q.m).slice(0, PREDICT_HEAVY);
-        for (const q of [b, p, ref]) if (q && !src.includes(q)) src.push(q);
+        for (const q of [b, p, ref].concat(turnBodies())) if (q && !src.includes(q)) src.push(q);
         return src;
     }
 
@@ -6113,8 +6933,8 @@
     // The world velocity a dragged body will have when it is let go, and that of its primary.
     function releaseVelocity(b, d) {
         if (b.aim) {
-            const base = aimBase(b);
-            return { v: [base.x + b.aim.vx, base.y + b.aim.vy] };
+            const v = aimedVelocity(b);
+            return { v: [v.x, v.y] };
         }
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
@@ -6123,7 +6943,7 @@
                 return { v: c.b, p, pv: c.p };
             }
         }
-        if (settings.placement === 'rest') { const fv = frameVelocity(); return { v: [fv.x, fv.y] }; }
+        if (settings.placement === 'rest') { const fv = frameVelocity(b.x, b.y); return { v: [fv.x, fv.y] }; }
         if (settings.placement === 'throw') return { v: throwVelocity(d || dragOf(b), performance.now()) };
         return { v: [b.vx, b.vy] };
     }
@@ -6132,18 +6952,19 @@
         const rel = releaseVelocity(b, d);
         const p = placementPrimary(b.x, b.y, b.m, b);
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
-        const ref = L || (p && p.m >= b.m ? p : null);
+        // (in a rotating frame the path is worked out as seen turning with the pair: see turnedSeen)
+        const ref = turn.on ? null : L || (p && p.m >= b.m ? p : null);
         // Worked out again when anything changes, but at most 20 times a second while the others move.
         // While drawing, it takes at most PREDICT_MS a frame and carries on in the next ones (the path so
         // far is shown meanwhile).
-        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
+        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
         const now = performance.now();
         const same = pred.key.split('|')[0] === String(b.id);
         if (pred.pts && (key === pred.key || (!paused && same && (now - pred.t < 50 || (pred.job && now - pred.t < 400))))) {
             if (pred.job) runPrediction(inRender ? PREDICT_MS : Infinity);
             return pred;
         }
-        pred.key = key; pred.t = now; pred.refId = ref ? ref.id : null;
+        pred.key = key; pred.t = now; pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
         const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
@@ -6157,6 +6978,8 @@
             for (const q of list) { M += q.m; X += q.m * q.x; Y += q.m * q.y; }
             return [X / M, Y / M];
         };
+        // Where a body of the copy is, relative to the origin (or in a rotating frame, to the turning pair)
+        const seen = turnedSeen(src, list) || ((q) => { const o = origin(); return [q.x - o[0], q.y - o[1]]; });
         // How long to look ahead: about one orbit if it is bound (two-body estimate), otherwise until it
         // is well out of view
         const pr = predictLaunch(b);
@@ -6164,12 +6987,10 @@
         const rMax = 2.5 * Math.max(viewW, viewH) / scale;
         const pairs = Math.max(1, (list.length * (list.length - 1)) / 2);
         const budget = Math.min(20000, Math.floor(PREDICT_PAIRS / (3 * pairs)));
-        const pts = [];
-        const o = origin();
-        pts.push(me.x - o[0], me.y - o[1]);
+        const pts = seen(me);
         pred.pts = pts;
         pred.end = 'cut';   // (until it finishes: the path so far, with no arrowhead at its end)
-        pred.job = { list, me, origin, pr, tMax, rMax, budget, k: 0, t: 0, lx: pts[0], ly: pts[1], ang: Math.atan2(pts[1], pts[0]), swept: 0, tmin: gravity(list) };
+        pred.job = { list, me, origin, seen, pr, tMax, rMax, budget, k: 0, t: 0, lx: pts[0], ly: pts[1], ang: Math.atan2(pts[1], pts[0]), swept: 0, tmin: gravity(list) };
         runPrediction(inRender ? PREDICT_MS : Infinity);
         return pred;
     }
@@ -6181,7 +7002,7 @@
         const t0 = performance.now();
         const px = 1.5 / scale;   // keep points about 1.5 px apart
         let { lx, ly, ang, swept, t, tmin } = job;
-        let o = job.origin(), end = null;
+        let end = null;
         for (; job.k < job.budget && t < job.tMax; job.k++) {
             if ((job.k & 15) === 15 && performance.now() - t0 > ms) {
                 Object.assign(job, { lx, ly, ang, swept, t, tmin });
@@ -6203,8 +7024,7 @@
                 const s = ee > 0 ? clamp((qx * ex + qy * ey) / ee, 0, 1) : 1;
                 if (Math.hypot(qx - s * ex, qy - s * ey) < reach) { hit = q; break; }
             }
-            o = job.origin();
-            const x = me.x - o[0], y = me.y - o[1];
+            const [x, y] = job.seen(me);
             const a = Math.atan2(y, x);
             let da = a - ang;
             if (da > Math.PI) da -= TAU; else if (da < -Math.PI) da += TAU;
@@ -6214,7 +7034,7 @@
             if (Math.abs(swept) > TAU * 1.02) { end = 'closed'; break; }
             if (Math.hypot(x, y) > job.rMax && !(pr && pr.el.bound)) { end = 'away'; break; }
         }
-        pts.push(me.x - o[0], me.y - o[1]);
+        pts.push(...job.seen(me));
         pred.end = end || 'open';
         pred.job = null;
     }
@@ -6235,7 +7055,7 @@
     function drawPredictedPath(C, b, pp) {
         const ref = pp.refId !== null ? bodyById(pp.refId) : null;
         const o = ref ? { x: ref.dx, y: ref.dy } : liveFrameOrigin();
-        const pts = pp.pts;
+        const pts = turnedPath(pp);   // (turned as the view is)
         const col = C.dark ? hexA(b.color, 0.8) : bodyStroke(b.color, false);
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = col;
@@ -6302,7 +7122,7 @@
         ctx.globalAlpha = 1;
         if (settings.placement === 'circular' && settings.preview) {
             const X = wx(x), Y = wy(y);
-            const p = placementPrimary(X, Y, k.m, null);
+            const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
             if (p) {
                 const rr = Math.hypot(X - p.dx, Y - p.dy) * scale;
                 ctx.strokeStyle = hexA(k.color, 0.7);
@@ -6349,8 +7169,8 @@
         if (top) {
             // The heaviest body: its motion around the centre of mass (with the aimed velocity while aiming)
             const c = totals(bodies);
-            const fv = b.aim ? frameVelocity() : null;
-            const vx = b.aim ? fv.x + b.aim.vx : b.vx, vy = b.aim ? fv.y + b.aim.vy : b.vy;
+            const av = b.aim ? aimedVelocity(b) : null;
+            const vx = av ? av.x : b.vx, vy = av ? av.y : b.vy;
             dist = Math.hypot(b.x - c.x, b.y - c.y);
             speed = Math.hypot(vx - c.vx, vy - c.vy);
             force = Math.hypot(b.fx, b.fy);
@@ -7647,7 +8467,7 @@
         if (d.over) {
             updateDrawnPositions();
             chipThrow = d;   // (thrown as it is let go, if bodies are thrown)
-            const b = addBody(d.kind, wx(d.cx), wy(d.cy));
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), b = addBody(d.kind, w.x, w.y);   // (from the drawn view to the world)
             chipThrow = null;
             if (b && d.kind === 'custom') openPopover(b);
         }
@@ -7702,7 +8522,7 @@
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
-            const base = aimBase(b), v = fmtSpeedKms(Math.hypot(b.aim.vx + base.x - (L ? L.vx : totals(bodies).vx), b.aim.vy + base.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
+            const av = aimedVelocity(b), v = fmtSpeedKms(Math.hypot(av.x - (L ? L.vx : totals(bodies).vx), av.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
             setHint(null, `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
@@ -7798,6 +8618,7 @@
         }
         const base = ref ? { x: ref.vx, y: ref.vy } : fv;
         b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
+        turnAim(b.aim);   // (a turned view: aimed as drawn, see aimedVelocity)
         // Keep the grabbed point on the arrow. A body at rest has no arrow: it is grabbed just off the
         // edge of its disc, and the arrow grows from there as soon as the pointer moves.
         let tip = velocityTip(b);
@@ -7815,6 +8636,7 @@
     function aimBase(b) {
         const a = b.aim;
         if (a.ref && bodies.includes(a.ref)) return { x: a.ref.vx, y: a.ref.vy };
+        if (a.turn && turn.on) return frameVelocity(b.x, b.y);   // (at rest in a rotating frame, where it is now)
         return frameId !== null && frameId !== b.id ? frameVelocity() : a.frameV;
     }
 
@@ -7854,9 +8676,9 @@
         if (!p || p.m < b.m) return;
         const rx = b.x - p.x, ry = b.y - p.y, r = Math.hypot(rx, ry);
         if (!(r > 0)) return;
-        const base = aimBase(b);
+        const av = aimedVelocity(b);   // (the world velocity aimed)
         const vc = Math.sqrt((G * (b.m + p.m)) / r), ve = Math.SQRT2 * vc;
-        const ux = base.x + a.vx - p.vx, uy = base.y + a.vy - p.vy;
+        const ux = av.x - p.vx, uy = av.y - p.vy;
         const tol = SNAP_PX / a.k;
         let to = null;
         for (const s of [1, -1]) {
@@ -7865,16 +8687,17 @@
         }
         const u = Math.hypot(ux, uy);
         if (!to && u > 0 && Math.abs(u - ve) < 0.7 * tol) { to = [(ux * ve) / u, (uy * ve) / u]; a.snap = 'escape'; }
-        if (to) { a.vx = to[0] + p.vx - base.x; a.vy = to[1] + p.vy - base.y; }
+        if (to) setAimedVelocity(b, to[0] + p.vx, to[1] + p.vy);
     }
 
     function startHold(b, d) {
         beginGesture(b, d.mode);   // (edit history: the whole drag is one step, from before the body is held)
         updateDrawnPositions();
         // A frame that moves with this body must stand still while it is dragged
-        if (!freeze && (frameId === null || frameId === b.id)) freeze = { x: F.x, y: F.y };
+        // (a rotating frame moves with both of its pair, and freezes its angle too)
+        if (!freeze && (frameId === null || frameId === b.id || turnUses(b))) freeze = { x: F.x, y: F.y, phi: turn.phi };
         b.held = { offX: b.dx - F.x, offY: b.dy - F.y };
-        d.frameV = frameVelocity();
+        d.frameV = frameVelocity(b.x, b.y);
         applyHolds();
         updateDrawnPositions();
     }
@@ -7887,8 +8710,8 @@
         if (apply) {
             if (d.mode === 'aim' && b.aim) {
                 if (b.aim.snap) snapAim(b);   // exact, even if the body it orbits has moved on since
-                const base = aimBase(b);
-                b.vx = base.x + b.aim.vx; b.vy = base.y + b.aim.vy;
+                const v = aimedVelocity(b);
+                b.vx = v.x; b.vy = v.y;
                 resetTracking(b);
                 k2.bid = null;
             } else if (d.mode === 'move' && d.moved) {
@@ -7899,15 +8722,14 @@
         b.held = null;
         missionEnd(burn);   // (missions: an aimed arrow is a burn)
         if (d.mode === 'move' && d.moved) clearTrail(b);
-        if (frameId === b.id && d.moved) clearAllTrails();
+        if ((frameId === b.id || turnUses(b)) && d.moved) clearAllTrails();
         forcesDirty = true;
         const stillHeld = bodies.some((c) => c.held);
         if (freeze && !stillHeld) {
             const fz = freeze;
             freeze = null;
             updateDrawnPositions();
-            view.panX += fz.x - F.x;
-            view.panY += fz.y - F.y;
+            keepScreen(fz);   // (and a rotating frame's angle glides on from where it was frozen)
             if (frameId !== null) view.anim = { zoom: view.zoom, panX: 0, panY: 0 };
         }
         computeForces();
@@ -8461,8 +9283,9 @@
         const origin = stateFrameOrigin();
         for (const b of bodies) {
             if (!b.held) continue;
-            b.x = origin.x + b.held.offX;
-            b.y = origin.y + b.held.offY;
+            const o = unturnVec(b.held.offX, b.held.offY);   // (held in the drawn view, which may be turned)
+            b.x = origin.x + o.x;
+            b.y = origin.y + o.y;
         }
         forcesDirty = true;
     }
@@ -9976,7 +10799,7 @@
         endAllDrags();
         hoverAim = null;
         updateDrawnPositions();
-        const before = { x: F.x, y: F.y };
+        const before = viewOrigin();
         const pan = view.anim ? { x: view.anim.panX, y: view.anim.panY } : { x: view.panX, y: view.panY };
         const sameScene = s.scene === settings.scene;
         const jump = s.t !== simTime;
@@ -10048,8 +10871,7 @@
         // glides back to where it was relative to the frame's origin, so a body you view from stays put.
         updateDrawnPositions();
         if (sameScene) {
-            view.panX += before.x - F.x;
-            view.panY += before.y - F.y;
+            keepScreen(before);   // (a rotating frame's angle glides too)
             if (jump) view.anim = { zoom: view.anim ? view.anim.zoom : view.zoom, panX: pan.x, panY: pan.y };
         } else {
             view.zoom = s.zoom; view.panX = s.panX; view.panY = s.panY; view.anim = null;
@@ -11610,7 +12432,7 @@
                 updateTrailLabel();
             });
         }
-        if (ui.frame) ui.frame.addEventListener('change', () => setFrame(ui.frame.value === 'com' ? null : parseInt(ui.frame.value, 10)));
+        if (ui.frame) ui.frame.addEventListener('change', () => pickTurning(ui.frame.value) || setFrame(ui.frame.value === 'com' ? null : parseInt(ui.frame.value, 10)));
         if (ui.frameChip) ui.frameChip.addEventListener('click', () => setFrame(null));
         if (ui.placement) {
             ui.placement.value = settings.placement;
@@ -11802,8 +12624,9 @@
                 k3: kepler3Rows(b).rows.map((r) => ({ name: r.body.name, a: r.a, T: r.T, ratio: r.ratio, measured: r.measured }))
             };
         },
-        toScreen(x, y) { updateDrawnPositions(); return { x: sx(x), y: sy(y) }; },
-        toWorld(px, py) { updateDrawnPositions(); return { x: wx(px), y: wy(py) }; },
+        // (world positions: a rotating frame turns them, see turnPoint)
+        toScreen(x, y) { updateDrawnPositions(); const d = turnPoint(x, y); return { x: sx(d.x), y: sy(d.y) }; },
+        toWorld(px, py) { updateDrawnPositions(); return unturnPoint(wx(px), wy(py)); },
         fit: fitAll,
         fitBox(box) { fitBox(box, false); },
         setCleanRender(v) { cleanRender = !!v; },
@@ -12299,6 +13122,58 @@
         }
     });
     bindPlayControls();
+
+    // Rotating frame, gravity well and Lagrange points (see "Rotating frame" after syncFrameUi)
+    Object.assign(window.orbitsSimulation, {
+        // Turn with body b and body a (by default the body b orbits); no name: back to the centre of mass
+        setRotatingFrame(a, b) {
+            const named = (n) => (n ? bodies.find((q) => q.name === n) || null : null);
+            if (!a && !b) { setFrame(null); return false; }
+            return b ? startTurning(named(b), named(a)) : startTurning(named(a));
+        },
+        // The rotating frame in use: the pair, the view's turn (radians), how fast the pair turns (rad/yr)
+        // and the line's direction on the screen
+        turning() {
+            updateDrawnPositions();
+            const P = turnPair();
+            return { on: !!P, a: P ? P.A.name : null, b: P ? P.B.name : null, phi: turn.phi, omega: turn.omega, up: turn.up, ease: turnEase() };
+        },
+        // A body's place and velocity as seen in the rotating frame: along the line from A to B (x) and
+        // across it (y, + ahead of B), from the pair's centre of mass (AU, AU/yr)
+        rotatingState(name) {
+            const P = turnPair(), q = bodies.find((o) => o.name === name);
+            if (!P || !q) return null;
+            const c = pairCentre(P, false), dx = P.B.x - P.A.x, dy = P.B.y - P.A.y, d = Math.hypot(dx, dy);
+            const ux = dx / d, uy = dy / d, sense = pairOmega(P) < 0 ? -1 : 1;
+            const u = turnVelocityAt(q.x, q.y), rx = q.x - c.x, ry = q.y - c.y, vx = q.vx - u.x, vy = q.vy - u.y;
+            return { x: rx * ux + ry * uy, y: sense * (ry * ux - rx * uy), vx: vx * ux + vy * uy, vy: sense * (vy * ux - vx * uy), d };
+        },
+        // Lagrange points of a body and the body it orbits: positions relative to the heavier of the two
+        // (AU, world axes), and along / across the line between them in units of their distance now
+        lagrange(name) {
+            const b = name ? bodies.find((q) => q.name === name) : null;
+            const P = turnPair();
+            const A = b ? (P && b === P.B ? P.A : turnPartner(b)) : null;
+            if (!b || !A) return null;
+            const heavy = b.m > A.m ? b : A, light = heavy === b ? A : b;
+            const rx = light.x - heavy.x, ry = light.y - heavy.y, vx = light.vx - heavy.vx, vy = light.vy - heavy.vy;
+            const r = Math.hypot(rx, ry);
+            if (0.5 * (vx * vx + vy * vy) - G * (heavy.m + light.m) / r >= 0) return null;
+            const Q = { A: heavy, B: light, mu: light.m / (heavy.m + light.m), sense: rx * vy - ry * vx < 0 ? -1 : 1 };
+            const pts = lagrangePoints(Q, false), out = { primary: heavy.name, secondary: light.name, mu: Q.mu, d: r, dKm: r * AU_KM };
+            pts.forEach((p, i) => {
+                out[`L${i + 1}`] = { x: p.x, y: p.y, along: p.along, across: p.across, km: Math.hypot(p.x, p.y) * AU_KM, text: lagrangeText(i, Q) };
+            });
+            return out;
+        },
+        // The markers drawn in the last frame (CSS px)
+        lagrangeMarkers: () => lagrangeShown.map((q) => ({ name: `L${q.i + 1}`, x: q.x, y: q.y, text: q.text })),
+        setWell(on) { setWell(on); },
+        setLagrange(on) { setLagrange(on); },
+        // The gravity well's last picture: grid, contour step and levels, cost (ms) and how many so far
+        wellInfo: () => Object.assign({ on: settings.well, cost: well.cost, count: well.count, wait: well.wait }, well.info || {})
+    });
+    bindWell();
 
     // ------------------------------------------------------------------
     // Start
