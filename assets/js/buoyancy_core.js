@@ -2187,12 +2187,28 @@
             fillRect(78, 76, 3, 6, MAT_ID.cork); fillRect(159, 76, 3, 6, MAT_ID.cork);
         } }
     ];
+    // Moves the whole drawing d rows up (or down), as far as the tank allows
+    function shiftRows(d) {
+        let r0 = GH, r1 = -1;
+        for (let r = 0; r < GH; r++) {
+            for (let c = 0; c < GW; c++) if (grid[r * GW + c]) { if (r < r0) r0 = r; r1 = r; break; }
+        }
+        if (r1 < 0) return;
+        d = clamp(d, -r0, GH - 1 - r1);
+        if (!d) return;
+        const copy = grid.slice();
+        grid.fill(0);
+        for (let r = r0; r <= r1; r++) grid.set(copy.subarray(r * GW, (r + 1) * GW), (r + d) * GW);
+    }
     function loadPreset(key, opts) {
         const p = PRESETS.find((q) => q.key === key);
         if (!p) return false;
         pushUndo();
         grid.fill(0);
         p.build();
+        // They are placed for 60 cm of liquid. With another depth they go up or down by the
+        // difference, or a boat would start under the surface and swamp, or fall from high up.
+        shiftRows(Math.round((settings.liquidDepth - 0.6) / CELL));
         dropUnchangedUndo();
         drawDirty = true;
         if (!opts || opts.drop !== false) dropObject();
