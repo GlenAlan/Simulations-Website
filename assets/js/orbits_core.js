@@ -5032,7 +5032,7 @@
     function launch(b, isNew, d) {
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
-            if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
+            if (p) launchCircular(b, p, isNew ? orbitSense(p, b) : heldSense(b, p, d), isSatellite(p));
         } else if (settings.placement === 'throw') {
             const v = throwVelocity(d || chipThrow, performance.now());
             b.vx = v[0]; b.vy = v[1];
@@ -5051,6 +5051,15 @@
         const vc = Math.sqrt((G * (b.m + p.m)) / Math.max(r, 1e-12));
         if (Math.abs(h) > 0.05 * r * vc) return h < 0 ? -1 : 1;
         return orbitSense(p, b);
+    }
+
+    // The way a body moved by hand goes round p when it is let go: the way it went round before it was
+    // picked up (its velocity, kept while it is held, would go round the other way once it is carried
+    // past the far side of p), or round a new primary, the usual way there. d: the drag (see startHold).
+    function heldSense(b, p, d) {
+        const h = d || dragOf(b);
+        if (h && h.sense) return h.sense.pid === p.id ? h.sense.s : orbitSense(p, b);
+        return senseAround(b, p);
     }
 
     // A tap on a palette chip: put the body at a free spot around the heaviest body, in view.
@@ -7257,7 +7266,7 @@
         if (settings.placement === 'circular') {
             const p = placementPrimary(b.x, b.y, b.m, b);
             if (p) {
-                const c = circularLaunch(b, p, d && d.isNew ? orbitSense(p, b) : senseAround(b, p), isSatellite(p));
+                const c = circularLaunch(b, p, d && d.isNew ? orbitSense(p, b) : heldSense(b, p, d), isSatellite(p));
                 return { v: c.b, p, pv: c.p };
             }
         }
@@ -9319,6 +9328,9 @@
             freeze = { x: F.x, y: F.y, phi: turn.phi, vx: c.vx, vy: c.vy, t: simTime + lag };
         }
         view.anim = null;
+        // (the way it goes round now, for a drop on a circular orbit: see heldSense)
+        const p0 = placementPrimary(b.x, b.y, b.m, b);
+        d.sense = p0 ? { pid: p0.id, s: senseAround(b, p0) } : null;
         b.held = { offX: b.dx - F.x, offY: b.dy - F.y };
         d.frameV = frameVelocity(b.x, b.y);
         applyHolds();
