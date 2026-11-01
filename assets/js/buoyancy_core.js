@@ -3431,13 +3431,36 @@
         if (B.cavs.length) drawOutStreams();
     }
 
-    function drawArrow(x, y, fx, fy, color, kPx, maxLen) {
+    // how far from (x, y) along (ux, uy) the canvas goes on, less a margin m
+    function roomTo(x, y, ux, uy, m) {
+        let t = Infinity;
+        if (ux > 1e-9) t = Math.min(t, (cssW - m - x) / ux); else if (ux < -1e-9) t = Math.min(t, (m - x) / ux);
+        if (uy > 1e-9) t = Math.min(t, (cssH - m - y) / uy); else if (uy < -1e-9) t = Math.min(t, (m - y) / uy);
+        return t;
+    }
+    const ARROW_MIN = 30;      // px: an arrow cut short at the tank's edge is still this long
+    // Where an arrow for force (fx, fy) at (x, y) goes on screen: null if too short to show
+    function arrowPlan(x, y, fx, fy, kPx, maxLen) {
         const f = Math.hypot(fx, fy);
         let len = f * kPx;
-        if (len < 5) return;
+        if (len < 5) return null;
         let clipped = false;
         if (len > maxLen) { len = maxLen; clipped = true; }
         const ux = fx / f, uy = -fy / f;
+        // An arrow never runs off the canvas (the weight of an object lying on the floor used to point
+        // out of sight): it is cut short at the edge, with the break mark, and if that leaves less than
+        // ARROW_MIN it slides back along its own line of action, its head at the edge.
+        const room = roomTo(x, y, ux, uy, 3);
+        if (len > room) {
+            const L = Math.min(len, Math.max(room, ARROW_MIN));
+            if (L < len) clipped = true;
+            if (L > room) { x -= ux * (L - room); y -= uy * (L - room); }
+            len = L;
+        }
+        return { x, y, ux, uy, len, clipped };
+    }
+    function drawArrow(a, color, dashed) {
+        const { x, y, ux, uy, len, clipped } = a;
         const ex = x + ux * len, ey = y + uy * len;
         const head = Math.min(11, Math.max(6, len * 0.35));
         const hx = ex - ux * head, hy = ey - uy * head;
@@ -3446,9 +3469,12 @@
             ctx.strokeStyle = pass === 0 ? pal.halo : color;
             ctx.fillStyle = pass === 0 ? pal.halo : color;
             ctx.lineWidth = pass === 0 ? 5 : 2.5;
+            // (dashed, halo and all, so an arrow under it shows through the gaps)
+            if (dashed) ctx.setLineDash([6, 4]);
             ctx.beginPath();
             ctx.moveTo(x, y); ctx.lineTo(hx, hy);
             ctx.stroke();
+            if (dashed) ctx.setLineDash([]);
             ctx.beginPath();
             const hw = head * 0.5 + (pass === 0 ? 1.5 : 0);
             ctx.moveTo(ex + ux * (pass === 0 ? 2 : 0), ey + uy * (pass === 0 ? 2 : 0));
@@ -3457,7 +3483,7 @@
             ctx.closePath();
             ctx.fill();
             if (clipped) {
-                const mx = x + ux * len * 0.5, my = y + uy * len * 0.5;
+                const mx = x + ux * (len - head) * 0.5, my = y + uy * (len - head) * 0.5;
                 ctx.beginPath();
                 ctx.moveTo(mx + px * 6 - ux * 3, my + py * 6 - uy * 3); ctx.lineTo(mx - px * 6 - ux * 1, my - py * 6 - uy * 1);
                 ctx.moveTo(mx + px * 6 + ux * 1, my + py * 6 + uy * 1); ctx.lineTo(mx - px * 6 + ux * 3, my - py * 6 + uy * 3);
@@ -3531,20 +3557,26 @@
         const maxLen = 0.42 * cssH;
         const cx = wx(fv.cx), cy = wy(fv.cy);
         const A = settings.arrows;
-        if (A.buoyancy && disp.sub > 0) {
-            drawArrow(wx(fv.bx), wy(fv.by), fv.fbX, fv.fbY, ARROWS.buoyancy.color, kPx, maxLen);
-        }
-        if (A.weight) drawArrow(cx, cy, 0, -weight, ARROWS.weight.color, kPx, maxLen);
-        if (A.drag) drawArrow(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color, kPx, maxLen);
-        if (A.contact && disp.hasContact > 0.05) drawArrow(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color, kPx, maxLen);
-        if (A.net) drawArrow(cx, cy, disp.netX, disp.netY, ARROWS.net.color, kPx, maxLen);
+        // longest (as drawn) first, so a short arrow is never hidden under a long one on the same line
+        const list = [];
+        const add = (x, y, fx, fy, color, dashed) => {
+            const a = arrowPlan(x, y, fx, fy, kPx, maxLen);
+            if (a) { a.color = color; a.dashed = dashed; list.push(a); }
+        };
+        if (A.buoyancy && disp.sub > 0) add(wx(fv.bx), wy(fv.by), fv.fbX, fv.fbY, ARROWS.buoyancy.color);
+        if (A.weight) add(cx, cy, 0, -weight, ARROWS.weight.color);
+        if (A.drag) add(cx, cy, disp.fdX, disp.fdY, ARROWS.drag.color);
+        if (A.contact && disp.hasContact > 0.05) add(wx(disp.cpx), wy(disp.cpy), disp.fcX, disp.fcY, ARROWS.contact.color);
+        if (A.net) add(cx, cy, disp.netX, disp.netY, ARROWS.net.color, true);
+        list.sort((a, b) => b.len - a.len);
+        for (const a of list) drawArrow(a, a.color, a.dashed);
         if (!legendVals.ok) storeLegendValues();
         const L = legendVals;
         const rows = [];
         const N = (v) => fmtAuto(v) + ' N';
         if (A.weight) rows.push([ARROWS.weight.color, 'Weight', N(L.weight)]);
         if (A.buoyancy) rows.push([ARROWS.buoyancy.color, 'Buoyancy', N(L.buoyancy)]);
-        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(L.net)]);
+        if (A.net) rows.push([ARROWS.net.color, 'Net force', N(L.net), true]);
         if (A.drag) rows.push([ARROWS.drag.color, 'Drag', N(L.drag)]);
         if (A.contact) rows.push([ARROWS.contact.color, 'Contact', N(L.contact)]);
         if (B.cavs.length && L.carried > 0.01) {
@@ -3611,7 +3643,9 @@
                 ctx.fillRect(sx + 3, yy - 4, sw - 6, 8);
             } else if (r[0]) {
                 ctx.strokeStyle = r[0]; ctx.lineWidth = 3;
+                if (r[3]) ctx.setLineDash([5, 3]);
                 ctx.beginPath(); ctx.moveTo(sx, yy); ctx.lineTo(sx + sw, yy); ctx.stroke();
+                ctx.setLineDash([]);
             }
             ctx.fillStyle = pal.text;
             ctx.textAlign = 'left';
