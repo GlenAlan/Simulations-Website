@@ -1818,6 +1818,7 @@
         const bh = (q) => q.kind === 'blackhole';
         const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
         const auto = autoColoured(big);   // (a star's colour follows its mass: see starColour)
+        noteCollision(big, small);   // (the stability timer)
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
@@ -1889,6 +1890,7 @@
     function disrupt(L, H) {
         const n = Math.min(FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
+        noteTornApart(L, H);       // (the stability timer)
         const d = Math.hypot(L.x - H.x, L.y - H.y);
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
         const span = L.R / AU_KM;
@@ -5742,6 +5744,7 @@
         y = drawMissionCard(C, y, cfs, compact);
         const fl = flybyLines(compact);
         if (fl) y = drawCard(C, fl, y, cfs) + 5;
+        y = drawStabilityCard(C, y, cfs, compact);
         if (settings.k1) y = drawCard(C, kepler1Lines(subj, compact), y, cfs) + 5;
         if (settings.k2) y = drawCard(C, kepler2Lines(subj, compact), y, cfs) + 5;
         if (settings.k3) y = drawKepler3Card(C, subj, y, cfs, compact) + 5;
@@ -7653,7 +7656,7 @@
 
     function setHint(kind, html) {
         if (!ui.hint) return;
-        let h = html || missionHint(kind);
+        let h = html || missionHint(kind) || (kind ? null : carryOnHint());   // (a mission's hint, or an autosave on offer: see "Save and share")
         if (!h) {
             const v = settings.velocities;
             if (kind === 'drop') h = '<strong>Drop it in space</strong> to add it.';
@@ -8275,6 +8278,7 @@
             co.data.datasets[0].data.push(null);
             co.data.datasets[1].data.push(null);
         }
+        recordGraphPoint(E, b, p);   // (kept at full precision for a download)
         for (const ch of [ce, co]) {
             if (ch.data.labels.length > 240) {
                 ch.data.labels.shift();
@@ -8282,6 +8286,1058 @@
             }
         }
         chartsDirty = true;
+    }
+
+    // ------------------------------------------------------------------
+    // Save and share: a link to the setup, autosave, data for a spreadsheet, and random planetary
+    // systems with a stability timer
+    //   A setup is what the edit history keeps of the system (see snapshot()), with its scene's key and
+    //   scales, the view, the time still owed to the integrator and the main settings, as JSON. In a
+    //   link it goes in the hash, #setup=1z.<data>: format 1, deflate-raw compressed (z), base64url. A
+    //   browser that can't compress writes 1j.<data>, the JSON itself. JavaScript writes each number
+    //   with just the digits that read back as the same float64, so a shared chaotic setup replays
+    //   exactly. Opening one is a step in the edit history, like a change of scene, so it can be undone.
+    //   Autosave keeps the same JSON in localStorage a couple of seconds after each change and every
+    //   half minute while it runs (but not for a built-in scene that hasn't been touched), and a later
+    //   visit offers to carry on, in the hint line. The copy of the system is taken at once (that is
+    //   cheap) and written out a few hundred bodies at a time while the browser is idle, so even 1,000
+    //   bodies never hold up a frame. Storage can be blocked: every use of it is wrapped.
+    //   A random system (scene key random-<number>) is made from its number alone, so a link needs only
+    //   the key to make it again. Its neighbouring planets are a random number of mutual Hill radii apart
+    //   (one number for the whole system, give or take 10%): closer than about 6 and they usually stir
+    //   each other into crossing orbits within thousands of orbits; wider than about 9 and they usually
+    //   last.
+    //   The stability timer counts the simulated time since the last change (or the start of the scene)
+    //   until the first collision or tidal break-up, or until a body is flung out: unbound from the rest
+    //   of the system, and three times as far from it as the farthest body was when the timer started.
+    //   Four times a second it reads the bound flags of computePrimaries() and makes one pass over the
+    //   bodies, so it costs next to nothing even with 1,000. Hooks in the code above: noteCollision in
+    //   mergeBodies, noteTornApart in disrupt, recordGraphPoint in sampleCharts, drawStabilityCard in
+    //   drawOverlays and carryOnHint in setHint.
+    // ------------------------------------------------------------------
+    const SETUP_VERSION = 1;
+    const SAVE_KEY = 'orbits.autosave';        // "<ms since 1970>|<setup JSON>"
+    const BEST_KEY = 'orbits.stabilityBest';   // { yr, label }
+    const LONG_LINK = 8000;                    // characters: a longer link gets a warning
+    const SETUP_MAX_BYTES = 16e6;              // a link may unpack to at most this much JSON
+    const SAVE_QUIET_MS = 2000;                // autosave this long after the last change...
+    const SAVE_EVERY_MS = 30000;               // ...and this often while it runs
+    const SAVE_CHUNK = 250;                    // bodies written out per idle moment
+    const OFFER_MS = 45000;                    // "Carry on where you left off" is offered this long
+    const NOTE_MS = 9000;                      // a note under a button stays this long
+    const STAB_EJECT = 3;                      // flung out: unbound, and this many times the system's size away
+    const STAB_GOAL = 10000;                   // years: the challenge
+    const RANDOM_MAX = 99999;                  // new random systems are numbered 1 to this
+    const SEED_MAX = 2147483646;               // (a link may carry any number up to this)
+    const GRAPH_POINTS = 20000;                // points of the graphs kept for a download
+    const PLANET_LETTERS = 'bcdefghi';
+    const SETUP_ERRORS = {
+        none: 'It doesn\'t hold a setup.',
+        broken: 'It may have been cut short or changed: ask for it again.',
+        newer: 'It was made by a newer version of this page: reload the page, then open the link again.',
+        browser: 'This browser can\'t unpack it: try an up-to-date Chrome, Edge, Firefox or Safari.',
+        many: `It holds more than ${MAX_BODIES.toLocaleString('en-US')} bodies, more than this page can take.`
+    };
+    const CSV_EMPTY = {
+        kepler: 'Nothing to list yet: choose a body that orbits something.',
+        graphs: 'No graph data yet: show the graphs (the chart button under the canvas) and let it run.',
+        bodies: 'There are no bodies.'
+    };
+    Object.assign(settings, { stability: false });
+
+    const share = {
+        offer: null, offerHtml: '', offerTimer: 0,     // the autosave on offer, as a setup
+        link: '', copying: false,                       // the last link made
+        noteTimers: new Map(),
+        save: { sig: '', due: 0, lastAt: 0, lastT: NaN, savedSig: '', job: null, ok: null, bytes: 0, sliceMs: 0, writeMs: 0, count: 0 }
+    };
+    const stab = {
+        running: false, sig: '', scene: '', t0: 0, lastT: 0, ended: null, rEject: Infinity,
+        unbound: new Map(),          // id -> the simulated time it was first seen unbound from the rest
+        boundAtStart: new Set(),     // ids of the bodies bound to the rest when the timer started
+        counts: false, label: '', restartedAt: -Infinity, goalNoted: false,
+        best: { yr: 0, label: '' }, bestBefore: { yr: 0, label: '' }, bestDirty: false, bestSavedAt: 0
+    };
+    const graphData = [];            // the graphs' points at full precision, since they last started
+    const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+    // localStorage, or null where it is blocked (some browsers throw on merely reading the property)
+    function storage() {
+        try { return window.localStorage || null; } catch (e) { return null; }
+    }
+
+    function storeGet(key) {
+        const s = storage();
+        if (!s) return null;
+        try { return s.getItem(key); } catch (e) { return null; }
+    }
+
+    function storeSet(key, value) {
+        const s = storage();
+        if (!s) return false;
+        try { s.setItem(key, value); return true; } catch (e) { return false; }   // blocked, or full
+    }
+
+    // Run fn when the browser has a moment to spare between frames
+    const whenIdle = (fn) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(fn, { timeout: 1000 }) : setTimeout(fn, 30));
+
+    // A note in the hint line for ms milliseconds (shares the history's timer, so notes don't cut each
+    // other short or linger)
+    function timedHint(html, ms) {
+        setHint(null, html);
+        clearTimeout(hist.noteTimer);
+        hist.noteTimer = setTimeout(() => { if (hintKey === html) setHint(); }, ms);
+    }
+
+    // A note under a button for a few seconds, then its usual text again
+    function flashNote(el, text) {
+        if (!el) return;
+        el.textContent = text;
+        clearTimeout(share.noteTimers.get(el));
+        share.noteTimers.set(el, setTimeout(() => { el.textContent = el.dataset.text || ''; }, NOTE_MS));
+    }
+
+    // A stretch of time in the scene's own unit: "0.24 yr", "3.4 yr", "1,234 yr" (or days, or seconds)
+    function fmtSpan(yr) {
+        const u = timeUnit(), v = u === 's' ? yr * YEAR_S : u === 'd' ? yr * DAYS_PER_YEAR : yr;
+        const n = v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('en-US');
+        return `${n} ${u === 'd' ? 'days' : u}`;
+    }
+
+    // "1,234 yr", "3.4 yr", or days when shorter than a tenth of a year
+    function fmtYears(yr) {
+        if (yr >= 10) return `${Math.round(yr).toLocaleString('en-US')} yr`;
+        if (yr >= 0.1) return `${+yr.toFixed(2)} yr`;
+        return `${+(yr * DAYS_PER_YEAR).toPrecision(2)} days`;
+    }
+
+    function fmtAge(ms) {
+        const min = ms / 60000;
+        if (!(min >= 1)) return 'just now';
+        if (min < 60) return `${Math.round(min)} min ago`;
+        const h = Math.round(min / 60);
+        if (h < 24) return `${h} ${h === 1 ? 'hour' : 'hours'} ago`;
+        const d = Math.round(h / 24);
+        return d < 2 ? 'yesterday' : `${d} days ago`;
+    }
+
+    // "System #4821", or a built-in scene's name as the scene list has it, without the part in brackets
+    function sceneLabel(key) {
+        const seed = randomSeed(key);
+        if (seed) return `System #${seed}`;
+        const opt = ui.scene ? Array.from(ui.scene.options).find((o) => o.value === key) : null;
+        return opt ? opt.textContent.replace(/\s*\(.*\)\s*$/, '') : 'Your setup';
+    }
+
+    // The user is moving a body or aiming its velocity: the system is half changed
+    const editing = () => !!(hist.pending && hist.pending.gesture) || bodies.some((b) => b.held);
+
+    // Changes to the system: every edit, undo, redo, run again and change of scene alters this
+    function editSignature() {
+        const top = hist.undo[hist.undo.length - 1];
+        return `${settings.scene}|${hist.epoch}|${hist.undo.length}|${hist.redo.length}|${top ? top.at : 0}`;
+    }
+
+    function settingsSignature() {
+        const s = settings;
+        return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
+            s.placement, s.trailIndex, s.com, selectedId, frameId].join(',');
+    }
+
+    // ------------------------------------------------------------------
+    // Random systems
+    // ------------------------------------------------------------------
+    const isRandomKey = (key) => typeof key === 'string' && /^random-[1-9]\d{0,9}$/.test(key);
+    function randomSeed(key) {
+        if (!isRandomKey(key)) return 0;
+        const n = +key.slice(7);
+        return n <= SEED_MAX ? n : 0;
+    }
+    const validSeed = (n) => Number.isInteger(n) && n >= 1 && n <= SEED_MAX;
+
+    // Repeatable random numbers in [0, 1) for a system number (mulberry32, after mixing the number up,
+    // so that neighbouring numbers give unrelated systems)
+    function systemRandom(seed) {
+        let h = seed >>> 0;
+        h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+        h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+        let a = (h ^ (h >>> 16)) >>> 0;
+        return () => {
+            a = (a + 0x6d2b79f5) >>> 0;
+            let t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    // Where a body is, and how it moves, relative to a mass on an orbit (a in AU, w and nu in degrees)
+    function orbitState(mass, a, e, w, nu) {
+        const c = { m: 0, x: 0, y: 0, vx: 0, vy: 0 };
+        placeOnOrbit(c, { m: mass, x: 0, y: 0, vx: 0, vy: 0 }, { a, e, w, nu });
+        return c;
+    }
+
+    // The scene for a system number: a star, 2 to 8 planets (fewer if they run out of room), now and then
+    // a moon or two and a second star. Bodies are given by position and velocity, so a second star can
+    // carry the whole planetary system round with it.
+    function makeRandomSystem(seed) {
+        const rnd = systemRandom(seed);
+        const span = (lo, hi) => lo + (hi - lo) * rnd();
+        const logSpan = (lo, hi) => lo * Math.pow(hi / lo, rnd());
+        const pick = (list) => list[Math.floor(rnd() * list.length)];
+        const DEG = 180 / Math.PI;
+        // The star: most often a red dwarf or one like the Sun, now and then a hotter star or a white dwarf
+        const roll = rnd();
+        const star = roll < 0.4 ? { what: 'a red dwarf', kind: 'dwarf', m: span(0.15, 0.6), color: '#ff8a5c' }
+            : roll < 0.85 ? { what: 'a star like the Sun', kind: 'sun', m: span(0.75, 1.3), color: '#ffd166' }
+                : roll < 0.95 ? { what: 'a hot white star', kind: 'sun', m: span(1.4, 2.2), color: '#e9f0ff' }
+                    : { what: 'a white dwarf', kind: 'whitedwarf', m: span(0.5, 0.75), color: '#e9f0ff' };
+        const M = star.m;
+        // (a star's radius grows a little more slowly than its mass; a white dwarf shrinks as it gets heavier)
+        const R = star.kind === 'whitedwarf' ? 8700 * Math.cbrt(0.6 / M) : 696000 * Math.pow(M, 0.8);
+        const list = [{ kind: star.kind, name: 'Star', m: M, R, color: star.color, x: 0, y: 0, vx: 0, vy: 0 }];
+        // The planets, from the inside out. The first takes 0.4 to 2 years to go round; each next one is
+        // `spacing` mutual Hill radii, ((m1 + m2) / 3M)^(1/3) (a1 + a2) / 2, beyond the one before.
+        const want = 2 + Math.floor(rnd() * 7);
+        const spacing = span(3.5, 10);
+        const T1 = logSpan(0.4, 2);
+        const planets = [];
+        let a = Math.cbrt(M * T1 * T1);
+        const aMax = 30 * a;
+        for (let i = 0; i < want; i++) {
+            const m = logSpan(0.5 * MEARTH, 2 * MJUP);
+            if (i > 0) {
+                const prev = planets[i - 1];
+                const h = 0.5 * spacing * span(0.9, 1.1) * Math.cbrt((m + prev.m) / (3 * M));
+                const next = h < 0.8 ? (prev.a * (1 + h)) / (1 - h) : Infinity;
+                if (next > aMax) break;
+                a = next;
+            }
+            const e = 0.06 * rnd(), w = 360 * rnd();
+            planets.push({ m, a, e, w, nu: trueAnomaly(TAU * rnd(), e) * DEG });
+        }
+        const ROCKY = ['#e8825e', '#b5aca3', '#7ecaf6', '#f0d9a0', '#c9a27a'];
+        const ICY = ['#7bd0c1', '#8499e7', '#8fb8ff'];
+        const GIANT = ['#e0b48a', '#d9a066', '#f2c48d', '#c78f6a'];
+        let moons = 0;
+        planets.forEach((p, i) => {
+            const me = p.m / MEARTH;
+            const look = me < 3 ? { kind: 'earth', R: 6371 * Math.pow(me, 0.28), color: pick(ROCKY) }
+                : me < 50 ? { kind: 'custom', R: 6371 * Math.min(4.5, Math.pow(me, 0.55)), color: pick(ICY) }
+                    : { kind: 'jupiter', R: 69911 * Math.pow(p.m / MJUP, 0.15), color: pick(GIANT) };
+            const q = orbitState(M + p.m, p.a, p.e, p.w, p.nu);
+            const planet = { kind: look.kind, name: `Planet ${PLANET_LETTERS[i]}`, m: p.m, R: look.R, color: look.color, x: q.x, y: q.y, vx: q.vx, vy: q.vy };
+            list.push(planet);
+            // Now and then a moon for a giant, well inside its Hill sphere (where the star hardly disturbs
+            // it); the pair's centre of mass follows the planet's orbit
+            if (me >= 10 && moons < 2 && rnd() < 0.3) {
+                const mm = logSpan(0.002, 0.03) * MEARTH;
+                const hill = p.a * (1 - p.e) * Math.cbrt(p.m / (3 * M));
+                const r = orbitState(p.m + mm, hill * span(0.15, 0.3), 0.03 * rnd(), 360 * rnd(), 360 * rnd());
+                const f = mm / (p.m + mm);
+                list.push({ kind: 'moon', name: `Moon of ${PLANET_LETTERS[i]}`, m: mm, R: 1737 * Math.cbrt(mm / KINDS.moon.m), color: '#c9ccd3',
+                    x: planet.x + (1 - f) * r.x, y: planet.y + (1 - f) * r.y, vx: planet.vx + (1 - f) * r.vx, vy: planet.vy + (1 - f) * r.vy });
+                planet.x -= f * r.x; planet.y -= f * r.y; planet.vx -= f * r.vx; planet.vy -= f * r.vy;
+                moons++;
+            }
+        });
+        // Now and then a second star, 3 to 8 times farther out than the last planet, which may unsettle it
+        let companion = false;
+        if (rnd() < 0.2) {
+            const outer = planets[planets.length - 1];
+            const mc = M * span(0.15, 0.7), red = mc < 0.6;
+            const c = totals(list);
+            const q = orbitState(c.M + mc, outer.a * (1 + outer.e) * span(3, 8), span(0, 0.35), 360 * rnd(), 360 * rnd());
+            const fi = mc / (c.M + mc), fc = c.M / (c.M + mc);
+            for (const b of list) { b.x -= fi * q.x; b.y -= fi * q.y; b.vx -= fi * q.vx; b.vy -= fi * q.vy; }
+            list.push({ kind: red ? 'dwarf' : 'sun', name: 'Star B', m: mc, R: 696000 * Math.pow(mc, 0.8), color: red ? '#f2849e' : '#ffd166',
+                x: c.x + fc * q.x, y: c.y + fc * q.y, vx: c.vx + fc * q.vx, vy: c.vy + fc * q.vy });
+            list[0].name = 'Star A';
+            companion = true;
+        }
+        const half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        const extra = [];
+        if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
+        if (companion) extra.push('a second star');
+        const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
+        return {
+            units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
+            tip: `System #${seed}: ${desc}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? Any change restarts the timer.`,
+            bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
+        };
+    }
+
+    // The scene key for a system number (making its scene the first time)
+    function randomSceneKey(seed) {
+        const key = `random-${seed}`;
+        if (!hasOwn(SCENES, key)) SCENES[key] = makeRandomSystem(seed);
+        return key;
+    }
+
+    function newRandomSeed() {
+        let s;
+        do { s = 1 + Math.floor(Math.random() * RANDOM_MAX); } while (s === randomSeed(settings.scene));
+        return s;
+    }
+
+    // The scene list shows the latest random system as an entry of its own, under "Random system"
+    // (which makes a new one)
+    function showRandomOption(key) {
+        if (!ui.scene || !isRandomKey(key)) return;
+        let opt = ui.scene.querySelector('option[data-random-system]');
+        if (!opt) {
+            opt = document.createElement('option');
+            opt.dataset.randomSystem = '';
+            const base = ui.scene.querySelector('option[value="random"]');
+            if (base) base.after(opt); else ui.scene.appendChild(opt);
+        }
+        opt.value = key;
+        opt.textContent = `Random system #${randomSeed(key)}`;
+    }
+
+    // (an undo can bring back an older random system: the list follows)
+    function syncSceneList() {
+        if (ui.scene && isRandomKey(settings.scene) && ui.scene.value !== settings.scene) {
+            showRandomOption(settings.scene);
+            ui.scene.value = settings.scene;
+        }
+    }
+
+    function setStability(on) {
+        settings.stability = !!on;
+        if (ui.stability) ui.stability.checked = settings.stability;
+    }
+
+    function loadRandomSystem(seed) {
+        const key = randomSceneKey(seed);
+        showRandomOption(key);
+        if (ui.scene) ui.scene.value = key;
+        loadScene(key);
+        setStability(true);
+        return key;
+    }
+
+    // "Random system" picked in the scene list: make a new one before the list's own listener loads it
+    function onSceneChoice(e) {
+        if (e.target !== ui.scene || ui.scene.value !== 'random') return;
+        const key = randomSceneKey(newRandomSeed());
+        showRandomOption(key);
+        ui.scene.value = key;
+        setStability(true);
+    }
+
+    // ------------------------------------------------------------------
+    // Setups as JSON, and as links
+    // ------------------------------------------------------------------
+    // Everything but the bodies (s: a snapshot)
+    function setupHead(s) {
+        const st = settings;
+        return {
+            v: SETUP_VERSION, sc: s.scene, t: s.t, acc, sel: s.sel, fr: s.frame,
+            vw: [s.zoom, s.panX, s.panY],
+            sca: [s.forceRef, s.vRef, s.energyExp, s.trail, s.com ? 1 : 0],
+            cc: s.customCount, pr: s.pairs, ge: s.groupE,
+            set: { sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3], sh: [+st.forces, +st.velocities, +st.labels], st: +st.stability, pl: st.placement }
+        };
+    }
+
+    // Body i of a snapshot: [id, name, kind, colour, m, R, x, y, vx, vy] and, for a piece of a body torn
+    // apart, the id of that body
+    function setupRow(s, i) {
+        const num = s.num, o = i * SNAP_W;
+        const row = [num[o], s.names[i], s.kinds[i], s.colors[i], num[o + 1], num[o + 2], num[o + 3], num[o + 4], num[o + 5], num[o + 6]];
+        if (num[o + 7]) row.push(num[o + 7]);
+        return row;
+    }
+
+    function setupJson(s) {
+        const rows = [];
+        for (let i = 0; i < s.n; i++) rows.push(setupRow(s, i));
+        return JSON.stringify(Object.assign(setupHead(s), { b: rows }));
+    }
+
+    function setupError(code) {
+        const e = new Error(SETUP_ERRORS[code] || SETUP_ERRORS.broken);
+        e.setup = code;
+        return e;
+    }
+
+    // A setup read back from JSON (a link or the autosave) and checked, so that a damaged or doctored
+    // link can't break the page: { s (a snapshot to restore), set (settings), acc, maxGrp }.
+    // Throws a setupError.
+    function readSetup(json) {
+        let d;
+        try { d = JSON.parse(json); } catch (e) { throw setupError('broken'); }
+        if (!d || typeof d !== 'object') throw setupError('broken');
+        if (d.v !== SETUP_VERSION) throw setupError(typeof d.v === 'number' && d.v > SETUP_VERSION ? 'newer' : 'broken');
+        const rows = d.b;
+        if (!Array.isArray(rows) || !rows.length) throw setupError('broken');
+        if (rows.length > MAX_BODIES) throw setupError('many');
+        const n = rows.length;
+        const num = new Float64Array(n * SNAP_W), names = new Array(n), kinds = new Array(n), colors = new Array(n);
+        const ids = new Set(), renumber = [];
+        let maxId = 0, maxGrp = 0;
+        for (let i = 0; i < n; i++) {
+            const r = rows[i];
+            if (!Array.isArray(r) || r.length < 10 || r.length > 11) throw setupError('broken');
+            const vals = r.slice(4, 10);
+            if (!vals.every(Number.isFinite) || !(vals[0] > 0) || !(vals[1] >= 0)) throw setupError('broken');
+            const kind = typeof r[2] === 'string' && hasOwn(KINDS, r[2]) ? r[2] : 'custom';
+            const o = i * SNAP_W;
+            const id = r[0];
+            if (Number.isInteger(id) && id > 0 && id <= 1e9 && !ids.has(id)) { ids.add(id); num[o] = id; maxId = Math.max(maxId, id); } else renumber.push(o);
+            for (let k = 0; k < 6; k++) num[o + 1 + k] = vals[k];
+            const grp = r.length > 10 ? r[10] : 0;
+            num[o + 7] = Number.isInteger(grp) && grp > 0 && grp <= 1e9 ? grp : 0;
+            maxGrp = Math.max(maxGrp, num[o + 7]);
+            names[i] = typeof r[1] === 'string' && r[1].trim() ? r[1].trim().slice(0, 40) : KINDS[kind].name;
+            kinds[i] = kind;
+            colors[i] = typeof r[3] === 'string' && /^#[0-9a-f]{6}$/i.test(r[3]) ? r[3] : (KINDS[kind].color || KINDS.custom.color);
+        }
+        for (const o of renumber) num[o] = ++maxId;
+        let key = typeof d.sc === 'string' ? d.sc : '';
+        const seed = randomSeed(key);
+        if (seed) randomSceneKey(seed); else if (!hasOwn(SCENES, key) || isRandomKey(key)) key = 'empty';
+        const def = SCENES[key];
+        const fin = (v, dflt) => (Number.isFinite(v) ? v : dflt);
+        const idOf = (v) => (ids.has(v) ? v : null);
+        const pairs = [], paired = new Set();
+        for (const q of Array.isArray(d.pr) ? d.pr : []) {
+            if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0]) || paired.has(q[1])) continue;
+            paired.add(q[0]); paired.add(q[1]);
+            pairs.push([q[0], q[1], q[2] ? 1 : 0]);
+        }
+        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
+        const vw = Array.isArray(d.vw) ? d.vw : [], sca = Array.isArray(d.sca) ? d.sca : [];
+        const raw = d.set && typeof d.set === 'object' ? d.set : {};
+        const flag = (v, dflt) => (v === 0 || v === 1 || typeof v === 'boolean' ? !!v : dflt);
+        const flagAt = (v, i, dflt) => (Array.isArray(v) ? flag(v[i], dflt) : dflt);
+        const s = {
+            num, names, kinds, colors, n, t: Math.max(0, fin(d.t, 0)), samples: 0, epoch: -1,
+            customCount: Number.isInteger(d.cc) && d.cc >= 0 ? d.cc : 0,
+            scene: key, sel: idOf(d.sel), frame: idOf(d.fr), pairs, groupE,
+            forceRef: fin(sca[0], 0) > 0 ? sca[0] : 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,
+            energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
+            trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
+            com: !!sca[4],
+            zoom: fin(vw[0], 0) > 0 ? clamp(vw[0], 1e-7, 1e7) : 0.4, panX: fin(vw[1], 0), panY: fin(vw[2], 0)
+        };
+        const set = {
+            sp: fin(raw.sp, 0) > 0 ? clamp(raw.sp, SPEED_STOPS[0], SPEED_STOPS[SPEED_STOPS.length - 1]) : settings.speed,
+            re: flag(raw.re, false), me: flag(raw.me, true),
+            k: [flagAt(raw.k, 0, false), flagAt(raw.k, 1, false), flagAt(raw.k, 2, false)],
+            sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true)],
+            st: flag(raw.st, false),
+            pl: ['circular', 'keep', 'rest'].includes(raw.pl) ? raw.pl : 'circular'
+        };
+        return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
+    }
+
+    function toBase64Url(bytes) {
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function fromBase64Url(text) {
+        let s = text.replace(/-/g, '+').replace(/_/g, '/');
+        while (s.length % 4) s += '=';
+        const bin = atob(s);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+
+    function canCompress() {
+        try { return typeof CompressionStream === 'function' && !!new CompressionStream('deflate-raw'); } catch (e) { return false; }
+    }
+
+    // Bytes through a (de)compression stream, stopping at limit bytes (a doctored link mustn't unpack
+    // into gigabytes)
+    async function pipeBytes(bytes, stream, limit) {
+        const reader = new Blob([bytes]).stream().pipeThrough(stream).getReader();
+        const parts = [];
+        let size = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.length;
+            if (limit && size > limit) { reader.cancel().catch(() => {}); throw setupError('broken'); }
+            parts.push(value);
+        }
+        const out = new Uint8Array(size);
+        let o = 0;
+        for (const p of parts) { out.set(p, o); o += p.length; }
+        return out;
+    }
+
+    // The part of a link after #setup=
+    async function encodeSetup(json) {
+        const bytes = new TextEncoder().encode(json);
+        if (canCompress()) {
+            try { return `${SETUP_VERSION}z.${toBase64Url(await pipeBytes(bytes, new CompressionStream('deflate-raw')))}`; } catch (e) { /* the plain form below */ }
+        }
+        return `${SETUP_VERSION}j.${toBase64Url(bytes)}`;
+    }
+
+    async function decodeSetup(token) {
+        const m = /^(\d{1,4})([zj])\.([A-Za-z0-9_-]+)$/.exec(token || '');
+        if (!m) throw setupError(token ? 'broken' : 'none');
+        if (+m[1] !== SETUP_VERSION) throw setupError(+m[1] > SETUP_VERSION ? 'newer' : 'broken');
+        let bytes;
+        try { bytes = fromBase64Url(m[3]); } catch (e) { throw setupError('broken'); }
+        if (m[2] === 'z') {
+            let stream;
+            try { stream = new DecompressionStream('deflate-raw'); } catch (e) { throw setupError('browser'); }
+            try { bytes = await pipeBytes(bytes, stream, SETUP_MAX_BYTES); } catch (e) { throw e && e.setup ? e : setupError('broken'); }
+        }
+        let json;
+        try { json = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch (e) { throw setupError('broken'); }
+        return readSetup(json);
+    }
+
+    async function makeShareLink() {
+        return `${location.href.split('#')[0]}#setup=${await encodeSetup(setupJson(snapshot()))}`;
+    }
+
+    // The setup part of a link, or of the page's own hash
+    function setupToken(url) {
+        const s = String(url || ''), i = s.indexOf('#setup=');
+        return i < 0 ? null : s.slice(i + 7).replace(/\s+/g, '');
+    }
+
+    // Put a setup in place of the system, paused: a step in the edit history (like a change of scene),
+    // so Undo brings back what was there. The settings it carries aren't part of the history.
+    function applySetup(st, label, note) {
+        flushEdit();
+        dragging();
+        if (hist.pending) { const p = hist.pending; hist.pending = null; commitStep(p.snap, p, false); }
+        closePopover();
+        endAllDrags();
+        if (bodies.length) commitStep(snapshot(), { label, target: null, key: 'scene' }, false);
+        const s = st.s;
+        showRandomOption(s.scene);
+        applySettings(st.set);       // first, so the forces worked out next are the right kind
+        restoreSnapshot(s, 'undo');
+        sceneFromSnapshot(s);        // the scene's scales, even if it is the scene already showing
+        acc = st.acc;
+        nextId = Math.max(nextId, st.maxGrp + 1);
+        const has = (id) => id !== null && bodies.some((b) => b.id === id);
+        selectedId = has(s.sel) ? s.sel : defaultSubject();
+        frameId = has(s.frame) ? s.frame : null;
+        view.zoom = s.zoom; view.panX = s.panX; view.panY = s.panY; view.anim = null;
+        k2.bid = null;
+        refreshBodyLists();
+        updateTrailLabel();
+        resetCharts();
+        syncEccentricity(true);
+        hist.epoch++;
+        Object.assign(hist, { cleanLoad: false, rwStale: true, rwFresh: false, rwFromStart: false, open: null });
+        updateHistoryUi();
+        setPaused(true);
+        updateScale();
+        updateDrawnPositions();
+        timedHint(note, 7000);
+    }
+
+    function applySettings(set) {
+        const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        setSpeedValue(set.sp);
+        check(ui.realistic, 'realistic', set.re);
+        check(ui.merge, 'merge', set.me);
+        check(ui.k1, 'k1', set.k[0]); check(ui.k2, 'k2', set.k[1]); check(ui.k3, 'k3', set.k[2]);
+        check(ui.forces, 'forces', set.sh[0]); check(ui.velocities, 'velocities', set.sh[1]); check(ui.labels, 'labels', set.sh[2]);
+        setStability(set.st);
+        settings.placement = set.pl;
+        if (ui.placement) ui.placement.value = set.pl;
+        forcesDirty = true;
+        pred.key = '';
+    }
+
+    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused: press play to run it, or Undo to go back.`;
+
+    // Open a link's setup. fromHash: it came with the page (or was pasted into its address), so the hash
+    // is cleared afterwards and a reload doesn't open it again over any changes. Resolves to { ok, message }.
+    async function openSetup(token, fromHash) {
+        let st;
+        try {
+            st = await decodeSetup(token);
+        } catch (e) {
+            const message = e && e.setup ? e.message : SETUP_ERRORS.broken;
+            timedHint(`<strong>That link didn't open a setup.</strong> ${escapeHtml(message)}`, 9000);
+            if (fromHash) setPaused(false);
+            return { ok: false, message };
+        }
+        applySetup(st, 'open a shared setup', OPEN_NOTE('Loaded a shared setup'));
+        if (fromHash) {
+            try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* the hash stays */ }
+        }
+        return { ok: true, message: 'Loaded a shared setup' };
+    }
+
+    // "Copy a link": to the clipboard (a ClipboardItem can wait for the link to be packed, which Safari
+    // needs to count it as part of the click), else writeText, else the link in a box to copy by hand
+    async function copyShareLink() {
+        if (share.copying) return;
+        share.copying = true;
+        const n = bodies.length;
+        const made = makeShareLink();
+        let ok = false, link = '';
+        try {
+            if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem === 'function') {
+                await navigator.clipboard.write([new ClipboardItem({ 'text/plain': made.then((l) => new Blob([l], { type: 'text/plain' })) })]);
+                ok = true;
+            }
+        } catch (e) { ok = false; }
+        try { link = await made; } catch (e) { share.copying = false; flashNote(ui.shareNote, 'Sorry: the link could not be made.'); return; }
+        if (!ok) {
+            try { await navigator.clipboard.writeText(link); ok = true; } catch (e) { ok = false; }
+        }
+        share.link = link;
+        if (ui.shareField) {
+            ui.shareField.value = link;
+            ui.shareField.hidden = ok;
+            if (!ok) {
+                ui.shareField.focus();
+                ui.shareField.select();
+                try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            }
+        }
+        const kb = `${Math.max(1, Math.round(link.length / 1024)).toLocaleString('en-US')} KB`;
+        let msg = ok ? 'Link copied. Opening it shows this setup, paused.' : 'Copy the link from the box below.';
+        if (link.length > LONG_LINK) {
+            msg = `${ok ? 'Link copied, but it is' : 'This link is'} long (${kb}, ${n.toLocaleString('en-US')} ${n === 1 ? 'body' : 'bodies'}): some apps cut long links short.${ok ? '' : ' Copy it from the box below.'}`;
+        }
+        flashNote(ui.shareNote, msg);
+        share.copying = false;
+    }
+
+    // ------------------------------------------------------------------
+    // Autosave, and "Carry on where you left off"
+    // ------------------------------------------------------------------
+    // Not a built-in scene that hasn't been touched (it is one click away anyway), nor half-way
+    // through moving a body
+    const saveEligible = () => bodies.length > 0 && (isRandomKey(settings.scene) || !hist.cleanLoad) && !editing();
+    const autosaveSignature = () => `${editSignature()}#${settingsSignature()}`;
+
+    function autosaveTick(now) {
+        const sv = share.save;
+        const sig = autosaveSignature();
+        if (sig !== sv.sig) { sv.sig = sig; sv.due = now + SAVE_QUIET_MS; }
+        else if (!sv.due && !paused && now - sv.lastAt >= SAVE_EVERY_MS && simTime !== sv.lastT) sv.due = now;
+        // (a change made while a save is being written out waits for it to finish)
+        if (sv.due && now >= sv.due && !sv.job && !editing()) { sv.due = 0; startSave(); }
+    }
+
+    // The copy is taken now; it is written out in slices while the browser is idle
+    function startSave() {
+        const sv = share.save;
+        if (sv.job || !saveEligible()) return;
+        const s = snapshot();
+        sv.job = { s, head: JSON.stringify(setupHead(s)), parts: [], i: 0, sig: sv.sig };
+        whenIdle(stepSave);
+    }
+
+    // One slice: SAVE_CHUNK bodies, or (once they are all written) the save itself
+    function stepSave() {
+        const sv = share.save, job = sv.job;
+        if (!job) return;
+        const t0 = performance.now();
+        if (job.i < job.s.n) {
+            const end = Math.min(job.s.n, job.i + SAVE_CHUNK), rows = [];
+            for (let i = job.i; i < end; i++) rows.push(setupRow(job.s, i));
+            job.parts.push(JSON.stringify(rows).slice(1, -1));
+            job.i = end;
+            sv.sliceMs = Math.max(sv.sliceMs, performance.now() - t0);
+            whenIdle(stepSave);
+            return;
+        }
+        sv.job = null;
+        writeSave(`${job.head.slice(0, -1)},"b":[${job.parts.join(',')}]}`, job);
+        sv.writeMs = Math.max(sv.writeMs, performance.now() - t0);
+    }
+
+    function writeSave(json, job) {
+        const sv = share.save;
+        sv.ok = storeSet(SAVE_KEY, `${Date.now()}|${json}`);
+        sv.lastAt = performance.now();
+        sv.lastT = job.s.t;
+        sv.savedSig = job.sig;
+        sv.bytes = json.length;
+        sv.count++;
+        return sv.ok;
+    }
+
+    // Save at once (the page is being left or hidden: no frames to hold up)
+    function saveNow() {
+        if (!saveEligible()) return false;
+        share.save.job = null;
+        const s = snapshot();
+        return writeSave(setupJson(s), { s, sig: autosaveSignature() });
+    }
+
+    function saveOnLeave() {
+        saveStabilityBest();
+        const sv = share.save;
+        if (sv.savedSig !== autosaveSignature() || sv.lastT !== simTime) saveNow();
+    }
+
+    // On a visit without a link: offer the last autosave in the hint line for a while
+    function offerAutosave() {
+        const raw = storeGet(SAVE_KEY);
+        const bar = raw ? raw.indexOf('|') : -1;
+        if (bar < 0) return;
+        let st;
+        try { st = readSetup(raw.slice(bar + 1)); } catch (e) { return; }
+        const at = +raw.slice(0, bar);
+        const what = `${sceneLabel(st.s.scene)}, ${st.s.n.toLocaleString('en-US')} ${st.s.n === 1 ? 'body' : 'bodies'}${at > 0 ? `, ${fmtAge(Date.now() - at)}` : ''}`;
+        share.offer = st;
+        share.offerHtml = `<button type="button" class="orb-carry-on" title="${escapeHtml(`Carry on where you left off: ${what}`)}"><span class="icon solid fa-history" aria-hidden="true"></span>Carry on where you left off</button>`
+            + `<span class="orb-carry-what">${escapeHtml(what)}</span>`
+            + '<button type="button" class="orb-carry-x" aria-label="No thanks" title="No thanks"><span class="icon solid fa-times" aria-hidden="true"></span></button>';
+        clearTimeout(share.offerTimer);
+        share.offerTimer = setTimeout(endOffer, OFFER_MS);
+        setHint();
+    }
+
+    // The hint line's usual text while the offer stands (so a tap elsewhere doesn't take it away)
+    function carryOnHint() { return share.offer ? share.offerHtml : ''; }
+
+    function endOffer() {
+        if (!share.offer) return;
+        const was = share.offerHtml;
+        share.offer = null;
+        share.offerHtml = '';
+        clearTimeout(share.offerTimer);
+        if (hintKey === was) setHint();
+    }
+
+    function onHintClick(e) {
+        const t = e.target && e.target.closest ? e.target : null;
+        if (!t) return;
+        if (t.closest('.orb-carry-on')) {
+            const st = share.offer;
+            endOffer();
+            if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
+        } else if (t.closest('.orb-carry-x')) {
+            endOffer();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Stability timer
+    // ------------------------------------------------------------------
+    // The energy per unit reduced mass of b relative to the rest of the system (two bodies: b, and the
+    // rest gathered at its centre of mass), from the totals c; restR is set to the distance between them
+    let restR = 0;
+    function restEnergy(b, c) {
+        const Mr = c.M - b.m;
+        if (!(Mr > 0)) { restR = 0; return -Infinity; }
+        const rx = (c.M * c.x - b.m * b.x) / Mr, ry = (c.M * c.y - b.m * b.y) / Mr;
+        const rvx = (c.M * c.vx - b.m * b.vx) / Mr, rvy = (c.M * c.vy - b.m * b.vy) / Mr;
+        const dvx = b.vx - rvx, dvy = b.vy - rvy;
+        restR = Math.hypot(b.x - rx, b.y - ry);
+        return 0.5 * (dvx * dvx + dvy * dvy) - (G * c.M) / Math.max(restR, 1e-300);
+    }
+
+    function stabilityReset() {
+        saveStabilityBest();
+        const c = totals(bodies);
+        let ext = 0;
+        stab.boundAtStart.clear();
+        stab.unbound.clear();
+        for (const b of bodies) {
+            ext = Math.max(ext, Math.hypot(b.x - c.x, b.y - c.y));
+            // (a planet of one star of a wide pair can seem unbound from the rest as a whole)
+            if (b.bound || restEnergy(b, c) < 0) stab.boundAtStart.add(b.id);
+        }
+        Object.assign(stab, {
+            running: true, scene: settings.scene, t0: simTime, lastT: simTime, ended: null, goalNoted: false, bestBefore: Object.assign({}, stab.best),
+            rEject: STAB_EJECT * Math.max(ext, 1e-12), counts: bodies.length >= 3,
+            label: sceneLabel(settings.scene) + (hist.cleanLoad ? '' : ', changed')
+        });
+    }
+
+    // Start the timer again if the system has been changed since it last looked (any edit, undo, run
+    // again or new scene, or the physics switched); returns true if it did
+    function stabilityRestart(now) {
+        const sig = `${editSignature()}|${+settings.merge}${+settings.realistic}`;
+        const edit = editing();
+        if (stab.running && !edit && sig === stab.sig && simTime >= stab.lastT) return false;
+        // (said on the card only if a run was under way in this scene)
+        const changed = stab.running && stab.scene === settings.scene && (!!stab.ended || stab.lastT > stab.t0);
+        stabilityReset();
+        if (changed || (edit && now - stab.restartedAt < 4000)) stab.restartedAt = now;
+        stab.sig = sig;
+        return true;
+    }
+
+    // Four times a second: start again after any change, else look for a body flung out and keep the best
+    function stabilityTick(now) {
+        if (!settings.stability) {
+            if (stab.running) { saveStabilityBest(); stab.running = false; }
+            return;
+        }
+        if (stabilityRestart(now)) return;
+        stab.lastT = simTime;
+        if (stab.ended) return;
+        checkEjections();
+        if (stab.ended) return;
+        // Only time before any body came unbound is sure to count (it may be on its way out)
+        let since = simTime;
+        for (const t of stab.unbound.values()) if (t < since) since = t;
+        const yrs = since - stab.t0;
+        if (noteBest(yrs) && now - stab.bestSavedAt > 10000) saveStabilityBest();
+        if (!stab.goalNoted && stab.counts && yrs >= STAB_GOAL) {
+            stab.goalNoted = true;
+            saveStabilityBest();
+            timedHint(`<strong>Still stable after ${STAB_GOAL.toLocaleString('en-US')} years.</strong> Challenge met!`, 8000);
+        }
+    }
+
+    // A body bound to something heavier (inside its Hill sphere) isn't leaving; any other is tested
+    // against the rest of the system
+    function checkEjections() {
+        if (bodies.length < 2) return;
+        const c = totals(bodies);
+        for (const b of bodies) {
+            if (b.bound || b.held || b.grp || restEnergy(b, c) < 0) { stab.unbound.delete(b.id); continue; }
+            if (!stab.unbound.has(b.id)) stab.unbound.set(b.id, simTime);
+            if (restR > stab.rEject) {
+                endStability(stab.boundAtStart.has(b.id) ? 'flung' : 'left', b, null, stab.unbound.get(b.id));
+                return;
+            }
+        }
+    }
+
+    // (from mergeBodies and disrupt, in the middle of a step: just note it, after catching up with a
+    // change made since the last look, such as a planet dropped onto its star)
+    function noteCollision(big, small) {
+        if (!settings.stability) return;
+        stabilityRestart(performance.now());
+        if (!stab.ended) endStability(big.kind === 'blackhole' ? 'swallowed' : 'hit', small, big, simTime);
+    }
+
+    function noteTornApart(L, H) {
+        if (!settings.stability) return;
+        stabilityRestart(performance.now());
+        if (!stab.ended) endStability('torn', L, H, simTime);
+    }
+
+    function endStability(kind, a, other, t) {
+        const years = Math.max(0, t - stab.t0);
+        stab.ended = { kind, a: a.name, b: other ? other.name : '', years };
+        const best = noteBest(years);
+        saveStabilityBest();
+        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''} Change something and try again.`, 8000);
+    }
+
+    function eventText(e, dur) {
+        switch (e.kind) {
+            case 'flung': return `${e.a} was flung out after ${dur}`;
+            case 'left': return `${e.a} left the system after ${dur}`;
+            case 'swallowed': return `${e.b} swallowed ${e.a} after ${dur}`;
+            case 'torn': return `${e.a} was torn apart after ${dur}`;
+            default: return `${e.a} hit ${e.b} after ${dur}`;
+        }
+    }
+
+    function readBest() {
+        try {
+            const b = JSON.parse(storeGet(BEST_KEY));
+            if (b && Number.isFinite(b.yr) && b.yr > 0) return { yr: b.yr, label: typeof b.label === 'string' ? b.label.slice(0, 60) : '' };
+        } catch (e) { /* none yet, or unreadable */ }
+        return { yr: 0, label: '' };
+    }
+
+    // A best counts with three bodies or more (two alone keep their orbit for ever)
+    function noteBest(yrs) {
+        if (!stab.counts || !(yrs > stab.best.yr)) return false;
+        stab.best = { yr: yrs, label: stab.label };
+        stab.bestDirty = true;
+        return true;
+    }
+
+    function saveStabilityBest() {
+        if (!stab.bestDirty) return;
+        stab.bestDirty = false;
+        stab.bestSavedAt = performance.now();
+        storeSet(BEST_KEY, JSON.stringify(stab.best));
+    }
+
+    // The card at the top of the top-right stack, while the timer is on
+    function stabilityLines(compact) {
+        if (!settings.stability || !stab.running) return null;
+        const C = colours();
+        const seed = randomSeed(settings.scene);
+        const e = stab.ended;
+        const dur = fmtSpan(Math.max(0, e ? e.years : simTime - stab.t0));
+        const lines = [[[seed ? `System #${seed}: ` : 'Stability: ', true, C.kepler], [e ? eventText(e, dur) : `stable for ${dur}`]]];
+        // (the best is the one from before this run: this run beating it is news)
+        const before = stab.bestBefore, goal = stab.best.yr >= STAB_GOAL ? ', goal met' : ` · goal ${fmtYears(STAB_GOAL)}`;
+        let note;
+        if (performance.now() - stab.restartedAt < 4000) note = 'Restarted: you changed the system';
+        else if (!stab.counts) note = 'A best needs three bodies or more';
+        else if (!(before.yr > 0)) note = compact ? `Goal: ${fmtYears(STAB_GOAL)}` : `Can you build one that lasts ${fmtYears(STAB_GOAL)}?`;
+        else if (stab.best.yr > before.yr) note = `A new best (was ${fmtYears(before.yr)})${goal}`;
+        else note = `Your best: ${fmtYears(before.yr)}${!compact && before.label ? ` (${before.label})` : ''}${goal}`;
+        lines.push([[note, false, C.subtle]]);
+        return lines;
+    }
+
+    function drawStabilityCard(C, y, fs, compact) {
+        const lines = stabilityLines(compact);
+        return lines ? drawCard(C, lines, y, fs) + 5 : y;
+    }
+
+    // ------------------------------------------------------------------
+    // Data for a spreadsheet (CSV): plain numbers or e-notation, units in the headings, in the scene's
+    // own units (AU or km; years, days or seconds)
+    // ------------------------------------------------------------------
+    function csvUnits() {
+        const tu = timeUnit(), km = scene.units === 'km';
+        return { t: tu === 'd' ? 'days' : tu, tf: tu === 's' ? YEAR_S : tu === 'd' ? DAYS_PER_YEAR : 1, d: km ? 'km' : 'AU', af: km ? AU_KM : 1 };
+    }
+
+    // Eight significant figures; e-notation for very large or small values (never x10 superscripts)
+    function csvNum(x) {
+        if (x === 0) return '0';
+        const ax = Math.abs(x);
+        return ax >= 1e-4 && ax < 1e9 ? String(+x.toPrecision(8)) : x.toExponential(7);
+    }
+
+    function csvCell(v) {
+        if (v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v))) return '';
+        if (typeof v === 'number') return csvNum(v);
+        let s = String(v);
+        if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;   // a name mustn't be taken for a spreadsheet formula
+        return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    const csvText = (head, rows) => `${[head].concat(rows).map((r) => r.map(csvCell).join(',')).join('\r\n')}\r\n`;
+
+    // Kepler's 3rd law: every body bound to the chosen body's primary (or to the chosen body, if it is
+    // the one at the centre), measured over its last full orbit where it has made one
+    function keplerCsv() {
+        const U = csvUnits();
+        const b = bodyById(selectedId);
+        const P = b ? (orbitingBody(b) ? b.primary : b) : heaviest();
+        const ratio = `${U.t}^2/${U.d}^3`;
+        const head = ['Body', 'Orbits', `a (${U.d})`, `T measured (${U.t})`, `T from its motion (${U.t})`, `a^3 (${U.d}^3)`, `T^2 (${U.t}^2)`,
+            `T^2/a^3 (${ratio})`, `Predicted 4pi^2/G(M+m) (${ratio})`];
+        const rows = [];
+        for (const c of P ? bodies : []) {
+            if (c === P || c.primary !== P || !c.bound || c.grp) continue;
+            const el = elementsOf(c, P);
+            const tr = c.track && c.track.done > 0 ? c.track : null;
+            const a = (tr ? tr.a : el.a) * U.af, Tm = tr ? tr.T * U.tf : null, Tk = el.T * U.tf;
+            const T = Tm !== null ? Tm : Tk;
+            rows.push([c.name, P.name, a, Tm, Tk, a * a * a, T * T, (T * T) / (a * a * a), ((4 * Math.PI * Math.PI) / (G * (P.m + c.m))) * (U.tf * U.tf) / (U.af * U.af * U.af)]);
+        }
+        rows.sort((r1, r2) => r1[2] - r2[2]);
+        return csvText(head, rows);
+    }
+
+    // (from sampleCharts, after it adds a point: the graphs' data at full precision)
+    function recordGraphPoint(E, b, p) {
+        if (charts.energy.data.labels.length === 1) graphData.length = 0;   // the graphs have just started again
+        graphData.push({
+            t: simTime, ke: E.ke, pe: E.pe, total: E.total, name: b ? b.name : '', around: b && p ? p.name : '',
+            r: b && p ? Math.hypot(b.x - p.x, b.y - p.y) : NaN, v: b && p ? Math.hypot(b.vx - p.vx, b.vy - p.vy) : NaN
+        });
+        if (graphData.length > GRAPH_POINTS) graphData.splice(0, GRAPH_POINTS / 10);
+    }
+
+    function graphsCsv() {
+        const U = csvUnits();
+        const head = [`Time (${U.t})`, 'Kinetic energy (J)', 'Potential energy (J)', 'Total energy (J)', 'Chosen body', 'Orbits',
+            `Distance from what it orbits (${U.d})`, 'Speed relative to it (km/s)'];
+        return csvText(head, graphData.map((q) => [q.t * U.tf, q.ke * ENERGY_J, q.pe * ENERGY_J, q.total * ENERGY_J, q.name, q.around, q.r * U.af, q.v * AUYR_KMS]));
+    }
+
+    function bodiesCsv() {
+        const U = csvUnits();
+        const head = [`Time (${U.t})`, 'Body', 'Mass (kg)', 'Radius (km)', `x (${U.d})`, `y (${U.d})`, 'vx (km/s)', 'vy (km/s)',
+            'Orbits', `Distance from what it orbits (${U.d})`, 'Speed relative to it (km/s)', 'Eccentricity'];
+        const rows = bodies.map((b) => {
+            const p = b.primary, el = p ? elementsOf(b, p) : null;
+            return [simTime * U.tf, b.name, b.m * MSUN_KG, b.R, b.x * U.af, b.y * U.af, b.vx * AUYR_KMS, b.vy * AUYR_KMS,
+                p ? p.name : '', el ? el.r * U.af : null, el ? el.v * AUYR_KMS : null, el ? el.e : null];
+        });
+        return csvText(head, rows);
+    }
+
+    function csvOf(kind) {
+        return kind === 'kepler' ? keplerCsv() : kind === 'graphs' ? graphsCsv() : kind === 'bodies' ? bodiesCsv() : '';
+    }
+
+    function downloadCsv(kind, noteEl) {
+        const text = csvOf(kind);
+        const rows = text ? text.split('\r\n').length - 2 : 0;
+        if (rows <= 0) { flashNote(noteEl, CSV_EMPTY[kind] || ''); return false; }
+        const seed = randomSeed(settings.scene);
+        const name = `orbits-${kind === 'kepler' ? 'kepler3' : kind}-${seed ? `system-${seed}` : settings.scene}.csv`;
+        try {
+            // (with a byte-order mark, so spreadsheets read the names as UTF-8)
+            const url = URL.createObjectURL(new Blob(['﻿', text], { type: 'text/csv;charset=utf-8' }));
+            const a = document.createElement('a');
+            a.href = url; a.download = name; a.hidden = true;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 30000);
+        } catch (e) {
+            flashNote(noteEl, 'Sorry: this browser couldn\'t save the file.');
+            return false;
+        }
+        flashNote(noteEl, `Downloaded ${name}: ${rows.toLocaleString('en-US')} ${rows === 1 ? 'row' : 'rows'}.`);
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Controls, the page's start, and the checks four times a second
+    // ------------------------------------------------------------------
+    function shareTick() {
+        const now = performance.now();
+        syncSceneList();
+        stabilityTick(now);
+        autosaveTick(now);
+    }
+
+    // After the first scene has loaded: a link in the address wins over the autosave
+    function startShare() {
+        share.save.sig = autosaveSignature();
+        const token = setupToken(location.hash);
+        if (token) { setPaused(true); openSetup(token, true); } else offerAutosave();
+    }
+
+    function bindShare() {
+        Object.assign(ui, {
+            shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
+            csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
+        });
+        for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
+        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); }); };
+        onClick(ui.shareBtn, copyShareLink);
+        onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
+        document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
+        onClick(ui.chartCsvBtn, () => downloadCsv('graphs', ui.chartCsvNote));
+        if (ui.stability) {
+            ui.stability.checked = settings.stability;
+            ui.stability.addEventListener('change', () => { settings.stability = ui.stability.checked; });
+        }
+        if (ui.shareField) ui.shareField.addEventListener('focus', () => ui.shareField.select());
+        // (capture, on the list's parent: before the list's own change listener)
+        if (ui.scene && ui.scene.parentElement) ui.scene.parentElement.addEventListener('change', onSceneChoice, true);
+        if (ui.hint) ui.hint.addEventListener('click', onHintClick);
+        window.addEventListener('hashchange', () => { const t = setupToken(location.hash); if (t) openSetup(t, true); });
+        window.addEventListener('pagehide', saveOnLeave);
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveOnLeave(); });
+        stab.best = readBest();
+        setInterval(shareTick, 250);
+        setTimeout(startShare, 0);
     }
 
     new MutationObserver(() => {
@@ -10583,6 +11639,42 @@
         help(open) { if (open === false) closeHelp(); else openHelp(); }
     });
     bindNavigation();
+
+    // Save and share (see that section): links, CSV, random systems, the stability timer and autosave
+    Object.assign(window.orbitsSimulation, {
+        // The link to the setup as it is now (a promise)
+        shareLink: () => makeShareLink(),
+        // Open a link's setup (a promise of { ok, message })
+        loadLink: (url) => openSetup(setupToken(url), false),
+        // kind: 'kepler', 'graphs' or 'bodies'; returns the CSV text (no byte-order mark)
+        exportCsv: (kind) => csvOf(kind),
+        // Load random system number seed (a new random one if left out)
+        randomSystem(seed) {
+            const s = validSeed(seed) ? seed : newRandomSeed();
+            loadRandomSystem(s);
+            return { seed: s, scene: settings.scene, bodies: bodies.length, Tref: scene.Tref, tip: scene.tip || '' };
+        },
+        stability() {
+            const e = stab.ended;
+            return {
+                on: settings.stability, running: stab.running, years: stab.running ? (e ? e.years : simTime - stab.t0) : 0,
+                ended: e ? Object.assign({ text: eventText(e, fmtSpan(e.years)) }, e) : null,
+                best: Object.assign({}, stab.best), counts: stab.counts, ejectDistance: stab.rEject, goal: STAB_GOAL
+            };
+        },
+        setStability,
+        // The checks made four times a second, now
+        tick: shareTick,
+        saveNow,
+        autosave() {
+            const sv = share.save;
+            return {
+                eligible: saveEligible(), saves: sv.count, ok: sv.ok, bytes: sv.bytes, sliceMs: sv.sliceMs, writeMs: sv.writeMs,
+                busy: !!sv.job, offer: !!share.offer, stored: (storeGet(SAVE_KEY) || '').length
+            };
+        }
+    });
+    bindShare();
 
     // ------------------------------------------------------------------
     // Start
