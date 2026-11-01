@@ -4632,6 +4632,22 @@
         return { how: 'near', around: null, from: null, with: [] };
     }
 
+    // After its orbit is reshaped (the eccentricity slider, or a new period or distances in the menu's
+    // Orbit tab): if the whole orbit no longer fits, zoom out just enough to show it as well as what is
+    // in view now (never in, and nothing else moves)
+    function keepOrbitInView(b) {
+        const p = b && b.primary && b.primary !== b && bodies.includes(b.primary) ? b.primary : null;
+        const el = p ? elementsOf(b, p) : null;
+        if (!el || !el.bound || !viewW || !viewH || !(el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12))) return;
+        updateDrawnPositions();
+        const o = orbitBox(b, p, el);   // (relative to the frame origin, with a margin)
+        const xa = wx(0) - F.x, xb = wx(viewW) - F.x, ya = wy(0) - F.y, yb = wy(viewH) - F.y;
+        const v = [Math.min(xa, xb), Math.max(xa, xb), Math.min(ya, yb), Math.max(ya, yb)];
+        if (o[0] >= v[0] && o[1] <= v[1] && o[2] >= v[2] && o[3] <= v[3]) return;
+        const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        fitBox([Math.min(o[0], v[0]), Math.max(o[1], v[1]), Math.min(o[2], v[2]), Math.max(o[3], v[3])], glide);
+    }
+
     function zoomChosen() {
         const b = bodyById(selectedId);
         const z = zoomToBody(b);
@@ -8257,6 +8273,7 @@
             ux = -s.uy * s.sense * v; uy = s.ux * s.sense * v;
         }
         applyEdit(b, () => setRelative(b, s, rx, ry, ux, uy));
+        keepOrbitInView(b);
     }
 
     // New closest and farthest distances (rp <= ra; ra = Infinity: an escaping orbit that keeps its
@@ -8282,6 +8299,7 @@
         const vr = (s.vr < 0 ? -1 : 1) * Math.sqrt(Math.max(0, mu * (2 / r - 1 / a) - vt * vt));
         const k = r / s.r, tx = -s.uy * s.sense, ty = s.ux * s.sense;
         applyEdit(b, () => setRelative(b, s, s.rx * k, s.ry * k, vr * s.ux + vt * tx, vr * s.uy + vt * ty));
+        keepOrbitInView(b);
     }
 
     // The way the other bodies go round p (or p round its own primary): 1 anticlockwise, -1 clockwise,
@@ -13098,16 +13116,7 @@
             });
             ui.ecc.addEventListener('change', () => {
                 eccDrag = null;
-                // Zoom out if the new orbit no longer fits
-                const b = bodyById(selectedId);
-                if (b && b.primary) {
-                    const el = elementsOf(b, b.primary);
-                    const apo = el.bound ? el.a * (1 + el.e) : el.r;
-                    updateDrawnPositions();
-                    const cx = sx(b.primary.dx), cy = sy(b.primary.dy);
-                    const R = apo * scale;
-                    if (cx - R < 0 || cx + R > viewW || cy - R < 0 || cy + R > viewH) fitAll();
-                }
+                keepOrbitInView(bodyById(selectedId));   // (zoom out if the new orbit no longer fits)
             });
         }
         if (ui.trail) {
