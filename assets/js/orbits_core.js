@@ -5140,11 +5140,13 @@
         return dark ? {
             dark, bg: '#16181c', text: '#e0e0e0', subtle: 'rgba(224,224,224,0.55)', label: 'rgba(224,224,224,0.62)', faint: 'rgba(224,224,224,0.28)',
             force: '#f2849e', velocity: '#7bd0c1', kepler: '#8499e7', sectorA: 'rgba(174,133,202,0.34)', sectorB: 'rgba(174,133,202,0.18)',
-            sectorLine: 'rgba(174,133,202,0.75)', card: 'rgba(30,32,37,0.93)', cardLine: 'rgba(255,255,255,0.12)', outline: 'rgba(0,0,0,0)'
+            sectorLine: 'rgba(174,133,202,0.75)', card: 'rgba(30,32,37,0.93)', cardLine: 'rgba(255,255,255,0.12)', outline: 'rgba(0,0,0,0)',
+            burn: '#ffb454'
         } : {
             dark, bg: '#f4f6f8', text: '#3d3d3d', subtle: 'rgba(50,50,50,0.68)', label: 'rgba(40,40,40,0.78)', faint: 'rgba(60,60,60,0.3)',
             force: '#e0607e', velocity: '#2a9d8f', kepler: '#5b6fd6', sectorA: 'rgba(150,100,190,0.30)', sectorB: 'rgba(150,100,190,0.15)',
-            sectorLine: 'rgba(130,85,175,0.75)', card: 'rgba(255,255,255,0.94)', cardLine: 'rgba(0,0,0,0.12)', outline: 'rgba(0,0,0,0.28)'
+            sectorLine: 'rgba(130,85,175,0.75)', card: 'rgba(255,255,255,0.94)', cardLine: 'rgba(0,0,0,0.12)', outline: 'rgba(0,0,0,0.28)',
+            burn: '#a85f00'
         };
     }
 
@@ -5871,7 +5873,31 @@
                 arrow(x + ((h.x - x) / hl) * r, y + ((h.y - y) / hl) * r, h.x, h.y, hotColour, w);
                 ctx.globalAlpha = 1;
             }
+            if (b.aim && b.aim.burn) drawBurn(C, b, w);
         }
+    }
+
+    // A burn being aimed in a mission (see beginAim): an arrow from where the velocity arrow's tip was
+    // when it was grabbed, along the change of velocity at the burn's own scale (so it follows the
+    // pointer), with its size beside it
+    function drawBurn(C, b, w) {
+        const a = b.aim, B = a.burn;
+        let dx = a.vx - B.vx, dy = a.vy - B.vy, ox = B.vx, oy = B.vy;
+        if (turn.phi && !a.turn) { ({ x: dx, y: dy } = turnVec(dx, dy)); ({ x: ox, y: oy } = turnVec(ox, oy)); }   // (as velocityTip)
+        const L = Math.hypot(dx, dy) * B.k;
+        if (L < 3) return;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b), o = Math.hypot(ox, oy);
+        const x0 = o > 0 ? x + (ox / o) * (r + o * a.k) : x, y0 = o > 0 ? y - (oy / o) * (r + o * a.k) : y;
+        const x1 = x0 + dx * B.k, y1 = y0 - dy * B.k;
+        arrow(x0, y0, x1, y1, C.burn, w * 1.5);
+        const dv = fmtSpeedKms(Math.hypot(dx, dy) * AUYR_KMS);
+        ctx.font = font(Math.round(12 * Math.max(sizeScale, 0.9)), true);
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = dx >= 0 ? 'left' : 'right';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = C.bg;
+        ctx.fillStyle = C.burn;
+        fillTextInside(`Δv ${dv.v} ${dv.u}`, x1 + (dx >= 0 ? 8 : -8), y1 - (dy >= 0 ? 8 : -8), true);
     }
 
     // The centre-of-mass marker (its label is placed with the bodies' names)
@@ -8992,6 +9018,8 @@
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
             showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
+        } else if (b.aim && b.aim.burn) {
+            showHint('drag', burnHint(b, d));
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
@@ -9076,9 +9104,20 @@
     // speed relative to the body it orbits, it snaps to it. If that body moves fast through the view
     // (a moon seen from the star) or the arrow would be tiny, the velocity is aimed relative to that body
     // instead, with the circular speed as the arrow's unit.
+    //   In a mission the probe's arrow aims a burn instead: the pointer drags out the change of velocity
+    // (drawn as its own arrow, see drawBurn) at a scale where the whole fuel budget is MISSION_TANK_PX of
+    // drag, whatever the mission. At the arrow's own scale a pixel is about half a km/s, so a twitch would
+    // spend the tank; this way a Hohmann burn is a drag of a few centimetres, and Shift is ten times finer.
     // ------------------------------------------------------------------
     const FINE = 0.1;
     const SNAP_PX = 6;
+    const MISSION_TANK_PX = 200;
+
+    // px of drag per AU/yr of burn for the mission's probe (0: not a mission's probe)
+    function burnScale(b) {
+        if (!mission.def || b.id !== mission.craftId || !(mission.def.budget > 0)) return 0;
+        return (MISSION_TANK_PX * sizeScale) / (mission.def.budget / AUYR_KMS);
+    }
 
     function beginAim(b, d, pt) {
         startHold(b, d);
@@ -9104,6 +9143,21 @@
         d.grabX = pt.x - tip.x; d.grabY = pt.y - tip.y;
         d.fine = null;
         d.start = { x: pt.x, y: pt.y, vx: b.aim.vx, vy: b.aim.vy, coarse: false };
+        const bk = burnScale(b);
+        if (bk) b.aim.burn = { k: bk, vx: b.aim.vx, vy: b.aim.vy, from: null };
+    }
+
+    // A mission's burn: the velocity as grabbed plus the pointer's movement at the burn's scale (a tenth
+    // of it while Shift is held, from where Shift went down or up, so nothing jumps)
+    function moveBurn(d, pt, shift) {
+        const b = d.body, a = b.aim, B = a.burn, fine = !!shift;
+        if (!B.from) B.from = { x: d.start.x, y: d.start.y, vx: B.vx, vy: B.vy, fine };
+        else if (B.from.fine !== fine) B.from = { x: pt.x, y: pt.y, vx: a.vx, vy: a.vy, fine };
+        const s = (fine ? FINE : 1) / B.k;
+        a.vx = B.from.vx + (pt.x - B.from.x) * s;
+        a.vy = B.from.vy - (pt.y - B.from.y) * s;
+        a.snap = null;
+        if (!fine) snapAim(b);
     }
 
     // The world velocity the aimed velocity is measured from
@@ -9116,6 +9170,7 @@
 
     function moveAim(d, pt, shift) {
         const b = d.body, a = b.aim;
+        if (a.burn) { moveBurn(d, pt, shift); return; }
         if (shift) {
             // Fine: a tenth of the pointer's movement, from where Shift was pressed (or from where the
             // drag began, if Shift was down from the start)
@@ -9153,7 +9208,7 @@
         const av = aimedVelocity(b);   // (the world velocity aimed)
         const vc = Math.sqrt((G * (b.m + p.m)) / r), ve = Math.SQRT2 * vc;
         const ux = av.x - p.vx, uy = av.y - p.vy;
-        const tol = SNAP_PX / a.k;
+        const tol = SNAP_PX / (a.burn ? a.burn.k : a.k);   // (a mission's burn: px of the burn's own arrow)
         let to = null;
         for (const s of [1, -1]) {
             const cx = (-s * ry / r) * vc, cy = (s * rx / r) * vc;
@@ -12222,6 +12277,29 @@
         } else return;
         applyEdit(b, () => { b.vx = R.vx + vx; b.vy = R.vy + vy; });
     }
+    // The hint line while the probe's arrow is aimed (see beginAim): the burn, which way it points
+    // (relative to the reference body), and the fuel it would leave
+    function burnHint(b, d) {
+        const def = mission.def, R = bodyById(mission.refId), av = aimedVelocity(b);
+        const dvx = av.x - b.vx, dvy = av.y - b.vy, dv = toKms(Math.hypot(dvx, dvy));
+        const left = Math.max(0, def.budget - mission.used), B = b.aim.burn;
+        if (!(dv >= 0.005)) return `<strong>Drag out a burn</strong> from the arrow's tip: along the arrow speeds you up, against it slows you down. Fuel: ${f1(left)} km/s.`;
+        let way = '';
+        if (R) {
+            const vx = b.vx - R.vx, vy = b.vy - R.vy, v = Math.hypot(vx, vy), rx = b.x - R.x, ry = b.y - R.y, r = Math.hypot(rx, ry);
+            const along = v > 0 ? (dvx * vx + dvy * vy) / v : 0, out = r > 0 ? (dvx * rx + dvy * ry) / r : 0;
+            way = Math.abs(along) >= Math.abs(out) ? (along > 0 ? ' forwards' : ' backwards') : (out > 0 ? ' outwards' : ' inwards');
+        }
+        const s = fmtSpeedKms(dv);
+        let h = `<strong>Burn ${s.v} ${s.u}${way}:</strong> `;
+        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left, so it stops when the tank runs dry.`
+            : `${f1(left - dv)} of ${f1(def.budget)} km/s of fuel left after it.`;
+        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Exactly the speed for a circular orbit.' : ' Exactly the escape speed.';
+        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
+        else if (aimFineTouch(d)) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+        return h;
+    }
+
     // (nudge's way in: a step is a fraction of the speed relative to the reference body)
     function missionNudge(b, kind, step) {
         if (!mission.def || b.id !== mission.craftId) return false;
