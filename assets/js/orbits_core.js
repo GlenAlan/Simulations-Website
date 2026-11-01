@@ -9266,12 +9266,13 @@
         if (Math.hypot(sx(b.dx) - x, sy(b.dy) - y) < drawRadius(b)) return null;
         return b;
     }
-    // ...or the tip of another body's arrow (long enough to tell apart from the body)
+    // ...or the tip of another body's arrow (long enough to tell apart from the body; not a swarm's dot or
+    // a piece, whose arrows aren't drawn unless it is the chosen body)
     function onArrowTip(x, y, tol) {
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor) continue;
             const tip = velocityTip(b);
             if (tip.len < 14) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
