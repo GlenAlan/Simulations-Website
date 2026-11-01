@@ -3785,10 +3785,21 @@
             ctx.strokeRect(b.cA * cellPx, (GH - b.rB - 1) * cellPx, (b.cB - b.cA + 1) * cellPx, (b.rB - b.rA + 1) * cellPx);
             ctx.setLineDash([]);
             const wcm = b.cB - b.cA + 1, hcm = b.rB - b.rA + 1;
+            const label = wcm + ' × ' + hcm + ' cm';
             ctx.font = '12px "Source Sans Pro", Helvetica, sans-serif';
             ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+            // beside the shape's top-right corner, or wherever it stays on the canvas, with a halo so
+            // it reads over the liquid too
+            const tw = ctx.measureText(label).width;
+            let lx = (b.cB + 1) * cellPx + 4, ly = (GH - b.rB - 1) * cellPx;
+            if (lx + tw > cssW - 4) lx = b.cA * cellPx - 4 - tw;
+            lx = clamp(lx, 4, cssW - 4 - tw);
+            if (ly < 16) ly = Math.min(cssH - 4, (GH - b.rA) * cellPx + 15);
+            ctx.lineWidth = 3; ctx.lineJoin = 'round';
+            ctx.strokeStyle = pal.halo;
+            ctx.strokeText(label, lx, ly);
             ctx.fillStyle = pal.text;
-            ctx.fillText(wcm + ' × ' + hcm + ' cm', (b.cB + 1) * cellPx + 4, (GH - b.rB - 1) * cellPx);
+            ctx.fillText(label, lx, ly);
             return;
         }
         if (pointer.type !== 'mouse' && !pointer.down) return;
