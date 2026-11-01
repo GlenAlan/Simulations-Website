@@ -1603,3 +1603,246 @@ html.dark-mode .orb-date-input {
 .sim-controls-content .orb-date .orb-note {
     margin-top: 0;
 }
+
+/* ---------- Missions ----------
+   Only while a mission is loaded: its briefing and result card over the canvas's top-left corner (the
+   mission card with the fuel gauge is drawn on the canvas, top right) and the palette greyed out (it
+   still answers a click, with a note on the mission's rules). In the settings, under the scene list,
+   a button into the missions. */
+.orbits-sim.orb-mission-on .orb-palette,
+.orbits-sim.orb-mission-on .orb-toolbar-label {
+    opacity: 0.4;
+}
+
+.orb-mission-panel {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 20;
+    box-sizing: border-box;
+    width: 320px;
+    max-width: calc(100% - 16px);
+    max-height: calc(100% - 16px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 9px 12px 11px;
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: var(--color-text);
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.orb-mission-panel[hidden] {
+    display: none;
+}
+
+.orb-mission-panel *,
+.orb-mission-panel *::before,
+.orb-mission-panel *::after {
+    box-sizing: border-box;
+}
+
+.orb-mission-kicker {
+    margin: 0 2.4em 0 0;
+    font-size: 0.75em;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.75;
+}
+
+.orb-mission-panel .orb-mission-title {
+    margin: 0.15em 2em 0.4em 0;
+    font-size: 1.15em;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text);
+}
+
+.orb-mission-text p {
+    margin: 0 0 0.55em;
+}
+
+.orb-mission-text strong {
+    font-weight: 700;
+}
+
+.orb-mission-facts {
+    font-variant-numeric: tabular-nums;
+}
+
+.orb-mission-text .orb-mission-small {
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+
+.orb-mission-stars {
+    font-size: 1.5em;
+    line-height: 1;
+    letter-spacing: 0.12em;
+    color: var(--color-accent);
+}
+
+/* The buttons stay in view at the bottom while a long briefing scrolls (a phone's canvas is small) */
+.orb-mission-actions {
+    position: sticky;
+    bottom: -11px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0.2em -12px -11px;
+    padding: 6px 12px 11px;
+    background-color: var(--color-bg-alt);
+}
+
+.orb-mission-more {
+    margin: 0 0 0.55em;
+}
+
+.orb-mission-more > summary {
+    display: list-item;
+    width: max-content;
+    max-width: 100%;
+    font-size: 0.9em;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.orb-mission-more > summary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.orb-mission-more > p {
+    margin: 0.3em 0 0;
+}
+
+.orb-mission-panel button {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45em;
+    height: 34px;
+    margin: 0;
+    padding: 0 0.9em;
+    font-size: 0.95em;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* (dark text on the accent: white on it would be too faint to read) */
+.orb-mission-panel button.is-primary {
+    font-weight: 700;
+    color: #16181c !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+@media (hover: hover) {
+    .orb-mission-panel button:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .orb-mission-panel button.is-primary:hover {
+        box-shadow: inset 0 0 0 2px var(--color-text);
+    }
+}
+
+.orb-mission-panel button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.orb-mission-panel .orb-mission-x {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+@media (pointer: coarse) {
+    .orb-mission-panel button {
+        height: 40px;
+    }
+
+    .orb-mission-panel .orb-mission-x {
+        top: 0;
+        right: 0;
+        width: 40px;
+        height: 40px;
+    }
+}
+
+/* Phones: a little tighter, so more of the briefing fits over the canvas */
+@media (max-width: 480px), (max-height: 540px) {
+    .orb-mission-panel {
+        padding: 7px 10px 9px;
+        font-size: 13px;
+        line-height: 1.35;
+    }
+
+    .orb-mission-actions {
+        bottom: -9px;
+        margin: 0.2em -10px -9px;
+        padding: 6px 10px 9px;
+    }
+}
+
+/* The settings' way into the missions (styled as "Set its period and distances") */
+.sim-controls-content .orb-mission-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    width: 100%;
+    height: 34px;
+    margin: 0.5em 0 0;
+    padding: 0 0.8em;
+    font-size: 0.85em;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    background-color: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.sim-controls-content .orb-mission-btn .icon {
+    color: var(--color-accent);
+}
+
+.sim-controls-content .orb-mission-btn + .orb-note {
+    margin-top: 0.3em;
+}
+
+@media (hover: hover) {
+    .sim-controls-content .orb-mission-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+@media (pointer: coarse) {
+    .sim-controls-content .orb-mission-btn {
+        height: 40px;
+    }
+}
