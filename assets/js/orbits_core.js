@@ -25,6 +25,9 @@
  *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
  *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest.
+ *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
+ *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
+ *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
  *
  * Crowded scenes (more than SWARM_N bodies, or made as a swarm) draw their light bodies as plain dots
  *   with short trails and no names or arrows, unless chosen; drawing gets coarser before the physics
@@ -329,6 +332,45 @@
                 return list;
             })()
         },
+        // The Sun and Mercury alone, with realistic physics: relativity turns Mercury's orbit forward by
+        // 6 pi GM/(c^2 a (1 - e^2)) = 0.1035" each time round, 43" a century. (The other planets turn it by
+        // about 532" a century more, as in "Inner planets": what Newton could explain; the 43" left over
+        // was explained by Einstein in 1915.)
+        mercury: {
+            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
+            tip: 'Realistic physics (in the settings) is on. Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
+            bodies: [
+                { kind: 'sun' },
+                { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
+            ]
+        },
+        // Two black holes of 36 and 29 solar masses, like the first pair LIGO heard (GW150914, 2015), 1,200
+        // km apart and going round each other 10 times a second: their gravitational waves (20 Hz) are
+        // about to enter LIGO's range. They start on a circular orbit as relativity has it here (r omega^2
+        // equal to the pull with its 1PN and 2PN terms: about 0.93 of Kepler's omega), already closing at
+        // Peters' rate, dr/dt = -(64/5) eta (GM)^3/(c^5 r^3). The waves carry off their orbital energy: they
+        // spiral together, faster and faster, and plunge at their innermost stable orbit (576 km) after
+        // about 0.4 s (Peters' formula: 0.61 s to reach zero; at this distance the relativistic corrections
+        // to that are large).
+        inspiral: (function () {
+            const m1 = 36, m2 = 29, M = m1 + m2, eta = (m1 * m2) / (M * M), r = 1200 / AU_KM, gm = G * M, g = gm / (C2 * r);
+            // x = r^3 omega^2 / GM: 1 + (1 + 3 eta) x g - (4 + 2 eta) g + 2PN terms (from pnPair at rdot = 0)
+            let x = 1;
+            for (let k = 0; k < 60; k++) {
+                x = 1 + (1 + 3 * eta) * x * g - (4 + 2 * eta) * g
+                    + g * g * ((3 * eta - 4 * eta * eta) * x * x + (2 * eta * eta - 6.5 * eta) * x + 9 + 21.75 * eta);
+            }
+            const w = Math.sqrt((x * gm) / (r * r * r));
+            const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
+            return {
+                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
+                tip: 'Realistic physics (in the settings) is on: gravitational waves carry off energy, so the black holes spiral together and merge.',
+                bodies: [
+                    { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
+                    { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
+                ]
+            };
+        })(),
         empty: {
             units: 'au', Tref: 1, subject: 0, vref: TAU, box: [-1.5, 1.5, -1.5, 1.5],
             bodies: [{ kind: 'sun' }]
@@ -566,7 +608,9 @@
     // degrees per orbit close to a neutron star or black hole. Pairs for which both GM/(rc^2) and v^2/c^2
     // are under PN_SKIP (a billionth: Earth and a moonlet, two asteroids) skip it: it would turn their
     // orbits by a few billionths of a radian per turn. The 1PN part is kept apart, so the second kick
-    // (velocities changed, positions not) only works out again the pairs where it matters.
+    // (velocities changed, positions not) only works out again the pairs where it matters. Compact, close
+    // pairs (GM/(rc^2) over RR_MIN) also get the 2PN terms and radiation reaction there: see "Relativity:
+    // orbits that turn, and gravitational waves" (after the tidal break-ups).
     //
     // The sums run on packed copies of the bodies' numbers (one Float64Array per quantity, kept from one
     // step to the next), which a browser works through far faster than the bodies' own objects; the
@@ -671,8 +715,22 @@
         const vx = SVX[i] - SVX[j], vy = SVY[i] - SVY[j];
         const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy;
         const f = gm / (C2 * r2);
-        const A = f * ((4 + 2 * eta) * gm / r - (1 + 3 * eta) * v2 + 1.5 * eta * rd * rd);
-        const B = f * (4 - 2 * eta) * rd;
+        let A = f * ((4 + 2 * eta) * gm / r - (1 + 3 * eta) * v2 + 1.5 * eta * rd * rd);
+        let B = f * (4 - 2 * eta) * rd;
+        // Compact, close pairs (GM/(rc^2) over RR_MIN) also get the 2PN terms and radiation reaction (2.5PN,
+        // the energy gravitational waves carry off): see "Relativity: orbits that turn, and gravitational waves".
+        if (gm > RR_MIN_C2 * r) {
+            rrSeen++;
+            const gr = gm / r, rd2 = rd * rd, e2 = eta * eta, h = f / C2;
+            A -= h * (rd2 * rd2 * (1.875 * eta - 5.625 * e2) + rd2 * v2 * (6 * e2 - 4.5 * eta) + v2 * v2 * (3 * eta - 4 * e2)
+                + gr * (-rd2 * (2 + 25 * eta + 2 * e2) + v2 * (2 * e2 - 6.5 * eta)) + gr * gr * (9 + 21.75 * eta));
+            B -= h * rd * (rd2 * (4.5 * eta + 3 * e2) - v2 * (7.5 * eta + 2 * e2) + gr * (2 + 20.5 * eta + 4 * e2));
+            if (gwOn) {
+                const k = 1.6 * eta * gm * gm / (C5 * r2 * r);
+                A += k * (18 * v2 + (2 / 3) * gr - 25 * rd2) * rd;
+                B -= k * (6 * v2 - 2 * gr - 15 * rd2);
+            }
+        }
         const ax = A * nx + B * vx, ay = A * ny + B * vy;
         PAX[i] += (mj / msum) * ax; PAY[i] += (mj / msum) * ay;
         PAX[j] -= (mi / msum) * ax; PAY[j] -= (mi / msum) * ay;
@@ -1385,6 +1443,598 @@
         if (b.kind === 'blackhole') b.R = horizonKm(b.m);
     }
 
+    // ------------------------------------------------------------------
+    // Relativity: orbits that turn, and gravitational waves (realistic physics)
+    //
+    // Gravitational waves. Two compact bodies close together (GM/(rc^2) over RR_MIN, which in practice
+    // means a white dwarf, neutron star or black hole within a few hundred thousand of its own size) lose
+    // orbital energy to gravitational waves. Their relative motion gets the leading radiation-reaction
+    // acceleration (2.5PN, a factor (v/c)^5 smaller than Newton's pull), added in pnPair beside the 1PN
+    // terms, in the same harmonic coordinates (Damour & Deruelle 1981; Iyer & Will 1993, PRL 70, 113,
+    // with their gauge constants alpha = 4, beta = 5):
+    //   a_RR = (8/5) eta (GM)^2/(c^5 r^3) { (18 v^2 + (2/3) GM/r - 25 rdot^2) rdot n
+    //                                       - (6 v^2 - 2 GM/r - 15 rdot^2) v }
+    // (M, eta, n, v, rdot as for 1PN). Averaged over an orbit it takes away exactly the energy and angular
+    // momentum of the quadrupole formula, so an orbit shrinks and becomes rounder as Peters (1964) found,
+    // and a circular one of radius a lasts t = (5/256) c^5 a^4 / (G^3 m1 m2 (m1 + m2)) before the two meet.
+    // (From moment to moment it differs from the quadrupole formula's rate by the change of a small
+    // "Schott" term, so round an eccentric orbit the rate swings, even below zero for a moment.)
+    // The force depends on the velocities, like the 1PN one, so it is part of the second kick done twice.
+    //
+    // The 2PN terms. These pairs get the next conservative terms too (Blanchet 2014, Living Rev. Relativ.
+    // 17, 2, eq. 219, harmonic coordinates; a = -(GM/r^2)[(1 + A) n + B v] with
+    //   c^4 A_2PN = (15/8) eta (1 - 3 eta) rdot^4 - (3/2) eta (3 - 4 eta) rdot^2 v^2 + eta (3 - 4 eta) v^4
+    //             - (GM/r) [(2 + 25 eta + 2 eta^2) rdot^2 + (13/2 - 2 eta) eta v^2] + (GM/r)^2 (9 + 87 eta / 4)
+    //   c^4 B_2PN = (3/2) eta (3 + 2 eta) rdot^3 - (1/2) eta (15 + 4 eta) rdot v^2 + (GM/r) (2 + 41 eta/2 + 4 eta^2) rdot),
+    // and their energy (energy2PN). Without them the late inspiral goes wrong: with the 1PN terms alone,
+    // which hold only while GM/(rc^2) is small, a pair 10 GM/c^2 apart takes 3.6 times Peters' time to
+    // close in, and its energy drifts from total + carried off by 50 GM/(rc^2)^2 of what it radiates
+    // (15% by 10 GM/c^2); and a body dropped straight onto a black hole even bounces back. With them, the
+    // drift falls to 1-2% at 10 GM/c^2, and a circular inspiral takes 0.995 of Peters' time from 100 GM/c^2
+    // apart, 0.98 from 50 and 0.94 from 30 (higher-order terms, left out, would add a few per cent back).
+    // (Checked: the energy is what the 2PN motion keeps constant, to order GM/(rc^2)^3.)
+    //
+    // The plunge. RR_MIN is far above PN_PAIR_MAX, so these pairs are never left to the two-body (Kepler)
+    // drift; their step follows the shrinking orbit (it scales with the pair's free-fall time). At their
+    // innermost stable orbit they plunge together and merge (see plunge), keeping momentum.
+    //
+    // The energy carried off is the work the radiation reaction does on the system's energy (with its
+    // 1PN and 2PN terms, as systemEnergy counts it), added up step by step (trapezium rule): total +
+    // carried off stays level, to within the size of the terms left out (a few per cent in the last
+    // orbits before a plunge).
+    //
+    // Orbits that turn. Relativity turns an orbit's closest point forward by 6 pi G(M + m)/(c^2 a (1 - e^2))
+    // each time round (Einstein 1915), the other planets' pulls turn it too. For the chosen body, the
+    // moment of its closest approach to what it orbits is found each time round (where r.v changes sign,
+    // on the cubic through the positions and velocities at the ends of that step), and its direction is
+    // that of the Runge-Lenz vector, the closest point of the osculating ellipse, at that moment
+    // (interpolated between the step's ends: a Kepler orbit keeps it exactly, so the steps don't show).
+    // The turn between one passage and the next is compared with Einstein's value for that orbit (with
+    // a (1 - e^2) = 2 r_min r_max / (r_min + r_max) from its measured closest and farthest distances).
+    // When other bodies' pulls on it could matter (their tides add up to more than a fifth of
+    // GM/(pc^2)), the measured turn is a straight-line fit over every orbit since it started, and
+    // Einstein's share is shown beside it. (Close to a black hole the measured turn is a few per cent more
+    // than Einstein's formula: the 2PN terms' share, as GR predicts: Damour & Schäfer 1988.)
+    // ------------------------------------------------------------------
+    const RR_MIN = 1e-5;
+    const RR_MIN_C2 = RR_MIN * C2;
+    const C5 = C2 * C2 * C_LIGHT;
+    const PREC_E_MIN = 0.02;              // a rounder orbit has no clear closest point to follow
+    const WAVE_N = 480;                   // samples in the wave sketch
+    let gwOn = true;                      // (tests can turn the waves off)
+    let rrSeen = 0;                       // radiation-reaction pairs met in force evaluations since the last step
+    let relSteps = 0;                     // steps since the scene loaded (trackers must see every one)
+    const gw = {
+        radiated: 0,                      // energy carried off by gravitational waves (M_sun AU^2 / yr^2)
+        power: 0,                         // ...the rate at the end of the last step
+        a: null, b: null,                 // the pair radiating most (b the lighter)
+        merged: null,                     // { t, id, m, m1, m2 } after two compact bodies merged
+        wave: new Float64Array(WAVE_N), waveT: 0, waveN: 0, waveDt: 0, frozen: false,
+        ring: null                        // ringing of a new black hole: { t0, A, w, tau }
+    };
+    const watched = new Map();            // trackers of orbits: "bodyId:primaryId" -> tracker
+    const apiWatch = new Set();           // bodies the test API asked about
+
+    // Radiation reaction of a pair as the energy it carries off per unit time (0 if not a compact, close
+    // pair): minus the work rate of a_RR on the pair's energy, mu a_RR . dE/dv, where
+    // dE/dv = v (1 + (3/2)(1 - 3 eta) v^2/c^2 + (3 + eta) GM/(rc^2)) + eta GM/(rc^2) rdot n, plus the 2PN
+    // terms' (from the energy in systemEnergy). Also sets RR_X, RR_Y, RR_VX, RR_VY: the relative position
+    // and velocity.
+    let RR_X = 0, RR_Y = 0, RR_VX = 0, RR_VY = 0;
+    function radiationPower(i, j) {
+        const dx = j.x - i.x, dy = j.y - i.y;
+        const r2 = dx * dx + dy * dy, r = Math.sqrt(r2);
+        const msum = i.m + j.m, gm = G * msum;
+        RR_X = -dx; RR_Y = -dy; RR_VX = i.vx - j.vx; RR_VY = i.vy - j.vy;
+        if (!(r > 0) || !(gm > RR_MIN_C2 * r)) return 0;
+        const eta = (i.m * j.m) / (msum * msum), mu = eta * msum;
+        const nx = -dx / r, ny = -dy / r, vx = RR_VX, vy = RR_VY;
+        const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy, gr = gm / r;
+        const k = 1.6 * eta * gm * gm / (C5 * r2 * r);
+        const A = k * (18 * v2 + (2 / 3) * gr - 25 * rd * rd) * rd, B = -k * (6 * v2 - 2 * gr - 15 * rd * rd);
+        const av = A * rd + B * v2, an = A + B * rd;
+        const e2 = energy2PN(v2, rd, gr, eta);
+        const dv2 = 0.5 + 0.75 * (1 - 3 * eta) * v2 / C2 + 0.5 * (3 + eta) * gr / C2 + e2.dv2;
+        const drd = eta * gr * rd / C2 + e2.drd;
+        return -mu * (2 * dv2 * av + drd * an);
+    }
+
+    // The 2PN terms of a pair's energy per unit reduced mass (harmonic coordinates; Blanchet 2014, Living
+    // Rev. Relativ. 17, 2, eq. 233): k, the v^6 term, and p, the rest, with their slopes dE/d(v^2) (dv2) and
+    // dE/d(rdot) (drd). (Checked: they are what the 2PN motion in pnPair keeps constant.)
+    const E2PN = { k: 0, p: 0, dv2: 0, drd: 0 };
+    function energy2PN(v2, rd, gr, eta) {
+        const e2 = eta * eta, rd2 = rd * rd, c4 = C2 * C2;
+        const a6 = (5 - 35 * eta + 65 * e2) / 16;
+        const b4 = (21 - 23 * eta - 27 * e2) / 8, b2 = 0.25 * eta * (1 - 15 * eta), b0 = -0.375 * eta * (1 - 3 * eta);
+        const q2 = 1.75 - 6.875 * eta + 0.5 * e2, q0 = 0.5 + 8.625 * eta + 1.5 * e2, q = -0.5 - 3.75 * eta;
+        E2PN.k = (a6 * v2 * v2 * v2) / c4;
+        E2PN.p = (gr * (b4 * v2 * v2 + b2 * v2 * rd2 + b0 * rd2 * rd2) + gr * gr * (q2 * v2 + q0 * rd2) + q * gr * gr * gr) / c4;
+        E2PN.dv2 = (3 * a6 * v2 * v2 + gr * (2 * b4 * v2 + b2 * rd2) + gr * gr * q2) / c4;
+        E2PN.drd = (gr * (2 * b2 * v2 * rd + 4 * b0 * rd2 * rd) + 2 * gr * gr * q0 * rd) / c4;
+        return E2PN;
+    }
+
+    // Sum the power of the pairs given radiation reaction in the last force evaluation of the bodies
+    // (the 1PN pairs, re-tested), and note the strongest pair. A pair inside its innermost stable orbit
+    // plunges (and the sum stops there: the bodies have changed).
+    function totalRadiationPower() {
+        gw.found = false;
+        if (pnList !== bodies || pnN !== bodies.length) return 0;
+        let P = 0, best = 0;
+        for (let q = 0; q < pnCount; q++) {
+            const i = bodies[PNI[q]], j = bodies[PNJ[q]];
+            if (!i || !j) continue;
+            if (G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && plunge(i, j)) return P;
+            const p = gwOn ? radiationPower(i, j) : 0;
+            if (!p) continue;
+            P += p;
+            // (the rate swings round an eccentric orbit, even below zero for a moment: in these
+            // coordinates the waves' energy is only carried off at the quadrupole formula's rate on average)
+            if (Math.abs(p) > best) { best = Math.abs(p); gw.a = i.m >= j.m ? i : j; gw.b = gw.a === i ? j : i; gw.mSum = i.m + j.m; gw.found = true; }
+        }
+        return P;
+    }
+
+    // The innermost stable orbit. Closer than about 6 GM/c^2 (for a small body round a black hole of
+    // mass M exactly that, in Schwarzschild's coordinates; much the same for two equal masses), no orbit
+    // lasts: the two plunge together within an orbit, which the 1PN terms can't follow (pushed that far,
+    // they even turn gravity round: a body dropped straight onto a black hole would bounce back). So a
+    // pair (two compact bodies, as nothing else gets that close) merges there, through mergeBodies (mass
+    // and momentum kept). Two black holes make one a little lighter than the two: what the final plunge
+    // and ringing radiate, from the fit E/(Mc^2) = (1 - sqrt(8/9)) eta + 4 eta^2 (4 p0 + sqrt(8/9) - 1),
+    // p0 = 0.04827, to numerical-relativity mergers of black holes without spin (Barausse, Morozova &
+    // Rezzolla 2012, ApJ 758, 63): 4.8% of the mass for two equal ones, 36 + 29 -> 62 solar masses, as LIGO
+    // measured. The final burst carries off that energy less what the pair had already given up (its
+    // orbital energy): it is added to the energy carried off, and the rest of the change in the books (the
+    // orbit's energy taken into the new hole) is kept, like a tidal break-up's, so the total stays level.
+    const ISCO = 6;
+    const ISCO_C2 = C2 / ISCO;
+    function plunge(i, j) {
+        if (!settings.merge || i.held || j.held) return false;
+        const bothHoles = i.kind === 'blackhole' && j.kind === 'blackhole';
+        const M = i.m + j.m, eta = (i.m * j.m) / (M * M);
+        const eFit = bothHoles ? ((1 - Math.sqrt(8 / 9)) * eta + 4 * eta * eta * (4 * 0.04827 + Math.sqrt(8 / 9) - 1)) * M * C2 : 0;
+        const burst = bothHoles ? Math.max(0, eFit + pairEnergy(i, j)) : 0;
+        const before = systemEnergy().total;
+        const n = bodies.length, mi = i.m, mj = j.m;
+        mergeBodies(i, j);
+        const big = bodies.includes(i) ? i : j;
+        if (bodies.length === n) return false;
+        if (bothHoles) { big.m = M - eFit / C2; collapseIfTooHeavy(big); }
+        noteMerger(big, mi, mj);
+        gw.radiated += burst;
+        groupEnergy.set(`plunge ${big.id} ${simTime}`, systemEnergy().total - before + burst);
+        computeForces();
+        refreshBodyLists();
+        return true;
+    }
+
+    // A pair's own energy, with its 1PN terms (as in systemEnergy)
+    function pairEnergy(i, j) {
+        const M = i.m + j.m, mu = (i.m * j.m) / M, eta = mu / M, gm = G * M;
+        const rx = i.x - j.x, ry = i.y - j.y, r = Math.hypot(rx, ry);
+        const vx = i.vx - j.vx, vy = i.vy - j.vy, v2 = vx * vx + vy * vy, rd = (rx * vx + ry * vy) / r;
+        const e2 = gm > RR_MIN_C2 * r ? energy2PN(v2, rd, gm / r, eta) : null;
+        return 0.5 * mu * v2 - (G * i.m * j.m) / r
+            + (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2 + (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r)
+            + (e2 ? mu * (e2.k + e2.p) : 0);
+    }
+
+    // After each step: the energy carried off (trapezium rule over the step), the orbits being watched,
+    // a merger of the radiating pair, and the wave sketch
+    function relativityStep(dt) {
+        relSteps++;
+        const pair = gw.a && gw.b ? [gw.a, gw.b] : null;
+        let P = 0;
+        gw.found = false;
+        if (rrSeen && settings.realistic) { rrSeen = 0; P = totalRadiationPower(); }
+        gw.radiated += 0.5 * (gw.power + P) * dt;
+        gw.power = P;
+        if (pair && !gw.found && !(gw.merged && gw.merged.t === simTime)) checkPairMerged(pair[0], pair[1]);
+        if (!gw.found) gw.a = gw.b = null;
+        const b = bodyById(selectedId);
+        if (b && b.primary && b.bound && !b.held && !b.primary.held) watchStep(b, b.primary);
+        if (gw.a && !(b && ((b === gw.b && b.primary === gw.a) || (b === gw.a && b.primary === gw.b)))) watchStep(gw.b, gw.a);
+        for (const id of apiWatch) {
+            const q = bodyById(id);
+            if (q && q !== b && q.primary && q.bound) watchStep(q, q.primary);
+        }
+        sampleWave();
+    }
+
+    // A tracker follows body b relative to p: its turns (for the period and the shrinking of the orbit)
+    // and its closest points (for the turning of the orbit)
+    function newTracker(b, p) {
+        return {
+            bid: b.id, pid: p.id, ref: b.track, n: relSteps,
+            x: 0, y: 0, vx: 0, vy: 0, rd: 0, phi: 0,
+            theta: 0, tTurn: simTime, rmin: Infinity, rmax: 0, turns: [],   // turns: { t, a, T } (the last few)
+            peri: null, apo: 0, sense: 0,
+            orbits: [],                                                     // { dw, dwE, T, e, p } (the last few)
+            n0: 0, W: 0, t0: 0, sT: 0, sW: 0, sTT: 0, sTW: 0, sumE: 0, sumT: 0, others: false
+        };
+    }
+
+    function watchStep(b, p) {
+        const key = `${b.id}:${p.id}`;
+        let tr = watched.get(key);
+        const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy;
+        const rd = rx * vx + ry * vy, r = Math.hypot(rx, ry), phi = Math.atan2(ry, rx);
+        if (!tr || tr.n !== relSteps - 1 || tr.ref !== b.track) {
+            // new, or it missed steps, or the body was changed: start again
+            if (watched.size > 8) watched.clear();
+            tr = newTracker(b, p);
+            watched.set(key, tr);
+        } else {
+            const t = simTime, h = t - tr.t;
+            // Turns: the angle swept round p
+            let d = phi - tr.phi;
+            if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU;
+            const prev = Math.abs(tr.theta);
+            tr.theta += d;
+            if (r < tr.rmin) tr.rmin = r;
+            if (r > tr.rmax) tr.rmax = r;
+            const now = Math.abs(tr.theta);
+            if (now >= TAU) {
+                const tc = tr.t + (now > prev ? (TAU - prev) / (now - prev) : 1) * h;
+                tr.turns.push({ t: tc, a: 0.5 * (tr.rmin + tr.rmax), T: tc - tr.tTurn });
+                if (tr.turns.length > 6) tr.turns.shift();
+                tr.tTurn = tc;
+                tr.theta -= Math.sign(tr.theta) * TAU;
+                tr.rmin = tr.rmax = r;
+            }
+            // Closest point: r.v goes from negative to positive. Its direction is that of the osculating
+            // ellipse's closest point (the Runge-Lenz vector), which a Kepler orbit keeps exactly and
+            // relativity turns smoothly, taken at the moment r.v = 0 between the ends of the step.
+            if (tr.rd < 0 && rd >= 0 && h > 0) {
+                const s = hermitePeri(tr.x, tr.y, tr.vx, tr.vy, rx, ry, vx, vy, h);
+                const rp = Math.hypot(HX, HY), mu = G * (b.m + p.m);
+                const w0 = lenzAngle(tr.x, tr.y, tr.vx, tr.vy, mu), w1 = lenzAngle(rx, ry, vx, vy, mu);
+                let dw = w1 - w0;
+                dw -= TAU * Math.round(dw / TAU);
+                notePericentre(tr, b, p, tr.t + s * h, w0 + s * dw, rp, rx * vy - ry * vx);
+            }
+            if (r > tr.apo) tr.apo = r;
+        }
+        tr.n = relSteps; tr.ref = b.track; tr.t = simTime;
+        tr.x = rx; tr.y = ry; tr.vx = vx; tr.vy = vy; tr.rd = rd; tr.phi = phi;
+    }
+
+    // Direction of the Runge-Lenz vector ((v^2 - mu/r) r - (r.v) v) / mu of a relative state
+    function lenzAngle(rx, ry, vx, vy, mu) {
+        const k = vx * vx + vy * vy - mu / Math.hypot(rx, ry), rv = rx * vx + ry * vy;
+        return Math.atan2(k * ry - rv * vy, k * rx - rv * vx);
+    }
+
+    // Where r.v = 0 on the cubic (Hermite) path between relative states (x0, y0, vx0, vy0) and
+    // (x1, y1, vx1, vy1) a time h apart: returns the fraction s of the step, the position in HX, HY
+    let HX = 0, HY = 0;
+    function hermitePeri(x0, y0, vx0, vy0, x1, y1, vx1, vy1, h) {
+        const at = (s) => {
+            const s2 = s * s, s3 = s2 * s;
+            const h00 = 2 * s3 - 3 * s2 + 1, h10 = (s3 - 2 * s2 + s) * h, h01 = 3 * s2 - 2 * s3, h11 = (s3 - s2) * h;
+            const d00 = 6 * s2 - 6 * s, d10 = (3 * s2 - 4 * s + 1) * h, d01 = 6 * s - 6 * s2, d11 = (3 * s2 - 2 * s) * h;
+            HX = h00 * x0 + h10 * vx0 + h01 * x1 + h11 * vx1;
+            HY = h00 * y0 + h10 * vy0 + h01 * y1 + h11 * vy1;
+            return HX * (d00 * x0 + d10 * vx0 + d01 * x1 + d11 * vx1) + HY * (d00 * y0 + d10 * vy0 + d01 * y1 + d11 * vy1);
+        };
+        let lo = 0, hi = 1;
+        for (let k = 0; k < 48; k++) {
+            const mid = 0.5 * (lo + hi);
+            if (at(mid) < 0) lo = mid; else hi = mid;
+        }
+        const s = 0.5 * (lo + hi);
+        at(s);
+        return s;
+    }
+
+    // A closest point passed at time t, in direction w, at distance rp (hh: the sign of the way round)
+    function notePericentre(tr, b, p, t, w, rp, hh) {
+        const last = tr.peri;
+        tr.peri = { t, w, rp };
+        const apo = tr.apo;
+        tr.apo = rp;
+        if (!last) return;
+        const sense = hh < 0 ? -1 : 1;
+        let dw = w - last.w;
+        dw -= TAU * Math.round(dw / TAU);
+        dw *= sense;
+        const T = t - last.t;
+        const rmin = 0.5 * (rp + last.rp), rmax = Math.max(apo, rmin);
+        const pp = (2 * rmin * rmax) / (rmin + rmax), e = (rmax - rmin) / (rmax + rmin);
+        const dwE = (6 * Math.PI * G * (b.m + p.m)) / (C2 * pp);
+        tr.orbits.push({ dw, dwE, T, e, p: pp, a: 0.5 * (rmin + rmax), t });
+        if (tr.orbits.length > 8) tr.orbits.shift();
+        // Running sums for the straight-line fit of the total turn against time, and Einstein's share
+        if (!tr.n0) { tr.t0 = last.t; tr.sT = 0; tr.sW = 0; tr.sTT = 0; tr.sTW = 0; tr.n0 = 1; tr.W = 0; }
+        tr.W += dw;
+        const x = t - tr.t0;
+        tr.n0++; tr.sT += x; tr.sW += tr.W; tr.sTT += x * x; tr.sTW += x * tr.W;
+        tr.sumE += dwE; tr.sumT += T;
+        tr.others = othersPull(b, p, pp);
+    }
+
+    // Could other bodies' pulls turn this orbit as much as a fifth of relativity does? Their tides on it,
+    // sum of (m/M)(r/d)^3 over bodies farther out than it (d from what it orbits) and (m/M)(d/r)^2 over
+    // those closer in, against GM/(pc^2) (their turn per orbit is about (3 pi / 2) times the first,
+    // Einstein's 6 pi times the second)
+    function othersPull(b, p, pp) {
+        const M = b.m + p.m, r = Math.hypot(b.x - p.x, b.y - p.y);
+        let tau = 0;
+        for (const q of bodies) {
+            if (q === b || q === p || !(q.m > 0)) continue;
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            tau += d > r ? (q.m / M) * Math.pow(r / d, 3) : (q.m / M) * Math.pow(d / r, 2);
+        }
+        return tau > 0.2 * G * M / (C2 * pp);
+    }
+
+    // Did the radiating pair touch and merge in the last step (one of them gone, the other with both
+    // masses)? (A plunge notes its merger itself.)
+    function checkPairMerged(a, b) {
+        const gone = !bodies.includes(a) ? a : !bodies.includes(b) ? b : null;
+        const big = gone === a ? b : a;
+        if (gone && bodies.includes(big) && Math.abs(big.m - gw.mSum) <= 1e-9 * big.m) noteMerger(big, gone.m, gw.mSum - gone.m);
+    }
+
+    // Two compact bodies (masses m1, m2) merged into big
+    function noteMerger(big, m1, m2) {
+        gw.merged = { t: simTime, id: big.id, m: big.m, m1: Math.max(m1, m2), m2: Math.min(m1, m2) };
+        // (said in the hint line too, which screen readers announce)
+        const kind = big.kind === 'blackhole' ? 'black hole' : big.kind === 'neutron' ? 'neutron star' : 'body';
+        const lost = m1 + m2 - big.m;
+        setHint(null, `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`);
+        // A black hole rings as it settles, at the frequency and damping of its main (l = m = 2) mode:
+        // omega = 0.3737 c^3/(GM), damping time GM/(0.0890 c^3) (Berti, Cardoso & Will 2006)
+        if (big.kind === 'blackhole') {
+            const tM = (G * big.m) / (C2 * C_LIGHT);
+            let A = 0;
+            for (let k = 1; k <= 24 && k <= gw.waveN; k++) A = Math.max(A, Math.abs(gw.wave[(gw.waveN - k) % WAVE_N]));
+            gw.ring = { t0: simTime, A, w: 0.3737 / tM, tau: tM / 0.089 };
+        } else {
+            gw.frozen = true;   // (the chirp stays in view)
+        }
+    }
+
+    // The wave as seen from above the orbit: h+ is proportional to the second time derivative of the
+    // pair's quadrupole moment, mu d^2(x^2 - y^2)/dt^2 / 2 = mu (vx^2 - vy^2 - GM (x^2 - y^2)/r^3) (relative
+    // position and velocity; for a circular orbit, proportional to (G M omega)^(2/3) cos 2 phi). Sampled
+    // WAVE_N times in 2.5 of the scene's reference periods; after a merger, the new black hole's ringing,
+    // then it stops (the chirp stays in view).
+    function sampleWave() {
+        if (gw.frozen && gw.a) { gw.frozen = false; gw.waveN = 0; gw.ring = null; }   // (a new pair)
+        if (gw.frozen) return;
+        if (!gw.waveDt) gw.waveDt = (2.5 * scene.Tref) / WAVE_N;
+        if (!gw.a && !gw.ring && !gw.waveN) { gw.waveT = simTime; return; }
+        while (gw.waveT + gw.waveDt <= simTime) {
+            gw.waveT += gw.waveDt;
+            let h = 0;
+            if (gw.a && gw.b) {
+                radiationPower(gw.b, gw.a);
+                const x = RR_X, y = RR_Y, r2 = x * x + y * y, r = Math.sqrt(r2);
+                const mu = (gw.a.m * gw.b.m) / (gw.a.m + gw.b.m);
+                h = mu * (RR_VX * RR_VX - RR_VY * RR_VY - (G * (gw.a.m + gw.b.m) * (x * x - y * y)) / (r2 * r));
+            } else if (gw.ring) {
+                const s = gw.waveT - gw.ring.t0;
+                h = gw.ring.A * Math.exp(-s / gw.ring.tau) * Math.cos(gw.ring.w * s);
+                if (s > 12 * gw.ring.tau) { gw.ring = null; gw.frozen = true; }
+            }
+            gw.wave[gw.waveN % WAVE_N] = h;
+            gw.waveN++;
+        }
+    }
+
+    // The tracker following either body of a pair round the other, if any
+    function pairTracker(a, b) {
+        return watched.get(`${b.id}:${a.id}`) || watched.get(`${a.id}:${b.id}`) || null;
+    }
+
+    function resetRelativity() {
+        gw.radiated = 0; gw.power = 0; gw.a = gw.b = null; gw.merged = null; gw.ring = null;
+        gw.waveN = 0; gw.waveDt = 0; gw.frozen = false;
+        rrSeen = 0;
+        watched.clear();
+    }
+
+    // A scene can switch realistic physics on (one about relativity)
+    function relativitySceneLoaded(def) {
+        resetRelativity();
+        apiWatch.clear();
+        if (def.realistic && !settings.realistic) {
+            settings.realistic = true;
+            if (ui.realistic) ui.realistic.checked = true;
+            forcesDirty = true;
+        }
+    }
+
+    // The precession of body b's orbit as measured so far: per orbit (radians) and per year, with
+    // Einstein's value for the same orbits, or null before the first full orbit
+    function precessionOf(b) {
+        const p = b && b.primary;
+        if (!p) return null;
+        const tr = watched.get(`${b.id}:${p.id}`);
+        if (!tr || !tr.orbits.length) return { orbits: 0, tracker: tr || null };
+        const last = tr.orbits[tr.orbits.length - 1];
+        const n = tr.n0;
+        // Straight-line fit of the total turn against time (rad / yr) once there are three passages
+        let rate = last.dw / last.T;
+        if (n >= 3) {
+            const den = n * tr.sTT - tr.sT * tr.sT;
+            if (den > 0) rate = (n * tr.sTW - tr.sT * tr.sW) / den;
+        }
+        const rateE = tr.sumE / tr.sumT;
+        return {
+            orbits: tr.orbits.length ? n - 1 : 0, last, others: tr.others, round: last.e < PREC_E_MIN,
+            perOrbit: tr.others ? rate * last.T : last.dw, einstein: tr.others ? rateE * last.T : last.dwE,
+            rate, rateE, T: last.T, tracker: tr
+        };
+    }
+
+    // ---- The relativity card (top right, with realistic physics, only when there is something to show) ----
+    // The turning of the chosen body's orbit, when it is elliptical enough to have a clear closest point;
+    // and the gravitational waves of the pair radiating most, when they shrink its orbit noticeably (by at
+    // least a hundred-thousandth a turn), with a sketch of the wave: a chirp that rises in pitch and
+    // strength as the pair closes in, and the ringing of the new black hole after they merge.
+    function fmtTurn(rad, perCentury) {
+        const deg = (rad * 180) / Math.PI;
+        if (!perCentury && Math.abs(deg) >= 0.1) return `${Math.abs(deg) >= 10 ? deg.toFixed(1) : deg.toFixed(2)}°`;
+        return `${fmtSig(deg * 3600)}″`;
+    }
+
+    function precessionLines(b, compact, title, C) {
+        if (!orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
+        const p = b.primary, el = elementsOf(b, p);
+        if (!el || !el.bound) return null;
+        const r = precessionOf(b);
+        // Round orbits have no clear closest point. (Until one is measured, the osculating e, which for a
+        // round orbit this close to a black hole is about 3 GM/(rc^2), not 0)
+        if (r && r.orbits > 0 ? r.round : el.e < PREC_E_MIN + (4 * G * (b.m + p.m)) / (C2 * el.r)) return null;
+        const done = r && r.orbits > 0;
+        const eNow = (6 * Math.PI * G * (b.m + p.m)) / (C2 * el.p);
+        const T = done ? r.T : el.T;
+        const big = Math.max(Math.abs(done ? r.perOrbit : 0), eNow) >= 0.1 * Math.PI / 180;
+        const century = !big && T * DAYS_PER_YEAR >= 1;
+        // Per orbit (degrees, or arcseconds), or per century (arcseconds) for slow, small turns
+        const say = (perOrbit, rate, unit) => (century ? `${fmtTurn(rate * 100, true)}${unit ? ' a century' : ''}`
+            : `${fmtTurn(perOrbit)}${unit ? (compact ? ' a turn' : ' each time round') : ''}`);
+        const lines = [];
+        if (!done) {
+            const tr = r && r.tracker;
+            const f = tr && tr.peri ? clamp((simTime - tr.peri.t) / T, 0, 0.99) : 0;
+            const wait = `measuring… ${Math.round(100 * f)}%`;
+            if (compact) return [[title('Orbit turns: '), [`${wait} · Einstein ${say(eNow, eNow / T, false)}`]]];
+            return [[title('The orbit turns (precession)')], [[`Measured: ${wait}`]], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
+        }
+        const einstein = say(r.einstein, r.others ? r.rateE : r.einstein / r.T, false);
+        const measured = say(r.perOrbit, r.rate, true);
+        if (compact) return [[title('Orbit turns: '), [`${measured}${r.others ? ', Einstein\'s ' : ' · Einstein '}${einstein}`]]];
+        lines.push([title('The orbit turns (precession)')]);
+        lines.push([[`Measured: ${measured}`]]);
+        lines.push([[`${r.others ? 'Einstein\'s share' : 'Einstein'}: ${einstein}`]]);
+        if (r.others) lines.push([['The rest: other bodies\' pulls', false, C.subtle]]);
+        else if (century) lines.push([[`(${fmtTurn(r.perOrbit, true)} each time round)`, false, C.subtle]]);
+        else if (Math.abs(r.perOrbit / r.einstein - 1) > 0.02 && G * (b.m + p.m) / (C2 * r.last.p) > 1e-3) {
+            lines.push([['The gap: relativity\'s next terms, strong this close', false, C.subtle]]);
+        }
+        return lines;
+    }
+
+    // The gravitational-wave lines: { lines, wave } or null
+    function waveLines(b, compact, title, C) {
+        const merged = gw.merged && bodyById(gw.merged.id);
+        if (!gw.a && !merged) return null;
+        const lines = [];
+        if (!gw.a) {
+            const kind = merged.kind === 'blackhole' ? 'black hole' : merged.kind === 'neutron' ? 'neutron star' : 'body';
+            const lost = gw.merged.m1 + gw.merged.m2 - merged.m;
+            if (compact) lines.push([title('Merged: '), [`one ${kind} of ${fmtMass(merged.m)}`]]);
+            else lines.push([title('Gravitational waves')], [[`Merged: one ${kind} of ${fmtMass(merged.m)}`]]);
+            if (lost > 0) lines.push([[`${fmtMass(lost)} of mass went into waves`]]);
+            return { lines, wave: gw.waveN > 1 };
+        }
+        const a = gw.a, c = gw.b;
+        const rx = c.x - a.x, ry = c.y - a.y, vx = c.vx - a.vx, vy = c.vy - a.vy, r = Math.hypot(rx, ry);
+        const tr = pairTracker(a, c);
+        const ecc = tr && tr.orbits.length && tr.orbits[tr.orbits.length - 1].e >= 0.1;
+        // Period: the last radial period of an eccentric orbit, otherwise the turning rate now
+        const T = ecc ? tr.orbits[tr.orbits.length - 1].T : (TAU * r * r) / Math.abs(rx * vy - ry * vx);
+        // Shown only if the waves shrink the orbit noticeably: Peters' average rate of energy loss over a
+        // turn against the orbit's energy, (128 pi / 5) eta (GM/(c^2 a))^(5/2) f(e), at least 1e-5
+        const el = relElements(rx, ry, vx, vy, G * (a.m + c.m));
+        const e2 = el.bound ? el.e * el.e : 0, M = a.m + c.m;
+        const fe = (1 + (73 / 24) * e2 + (37 / 96) * e2 * e2) / Math.pow(1 - Math.min(e2, 0.99), 3.5);
+        if (el.bound && (128 * Math.PI / 5) * (a.m * c.m / (M * M)) * Math.pow(G * M / (C2 * el.a), 2.5) * fe < 1e-5) return null;
+        let shrink = null;
+        if (tr) {
+            const list = ecc && tr.orbits.length >= 2 ? tr.orbits : !ecc && tr.turns.length >= 2 ? tr.turns : null;
+            if (list) shrink = (list[list.length - 2].a - list[list.length - 1].a) * AU_KM;
+        }
+        const km = shrink === null ? 'measuring…' : shrink >= 1 ? `${fmtKm(shrink)} km` : `${fmtSig(shrink * 1000)} m`;
+        const freq = `${fmtSig(2 / (T * YEAR_S))} Hz`;   // (twice a turn)
+        const mine = b === a || b === c;
+        if (compact) {
+            lines.push([title('Waves: '), [shrink === null ? `${freq}, orbit shrinking` : `${freq}, orbit shrinks ${km} a turn`]]);
+        } else {
+            lines.push([title(mine ? 'Gravitational waves' : `Gravitational waves: ${a.name} and ${c.name}`)]);
+            lines.push([[`Orbit shrinks ${km}${shrink === null ? '' : ' each time round'}`]]);
+            lines.push([[`Period ${fmtDuration(T, true)} · waves ${freq}`]]);
+        }
+        return { lines, wave: gw.waveN > 1 };
+    }
+
+    function drawRelativityCard(C, subj, y, fs, compact) {
+        if (!settings.realistic || cleanRender) return y;
+        const title = (t) => [t, true, C.kepler];
+        const pl = precessionLines(subj, compact, title, C);
+        const wl = waveLines(subj, compact, title, C);
+        if (!pl && !wl) return y;
+        const lines = (pl || []).concat(wl ? wl.lines : []);
+        const lh = Math.round(fs * 1.4);
+        const widthOf = (line) => line.reduce((s, seg) => { ctx.font = font(fs, seg[1]); return s + ctx.measureText(seg[0]).width; }, 0);
+        const sketchH = wl && wl.wave ? (compact ? 18 : 30) : 0;
+        const w = Math.max(...lines.map(widthOf), sketchH ? (compact ? 120 : 170) : 0) + 20;
+        const h = lines.length * lh + 10 + (sketchH ? sketchH + 6 : 0);
+        const x = viewW - 8 - w;
+        cardBox(C, x, y, w, h);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        lines.forEach((line, i) => {
+            let lx = x + 10;
+            for (const seg of line) {
+                ctx.font = font(fs, seg[1]);
+                ctx.fillStyle = seg[2] || C.text;
+                ctx.fillText(seg[0], lx, y + 5 + lh * (i + 0.5));
+                lx += ctx.measureText(seg[0]).width;
+            }
+        });
+        if (sketchH) drawWave(C, x + 10, y + 5 + lines.length * lh + 2, w - 20, sketchH);
+        return y + h;
+    }
+
+    // The wave sketch: the samples kept, newest on the right, scaled to the largest
+    function drawWave(C, x, y, w, h) {
+        const n = Math.min(gw.waveN, WAVE_N);
+        let A = 0;
+        for (let k = 0; k < n; k++) A = Math.max(A, Math.abs(gw.wave[(gw.waveN - 1 - k) % WAVE_N]));
+        ctx.strokeStyle = C.faint;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2);
+        ctx.stroke();
+        if (!(A > 0)) return;
+        ctx.strokeStyle = C.kepler;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        const k0 = gw.waveN - n;
+        for (let k = 0; k < n; k++) {
+            const px = x + w * ((k + WAVE_N - n) / (WAVE_N - 1));
+            const py = y + h / 2 - (gw.wave[(k0 + k) % WAVE_N] / A) * (h / 2 - 1.5);
+            if (k) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        }
+        ctx.stroke();
+    }
+
+    // Energy chart: the energy carried off by gravitational waves, and the total with it (which stays
+    // level), shown while the graph's span holds any (dashed, so they don't rely on colour)
+    function chartWaves(ce, E, k) {
+        if (!ce.$waves) {
+            const line = (label, color, dash) => ({ label, data: [], borderColor: color, borderDash: dash, borderWidth: 2, pointRadius: 0, tension: 0.2, hidden: true });
+            ce.$waves = [line('Carried off by waves', '#e9a23b', [6, 3]), line('Total + carried off', '#ae85ca', [2, 3])];
+            ce.data.datasets.push(...ce.$waves);
+            const labels = ce.options.plugins.legend.labels;
+            labels.filter = (item, data) => !(ce.$waves.includes(data.datasets[item.datasetIndex]) && data.datasets[item.datasetIndex].hidden);
+        }
+        const n = ce.data.labels.length, on = gw.radiated !== 0;
+        let show = on;
+        for (const d of ce.$waves) {
+            while (d.data.length < n - 1) d.data.unshift(null);
+            d.data.push(on ? (d === ce.$waves[0] ? gw.radiated : E.total + gw.radiated) * k : null);
+        }
+        if (!show) show = ce.$waves[0].data.some((v) => v !== null);
+        ce.$waves[0].hidden = ce.$waves[1].hidden = !show;
+    }
+
     // Advance the simulation by simDt years (as many whole adaptive steps as fit). In the animation the
     // physics gets a share of each frame's time (budgetMs, checked on the clock every few steps): if the
     // steps still owed don't fit, the simulation slows down for this frame rather than take bigger steps.
@@ -1417,6 +2067,7 @@
             trackPeriods(simTime);
             k2Step(simTime);
             flybyStep();
+            relativityStep(dt);
             if (simTime >= nextSampleT || (simTime - lastSampleT > sampleDt / 32 && trailBending())) {
                 recordSample();
                 while (nextSampleT <= simTime) nextSampleT += sampleDt;
@@ -1822,6 +2473,7 @@
         if (ui.trail) ui.trail.value = String(settings.trailIndex);
         settings.com = !!def.com;
         if (ui.com) ui.com.checked = settings.com;
+        relativitySceneLoaded(def);
         computeForces();
         computePrimaries();
         // Arrow scales: the subject's pull (or the scene's chosen one) and its average orbital speed
@@ -3168,7 +3820,8 @@
         if (fl) y = drawCard(C, fl, y, cfs) + 5;
         if (settings.k1) y = drawCard(C, kepler1Lines(subj, compact), y, cfs) + 5;
         if (settings.k2) y = drawCard(C, kepler2Lines(subj, compact), y, cfs) + 5;
-        if (settings.k3) drawKepler3Card(C, subj, y, cfs, compact);
+        if (settings.k3) y = drawKepler3Card(C, subj, y, cfs, compact) + 5;
+        drawRelativityCard(C, subj, y, cfs, compact);
     }
 
     // The flyby card: the chosen body's speed relative to the star before and after it passed the
@@ -5611,7 +6264,8 @@
     // each pair's energy are added (the v^4 one to the kinetic energy, the rest to the potential):
     // E/mu = (3/8)(1 - 3 eta) v^4/c^2 + GM/(2rc^2) [(3 + eta) v^2 + eta rdot^2 + GM/r]. Then the total
     // stays level round a black hole, where the Newtonian energy alone swings by tens of per cent each
-    // orbit (to within the size of the next, 2PN, terms: about 2% for the neutron star at 0.24c).
+    // orbit (to within the size of the next, 2PN, terms: about 2% for the neutron star at 0.24c). A compact,
+    // close pair also has the 2PN terms in its motion, and so in its energy (energy2PN).
     function systemEnergy() {
         const c = totals(bodies);
         let ke = 0, pe = 0;
@@ -5636,6 +6290,8 @@
                     const rd = (rx * vx + ry * vy) / r;
                     ke += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
                     pe += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
+                    // (and the 2PN terms for a compact, close pair, which has them in its motion too)
+                    if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); ke += mu * e2.k; pe += mu * e2.p; }
                 }
             }
         }
@@ -5673,6 +6329,7 @@
         ce.data.datasets[0].data.push(E.ke * k);
         ce.data.datasets[1].data.push(E.pe * k);
         ce.data.datasets[2].data.push(E.total * k);
+        chartWaves(ce, E, k);
         const co = charts.orbit;
         const b = bodyById(selectedId);
         const p = b && b.primary;
@@ -5765,6 +6422,7 @@
             // running again needs the same ones to repeat exactly), and the binding energy booked for
             // bodies torn apart by tides
             pairs: mainPairs.map((q) => [q.a.id, q.b.id, q.fast ? 1 : 0]), groupE: Array.from(groupEnergy),
+            gwE: gw.radiated, gwP: gw.power,   // (energy carried off by gravitational waves so far, and the rate)
             // The scene's own scales and settings: put back only when a change of scene is undone
             forceRef, vRef, energyExp, trail: settings.trailIndex, com: settings.com,
             zoom: view.zoom, panX: view.panX, panY: view.panY
@@ -5820,6 +6478,8 @@
         }
         groupEnergy.clear();
         for (const [id, u] of s.groupE || []) groupEnergy.set(id, u);
+        resetRelativity();
+        gw.radiated = s.gwE || 0; gw.power = s.gwP || 0;
         customCount = s.customCount;
         simTime = s.t; acc = 0; lag = 0; slowedDown = false;
         if (!keepTrails) restartSamples();
@@ -6663,6 +7323,44 @@
             physics: perf.physics, render: perf.render, other: perf.other, frame: perf.frame,
             steps: perf.steps, speedRatio: perf.ratio, quality: perf.quality, bodies: bodies.length, slowedDown
         })
+    });
+
+    // Relativity (see "Relativity: orbits that turn, and gravitational waves"). Angles in radians per
+    // orbit, rates in arcseconds a century; energies in M_sun AU^2/yr^2 (and J, and M_sun c^2).
+    Object.assign(window.orbitsSimulation, {
+        // The turning of a body's orbit, measured and as Einstein predicts. Asking starts measuring it
+        // (it is measured anyway while it is the chosen body).
+        precession(name) {
+            const b = bodies.find((q) => q.name === name);
+            if (!b) return null;
+            apiWatch.add(b.id);
+            const p = b.primary;
+            const el = p ? elementsOf(b, p) : null;
+            const out = {
+                body: b.name, primary: p ? p.name : null, orbits: 0,
+                predictedNow: el && el.bound ? (6 * Math.PI * G * (b.m + p.m)) / (C2 * el.p) : null
+            };
+            const r = precessionOf(b);
+            if (!r || !r.orbits) return out;
+            const AS = (180 / Math.PI) * 3600;
+            return Object.assign(out, {
+                orbits: r.orbits, measured: r.perOrbit, predicted: r.einstein, others: r.others, round: r.round,
+                perCentury: { measured: r.rate * 100 * AS, predicted: r.rateE * 100 * AS },
+                last: Object.assign({}, r.last), period: r.T
+            });
+        },
+        radiated() {
+            const tr = gw.a ? pairTracker(gw.a, gw.b) : null;
+            return {
+                energy: gw.radiated, joules: gw.radiated * ENERGY_J, solarMasses: gw.radiated / C2, power: gw.power,
+                pair: gw.a ? [gw.a.name, gw.b.name] : null,
+                turns: tr ? tr.turns.map((q) => ({ t: q.t, a: q.a, T: q.T })) : [],
+                merged: gw.merged ? Object.assign({ name: bodyById(gw.merged.id) ? bodyById(gw.merged.id).name : null }, gw.merged) : null,
+                waveSamples: gw.waveN, frozen: gw.frozen, waves: gwOn
+            };
+        },
+        // Turn the radiation reaction off or on (for tests: realistic physics always has it)
+        setWaves(v) { gwOn = !!v; forcesDirty = true; }
     });
 
     // ------------------------------------------------------------------
