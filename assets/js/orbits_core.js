@@ -6964,12 +6964,21 @@
     // once round, left the view far behind or hit something, so Jupiter's pull on a probe, or the star's
     // on a moon, is included. The path is drawn relative to the body it orbits (or to the body the view
     // is locked on), which is how an orbit is usually pictured.
+    //   Smooth: a path is worked out in the background, PREDICT_MS a frame, and only shown once it is
+    //   whole; until then the last whole one stays (pred.shown), so a path never flickers or grows. A
+    //   dragged body's path is worked out again as soon as the last is done (every frame or two); one
+    //   moving on with the others, at most every PREDICT_EVERY_MS. In between, each frame the shown path
+    //   is drawn from where the body is now (anchoredPath): the stretch it has covered since is left off
+    //   (or for a closed orbit moved round to the end), and the rest is shifted to start at the body.
     // ------------------------------------------------------------------
     const PREDICT_ETA = 0.012;
     const PREDICT_PAIRS = 4e5;
     const PREDICT_MS = 3;                 // while drawing: ms of prediction a frame (it carries on in the next)
+    const PREDICT_EVERY_MS = 100;         // a path whose body moves on with the others: worked out again this often
     const PREDICT_ALL = 24, PREDICT_HEAVY = 8;
-    const pred = { key: '', t: 0, pts: null, end: null, refId: null, job: null };
+    // The path being worked out (pts, its points' times ts after t0 in simulated years, bid: whose) and
+    // the last whole one (shown); force: start again now (an edit, see previewPath)
+    const pred = { key: '', t: 0, pts: null, ts: null, t0: 0, bid: null, loop: 0, end: null, refId: null, job: null, shown: null, force: false };
     let inRender = false;
 
     // The bodies copied for a prediction: all of them, or in a crowded scene only those whose pull on
@@ -7015,17 +7024,22 @@
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
         // (in a rotating frame the path is worked out as seen turning with the pair: see turnedSeen)
         const ref = turn.on ? null : L || (p && p.m >= b.m ? p : null);
-        // Worked out again when anything changes, but at most 20 times a second while the others move.
-        // While drawing, it takes at most PREDICT_MS a frame and carries on in the next ones (the path so
-        // far is shown meanwhile).
         const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
         const now = performance.now();
-        const same = pred.key.split('|')[0] === String(b.id);
-        if (pred.pts && (key === pred.key || (!paused && same && (now - pred.t < 50 || (pred.job && now - pred.t < 400))))) {
-            if (pred.job) runPrediction(inRender ? PREDICT_MS : Infinity);
-            return pred;
-        }
-        pred.key = key; pred.t = now; pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
+        // The one being worked out carries on; a new one starts when something has changed: at once
+        // after a reset or an edit, for another body, or while paused; for a dragged body once the last
+        // is whole (or has taken too long); for one moving on with the others, at most every
+        // PREDICT_EVERY_MS (anchoredPath keeps it with its body in between)
+        if (pred.job) runPrediction(inRender ? PREDICT_MS : Infinity);
+        const reset = !pred.key || pred.force || pred.bid !== b.id;
+        const due = reset || (key !== pred.key && (!pred.job || now - pred.t > 400) && (paused || b.held || now - pred.t >= PREDICT_EVERY_MS));
+        if (due) startPrediction(b, rel, ref, key, now);
+        return pred.shown && pred.shown.bid === b.id ? pred.shown : pred;
+    }
+
+    function startPrediction(b, rel, ref, key, now) {
+        pred.key = key; pred.t = now; pred.force = false; pred.bid = b.id; pred.t0 = simTime; pred.loop = 0;
+        pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
         const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
@@ -7050,16 +7064,16 @@
         const budget = Math.min(20000, Math.floor(PREDICT_PAIRS / (3 * pairs)));
         const pts = seen(me);
         pred.pts = pts;
+        pred.ts = [0];
         pred.end = 'cut';   // (until it finishes: the path so far, with no arrowhead at its end)
         pred.job = { list, me, origin, seen, pr, tMax, rMax, budget, k: 0, t: 0, lx: pts[0], ly: pts[1], ang: Math.atan2(pts[1], pts[0]), swept: 0, tmin: gravity(list) };
         runPrediction(inRender ? PREDICT_MS : Infinity);
-        return pred;
     }
 
     // Carry the prediction on for up to ms milliseconds (it ends when the path closes, hits something,
     // leaves the view or uses up its budget)
     function runPrediction(ms) {
-        const job = pred.job, list = job.list, me = job.me, pts = pred.pts, pr = job.pr;
+        const job = pred.job, list = job.list, me = job.me, pts = pred.pts, ts = pred.ts, pr = job.pr;
         const t0 = performance.now();
         const px = 1.5 / scale;   // keep points about 1.5 px apart
         let { lx, ly, ang, swept, t, tmin } = job;
@@ -7090,14 +7104,23 @@
             let da = a - ang;
             if (da > Math.PI) da -= TAU; else if (da < -Math.PI) da += TAU;
             swept += da; ang = a;
-            if (hit) { pts.push(x, y); end = 'hit'; break; }
-            if (Math.abs(x - lx) + Math.abs(y - ly) > px) { pts.push(x, y); lx = x; ly = y; }
+            if (hit) { pts.push(x, y); ts.push(t); end = 'hit'; break; }
+            // (each point with its time, and where it first comes right round: one lap, for anchoredPath)
+            const lap = !pred.loop && Math.abs(swept) >= TAU;
+            if (lap || Math.abs(x - lx) + Math.abs(y - ly) > px) { pts.push(x, y); ts.push(t); lx = x; ly = y; }
+            if (lap) pred.loop = ts.length - 1;
             if (Math.abs(swept) > TAU * 1.02) { end = 'closed'; break; }
             if (Math.hypot(x, y) > job.rMax && !(pr && pr.el.bound)) { end = 'away'; break; }
         }
         pts.push(...job.seen(me));
+        ts.push(t);
         pred.end = end || 'open';
         pred.job = null;
+        // Whole: shown from now on, in place of the last (which it grows out of: see blendedPath)
+        const old = pred.shown && pred.shown.bid === pred.bid ? pred.shown : null;
+        if (old) old.from = null;
+        const t1 = performance.now();
+        pred.shown = { bid: pred.bid, pts, ts, t0: pred.t0, loop: pred.end === 'closed' ? pred.loop : 0, end: pred.end, refId: pred.refId, t: t1, from: old, blend0: t1 };
     }
 
     // While dragging: the path the body would follow if let go now.
@@ -7116,7 +7139,7 @@
     function drawPredictedPath(C, b, pp) {
         const ref = pp.refId !== null ? bodyById(pp.refId) : null;
         const o = ref ? { x: ref.dx, y: ref.dy } : liveFrameOrigin();
-        const pts = turnedPath(pp);   // (turned as the view is)
+        const pts = anchoredPath(b, pp, blendedPath(b, pp), o);   // (turned as the view is, and from where the body is now)
         const col = C.dark ? hexA(b.color, 0.8) : bodyStroke(b.color, false);
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = col;
@@ -7154,6 +7177,60 @@
                 ctx.fill();
             }
         }
+    }
+
+    // A path's points turned as drawn, and for its first PATH_BLEND_MS grown smoothly out of the path it
+    // replaced (pp.from): each point moves from where the old path was at the same moment (matched by the
+    // points' times, both counted from now) to its own place, so a new path never jumps in.
+    const PATH_BLEND_MS = 90;
+    function blendedPath(b, pp) {
+        const pts = turnedPath(pp), old = pp.from;
+        if (!old) return pts;
+        const w = (performance.now() - pp.blend0) / PATH_BLEND_MS;
+        const ots = old.ts, on = ots ? ots.length : 0, ts = pp.ts;
+        if (!(w < 1) || !ts || ts.length * 2 !== pts.length || on < 2 || old.refId !== pp.refId) { pp.from = null; return pts; }
+        const ops = turnedPath(old);
+        if (ops.length !== 2 * on) { pp.from = null; return pts; }
+        const keep = 1 - w * w * (3 - 2 * w);   // (eased: the old path's share)
+        const off = b.held ? 0 : timeDir * (pp.t0 - old.t0);
+        const out = pts.slice();
+        for (let i = 0, j = 0; i < ts.length; i++) {
+            const t = ts[i] + off;
+            if (t > ots[on - 1]) break;   // (beyond the old path's end: the new one as it is)
+            while (j < on - 2 && ots[j + 1] < t) j++;
+            const f = t <= ots[j] ? 0 : ots[j + 1] > ots[j] ? Math.min(1, (t - ots[j]) / (ots[j + 1] - ots[j])) : 0;
+            const ox = ops[2 * j] + f * (ops[2 * j + 2] - ops[2 * j]), oy = ops[2 * j + 1] + f * (ops[2 * j + 3] - ops[2 * j + 1]);
+            out[2 * i] += keep * (ox - out[2 * i]);
+            out[2 * i + 1] += keep * (oy - out[2 * i + 1]);
+        }
+        return out;
+    }
+
+    // A path's points (pts, relative to o and turned as drawn) from where body b is drawn now. Time having
+    // run on since the path was worked out (from pp.t0), the body has covered its first stretch: that is
+    // left off, or for a closed orbit (one lap, to pp.loop) moved round to the end; and the rest is
+    // shifted so that it starts exactly at the body. A dragged body (held, so no time passes for it)
+    // takes its whole path with it until the next one is ready. So the path stays with the body every
+    // frame, and the next one, worked out from there, lands where this one already is.
+    function anchoredPath(b, pp, pts, o) {
+        const n = pts.length >> 1, ts = pp.ts;
+        if (!ts || ts.length !== n || n < 2 || pp.bid !== b.id) return pts;
+        const loop = pp.loop > 0 && pp.loop < n ? pp.loop : 0, last = loop || n - 1;
+        let tau = b.held ? 0 : timeDir * (simTime + lag - pp.t0);
+        if (!(tau > 0)) tau = 0;
+        if (loop) tau %= ts[loop]; else if (tau > ts[last]) tau = ts[last];
+        let lo = 0, hi = last;   // ts[lo] <= tau < ts[hi]
+        while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ts[m] <= tau) lo = m; else hi = m; }
+        const f = ts[lo + 1] > ts[lo] ? clamp((tau - ts[lo]) / (ts[lo + 1] - ts[lo]), 0, 1) : 0;
+        const qx = pts[2 * lo] + f * (pts[2 * lo + 2] - pts[2 * lo]), qy = pts[2 * lo + 1] + f * (pts[2 * lo + 3] - pts[2 * lo + 1]);
+        const bx = b.dx - o.x, by = b.dy - o.y, dx = bx - qx, dy = by - qy;
+        const out = [bx, by];
+        for (let k = lo + 1; k <= last; k++) out.push(pts[2 * k] + dx, pts[2 * k + 1] + dy);
+        if (loop) {
+            for (let k = 1; k <= lo; k++) out.push(pts[2 * k] + dx, pts[2 * k + 1] + dy);
+            out.push(bx, by);
+        }
+        return out;
     }
 
     // The two-body orbit a held or aimed body would have around its primary on release (for the hint
@@ -8257,9 +8334,8 @@
     // The predicted path (predictPath's, drawn as while aiming) of the body in the menu, of the chosen
     // body for two seconds after a push from the keyboard, and of the chosen body while paused (if
     // predicted paths are on). It is started again only when something has changed (while running, ten
-    // times a second at most); like every prediction made while drawing, it takes at most PREDICT_MS a
-    // frame and carries on in the next frames until the path is whole.
-    const PREVIEW_EVERY_MS = 100;
+    // times a second at most); like every prediction made while drawing, it is worked out PREDICT_MS a
+    // frame in the background, and the last whole path is shown meanwhile (see predictPath).
     function markPreview() { edit.previewDirty = true; }
 
     function previewBody() {
@@ -8285,17 +8361,19 @@
             const s = bodiesSum();
             if (s !== edit.sum) { edit.sum = s; edit.previewDirty = true; }
         }
-        const P = edit.preview;
-        // (an unfinished prediction is carried on every frame, PREDICT_MS at a time, until it is whole)
-        const going = !!(pred.job && P && P.bid === b.id && P.end === 'cut');
-        if (P && P.bid === b.id && !going && (paused ? P.paused && !edit.previewDirty : now - P.t < PREVIEW_EVERY_MS)) return P;
-        // The body's own velocity, given to predictPath as an aim (which it reads) for this call only
+        // The body's own velocity, given to predictPath as an aim (which it reads) for this call only. It
+        // decides when to start a path again (at once after an edit, else at most every
+        // PREDICT_EVERY_MS) and hands back the last whole one, which drawPredictedPath keeps with the body.
         const fv = frameVelocity();
         b.aim = { vx: b.vx - fv.x, vy: b.vy - fv.y, k: 1, ref: null, frameV: fv, snap: null };
-        if (edit.previewDirty || !P || P.bid !== b.id) pred.key = '';
+        if (edit.previewDirty) pred.force = true;
         let pp;
         try { pp = predictPath(b, null); } finally { b.aim = null; }
-        edit.preview = { bid: b.id, pts: pp.pts, end: pp.end, refId: pp.refId, t: going ? P.t : now, cost: performance.now() - now, paused };
+        const P = edit.preview, same = !!(P && P.src === pp && P.bid === b.id);
+        edit.preview = {
+            src: pp, bid: b.id, pts: pp.pts, ts: pp.ts, t0: pp.t0, loop: pp.loop, end: pp.end, refId: pp.refId, from: pp.from, blend0: pp.blend0,
+            t: same ? P.t : now, cost: same ? P.cost : performance.now() - now, paused
+        };
         edit.previewDirty = false;
         return edit.preview;
     }
