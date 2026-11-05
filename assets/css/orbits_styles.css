@@ -59,22 +59,14 @@ html:not(.dark-mode) .orbits-sim {
     flex: 1 1 100%;
 }
 
-/* Groups of chips (stars, dead stars, planets, small bodies): headed in the column beside the canvas;
-   under it the chips simply flow on, in the same order. */
-.orb-group,
+/* The chips: in the column beside the canvas the usual kinds, then "More bodies" and the rest (see
+   the column's own rules); under it they simply flow on, in the same order. */
 .orb-group-chips {
     display: contents;
 }
 
-.orb-group-label {
+.orb-toolbar .orb-palette-more {
     display: none;
-    margin: 0;
-    font-size: 0.7em;
-    font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    opacity: 0.6;
 }
 
 .orb-toolbar button {
@@ -186,6 +178,11 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     height: 36px;
     padding: 0 0.8em;
     white-space: nowrap;
+}
+
+.orb-toolbar .orb-fit.is-wanted {
+    color: var(--color-accent) !important;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
 }
 
 .orb-hint {
@@ -345,11 +342,6 @@ html:not(.dark-mode) .orb-hint.is-open::after {
         touch-action: pan-x;
     }
 
-    /* (a little more space between the groups: stars, dead stars, planets and moons, small bodies) */
-    .orbits-sim .orb-group + .orb-group .orb-group-chips > .orb-chip:first-child {
-        margin-left: 8px;
-    }
-
     .orbits-sim.orb-mission-on .orb-palette {
         display: none;
     }
@@ -437,19 +429,39 @@ html:not(.dark-mode) .orb-hint.is-open::after {
         background-color: var(--color-bg-alt);
     }
 
-    .orb-group {
-        display: block;
-    }
-
-    .orb-group-label {
-        display: block;
-        padding: 0 2px 3px;
-    }
-
     .orb-group-chips {
         display: grid;
         grid-template-columns: repeat(var(--orb-cols), minmax(0, 1fr));
         gap: 4px;
+    }
+
+    /* "More bodies": a quiet button with a chevron that turns when it is open */
+    .orb-toolbar .orb-palette-more {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5em;
+        flex: 0 0 auto;
+        min-height: 32px;
+        padding: 0 0.5em;
+        font-size: min(0.85em, 12px);
+        cursor: pointer;
+    }
+
+    .orb-palette-more::after {
+        content: '\f078';
+        font-family: 'Font Awesome 5 Free';
+        font-weight: 900;
+        font-size: 0.8em;
+        transition: transform 0.2s ease;
+    }
+
+    .orb-palette-more[aria-expanded="true"]::after {
+        transform: rotate(180deg);
+    }
+
+    .orb-palette:not(.is-open) .orb-palette-more ~ .orb-group-chips {
+        display: none;
     }
 
     .orb-toolbar .orb-chip {
@@ -477,7 +489,6 @@ html:not(.dark-mode) .orb-hint.is-open::after {
         width: 100%;
     }
 
-    /* Room for five lines, so a longer hint never moves the chips */
     .orb-hint {
         order: 0;
         flex: 0 0 auto;
@@ -505,13 +516,17 @@ html:not(.dark-mode) .orb-hint.is-open::after {
             gap: 6px;
         }
 
-        /* the groups simply follow on, a little apart */
-        .orb-group-label {
+        /* every chip shows: no room to fold any away, or for a button that would */
+        .orb-toolbar .orb-palette-more {
             display: none;
         }
 
+        .orb-palette:not(.is-open) .orb-palette-more ~ .orb-group-chips {
+            display: grid;
+        }
+
         .orb-palette {
-            gap: 6px;
+            gap: 4px;
         }
 
         .orb-toolbar .orb-chip {
@@ -1578,11 +1593,43 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         right: 0.3em;
         flex-wrap: nowrap;
     }
+
+    /* Each button says what it does, under its icon */
+    .orbits-sim .sim-info-actions .orb-cap {
+        flex-direction: column;
+        gap: 4px;
+        width: auto;
+        min-width: 46px;
+        padding: 0 5px;
+    }
+
+    .orbits-sim .sim-info-actions .orb-cap::after {
+        content: attr(data-cap);
+        font-family: "Source Sans Pro", Helvetica, sans-serif;
+        font-size: 12px;
+        line-height: 1;
+        white-space: nowrap;
+    }
+
+    .orbits-sim #pauseBtn::after {
+        content: "Pause";
+    }
+
+    .orbits-sim #pauseBtn[aria-pressed="true"]::after {
+        content: "Play";
+    }
+
+    .orbits-sim .sim-info-actions .sim-fullscreen-toggle::after {
+        content: "Fullscreen";
+    }
+
+    body.sim-fullscreen-active .orbits-sim .sim-info-actions .sim-fullscreen-toggle::after {
+        content: "Exit";
+    }
 }
 
-/* Tool column: undo and redo (icons) share a row with "Fit view", leaving the palette one row more.
-   The hint keeps room for five lines but may grow (to eight) for a scene's longer tip: only the
-   palette above it, which scrolls, gets shorter, so no chip moves. */
+/* Tool column: undo and redo (icons) share a row with "Fit view". The hint may grow (to eight lines)
+   for a scene's longer tip: only an open "More bodies" above it, which scrolls, can get shorter. */
 @media (orientation: landscape) and (min-width: 640px) {
     .orb-toolbar {
         display: grid;

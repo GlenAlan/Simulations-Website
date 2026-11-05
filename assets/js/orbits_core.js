@@ -141,10 +141,8 @@
         probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
     const PALETTE = [
-        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
-        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
-        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
-        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
+        ['sun', 'earth', 'moon', 'jupiter', 'comet', 'blackhole'],
+        ['dwarf', 'redgiant', 'bluegiant', 'browndwarf', 'whitedwarf', 'neutron', 'mars', 'asteroid', 'custom']   // ("More bodies")
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
     // Values the mass and radius sliders snap to
@@ -4130,7 +4128,7 @@
         syncFrameUi();
         if (ui.palette) {
             const full = bodies.length >= MAX_BODIES;
-            ui.palette.querySelectorAll('button').forEach((btn) => {
+            ui.palette.querySelectorAll('.orb-chip').forEach((btn) => {
                 btn.disabled = full;
                 btn.title = full ? `At most ${MAX_BODIES} bodies` : btn.dataset.title;
             });
@@ -8921,26 +8919,32 @@
     let paletteDrag = null;
     let ghostEl = null;
 
-    // The chips come in groups (stars, dead stars, planets, small bodies): headed groups in the column
-    // beside the canvas, one flowing set of chips under it on narrow screens.
+    // In the column beside the canvas the usual kinds show, and the rest wait behind "More bodies"
+    // (open again next time if it was left open); on narrow screens, and on a phone held sideways, all
+    // the chips flow on in one set.
+    const PALETTE_STORE = 'orbitsPaletteMore';
     function buildPalette() {
         if (!ui.palette) return;
         ui.palette.textContent = '';
-        for (const group of PALETTE) {
-            const box = document.createElement('div');
-            box.className = 'orb-group';
-            box.setAttribute('role', 'group');
-            const head = document.createElement('p');
-            head.className = 'orb-group-label';
-            head.id = `orbGroup${group.label.replace(/\W/g, '')}`;
-            head.textContent = group.label;
-            box.setAttribute('aria-labelledby', head.id);
+        PALETTE.forEach((kinds, i) => {
             const chips = document.createElement('div');
             chips.className = 'orb-group-chips';
-            for (const kind of group.kinds) chips.appendChild(paletteChip(kind));
-            box.append(head, chips);
-            ui.palette.appendChild(box);
-        }
+            for (const kind of kinds) chips.appendChild(paletteChip(kind));
+            ui.palette.appendChild(chips);
+            if (i) return;
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'orb-palette-more';
+            more.textContent = 'More bodies';
+            const show = (on) => { ui.palette.classList.toggle('is-open', on); more.setAttribute('aria-expanded', on ? 'true' : 'false'); };
+            more.addEventListener('click', () => {
+                const on = !ui.palette.classList.contains('is-open');
+                show(on);
+                storeSet(PALETTE_STORE, on ? '1' : '');
+            });
+            show(storeGet(PALETTE_STORE) === '1');
+            ui.palette.appendChild(more);
+        });
         paletteRove(ui.palette.querySelector('.orb-chip'));
         if (!ui.palette.dataset.keys) {
             ui.palette.dataset.keys = '1';
@@ -8975,7 +8979,7 @@
     function onPaletteKey(e) {
         const c = e.target.closest && e.target.closest('.orb-chip');
         if (!c || e.altKey || e.ctrlKey || e.metaKey) return;
-        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled);
+        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled && q.offsetParent);
         const i = list.indexOf(c);
         if (i < 0) return;
         let to = null;
