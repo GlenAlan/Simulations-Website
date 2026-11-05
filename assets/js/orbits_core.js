@@ -1843,6 +1843,8 @@
         removeBody(small, big);
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
+        // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred)
+        if (!small.minor && !small.grp) showHint('note', `<strong>${escapeHtml(theName(small))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
     }
 
     // ------------------------------------------------------------------
@@ -3146,6 +3148,12 @@
     function fitAll() {
         if (!bodies.length) return;
         updateDrawnPositions();
+        // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
+        if (bodies.length === 1) {
+            const b = bodies[0], w = 0.5 * (scene.box[1] - scene.box[0]), h = 0.5 * (scene.box[3] - scene.box[2]);
+            fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
+            return;
+        }
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         const add = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
         for (const b of bodies) {
@@ -5101,7 +5109,8 @@
             if (tx > 0 && tx < viewW && ty > 0 && ty < viewH) {
                 cx = top.dx; cy = top.dy;
                 const spaceX = Math.min(tx, viewW - tx), spaceY = Math.min(ty, viewH - ty);
-                R = 0.7 * Math.min(spaceX, spaceY) / scale;
+                // (zoomed in close it may land out of view, rather than inside the body and merge with it)
+                R = Math.max(0.7 * Math.min(spaceX, spaceY) / scale, 4 * (top.R + k.R) / AU_KM);
             }
         }
         let best = null, bestD = -1;
@@ -8089,11 +8098,7 @@
             syncEccentricity(true);
             updatePopover(true);
         });
-        ui.popDelete.addEventListener('click', () => {
-            const b = popBody;
-            closePopover();
-            deleteBody(b);
-        });
+        ui.popDelete.addEventListener('click', deleteChosen);
         ui.popName.addEventListener('input', () => {
             if (!popBody) return;
             const n = ui.popName.value.trim().slice(0, 18);
@@ -10257,12 +10262,17 @@
     function makeCharts() {
         if (typeof Chart === 'undefined') return null;
         const c = chartColors();
+        // (a steady line stays a steady line: its axis spans at least 1% of its value, not its last few digits)
+        const steadyAxis = (axis) => {
+            const mid = 0.5 * (axis.max + axis.min), least = 0.01 * Math.abs(mid);
+            if (axis.max - axis.min < least) { axis.min = mid - 0.5 * least; axis.max = mid + 0.5 * least; }
+        };
         const common = (yTitle) => ({
             responsive: true, maintainAspectRatio: false, animation: false,
             plugins: { legend: { labels: { color: c.text, boxWidth: 12 } } },
             scales: {
                 x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
-                y: { ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
+                y: { afterDataLimits: steadyAxis, ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
             }
         });
         const e1 = byId('energyChart'), e2 = byId('orbitChart');
@@ -10280,7 +10290,7 @@
             options: common(`Energy (×10${supExp(energyExp)} J)`)
         });
         const opts = common('Distance');
-        opts.scales.y1 = { position: 'right', ticks: { color: c.text }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Speed (km/s)', color: c.text } };
+        opts.scales.y1 = { afterDataLimits: steadyAxis, position: 'right', ticks: { color: c.text }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Speed (km/s)', color: c.text } };
         const orbit = new Chart(e2, {
             type: 'line',
             data: {
@@ -10303,6 +10313,11 @@
         document.body.classList.toggle('charts-visible', visible);
         if (visible && !charts) charts = makeCharts();
         if (visible) resetCharts();
+        // (they open under the info bar, below the fold on most screens)
+        if (visible && !document.body.classList.contains('sim-fullscreen-active')) {
+            const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: glide ? 'smooth' : 'auto' });
+        }
     }
 
     function resetCharts() {
@@ -10689,7 +10704,12 @@
             list[0].name = 'Star A';
             companion = true;
         }
-        const half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        let half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        // (with a second star the planets' star goes round the centre of mass too: all of it in view)
+        if (companion) {
+            const c = totals(list), far = (b) => Math.hypot(b.x - c.x, b.y - c.y);
+            half = 1.15 * Math.max(far(list[0]) + half / 1.15, far(list[list.length - 1]));
+        }
         const extra = [];
         if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
         if (companion) extra.push('a second star');
@@ -11906,7 +11926,8 @@
     // Delete or Backspace: delete the chosen body (if another is left)
     function deleteChosen() {
         const b = bodyById(selectedId);
-        if (!b || bodies.length < 2 || dragging() || missionRefuse('delete', b)) return;
+        if (!b || dragging() || missionRefuse('delete', b)) return;
+        if (bodies.length < 2) { historyNote(`<strong>${escapeHtml(b.name)} is the last body.</strong> Add another before deleting it.`); return; }
         const name = b.name;
         if (popBody === b) closePopover();
         deleteBody(b);
@@ -12683,7 +12704,7 @@
     // (from loadScene: a mission's scene starts the mission, any other ends one)
     function missionSceneLoaded() {
         const def = missionByKey(settings.scene);
-        if (!def) { if (mission.def) endMission(); return; }
+        if (!def) { if (mission.def) { endMission(); setPaused(false); } return; }   // (its briefing paused it)
         Object.assign(mission, {
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
