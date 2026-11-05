@@ -189,7 +189,7 @@
 									<div class="sim-controls-content">
 										<div class="sim-control-group sim-speed-control">
 											<label>Speed: <span id="speedVal" class="sim-value" style="--chars: 4">1</span>&times; <span class="orb-note orb-speed-note" id="speedNote">1 yr every 6 s</span>
-												<input type="range" id="speedSlider" min="0" max="23" step="1" value="11" aria-describedby="speedNote" title="Simulation speed ([ slower, ] faster)">
+												<input type="range" id="speedSlider" min="0" max="23" step="1" value="11" aria-describedby="speedNote" title="[ slower, ] faster">
 											</label>
 											<div class="sim-checkbox-group">
 												<input type="checkbox" id="reverseToggle" aria-describedby="reverseNote">
@@ -223,7 +223,7 @@
 											<div class="orb-date" id="startDateRow" hidden>
 												<label for="startDateInput">Start date</label>
 												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
-												<p class="orb-note" id="startDateNote">The planets start where they really were, or will be, on this day (1800 to 2050).</p>
+												<p class="orb-note" id="startDateNote">1800 to 2050.</p>
 											</div>
 											<div class="orb-scene-row" id="sceneButtons" role="group" aria-label="Other ways to start">
 												<button type="button" id="randomSystemBtn" aria-describedby="missionsNote" title="A new star with planets each time: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
@@ -234,9 +234,9 @@
 											<p class="sim-control-group-label">Show</p>
 											<div class="sim-checkbox-group">
 												<input type="checkbox" id="forceToggle" checked>
-												<label for="forceToggle" title="The pull of gravity on each body"><span class="orb-key orb-key-force" aria-hidden="true"></span>Gravity forces</label>
+												<label for="forceToggle" title="Pink arrows: the pull of gravity on each body"><span class="orb-key orb-key-force" aria-hidden="true"></span>Gravity forces</label>
 												<input type="checkbox" id="velocityToggle" checked>
-												<label for="velocityToggle" title="How fast each body moves, and which way. Drag an arrow's tip to aim it"><span class="orb-key orb-key-velocity" aria-hidden="true"></span>Velocities</label>
+												<label for="velocityToggle" title="Teal arrows. Drag an arrow's tip to aim it"><span class="orb-key orb-key-velocity" aria-hidden="true"></span>Velocities</label>
 												<input type="checkbox" id="labelsToggle" checked>
 												<label for="labelsToggle">Names</label>
 												<input type="checkbox" id="pullsToggle" aria-describedby="pullsNote">
@@ -244,11 +244,11 @@
 												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
 												<label for="wellToggle" title="How deep each body's pull reaches, as shading and contour lines (W)">Gravity well</label>
 												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
-												<label for="realisticToggle" title="True sizes, Einstein's relativity and tides that tear stars apart">Realistic physics</label>
+												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
 											<p class="orb-note" id="pullsNote" hidden>Pull lines split the chosen body's force into one arrow for each body pulling on it<span class="orb-keys-note"> (G)</span>.</p>
 											<p class="orb-note" id="wellNote" hidden>Gravity well: how deep each body's pull reaches, as shading and contour lines<span class="orb-keys-note"> (W)</span>.</p>
-											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, Einstein's relativity (orbits slowly turn, black holes spiral together) and tides that tear stars apart.</p>
+											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
@@ -401,7 +401,7 @@
 																<button type="button" class="orb-spin-btn" data-dir="1" aria-label="Turn outward"><span class="icon solid fa-plus" aria-hidden="true"></span></button>
 															</div>
 														</div>
-														<p class="orb-pop-note" id="popAngleNote">0° is sideways, as in a circle; + is outward, − inward.</p>
+														<p class="orb-pop-note" id="popAngleNote">0° is sideways, + outward, − inward.</p>
 														<div class="orb-field">
 															<span class="orb-field-label" id="popSenseLabel">Goes round<span class="orb-field-sub" id="popSenseSub"></span></span>
 															<div class="orb-seg" role="group" aria-labelledby="popSenseLabel">
@@ -418,7 +418,7 @@
 																<button type="button" data-push="out" title="Push it outward, away from what it orbits (→)">Out<span class="icon solid fa-caret-right" aria-hidden="true"></span></button>
 															</div>
 														</div>
-														<p class="orb-pop-note orb-keys-note">Arrow keys push it too. Shift: finer, Alt: coarser.</p>
+														
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelOrbit" aria-labelledby="popTabOrbit" hidden>
 														<div class="orb-pop-fields">
@@ -428,7 +428,7 @@
 															<p class="orb-pop-note" id="eccNote" hidden>Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.</p>
 														</div>
 														<div class="orb-field">
-															<label class="orb-field-label" for="popPeriodIn">Period</label>
+															<label class="orb-field-label" for="popPeriodIn" title="A new period scales the whole orbit, same shape">Period</label>
 															<div class="orb-spin" data-field="period">
 																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Shorter period"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
 																<input type="text" class="orb-spin-input" id="popPeriodIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popOrbitRule">
@@ -437,7 +437,7 @@
 															</div>
 														</div>
 														<div class="orb-field">
-															<label class="orb-field-label" for="popPeriIn">Closest<span class="orb-field-sub" id="popPeriName">perihelion</span></label>
+															<label class="orb-field-label" for="popPeriIn" title="A new distance reshapes the orbit; the body stays where it is">Closest<span class="orb-field-sub" id="popPeriName">perihelion</span></label>
 															<div class="orb-spin" data-field="peri">
 																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Closer"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
 																<input type="text" class="orb-spin-input" id="popPeriIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popOrbitRule">
@@ -446,7 +446,7 @@
 															</div>
 														</div>
 														<div class="orb-field">
-															<label class="orb-field-label" for="popApoIn">Farthest<span class="orb-field-sub" id="popApoName">aphelion</span></label>
+															<label class="orb-field-label" for="popApoIn" title="A new distance reshapes the orbit; the body stays where it is">Farthest<span class="orb-field-sub" id="popApoName">aphelion</span></label>
 															<div class="orb-spin" data-field="apo">
 																<button type="button" class="orb-spin-btn" data-dir="-1" aria-label="Closer"><span class="icon solid fa-minus" aria-hidden="true"></span></button>
 																<input type="text" class="orb-spin-input" id="popApoIn" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-describedby="popOrbitRule">
@@ -455,7 +455,7 @@
 															</div>
 														</div>
 														<p class="orb-pop-note orb-orbit-shape" id="popOrbitShape">&nbsp;</p>
-														<p class="orb-pop-note" id="popOrbitRule">A new period scales the whole orbit (same shape). New closest or farthest distances keep it where it is.</p>
+														<p class="orb-sr-only" id="popOrbitRule">A new period scales the whole orbit (same shape). New closest or farthest distances keep it where it is.</p>
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelBody" aria-labelledby="popTabBody">
 														<div class="orb-pop-fields">
@@ -480,7 +480,7 @@
 															<span class="orb-field-label" id="popPullShowLabel">Show</span>
 															<div class="orb-seg" role="group" aria-labelledby="popPullShowLabel">
 																<button type="button" id="popPullLines" aria-pressed="false" title="One arrow for each body's pull, joined tip to tail (G)">Pull lines</button>
-																<button type="button" id="popPullLimits" aria-pressed="false" title="Its Hill sphere and Roche limit">Hill &amp; Roche</button>
+																<button type="button" id="popPullLimits" aria-pressed="false" title="How far out its moons can orbit, and how close it can go before tides tear it apart">Hill &amp; Roche</button>
 															</div>
 														</div>
 													</div>
@@ -538,7 +538,7 @@
 												<button type="button" id="stepBtn" class="sim-icon-button orb-cap" data-cap="Step" aria-label="Step forward" title="Step forward a moment (.)">
 													<span class="icon solid fa-step-forward"></span>
 												</button>
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Graphs">
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
 													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
 													<span class="icon solid fa-chart-bar"></span>
 												</label>

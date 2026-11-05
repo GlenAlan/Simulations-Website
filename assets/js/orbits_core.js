@@ -5093,10 +5093,10 @@
 
     // The note under "Bodies you drop or move" says what the chosen option does (see launch)
     const PLACEMENT_NOTES = {
-        circular: 'Each starts on a circular orbit round the body it would orbit there.',
-        keep: 'A body you move keeps its velocity; a new one starts at rest.',
-        rest: 'Each starts at rest in this view, then falls.',
-        throw: 'Flick a body as you let go, and it keeps your speed.'
+        circular: 'Round the body it would orbit there.',
+        keep: 'A new body starts at rest.',
+        rest: 'Then it falls.',
+        throw: 'Flick it as you let go.'
     };
     function syncPlacementNote() {
         setText(byId('placementNote'), PLACEMENT_NOTES[settings.placement] || PLACEMENT_NOTES.circular);
@@ -5238,8 +5238,7 @@
         if (ui.eccNote) {
             const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
                 : (b ? `${b.name} is the heaviest body here. Click or tap a body that orbits it.` : '');
-            if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
-            ui.eccNote.hidden = usable && !mission.def;   // (why the slider can't move; else its tooltip says)
+            if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;   // (read out; the tab's own note shows)
         }
         missionLockSidebar();
         if (!usable) {
@@ -8155,29 +8154,14 @@
             s.setAttribute('aria-checked', s === on ? 'true' : 'false');
             s.tabIndex = s === (on || sw[0]) ? 0 : -1;   // (a colour of its own, as a star's: the stop is on the first)
         });
-        // Newton's law for this body and its primary, and its orbit
-        let info = '';
-        if (sr.p) {
-            const p = sr.p;
-            const r = Math.hypot(b.x - p.x, b.y - p.y);
-            const Fn = forceToNewtons((G * b.m * p.m) / (r * r));
-            const el = elementsOf(b, p);
-            const dd = fmtDistance(r);
-            info = `<strong>Pull of ${escapeHtml(theName(p))}:</strong> F = Gm₁m₂/r² = ${fmtSci(Fn, 2)} N<br>`;
-            info += el.bound ? `<strong>Orbit:</strong> ${dd.v} ${dd.u} away, e = ${el.e.toFixed(3)}, period ${fmtDuration(el.T, true)}`
-                : `<strong>Not bound:</strong> ${dd.v} ${dd.u} away and escaping (e = ${el.e.toFixed(2)})`;
-        } else if (bodies.length > 1) {
-            info = `<strong>Heaviest body.</strong> Pull of the others: ${fmtSci(forceToNewtons(Math.hypot(b.fx, b.fy)), 2)} N`;
-        } else {
-            info = '<strong>On its own:</strong> nothing to pull on it.';
-        }
-        info += `<br><strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
-        // How hard it is to leave its surface: sqrt(2GM/R), the speed of light at a black hole's horizon
-        if (hole) info += '<br><strong>Escape speed</strong> at the event horizon: the speed of light';
+        // Its mass in kg, and how hard it is to leave its surface: sqrt(2GM/R), the speed of light at a
+        // black hole's horizon. (Its pull and its orbit are in the info bar and the other tabs.)
+        let info = `<strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
+        if (hole) info += '<br><strong>Escape speed at its horizon:</strong> the speed of light';
         else if (b.R > 0.1) {
             const vs = Math.sqrt((2 * G * b.m) / (b.R / AU_KM)) * AUYR_KMS;
             const f = fmtSpeedKms(vs);
-            info += `<br><strong>Escape speed</strong> from its surface: ${f.v} ${f.u}${lightFraction(vs)}`;
+            info += `<br><strong>Surface escape speed:</strong> ${f.v} ${f.u}${lightFraction(vs)}`;
         }
         if (ui.popInfo.innerHTML !== info) ui.popInfo.innerHTML = info;
         updateEditor(force);
@@ -8641,8 +8625,7 @@
         const vc = s.p ? Math.sqrt((G * (b.m + s.p.m)) / Math.max(s.r, 1e-15)) : s.v;
         showField('speed', s.v, speedUnit(vc));
         showField('angle', s.angle, { label: '°', f: DEG });
-        setText(ui.popAngleNote, s.screen ? 'Relative to the centre of mass: 0° points right, 90° up.'
-            : '0° is sideways, as in a circle; + is outward, − inward.');
+        setText(ui.popAngleNote, s.screen ? '0° points right, 90° up.' : '0° is sideways, + outward, − inward.');
         ui.popSenseAcw.setAttribute('aria-pressed', !s.screen && s.sense > 0 ? 'true' : 'false');
         ui.popSenseCw.setAttribute('aria-pressed', !s.screen && s.sense < 0 ? 'true' : 'false');
         const usual = s.screen ? 0 : usualSense(s.p, b);
@@ -8663,18 +8646,16 @@
             ui.popPeriodIn.placeholder = 'escaping';
             ui.popApoIn.placeholder = 'never';
             const d = fmtDistance(o.el.a);
-            const e = o.el.e;
-            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}, e = ${e.toFixed(3)}: ${e < 0.005 ? 'a circle' : e < 0.995 ? 'an ellipse' : 'a very thin ellipse'}.`
-                : `Escaping (e = ${e.toFixed(2)}). Set a farthest distance to make it orbit.`;
+            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}` : 'Escaping. Set a farthest distance to make it orbit.';
         } else {
             showField('period', NaN, periodUnit(scene.Tref));
             for (const n of ['peri', 'apo']) showField(n, NaN, distUnit(scene.units === 'km' ? 0 : 1));
             ui.popPeriodIn.placeholder = ui.popApoIn.placeholder = '';
             // (the heavier of a pair that orbit each other: their orbit is set from the lighter one)
             const partner = b.primary && b.primary.primary === b ? b.primary : null;
-            shape = alone ? 'It is on its own: there is nothing to orbit.'
-                : partner ? `${b.name} and ${partner.name} orbit each other: set their orbit from ${partner.name}'s menu.`
-                    : `${b.name} is the heaviest body here: it doesn't orbit another. Choose one that orbits it.`;
+            shape = alone ? 'Nothing to orbit.'
+                : partner ? `${b.name} and ${partner.name} orbit each other: set it from ${partner.name}'s menu.`
+                    : `${b.name} is the heaviest: choose a body that orbits it.`;
         }
         setText(ui.popOrbitShape, shape);
         // (an escaping orbit's period and farthest distance can be typed, not stepped)
@@ -9038,9 +9019,9 @@
         btn.className = 'orb-chip';
         btn.dataset.kind = kind;
         const label = kind === 'custom' ? 'Custom' : k.name;
-        btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
-            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it onto a planet, or click to give the chosen planet a moon.`
-                : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
+        btn.dataset.title = kind === 'custom' ? 'Your own body: drop it, then set its mass, speed and colour'
+            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drop it on a planet, or click for a moon of the chosen planet`
+                : `${k.name}, ${k.info} (${fmtMass(k.m)})`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
         const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
@@ -10613,7 +10594,7 @@
     };
     const CSV_EMPTY = {
         kepler: 'Nothing to list yet: choose a body that orbits something.',
-        graphs: 'No graph data yet: show the graphs (the chart button under the canvas) and let it run.',
+        graphs: 'No graph data yet: show the Graphs and let it run.',
         bodies: 'There are no bodies.'
     };
     Object.assign(settings, { stability: false });
@@ -13173,7 +13154,7 @@
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'In a mission the orbit changes only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
+        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
         setText(ui.popOrbitShape, why);
         if (!craft) setText(ui.popAngleNote, why);
     }
