@@ -921,6 +921,8 @@
     // Small helpers
     // ------------------------------------------------------------------
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+    // (Math.hypot boxes its numbers and takes far longer: this one for what runs every step or for every body)
+    const hyp = (x, y) => Math.sqrt(x * x + y * y);
     const isDark = () => document.documentElement.classList.contains('dark-mode');
     const COMPACT = { whitedwarf: 1, neutron: 1, blackhole: 1 };
     const isCompact = (b) => !!COMPACT[b.kind];
@@ -2158,7 +2160,7 @@
         const key = `${b.id}:${p.id}`;
         let tr = watched.get(key);
         const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy;
-        const rd = rx * vx + ry * vy, r = Math.hypot(rx, ry), phi = Math.atan2(ry, rx);
+        const rd = rx * vx + ry * vy, r = hyp(rx, ry), phi = Math.atan2(ry, rx);
         if (!tr || tr.n !== relSteps - 1 || tr.ref !== b.track) {
             // new, or it missed steps, or the body was changed: start again
             if (watched.size > 8) watched.clear();
@@ -2744,7 +2746,7 @@
             const p = b.primary;
             if (!p || !b.bound || b.held || p.held || (b.minor && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
             const rx = b.x - p.x, ry = b.y - p.y;
-            const r = Math.hypot(rx, ry);
+            const r = hyp(rx, ry);
             const phi = Math.atan2(ry, rx);
             let tr = b.track;
             if (!tr || tr.pid !== p.id) {
@@ -2845,8 +2847,8 @@
         if (flyby.active) {
             const q = bodyById(flyby.pid), s = bodyById(flyby.sid);
             if (!q || !s || q.held) { resetFlyby(); return; }
-            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
-            flyby.vNow = Math.hypot(b.vx - s.vx, b.vy - s.vy);
+            const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
+            flyby.vNow = hyp(b.vx - s.vx, b.vy - s.vy);
             if (r < flyby.rmin) {
                 // On the way in, the closest approach of the hyperbola it is on now (the star's pull
                 // shifts it as it goes); after it, the measured one. The close-up is scaled by it.
@@ -2858,7 +2860,7 @@
             }
             // points closer together near the planet (where the close-up shows them)
             const n = flyby.pts.length;
-            if (Math.hypot(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
+            if (hyp(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
             if (r > flyby.hill) {
                 flyby.active = false; flyby.done = true;
                 flyby.vOut = flyby.vNow;
@@ -2872,7 +2874,7 @@
             const s = q.primary;
             if (q === b || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
             if (q.m < 10 * b.m || q.m > 0.1 * s.m) continue;   // a light body passing a planet
-            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
+            const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
             if (r >= q.hill) continue;
             const el = relElements(dx, dy, b.vx - q.vx, b.vy - q.vy, G * (b.m + q.m));
             if (el.bound) continue;   // captured: an orbit, not a flyby
@@ -2923,7 +2925,7 @@
             const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
             const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
-            if (Math.hypot(rx - ox, ry - oy) > 0.035 * Math.hypot(rx, ry)) return true;
+            if (hyp(rx - ox, ry - oy) > 0.035 * hyp(rx, ry)) return true;
         }
         return false;
     }
