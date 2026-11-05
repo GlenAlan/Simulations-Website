@@ -2944,6 +2944,7 @@
     // Scenes
     // ------------------------------------------------------------------
     function loadScene(key) {
+        missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
         setReverse(false, true);   // (a new or restarted scene runs forwards)
         const def = SCENES[key] || SCENES['sun-earth'];
@@ -3145,6 +3146,8 @@
     // Fit every body, and the whole orbit of each bound one, in the view.
     function fitAll() {
         if (!bodies.length) return;
+        // (a mission locked on a body has its own view: the Sun, far off, isn't part of it)
+        if (mission.def && mission.def.lock !== undefined) { fitBox(mission.def.scene.box, true); return; }
         updateDrawnPositions();
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         const add = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
@@ -6829,23 +6832,22 @@
     }
 
     // ---- The cards down the top-right corner ----
-    // Top first, in this order: the mission, a flyby, the stability timer, relativity, Kepler's 1st, 2nd
+    // Top first, in this order: a flyby, the stability timer, relativity, Kepler's 1st, 2nd
     // and 3rd laws, the Hill sphere and Roche limit. The stack never covers much of the canvas: when it
     // would grow past its cap (about 60% of the height, and clear of the scale bar), the lowest cards
-    // turn compact (a line or two) first, the mission, a flyby and relativity last; if it is still too
+    // turn compact (a line or two) first, a flyby and relativity last; if it is still too
     // tall the lowest fold into one last line that names them, and any left compact that now fit are
     // shown in full again. (Small canvases show compact cards from the start.) The layout is worked out
     // a few times a second, by drawing the cards where nothing shows, and kept in between.
-    const CARD_ORDER = ['mission', 'flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
-    const CARD_NAMES = { mission: 'mission', flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
-    const CARD_KEEP = new Set(['mission', 'flyby', 'relativity']);
+    const CARD_ORDER = ['flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
+    const CARD_NAMES = { flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
+    const CARD_KEEP = new Set(['flyby', 'relativity']);
     const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0, over: false };
 
     // One card at y (compact or not): returns where the next one goes (y itself if it has nothing to show)
     function drawOneCard(C, id, subj, y, fs, compact) {
         let b = y;
-        if (id === 'mission') b = drawMissionCard(C, y, fs, compact);
-        else if (id === 'flyby') { const fl = flybyLines(compact); if (fl) b = drawCard(C, fl, y, fs) + 5; }
+        if (id === 'flyby') { const fl = flybyLines(compact); if (fl) b = drawCard(C, fl, y, fs) + 5; }
         else if (id === 'stability') b = drawStabilityCard(C, y, fs, compact);
         else if (id === 'relativity') { const e = drawRelativityCard(C, subj, y, fs, compact); if (e > y) b = e + 5; }
         else if (settings[id]) {
@@ -6874,7 +6876,7 @@
         const compact = {};
         let total = 0;
         for (const id of ids) { compact[id] = small; total += full[id]; }
-        // (the mission, a flyby and relativity are what the moment is about: they turn compact last)
+        // (a flyby and relativity are what the moment is about: they turn compact last)
         const squeeze = (keep) => {
             for (let i = ids.length - 1; i >= 0 && total > cap; i--) {
                 const id = ids[i];
@@ -6906,7 +6908,7 @@
         const y0 = frameId !== null && viewW < 520 ? 48 : pad;
         const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
         const now = performance.now();
-        const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${mission.def ? mission.def.id : ''}|${selectedId}|${C.dark}`;
+        const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${selectedId}|${C.dark}`;
         // (worked out again when what is switched on changes, and twice a second while the stack is
         // over its cap or has had to give way; a stack that fits as it is costs nothing more)
         const squeezed = cards.folded.length > 0 || (!small && CARD_ORDER.some((id) => cards.compact[id]));
@@ -8664,7 +8666,8 @@
         const kind = ARROW_PUSH[e.key];
         if (!kind || e.ctrlKey || e.metaKey || takesArrows(t)) return;
         if (!popBody && !edit.engaged && !document.body.classList.contains('sim-fullscreen-active')) return;
-        const b = missionCraft() || popBody || (selectedId !== null ? bodyById(selectedId) : null);
+        if (missionKey(e, kind)) return;
+        const b = popBody || (selectedId !== null ? bodyById(selectedId) : null);
         if (!b || b.held || bodies.length < 2) return;
         e.preventDefault();
         nudge(b, kind, stepFor(e));
@@ -9089,7 +9092,7 @@
                 : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
         }
         // (the gear kept on the line of the word before it)
-        if (hints.intro) h += ' <strong>New:</strong> Missions, in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
+        if (hints.intro) h += ' <strong>New:</strong> <button type="button" class="orb-hint-missions">Missions</button>, also in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
         return h;
     }
 
@@ -9872,7 +9875,7 @@
     // the other way, and the measurements that run with the clock (periods, Kepler's 2nd law sectors,
     // the flyby card) start again; the history, the trails and any merges to undo carry on.
     function setReverse(on, quiet) {
-        if (on && mission.def && mission.status === 'flying') {
+        if (on && mission.def) {
             missionNote('<strong>Mission rules:</strong> in a mission, time only runs forwards (Undo takes a burn back).');
             on = false;
         }
@@ -10996,6 +10999,7 @@
         updateScale();
         updateDrawnPositions();
         timedHint(note, 7000);
+        missionFromSetup(s);
     }
 
     function applySettings(set) {
@@ -11081,7 +11085,7 @@
     // ------------------------------------------------------------------
     // Not a built-in scene that hasn't been touched (it is one click away anyway), nor half-way
     // through moving a body
-    const saveEligible = () => bodies.length > 0 && (isRandomKey(settings.scene) || !hist.cleanLoad) && !editing();
+    const saveEligible = () => bodies.length > 0 && (isRandomKey(settings.scene) || !hist.cleanLoad) && !editing() && !mission.def;   // (a mission mustn't take the place of your own system)
     const autosaveSignature = () => `${editSignature()}#${settingsSignature()}`;
 
     function autosaveTick(now) {
@@ -11999,11 +12003,15 @@
     // Missions: goals a student meets by firing a probe's engine within a fuel (delta-v) budget.
     //   Each mission is a scene of its own (the scene list's "Missions" group, or the Missions button
     //   under it): the bodies, the probe, the body its burns are measured from, a time limit and a
-    //   view. A briefing gives the goal, the physics idea and the par: the delta-v of the classic way
-    //   there, worked out from vis-viva, v^2 = GM (2/r - 1/a), and Kepler's 3rd law.
-    //   While a mission is loaded only the probe's velocity may change, and only by burns: the menu's
-    //   pushes and typed velocity, the arrow keys (which always fire the probe's engine) and aiming its
-    //   arrow (the clock stops while it is aimed, so it can't hover). Each burn costs |delta-v| in km/s.
+    //   view. It starts at once, paused: the mission console takes the palette's place (the goal in a
+    //   line, how it is going, the fuel, the engine, Start or a skip to the next moment that matters),
+    //   and the goal is drawn on the canvas. "How it works" gives the physics idea and the par: the
+    //   delta-v of the classic way there, worked out from vis-viva, v^2 = GM (2/r - 1/a), and Kepler's
+    //   3rd law.
+    //   While a mission is loaded only the probe's velocity may change, and only by burns: the engine's
+    //   buttons and the arrow keys (held, they keep firing, and the clock waits meanwhile), the menu's
+    //   pushes and typed velocity, and aiming its arrow (the clock stops while it is aimed, so it can't
+    //   hover). Each burn costs |delta-v| in km/s.
     //   Every edit already goes through keepView (an aimed arrow through endHold), which brackets it
     //   with missionBegin / missionEnd: a copy of every body before, compared after. A change to the
     //   probe's velocity alone is a burn and is charged (cut short if the tank runs dry); anything else
@@ -12017,13 +12025,19 @@
     //   the last burn with the fuel as it was then.
     //   Goals are checked on the simulated state: distances and relative speeds every step (a few
     //   multiplications, so a fast pass through Mars's Hill sphere is never stepped over), orbit
-    //   elements every ORBIT_CHECK_EVERY steps and after each burn. The card, the hint line and the
+    //   elements every ORBIT_CHECK_EVERY steps and after each burn. The console, the hint line and the
     //   results are updated ten times a second, with the readouts.
+    //   Leaving goes back to the system, speed and view it was started from (missionKeepHome, leaveMission).
     // ------------------------------------------------------------------
     const MISSION_STORE = 'orbitsMissions';  // localStorage: the best result of each mission
     const STARS_AT = [1.1, 1.35];            // delta-v up to these multiples of par: three stars, two (else one)
     const ORBIT_CHECK_EVERY = 16;            // steps between checks of the orbit elements
     const MSNAP_W = 7;                       // numbers kept per body while an edit is checked: id, m, R, x, y, vx, vy
+    // The engine, as shares of the mission's tank: a tap (the first ENGINE_WAIT_MS of a press), a second
+    // of holding, and how much smaller fine burns are. So a tank's par burn takes a second or few of holding.
+    const ENGINE_TAP = 0.015, ENGINE_HOLD = 0.12, ENGINE_FINE = 0.1;
+    const ENGINE_WAIT_MS = 220, ENGINE_EVERY_MS = 50;
+    const SKIP_S = 1.5;                      // a skip to the next moment that matters takes about this long to watch
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
     const auText = (d) => `${d < 0.1 ? d.toFixed(3) : d.toFixed(2)} AU`;
@@ -12041,7 +12055,8 @@
 
     // The missions, easy to hard. Each: its scene (as in SCENES), the probe, the reference body and the
     // target (indices into the scene's bodies), the fuel budget and par (km/s), the time limit (years),
-    // the goal, and the words: the briefing, how par is worked out, what it teaches, hints.
+    // the size of the first burn, where a hint needs to give it (aim, km/s), the goal, and the words: the
+    // goal in a line, the idea and how par is worked out (on request), what it teaches, hints.
     //   goal types: orbit (a near-circle of radius r, within tol of it, round the reference body),
     //   escape (unbound from it), capture (bound to it, never farther than lim), reach (inside the
     //   target's Hill sphere, zone) and meet (within D of the target, moving within V of it; l4: within D
@@ -12080,36 +12095,36 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: up.dv1 + up.dv2,
                 goal: { type: 'orbit', r: 1.5, tol: 0.05 },
-                goalText: 'Move your probe from its circular orbit at 1 AU (Earth\'s distance from the Sun) to a circular orbit at 1.5 AU.',
-                idea: 'A burn forwards (prograde) speeds you up, and that lifts the far side of your orbit. Two burns at opposite ends of an ellipse are the cheapest way up: a Hohmann transfer.',
-                parText: `burn forwards ${f1(up.dv1)} km/s to stretch your orbit into an ellipse that reaches 1.5 AU, then ${f1(up.dv2)} km/s more when you get there, to round it off. The speeds come from v² = GM(2/r − 1/a).`,
+                goalText: 'Reach a round orbit on the ring, 1.5 AU from the Sun.',
+                idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off. These two burns, a Hohmann transfer, are the cheapest way up.',
+                parText: `${f1(up.dv1)} km/s to stretch your orbit out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
                 teach: 'That was a Hohmann transfer: speeding up at one end of an orbit raises the other end.',
                 hint: (x) => transferHint(x, 1.5, 0.05, true),
-                fail: { fuel: 'Two burns are enough: forwards at the start, then forwards again at the far point of the ellipse.', crash: 'Burning backwards drops you towards the Sun.' }
+                fail: { fuel: 'Two burns are enough: forwards at the start, then forwards again at the far point.', crash: 'Burning backwards drops you towards the Sun.', time: 'Burn forwards until your orbit reaches the ring, then skip to the far point and burn again.' }
             },
             {
                 id: 'venus', title: 'Down to Venus\'s orbit',
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.2, 1.2, -1.2, 1.2], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: down.dv1 + down.dv2,
                 goal: { type: 'orbit', r: 0.723, tol: 0.05 },
-                goalText: 'Move from a circular orbit at 1 AU to a circular orbit at 0.72 AU, where Venus goes round.',
-                idea: 'To go down, slow down: a burn backwards (retrograde) lowers the far side of your orbit. As you fall towards the Sun you speed up, so the lower orbit is the faster one.',
-                parText: `burn backwards ${f1(down.dv1)} km/s so your orbit dips to 0.72 AU, then backwards ${f1(down.dv2)} km/s more there, to round it off (v² = GM(2/r − 1/a) at both ends of the ellipse).`,
+                goalText: 'Drop to a round orbit on the ring, at Venus\'s distance.',
+                idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Then burn backwards again at the closest point to round it off. You speed up as you fall, so a lower orbit is a faster one.',
+                parText: `${f1(down.dv1)} km/s backwards so your orbit dips to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
                 teach: 'You slowed down twice, yet you are now faster than when you started: lower orbits are quicker.',
                 hint: (x) => transferHint(x, 0.723, 0.05, false),
-                fail: { fuel: 'Two burns are enough: backwards at the start, then backwards again at the closest point.', crash: 'Too much braking: you fell into the Sun. Burn backwards less.' }
+                fail: { fuel: 'Two burns are enough: backwards at the start, then backwards again at the closest point.', crash: 'Too much braking: you fell into the Sun. Burn backwards less.', time: 'Burn backwards until your orbit dips to the ring, then skip to the closest point and burn again.' }
             },
             {
                 id: 'escape', title: 'Escape the Sun',
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-3.3, 0.65, -1.25, 1.25], bodies: [sun, probe({ around: 0, a: ea, e: ee, w: 0, nu: 180 })] },
                 craft: 1, ref: 0, target: null, budget: 8, limit: 2.5, par: escPeri,
                 goal: { type: 'escape' },
-                goalText: 'Your probe is on a long ellipse that swings between 3 AU and 0.3 AU from the Sun. Leave the Solar System for good, using as little fuel as you can.',
+                goalText: 'Escape the Sun for good, on as little fuel as you can.',
                 idea: 'A burn adds the most energy where you are moving fastest (the Oberth effect). So wait until you swing closest to the Sun, then burn forwards.',
-                parText: `at 0.3 AU you move at ${f1(toKms(vPeri))} km/s, and escaping needs ${f1(toKms(Math.sqrt(2 * G / 0.3)))} km/s there (the escape speed √(2GM/r)): ${f1(escPeri)} km/s more. Out at 3 AU it would take ${f1(escApo)} km/s.`,
+                parText: `at 0.3 AU you move at ${f1(toKms(vPeri))} km/s and escaping takes ${f1(toKms(Math.sqrt(2 * G / 0.3)))} km/s (√(2GM/r)): ${f1(escPeri)} km/s more. Out at 3 AU it would take ${f1(escApo)} km/s.`,
                 teach: 'The same burn gives more energy when you are moving fast, which is why spacecraft burn close to a planet or the Sun.',
                 hint: escapeHint,
-                fail: { fuel: 'Burn at the closest point to the Sun: there the same burn adds far more energy.', time: 'Pause as you swing closest to the Sun, then burn forwards.', crash: 'Burning backwards sends you into the Sun.' }
+                fail: { fuel: 'Burn at the closest point to the Sun: there the same burn adds far more energy.', time: 'Skip to the closest point to the Sun, then burn forwards.', crash: 'Burning backwards sends you into the Sun.' }
             },
             {
                 id: 'capture', title: 'Captured by Jupiter',
@@ -12120,12 +12135,12 @@
                 },
                 craft: 2, ref: 1, target: null, lock: 1, budget: 5, limit: 0.6, par: toKms(cVp - cVcap),
                 goal: { type: 'capture', lim: cLim, hill: hillJ },
-                goalText: `Your probe is falling past Jupiter too fast to stay. Burn so that it ends up orbiting Jupiter, never more than ${f2(cLim)} AU (${Math.round(cLim * AU_KM / 1e6)} million km) away.`,
+                goalText: 'You are falling past Jupiter too fast. Brake to stay in orbit, inside the ring.',
                 idea: 'Slow down where you are moving fastest, at the closest point to Jupiter: there each km/s of braking takes away the most energy (the Oberth effect again).',
-                parText: `at the closest point, ${Math.round(cRp * AU_KM / 1e6)} million km from Jupiter, you pass at ${f1(toKms(cVp))} km/s; slowing to ${f1(toKms(cVcap))} km/s there gives an orbit that stays inside the ring (vis-viva at both ends of that orbit).`,
+                parText: `at the closest point, ${Math.round(cRp * AU_KM / 1e6)} million km from Jupiter, slow from ${f1(toKms(cVp))} to ${f1(toKms(cVcap))} km/s: an orbit that stays inside the ring (from v² = GM(2/r − 1/a)).`,
                 teach: 'You braked at the closest point, where it counts most. The Juno probe was captured by Jupiter in just this way.',
                 hint: captureHint,
-                fail: { fuel: 'Brake at the closest point to Jupiter, where it counts most.', missed: 'Pause just before the closest point, then burn backwards: two 10% pushes is about right.', crash: 'You hit Jupiter! Try a gentler burn.' }
+                fail: { fuel: 'Brake at the closest point to Jupiter, where it counts most.', missed: 'Skip to the closest point, then hold Back until Jupiter keeps you.', crash: 'You hit Jupiter! Try a gentler burn.' }
             },
             {
                 id: 'mars', title: 'Get to Mars',
@@ -12133,14 +12148,14 @@
                     units: 'au', Tref: 1, subject: 2, forceBody: 1, box: [-1.75, 1.75, -1.75, 1.75],
                     bodies: [sun, { kind: 'mars', orbit: { around: 0, a: 1.524, e: 0, nu: 100 } }, probe({ around: 0, a: 1, e: 0, nu: 0 })]
                 },
-                craft: 2, ref: 0, target: 1, budget: 6, limit: 2, par: mars.dv1, lead: marsLead,
+                craft: 2, ref: 0, target: 1, budget: 6, limit: 2, par: mars.dv1, aim: mars.dv1, lead: marsLead,
                 goal: { type: 'reach', zone: marsHill },
-                goalText: `Fly from Earth's orbit (1 AU) to Mars (1.52 AU) and get inside its Hill sphere, where Mars's pull beats the Sun's: within ${auText(marsHill)} (${f1(marsHill * AU_KM / 1e6)} million km) of it.`,
-                idea: `One burn forwards stretches your orbit out to Mars's: a Hohmann transfer, half an orbit long. Mars moves on while you fly, so time it: burn when Mars is about ${Math.round(marsLead)}° ahead of you.`,
-                parText: `the Hohmann burn, ${f1(mars.dv1)} km/s. The trip takes ${Math.round(mars.T * 12)} months (Kepler's 3rd law for the transfer ellipse), and Mars moves ${Math.round(180 - marsLead)}° in that time, so it must start ${Math.round(marsLead)}° ahead.`,
+                goalText: 'Fly to Mars, and get inside the ring round it.',
+                idea: `One burn forwards stretches your orbit out to Mars's: half an orbit long. Mars moves on while you fly, so wait for the launch window, when Mars is about ${Math.round(marsLead)}° ahead of you.`,
+                parText: `the one burn, ${f1(mars.dv1)} km/s. The trip takes ${Math.round(mars.T * 12)} months (Kepler's 3rd law), and Mars moves ${Math.round(180 - marsLead)}° in that time, so it must start ${Math.round(marsLead)}° ahead.`,
                 teach: 'Launch windows: Mars has to be in the right place when you set off. For real missions to Mars that happens every 26 months.',
                 hint: marsHint,
-                fail: { fuel: `One burn of about 3 km/s, when Mars is ${Math.round(marsLead)}° ahead, is nearly all it takes; small pushes then fine-tune it.`, time: `Burn when Mars is about ${Math.round(marsLead)}° ahead of you, then fine-tune until your closest approach in the card is inside the goal.` }
+                fail: { fuel: 'One burn of about 3 km/s, at the launch window, is nearly all it takes. Fine burns then tune it.', time: 'Skip to the launch window, burn until your closest approach is inside the goal, then skip to Mars.' }
             },
             {
                 id: 'station', title: 'Catch the station',
@@ -12148,14 +12163,14 @@
                     units: 'au', Tref: 1, subject: 2, box: [-1.25, 1.25, -1.25, 1.25],
                     bodies: [sun, { kind: 'probe', name: 'Station', color: '#ae85ca', orbit: { around: 0, a: 1, e: 0, nu: 30 } }, probe({ around: 0, a: 1, e: 0, nu: 0 })]
                 },
-                craft: 2, ref: 0, target: 1, budget: 4, limit: 1.6, par: 2 * rDv,
-                goal: { type: 'meet', D: 0.01, V: 0.3 / AUYR_KMS },
-                goalText: 'A space station shares your orbit, 30° ahead. Meet it: get within 0.01 AU (1.5 million km) of it, moving within 0.3 km/s of its speed.',
+                craft: 2, ref: 0, target: 1, budget: 4, limit: 1.6, par: 2 * rDv, aim: rDv,
+                goal: { type: 'meet', D: 0.02, V: 0.3 / AUYR_KMS },
+                goalText: 'Catch the station, 30° ahead of you, and match its speed.',
                 idea: 'Speeding up raises your orbit and makes each lap longer, so you fall behind. To catch up, slow down: a smaller orbit is a quicker lap.',
-                parText: `slow down ${f1(rDv)} km/s. Your smaller orbit takes 11 months instead of 12 (Kepler's 3rd law), so after one lap you have gained 30°. Then speed up ${f1(rDv)} km/s to match the station.`,
+                parText: `slow down ${f1(rDv)} km/s. Your smaller orbit takes 11 months instead of 12 (Kepler's 3rd law), so one lap gains 30°. Then speed up ${f1(rDv)} km/s to match the station.`,
                 teach: 'Slow down to catch up: a lower orbit takes less time. Spacecraft meeting a space station use the same trick.',
                 hint: stationHint,
-                fail: { fuel: `Slow down about ${f1(rDv)} km/s, wait a lap, then speed up by the same amount when you meet the station.`, time: `Slow down about ${f1(rDv)} km/s at the start: that smaller orbit brings you to the station in one lap.` }
+                fail: { fuel: `Slow down about ${f1(rDv)} km/s, skip to the station, then speed up by the same amount.`, time: `Slow down about ${f1(rDv)} km/s at the start: that smaller orbit brings you to the station in one lap.` }
             },
             {
                 id: 'l4', title: 'Park at L4',
@@ -12163,14 +12178,14 @@
                     units: 'au', Tref: 11.86, subject: 2, forceBody: 1, box: [-6.3, 6.3, -6.3, 6.3],
                     bodies: [sun, { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0 } }, probe({ around: 0, a: 5.2, e: 0, nu: 90 })]
                 },
-                craft: 2, ref: 0, target: 1, budget: 2, limit: 20, par: 2 * lDv,
+                craft: 2, ref: 0, target: 1, budget: 2, limit: 20, par: 2 * lDv, aim: lDv,
                 goal: { type: 'meet', D: 0.3, l4: true, a: 5.2, da: 0.01, eMax: 0.03 },
-                goalText: 'Jupiter\'s Trojan asteroids gather 60° ahead of it, at L4, where the Sun\'s and Jupiter\'s pulls together keep them going round with Jupiter. Park your probe there: within 0.3 AU of L4, on an orbit like Jupiter\'s (the same size to within 1%, and nearly round), so that you keep pace with it.',
-                idea: 'You start 90° ahead of Jupiter, on its orbit. A slightly bigger orbit takes longer, so you slip back towards L4; then a burn settles you there.',
-                parText: `speed up ${f2(lDv)} km/s. Your orbit then takes ${f1(lT)} years instead of Jupiter's ${f1(TJ)} (Kepler's 3rd law), so after one lap you are 30° further back, at L4. Then slow down ${f2(lDv)} km/s to stay.`,
-                teach: 'Parked at L4 on Jupiter\'s orbit, you go round in step with Jupiter, and the Sun and Jupiter together keep you near L4, like the Trojan asteroids (the Lucy probe is on its way to visit them).',
+                goalText: 'Park at L4, 60° ahead of Jupiter, on an orbit like Jupiter\'s.',
+                idea: 'L4 is where the Sun\'s and Jupiter\'s pulls together keep Trojan asteroids going round with Jupiter. You start 90° ahead on its orbit. A slightly bigger orbit takes longer, so you slip back to L4; then a burn settles you there.',
+                parText: `speed up ${f2(lDv)} km/s. Your orbit then takes ${f1(lT)} years instead of Jupiter's ${f1(TJ)} (Kepler's 3rd law), so one lap loses 30°. Then slow down ${f2(lDv)} km/s to stay.`,
+                teach: 'At L4 you go round in step with Jupiter, like the Trojan asteroids (the Lucy probe is on its way to visit them).',
                 hint: l4Hint,
-                fail: { fuel: `Speed up about ${f2(lDv)} km/s, wait one lap (about 13 years), then slow down by the same amount at L4.`, time: `Speed up about ${f2(lDv)} km/s at the start: one lap of that bigger orbit brings you back to L4.`, crash: 'Stay clear of Jupiter!' }
+                fail: { fuel: `Speed up about ${f2(lDv)} km/s, skip to L4 (about 13 years), then slow down by the same amount.`, time: `Speed up about ${f2(lDv)} km/s at the start: one lap of that bigger orbit brings you back to L4.`, crash: 'Stay clear of Jupiter!' }
             }
         ].map((m, i) => Object.assign(m, { n: i + 1, key: `mission-${m.id}` }));
     })();
@@ -12180,7 +12195,7 @@
 
     const mission = {
         def: null,             // the mission loaded (null: none)
-        status: 'off',         // 'ready' (the briefing is up), 'flying', 'won' or 'lost'
+        status: 'off',         // 'ready' (the clock hasn't started), 'flying', 'won' or 'lost'
         reason: '',            // why it was lost: crash, fuel, time or missed
         crashedInto: '',
         craftId: null, refId: null, targetId: null,
@@ -12191,83 +12206,101 @@
         result: null,          // { stars, used, t, prev, better } once it is over
         resultShown: false,
         pred: null, predDirty: true,   // the coming closest approach to the target
-        aimPaused: false,      // the clock was stopped while the probe's arrow is aimed
-        burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one note for them all)
+        aimPaused: false,      // the clock was stopped for a moment (aiming, firing, reading a card)
+        firing: null,          // the engine while it is held: { kind, fine, key, timer }
+        fine: false,           // the Fine switch
+        skip: null,            // a skip going on: { kind, t, late, out, speed }
+        home: null,            // what to go back to on leaving (see missionKeepHome)
+        burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
         hintShown: '',         // the mission hint last put in the hint line
-        panel: null,           // what the briefing card shows: 'brief' or 'result' (null: hidden)
+        panel: null,           // what the card over the canvas shows: 'how', 'list' or 'result' (null: hidden)
+        okSaid: false, sceneKeyAt: -1e9, keyed: false,
         menuLocked: false
     };
 
     // ---- Words ----
-    const PUSH_KEY = { faster: '↑', slower: '↓', out: '→', in: '←' };
-    const PUSH_WORD = { faster: 'Faster', slower: 'Slower', out: 'Out', in: 'In' };
-    function press(kind) {
-        return coarse() ? `Tap <strong>Edit</strong>, then <strong>${PUSH_WORD[kind]}</strong>,` : `Press <strong>${PUSH_KEY[kind]}</strong>`;
-    }
-    function howToBurn() {
-        return coarse() ? 'Fire the engine with the pushes in the probe\'s menu (tap <strong>Edit</strong>) or by dragging the tip of its arrow. Every burn uses fuel; Undo gives it back.'
-            : 'Fire the engine with the arrow keys (<strong>↑</strong> forwards, <strong>↓</strong> backwards, <strong>→</strong> out, <strong>←</strong> in; hold Shift for small burns), the probe\'s menu, or by dragging the tip of its arrow. Every burn uses fuel; Undo gives it back.';
-    }
     const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter' };
 
     // Hints for a move between circular orbits (up: outwards). The end of the orbit that moves is the
     // far one going up and the near one going down; the second burn goes there, the same way again.
     function transferHint(x, r, tol, up) {
         const lo = r * (1 - tol), hi = r * (1 + tol);
-        const way = up ? 'forwards' : 'backwards', where = up ? 'far point' : 'closest point';
+        const way = up ? 'forwards' : 'backwards', where = up ? 'far point' : 'closest point', btn = up ? 'Forward' : 'Back';
         const reach = up ? x.ra : x.rp;
-        if (!x.burns) return `${press(up ? 'faster' : 'slower')} to burn ${way}: it ${up ? 'raises' : 'lowers'} the far side of your orbit.`;
-        if (!x.el.bound) return 'You are escaping the Sun! Undo that burn and try a smaller one.';
+        if (!x.burns) return `Hold <strong>${btn}</strong> until your dashed orbit ${up ? 'reaches' : 'dips to'} the ring.`;
+        if (!x.el.bound) return 'You are escaping the Sun! <strong>Undo</strong>, and try a smaller burn.';
         // (the first burn went the wrong way: the orbit shrank going up, or grew going down)
-        if (up ? x.el.a < 0.995 : x.el.a > 1.005) return `That burn ${up ? 'lowered' : 'raised'} your orbit. Burn ${way} instead (Undo gives the fuel back).`;
-        if (up ? reach < lo : reach > hi) return `Your orbit reaches ${f2(reach)} AU. Burn ${way} a little more to reach ${r} AU.`;
-        if (up ? reach > hi : reach < lo) return `Your orbit goes past ${r} AU. A burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'} brings it back, but costs fuel.`;
+        if (up ? x.el.a < 0.995 : x.el.a > 1.005) return `That burn ${up ? 'lowered' : 'raised'} your orbit. <strong>Undo</strong>, then burn ${way}.`;
+        if (up ? reach < lo : reach > hi) return `Not there yet: hold <strong>${btn}</strong> until your orbit ${up ? 'reaches' : 'dips to'} the ring.`;
+        if (up ? reach > hi : reach < lo) return `Too far: your orbit goes past the ring. <strong>Undo</strong>, or burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'}.`;
         const at = up ? x.nu > 165 : x.nu < 15;
-        return at ? `<strong>Now:</strong> you are at the ${where}. Burn ${way} to round off your orbit.`
-            : `Good: your orbit reaches ${r} AU. Coast to the ${where}, then burn ${way} again to round it off.`;
+        return at ? `<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`
+            : `Good. <strong>Skip to the ${where}</strong>, then burn ${way} again.`;
     }
     // (within 45 degrees of the closest point, 0.35 AU from the Sun, a burn still earns three stars)
     function escapeHint(x) {
-        if (x.nu < 45) return `<strong>Now:</strong> you are close to the Sun and moving fastest. ${press('faster')} to burn forwards!`;
-        if (x.out) return 'You are past the closest point and slowing down: a burn out here costs far more. Try again, and burn as you swing round the Sun.';
-        return x.burns ? 'A burn out here adds less energy than the same burn near the Sun. Wait for the closest point.'
-            : 'Wait: you are falling towards the Sun and speeding up. Pause as you swing closest to it, then burn forwards.';
+        if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
+        if (x.out) return 'You have passed the closest point, so a burn costs far more. <strong>Retry</strong>, and burn close to the Sun.';
+        return x.burns ? 'A burn out here adds little energy. <strong>Skip to the closest point</strong>, then burn.'
+            : 'Watch the fuel it takes to escape fall as you near the Sun. <strong>Skip to the closest point</strong>, then burn forwards.';
     }
     function captureHint(x) {
         const g = x.d.goal;
-        if (x.el.bound && x.ra > g.lim) return 'You are orbiting Jupiter, but too widely. Burn backwards again at the closest point to shrink the orbit.';
-        if (x.nu < 20) return `<strong>Now:</strong> closest point. ${press('slower')} to burn backwards!`;
+        if (x.el.bound && x.ra > g.lim) return 'Jupiter has you, but too widely. Hold <strong>Back</strong> at the closest point to shrink your orbit.';
+        if (x.nu < 20) return '<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.';
         if (x.out) return 'You are past the closest point and climbing away: braking now costs more.';
-        return 'Pause as you near Jupiter, then burn backwards at the closest point (the card shows the speed to get below).';
+        return '<strong>Skip to the closest point</strong>, where braking counts most.';
     }
+    // A first burn with a size to aim for: how much of it is still to come, while the path it gives is
+    // still far off the mark ('' after that, when fine-tuning takes over)
+    function aimHint(x, btn, digits) {
+        const more = x.d.aim - mission.used;
+        return more > 0.12 * x.d.aim ? `Keep holding <strong>${btn}</strong>: about ${more.toFixed(digits)} km/s to go.` : '';
+    }
+    const FINE_HINT = 'Close. Turn on <strong>Fine</strong> and burn a little more, or less, until your closest approach is inside the goal.';
     function marsHint(x) {
-        const g = x.d.goal, lead = Math.round(x.d.lead), p = mission.pred;
+        const g = x.d.goal, p = mission.pred;
         if (!x.burns) {
-            return Math.abs(x.phase - x.d.lead) < 3 ? `<strong>Now:</strong> Mars is ${lead}° ahead. ${press('faster')} to burn forwards about 3 km/s.`
-                : `Pause when Mars is about ${lead}° ahead of you (the card shows the angle), then burn forwards about 3 km/s.`;
+            if (Math.abs(x.phase - x.d.lead) < 3) return `<strong>Now:</strong> hold <strong>Forward</strong> for about ${f1(x.d.aim)} km/s.`;
+            return x.phase > x.d.lead ? '<strong>Skip to the launch window</strong>, when Mars reaches the marked spot.'
+                : 'You missed the launch window. <strong>Retry</strong>, or burn now and try to fine-tune it.';
         }
-        if (p && p.d < g.zone) return 'On course for Mars! Sit back and watch.';
-        if (x.ra < 1.45) return `Your orbit doesn't reach Mars's yet (${f2(x.ra)} AU). Burn forwards a little more.`;
-        return `Fine-tune with small pushes (${coarse() ? 'the 0.1% step' : 'Shift + arrow keys'}) until your closest approach to Mars, in the card, is under ${auText(g.zone)}.`;
+        if (p && p.d < g.zone) return `On course for Mars! <strong>Skip to Mars</strong>${mission.skip ? '' : ', or press play and watch'}.`;
+        return aimHint(x, 'Forward', 1) || FINE_HINT;
     }
-    // Near the target: which way to burn to match its velocity (along the probe's motion or against it)
-    const matchWay = (x) => ((x.vx - x.tvx) * x.vx + (x.vy - x.tvy) * x.vy < 0 ? 'forwards' : 'backwards');
+    // Near the target: the burn that matches its velocity most, as the engine's buttons have it: along
+    // the probe's motion, or (meeting it off the end of the orbit, they cross at an angle) straight out or in
+    function matchBurn(x) {
+        const ux = x.tvx - x.vx, uy = x.tvy - x.vy, along = (ux * x.vx + uy * x.vy) / x.el.v, out = (ux * x.rx + uy * x.ry) / x.el.r;
+        const first = Math.abs(along) >= Math.abs(out);
+        return { btn: first ? (along > 0 ? 'Forward' : 'Back') : (out > 0 ? 'Out' : 'In'), kms: toKms(Math.abs(first ? along : out)) };
+    }
     function stationHint(x) {
-        const g = x.d.goal;
-        if (!x.burns) return `The station is ${Math.round(x.phase)}° ahead. ${press('slower')} to slow down about 0.9 km/s: a smaller orbit is a quicker lap.`;
-        if (x.td < 5 * g.D) return x.tdv > g.V ? `<strong>Nearly there:</strong> burn ${matchWay(x)} to match the station's speed.` : 'Close in: you are matching the station.';
-        if (x.el.a > 1.005) return 'You sped up, so your bigger orbit is slower and you are falling behind. Slow down instead.';
-        return 'Now wait a lap. When you meet the station, burn forwards to match its speed.';
+        const g = x.d.goal, p = mission.pred;
+        if (!x.burns) return `Hold <strong>Back</strong> to slow down by about ${f1(x.d.aim)} km/s: a smaller orbit is a quicker lap.`;
+        if (x.td < 3 * g.D) {
+            if (x.tdv <= g.V) return 'Speed matched. Press play, and drift in to the station.';
+            const m = matchBurn(x);
+            return `<strong>Now:</strong> hold <strong>${m.btn}</strong>, about ${f1(m.kms)} km/s, to match the station's speed.`;
+        }
+        if (x.el.a > 1.005) return 'You sped up, so your bigger orbit is slower and you are falling behind. <strong>Undo</strong>, and slow down instead.';
+        if (p && p.d > g.D) return aimHint(x, 'Back', 1) || FINE_HINT;
+        return 'On course. <strong>Skip to the station</strong>, then hold <strong>Forward</strong> to match its speed.';
     }
     function l4Hint(x) {
-        const g = x.d.goal;
-        if (!x.burns) return `L4 is ${Math.round(Math.abs(x.phase))}° behind you. ${press('faster')} to speed up about 0.3 km/s: a bigger orbit is slower, so you drift back to L4.`;
-        if (x.td < 3 * g.D) return `<strong>Nearly there:</strong> burn ${matchWay(x)} to match L4's motion and round off your orbit.`;
-        return 'Now wait a lap, about 13 years. When you reach L4, burn backwards to match its motion.';
+        const g = x.d.goal, p = mission.pred;
+        if (!x.burns) return `Hold <strong>Forward</strong> for about ${f2(x.d.aim)} km/s: a bigger orbit is slower, so you drift back to L4.`;
+        if (x.td < 2 * g.D) {
+            const big = x.el.a > g.a * (1 + g.da), small = x.el.a < g.a * (1 - g.da);
+            if (big || small) return `<strong>Now:</strong> hold <strong>${big ? 'Back' : 'Forward'}</strong> until your orbit is the size of Jupiter's, to keep pace with L4.`;
+            return `<strong>Now:</strong> hold <strong>${x.out ? 'In' : 'Out'}</strong> to round off your orbit.`;
+        }
+        if (p && p.d > g.D) return aimHint(x, 'Forward', 2) || FINE_HINT;
+        return 'On course. <strong>Skip to L4</strong>, then hold <strong>Back</strong> to stay.';
     }
 
-    // ---- The state the card, hints and checks read ----
+    // ---- The state the console, hints and checks read ----
     // The target as seen from the reference body (rotated 60 degrees ahead for L4)
     function targetNow(R, T, l4) {
         let x = T.x - R.x, y = T.y - R.y, vx = T.vx - R.vx, vy = T.vy - R.vy;
@@ -12297,6 +12330,7 @@
             x.tname = d.goal.l4 ? 'L4' : T.name;
             x.tvx = t.vx; x.tvy = t.vy;
             x.td = Math.hypot(rx - t.x, ry - t.y);
+            x.tr = Math.hypot(t.x, t.y);
             x.tdv = Math.hypot(vx - t.vx, vy - t.vy);
             // how far ahead (+) or behind (-) the target is round the orbit, degrees
             x.phase = (((Math.atan2(t.y, t.x) - Math.atan2(ry, rx)) / DEG + 540) % 360) - 180;
@@ -12304,47 +12338,48 @@
         return x;
     }
 
-    // The card's middle lines (the first is all a phone shows)
+    // How the goal stands, for the console: { text, ok } (ok: on track)
     function missionStatus(x) {
-        if (mission.status === 'won') return [`Complete: ${starText(mission.result.stars)} with ${f1(mission.result.used)} km/s`];
-        if (mission.status === 'lost') return [`${LOST_TITLE[mission.reason] || 'Mission over'}: try again`];
-        if (!x) return [];
-        const d = x.d, g = d.goal, kms = (v) => f1(toKms(v));
+        if (mission.status === 'won') return { text: `Complete: ${f1(mission.result.used)} km/s used`, ok: true };
+        if (mission.status === 'lost') return { text: LOST_TITLE[mission.reason] || 'Mission over', ok: false };
+        if (!x) return { text: '', ok: false };
+        const d = x.d, g = d.goal;
         switch (g.type) {
-            case 'orbit':
-                return [x.el.bound ? `Orbit ${f2(x.rp)}–${f2(x.ra)} AU · goal ${f2(g.r)}` : 'Escaping the Sun!'];
-            case 'escape':
-                return [`Speed ${kms(x.el.v)} · escape ${kms(Math.sqrt(2 * x.el.mu / x.el.r))} km/s`, `${f2(x.el.r)} AU from the Sun`];
-            case 'capture':
-                if (x.el.bound) return [`Orbit out to ${f2(x.ra)} AU · goal ${f2(g.lim)}`];
-                if (x.el.r > g.lim) return [`${f2(x.el.r)} AU from Jupiter · ${kms(x.el.v)} km/s`];
-                return [`${kms(x.el.v)} km/s · capture below ${kms(Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))))}`];
+            case 'orbit': {
+                if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
+                const up = g.r > 1, reach = up ? x.ra : x.rp;
+                return { text: `${up ? 'Far point' : 'Closest point'} ${f2(reach)} AU, goal ${f2(g.r)}`, ok: Math.abs(reach / g.r - 1) <= g.tol };
+            }
+            case 'escape': {
+                const need = toKms(Math.sqrt(2 * x.el.mu / x.el.r) - x.el.v);
+                return { text: `To escape from here: ${f1(Math.max(need, 0))} km/s`, ok: need <= x.left };
+            }
+            case 'capture': {
+                if (x.el.bound) return { text: `Orbit reaches ${f2(x.ra)} AU, goal ${f2(g.lim)}`, ok: false };
+                if (x.el.r > g.lim) return { text: `${f2(x.el.r)} AU from Jupiter, ring at ${f2(g.lim)}`, ok: false };
+                const need = toKms(x.el.v - Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))));
+                return { text: `To stay from here: brake ${f1(need)} km/s`, ok: need <= x.left };
+            }
             default: {
-                const goal = g.type === 'reach' ? `Goal: within ${auText(g.zone)}`
-                    : g.l4 ? `Goal: within ${auText(g.D)}; a ${f2(g.a * (1 - g.da))}–${f2(g.a * (1 + g.da))} AU, e < ${g.eMax}`
-                        : `Goal: within ${auText(g.D)}, ${f2(toKms(g.V))} km/s`;
+                const reach = g.type === 'reach' ? g.zone : g.D, p = mission.pred;
                 if (!x.burns) {
                     const where = `${x.tname} ${Math.round(Math.abs(x.phase))}° ${x.phase >= 0 ? 'ahead' : 'behind'}`;
-                    return [d.lead ? `${where} · burn at ${Math.round(d.lead)}°` : `${where} · ${auText(x.td)}`, goal];
+                    return d.lead ? { text: `${where}, launch at ${Math.round(d.lead)}°`, ok: Math.abs(x.phase - d.lead) < 3 } : { text: where, ok: false };
                 }
-                if (g.type === 'meet' && x.td < 5 * g.D) {
-                    return [g.l4 ? `${auText(x.td)} from L4 · a ${f2(x.el.a)} AU, e ${f2(x.el.e)}` : `${auText(x.td)} away · ${f2(toKms(x.tdv))} km/s apart`, goal];
+                if (g.type === 'meet' && x.td < 3 * reach) {
+                    if (g.l4) return { text: `${auText(x.td)} from L4, orbit ${f2(x.el.a)} AU, e ${f2(x.el.e)}`, ok: x.td < reach };
+                    return { text: `${auText(x.td)} away, ${f2(toKms(x.tdv))} km/s apart (goal ${f2(toKms(g.V))})`, ok: x.td < reach };
                 }
-                const p = mission.pred;
-                return [p ? `Closest: ${auText(p.d)} in ${fmtDuration(Math.max(0, p.t - simTime))}` : `${x.tname} ${auText(x.td)} away`, goal];
+                return p ? { text: `Closest to ${x.tname}: ${auText(p.d)}, goal ${auText(reach)}`, ok: p.d < reach } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
             }
         }
     }
 
     function missionHintText() {
         const x = missionContext();
-        if (!x) return mission.status === 'lost' ? 'Press <strong>Try again</strong>, or Undo your last burn.' : '';
-        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or try again with less fuel.' : 'That was the last one: can you beat your fuel?'}`;
-        if (mission.status === 'lost') return 'Press <strong>Try again</strong>, or Undo your last burn and fly it differently.';
-        if (mission.status === 'ready') {
-            return mission.panel === 'brief' ? `<strong>${escapeHtml(mission.def.title)}:</strong> read the briefing, then press <strong>Start</strong>.`
-                : `<strong>${escapeHtml(mission.def.title)}:</strong> press play to start the clock, or fire the engine.`;
-        }
+        if (!x) return mission.status === 'lost' ? '<strong>Retry</strong>, or undo your last burn.' : '';
+        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
+        if (mission.status === 'lost') return '<strong>Retry</strong>, or undo your last burn and fly it differently.';
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
         return x.d.hint(x);
     }
@@ -12368,12 +12403,14 @@
         historyNote(html);
     }
 
+    const missionIsOver = () => mission.status === 'won' || mission.status === 'lost';
+
     // Is this edit off limits in a mission? Shows a friendly note if so. Aiming the probe's own arrow is
     // allowed, and stops the clock while it is aimed (a held body stays put while time runs).
     function missionRefuse(what, b) {
         if (!mission.def) return false;
         const craft = !!b && b.id === mission.craftId;
-        if (what === 'aim' && craft) {
+        if (what === 'aim' && craft && !missionIsOver()) {
             if (!paused) { setPaused(true); mission.aimPaused = true; }
             return false;
         }
@@ -12382,7 +12419,7 @@
             delete: 'Nothing can be removed in a mission.',
             move: craft ? 'Your probe can\'t be picked up: change its path with burns, or drag the tip of its arrow.'
                 : `${b ? escapeHtml(b.name) : 'It'} keeps to its path: in a mission only your probe can change course.`,
-            aim: 'Only your probe has an engine: aim its arrow, not another body\'s.',
+            aim: craft ? 'The mission is over: retry, or undo your last burn.' : 'Only your probe has an engine: aim its arrow, not another body\'s.',
             orbit: 'In a mission, orbits change only by burns of your probe\'s engine.',
             other: 'In a mission, only your probe\'s engine can change anything.'
         };
@@ -12443,6 +12480,11 @@
         const dv = toKms(Math.hypot(dvx, dvy));
         if (!(dv > 1e-9) || !c) { resumeAfterAim(); return; }
         const d = mission.def, left = d.budget - mission.used;
+        if (missionIsOver()) {
+            c.vx = s[vo]; c.vy = s[vo + 1];
+            missionNote('The mission is over: <strong>Retry</strong>, or undo your last burn.');
+            return;
+        }
         if (left <= 1e-6) {
             c.vx = s[vo]; c.vy = s[vo + 1];
             missionNote('<strong>Out of fuel:</strong> you can only coast now.');
@@ -12454,9 +12496,10 @@
         mission.used = Math.min(d.budget, mission.used + dv * f);
         mission.log.push(simTime, dv * f);
         mission.predDirty = true;
-        noteBurn(dv * f, f < 1);
+        noteBurn(dv * f);
+        endSkip(false);
         if (mission.status === 'ready') startFlying();
-        // Show the new path for a few seconds (the editor's preview of the chosen body)
+        // Show the new path (the editor's preview of the chosen body)
         if (selectedId !== c.id) selectBody(c.id);
         edit.previewUntil = performance.now() + 5000;
         markPreview();
@@ -12465,29 +12508,29 @@
             if (out) missionOver(out === 'missed' ? 'lost' : out, out === 'missed' ? 'missed' : '');
             else if (d.budget - mission.used <= 1e-6) missionFuelCheck();
         }
+        updateMissionConsole();
         resumeAfterAim();
     }
 
-    // The clock goes on again once the probe's arrow has been let go (if it was stopped for that)
+    // The clock goes on again once the probe's arrow or engine has been let go, or a card closed (if it
+    // was stopped for that)
     function resumeAfterAim() {
-        if (!mission.aimPaused || bodies.some((q) => q.held)) return;
+        if (!mission.aimPaused || mission.firing || bodies.some((q) => q.held) || mission.panel === 'how' || mission.panel === 'list') return;
         mission.aimPaused = false;
         if (mission.status === 'flying' || mission.status === 'ready') setPaused(false);
     }
 
-    // One note for burns in quick succession (a held key, a stepper): read out once they stop
-    function noteBurn(dv, cut) {
+    // Burns in quick succession (a held engine, a stepper) are read out once, when they stop: on the
+    // screen the fuel gauge has already fallen with them
+    function noteBurn(dv) {
         mission.burst += dv;
         clearTimeout(mission.burstTimer);
-        mission.burstTimer = setTimeout(function showBurn() {
-            // (a "Mission rules" note put up a moment ago keeps the line long enough to be read first)
-            const h = hints.missionNote, wait = RULES_MS - (performance.now() - mission.refusedAt);
-            if (h && h.html === mission.refusedText && wait > 0) { mission.burstTimer = setTimeout(showBurn, wait); return; }
+        mission.burstTimer = setTimeout(() => {
             const d = mission.def, burst = mission.burst;
             mission.burst = 0;
-            if (!d || mission.status === 'won' || mission.status === 'lost') return;
-            const left = Math.max(0, d.budget - mission.used), s = fmtSpeedKms(burst);
-            historyNote(`<strong>Burn: ${s.v} ${s.u}.</strong> ${left > 1e-6 ? `Fuel left: ${f1(left)} of ${f1(d.budget)} km/s.` : (cut ? 'The tank ran dry during that burn.' : 'That was the last of your fuel.')}`);
+            if (!d || missionIsOver()) return;
+            const left = Math.max(0, d.budget - mission.used), v = fmtSpeedKms(burst);
+            announce(`Burn: ${v.v} ${v.u}. ${left > 1e-6 ? `Fuel left: ${f1(left)} of ${f1(d.budget)} kilometres a second.` : 'That was the last of your fuel.'}`);
         }, 450);
     }
 
@@ -12532,12 +12575,133 @@
         return h;
     }
 
+    // ---- The engine ----
+    // Pressed (a button, or an arrow key), it fires a tap at once, and held it goes on firing. The clock
+    // waits meanwhile, so a burn happens at one place, and watching the fuel and the new path takes the
+    // time it needs: it runs again on letting go if it was running. (Before Start or a skip it wasn't.)
+    function engineFire(kind, fine, key) {
+        engineStop();
+        if (!mission.def) return;
+        if (missionIsOver()) { missionNote('The mission is over: <strong>Retry</strong>, or undo your last burn.'); return; }
+        const c = missionCraft();
+        if (!c || c.held) return;
+        endSkip(false);
+        if (!paused) { setPaused(true); mission.aimPaused = true; }
+        const tank = mission.def.budget / AUYR_KMS, size = fine ? ENGINE_FINE : 1;
+        const f = { kind, key: key || '', timer: 0 };
+        mission.firing = f;
+        mission.keyed = !!key;
+        missionPush(c, kind, tank * ENGINE_TAP * size);
+        const again = () => {
+            const q = missionCraft();
+            if (mission.firing !== f || !q || missionIsOver() || mission.used >= mission.def.budget - 1e-6) { if (mission.firing === f) engineStop(); return; }
+            missionPush(q, kind, tank * ENGINE_HOLD * size * ENGINE_EVERY_MS / 1000);
+            f.timer = setTimeout(again, ENGINE_EVERY_MS);
+        };
+        f.timer = setTimeout(again, ENGINE_WAIT_MS);
+    }
+
+    function engineStop() {
+        const f = mission.firing;
+        if (!f) return;
+        clearTimeout(f.timer);
+        mission.firing = null;
+        // (an orbit stretched past the view: the view makes room for it)
+        if (mission.def && mission.def.goal.type === 'orbit') keepOrbitInView(missionCraft());
+        resumeAfterAim();
+        updateMissionConsole();
+    }
+
+    // (from the arrow keys, once they are for the simulation) In a mission they fire the probe's engine
+    function missionKey(e, kind) {
+        if (!mission.def) return false;
+        e.preventDefault();
+        if (!e.repeat) engineFire(kind, mission.fine || e.shiftKey, e.key);
+        return true;
+    }
+
     // (nudge's way in: a step is a fraction of the speed relative to the reference body)
     function missionNudge(b, kind, step) {
         if (!mission.def || b.id !== mission.craftId) return false;
         const R = bodyById(mission.refId);
         if (R && step > 0) missionPush(b, kind, step * Math.hypot(b.vx - R.vx, b.vy - R.vy));
         return true;
+    }
+
+    // ---- Skipping to the next moment that matters ----
+    // Years until the far point (apo) or the closest point of the orbit it is on (null: never again)
+    function apsisIn(x, apo) {
+        const el = x.el;
+        if (!el.bound) {
+            if (apo || x.out || !(el.e > 1)) return null;
+            const a = -el.a, F = Math.acosh(Math.max(1, (1 + el.r / a) / el.e));
+            return (el.e * Math.sinh(F) - F) / Math.sqrt(el.mu / (a * a * a));
+        }
+        if (el.e < 1e-3) return null;
+        const c = clamp((1 - el.r / el.a) / el.e, -1, 1), E = x.out ? Math.acos(c) : TAU - Math.acos(c);
+        const dM = (apo ? Math.PI : TAU) - (E - el.e * Math.sin(E));
+        return ((dM + TAU) % TAU) / (TAU / el.T);
+    }
+
+    // What the skip button offers now: { kind, word, dt } (dt in years, inside the time left), or null.
+    // Not when it is there already: the burn comes next.
+    function skipTarget(x) {
+        if (!x || missionIsOver()) return null;
+        const d = x.d, g = d.goal, p = mission.pred;
+        let s = null;
+        if (g.type === 'orbit') {
+            const apo = g.r > 1;
+            // (once the orbit touches the ring: short of it or past it, the second burn won't round it off there)
+            if (x.burns && x.el.bound && Math.abs((apo ? x.ra : x.rp) / g.r - 1) <= g.tol && (apo ? x.nu < 170 : x.nu > 10)) s = { kind: apo ? 'apo' : 'peri', word: apo ? 'the far point' : 'the closest point', dt: apsisIn(x, apo) };
+        } else if (g.type === 'escape' || g.type === 'capture') {
+            if (x.nu > 10) s = { kind: 'peri', word: 'the closest point', dt: apsisIn(x, false) };
+        } else if (!x.burns) {
+            // (Mars's angle falls behind at the difference of the two rates of going round)
+            if (d.lead && x.phase > d.lead) s = { kind: 'window', word: 'the launch window', dt: (x.phase - d.lead) * DEG / (x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3))) };
+        } else if (p && p.t > simTime && x.td > (g.type === 'reach' ? g.zone : (g.l4 ? 2 : 3) * g.D)) {
+            s = { kind: 'meet', word: g.l4 ? 'L4' : x.tname === 'Station' ? 'the station' : x.tname, dt: p.t - simTime };
+        }
+        return s && s.dt > 0 && s.dt < d.limit - simTime ? s : null;
+    }
+
+    // Time runs faster up to that moment, then stops there, waiting for the burn. The speed chosen comes
+    // back afterwards. It ends when anything else stops the clock or changes the path.
+    function startSkip() {
+        const x = missionContext(), s = skipTarget(x);
+        if (!s) return;
+        engineStop();
+        if (mission.status === 'ready') startFlying();
+        mission.skip = { kind: s.kind, t: simTime + s.dt, late: simTime + s.dt * (s.kind === 'apo' || s.kind === 'peri' ? 1.1 : 1), out: x.out, speed: settings.speed };
+        setSpeedValue(clamp(s.dt / (SKIP_S * rate()), settings.speed, 100));
+        mission.aimPaused = false;
+        setPaused(false);
+        updateMissionConsole();
+    }
+
+    function endSkip(stop) {
+        const k = mission.skip;
+        if (!k) return;
+        mission.skip = null;
+        setSpeedValue(k.speed);
+        if (stop) { acc = 0; setPaused(true); }
+    }
+
+    // (each step of a skip) Has it got there?
+    function skipArrived(c) {
+        const k = mission.skip, R = bodyById(mission.refId);
+        if (simTime >= k.late || !R) return true;
+        const rx = c.x - R.x, ry = c.y - R.y;
+        if (k.kind === 'apo' || k.kind === 'peri') {
+            const out = rx * (c.vx - R.vx) + ry * (c.vy - R.vy) > 0, was = k.out;
+            k.out = out;
+            return k.kind === 'apo' ? was && !out : !was && out;
+        }
+        if (k.kind === 'window') {
+            const T = bodyById(mission.targetId);
+            if (!T) return true;
+            return ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(ry, rx)) / DEG + 360) % 360 <= mission.def.lead;
+        }
+        return false;
     }
 
     // ---- Goals ----
@@ -12566,7 +12730,8 @@
             const out = missionCheckNow(c);
             if (out) { missionOver(out === 'missed' ? 'lost' : out, out === 'missed' ? 'missed' : ''); return; }
         }
-        if (d.limit && simTime > d.limit) missionOver('lost', 'time');
+        if (d.limit && simTime > d.limit) { missionOver('lost', 'time'); return; }
+        if (mission.skip && skipArrived(c)) endSkip(true);
     }
 
     // Within reach of the target (and, to meet it, moving with it)?
@@ -12638,6 +12803,9 @@
             mission.result = { t: simTime };
         }
         mission.resultShown = false;
+        endSkip(false);
+        if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
+        mission.aimPaused = false;
         acc = 0;
         setPaused(true);
     }
@@ -12698,23 +12866,35 @@
             nearId: null, pred: null, predDirty: true, aimPaused: false, burst: 0
         });
         clearTimeout(mission.burstTimer);
+        endSkip(false);
+        engineStop();
         if (def.lock !== undefined) {
             // (the view follows the body it is about, and the box is round it)
             frameId = bodies[def.lock].id;
             syncFrameUi();
             fitBox(def.scene.box, false);
         }
+        // Every mission starts at the same pace, and the arrow keys are for the engine from now on
+        // (not for the scene list, if it was picked there with the mouse)
+        setSpeedValue(1);
+        mission.fine = false;
+        edit.engaged = true;
+        if (document.activeElement === ui.scene && performance.now() - mission.sceneKeyAt > 1000) ui.scene.blur();
+        closeSettingsSheet();
+        hideMissionPanel();
         missionUi(true);
         quietFlyby();
         setPaused(true);
         syncEccentricity(true);
-        showMissionPanel('brief');
         setHint();
     }
 
     function endMission() {
         clearTimeout(mission.burstTimer);
-        Object.assign(mission, { def: null, status: 'off', pred: null, aimPaused: false, result: null });
+        endSkip(false);
+        engineStop();
+        if (mission.home) setSpeedValue(mission.home.speed);
+        Object.assign(mission, { def: null, status: 'off', pred: null, aimPaused: false, result: null, home: null });
         hideMissionPanel();
         missionUi(false);
         if (popBody) updatePopover(true);
@@ -12724,7 +12904,44 @@
 
     function startFlying() {
         mission.status = 'flying';
-        if (mission.panel === 'brief') hideMissionPanel();
+    }
+
+    // (from loadScene, before anything changes) Going into a mission from anything else: what to come
+    // back to. (Not from a mission's scene without its mission: a link's, about to start it properly.)
+    function missionKeepHome(key) {
+        if (mission.def || !missionByKey(key)) return;
+        mission.home = missionByKey(settings.scene) ? { speed: settings.speed } : {
+            snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup()
+        };
+    }
+
+    // Back to free play: the system as it was, its speed, its view, its way of time, running or paused.
+    // Undo goes back into the mission.
+    function leaveMission() {
+        const h = mission.home;
+        if (!h || !h.snap) {
+            if (ui.scene) ui.scene.value = 'sun-earth';
+            loadScene('sun-earth');
+            setPaused(false);
+            return;
+        }
+        flushEdit();
+        dragging();
+        hideMissionPanel();
+        commitStep(snapshot(), { label: 'leave the mission', target: null, key: 'scene' }, false);
+        restoreSnapshot(h.snap, 'undo');
+        if (h.back) setReverse(true, true);
+        if (h.turn) restoreTurning({ a: h.turn[0], up: h.turn[1] });
+        syncFrameUi();
+        Object.assign(hist, { open: null, cleanLoad: h.clean, rwStale: true, rwFresh: false, rwFromStart: h.clean });
+        updateHistoryUi();
+        setPaused(h.paused);
+    }
+
+    // (the end of applySetup) A link or an autosave made in a mission holds no fuel or burns, so its
+    // mission starts afresh
+    function missionFromSetup(s) {
+        if (missionByKey(s.scene)) loadScene(s.scene);
     }
 
     // (part of each edit-history snapshot)
@@ -12748,9 +12965,16 @@
         });
         clearTimeout(mission.burstTimer);
         mission.burst = 0;
+        endSkip(false);
+        if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
         hideMissionPanel();
         quietFlyby();
-        if (was !== def) { missionUi(true); syncEccentricity(true); }
+        if (was !== def) {
+            if (!was) { mission.home = { speed: settings.speed }; setSpeedValue(1); }
+            missionUi(true);
+            syncEccentricity(true);
+        }
+        updateMissionConsole();
         // (the undo note, put up just after this, says how much fuel came back)
         if (how === 'undo' && Math.abs(usedBefore - m.used) > 1e-9) {
             setTimeout(() => {
@@ -12802,8 +13026,9 @@
         setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
     }
 
-    // ---- The briefing and result card, the Missions button, the scene list ----
-    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), missionPanel: null, missionsBtn: null });
+    // ---- The console, the card over the canvas, the Missions button, the scene list ----
+    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, missionsBtn: null, mc: null });
+    const toolIcon = (name) => `<span class="icon solid fa-${name}" aria-hidden="true"></span>`;
 
     function buildMissionUi() {
         const wrap = canvas.closest('.sim-canvas-wrapper');
@@ -12814,21 +13039,23 @@
             P.hidden = true;
             P.setAttribute('aria-labelledby', 'missionTitle');
             P.setAttribute('aria-live', 'polite');
-            P.innerHTML = '<button type="button" class="orb-mission-x" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>'
+            P.innerHTML = `<button type="button" class="orb-mission-x" aria-label="Close" title="Close (Esc)">${toolIcon('times')}</button>`
                 + '<p class="orb-mission-kicker" id="missionKicker"></p><h3 class="orb-mission-title" id="missionTitle"></h3>'
                 + '<div class="orb-mission-text" id="missionText"></div><div class="orb-mission-actions" id="missionActions"></div>';
             wrap.appendChild(P);
             ui.missionPanel = P;
             P.querySelector('.orb-mission-x').addEventListener('click', () => hideMissionPanel(true));
-            P.addEventListener('keydown', (e) => {
-                if (e.key !== 'Escape') return;
+            // (Escape closes it, wherever the focus is, before anything else that Escape would close)
+            window.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape' || P.hidden) return;
                 hideMissionPanel(true);
-                e.stopPropagation();
+                e.stopImmediatePropagation();
                 e.preventDefault();
-            });
+            }, true);
             // (clicks and drags in it stay away from the canvas and the page)
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
+        if (ui.toolbar) buildMissionConsole();
         // In the settings, under the scene list: a button into the missions (beside "Random system"),
         // and the line saying what they are
         if (ui.scene) {
@@ -12839,8 +13066,8 @@
             btn.className = 'orb-mission-btn';
             btn.id = 'missionsBtn';
             btn.setAttribute('aria-describedby', 'missionsNote');
-            btn.title = `${MISSIONS.length} missions, easy to hard (also at the end of the scene list)`;
-            btn.innerHTML = '<span class="icon solid fa-rocket" aria-hidden="true"></span>Missions';
+            btn.title = `${MISSIONS.length} missions, easy to hard (M)`;
+            btn.innerHTML = `${toolIcon('rocket')}Missions`;
             let note = byId('missionsNote');
             if (!note) {
                 note = document.createElement('p');
@@ -12861,8 +13088,74 @@
             }
             ui.scene.appendChild(og);
             labelMissionOptions();
+            ui.scene.addEventListener('keydown', () => { mission.sceneKeyAt = performance.now(); });
         }
+        // The usual hint's "Missions", and M
+        if (ui.hint) ui.hint.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('.orb-hint-missions')) openMissions(); });
+        window.addEventListener('keydown', (e) => {
+            if ((e.key !== 'm' && e.key !== 'M') || e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
+            e.preventDefault();
+            openMissions();
+        });
+        // The engine stops when its key comes up, wherever the focus has gone (or the window with it)
+        window.addEventListener('keyup', (e) => { if (mission.firing && mission.firing.key === e.key) engineStop(); });
+        window.addEventListener('blur', engineStop);
         setTimeout(introduceMissions, 0);
+    }
+
+    // The console: in the palette's place while a mission is loaded
+    function buildMissionConsole() {
+        const C = document.createElement('section');
+        C.className = 'orb-console';
+        C.id = 'missionConsole';
+        C.hidden = true;
+        C.setAttribute('aria-labelledby', 'mcTitle');
+        const pad = [['faster', 'Forward', 'arrow-up', '↑'], ['in', 'In', 'arrow-left', '←'], ['out', 'Out', 'arrow-right', '→'], ['slower', 'Back', 'arrow-down', '↓']];
+        C.innerHTML = '<div class="orb-mc-head"><h3 class="orb-mc-title" id="mcTitle"></h3>'
+            + `<button type="button" class="orb-mc-leave" id="mcLeave" aria-label="Leave the mission" title="Leave the mission, back to free play">${toolIcon('times')}</button></div>`
+            + '<p class="orb-mc-goal" id="mcGoal"></p><p class="orb-mc-status" id="mcStatus"></p>'
+            + '<div class="orb-mc-fuel" id="mcFuel" role="meter" aria-label="Fuel left" aria-valuemin="0"><div class="orb-mc-row"><strong>Fuel</strong><span id="mcFuelNum"></span></div>'
+            + '<div class="orb-mc-bar"><div class="orb-mc-fill" id="mcFill"></div><div class="orb-mc-tick" id="mcTick" title="Keep your fuel above this mark for three stars"></div></div></div>'
+            + '<div class="orb-mc-row orb-mc-left-row"><strong>Time</strong><span id="mcLeft"></span></div>'
+            + '<div class="orb-mc-row orb-mc-pad-head"><strong id="mcPadLabel">Engine: hold to fire</strong><button type="button" class="orb-mc-fine" id="mcFine" aria-pressed="false" title="Much smaller burns, to fine-tune (or hold Shift)">Fine</button></div>'
+            + `<div class="orb-mc-pad" role="group" aria-labelledby="mcPadLabel">${pad.map(([k, w, i, key]) => `<button type="button" class="orb-mc-burn orb-mc-${k}" data-kind="${k}" title="Burn ${w.toLowerCase()} (${key})">${toolIcon(i)}${w}</button>`).join('')}</div>`
+            + `<button type="button" class="orb-mc-skip" id="mcSkip" hidden>${toolIcon('fast-forward')}<span id="mcSkipText"></span></button>`
+            + `<div class="orb-mc-time"><button type="button" class="orb-mc-play" id="mcPlay">${toolIcon('play')}<span id="mcPlayText"></span></button>`
+            + '<button type="button" class="orb-mc-retry" id="mcRetry" title="Start this mission again">Retry</button></div>'
+            + '<div class="orb-mc-links"><button type="button" id="mcHow">How it works</button><button type="button" id="mcList">All missions</button></div>';
+        ui.toolbar.prepend(C);
+        const E = { box: C };
+        ['Title', 'Goal', 'Status', 'Fuel', 'FuelNum', 'Fill', 'Tick', 'Fine', 'Play', 'PlayText', 'Skip', 'SkipText', 'Left', 'Retry', 'How', 'List', 'Leave'].forEach((n) => { E[n.toLowerCase()] = byId(`mc${n}`); });
+        E.playIcon = E.play.querySelector('.icon');
+        E.burns = Array.from(C.querySelectorAll('.orb-mc-burn'));
+        ui.mc = E;
+        // A button pressed with the pointer leaves the focus where it was, so Space still plays and pauses
+        C.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button')) e.preventDefault(); });
+        E.burns.forEach((b) => {
+            const kind = b.dataset.kind;
+            b.addEventListener('pointerdown', (e) => {
+                if (e.button) return;
+                try { b.setPointerCapture(e.pointerId); } catch (err) { /* not captured: the window's events still end it */ }
+                b.classList.add('is-firing');
+                engineFire(kind, mission.fine || e.shiftKey);
+            });
+            const up = () => { b.classList.remove('is-firing'); engineStop(); };
+            ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => b.addEventListener(t, up));
+            b.addEventListener('contextmenu', (e) => e.preventDefault());
+            // (Enter or Space on the button: a tap)
+            b.addEventListener('click', (e) => { if (!e.detail) { engineFire(kind, mission.fine); engineStop(); } });
+        });
+        E.fine.addEventListener('click', () => { mission.fine = !mission.fine; updateMissionConsole(); });
+        E.play.addEventListener('click', () => {
+            if (mission.status === 'ready') startFlying();
+            setPaused(!paused);
+            updateMissionConsole();
+        });
+        E.skip.addEventListener('click', startSkip);
+        E.retry.addEventListener('click', (e) => loadMission(mission.def, !e.detail));
+        E.how.addEventListener('click', (e) => showMissionPanel('how', !e.detail));
+        E.list.addEventListener('click', (e) => showMissionPanel('list', !e.detail));
+        E.leave.addEventListener('click', leaveMission);
     }
 
     // When the page opens, the usual hint also points to the missions, until the first press anywhere
@@ -12883,57 +13176,114 @@
         }
     }
 
-    // The Missions button: in a mission, its briefing again; otherwise the first mission not yet done
-    function openMissions() {
+    // On a phone the settings cover the canvas: they step aside for a mission
+    function closeSettingsSheet() {
         const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
         if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
-        if (mission.def) { showMissionPanel('brief', true); return; }
-        loadMission(MISSIONS.find((m) => !bestOf(m.id)) || MISSIONS[0], true);
+    }
+
+    // The Missions button (and M): straight into the first mission the first time, afterwards the list
+    function openMissions(e) {
+        closeSettingsSheet();
+        const flown = MISSIONS.some((m) => bestOf(m.id));
+        if (mission.def || flown) showMissionPanel('list', !!(e && e.detail === 0));
+        else loadMission(MISSIONS[0], !!(e && e.detail === 0));
     }
 
     function loadMission(def, focus) {
         if (!def) return;
         if (ui.scene) ui.scene.value = def.key;
         loadScene(def.key);
-        if (focus) focusMissionPanel();
+        if (focus && ui.mc) ui.mc.play.focus({ preventScroll: true });
     }
 
     function focusMissionPanel() {
-        const btn = ui.missionPanel && !ui.missionPanel.hidden ? ui.missionPanel.querySelector('.orb-mission-actions button') : null;
+        const btn = ui.missionPanel && !ui.missionPanel.hidden ? ui.missionPanel.querySelector('.orb-mission-actions button, .orb-mission-list button') : null;
         if (btn) btn.focus({ preventScroll: true });
     }
 
     function missionUi(on) {
         if (ui.simWrap) ui.simWrap.classList.toggle('orb-mission-on', on);
+        if (ui.toolbar) ui.toolbar.setAttribute('aria-label', on ? 'Mission controls' : 'Add bodies');
+        if (ui.mc) ui.mc.box.hidden = !on;
+        if (on) updateMissionConsole();
+    }
+
+    // The console, ten times a second and after each burn
+    function updateMissionConsole() {
+        const d = mission.def, E = ui.mc;
+        if (!d || !E) return;
+        const x = missionContext(), m = missionStatus(x), st = mission.status, over = missionIsOver();
+        const left = Math.max(0, d.budget - mission.used), best = bestOf(d.id);
+        setText(E.title, `${d.n}. ${d.title}${best ? ` ${starText(best.stars)}` : ''}`);
+        setAttr(E.title, 'aria-label', `Mission ${d.n} of ${MISSIONS.length}: ${d.title}${best ? `, best ${best.stars} of 3 stars` : ''}`);
+        setText(E.goal, d.goalText);
+        setText(E.status, `${m.ok ? '✓ ' : ''}${m.text}`);
+        E.status.classList.toggle('is-ok', m.ok);
+        if (m.ok !== mission.okSaid) { mission.okSaid = m.ok; if (m.ok && !over) announce(`On track. ${m.text}`); }
+        // The gauge: a mark where three stars are lost
+        const frac = d.budget > 0 ? left / d.budget : 0;
+        E.fill.style.width = `${(100 * frac).toFixed(1)}%`;
+        E.fill.classList.toggle('is-low', frac < 0.15);
+        E.tick.style.left = `${(100 * clamp(1 - STARS_AT[0] * d.par / d.budget, 0, 1)).toFixed(1)}%`;
+        setText(E.fuelnum, `${f1(left)} of ${f1(d.budget)} km/s`);
+        setAttr(E.fuel, 'aria-valuemax', f1(d.budget));
+        setAttr(E.fuel, 'aria-valuenow', f1(left));
+        setAttr(E.fuel, 'aria-valuetext', `${f1(left)} of ${f1(d.budget)} kilometres a second`);
+        for (const b of E.burns) if (b.disabled !== over) b.disabled = over;
+        E.fine.disabled = over;
+        setAttr(E.fine, 'aria-pressed', mission.fine ? 'true' : 'false');
+        // The clock's button, and the skip
+        const ready = st === 'ready', running = !paused || !!(mission.firing && mission.aimPaused && !ready);
+        setText(E.playtext, ready ? 'Start' : running ? 'Pause' : 'Play');
+        setAttr(E.play, 'aria-label', ready ? 'Start the clock' : running ? 'Pause' : 'Play');
+        E.play.classList.toggle('is-primary', ready);
+        E.playIcon.classList.toggle('fa-play', !running);
+        E.playIcon.classList.toggle('fa-pause', running);
+        E.play.hidden = over;
+        const s = over ? null : skipTarget(x);
+        E.skip.hidden = !s && !mission.skip;
+        E.skip.disabled = !!mission.skip;
+        if (s || mission.skip) setText(E.skiptext, mission.skip ? 'Skipping…' : `Skip to ${s.word}`);
+        setText(E.left, `${fmtDuration(Math.max(0, d.limit - simTime))} left`);
+        E.retry.classList.toggle('is-primary', over);
     }
 
     const starsHtml = (n) => `<span class="orb-mission-stars" role="img" aria-label="${n} of 3 stars">${starText(n)}</span>`;
-
-    function showMissionPanel(kind, focus) {
-        const d = mission.def, P = ui.missionPanel;
-        if (!d || !P) return;
-        let title, html;
-        const acts = [];
-        const kicker = `Mission ${d.n} of ${MISSIONS.length}`;
-        if (kind === 'brief') {
-            const best = bestOf(d.id);
-            title = d.title;
-            html = `<p>${d.goalText}</p><p><strong>The idea:</strong> ${d.idea}</p>`
-                + `<p class="orb-mission-facts"><strong>Fuel</strong> ${f1(d.budget)} km/s · <strong>Par</strong> ${f1(d.par)} km/s${d.limit ? ` · <strong>Time</strong> ${fmtDuration(d.limit)}` : ''}</p>`
-                + `<details class="orb-mission-more"><summary>How par is worked out</summary><p class="orb-mission-small">Par is the classic route: ${d.parText}</p></details>`
-                + `<p class="orb-mission-small">${howToBurn()}</p>`
-                + (best ? `<p class="orb-mission-small">Your best: ${starsHtml(best.stars)} with ${f1(best.used)} km/s.</p>` : '');
-            acts.push([mission.status === 'ready' ? 'Start' : 'Carry on', () => { hideMissionPanel(true); startFlying(); setPaused(false); }]);
-        } else if (mission.status === 'won') {
-            const r = mission.result, next = MISSIONS[d.n];
-            title = 'Mission complete!';
-            const words = r.stars === 3 ? (r.used < d.par ? 'Under par: brilliant flying.' : 'Right on par: superb flying.') : r.stars === 2 ? 'Well done. Can you get closer to par?' : 'You made it! Now try it with less fuel.';
-            html = `<p>${starsHtml(r.stars)}</p><p>You used <strong>${f1(r.used)} km/s</strong> of fuel; par is ${f1(d.par)} km/s. ${words}</p>`
-                + `<p class="orb-mission-small">${d.teach}</p>`
-                + `<p class="orb-mission-small">${r.better ? (r.prev ? 'A new best!' : 'Your result is saved in this browser.') : `Your best is still ${starText(r.prev.stars)} with ${f1(r.prev.used)} km/s.`}${next ? '' : ' That was the last mission.'}</p>`;
-            if (next) acts.push(['Next mission', () => loadMission(next, true)]);
-            acts.push(['Try again', () => loadMission(d, true)]);
-        } else {
+    const panelWords = {
+        how(d) {
+            return {
+                kicker: `Mission ${d.n} of ${MISSIONS.length}`, title: 'How it works',
+                html: `<p>${d.idea}</p><p class="orb-mission-small"><strong>Par ${f1(d.par)} km/s:</strong> ${d.parText}</p>`
+                    + '<p class="orb-mission-small">Keep your fuel above the mark on the gauge for three stars. Undo gives fuel back.</p>',
+                acts: [['Carry on', () => hideMissionPanel(true)]]
+            };
+        },
+        list() {
+            const total = MISSIONS.reduce((n, m) => n + (bestOf(m.id) ? bestOf(m.id).stars : 0), 0);
+            const next = MISSIONS.find((m) => !bestOf(m.id));
+            const rows = MISSIONS.map((m) => {
+                const b = bestOf(m.id), here = mission.def === m;
+                return `<li><button type="button" data-mission="${m.id}"${here ? ' aria-current="true"' : ''}${m === next ? ' class="is-next"' : ''}><span class="orb-mission-row-name">${m.n}. ${escapeHtml(m.title)}</span>`
+                    + `<span class="orb-mission-stars" role="img" aria-label="${b ? `${b.stars} of 3 stars` : 'not flown yet'}">${starText(b ? b.stars : 0)}</span></button></li>`;
+            }).join('');
+            return {
+                kicker: `${total} of ${3 * MISSIONS.length} stars`, title: 'Missions',
+                html: `<ol class="orb-mission-list">${rows}</ol>`,
+                acts: mission.def ? [['Back to free play', leaveMission]] : []
+            };
+        },
+        result(d) {
+            const kicker = `Mission ${d.n} of ${MISSIONS.length}`;
+            if (mission.status === 'won') {
+                const r = mission.result, next = MISSIONS[d.n];
+                const best = r.better ? (r.prev ? ' A new best!' : '') : ` Your best: ${starText(r.prev.stars)}.`;
+                return {
+                    kicker, title: 'Mission complete!',
+                    html: `<p>${starsHtml(r.stars)}</p><p>${f1(r.used)} km/s of fuel; par ${f1(d.par)}.${best}</p><p class="orb-mission-small">${d.teach}</p>`,
+                    acts: [next ? ['Next mission', () => loadMission(next)] : ['All missions', () => showMissionPanel('list')], ['Retry', () => loadMission(d)]].concat(next ? [['All missions', () => showMissionPanel('list')]] : [])
+                };
+            }
             const what = {
                 crash: `Your probe crashed into ${escapeHtml(theName({ name: mission.crashedInto }))}.`,
                 fuel: 'Your tank is empty, and coasting won\'t get you there.',
@@ -12941,25 +13291,48 @@
                 missed: 'You passed Jupiter too fast for it to keep you.'
             }[mission.reason] || 'The mission is over.';
             const hint = d.fail[mission.reason] || d.fail.time || d.fail.fuel || 'Undo your last burn and try another, or start again.';
-            title = mission.reason === 'crash' ? `You hit ${escapeHtml(theName({ name: mission.crashedInto }))}` : (LOST_TITLE[mission.reason] || 'Mission over');
-            html = `<p>${what}</p><p><strong>Hint:</strong> ${hint}</p>`;
-            acts.push(['Try again', () => loadMission(d, true)]);
-            if (mission.log.length) acts.push(['Undo last burn', () => { hideMissionPanel(); undoStep(); }]);
+            return {
+                kicker, title: mission.reason === 'crash' ? `You hit ${escapeHtml(theName({ name: mission.crashedInto }))}` : (LOST_TITLE[mission.reason] || 'Mission over'),
+                html: `<p>${what}</p><p><strong>Hint:</strong> ${hint}</p>`,
+                acts: [['Retry', () => loadMission(d)]].concat(mission.log.length ? [['Undo last burn', () => { hideMissionPanel(); undoStep(); }]] : [], [['All missions', () => showMissionPanel('list')]])
+            };
         }
+    };
+
+    // The card over the canvas, on request ('how', 'list') or for the outcome ('result'). The clock
+    // waits while one asked for is open.
+    function showMissionPanel(kind, focus) {
+        const d = mission.def, P = ui.missionPanel;
+        if (!P || (kind !== 'list' && !d)) return;
+        endSkip(false);
+        const w = panelWords[kind](d);
         mission.panel = kind;
-        byId('missionKicker').textContent = kicker;
-        byId('missionTitle').innerHTML = title;
-        byId('missionText').innerHTML = html;
+        if (d && mission.status === 'flying' && !paused && kind !== 'result') { setPaused(true); mission.aimPaused = true; }
+        byId('missionKicker').textContent = w.kicker;
+        byId('missionTitle').innerHTML = w.title;
+        const text = byId('missionText');
+        text.innerHTML = w.html;
+        text.querySelectorAll('[data-mission]').forEach((b) => b.addEventListener('click', (e) => {
+            hideMissionPanel(true);
+            loadMission(missionById(b.dataset.mission), !e.detail);
+        }));
         const box = byId('missionActions');
         box.textContent = '';
-        acts.forEach(([label, fn], i) => {
+        w.acts.forEach(([label, fn], i) => {
             const b = document.createElement('button');
             b.type = 'button';
             b.textContent = label;
-            if (i === 0) b.className = 'is-primary';
-            b.addEventListener('click', (e) => { fn(); if (e.detail) b.blur(); });
+            if (i === 0 && kind !== 'list') b.className = 'is-primary';
+            b.addEventListener('click', (e) => {
+                const keyed = !e.detail;
+                fn();
+                if (keyed && ui.missionPanel.hidden && mission.def && ui.mc) ui.mc.play.focus({ preventScroll: true });
+                else if (keyed) focusMissionPanel();
+                else b.blur();
+            });
             box.appendChild(b);
         });
+        P.classList.toggle('is-list', kind === 'list');
         P.hidden = false;
         P.scrollTop = 0;
         if (focus) focusMissionPanel();
@@ -12967,26 +13340,23 @@
 
     function hideMissionPanel(byUser) {
         const P = ui.missionPanel;
-        if (!P || P.hidden) { mission.panel = null; return; }
+        const wasOpen = !!P && !P.hidden;
+        mission.panel = null;
+        if (!wasOpen) return;
         // (if the focus was in it, it goes back to the page rather than to nowhere)
         const had = P.contains(document.activeElement);
         P.hidden = true;
-        mission.panel = null;
         if (had && byUser) document.activeElement.blur();
+        if (byUser) resumeAfterAim();
     }
 
-    // The outcome, once: the card, a gentle ring round the probe, and a line read out in the hint
+    // The outcome, once: the card, and a gentle ring round the probe. (The keyboard's user can go on with
+    // Enter at once.)
     function showResult() {
-        const d = mission.def, c = bodyById(mission.craftId);
+        const c = bodyById(mission.craftId);
         mission.resultShown = true;
-        showMissionPanel('result');
-        if (mission.status === 'won') {
-            const r = mission.result;
-            if (c) flashes.push({ x: c.x, y: c.y, t: performance.now(), color: colours().velocity, r0: drawRadius(c), grow: 40 });
-            historyNote(`<strong>Mission complete!</strong> ${r.stars} of 3 stars: ${f1(r.used)} km/s of fuel (par ${f1(d.par)}).`, 8000);
-        } else {
-            historyNote(`<strong>${byId('missionTitle').textContent}.</strong> ${d.fail[mission.reason] || d.fail.time || ''}`, 10000);
-        }
+        showMissionPanel('result', mission.keyed);
+        if (mission.status === 'won' && c) flashes.push({ x: c.x, y: c.y, t: performance.now(), color: colours().velocity, r0: drawRadius(c), grow: 40 });
     }
 
     // In a mission the probe's flybys get no card or close-up (the mission card says what matters):
@@ -12996,21 +13366,27 @@
     }
 
     // Ten times a second (with the readouts): the start, the clock while aiming, the prediction, the
-    // result, and the hint line following the mission's progress (unless a note is showing)
+    // result, the console, and the hint line following the mission's progress (unless a note is showing)
     function updateMission() {
         if (!mission.def) return;
         if (mission.status === 'ready' && !paused) startFlying();
         const c = bodyById(mission.craftId);
         if (c && c.held && !paused) { setPaused(true); mission.aimPaused = true; }
-        if (mission.status === 'flying') refreshPrediction(false);
-        if ((mission.status === 'won' || mission.status === 'lost') && !mission.resultShown) showResult();
+        if (mission.status === 'flying' || mission.status === 'ready') refreshPrediction(false);
+        // (the clock stopped some other way during a skip: that ends it)
+        if (mission.skip && paused) endSkip(false);
+        if (missionIsOver() && !mission.resultShown) showResult();
         quietFlyby();
+        // (the probe's path, as it stands, is always on show while flying)
+        if (!missionIsOver()) edit.previewUntil = performance.now() + 500;
+        updateMissionConsole();
         refreshHint();   // (the guidance follows the mission's progress; the line only changes if it does)
     }
 
     // ---- Drawing ----
-    // Under the bodies: the goal ring (with the band the orbit must stay in), L4 and its zone, and where
-    // the probe and the target will be at their coming closest approach.
+    // Under the bodies: the goal ring (with the band the orbit must stay in), the target's ring, L4 and
+    // its zone, where the next burn goes (the far or closest point, the launch window) and where the
+    // probe and the target will be at their coming closest approach.
     function drawMissionMarks(C) {
         const d = mission.def;
         if (!d || cleanRender) return;
@@ -13072,8 +13448,36 @@
             ctx.textBaseline = 'bottom';
             ctx.fillText('L4', lx, ly - Math.max(7, g.D * scale) - 2);
             ctx.textBaseline = 'top';
+        } else if (T) {
+            // The ring to get inside, round the target; and Mars's path, to fly out to
+            ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), null);
+            if (g.type === 'reach') ring(cx, cy, Math.hypot(T.dx - R.dx, T.dy - R.dy) * scale, null);
         }
         const p = mission.pred, c = bodyById(mission.craftId);
+        // Where the next burn goes: a world offset from R, turned as the view is turned
+        const x = c && !missionIsOver() ? missionContext() : null, next = skipTarget(x);
+        if (next && next.kind !== 'meet') {
+            const ang = turn.on ? turnAngleIn(0) : 0;
+            const at = (wx, wy) => [cx + (Math.cos(ang) * wx - Math.sin(ang) * wy) * scale, cy - (Math.sin(ang) * wx + Math.cos(ang) * wy) * scale];
+            let spot, label = 'burn here';
+            if (next.kind === 'window') {
+                const a = Math.atan2(x.ry, x.rx) + d.lead * DEG;
+                spot = at(x.tr * Math.cos(a), x.tr * Math.sin(a));
+                label = 'launch when Mars is here';
+            } else {
+                const k = (next.kind === 'apo' ? -x.ra : x.rp) / x.el.e;
+                spot = at(x.el.ex * k, x.el.ey * k);
+            }
+            ctx.strokeStyle = C.dark ? C.text : '#16181c';
+            ctx.fillStyle = hexA(col, 0.35);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(spot[0], spot[1], 6, 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = C.label;
+            ctx.fillText(label, clamp(spot[0], 60, viewW - 60), spot[1] + 9);
+        }
         const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
         // (the places predicted are world offsets from R at that time: turned as the view will be turned
         // then, so in a rotating frame they are seen from the pair as it will be)
@@ -13105,59 +13509,6 @@
         ctx.restore();
     }
 
-    // The mission card, heading the cards in the top-right corner: the mission, how it is going, the
-    // fuel gauge (a tick marks where it would stand after using exactly par) and, room permitting, the
-    // fuel used, par and time left. Returns where the next card goes.
-    function drawMissionCard(C, y, fs, compact) {
-        const d = mission.def;
-        if (!d || cleanRender) return y;
-        const x = missionContext();
-        const accent = C.dark ? C.velocity : '#1d6f65';
-        const title = compact ? `${d.n}. ${d.title}` : `Mission ${d.n}: ${d.title}`;
-        const status = missionStatus(x).slice(0, compact ? 1 : 2);
-        const left = Math.max(0, d.budget - mission.used);
-        const fuel = compact ? `${f1(left)} km/s left` : `${f1(left)} of ${f1(d.budget)} km/s left`;
-        const over = mission.status === 'won' || mission.status === 'lost';
-        const foot = compact ? null : `Used ${f1(mission.used)} · par ${f1(d.par)} km/s${d.limit && !over ? ` · ${fmtDuration(Math.max(0, d.limit - simTime))} left` : ''}`;
-        const lh = Math.round(fs * 1.4), gw = compact ? 54 : 84;
-        ctx.font = font(fs, true);
-        let w = ctx.measureText(title).width;
-        ctx.font = font(fs);
-        for (const s of status) w = Math.max(w, ctx.measureText(s).width);
-        if (foot) w = Math.max(w, ctx.measureText(foot).width);
-        w = Math.max(w, gw + 8 + ctx.measureText(fuel).width) + 20;
-        const rows = 2 + status.length + (foot ? 1 : 0);
-        const h = rows * lh + 10, x0 = viewW - 8 - w;
-        cardBox(C, x0, y, w, h);
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        let ly = y + 5 + lh / 2;
-        ctx.font = font(fs, true);
-        ctx.fillStyle = accent;
-        ctx.fillText(title, x0 + 10, ly);
-        ctx.font = font(fs);
-        ctx.fillStyle = C.text;
-        for (const s of status) { ly += lh; ctx.fillText(s, x0 + 10, ly); }
-        ly += lh;
-        // The gauge
-        const gx = x0 + 10, gh = 7, frac = d.budget > 0 ? left / d.budget : 0;
-        roundRect(gx, ly - gh / 2, gw, gh, 3);
-        ctx.fillStyle = C.faint;
-        ctx.fill();
-        if (frac > 0) {
-            roundRect(gx, ly - gh / 2, Math.max(gh, gw * frac), gh, 3);
-            ctx.fillStyle = frac < 0.15 ? C.force : C.velocity;
-            ctx.fill();
-        }
-        const tick = gx + gw * clamp(1 - d.par / d.budget, 0, 1);
-        ctx.strokeStyle = C.text;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(tick, ly - gh / 2 - 2); ctx.lineTo(tick, ly + gh / 2 + 2); ctx.stroke();
-        ctx.fillStyle = C.text;
-        ctx.fillText(fuel, gx + gw + 8, ly);
-        if (foot) { ly += lh; ctx.fillStyle = C.subtle; ctx.fillText(foot, x0 + 10, ly); }
-        return y + h + 5;
-    }
     // For testing: the mission as it stands (the goal's own numbers in goal, km/s and AU)
     function missionState() {
         const d = mission.def;
@@ -13176,7 +13527,8 @@
             result: mission.result ? Object.assign({}, mission.result) : null, best: bestOf(d.id),
             goal: Object.assign({ type: g.type }, g, g.V ? { V: toKms(g.V) } : {}), now,
             closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
-            panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null
+            panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null,
+            skip: mission.skip ? mission.skip.kind : null, offers: skipTarget(x), speed: settings.speed, firing: !!mission.firing
         };
     }
 
@@ -13323,8 +13675,8 @@
         // palette (getting on with it) ends the scene's tip too. Notes run out by themselves.
         window.addEventListener('pointerdown', (e) => {
             lastPointerType = e.pointerType || 'mouse';
-            hints.intro = false;
             const t = e.target;
+            if (!(t && t.closest && t.closest('.orb-hint-missions'))) hints.intro = false;   // (not until its own click has landed)
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
             refreshHint();
         }, true);
@@ -13434,7 +13786,7 @@
     }
 
     window.orbitsSimulation = {
-        reset() { loadScene(settings.scene); setPaused(false); },
+        reset() { loadScene(settings.scene); if (!mission.def) setPaused(false); },
         loadScene(key) { if (ui.scene) ui.scene.value = key; loadScene(key); },
         scenes: () => Object.keys(SCENES),
         getState() {

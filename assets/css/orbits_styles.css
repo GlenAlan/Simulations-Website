@@ -301,7 +301,7 @@ html:not(.dark-mode) .orb-hint.is-open::after {
    or four rows of chips took (the shared layout fits the canvas to what is left of the screen). A
    sideways swipe scrolls the row; a drag up carries a body out onto the canvas (see onChipMove), and a
    tap still adds one. The row fades at an edge with more chips beyond it (at-start and at-end are set
-   by paletteEdges in orbits_core.js). In a mission the chips can't be used, so they step aside. */
+   by paletteEdges in orbits_core.js). */
 @media (max-width: 600px) and (orientation: portrait) {
     .orbits-sim .orb-palette {
         --orb-fade-l: 16px;
@@ -338,10 +338,6 @@ html:not(.dark-mode) .orb-hint.is-open::after {
     /* (a little more space between the groups: stars, dead stars, planets and moons, small bodies) */
     .orbits-sim .orb-group + .orb-group .orb-group-chips > .orb-chip:first-child {
         margin-left: 8px;
-    }
-
-    .orbits-sim.orb-mission-on .orb-palette {
-        display: none;
     }
 }
 
@@ -1804,19 +1800,351 @@ html.dark-mode .orb-date-input {
 }
 
 /* ---------- Missions ----------
-   Only while a mission is loaded: its briefing and result card over the canvas's top-left corner (the
-   mission card with the fuel gauge is drawn on the canvas, top right) and the palette greyed out (it
-   still answers a click, with a note on the mission's rules). In the settings, under the scene list,
-   a button into the missions. */
+   Only while a mission is loaded: the console in the palette's place (the goal, how it is going, the
+   fuel, the engine and the clock), and a card over the canvas for the outcome, the list of missions and
+   "How it works". In the settings, under the scene list, a button into the missions. */
 .orbits-sim.orb-mission-on .orb-palette,
 .orbits-sim.orb-mission-on .orb-toolbar-label {
-    opacity: 0.4;
+    display: none;
+}
+
+.orbits-sim {
+    --orb-mc-go: #7fd6c2;
+}
+
+html:not(.dark-mode) .orbits-sim {
+    --orb-mc-go: #1d6f65;
+}
+
+/* (the column is a little wider for it: there is room beside the canvas, whose height sets its size) */
+.orbits-sim.orb-mission-on {
+    --orb-side-w: 216px;
+}
+
+.orb-console {
+    grid-area: palette;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 100%;
+    gap: 5px;
+    min-width: 0;
+    min-height: 0;
+    padding: 1px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.orb-console[hidden] {
+    display: none;
+}
+
+.orb-mc-head,
+.orb-mc-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+    line-height: 1.25;
+}
+
+.orb-mc-row {
+    font-variant-numeric: tabular-nums;
+}
+
+.orb-mc-row strong {
+    font-weight: 700;
+}
+
+.orb-console .orb-mc-title {
+    margin: 0;
+    font-size: 1.1em;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text);
+}
+
+.orb-console .orb-mc-leave {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    margin: -2px -1px 0 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.orb-mc-goal,
+.orb-mc-status {
+    margin: 0;
+    line-height: 1.3;
+}
+
+.orb-mc-status {
+    min-height: 1.3em;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
+}
+
+.orb-mc-status.is-ok {
+    font-weight: 700;
+    color: var(--orb-mc-go);
+    opacity: 1;
+}
+
+.orb-mc-bar {
+    position: relative;
+    height: 8px;
+    margin-top: 3px;
+    border-radius: 4px;
+    background-color: var(--color-border);
+}
+
+.orb-mc-fill {
+    height: 100%;
+    border-radius: 4px;
+    background-color: var(--orb-mc-go);
+}
+
+.orb-mc-fill.is-low {
+    background-color: var(--color-accent);
+}
+
+/* (where three stars are lost) */
+.orb-mc-tick {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    margin-left: -1px;
+    background-color: var(--color-text);
+}
+
+.orb-mc-pad-head {
+    align-items: center;
+    margin-top: 2px;
+}
+
+.orb-console .orb-mc-fine {
+    flex: 0 0 auto;
+    height: 24px;
+    padding: 0 0.7em;
+    font-size: 0.95em;
+}
+
+.orb-console .orb-mc-fine[aria-pressed="true"] {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.orb-mc-pad {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "f b" "i o";
+    gap: 4px;
+}
+
+.orb-console .orb-mc-burn,
+.orb-console .orb-mc-play,
+.orb-console .orb-mc-skip,
+.orb-console .orb-mc-retry {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45em;
+    min-width: 0;
+    height: 36px;
+    padding: 0 0.4em;
+    line-height: 1.1;
+}
+
+.orb-console .orb-mc-burn {
+    font-weight: 700;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.orb-console .orb-mc-burn .icon {
+    color: var(--color-accent);
+}
+
+html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
+    color: #b03a5b;
+}
+
+.orb-mc-faster { grid-area: f; }
+.orb-mc-in { grid-area: i; }
+.orb-mc-out { grid-area: o; }
+.orb-mc-slower { grid-area: b; }
+
+.orb-console .orb-mc-burn.is-firing:not(:disabled) {
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+    background-color: var(--color-bg-button-active-overlay);
+}
+
+.orb-mc-time {
+    display: flex;
+    gap: 4px;
+}
+
+.orb-console .orb-mc-play,
+.orb-console .orb-mc-retry {
+    flex: 1 1 0;
+}
+
+.orb-console .orb-mc-play[hidden],
+.orb-console .orb-mc-skip[hidden] {
+    display: none;
+}
+
+.orb-console .orb-mc-skip {
+    flex: 0 0 auto;
+    font-weight: 700;
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.orb-console .is-primary {
+    font-weight: 700;
+    color: #16181c !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+.orb-mc-links {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.orb-console .orb-mc-links button {
+    min-height: 24px;
+    font-size: 0.95em;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    background: transparent;
+    box-shadow: none;
+}
+
+/* A little tighter on a shorter screen, so all of it and the hint fit beside the canvas */
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 820px) {
+    .orb-console {
+        gap: 3px;
+    }
+
+    .orb-console .orb-mc-burn,
+    .orb-console .orb-mc-play,
+    .orb-console .orb-mc-skip,
+    .orb-console .orb-mc-retry {
+        height: 30px;
+    }
+
+    .orbits-sim.orb-mission-on .orb-hint {
+        min-height: 5.7em;
+        height: 5.7em;
+    }
+}
+
+/* Under the canvas (portrait): as few rows as it will go in, as the canvas gets what is left of the
+   screen. The fuel and the time share one, the engine's four buttons another, the way the arrow keys
+   lie ("Engine: hold to fire" is for screen readers here: the hint line says it). */
+@media not all and (orientation: landscape) and (min-width: 640px) {
+    .orb-console {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-areas: "head head head" "goal goal goal" "status status status" "fuel fuel left" "pad pad pad" "skip skip skip" "play retry fine" "links links links";
+        gap: 4px 6px;
+        overflow: visible;
+    }
+
+    .orb-console[hidden] {
+        display: none;
+    }
+
+    .orb-mc-head { grid-area: head; }
+    .orb-mc-goal { grid-area: goal; }
+    .orb-mc-status { grid-area: status; }
+    .orb-mc-fuel { grid-area: fuel; }
+    .orb-mc-pad { grid-area: pad; }
+    .orb-console .orb-mc-skip { grid-area: skip; }
+    .orb-console .orb-mc-play { grid-area: play; }
+    .orb-console .orb-mc-retry { grid-area: retry; }
+    .orb-mc-links { grid-area: links; }
+
+    .orb-mc-left-row {
+        grid-area: left;
+        flex-direction: column;
+        gap: 0;
+        align-items: flex-end;
+    }
+
+    .orb-mc-left-row strong {
+        display: none;
+    }
+
+    .orb-mc-time,
+    .orb-mc-pad-head {
+        display: contents;
+    }
+
+    .orb-mc-pad-head strong {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+
+    .orb-console .orb-mc-fine {
+        grid-area: fine;
+        height: 36px;
+    }
+
+    .orb-mc-pad {
+        grid-template-columns: repeat(4, 1fr);
+        grid-template-areas: "i b f o";
+    }
+
+    .orb-mc-links {
+        justify-content: flex-start;
+        gap: 14px;
+    }
+}
+
+@media (pointer: coarse) {
+    .orb-console .orb-mc-burn,
+    .orb-console .orb-mc-play,
+    .orb-console .orb-mc-skip,
+    .orb-console .orb-mc-retry,
+    .orb-console .orb-mc-fine,
+    .orb-console .orb-mc-links button,
+    .orb-console .orb-mc-leave {
+        height: 40px;
+        min-height: 40px;
+    }
+
+    .orb-console .orb-mc-leave {
+        width: 40px;
+    }
+}
+
+/* In the usual hint when the page opens: the way in */
+.orb-toolbar .orb-hint-missions {
+    display: inline;
+    padding: 0;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    background: transparent;
+    box-shadow: none;
 }
 
 .orb-mission-panel {
     position: absolute;
     top: 8px;
-    left: 8px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 20;
     box-sizing: border-box;
     width: 320px;
@@ -1881,6 +2209,48 @@ html.dark-mode .orb-date-input {
     opacity: 0.85;
 }
 
+.orb-mission-list {
+    margin: 0 0 0.3em;
+    padding: 0;
+    list-style: none;
+}
+
+.orb-mission-list li {
+    margin: 0;
+    padding: 0;
+}
+
+.orb-mission-list li + li {
+    margin-top: 3px;
+}
+
+.orb-mission-panel .orb-mission-list button {
+    justify-content: space-between;
+    width: 100%;
+    height: 34px;
+    padding: 0 0.7em;
+}
+
+.orb-mission-panel .orb-mission-list button[aria-current="true"] {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px var(--color-text);
+}
+
+.orb-mission-panel .orb-mission-list button.is-next {
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.orb-mission-row-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.orb-mission-list .orb-mission-stars {
+    flex: 0 0 auto;
+    font-size: 1.1em;
+    letter-spacing: 0.06em;
+}
+
 .orb-mission-stars {
     font-size: 1.5em;
     line-height: 1;
@@ -1888,7 +2258,7 @@ html.dark-mode .orb-date-input {
     color: var(--color-accent);
 }
 
-/* The buttons stay in view at the bottom while a long briefing scrolls (a phone's canvas is small) */
+/* The buttons stay in view at the bottom while a long card scrolls (a phone's canvas is small) */
 .orb-mission-actions {
     position: sticky;
     bottom: -11px;
@@ -1898,28 +2268,6 @@ html.dark-mode .orb-date-input {
     margin: 0.2em -12px -11px;
     padding: 6px 12px 11px;
     background-color: var(--color-bg-alt);
-}
-
-.orb-mission-more {
-    margin: 0 0 0.55em;
-}
-
-.orb-mission-more > summary {
-    display: list-item;
-    width: max-content;
-    max-width: 100%;
-    font-size: 0.9em;
-    font-weight: 700;
-    cursor: pointer;
-}
-
-.orb-mission-more > summary:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
-}
-
-.orb-mission-more > p {
-    margin: 0.3em 0 0;
 }
 
 .orb-mission-panel button {
@@ -1992,7 +2340,7 @@ html.dark-mode .orb-date-input {
     }
 }
 
-/* Phones: a little tighter, so more of the briefing fits over the canvas */
+/* Phones: a little tighter, so more of the card fits over the canvas */
 @media (max-width: 480px), (max-height: 540px) {
     .orb-mission-panel {
         padding: 7px 10px 9px;
