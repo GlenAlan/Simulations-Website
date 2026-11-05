@@ -254,17 +254,6 @@
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
 										</div>
-										<details class="sim-controls-more orb-fold" id="orbitGroup">
-											<summary><span id="orbitGroupLabel">Orbit of Earth</span><span class="orb-fold-state" id="foldOrbit"></span></summary>
-											<div class="sim-control-group">
-												<label>Eccentricity: <span id="eccVal" class="sim-value" style="--chars: 4">0.00</span> <span class="orb-sub" id="eccName">(circle)</span>
-													<input type="range" id="eccSlider" min="0" max="0.95" step="0.01" value="0" aria-describedby="eccNote" title="Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse">
-												</label>
-												<p class="orb-note" id="eccNote" hidden>Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.</p>
-												<p class="orb-note orb-orbit-facts" id="orbitFacts"></p>
-												<button type="button" class="orb-edit-orbit" id="editOrbitBtn" aria-haspopup="dialog"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Set its period and distances</button>
-											</div>
-										</details>
 										<details class="sim-controls-more orb-fold" id="frameGroup">
 											<summary><span id="frameLabel">View from</span><span class="orb-fold-state" id="foldFrame"></span></summary>
 											<div class="sim-control-group">
@@ -433,6 +422,12 @@
 														<p class="orb-pop-note orb-keys-note">Arrow keys push it too. Shift: finer, Alt: coarser.</p>
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelOrbit" aria-labelledby="popTabOrbit" hidden>
+														<div class="orb-pop-fields">
+															<label>Eccentricity: <span class="orb-pop-val"><span id="eccVal">0.00</span> <span class="orb-sub" id="eccName">(circle)</span></span>
+																<input type="range" id="eccSlider" min="0" max="0.95" step="0.01" value="0" aria-describedby="eccNote" title="Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse">
+															</label>
+															<p class="orb-pop-note" id="eccNote" hidden>Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.</p>
+														</div>
 														<div class="orb-field">
 															<label class="orb-field-label" for="popPeriodIn">Period</label>
 															<div class="orb-spin" data-field="period">
@@ -600,14 +595,14 @@
 											<h4>How to use it</h4>
 											<p class="orb-howto-group">Build and move</p>
 											<ul>
-												<li><strong>Add a body:</strong> drag it from the strip into space, or click or tap it to add it at a free spot. Drag a body to move it. Drag empty space to pan; scroll or pinch to zoom; <span class="icon solid fa-expand-arrows-alt"></span> Fit view brings everything back into view.</li>
+												<li><strong>Add a body:</strong> drag it from the strip into space, or click or tap it to add it at a free spot. Drop it on a planet to make it a moon. Drag a body to move it. Drag empty space to pan; scroll or pinch to zoom; <span class="icon solid fa-expand-arrows-alt"></span> Fit view brings everything back into view.</li>
 												<li><strong>Aim a velocity:</strong> drag the tip of a body's teal arrow (hold Shift for fine control; on a touch screen, hold the tip still for a moment first). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go.</li>
 												<li><strong>Throw a body:</strong> in More options choose <em>Throw it</em>, then flick a body (or one from the strip) as you let go: it keeps the speed of your pointer.</li>
 											</ul>
 											<p class="orb-howto-group">Choose and change a body</p>
 											<ul>
 												<li><strong>Choose a body:</strong> click or tap it. The info bar shows its distance, speed, pull and period (with a tick once the period has been measured over a whole orbit). Double-click or double-tap a body to view the motion from it.</li>
-												<li><strong>Its menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body (or press Enter). <em>Body</em> sets its mass, size and colour; <em>Velocity</em> takes a typed speed and direction (0&deg; is sideways, as in a circle; + is outward) or a push; <em>Orbit</em> sets its period, which scales the whole orbit, or its closest and farthest distances, which keep it where it is; <em>Gravity</em> lists who pulls on it. The arrow keys push the chosen body: &uarr; faster, &darr; slower, &rarr; outward, &larr; inward (Shift finer, Alt coarser).</li>
+												<li><strong>Its menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body (or press Enter). <em>Body</em> sets its mass, size and colour; <em>Velocity</em> takes a typed speed and direction (0&deg; is sideways, as in a circle; + is outward) or a push; <em>Orbit</em> sets its eccentricity, its period, which scales the whole orbit, or its closest and farthest distances, which keep it where it is; <em>Gravity</em> lists who pulls on it. The arrow keys push the chosen body: &uarr; faster, &darr; slower, &rarr; outward, &larr; inward (Shift finer, Alt coarser).</li>
 												<li><strong>Find a body:</strong> open the settings and <em>Bodies</em> to list them all, with what each orbits, its mass, distance, speed and period. Find one by name, sort them, and choose one for buttons to zoom to its orbit, view from it, edit or delete it. N and Shift+N step through the bodies, heaviest first with moons after their planet; Z zooms to the chosen body's orbit.</li>
 											</ul>
 											<p class="orb-howto-group">Time</p>
@@ -634,7 +629,7 @@
 
 											<h4>Things to try</h4>
 											<ul>
-												<li>Raise the eccentricity and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
+												<li>Press Edit, raise the eccentricity on the Orbit tab and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
 												<li>Press Edit, open the Orbit tab and give Earth a period of 2 years: Kepler's 3rd law moves its orbit out to 1.59 AU.</li>
 												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Download the table (More options) and plot <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>: a straight line through the origin.</li>
 												<li>Set the Solar System's start date to your birthday and see where the planets were.</li>
@@ -677,7 +672,7 @@
 											<div class="orb-help-group orb-help-touch">
 												<h3 id="helpTouchTitle">On a touch screen</h3>
 												<dl>
-													<div><dt>Drag from the strip</dt><dd>Add a body where you let go, or tap one to add it at a free spot. Swipe the strip sideways for more</dd></div>
+													<div><dt>Drag from the strip</dt><dd>Add a body where you let go (on a planet, it becomes its moon), or tap one to add it at a free spot. Swipe the strip sideways for more</dd></div>
 													<div><dt>Tap a body</dt><dd>Choose it: the info bar shows its distance, speed and period</dd></div>
 													<div><dt>Double-tap a body</dt><dd>View the motion from it (double-tap empty space to go back)</dd></div>
 													<div><dt>Long-press a body</dt><dd>Open its menu: its mass and colour, velocity, orbit and pulls</dd></div>
@@ -706,6 +701,7 @@
 													<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Push it faster or slower (in a mission, fire the probe's engine)</dd></div>
 													<div><dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>Push it outward or inward (with <kbd>Shift</kbd> finer, <kbd>Alt</kbd> coarser)</dd></div>
 													<div><dt>Drag</dt><dd>Move a body, or aim it by its arrow's tip (hold <kbd>Shift</kbd> for fine aim)</dd></div>
+													<div><dt>Drop on a planet</dt><dd>Make a body its moon</dd></div>
 													<div><dt><kbd>Delete</kbd></dt><dd>Delete the chosen body (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back)</dd></div>
 												</dl>
 											</div>

@@ -59,7 +59,7 @@
     const ui = {
         speed: byId('speedSlider'), speedVal: byId('speedVal'),
         scene: byId('sceneSelect'),
-        orbitGroupLabel: byId('orbitGroupLabel'), ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
+        ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
         eccNote: byId('eccNote'),
         forces: byId('forceToggle'), velocities: byId('velocityToggle'), labels: byId('labelsToggle'),
         realistic: byId('realisticToggle'),
@@ -1841,8 +1841,9 @@
         removeBody(small, big);
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
-        // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred)
-        if (!small.minor && !small.grp) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
+        // timer says so itself)
+        if (!small.minor && !small.grp && !settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
     }
 
     // ------------------------------------------------------------------
@@ -5217,10 +5218,6 @@
         const b = bodyById(selectedId);
         const p = b && b.primary;
         const usable = !!(b && p && !(p.primary === b && b.m > p.m));
-        if (ui.orbitGroupLabel) {
-            const t = b ? `Orbit of ${b.name}` : 'Orbit';
-            if (ui.orbitGroupLabel.textContent !== t) ui.orbitGroupLabel.textContent = t;
-        }
         ui.ecc.disabled = !usable;
         if (ui.eccNote) {
             const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
@@ -5228,7 +5225,6 @@
             if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
             ui.eccNote.hidden = usable && !mission.def;   // (why the slider can't move; else its tooltip says)
         }
-        syncOrbitFacts(b, usable);
         missionLockSidebar();
         if (!usable) {
             if (ui.eccVal) ui.eccVal.textContent = '–';
@@ -8244,7 +8240,6 @@
         popOrbitShape: byId('popOrbitShape'),
         popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
         subjectEdit: byId('statSubjectEdit'),
-        orbitFacts: byId('orbitFacts'), editOrbit: byId('editOrbitBtn')
     });
 
     const edit = {
@@ -8650,21 +8645,6 @@
         }
     }
 
-    // The sidebar's "Orbit of ..." group: its period and closest and farthest distances
-    function syncOrbitFacts(b, usable) {
-        if (ui.editOrbit) ui.editOrbit.disabled = !usable;
-        if (!ui.orbitFacts) return;
-        let t = '';
-        const o = usable ? orbitOf(b) : null;
-        if (o) {
-            const names = apsisNames(o.p);
-            const d = (x) => { const f = fmtDistance(x); return `${f.v} ${f.u}`; };
-            t = o.el.bound ? `Period ${fmtDuration(o.T, true)}; ${names[0]} ${d(o.rp)}, ${names[1]} ${d(o.ra)}.`
-                : `Escaping; ${names[0]} ${d(o.rp)}.`;
-        }
-        setText(ui.orbitFacts, t);
-    }
-
     // A button that acts once when pressed and, held down, again and again (steppers and pushes)
     function holdRepeat(btn, fn) {
         let timer = 0, viaPointer = false;
@@ -8881,15 +8861,6 @@
                 syncEditButton();
             });
         }
-        // The sidebar's button: the Orbit tab (on a phone, the settings sheet closes first)
-        if (ui.editOrbit) {
-            ui.editOrbit.addEventListener('click', () => {
-                const b = selectedId !== null ? bodyById(selectedId) : null;
-                const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
-                if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
-                openEditor(b, 'orbit', true);
-            });
-        }
         // Keys (before the page's own Escape handler, so Escape in a field only puts it back)
         window.addEventListener('keydown', onEditorKey, true);
         const inSim = (el) => !!(el && el.closest && el.closest('.simulation-display-container'));
@@ -8998,7 +8969,8 @@
         btn.dataset.kind = kind;
         const label = kind === 'custom' ? 'Custom' : k.name;
         btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
-            : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
+            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it onto a planet, or click to give the chosen planet a moon.`
+                : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
         const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
@@ -11560,13 +11532,12 @@
     // ------------------------------------------------------------------
     // Controls, the page's start, and the checks four times a second
     // ------------------------------------------------------------------
-    // A folded group of the settings says what it holds: the orbit's shape, the view, the laws switched on
+    // A folded group of the settings says what it holds: the view, the laws switched on
     function syncFolds() {
         const on = [[ui.k1, '1st'], [ui.k2, '2nd'], [ui.k3, '3rd']].filter((k) => k[0] && k[0].checked).map((k) => k[1]);
         setText(ui.foldKepler, on.join(', '));
         const opt = ui.frame && ui.frame.options[ui.frame.selectedIndex];
         setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '') : '');
-        setText(ui.foldOrbit, ui.ecc && !ui.ecc.disabled && ui.eccVal ? `e = ${ui.eccVal.textContent}` : '');
     }
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
@@ -11597,7 +11568,7 @@
 
     function bindShare() {
         Object.assign(ui, {
-            foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'), foldOrbit: byId('foldOrbit'),
+            foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
             shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
@@ -12912,11 +12883,10 @@
         setText(ui.popOrbitShape, why);
         if (!craft) setText(ui.popAngleNote, why);
     }
-    // (syncEccentricity) the eccentricity slider and "Set its period and distances"
+    // (syncEccentricity) the eccentricity slider
     function missionLockSidebar() {
         if (!mission.def) return;
         if (ui.ecc) ui.ecc.disabled = true;
-        if (ui.editOrbit) ui.editOrbit.disabled = true;
         setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
     }
 
