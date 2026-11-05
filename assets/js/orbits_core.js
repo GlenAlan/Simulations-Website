@@ -2285,7 +2285,7 @@
         // (said in the hint line too, which screen readers announce)
         const kind = big.kind === 'blackhole' ? 'black hole' : big.kind === 'neutron' ? 'neutron star' : 'body';
         const lost = m1 + m2 - big.m;
-        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
+        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `. ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
         // A black hole rings as it settles, at the frequency and damping of its main (l = m = 2) mode:
         // omega = 0.3737 c^3/(GM), damping time GM/(0.0890 c^3) (Berti, Cardoso & Will 2006)
         if (big.kind === 'blackhole') {
@@ -3422,13 +3422,14 @@
         markPreview();
         syncFrameUi();
         updatePopover(true);
-        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`, { ms: 7000 });
+        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns, so both stand still.`, { ms: 7000, tag: 'turn' });
         return true;
     }
 
     // Choosing any other frame ends a rotating one (setFrame keeps the screen still; the turn glides off)
     function leaveTurning() {
         if (!turn.on) return;
+        clearHint('note', 'turn');
         Object.assign(turn, { on: false, aId: null, bId: null });
         pred.key = '';
         markPreview();
@@ -3511,9 +3512,9 @@
             ui.turnNote.hidden = !P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
-                const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
-                const lag = settings.lagrange ? '' : ' Lagrange points are in More options.';
-                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}${lag}`);
+                const ecc = el && el.bound && el.e > 0.03 ? ` ${sentenceCase(theName(P.B))} slides in and out along its ellipse.` : '';
+                const lag = settings.lagrange ? '' : ' Lagrange points: More options.';
+                setText(ui.turnNote, `Arrows show motion in this turning view.${ecc}${lag}`);
             }
         }
     }
@@ -3691,10 +3692,10 @@
         const b = theName(Q.B), a = theName(Q.A);
         if (i < 3) {
             const where = [`between ${b} and ${a}`, `just beyond ${b}`, `on the far side of ${a}`][i];
-            return `L${i + 1}, ${where}: a body here keeps pace with ${b}, but drifts away if nudged.`;
+            return `L${i + 1}, ${where}: keeps pace with ${b}, but drifts away if nudged.`;
         }
         const where = i === 3 ? 'ahead of' : 'behind';
-        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: a stable spot, where small bodies gather (like Jupiter's Trojans).`
+        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: stable, so small bodies gather (like Jupiter's Trojans).`
             : `L${i + 1}, 60° ${where} ${b}: not stable, as ${b} is too heavy compared with ${a}.`;
     }
 
@@ -3802,7 +3803,7 @@
     const WELL_LEVELS = 9;        // about this many steps between contour lines across the depths in view
     const WELL_SOFT_MS = 150;     // a picture shifted or scaled is painted afresh after this long
     Object.assign(settings, { well: false, lagrange: false });
-    Object.assign(ui, { wellToggle: byId('wellToggle'), wellNote: byId('wellNote'), lagrangeToggle: byId('lagrangeToggle') });
+    Object.assign(ui, { wellToggle: byId('wellToggle'), lagrangeToggle: byId('lagrangeToggle') });
     const well = {
         small: null, smallCtx: null, img: null,   // the shading, one pixel per grid point
         U: null,                          // the depth at each grid point
@@ -4058,20 +4059,12 @@
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
-    // (its note in the settings says what it is, and once it is on, how to read it)
-    const WELL_NOTE_OFF = 'Gravity well: how deep each body\'s pull reaches, as shading and contour lines';
-    const WELL_NOTE_ON = 'Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong';
-    function setWell(on, fromKey) {
+    function setWell(on, say) {
         settings.well = !!on;
         if (ui.wellToggle) ui.wellToggle.checked = settings.well;
-        if (ui.wellNote && ui.wellNote.firstChild && ui.wellNote.firstChild.nodeType === 3) {
-            ui.wellNote.firstChild.nodeValue = settings.well ? WELL_NOTE_ON : WELL_NOTE_OFF;
-        }
         well.sig = '';
-        if (fromKey) {
-            showHint('note', settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
-                : '<strong>Gravity well hidden.</strong> W shows it again.', { ms: 6000, tag: 'well' });
-        } else if (!settings.well) clearHint('note', 'well');
+        if (say && settings.well) showHint('note', '<strong>Gravity well:</strong> darker is deeper, and each line joins points of equal depth.', { ms: 6000, tag: 'well' });
+        else if (!settings.well) clearHint('note', 'well');
     }
     function setLagrange(on) {
         settings.lagrange = !!on;
@@ -4110,13 +4103,13 @@
         const m = lagrangeAt(pt.x, pt.y, LAGRANGE_TAP);
         if (!m) return;
         const comma = m.text.indexOf(',');
-        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
+        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000, tag: 'chosen' });
     }
 
     function bindWell() {
         if (ui.wellToggle) {
             ui.wellToggle.checked = settings.well;
-            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked));
+            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked, true));
         }
         if (ui.lagrangeToggle) {
             ui.lagrangeToggle.checked = settings.lagrange;
@@ -5017,6 +5010,7 @@
         k2.bid = null;
         resetOrbitChart();
         syncEccentricity(true);
+        clearHint('note', 'chosen');   // (about the last one: its Lagrange point, or a Zoom in that would now zoom elsewhere)
         refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
@@ -5146,7 +5140,7 @@
     // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
     function moonNote(b) {
         const p = b && b.primary;
-        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000 });
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000, tag: 'chosen' });
     }
 
     // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
@@ -6687,7 +6681,7 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
-            return `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${escapeHtml(theName(b))}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`;
+            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}, joined tip to tail.`;
         }, { ms: 9000, tag: 'pulls' });
     }
 
@@ -6699,8 +6693,7 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!(b && orbitingBody(b) && b.m >= 1e-17)) return '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.';
-            const who = escapeHtml(theName(b)), p = escapeHtml(theName(b.primary));
-            return `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`;
+            return `<strong>Hill sphere and Roche limit</strong> for ${escapeHtml(theName(b))}: the card says what each means.`;
         }, { ms: 9000, tag: 'limits' });
     }
 
@@ -9136,7 +9129,6 @@
             if (b && d.kind === 'custom') openPopover(b);
         }
         dropHost = null;
-        throwTipSeen(d);
         clearHint('drag');
     }
 
@@ -9194,7 +9186,7 @@
         let h;
         if (coarse()) {
             h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
-                : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
+                : '<strong>Drag</strong> a body into space. Tap one, then tap <strong>Edit</strong> to change it.';
         } else {
             h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
@@ -9235,7 +9227,7 @@
             const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
             if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
         }
-        showHint('drag', h + throwTip(true));
+        showHint('drag', settings.placement === 'throw' ? `${h} <strong>Flick</strong> it as you let go to throw it.` : h);
     }
 
     // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
@@ -9327,9 +9319,6 @@
         if (sideways.addEventListener) sideways.addEventListener('change', onTurn); else if (sideways.addListener) sideways.addListener(onTurn);
     }
 
-    // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
-    let throwTipShown = false;
-
     function dragHint(d) {
         const b = d.body;
         if (!b) return;
@@ -9341,26 +9330,26 @@
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
-            showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
+            showHint('drag', `<strong>Let go:</strong> it ${how}.`);
         } else if (b.aim && b.aim.burn) {
             showHint('drag', burnHint(b, d));
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
             const av = aimedVelocity(b), v = fmtSpeedKms(Math.hypot(av.x - (L ? L.vx : totals(bodies).vx), av.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
-            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
+            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
             const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
-            const fate = snap === 'circular' ? 'exactly the circular speed, a circle'
-                : snap === 'escape' ? 'exactly the escape speed, so it just escapes (a parabola)'
+            const fate = snap === 'circular' ? 'circular speed, a circle'
+                : snap === 'escape' ? 'escape speed, so it only just gets away'
                     : pr.el.bound ? (pr.el.e < 0.01 ? 'a circle' : `an ellipse, e = ${pr.el.e.toFixed(2)}`) : `it escapes (e = ${pr.el.e.toFixed(2)})`;
             let h = `<strong>${v.v} ${v.u}</strong> relative to ${escapeHtml(theName(pr.p))}: ${fate}.`;
             // (on a touch screen, fine control comes from holding the tip still before dragging it)
             const fineTouch = coarse() && aimFineTouch(d);
             if (!snap && !fineTouch) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
-            if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
-            else if (fineTouch) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+            if (!coarse()) h += d.fine ? ' <strong>Fine control.</strong>' : ' <strong>Shift:</strong> finer.';
+            else if (fineTouch) h += ' <strong>Fine control:</strong> a tenth of your finger\'s move.';
             showHint('drag', h);
         }
     }
@@ -9602,7 +9591,6 @@
         computeForces();
         computePrimaries();
         syncEccentricity(true);
-        throwTipSeen(d);
         clearHint('drag');
         clearHint('tip');
         if (dropHost && d.mode === 'move' && apply) moonNote(b);
@@ -9766,7 +9754,7 @@
             past.wall = null;
             setPaused(true);
             acc = 0;
-            pastNote('<strong>Stopped:</strong> two bodies merged about now, too long ago for the simulation to remember how to take them apart.', 8000);
+            pastNote('<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
         }
     }
 
@@ -9839,8 +9827,8 @@
         const back = list.filter((b) => !had.has(b));
         for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
         const name = back.length ? escapeHtml(back[0].name) : 'A body';
-        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself, so it is put back as it was just before.`
-            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself, so the bodies are put back as they were just before they met.`;
+        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
+            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
     }
 
@@ -9971,7 +9959,7 @@
         }
         if (past.drift && !past.noted) {
             past.noted = true;
-            pastNote('<strong>Drifted from the true past.</strong> Tiny rounding errors grow fast in chaos, so the bodies no longer retrace their paths. Faint dashed discs show where they really were.', 9000);
+            pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
         }
     }
 
@@ -10017,7 +10005,7 @@
             pred.key = '';
             edit.previewDirty = true;
             past.noted = false;
-            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> the clock counts down and every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
+            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
         }
         syncReverseUi();
     }
@@ -10139,22 +10127,11 @@
     // The hint while a body is moved, when it will be thrown: "flies off at 12 km/s ..."
     function throwHint(d) {
         const now = performance.now();
-        if (!flickPx(d, now)) return 'stays put in this view. <strong>Flick</strong> it as you let go to throw it';
+        if (!flickPx(d, now)) return 'stays put. <strong>Flick</strong> it as you let go to throw it';
         const v = throwVelocity(d, now), fv = throwBase(d);
         const s = fmtSpeedKms(Math.hypot(v[0] - fv.x, v[1] - fv.y) * AUYR_KMS);
-        return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
+        return `flies off at <strong>${s.v} ${s.u}</strong>`;
     }
-
-    // ...and how to find throwing, if it is off: during the first drag of a visit only (d: the drag)
-    function throwTip(drop, d) {
-        if (settings.placement === 'throw') return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
-        const g = d || paletteDrag;
-        if (throwTipShown && !(g && g.throwTipped)) return '';
-        if (g) g.throwTipped = true;
-        return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
-    }
-    // (at the end of a drag: the pointer to throwing has been seen)
-    function throwTipSeen(d) { if (d && d.throwTipped) throwTipShown = true; }
 
     // A body being dragged from the palette: the velocity it would be thrown with
     function drawThrowArrow(C) {
@@ -11181,7 +11158,7 @@
         pred.key = '';
     }
 
-    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused: press play to run it, or Undo to go back.`;
+    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused. Press play, or Undo to go back.`;
 
     // Open a link's setup. fromHash: it came with the page (or was pasted into its address), so the hash
     // is cleared afterwards and a reload doesn't open it again over any changes. Resolves to { ok, message }.
@@ -11231,7 +11208,7 @@
             }
         }
         const kb = `${Math.max(1, Math.round(link.length / 1024)).toLocaleString('en-US')} KB`;
-        let msg = ok ? 'Link copied. Opening it shows this setup, paused.' : 'Copy the link from the box below.';
+        let msg = ok ? 'Link copied.' : 'Copy the link from the box below.';
         if (link.length > LONG_LINK) {
             msg = `${ok ? 'Link copied, but it is' : 'This link is'} long (${kb}, ${n.toLocaleString('en-US')} ${n === 1 ? 'body' : 'bodies'}): some apps cut long links short.${ok ? '' : ' Copy it from the box below.'}`;
         }
@@ -11460,7 +11437,7 @@
         stab.ended = { kind, a: a.name, b: other ? other.name : '', years };
         const best = noteBest(years);
         saveStabilityBest();
-        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''} Change something and try again.`, 8000);
+        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''}`, 8000);
     }
 
     function eventText(e, dur) {
