@@ -1962,6 +1962,7 @@ html:not(.dark-mode) .orbits-sim {
 .orb-console .orb-mc-burn {
     font-weight: 700;
     touch-action: none;
+    -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
 }
@@ -2085,6 +2086,29 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     .orb-console .orb-mc-skip,
     .orb-console .orb-mc-retry {
         height: 28px;
+    }
+}
+
+/* Phones held sideways: the engine and the clock come first, in sight; the rest scrolls below them
+   (the hint line is under the canvas here) */
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orb-mc-head { order: 0; }
+    .orb-mc-fuel { order: 1; }
+    .orb-mc-pad { order: 2; }
+    .orb-console .orb-mc-skip { order: 3; }
+    .orb-mc-time { order: 4; }
+    .orb-mc-goal { order: 5; }
+    .orb-mc-status { order: 6; min-height: 0; }
+    .orb-mc-left-row { order: 7; }
+    .orb-mc-pad-head { order: 8; }
+    .orb-mc-links { order: 9; }
+
+    .orb-console .orb-mc-burn,
+    .orb-console .orb-mc-play,
+    .orb-console .orb-mc-skip,
+    .orb-console .orb-mc-retry {
+        height: 34px;
+        min-height: 34px;
     }
 }
 

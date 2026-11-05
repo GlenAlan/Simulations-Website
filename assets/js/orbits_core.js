@@ -12241,7 +12241,8 @@
     // (within 45 degrees of the closest point, 0.35 AU from the Sun, a burn still earns three stars)
     function escapeHint(x) {
         if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
-        if (x.out) return 'You have passed the closest point, so a burn costs far more. <strong>Retry</strong>, and burn close to the Sun.';
+        // (at the very start, at the far point, it may just be moving out by a rounding error)
+        if (x.out && x.nu < 170) return 'You have passed the closest point, so a burn costs far more. <strong>Retry</strong>, and burn close to the Sun.';
         return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
             : 'Escaping costs less as you near the Sun. <strong>Skip to closest point</strong>, then burn.';
     }
@@ -12394,8 +12395,6 @@
     const missionCraft = () => (mission.def ? bodyById(mission.craftId) : null);
 
     // A note in the hint line for something a mission doesn't allow (the same one at most every 1.5 s).
-    // A burn's note waits until one has been up for RULES_MS (see noteBurn).
-    const RULES_MS = 2500;
     function missionNote(html) {
         const now = performance.now();
         if (html === mission.refusedText && now - mission.refusedAt < 1500) return;
@@ -12658,7 +12657,8 @@
         } else if (!x.burns) {
             // (Mars's angle falls behind at the difference of the two rates of going round)
             if (d.lead && x.phase > d.lead) s = { kind: 'window', word: 'launch window', dt: (x.phase - d.lead) * DEG / (x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3))) };
-        } else if (p && p.t > simTime && x.td > (g.type === 'reach' ? g.zone : (g.l4 ? 2 : 3) * g.D)) {
+        } else if (p && p.t > simTime && p.d < (g.type === 'reach' ? g.zone : g.D) && x.td > (g.type === 'reach' ? g.zone : (g.l4 ? 2 : 3) * g.D)) {
+            // (once the path comes within the goal; until then the burn isn't finished)
             s = { kind: 'meet', word: g.l4 ? 'L4' : x.tname === 'Station' ? 'the station' : x.tname, dt: p.t - simTime };
         }
         return s && s.dt > 0 && s.dt < d.limit - simTime ? s : null;
@@ -12911,7 +12911,7 @@
     function missionKeepHome(key) {
         if (mission.def || !missionByKey(key)) return;
         mission.home = missionByKey(settings.scene) ? { speed: settings.speed } : {
-            snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup()
+            snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup(), stability: settings.stability, stabAuto: stab.auto
         };
     }
 
@@ -12932,6 +12932,7 @@
         restoreSnapshot(h.snap, 'undo');
         if (h.back) setReverse(true, true);
         if (h.turn) restoreTurning({ a: h.turn[0], up: h.turn[1] });
+        if (h.stability) setStability(true, h.stabAuto);
         syncFrameUi();
         Object.assign(hist, { open: null, cleanLoad: h.clean, rwStale: true, rwFresh: false, rwFromStart: h.clean });
         updateHistoryUi();
@@ -13096,7 +13097,7 @@
             if ((e.key !== 'm' && e.key !== 'M') || e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
             if (!(nav.inUse || document.body.classList.contains('sim-fullscreen-active'))) return;
             e.preventDefault();
-            openMissions();
+            openMissions(e);
         });
         // The engine stops when its key comes up, wherever the focus has gone (or the window with it)
         window.addEventListener('keyup', (e) => { if (mission.firing && mission.firing.key === e.key) engineStop(); });
@@ -13177,18 +13178,20 @@
         }
     }
 
-    // On a phone the settings cover the canvas: they step aside for a mission
-    function closeSettingsSheet() {
+    // On a phone the settings cover the canvas: they step aside for a mission (any: on a wider screen
+    // too, where they take room from it)
+    function closeSettingsSheet(any) {
         const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
-        if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
+        if (panel && toggle && panel.classList.contains('panel-open') && (any || document.body.classList.contains('sim-panel-sheet'))) toggle.click();
     }
 
-    // The Missions button (and M): straight into the first mission the first time, afterwards the list
+    // The Missions button (and M): straight into the first mission the first time, afterwards the list.
+    // (From the keyboard, a key press or a button's click with no pointer, the focus goes along.)
     function openMissions(e) {
-        closeSettingsSheet();
-        const flown = MISSIONS.some((m) => bestOf(m.id));
-        if (mission.def || flown) showMissionPanel('list', !!(e && e.detail === 0));
-        else loadMission(MISSIONS[0], !!(e && e.detail === 0));
+        closeSettingsSheet(true);
+        const keyed = !!e && !e.detail;
+        if (mission.def || MISSIONS.some((m) => bestOf(m.id))) showMissionPanel('list', keyed);
+        else loadMission(MISSIONS[0], keyed);
     }
 
     function loadMission(def, focus) {
