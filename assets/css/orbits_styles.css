@@ -3220,14 +3220,18 @@ dialog.orb-help::backdrop {
 }
 
 /* ---------- Touch screens: every control at least a finger wide (40 px) ----------
-   Undo, redo and "Fit view", the info bar's Edit, the settings' Kepler switches and "Set its period
-   and distances", and held sideways the slim body chips (their names a size larger to read). */
+   Undo, redo and "Fit view", "More bodies" and the buttons in the hint, the info bar's Edit, the
+   settings' Kepler switches, and held sideways the slim body chips (their names a size larger to read). */
 @media (pointer: coarse) {
     .orb-toolbar .orb-history-btn,
     .orb-toolbar .orb-fit,
-    #statSubject .orb-subject-edit,
-    .sim-controls-content .orb-edit-orbit {
+    #statSubject .orb-subject-edit {
         height: 40px;
+    }
+
+    .orb-toolbar .orb-palette-more,
+    .orb-toolbar .orb-hint-btn {
+        min-height: 40px;
     }
 
     .orbits-sim .sim-checkbox-group.orb-kepler-chips input[type="checkbox"] + label {

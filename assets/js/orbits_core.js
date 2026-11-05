@@ -9151,7 +9151,7 @@
     function dropHint(d) {
         const k = KINDS[d.kind] || KINDS.custom;
         dropHost = d.over ? moonHost(d.cx, d.cy, k.m, k.R, null) : null;
-        let h = '<strong>Drop it in space</strong>, or on a planet to make it a moon.';
+        let h = settings.placement === 'circular' ? '<strong>Drop it in space</strong>, or on a planet to make it a moon.' : '<strong>Drop it in space.</strong>';
         if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
         else if (d.over && settings.placement === 'circular') {
             const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
