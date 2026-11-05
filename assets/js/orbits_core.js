@@ -13432,7 +13432,8 @@
     const wake = () => { wakeUntil = performance.now() + WAKE_MS; };
     function resting(now) {
         if (!paused || now < wakeUntil || now >= restNext) return false;
-        return !drags.size && !paletteDrag && !view.anim && !flashes.length && !pred.job && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+        if (pred.job || (pred.shown && now - pred.shown.t < PATH_BLEND_MS)) return false;
+        return !drags.size && !paletteDrag && !view.anim && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
     }
     function bindRest() {
         for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
