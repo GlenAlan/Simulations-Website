@@ -1583,7 +1583,7 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
     .orbits-sim .stats-container > .orb-subject {
         min-height: 44px;
-        padding-right: calc(var(--orb-bar-acts, 330px) + 0.5em);
+        padding-right: calc(var(--orb-bar-acts, 400px) + 0.5em);
         box-sizing: border-box;
     }
 

@@ -546,20 +546,20 @@
 												</div>
 											</div>
 											<div class="sim-info-actions">
-												<button type="button" id="pauseBtn" class="sim-icon-button" aria-label="Pause" title="Pause (Space)" aria-pressed="false">
+												<button type="button" id="pauseBtn" class="sim-icon-button orb-cap" aria-label="Pause" title="Pause (Space)" aria-pressed="false">
 													<span class="icon solid fa-pause"></span>
 												</button>
-												<button type="button" id="stepBtn" class="sim-icon-button" aria-label="Step forward" title="Step forward a moment (.)">
+												<button type="button" id="stepBtn" class="sim-icon-button orb-cap" data-cap="Step" aria-label="Step forward" title="Step forward a moment (.)">
 													<span class="icon solid fa-step-forward"></span>
 												</button>
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Graphs">
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Graphs">
 													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
 													<span class="icon solid fa-chart-bar"></span>
 												</label>
-												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
+												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
 													<span class="icon solid fa-history"></span>
 												</button>
-												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart the scene" title="Restart the scene from its original setup">
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button orb-cap" data-cap="Restart" aria-label="Restart the scene" title="Restart the scene from its original setup">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
 											</div>
@@ -580,10 +580,10 @@
 										</div>
 									</div>
 									<div class="sim-action-buttons-overlay">
-										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+										<button type="button" class="sim-fullscreen-toggle orb-cap" aria-label="Toggle fullscreen">
 											<!-- Icon will be managed by simulation_ui.js -->
 										</button>
-										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+										<button type="button" class="sim-panel-toggle-button orb-cap" data-cap="Settings" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
 											<!-- Icon will be managed by simulation_ui.js -->
 										</button>
 									</div>
