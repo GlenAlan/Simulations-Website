@@ -3756,20 +3756,24 @@
     //   tadpoles that bodies can't cross without more energy.
     //   eps is about a body's drawn radius, so its well bottoms out under its disc.
     //   Worked out on a coarse grid (a point every WELL_CELL px, more when there are many bodies to add
-    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, drawn
-    //   smoothly scaled up, and the lines as paths. Again only when a body has moved a pixel or the view
-    //   has changed more than shifting and scaling the old picture can cover, and at most every few
-    //   frames if that is slow; in between, the old picture follows the zoom and pan.
+    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, smoothly
+    //   scaled up, and the lines as paths, painted once onto a picture the size of the canvas and its
+    //   margin (painting them takes far longer than copying it). Again only when a body has moved a pixel
+    //   or the view has changed more than shifting and scaling the old picture can cover, and at most
+    //   every few frames if that is slow; in between, the old picture follows the zoom and pan.
     // ------------------------------------------------------------------
     const WELL_CELL = 7;          // px between grid points
     const WELL_WORK = 240000;     // at most about this many body-point sums per picture
     const WELL_BODIES = 24;       // the heaviest bodies that make the picture
     const WELL_LEVELS = 9;        // about this many steps between contour lines across the depths in view
+    const WELL_SOFT_MS = 150;     // a picture shifted or scaled is painted afresh after this long
     Object.assign(settings, { well: false, lagrange: false });
     Object.assign(ui, { wellToggle: byId('wellToggle'), wellNote: byId('wellNote'), lagrangeToggle: byId('lagrangeToggle') });
     const well = {
         small: null, smallCtx: null, img: null,   // the shading, one pixel per grid point
-        lines: null, strong: null,        // the contour lines (Path2D, in the screen points of the view below)
+        U: null,                          // the depth at each grid point
+        next: null,                       // what computeWell has worked out, until it is painted
+        pic: null, picCtx: null,          // the whole picture, in the canvas's own pixels, the margin included
         view: null,                       // what it was worked out for (origin, pan, scale, size, margin, grid)
         pos: [],                          // the screen positions of its bodies then
         sig: '',                          // what forces a new picture when it changes (theme, size, frame, bodies)
@@ -3851,7 +3855,8 @@
         // Grid point (i, j) is at screen point (i cell - margin, j cell - margin)
         const x0 = F.x + view.panX + (-margin - viewW / 2) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
         const step = cell / scale;
-        const U = new Float32Array(gw * gh);
+        if (!well.U || well.U.length !== gw * gh) well.U = new Float32Array(gw * gh);
+        const U = well.U;
         let umin = Infinity, umax = -Infinity;
         for (let j = 0; j < gh; j++) {
             const y = y0 - j * step;
@@ -3916,16 +3921,47 @@
                 for (const v of crit) if (v > lo && v <= hi) cellContour(strong, x, y, cell, a, b, c, d, v);
             }
         }
-        well.lines = lines;
-        well.strong = crit.length ? strong : null;
-        well.view = { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh };
-        well.pos = src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }));
-        well.omega = P ? turn.omega : 0;
+        well.next = {
+            lines, strong: crit.length ? strong : null, omega: P ? turn.omega : 0,
+            view: { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh, off: Math.ceil(margin * dpr) },
+            pos: src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }))
+        };
         well.t = performance.now();
         well.cost = well.t - t0;
         well.wait = clamp(10 * well.cost, 0, 100);
         well.count++;
         well.info = { cell, grid: [gw, gh], bodies: n, step: dz, umin, umax, crit: crit.slice() };
+    }
+
+    // Paint what computeWell worked out onto the picture that drawGravityWell copies (v.off: where the
+    // view's top-left corner is in it). In the frame after, unless it is needed at once, so one frame
+    // doesn't have to do both.
+    function paintWell(C) {
+        const N = well.next, v = N.view, c = v.cell;
+        well.next = null;
+        const pw = Math.ceil((v.w + 2 * v.margin) * dpr) + 1, ph = Math.ceil((v.h + 2 * v.margin) * dpr) + 1;
+        if (!well.pic || well.pic.width !== pw || well.pic.height !== ph) {
+            well.pic = document.createElement('canvas');
+            well.pic.width = pw; well.pic.height = ph;
+            well.picCtx = well.pic.getContext('2d');
+        }
+        const g = well.picCtx;
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.clearRect(0, 0, pw, ph);
+        g.setTransform(dpr, 0, 0, dpr, v.off, v.off);
+        g.imageSmoothingEnabled = true;
+        g.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        g.lineWidth = 1;
+        g.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
+        g.stroke(N.lines);
+        if (N.strong) {
+            g.lineWidth = 1.3;
+            g.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
+            g.stroke(N.strong);
+        }
+        well.view = v; well.pos = N.pos; well.omega = N.omega;
     }
 
     // How the picture's screen points map onto the screen now: x' = k x + tx, y' = k y + ty
@@ -3941,6 +3977,8 @@
     // Is the old picture still good enough to shift into place?
     function wellStale(v, map, P) {
         if (map.k < 0.85 || map.k > 1.18) return true;
+        // (a copy shifted or scaled is a little softer: only for a moment, while the view moves)
+        if ((map.k !== 1 || map.tx !== 0 || map.ty !== 0) && performance.now() - well.t >= WELL_SOFT_MS) return true;
         // (the view must stay inside its margin, short of the outermost grid cell)
         const slack = v.margin - 16;
         if (-map.tx / map.k < -slack || (viewW - map.tx) / map.k > v.w + slack) return true;
@@ -3958,26 +3996,31 @@
         if (!src.length) return;
         const P = turnPair();
         const sig = [C.dark, viewW, viewH, dpr, P ? `${P.A.id}>${P.B.id}` : '-', src.map((b) => `${b.id}:${b.m}`).join(',')].join('|');
-        const forced = sig !== well.sig || !well.view;
-        if (forced || (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P))) {
+        let paintAt = 0;
+        if (sig !== well.sig || !well.view) {
             computeWell(C, src, P);
             well.sig = sig;
+            paintWell(C);
+        } else if (well.next) {
+            paintAt = performance.now();
+            paintWell(C);
+        } else if (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P)) {
+            computeWell(C, src, P);
         }
-        // The shading (smoothly scaled up from its grid) and the lines, shifted and scaled into place
-        const v = well.view, map = wellMap(v), c = v.cell;
+        // The picture, shifted (by whole pixels, which keeps it sharp) or scaled into place
+        const v = well.view, map = wellMap(v), pic = well.pic;
         ctx.save();
-        ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
-        ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
-        ctx.lineWidth = 1 / map.k;
-        ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
-        ctx.stroke(well.lines);
-        if (well.strong) {
-            ctx.lineWidth = 1.3 / map.k;
-            ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
-            ctx.stroke(well.strong);
+        if (map.k === 1) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.drawImage(pic, Math.round(dpr * map.tx) - v.off, Math.round(dpr * map.ty) - v.off);
+        } else {
+            ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(pic, -v.off / dpr, -v.off / dpr, pic.width / dpr, pic.height / dpr);
         }
         ctx.restore();
+        // (the painting, done by now, counts towards the wait before the next: a tenth of the time at most)
+        if (paintAt) well.wait = clamp(10 * (well.cost + performance.now() - paintAt), 0, 100);
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
