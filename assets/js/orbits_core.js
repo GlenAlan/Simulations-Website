@@ -5832,7 +5832,7 @@
         if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
         const strip = Math.min(edges.strip, viewH - fs - 18);
         out.push([0, strip, Math.min(viewW, edges.scaleRight + 6), viewH]);
-        out.push([Math.min(edges.noteLeft, viewW - 120) - 6, strip, viewW, viewH]);
+        if (edges.noteLeft < viewW) out.push([edges.noteLeft - 6, strip, viewW, viewH]);
         if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
         return out;
     }
@@ -6590,10 +6590,21 @@
         return `${(+kms.toPrecision(2)).toLocaleString('en-US')} km/s`;
     }
 
+    // On a small canvas the key keeps out of the way: there for a few seconds as a scene opens or an
+    // arrow is switched on, then only while paused (in a mission the clock stops for each burn, so not
+    // there) or dragging
+    const KEY_MS = 6000;
+    const keyWake = { scene: null, v: false, f: false, until: 0 };
     function drawArrowLegend(C) {
         legend.shown = false;
         const showV = settings.velocities, showF = settings.forces;
         if (cleanRender || !bodies.length || !(showV || showF)) return;
+        const now = performance.now();
+        if (keyWake.scene !== scene || (showV && !keyWake.v) || (showF && !keyWake.f)) keyWake.until = now + KEY_MS;
+        Object.assign(keyWake, { scene, v: showV, f: showF });
+        const tight = viewW < 560 || viewH < 320;
+        const away = tight && now >= keyWake.until && !drags.size && !(paused && !mission.def);
+        if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
         // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
@@ -6607,13 +6618,11 @@
             if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
-        const now = performance.now();
         ctx.font = font(fs);
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
         const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
         const textW = Math.max(vTW, fTW);
         // On a small canvas the two arrows share one row, just above the scale bar; elsewhere a row each
-        const tight = viewW < 560 || viewH < 320;
         const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
         const oneRow = tight && rowW <= viewW * 0.8;
         const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
@@ -6633,7 +6642,7 @@
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
             }
         }
-        legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
+        legend.alpha += ((away ? 0 : legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
         // (the arrows as drawArrows draws them: the same width and lengths)
         const aw = clamp(2 * sizeScale, 1.5, 2.4);
         ctx.globalAlpha = legend.alpha;
@@ -6882,6 +6891,10 @@
         ctx.globalAlpha = 1;
     }
 
+    // "Sizes not to scale" says so for a few seconds as a scene opens or Realistic physics changes
+    const SIZE_NOTE_MS = 8000;
+    const sizeNote = { scene: null, realistic: null, until: 0 };
+
     // Overlays: Kepler cards (top right), scale bar (bottom left), "not to scale" note, pause label.
     function drawOverlays(C, subj) {
         if (cleanRender) return;
@@ -6902,12 +6915,19 @@
         ctx.fillStyle = C.subtle;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        const sl = scaleLabel(nice), note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+        const sl = scaleLabel(nice), now = performance.now();
         ctx.fillText(sl, x0 + len + 6, y0 + 2);
-        ctx.textAlign = 'right';
-        ctx.fillText(note, viewW - pad - 2, y0 + 2);
         edges.scaleRight = x0 + len + 6 + ctx.measureText(sl).width;
-        edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        if (sizeNote.scene !== scene || sizeNote.realistic !== settings.realistic) {
+            Object.assign(sizeNote, { scene, realistic: settings.realistic, until: now + SIZE_NOTE_MS });
+        }
+        edges.noteLeft = Infinity;
+        if (now < sizeNote.until) {
+            const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+            ctx.textAlign = 'right';
+            ctx.fillText(note, viewW - pad - 2, y0 + 2);
+            edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        }
         edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
@@ -7911,6 +7931,7 @@
     function timeNotice() {
         const back = timeDir < 0 ? 'Running backwards' : '';
         if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
+        if (paused && mission.def) return null;   // (its console says so, and the clock stops for each burn)
         if (paused) return back ? 'Paused · running backwards' : 'Paused';
         if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
         return back || null;
