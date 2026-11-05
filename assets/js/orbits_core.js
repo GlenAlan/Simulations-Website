@@ -5389,26 +5389,39 @@
     // tr.stride): the corners stay on the same samples from one frame to the next as the trail's ends
     // move on, so its lines don't crawl. Lines shorter than minPx don't have to fit.
     const TRAIL_JUMP = 64;
+    const TP = new Float64Array(2);   // (trailAt's answer: numbers returned from a function are boxed)
     function traceTrail(tr, ks, ke, minPx) {
         tr.capT = tr.T.length >> 1;
         tr.capO = tr.oT.length >> 1;
         const tol = minPx / (8 * dpr), tol2 = tol * tol, last = ke - 1;
         let s0 = 1;
         while (s0 < tr.stride) s0 *= 2;
-        let a = ks, ax = trailX(tr, a), ay = trailY(tr, a);
+        trailAt(tr, ks);
+        let a = ks, ax = TP[0], ay = TP[1];
         tr.out = outcode(ax, ay);
         tr.pen = true;
         ctx.moveTo(ax, ay);
         while (a < last) {
-            let b = Math.min(last, a - a % s0 + s0), bx = trailX(tr, b), by = trailY(tr, b);
+            let b = Math.min(last, a - a % s0 + s0);
+            trailAt(tr, b);
+            let bx = TP[0], by = TP[1];
             for (let s = 2 * s0; s <= TRAIL_JUMP && b < last; s *= 2) {
                 const c = Math.min(last, a - a % s + s);
                 if (c === b) continue;
-                const cx = trailX(tr, c), cy = trailY(tr, c);
-                if (Math.abs(cx - ax) + Math.abs(cy - ay) >= minPx) {
-                    const h = (c - a) >> 1, q = h >> 1;
-                    if (trailOff(tr, a + h, ax, ay, cx, cy) > tol2) break;
-                    if (q > 0 && (trailOff(tr, a + q, ax, ay, cx, cy) > tol2 || trailOff(tr, a + h + q, ax, ay, cx, cy) > tol2)) break;
+                trailAt(tr, c);
+                const cx = TP[0], cy = TP[1], ex = cx - ax, ey = cy - ay;
+                if (Math.abs(ex) + Math.abs(ey) >= minPx) {
+                    // (its middle and quarters, how far from the line)
+                    const q = (c - a) >> 2, ee = ex * ex + ey * ey;
+                    let fits = true;
+                    for (let i = q > 0 ? 1 : 2; fits && i <= (q > 0 ? 3 : 2); i++) {
+                        trailAt(tr, q > 0 ? a + i * q : a + 1);
+                        const px = TP[0] - ax, py = TP[1] - ay;
+                        const t = ee > 0 ? clamp((px * ex + py * ey) / ee, 0, 1) : 0;
+                        const dx = px - t * ex, dy = py - t * ey;
+                        fits = dx * dx + dy * dy <= tol2;
+                    }
+                    if (!fits) break;
                 }
                 b = c; bx = cx; by = cy;
             }
@@ -5418,26 +5431,18 @@
         if (!tr.pen) ctx.moveTo(ax, ay);
     }
 
-    // Where sample k of the trail is drawn (each turned, in a turned view: see turnedTrails)
-    function trailX(tr, k) {
-        const T = tr.T, oT = tr.oT, i = 2 * (k % tr.capT), io = 2 * (k % tr.capO), q = tr.turn, rx = T[i] - oT[io];
-        if (!q) return tr.offX + rx * scale;
-        const ry = T[i + 1] - oT[io + 1], cs = q.cs, j = 2 * (k % TRAIL_CAP);
-        return tr.offX + ((cs ? cs[j] : q.c) * rx - (cs ? cs[j + 1] : q.s) * ry) * scale;
-    }
-    function trailY(tr, k) {
-        const T = tr.T, oT = tr.oT, i = 2 * (k % tr.capT), io = 2 * (k % tr.capO), q = tr.turn, ry = T[i + 1] - oT[io + 1];
-        if (!q) return tr.offY - ry * scale;
-        const rx = T[i] - oT[io], cs = q.cs, j = 2 * (k % TRAIL_CAP);
-        return tr.offY - ((cs ? cs[j + 1] : q.s) * rx + (cs ? cs[j] : q.c) * ry) * scale;
-    }
-
-    // How far sample k is from the straight stretch (ax, ay)..(bx, by), squared
-    function trailOff(tr, k, ax, ay, bx, by) {
-        const px = trailX(tr, k) - ax, py = trailY(tr, k) - ay, ex = bx - ax, ey = by - ay, ee = ex * ex + ey * ey;
-        const t = ee > 0 ? clamp((px * ex + py * ey) / ee, 0, 1) : 0;
-        const dx = px - t * ex, dy = py - t * ey;
-        return dx * dx + dy * dy;
+    // Where sample k of the trail is drawn, into TP (turned, in a turned view: see turnedTrails)
+    function trailAt(tr, k) {
+        const T = tr.T, oT = tr.oT, i = 2 * (k % tr.capT), io = 2 * (k % tr.capO), q = tr.turn;
+        const rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
+        if (!q) {
+            TP[0] = tr.offX + rx * scale;
+            TP[1] = tr.offY - ry * scale;
+            return;
+        }
+        const cs = q.cs, j = 2 * (k % TRAIL_CAP), c = cs ? cs[j] : q.c, sn = cs ? cs[j + 1] : q.s;
+        TP[0] = tr.offX + (c * rx - sn * ry) * scale;
+        TP[1] = tr.offY - (sn * rx + c * ry) * scale;
     }
 
     // A straight stretch of a trail, unless it is wholly off one side of the canvas
