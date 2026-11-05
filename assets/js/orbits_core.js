@@ -7080,9 +7080,15 @@
         ctx.fillText(`Seen from ${q.name}`, cx, cy - R - 4);
     }
 
+    // (kept: it is asked for every frame, and formatting a number with commas is slow)
+    const scaleMemo = { au: 0, km: false, text: '' };
     function scaleLabel(au) {
-        if (scene.units === 'km' || au < 0.01) return `${fmtKm(Math.round(au * AU_KM))} km`;
-        return `${+au.toPrecision(3)} AU`;
+        const km = scene.units === 'km' || au < 0.01;
+        if (au !== scaleMemo.au || km !== scaleMemo.km) {
+            scaleMemo.au = au; scaleMemo.km = km;
+            scaleMemo.text = km ? `${fmtKm(Math.round(au * AU_KM))} km` : `${+au.toPrecision(3)} AU`;
+        }
+        return scaleMemo.text;
     }
 
     // The largest 1, 2 or 5 x 10^n not much longer than x
