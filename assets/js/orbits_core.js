@@ -12236,21 +12236,21 @@
         if (up ? reach > hi : reach < lo) return `Too far: your orbit goes past the ring. <strong>Undo</strong>, or burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'}.`;
         const at = up ? x.nu > 165 : x.nu < 15;
         return at ? `<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`
-            : `Good. <strong>Skip to the ${where}</strong>, then burn ${way} again.`;
+            : `Good. <strong>Skip to ${where}</strong>, then burn ${way} again.`;
     }
     // (within 45 degrees of the closest point, 0.35 AU from the Sun, a burn still earns three stars)
     function escapeHint(x) {
         if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
         if (x.out) return 'You have passed the closest point, so a burn costs far more. <strong>Retry</strong>, and burn close to the Sun.';
-        return x.burns ? 'A burn out here adds little energy. <strong>Skip to the closest point</strong>, then burn.'
-            : 'Watch the fuel it takes to escape fall as you near the Sun. <strong>Skip to the closest point</strong>, then burn forwards.';
+        return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
+            : 'Escaping costs less as you near the Sun. <strong>Skip to closest point</strong>, then burn.';
     }
     function captureHint(x) {
         const g = x.d.goal;
         if (x.el.bound && x.ra > g.lim) return 'Jupiter has you, but too widely. Hold <strong>Back</strong> at the closest point to shrink your orbit.';
         if (x.nu < 20) return '<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.';
         if (x.out) return 'You are past the closest point and climbing away: braking now costs more.';
-        return '<strong>Skip to the closest point</strong>, where braking counts most.';
+        return '<strong>Skip to closest point</strong>, where braking counts most.';
     }
     // A first burn with a size to aim for: how much of it is still to come, while the path it gives is
     // still far off the mark ('' after that, when fine-tuning takes over)
@@ -12263,7 +12263,7 @@
         const g = x.d.goal, p = mission.pred;
         if (!x.burns) {
             if (Math.abs(x.phase - x.d.lead) < 3) return `<strong>Now:</strong> hold <strong>Forward</strong> for about ${f1(x.d.aim)} km/s.`;
-            return x.phase > x.d.lead ? '<strong>Skip to the launch window</strong>, when Mars reaches the marked spot.'
+            return x.phase > x.d.lead ? '<strong>Skip to launch window</strong>, when Mars reaches the marked spot.'
                 : 'You missed the launch window. <strong>Retry</strong>, or burn now and try to fine-tune it.';
         }
         if (p && p.d < g.zone) return `On course for Mars! <strong>Skip to Mars</strong>${mission.skip ? '' : ', or press play and watch'}.`;
@@ -12352,13 +12352,13 @@
             }
             case 'escape': {
                 const need = toKms(Math.sqrt(2 * x.el.mu / x.el.r) - x.el.v);
-                return { text: `To escape from here: ${f1(Math.max(need, 0))} km/s`, ok: need <= x.left };
+                return { text: `To escape from here: ${f1(Math.max(need, 0))} km/s`, ok: x.nu < 45 && need <= x.left };
             }
             case 'capture': {
                 if (x.el.bound) return { text: `Orbit reaches ${f2(x.ra)} AU, goal ${f2(g.lim)}`, ok: false };
                 if (x.el.r > g.lim) return { text: `${f2(x.el.r)} AU from Jupiter, ring at ${f2(g.lim)}`, ok: false };
                 const need = toKms(x.el.v - Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))));
-                return { text: `To stay from here: brake ${f1(need)} km/s`, ok: need <= x.left };
+                return { text: `To stay from here: brake ${f1(need)} km/s`, ok: x.nu < 20 && need <= x.left };
             }
             default: {
                 const reach = g.type === 'reach' ? g.zone : g.D, p = mission.pred;
@@ -12652,12 +12652,12 @@
         if (g.type === 'orbit') {
             const apo = g.r > 1;
             // (once the orbit touches the ring: short of it or past it, the second burn won't round it off there)
-            if (x.burns && x.el.bound && Math.abs((apo ? x.ra : x.rp) / g.r - 1) <= g.tol && (apo ? x.nu < 170 : x.nu > 10)) s = { kind: apo ? 'apo' : 'peri', word: apo ? 'the far point' : 'the closest point', dt: apsisIn(x, apo) };
+            if (x.burns && x.el.bound && Math.abs((apo ? x.ra : x.rp) / g.r - 1) <= g.tol && (apo ? x.nu < 170 : x.nu > 10)) s = { kind: apo ? 'apo' : 'peri', word: apo ? 'far point' : 'closest point', dt: apsisIn(x, apo) };
         } else if (g.type === 'escape' || g.type === 'capture') {
-            if (x.nu > 10) s = { kind: 'peri', word: 'the closest point', dt: apsisIn(x, false) };
+            if (x.nu > 10) s = { kind: 'peri', word: 'closest point', dt: apsisIn(x, false) };
         } else if (!x.burns) {
             // (Mars's angle falls behind at the difference of the two rates of going round)
-            if (d.lead && x.phase > d.lead) s = { kind: 'window', word: 'the launch window', dt: (x.phase - d.lead) * DEG / (x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3))) };
+            if (d.lead && x.phase > d.lead) s = { kind: 'window', word: 'launch window', dt: (x.phase - d.lead) * DEG / (x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3))) };
         } else if (p && p.t > simTime && x.td > (g.type === 'reach' ? g.zone : (g.l4 ? 2 : 3) * g.D)) {
             s = { kind: 'meet', word: g.l4 ? 'L4' : x.tname === 'Station' ? 'the station' : x.tname, dt: p.t - simTime };
         }
@@ -12859,7 +12859,7 @@
     // (from loadScene: a mission's scene starts the mission, any other ends one)
     function missionSceneLoaded() {
         const def = missionByKey(settings.scene);
-        if (!def) { if (mission.def) endMission(); return; }
+        if (!def) { if (mission.def) endMission(); else hideMissionPanel(); return; }
         Object.assign(mission, {
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
@@ -13094,6 +13094,7 @@
         if (ui.hint) ui.hint.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('.orb-hint-missions')) openMissions(); });
         window.addEventListener('keydown', (e) => {
             if ((e.key !== 'm' && e.key !== 'M') || e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
+            if (!(nav.inUse || document.body.classList.contains('sim-fullscreen-active'))) return;
             e.preventDefault();
             openMissions();
         });
@@ -13245,7 +13246,7 @@
         E.skip.hidden = !s && !mission.skip;
         E.skip.disabled = !!mission.skip;
         if (s || mission.skip) setText(E.skiptext, mission.skip ? 'Skipping…' : `Skip to ${s.word}`);
-        setText(E.left, `${fmtDuration(Math.max(0, d.limit - simTime))} left`);
+        setText(E.left, over ? `${fmtDuration(simTime)} taken` : `${fmtDuration(Math.max(0, d.limit - simTime))} left`);
         E.retry.classList.toggle('is-primary', over);
     }
 
