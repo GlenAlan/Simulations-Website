@@ -59,7 +59,7 @@
     const ui = {
         speed: byId('speedSlider'), speedVal: byId('speedVal'),
         scene: byId('sceneSelect'),
-        orbitGroupLabel: byId('orbitGroupLabel'), ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
+        ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
         eccNote: byId('eccNote'),
         forces: byId('forceToggle'), velocities: byId('velocityToggle'), labels: byId('labelsToggle'),
         realistic: byId('realisticToggle'),
@@ -141,10 +141,8 @@
         probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
     const PALETTE = [
-        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
-        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
-        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
-        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
+        ['sun', 'earth', 'moon', 'jupiter', 'comet', 'blackhole'],
+        ['dwarf', 'redgiant', 'bluegiant', 'browndwarf', 'whitedwarf', 'neutron', 'mars', 'asteroid', 'custom']   // ("More bodies")
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
     // Values the mass and radius sliders snap to
@@ -1843,6 +1841,9 @@
         removeBody(small, big);
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
+        // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
+        // timer says so itself)
+        if (!small.minor && !small.grp && !settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
     }
 
     // ------------------------------------------------------------------
@@ -2696,6 +2697,31 @@
         return best || pull;
     }
 
+    // A planet's Hill sphere is often smaller than its disc on the screen, so a moon can't be dropped
+    // inside it by eye. A body of mass m and radius R dropped on a heavier body that orbits something
+    // (at canvas point px, py) therefore goes to moonSpot, about the Moon's distance in Hill spheres;
+    // this is that body, unless at this zoom its Hill sphere is big enough to aim within.
+    function moonHost(px, py, m, R, exclude) {
+        if (settings.placement !== 'circular') return null;
+        let host = null, bestD = 6;
+        for (const b of bodies) {
+            if (b === exclude || b.minor || !(b.m > m) || !isFinite(b.hill) || !(0.25 * b.hill > 2 * (b.R + R) / AU_KM)) continue;
+            const d = Math.hypot(sx(b.dx) - px, sy(b.dy) - py) - drawRadius(b);
+            if (d < bestD) { bestD = d; host = b; }
+        }
+        if (!host) return null;
+        const w = unturnPoint(wx(px), wy(py)), r = Math.hypot(w.x - host.x, w.y - host.y);
+        return host.hill * scale > drawRadius(host) + 24 && r > 2 * (host.R + R) / AU_KM ? null : host;
+    }
+
+    // Where such a body goes, on the side of host that (x, y) is on. n: moons it has already, each a
+    // little farther out, so that they don't share an orbit.
+    function moonSpot(host, x, y, n) {
+        const dx = x - host.x, dy = y - host.y, d = Math.hypot(dx, dy) || 1;
+        const r = host.hill * Math.min(0.45, 0.25 + 0.1 * (n || 0));
+        return d > 1e-12 ? { x: host.x + (dx / d) * r, y: host.y + (dy / d) * r } : { x: host.x + r, y: host.y };
+    }
+
     // Sense of rotation for a new orbit around p: the way p's own satellites (or p itself) go round.
     function orbitSense(p, b) {
         let L = 0;
@@ -3146,6 +3172,12 @@
     function fitAll() {
         if (!bodies.length) return;
         updateDrawnPositions();
+        // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
+        if (bodies.length === 1) {
+            const b = bodies[0], w = 0.5 * (scene.box[1] - scene.box[0]), h = 0.5 * (scene.box[3] - scene.box[2]);
+            fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
+            return;
+        }
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         const add = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
         for (const b of bodies) {
@@ -3249,7 +3281,7 @@
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote'), frameNote: byId('frameNote') });
+    Object.assign(ui, { turnNote: byId('turnNote') });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -3468,7 +3500,6 @@
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
-            if (ui.frameNote) ui.frameNote.hidden = !!P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
                 const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
@@ -4097,7 +4128,7 @@
         syncFrameUi();
         if (ui.palette) {
             const full = bodies.length >= MAX_BODIES;
-            ui.palette.querySelectorAll('button').forEach((btn) => {
+            ui.palette.querySelectorAll('.orb-chip').forEach((btn) => {
                 btn.disabled = full;
                 btn.title = full ? `At most ${MAX_BODIES} bodies` : btn.dataset.title;
             });
@@ -5033,6 +5064,7 @@
         computePrimaries();
         refreshBodyLists();
         selectBody(b.id);
+        clearHint('note');   // (whatever it said before this)
         return added;
     }
 
@@ -5089,9 +5121,30 @@
         return senseAround(b, p);
     }
 
+    // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
+    function moonNote(b) {
+        const p = b && b.primary;
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000 });
+    }
+
+    // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
+    function autoMoon(kind) {
+        const k = KINDS[kind];
+        const can = (b) => b && !b.minor && b.m > k.m && isFinite(b.hill) && 0.25 * b.hill > 2 * (b.R + k.R) / AU_KM;
+        let host = bodyById(selectedId);
+        if (!can(host)) { host = null; for (const b of bodies) if (can(b) && (!host || b.m > host.m)) host = b; }
+        if (!host) return null;
+        const n = bodies.filter((b) => b.primary === host && b.bound).length, ang = 0.6 + 2.4 * n;
+        const s = moonSpot(host, host.x + Math.cos(ang), host.y + Math.sin(ang), n);
+        const b = addBody(kind, s.x, s.y);
+        moonNote(b);
+        return b;
+    }
+
     // A tap on a palette chip: put the body at a free spot around the heaviest body, in view.
     function addBodyAuto(kind) {
         updateDrawnPositions();
+        if (kind === 'moon') { const b = autoMoon(kind); if (b) return b; }
         const top = heaviest();
         const k = KINDS[kind] || KINDS.custom;
         const half = Math.min(viewW, viewH) / (2 * scale);
@@ -5101,7 +5154,8 @@
             if (tx > 0 && tx < viewW && ty > 0 && ty < viewH) {
                 cx = top.dx; cy = top.dy;
                 const spaceX = Math.min(tx, viewW - tx), spaceY = Math.min(ty, viewH - ty);
-                R = 0.7 * Math.min(spaceX, spaceY) / scale;
+                // (zoomed in close it may land out of view, rather than inside the body and merge with it)
+                R = Math.max(0.7 * Math.min(spaceX, spaceY) / scale, 4 * (top.R + k.R) / AU_KM);
             }
         }
         let best = null, bestD = -1;
@@ -5164,17 +5218,13 @@
         const b = bodyById(selectedId);
         const p = b && b.primary;
         const usable = !!(b && p && !(p.primary === b && b.m > p.m));
-        if (ui.orbitGroupLabel) {
-            const t = b ? `Orbit of ${b.name}` : 'Orbit';
-            if (ui.orbitGroupLabel.textContent !== t) ui.orbitGroupLabel.textContent = t;
-        }
         ui.ecc.disabled = !usable;
         if (ui.eccNote) {
             const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
                 : (b ? `${b.name} is the heaviest body here. Click or tap a body that orbits it.` : '');
             if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
+            ui.eccNote.hidden = usable && !mission.def;   // (why the slider can't move; else its tooltip says)
         }
-        syncOrbitFacts(b, usable);
         missionLockSidebar();
         if (!usable) {
             if (ui.eccVal) ui.eccVal.textContent = '–';
@@ -6054,7 +6104,6 @@
         t: -Infinity, alpha: 1, covered: false, vSqueezed: false, shown: false, right: false,
         kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0, top: 0
     };
-    const LEGEND_SQUEEZE = 'longer arrows are squeezed';
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // The pull of q on b (M_sun AU / yr^2) into pp; returns its size
@@ -6499,17 +6548,14 @@
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
         const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
         const textW = Math.max(vTW, fTW);
-        // On a small canvas the two arrows share one row, just above the scale bar, and the note that
-        // longer arrows are squeezed is left out (the About section says so); elsewhere a row each
+        // On a small canvas the two arrows share one row, just above the scale bar; elsewhere a row each
         const tight = viewW < 560 || viewH < 320;
         const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
         const oneRow = tight && rowW <= viewW * 0.8;
-        // A velocity arrow over three medium lengths, or any force arrow, is shorter than in proportion
-        const squeeze = !tight && (showF || (showV && legend.vSqueezed));
         const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
-        const w = oneRow ? rowW : Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
+        const w = oneRow ? rowW : arrowW + 8 + textW;
         const bottom = viewH - 12 - fs - (tight ? 6 : 10);
-        const top = bottom - (rows + (squeeze ? 1 : 0)) * lh;
+        const top = bottom - rows * lh;
         // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
         legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
         const left = legend.right ? viewW - 12 - w : 12;
@@ -6517,15 +6563,10 @@
         if (now - legend.t > 100) {
             legend.t = now;
             legend.covered = false;
-            legend.vSqueezed = false;
-            const fv = showV ? frameVelocity() : null;
             for (const b of bodies) {
                 if (b.minor && !isChosen(b)) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b) + 4;
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
-                // (the velocity as its arrow shows it: in a rotating frame, relative to the frame where the body is)
-                const u = fv && turn.on ? frameVelocity(b.x, b.y) : fv;
-                if (fv && Math.hypot(b.vx - u.x, b.vy - u.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
             }
         }
         legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
@@ -6541,10 +6582,9 @@
             const tx = left + arrowW + 8;
             if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
             if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
-            if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
         }
         ctx.globalAlpha = 1;
-        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w; legend.top = top;
+        legend.x = left; legend.shown = true; legend.w = w; legend.top = top;
     }
 
     // A legend row: an arrow px long (if any), then its text at tx
@@ -7542,8 +7582,21 @@
         return { p, el: relElements(rx, ry, rel.v[0] - pv[0], rel.v[1] - pv[1], mu), vc, ve };
     }
 
+    // The body a drag would make a moon of (see moonHost): ringed while the drag is over it
+    let dropHost = null;
+    function drawDropHost(C) {
+        if (!dropHost || !bodies.includes(dropHost)) return;
+        ctx.strokeStyle = C.velocity;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(sx(dropHost.dx), sy(dropHost.dy), drawRadius(dropHost) + 7, 0, TAU);
+        ctx.stroke();
+    }
+
     // A body being dragged from the palette, drawn where it would land.
     function drawPaletteGhost() {
+        drawDropHost(colours());
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
         const x = paletteDrag.cx, y = paletteDrag.cy;
@@ -7551,7 +7604,7 @@
         ctx.globalAlpha = 0.85;
         drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
         ctx.globalAlpha = 1;
-        if (settings.placement === 'circular' && settings.preview) {
+        if (settings.placement === 'circular' && settings.preview && !dropHost) {
             const X = wx(x), Y = wy(y);
             const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
             if (p) {
@@ -7632,6 +7685,7 @@
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
     function theName(b) { return ['Sun', 'Moon'].includes(b.name) ? `the ${b.name}` : b.name; }
+    const sentenceCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // ------------------------------------------------------------------
     // The chosen body's orbit in the info bar: its period and eccentricity, and tooltips that name
@@ -7794,12 +7848,11 @@
         return back || null;
     }
 
-    // Every frame: the achieved speed, the caption (it changes with the scene) and the step button
+    // Every frame: the achieved speed and the caption (it changes with the scene)
     function updateTimeControls() {
         measurePace();
         const key = `${settings.scene}|${settings.speed}`;
         if (key !== captionKey) { captionKey = key; setText(ui.speedNote, speedCaption(settings.speed)); }
-        if (ui.step && ui.step.disabled === paused) ui.step.disabled = !paused;
     }
 
     // One step while paused: a 60 fps frame's worth of time at the chosen speed, in whole integrator
@@ -7825,11 +7878,8 @@
     // or Option (which on Windows also reports Ctrl).
     function bindTimeControls() {
         if (ui.step) {
-            ui.step.addEventListener('click', (e) => {
-                stepForward();
-                // After a click or tap (not a key press), Space should play again rather than press
-                // this button once more
-                if (e.detail) ui.step.blur();
+            ui.step.addEventListener('click', () => {
+                if (paused) stepForward(); else setPaused(true);
             });
         }
         window.addEventListener('keydown', (e) => {
@@ -8093,11 +8143,7 @@
             syncEccentricity(true);
             updatePopover(true);
         });
-        ui.popDelete.addEventListener('click', () => {
-            const b = popBody;
-            closePopover();
-            deleteBody(b);
-        });
+        ui.popDelete.addEventListener('click', deleteChosen);
         ui.popName.addEventListener('input', () => {
             if (!popBody) return;
             const n = ui.popName.value.trim().slice(0, 18);
@@ -8194,7 +8240,6 @@
         popOrbitShape: byId('popOrbitShape'),
         popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
         subjectEdit: byId('statSubjectEdit'),
-        orbitFacts: byId('orbitFacts'), editOrbit: byId('editOrbitBtn')
     });
 
     const edit = {
@@ -8600,21 +8645,6 @@
         }
     }
 
-    // The sidebar's "Orbit of ..." group: its period and closest and farthest distances
-    function syncOrbitFacts(b, usable) {
-        if (ui.editOrbit) ui.editOrbit.disabled = !usable;
-        if (!ui.orbitFacts) return;
-        let t = '';
-        const o = usable ? orbitOf(b) : null;
-        if (o) {
-            const names = apsisNames(o.p);
-            const d = (x) => { const f = fmtDistance(x); return `${f.v} ${f.u}`; };
-            t = o.el.bound ? `Period ${fmtDuration(o.T, true)}; ${names[0]} ${d(o.rp)}, ${names[1]} ${d(o.ra)}.`
-                : `Escaping; ${names[0]} ${d(o.rp)}.`;
-        }
-        setText(ui.orbitFacts, t);
-    }
-
     // A button that acts once when pressed and, held down, again and again (steppers and pushes)
     function holdRepeat(btn, fn) {
         let timer = 0, viaPointer = false;
@@ -8831,15 +8861,6 @@
                 syncEditButton();
             });
         }
-        // The sidebar's button: the Orbit tab (on a phone, the settings sheet closes first)
-        if (ui.editOrbit) {
-            ui.editOrbit.addEventListener('click', () => {
-                const b = selectedId !== null ? bodyById(selectedId) : null;
-                const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
-                if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
-                openEditor(b, 'orbit', true);
-            });
-        }
         // Keys (before the page's own Escape handler, so Escape in a field only puts it back)
         window.addEventListener('keydown', onEditorKey, true);
         const inSim = (el) => !!(el && el.closest && el.closest('.simulation-display-container'));
@@ -8859,26 +8880,32 @@
     let paletteDrag = null;
     let ghostEl = null;
 
-    // The chips come in groups (stars, dead stars, planets, small bodies): headed groups in the column
-    // beside the canvas, one flowing set of chips under it on narrow screens.
+    // In the column beside the canvas the usual kinds show, and the rest wait behind "More bodies"
+    // (open again next time if it was left open); on narrow screens, and on a phone held sideways, all
+    // the chips flow on in one set.
+    const PALETTE_STORE = 'orbitsPaletteMore';
     function buildPalette() {
         if (!ui.palette) return;
         ui.palette.textContent = '';
-        for (const group of PALETTE) {
-            const box = document.createElement('div');
-            box.className = 'orb-group';
-            box.setAttribute('role', 'group');
-            const head = document.createElement('p');
-            head.className = 'orb-group-label';
-            head.id = `orbGroup${group.label.replace(/\W/g, '')}`;
-            head.textContent = group.label;
-            box.setAttribute('aria-labelledby', head.id);
+        PALETTE.forEach((kinds, i) => {
             const chips = document.createElement('div');
             chips.className = 'orb-group-chips';
-            for (const kind of group.kinds) chips.appendChild(paletteChip(kind));
-            box.append(head, chips);
-            ui.palette.appendChild(box);
-        }
+            for (const kind of kinds) chips.appendChild(paletteChip(kind));
+            ui.palette.appendChild(chips);
+            if (i) return;
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'orb-palette-more';
+            more.textContent = 'More bodies';
+            const show = (on) => { ui.palette.classList.toggle('is-open', on); more.setAttribute('aria-expanded', on ? 'true' : 'false'); };
+            more.addEventListener('click', () => {
+                const on = !ui.palette.classList.contains('is-open');
+                show(on);
+                storeSet(PALETTE_STORE, on ? '1' : '');
+            });
+            show(storeGet(PALETTE_STORE) === '1');
+            ui.palette.appendChild(more);
+        });
         paletteRove(ui.palette.querySelector('.orb-chip'));
         if (!ui.palette.dataset.keys) {
             ui.palette.dataset.keys = '1';
@@ -8913,7 +8940,7 @@
     function onPaletteKey(e) {
         const c = e.target.closest && e.target.closest('.orb-chip');
         if (!c || e.altKey || e.ctrlKey || e.metaKey) return;
-        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled);
+        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled && q.offsetParent);
         const i = list.indexOf(c);
         if (i < 0) return;
         let to = null;
@@ -8942,7 +8969,8 @@
         btn.dataset.kind = kind;
         const label = kind === 'custom' ? 'Custom' : k.name;
         btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
-            : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
+            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it onto a planet, or click to give the chosen planet a moon.`
+                : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
         const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
@@ -8999,7 +9027,6 @@
             }
             const k = KINDS[d.kind];
             ghostEl.style.background = d.kind === 'custom' ? '#ae85ca' : k.color;
-            setHint('drop');   // (the drag layer, until it is let go)
         }
         if (!d.moved) return;
         traceDrag(d, e.clientX, e.clientY, e);   // (for a throw)
@@ -9008,6 +9035,7 @@
         d.cx = e.clientX - r.left; d.cy = e.clientY - r.top;
         ghostEl.style.display = d.over ? 'none' : 'block';
         ghostEl.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+        dropHint(d);   // (the drag layer, until it is let go)
     }
 
     function onChipUp(e) {
@@ -9022,10 +9050,15 @@
         if (d.over) {
             updateDrawnPositions();
             chipThrow = d;   // (thrown as it is let go, if bodies are thrown)
-            const w = unturnPoint(wx(d.cx), wy(d.cy)), b = addBody(d.kind, w.x, w.y);   // (from the drawn view to the world)
+            const k = KINDS[d.kind] || KINDS.custom, host = moonHost(d.cx, d.cy, k.m, k.R, null);
+            const w = unturnPoint(wx(d.cx), wy(d.cy));   // (from the drawn view to the world)
+            const at = host ? moonSpot(host, w.x, w.y, bodies.filter((q) => q.primary === host && q.bound).length) : w;
+            const b = addBody(d.kind, at.x, at.y);
             chipThrow = null;
+            if (b && host) moonNote(b);
             if (b && d.kind === 'custom') openPopover(b);
         }
+        dropHost = null;
         throwTipSeen(d);
         clearHint('drag');
     }
@@ -9036,6 +9069,7 @@
         paletteDrag = null;
         d.btn.classList.remove('is-dragging');
         if (ghostEl) ghostEl.style.display = 'none';
+        dropHost = null;
         clearHint('drag');
     }
 
@@ -9054,8 +9088,8 @@
     //   note         fresh feedback from a switch or an action (a few seconds)
     //   tip          the scene's tip, until the first press on the canvas or the palette
     //   (offer)      "Carry on where you left off", for a while after the page opens
-    //   (help)       the usual help; when the page opens, with a pointer to the missions
-    const hints = { drag: null, missionNote: null, note: null, tip: null, intro: false, open: false };
+    //   (help)       the usual help
+    const hints = { drag: null, missionNote: null, note: null, tip: null, open: false };
     const hintTimers = {};
 
     function showHint(layer, html, opts) {
@@ -9085,11 +9119,8 @@
             h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
                 : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
         } else {
-            h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
-                : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
+            h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
-        // (the gear kept on the line of the word before it)
-        if (hints.intro) h += ' <strong>New:</strong> Missions, in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
         return h;
     }
 
@@ -9110,11 +9141,23 @@
         hintClampCheck();
     }
 
-    // The older way in: setHint() refreshes, setHint('drop') is a drag from the palette, html a note
+    // The older way in: setHint() refreshes, html a note
     function setHint(kind, html) {
-        if (kind === 'drop') showHint('drag', `<strong>Drop it in space</strong> to add it.${throwTip(true)}`);
-        else if (html) showHint('note', html, { ms: 6000 });
+        if (html) showHint('note', html, { ms: 6000 });
         else refreshHint();
+    }
+
+    // A drag from the palette: what a drop just here would do
+    function dropHint(d) {
+        const k = KINDS[d.kind] || KINDS.custom;
+        dropHost = d.over ? moonHost(d.cx, d.cy, k.m, k.R, null) : null;
+        let h = settings.placement === 'circular' ? '<strong>Drop it in space</strong>, or on a planet to make it a moon.' : '<strong>Drop it in space.</strong>';
+        if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
+        else if (d.over && settings.placement === 'circular') {
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
+            if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
+        }
+        showHint('drag', h + throwTip(true));
     }
 
     // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
@@ -9188,6 +9231,8 @@
     // to where it fits, rather than leaving the header in view and the info column cut off below.
     function bindTurn() {
         const dc = canvas.closest('.simulation-display-container');
+        // (held sideways as the page opens: the simulation fills the screen straight away, under the header)
+        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) }); }, { once: true });
         if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
         let inView = false;
         new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
@@ -9212,6 +9257,8 @@
         if (!b) return;
         const pr = predictLaunch(b);
         if (d.mode === 'move') {
+            dropHost = moonHost(sx(b.dx), sy(b.dy), b.m, b.R, b);
+            if (dropHost) { showHint('drag', `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`); return; }
             const p = pr && pr.p;
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
@@ -9453,6 +9500,8 @@
                 resetTracking(b);
                 k2.bid = null;
             } else if (d.mode === 'move' && d.moved) {
+                const host = moonHost(sx(b.dx), sy(b.dy), b.m, b.R, b);
+                if (host) { const at = moonSpot(host, b.x, b.y, bodies.filter((q) => q.primary === host && q.bound).length); b.x = at.x; b.y = at.y; }
                 launch(b, false, d);
             }
         }
@@ -9478,6 +9527,8 @@
         throwTipSeen(d);
         clearHint('drag');
         clearHint('tip');
+        if (dropHost && d.mode === 'move' && apply) moonNote(b);
+        dropHost = null;
         endGesture(d.mode === 'move' || apply);
     }
 
@@ -9486,6 +9537,7 @@
         drags.clear();
         pinch = null;
         freeze = null;
+        dropHost = null;
         if (hints.drag && !paletteDrag) { hints.drag = null; refreshHint(); }
     }
 
@@ -10261,12 +10313,17 @@
     function makeCharts() {
         if (typeof Chart === 'undefined') return null;
         const c = chartColors();
+        // (a steady line stays a steady line: its axis spans at least 1% of its value, not its last few digits)
+        const steadyAxis = (axis) => {
+            const mid = 0.5 * (axis.max + axis.min), least = 0.01 * Math.abs(mid);
+            if (axis.max - axis.min < least) { axis.min = mid - 0.5 * least; axis.max = mid + 0.5 * least; }
+        };
         const common = (yTitle) => ({
             responsive: true, maintainAspectRatio: false, animation: false,
             plugins: { legend: { labels: { color: c.text, boxWidth: 12 } } },
             scales: {
                 x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
-                y: { ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
+                y: { afterDataLimits: steadyAxis, ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
             }
         });
         const e1 = byId('energyChart'), e2 = byId('orbitChart');
@@ -10284,7 +10341,7 @@
             options: common(`Energy (×10${supExp(energyExp)} J)`)
         });
         const opts = common('Distance');
-        opts.scales.y1 = { position: 'right', ticks: { color: c.text }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Speed (km/s)', color: c.text } };
+        opts.scales.y1 = { afterDataLimits: steadyAxis, position: 'right', ticks: { color: c.text }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Speed (km/s)', color: c.text } };
         const orbit = new Chart(e2, {
             type: 'line',
             data: {
@@ -10307,6 +10364,11 @@
         document.body.classList.toggle('charts-visible', visible);
         if (visible && !charts) charts = makeCharts();
         if (visible) resetCharts();
+        // (they open under the info bar, below the fold on most screens)
+        if (visible && !document.body.classList.contains('sim-fullscreen-active')) {
+            const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: glide ? 'smooth' : 'auto' });
+        }
     }
 
     function resetCharts() {
@@ -10693,7 +10755,12 @@
             list[0].name = 'Star A';
             companion = true;
         }
-        const half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        let half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        // (with a second star the planets' star goes round the centre of mass too: all of it in view)
+        if (companion) {
+            const c = totals(list), far = (b) => Math.hypot(b.x - c.x, b.y - c.y);
+            half = 1.15 * Math.max(far(list[0]) + half / 1.15, far(list[list.length - 1]));
+        }
         const extra = [];
         if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
         if (companion) extra.push('a second star');
@@ -11161,7 +11228,6 @@
             + '<button type="button" class="orb-carry-x" aria-label="No thanks" title="No thanks"><span class="icon solid fa-times" aria-hidden="true"></span></button>';
         clearTimeout(share.offerTimer);
         share.offerTimer = setTimeout(endOffer, OFFER_MS);
-        hints.intro = false;   // (one thing at a time: the offer, not the missions' introduction too)
         refreshHint();
     }
 
@@ -11185,6 +11251,11 @@
             if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
         } else if (t.closest('.orb-carry-x')) {
             endOffer();
+        } else if (t.closest('.orb-hint-zoom')) {
+            clearHint('note');
+            zoomChosen();
+        } else if (t.closest('.orb-hint-help')) {
+            openHelp(false);
         }
     }
 
@@ -11461,9 +11532,29 @@
     // ------------------------------------------------------------------
     // Controls, the page's start, and the checks four times a second
     // ------------------------------------------------------------------
+    // A folded group of the settings says what it holds: the view, the laws switched on
+    function syncFolds() {
+        const on = [[ui.k1, '1st'], [ui.k2, '2nd'], [ui.k3, '3rd']].filter((k) => k[0] && k[0].checked).map((k) => k[1]);
+        setText(ui.foldKepler, on.join(', '));
+        const opt = ui.frame && ui.frame.options[ui.frame.selectedIndex];
+        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '') : '');
+    }
+
+    // Everything panned or zoomed out of view: Fit view stands out, and says why once
+    function checkInView() {
+        if (!ui.fit || !viewW || !bodies.length || dragging()) return;
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy); return x > 0 && x < viewW && y > 0 && y < viewH; });
+        if (out === ui.fit.classList.contains('is-wanted')) return;
+        ui.fit.classList.toggle('is-wanted', out);
+        if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
+        else clearHint('note', 'lost');
+    }
+
     function shareTick() {
         const now = performance.now();
         syncSceneList();
+        syncFolds();
+        checkInView();
         stabilityTick(now);
         autosaveTick(now);
     }
@@ -11477,12 +11568,12 @@
 
     function bindShare() {
         Object.assign(ui, {
+            foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
             shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
         for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
-        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
-        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); }); };
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.shareBtn, copyShareLink);
         onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
         document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
@@ -11911,7 +12002,8 @@
     // Delete or Backspace: delete the chosen body (if another is left)
     function deleteChosen() {
         const b = bodyById(selectedId);
-        if (!b || bodies.length < 2 || dragging() || missionRefuse('delete', b)) return;
+        if (!b || dragging() || missionRefuse('delete', b)) return;
+        if (bodies.length < 2) { historyNote(`<strong>${escapeHtml(b.name)} is the last body.</strong> Add another before deleting it.`); return; }
         const name = b.name;
         if (popBody === b) closePopover();
         deleteBody(b);
@@ -11971,10 +12063,7 @@
 
     function bindHistory() {
         Object.assign(ui, { undoBtn: byId('undoBtn'), redoBtn: byId('redoBtn'), rewindBtn: byId('rewindBtn') });
-        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
-        const onClick = (btn, action) => {
-            if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); });
-        };
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.undoBtn, undoStep);
         onClick(ui.redoBtn, redoStep);
         onClick(ui.rewindBtn, runAgain);
@@ -12691,7 +12780,7 @@
     // (from loadScene: a mission's scene starts the mission, any other ends one)
     function missionSceneLoaded() {
         const def = missionByKey(settings.scene);
-        if (!def) { if (mission.def) endMission(); return; }
+        if (!def) { if (mission.def) { endMission(); setPaused(false); } return; }   // (its briefing paused it)
         Object.assign(mission, {
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
@@ -12794,11 +12883,10 @@
         setText(ui.popOrbitShape, why);
         if (!craft) setText(ui.popAngleNote, why);
     }
-    // (syncEccentricity) the eccentricity slider and "Set its period and distances"
+    // (syncEccentricity) the eccentricity slider
     function missionLockSidebar() {
         if (!mission.def) return;
         if (ui.ecc) ui.ecc.disabled = true;
-        if (ui.editOrbit) ui.editOrbit.disabled = true;
         setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
     }
 
@@ -12862,15 +12950,6 @@
             ui.scene.appendChild(og);
             labelMissionOptions();
         }
-        setTimeout(introduceMissions, 0);
-    }
-
-    // When the page opens, the usual hint also points to the missions, until the first press anywhere
-    // (unless "Carry on where you left off" is on offer: one thing at a time)
-    function introduceMissions() {
-        if (mission.def || !ui.hint || share.offer) return;
-        hints.intro = true;
-        refreshHint();
     }
 
     // "3. Escape the Sun ★★☆"
@@ -13227,6 +13306,8 @@
         if (icon) { icon.classList.toggle('fa-pause', !paused); icon.classList.toggle('fa-play', paused); }
     }
 
+    let focusByPointer = false;
+
     function bindControls() {
         const bindCheck = (el, key, after) => {
             if (!el) return;
@@ -13308,31 +13389,32 @@
                 e.preventDefault();
                 return;
             }
-            // Space pauses, unless it would type, press a button or tick a box
+            // Space pauses, unless it would type, or press what the keyboard has moved to. A button or
+            // switch last used with the pointer lets go instead (or Space would add that body again).
             const t = e.target;
-            const takesSpace = t && ((t.tagName === 'INPUT' && t.type !== 'range') || ['TEXTAREA', 'SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName) || t.isContentEditable);
-            if ((e.key === ' ' || e.code === 'Space') && !takesSpace && !e.repeat) {
-                setPaused(!paused);
-                e.preventDefault();
-            }
+            if ((e.key !== ' ' && e.code !== 'Space') || e.repeat || !t) return;
+            const types = (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable;
+            const presses = (t.tagName === 'INPUT' && t.type !== 'range') || ['SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName);
+            if (types || (presses && !focusByPointer)) return;
+            if (presses) t.blur();
+            setPaused(!paused);
+            e.preventDefault();
         }, true);
+        // (how the focus last moved: within a moment of a press or a click, it was the pointer's doing)
+        let pointerAt = -Infinity;
+        const pointerUsed = () => { pointerAt = performance.now(); };
+        window.addEventListener('pointerdown', pointerUsed, true);
+        window.addEventListener('click', (e) => { if (e.detail) pointerUsed(); }, true);
+        document.addEventListener('focusin', () => { focusByPointer = performance.now() - pointerAt < 100; });
 
         // Recolour when the theme changes (palette chips use fixed colours, the canvas redraws itself)
         new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        // The first press anywhere ends the missions' introduction; a press on the canvas or the
-        // palette (getting on with it) ends the scene's tip too. Notes run out by themselves.
+        // A press on the canvas or the palette (getting on with it) ends the scene's tip. Notes run out
+        // by themselves.
         window.addEventListener('pointerdown', (e) => {
             lastPointerType = e.pointerType || 'mouse';
-            hints.intro = false;
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
-            refreshHint();
-        }, true);
-        // (for the keyboard, a key pressed in the simulation, other than moving about with Tab)
-        window.addEventListener('keydown', (e) => {
-            if (!hints.intro || ['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
-            if (!(e.target && e.target.closest && e.target.closest('.simulation-area-wrapper'))) return;
-            hints.intro = false;
             refreshHint();
         }, true);
         bindHint();
