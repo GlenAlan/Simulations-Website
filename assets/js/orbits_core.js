@@ -6701,7 +6701,11 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!(b && orbitingBody(b) && b.m >= 1e-17)) return '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.';
-            return `<strong>Hill sphere and Roche limit</strong> for ${escapeHtml(theName(b))}: the card says what each means.`;
+            measureLimits(b);
+            const who = escapeHtml(theName(b)), says = [];
+            if (lim.hill > 0) says.push(`<strong>Hill sphere:</strong> ${who}'s moons stay inside`);
+            if (lim.roche > 0) says.push(`<strong>Roche limit:</strong> any closer, and tides would tear it apart`);
+            return says.length ? `${says.join('. ')}.` : `<strong>Hill sphere and Roche limit:</strong> none for ${who}.`;
         }, { ms: 9000, tag: 'limits' });
     }
 
