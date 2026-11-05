@@ -5293,11 +5293,11 @@
     }
 
     // Each trail point is drawn relative to where the frame's origin (the centre of mass, or the locked
-    // body) was at that sample's time, so a locked view shows paths as seen from that body. A point
-    // closer than about a pixel to the last one drawn is skipped (two or three pixels in the older,
-    // fainter part, and more if drawing is running slow: perf.quality), and stretches off the canvas
-    // aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add extra ones) is read
-    // every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
+    // body) was at that sample's time, so a locked view shows paths as seen from that body. Runs of
+    // points that make a straight line to within a fraction of a pixel are drawn as one (a little more
+    // in the older, fainter part, and if drawing is running slow: perf.quality; see traceTrail), and
+    // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
+    // extra ones) is read every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, TRAIL_POINTS = 1500;
     const minorGroups = new Map();
     function drawTrails(C) {
