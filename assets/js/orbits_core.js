@@ -919,6 +919,8 @@
     // Small helpers
     // ------------------------------------------------------------------
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+    // (Math.hypot boxes its numbers and takes far longer: this one for what runs every step or for every body)
+    const hyp = (x, y) => Math.sqrt(x * x + y * y);
     const isDark = () => document.documentElement.classList.contains('dark-mode');
     const COMPACT = { whitedwarf: 1, neutron: 1, blackhole: 1 };
     const isCompact = (b) => !!COMPACT[b.kind];
@@ -1033,7 +1035,11 @@
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
-            track: null                   // period measurement (Kepler's 3rd law)
+            track: null,                  // period measurement (Kepler's 3rd law)
+            // Set later on, but named here so every body has the same shape: the integrator's loops run
+            // far faster over one shape than over many (with too many, each number written is boxed anew)
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null,
+            navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
 
@@ -2155,7 +2161,7 @@
         const key = `${b.id}:${p.id}`;
         let tr = watched.get(key);
         const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy;
-        const rd = rx * vx + ry * vy, r = Math.hypot(rx, ry), phi = Math.atan2(ry, rx);
+        const rd = rx * vx + ry * vy, r = hyp(rx, ry), phi = Math.atan2(ry, rx);
         if (!tr || tr.n !== relSteps - 1 || tr.ref !== b.track) {
             // new, or it missed steps, or the body was changed: start again
             if (watched.size > 8) watched.clear();
@@ -2766,7 +2772,7 @@
             const p = b.primary;
             if (!p || !b.bound || b.held || p.held || (b.minor && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
             const rx = b.x - p.x, ry = b.y - p.y;
-            const r = Math.hypot(rx, ry);
+            const r = hyp(rx, ry);
             const phi = Math.atan2(ry, rx);
             let tr = b.track;
             if (!tr || tr.pid !== p.id) {
@@ -2867,8 +2873,8 @@
         if (flyby.active) {
             const q = bodyById(flyby.pid), s = bodyById(flyby.sid);
             if (!q || !s || q.held) { resetFlyby(); return; }
-            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
-            flyby.vNow = Math.hypot(b.vx - s.vx, b.vy - s.vy);
+            const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
+            flyby.vNow = hyp(b.vx - s.vx, b.vy - s.vy);
             if (r < flyby.rmin) {
                 // On the way in, the closest approach of the hyperbola it is on now (the star's pull
                 // shifts it as it goes); after it, the measured one. The close-up is scaled by it.
@@ -2880,7 +2886,7 @@
             }
             // points closer together near the planet (where the close-up shows them)
             const n = flyby.pts.length;
-            if (Math.hypot(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
+            if (hyp(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
             if (r > flyby.hill) {
                 flyby.active = false; flyby.done = true;
                 flyby.vOut = flyby.vNow;
@@ -2894,7 +2900,7 @@
             const s = q.primary;
             if (q === b || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
             if (q.m < 10 * b.m || q.m > 0.1 * s.m) continue;   // a light body passing a planet
-            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
+            const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
             if (r >= q.hill) continue;
             const el = relElements(dx, dy, b.vx - q.vx, b.vy - q.vy, G * (b.m + q.m));
             if (el.bound) continue;   // captured: an orbit, not a flyby
@@ -2945,7 +2951,7 @@
             const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
             const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
-            if (Math.hypot(rx - ox, ry - oy) > 0.035 * Math.hypot(rx, ry)) return true;
+            if (hyp(rx - ox, ry - oy) > 0.035 * hyp(rx, ry)) return true;
         }
         return false;
     }
@@ -3614,36 +3620,6 @@
         return { ox: (P.A.m * ax + P.B.m * bx) / M, oy: (P.A.m * ay + P.B.m * by) / M, c: Math.cos(a), s: Math.sin(a) };
     }
 
-    // traceTrail for a turned view: the same, with each point turned
-    function traceTurnedTrail(tr, ks, ke, minPx) {
-        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
-        const cs = tr.turn.cs, c0 = tr.turn.c, s0 = tr.turn.s;
-        const capT = T.length >> 1, capO = oT.length >> 1;
-        let i = 2 * (ks % capT), io = 2 * (ks % capO), j = 2 * (ks % TRAIL_CAP);
-        let c = cs ? cs[j] : c0, s = cs ? cs[j + 1] : s0;
-        let rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
-        let lx = offX + (c * rx - s * ry) * scale, ly = offY - (s * rx + c * ry) * scale;
-        let out = outcode(lx, ly), pen = true;
-        ctx.moveTo(lx, ly);
-        for (let k = ks + 1; k < ke; k += stride) {
-            if (k + stride >= ke) k = ke - 1;
-            i = 2 * (k % capT); io = 2 * (k % capO); j = 2 * (k % TRAIL_CAP);
-            if (cs) { c = cs[j]; s = cs[j + 1]; }
-            rx = T[i] - oT[io]; ry = T[i + 1] - oT[io + 1];
-            const x = offX + (c * rx - s * ry) * scale, y = offY - (s * rx + c * ry) * scale;
-            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
-            const o = outcode(x, y);
-            if (o & out) {
-                pen = false;
-            } else {
-                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
-                ctx.lineTo(x, y);
-            }
-            lx = x; ly = y; out = o;
-        }
-        if (!pen) ctx.moveTo(lx, ly);
-    }
-
     // ------------------------------------------------------------------
     // Lagrange points of a body B and the body A it orbits (A the heavier; mu = m_B / (m_A + m_B)), in
     // units of the distance d between them now, along the line from A to B and measured from their
@@ -3814,20 +3790,24 @@
     //   tadpoles that bodies can't cross without more energy.
     //   eps is about a body's drawn radius, so its well bottoms out under its disc.
     //   Worked out on a coarse grid (a point every WELL_CELL px, more when there are many bodies to add
-    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, drawn
-    //   smoothly scaled up, and the lines as paths. Again only when a body has moved a pixel or the view
-    //   has changed more than shifting and scaling the old picture can cover, and at most every few
-    //   frames if that is slow; in between, the old picture follows the zoom and pan.
+    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, smoothly
+    //   scaled up, and the lines as paths, painted once onto a picture the size of the canvas and its
+    //   margin (painting them takes far longer than copying it). Again only when a body has moved a pixel
+    //   or the view has changed more than shifting and scaling the old picture can cover, and at most
+    //   every few frames if that is slow; in between, the old picture follows the zoom and pan.
     // ------------------------------------------------------------------
     const WELL_CELL = 7;          // px between grid points
     const WELL_WORK = 240000;     // at most about this many body-point sums per picture
     const WELL_BODIES = 24;       // the heaviest bodies that make the picture
     const WELL_LEVELS = 9;        // about this many steps between contour lines across the depths in view
+    const WELL_SOFT_MS = 150;     // a picture shifted or scaled is painted afresh after this long
     Object.assign(settings, { well: false, lagrange: false });
     Object.assign(ui, { wellToggle: byId('wellToggle'), wellNote: byId('wellNote'), lagrangeToggle: byId('lagrangeToggle') });
     const well = {
         small: null, smallCtx: null, img: null,   // the shading, one pixel per grid point
-        lines: null, strong: null,        // the contour lines (Path2D, in the screen points of the view below)
+        U: null,                          // the depth at each grid point
+        next: null,                       // what computeWell has worked out, until it is painted
+        pic: null, picCtx: null,          // the whole picture, in the canvas's own pixels, the margin included
         view: null,                       // what it was worked out for (origin, pan, scale, size, margin, grid)
         pos: [],                          // the screen positions of its bodies then
         sig: '',                          // what forces a new picture when it changes (theme, size, frame, bodies)
@@ -3909,7 +3889,8 @@
         // Grid point (i, j) is at screen point (i cell - margin, j cell - margin)
         const x0 = F.x + view.panX + (-margin - viewW / 2) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
         const step = cell / scale;
-        const U = new Float32Array(gw * gh);
+        if (!well.U || well.U.length !== gw * gh) well.U = new Float32Array(gw * gh);
+        const U = well.U;
         let umin = Infinity, umax = -Infinity;
         for (let j = 0; j < gh; j++) {
             const y = y0 - j * step;
@@ -3974,16 +3955,47 @@
                 for (const v of crit) if (v > lo && v <= hi) cellContour(strong, x, y, cell, a, b, c, d, v);
             }
         }
-        well.lines = lines;
-        well.strong = crit.length ? strong : null;
-        well.view = { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh };
-        well.pos = src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }));
-        well.omega = P ? turn.omega : 0;
+        well.next = {
+            lines, strong: crit.length ? strong : null, omega: P ? turn.omega : 0,
+            view: { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh, off: Math.ceil(margin * dpr) },
+            pos: src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }))
+        };
         well.t = performance.now();
         well.cost = well.t - t0;
         well.wait = clamp(10 * well.cost, 0, 100);
         well.count++;
         well.info = { cell, grid: [gw, gh], bodies: n, step: dz, umin, umax, crit: crit.slice() };
+    }
+
+    // Paint what computeWell worked out onto the picture that drawGravityWell copies (v.off: where the
+    // view's top-left corner is in it). In the frame after, unless it is needed at once, so one frame
+    // doesn't have to do both.
+    function paintWell(C) {
+        const N = well.next, v = N.view, c = v.cell;
+        well.next = null;
+        const pw = Math.ceil((v.w + 2 * v.margin) * dpr) + 1, ph = Math.ceil((v.h + 2 * v.margin) * dpr) + 1;
+        if (!well.pic || well.pic.width !== pw || well.pic.height !== ph) {
+            well.pic = document.createElement('canvas');
+            well.pic.width = pw; well.pic.height = ph;
+            well.picCtx = well.pic.getContext('2d');
+        }
+        const g = well.picCtx;
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.clearRect(0, 0, pw, ph);
+        g.setTransform(dpr, 0, 0, dpr, v.off, v.off);
+        g.imageSmoothingEnabled = true;
+        g.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        g.lineWidth = 1;
+        g.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
+        g.stroke(N.lines);
+        if (N.strong) {
+            g.lineWidth = 1.3;
+            g.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
+            g.stroke(N.strong);
+        }
+        well.view = v; well.pos = N.pos; well.omega = N.omega;
     }
 
     // How the picture's screen points map onto the screen now: x' = k x + tx, y' = k y + ty
@@ -3999,6 +4011,8 @@
     // Is the old picture still good enough to shift into place?
     function wellStale(v, map, P) {
         if (map.k < 0.85 || map.k > 1.18) return true;
+        // (a copy shifted or scaled is a little softer: only for a moment, while the view moves)
+        if ((map.k !== 1 || map.tx !== 0 || map.ty !== 0) && performance.now() - well.t >= WELL_SOFT_MS) return true;
         // (the view must stay inside its margin, short of the outermost grid cell)
         const slack = v.margin - 16;
         if (-map.tx / map.k < -slack || (viewW - map.tx) / map.k > v.w + slack) return true;
@@ -4016,26 +4030,31 @@
         if (!src.length) return;
         const P = turnPair();
         const sig = [C.dark, viewW, viewH, dpr, P ? `${P.A.id}>${P.B.id}` : '-', src.map((b) => `${b.id}:${b.m}`).join(',')].join('|');
-        const forced = sig !== well.sig || !well.view;
-        if (forced || (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P))) {
+        let paintAt = 0;
+        if (sig !== well.sig || !well.view) {
             computeWell(C, src, P);
             well.sig = sig;
+            paintWell(C);
+        } else if (well.next) {
+            paintAt = performance.now();
+            paintWell(C);
+        } else if (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P)) {
+            computeWell(C, src, P);
         }
-        // The shading (smoothly scaled up from its grid) and the lines, shifted and scaled into place
-        const v = well.view, map = wellMap(v), c = v.cell;
+        // The picture, shifted (by whole pixels, which keeps it sharp) or scaled into place
+        const v = well.view, map = wellMap(v), pic = well.pic;
         ctx.save();
-        ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
-        ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
-        ctx.lineWidth = 1 / map.k;
-        ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
-        ctx.stroke(well.lines);
-        if (well.strong) {
-            ctx.lineWidth = 1.3 / map.k;
-            ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
-            ctx.stroke(well.strong);
+        if (map.k === 1) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.drawImage(pic, Math.round(dpr * map.tx) - v.off, Math.round(dpr * map.ty) - v.off);
+        } else {
+            ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(pic, -v.off / dpr, -v.off / dpr, pic.width / dpr, pic.height / dpr);
         }
         ctx.restore();
+        // (the painting, done by now, counts towards the wait before the next: a tenth of the time at most)
+        if (paintAt) well.wait = clamp(10 * (well.cost + performance.now() - paintAt), 0, 100);
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
@@ -5327,11 +5346,11 @@
     }
 
     // Each trail point is drawn relative to where the frame's origin (the centre of mass, or the locked
-    // body) was at that sample's time, so a locked view shows paths as seen from that body. A point
-    // closer than about a pixel to the last one drawn is skipped (two or three pixels in the older,
-    // fainter part, and more if drawing is running slow: perf.quality), and stretches off the canvas
-    // aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add extra ones) is read
-    // every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
+    // body) was at that sample's time, so a locked view shows paths as seen from that body. Runs of
+    // points that make a straight line to within a fraction of a pixel are drawn as one (a little more
+    // in the older, fainter part, and if drawing is running slow: perf.quality; see traceTrail), and
+    // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
+    // extra ones) is read every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, TRAIL_POINTS = 1500;
     const minorGroups = new Map();
     function drawTrails(C) {
@@ -5349,7 +5368,7 @@
         const turned = turnedTrails(first);
         const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
         const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned };
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
         for (const g of minorGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
@@ -5414,32 +5433,81 @@
         ctx.lineJoin = 'round';
     }
 
-    // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT; every tr.stride-th, and
-    // the last) to the current path, skipping points within minPx of the last one drawn and stretches
-    // wholly off one side of the canvas
+    // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT) to the current path,
+    // leaving out stretches wholly off one side of the canvas. Painting a stroke takes far longer than
+    // anything else in a frame and goes by its corners, so a run of samples goes as one straight line
+    // while it stays within an eighth of minPx of them, in the screen's own pixels (0.15 in the newest
+    // part): an orbit's long gentle curves need a quarter of the corners, and look the same. A line
+    // always ends on a round sample number (a multiple of a power of two, at most TRAIL_JUMP and at least
+    // tr.stride): the corners stay on the same samples from one frame to the next as the trail's ends
+    // move on, so its lines don't crawl. Lines shorter than minPx don't have to fit.
+    const TRAIL_JUMP = 64;
+    const TP = new Float64Array(2);   // (trailAt's answer: numbers returned from a function are boxed)
     function traceTrail(tr, ks, ke, minPx) {
-        if (tr.turn) { traceTurnedTrail(tr, ks, ke, minPx); return; }
-        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
-        const capT = T.length >> 1, capO = oT.length >> 1;
-        let i = 2 * (ks % capT), io = 2 * (ks % capO);
-        let lx = offX + (T[i] - oT[io]) * scale, ly = offY - (T[i + 1] - oT[io + 1]) * scale;
-        let out = outcode(lx, ly), pen = true;
-        ctx.moveTo(lx, ly);
-        for (let k = ks + 1; k < ke; k += stride) {
-            if (k + stride >= ke) k = ke - 1;
-            i = 2 * (k % capT); io = 2 * (k % capO);
-            const x = offX + (T[i] - oT[io]) * scale, y = offY - (T[i + 1] - oT[io + 1]) * scale;
-            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
-            const o = outcode(x, y);
-            if (o & out) {
-                pen = false;
-            } else {
-                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
-                ctx.lineTo(x, y);
+        tr.capT = tr.T.length >> 1;
+        tr.capO = tr.oT.length >> 1;
+        const tol = minPx / (8 * dpr), tol2 = tol * tol, last = ke - 1;
+        let s0 = 1;
+        while (s0 < tr.stride) s0 *= 2;
+        trailAt(tr, ks);
+        let a = ks, ax = TP[0], ay = TP[1];
+        tr.out = outcode(ax, ay);
+        tr.pen = true;
+        ctx.moveTo(ax, ay);
+        while (a < last) {
+            let b = Math.min(last, a - a % s0 + s0);
+            trailAt(tr, b);
+            let bx = TP[0], by = TP[1];
+            for (let s = 2 * s0; s <= TRAIL_JUMP && b < last; s *= 2) {
+                const c = Math.min(last, a - a % s + s);
+                if (c === b) continue;
+                trailAt(tr, c);
+                const cx = TP[0], cy = TP[1], ex = cx - ax, ey = cy - ay;
+                if (Math.abs(ex) + Math.abs(ey) >= minPx) {
+                    // (its middle and quarters, how far from the line)
+                    const q = (c - a) >> 2, ee = ex * ex + ey * ey;
+                    let fits = true;
+                    for (let i = q > 0 ? 1 : 2; fits && i <= (q > 0 ? 3 : 2); i++) {
+                        trailAt(tr, q > 0 ? a + i * q : a + 1);
+                        const px = TP[0] - ax, py = TP[1] - ay;
+                        const t = ee > 0 ? clamp((px * ex + py * ey) / ee, 0, 1) : 0;
+                        const dx = px - t * ex, dy = py - t * ey;
+                        fits = dx * dx + dy * dy <= tol2;
+                    }
+                    if (!fits) break;
+                }
+                b = c; bx = cx; by = cy;
             }
-            lx = x; ly = y; out = o;
+            trailLine(tr, ax, ay, bx, by);
+            a = b; ax = bx; ay = by;
         }
-        if (!pen) ctx.moveTo(lx, ly);
+        if (!tr.pen) ctx.moveTo(ax, ay);
+    }
+
+    // Where sample k of the trail is drawn, into TP (turned, in a turned view: see turnedTrails)
+    function trailAt(tr, k) {
+        const T = tr.T, oT = tr.oT, i = 2 * (k % tr.capT), io = 2 * (k % tr.capO), q = tr.turn;
+        const rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
+        if (!q) {
+            TP[0] = tr.offX + rx * scale;
+            TP[1] = tr.offY - ry * scale;
+            return;
+        }
+        const cs = q.cs, j = 2 * (k % TRAIL_CAP), c = cs ? cs[j] : q.c, sn = cs ? cs[j + 1] : q.s;
+        TP[0] = tr.offX + (c * rx - sn * ry) * scale;
+        TP[1] = tr.offY - (sn * rx + c * ry) * scale;
+    }
+
+    // A straight stretch of a trail, unless it is wholly off one side of the canvas
+    function trailLine(tr, ax, ay, x, y) {
+        const o = outcode(x, y);
+        if (o & tr.out) {
+            tr.pen = false;
+        } else {
+            if (!tr.pen) { ctx.moveTo(ax, ay); tr.pen = true; }
+            ctx.lineTo(x, y);
+        }
+        tr.out = o;
     }
 
     // Which sides of the canvas (with a margin) a point is beyond, as bits
@@ -7069,9 +7137,15 @@
         ctx.fillText(`Seen from ${q.name}`, cx, cy - R - 4);
     }
 
+    // (kept: it is asked for every frame, and formatting a number with commas is slow)
+    const scaleMemo = { au: 0, km: false, text: '' };
     function scaleLabel(au) {
-        if (scene.units === 'km' || au < 0.01) return `${fmtKm(Math.round(au * AU_KM))} km`;
-        return `${+au.toPrecision(3)} AU`;
+        const km = scene.units === 'km' || au < 0.01;
+        if (au !== scaleMemo.au || km !== scaleMemo.km) {
+            scaleMemo.au = au; scaleMemo.km = km;
+            scaleMemo.text = km ? `${fmtKm(Math.round(au * AU_KM))} km` : `${+au.toPrecision(3)} AU`;
+        }
+        return scaleMemo.text;
     }
 
     // The largest 1, 2 or 5 x 10^n not much longer than x
@@ -7377,7 +7451,7 @@
         pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
-        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
+        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
         const me = list[src.indexOf(b)];
         me.vx = rel.v[0]; me.vy = rel.v[1];
         if (rel.p) { const pc = list[src.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
@@ -10314,8 +10388,25 @@
 
     function supExp(n) { return String(n).split('').map((c) => SUP[c]).join(''); }
 
+    // Chart.js is fetched the first time the graphs are shown (most visits never need it)
+    const CHART_JS = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js';
+    let chartJsAsked = false;
+    function askForChartJs() {
+        if (chartJsAsked) return;
+        chartJsAsked = true;
+        const tag = document.createElement('script');
+        tag.src = CHART_JS;
+        tag.onload = () => {
+            if (charts || !ui.chartsContainer || ui.chartsContainer.style.display === 'none') return;
+            charts = makeCharts();
+            resetCharts();
+        };
+        tag.onerror = () => { chartJsAsked = false; };
+        document.head.appendChild(tag);
+    }
+
     function makeCharts() {
-        if (typeof Chart === 'undefined') return null;
+        if (typeof Chart === 'undefined') { askForChartJs(); return null; }
         const c = chartColors();
         // (a steady line stays a steady line: its axis spans at least 1% of its value, not its last few digits)
         const steadyAxis = (axis) => {
@@ -10326,7 +10417,7 @@
             responsive: true, maintainAspectRatio: false, animation: false,
             plugins: { legend: { labels: { color: c.text, boxWidth: 12 } } },
             scales: {
-                x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
+                x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0, sampleSize: 8 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
                 y: { afterDataLimits: steadyAxis, ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
             }
         });
@@ -13785,7 +13876,33 @@
     // if drawing alone takes too long, the trails are drawn more coarsely first
     // (quality below 1), before the simulation itself has to slow down. Readouts, primaries in a crowded
     // scene and the graphs are updated about ten times a second rather than every frame.
+    // While paused with nothing going on, the picture can't change: frames rest, with one in full four
+    // times a second in case something else has changed it. Anything the visitor does (or a call of the
+    // public API) wakes them for a second. With the canvas scrolled out of sight, the physics and the
+    // readouts carry on but nothing is drawn.
     // ------------------------------------------------------------------
+    const REST_EVERY_MS = 250, WAKE_MS = 1000;
+    let wakeUntil = 0, restNext = 0, canvasInView = true;
+    const wake = () => { wakeUntil = performance.now() + WAKE_MS; };
+    function resting(now) {
+        if (!paused || now < wakeUntil || now >= restNext) return false;
+        if (pred.job || (pred.shown && now - pred.shown.t < PATH_BLEND_MS)) return false;
+        return !drags.size && !paletteDrag && !view.anim && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+    }
+    function bindRest() {
+        for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
+            window.addEventListener(t, wake, { capture: true, passive: true });
+        }
+        const api = window.orbitsSimulation;
+        for (const k of Object.keys(api)) {
+            const fn = api[k];
+            if (typeof fn === 'function') api[k] = function (...args) { wake(); return fn.apply(this, args); };
+        }
+        if (typeof IntersectionObserver !== 'undefined') {
+            new IntersectionObserver((es) => { canvasInView = es[es.length - 1].isIntersecting; }).observe(canvas);
+        }
+    }
+
     let fpsFrames = 0, fpsTime = 0;
     let eccNext = 0, readoutNext = 0, primNext = 0;
     const perf = { physics: 0, render: 0, other: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
@@ -13796,6 +13913,11 @@
         const dtReal = lastFrameTs ? Math.min(0.1, (ts - lastFrameTs) / 1000) : 0;
         lastFrameTs = ts;
         const t0 = performance.now();
+        if (resting(t0)) {
+            if (ui.fps) { fpsFrames++; fpsTime += dtReal; }
+            return;
+        }
+        restNext = t0 + REST_EVERY_MS;
         updateScale();
         applyHolds();
         let steps = 0;
@@ -13817,7 +13939,7 @@
         updateScale();
         updateDrawnPositions();
         const t2 = performance.now();
-        render();
+        if (canvasInView) render(); else syncTurnOptions();
         const t3 = performance.now();
         if (ts >= readoutNext) { updateReadouts(); readoutNext = ts + 100; }
         updatePopover(false);
@@ -14482,5 +14604,6 @@
     resizeCanvas();
     loadScene(settings.scene);
     setHint();
+    bindRest();
     requestAnimationFrame(frame);
 })();
