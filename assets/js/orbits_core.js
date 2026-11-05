@@ -10311,14 +10311,31 @@
 
     function supExp(n) { return String(n).split('').map((c) => SUP[c]).join(''); }
 
+    // Chart.js is fetched the first time the graphs are shown (most visits never need it)
+    const CHART_JS = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js';
+    let chartJsAsked = false;
+    function askForChartJs() {
+        if (chartJsAsked) return;
+        chartJsAsked = true;
+        const tag = document.createElement('script');
+        tag.src = CHART_JS;
+        tag.onload = () => {
+            if (charts || !ui.chartsContainer || ui.chartsContainer.style.display === 'none') return;
+            charts = makeCharts();
+            resetCharts();
+        };
+        tag.onerror = () => { chartJsAsked = false; };
+        document.head.appendChild(tag);
+    }
+
     function makeCharts() {
-        if (typeof Chart === 'undefined') return null;
+        if (typeof Chart === 'undefined') { askForChartJs(); return null; }
         const c = chartColors();
         const common = (yTitle) => ({
             responsive: true, maintainAspectRatio: false, animation: false,
             plugins: { legend: { labels: { color: c.text, boxWidth: 12 } } },
             scales: {
-                x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
+                x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0, sampleSize: 8 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
                 y: { ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
             }
         });
