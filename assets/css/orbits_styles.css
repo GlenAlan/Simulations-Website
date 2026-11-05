@@ -210,6 +210,16 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     font-weight: 700;
 }
 
+/* A button within the line: "Help", "Zoom in" */
+.orb-toolbar .orb-hint-btn {
+    display: inline-block;
+    min-height: 24px;
+    padding: 0 0.5em;
+    font-weight: 600;
+    vertical-align: baseline;
+    cursor: pointer;
+}
+
 /* A message too long for the line: "More" at its end, and a tap or Enter opens it out (it closes
    again with a second tap, or when the next message comes) */
 .orb-hint.is-cut,

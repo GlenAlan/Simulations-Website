@@ -1844,7 +1844,7 @@
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred)
-        if (!small.minor && !small.grp) showHint('note', `<strong>${escapeHtml(theName(small))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        if (!small.minor && !small.grp) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
     }
 
     // ------------------------------------------------------------------
@@ -2696,6 +2696,31 @@
             if (r2 < p.hill * p.hill && (!best || p.hill < best.hill)) best = p;
         }
         return best || pull;
+    }
+
+    // A planet's Hill sphere is often smaller than its disc on the screen, so a moon can't be dropped
+    // inside it by eye. A body of mass m and radius R dropped on a heavier body that orbits something
+    // (at canvas point px, py) therefore goes to moonSpot, about the Moon's distance in Hill spheres;
+    // this is that body, unless at this zoom its Hill sphere is big enough to aim within.
+    function moonHost(px, py, m, R, exclude) {
+        if (settings.placement !== 'circular') return null;
+        let host = null, bestD = 6;
+        for (const b of bodies) {
+            if (b === exclude || b.minor || !(b.m > m) || !isFinite(b.hill) || !(0.25 * b.hill > 2 * (b.R + R) / AU_KM)) continue;
+            const d = Math.hypot(sx(b.dx) - px, sy(b.dy) - py) - drawRadius(b);
+            if (d < bestD) { bestD = d; host = b; }
+        }
+        if (!host) return null;
+        const w = unturnPoint(wx(px), wy(py)), r = Math.hypot(w.x - host.x, w.y - host.y);
+        return host.hill * scale > drawRadius(host) + 24 && r > 2 * (host.R + R) / AU_KM ? null : host;
+    }
+
+    // Where such a body goes, on the side of host that (x, y) is on. n: moons it has already, each a
+    // little farther out, so that they don't share an orbit.
+    function moonSpot(host, x, y, n) {
+        const dx = x - host.x, dy = y - host.y, d = Math.hypot(dx, dy) || 1;
+        const r = host.hill * Math.min(0.45, 0.25 + 0.1 * (n || 0));
+        return d > 1e-12 ? { x: host.x + (dx / d) * r, y: host.y + (dy / d) * r } : { x: host.x + r, y: host.y };
     }
 
     // Sense of rotation for a new orbit around p: the way p's own satellites (or p itself) go round.
@@ -5041,6 +5066,7 @@
         computePrimaries();
         refreshBodyLists();
         selectBody(b.id);
+        clearHint('note');   // (whatever it said before this)
         return added;
     }
 
@@ -5097,9 +5123,30 @@
         return senseAround(b, p);
     }
 
+    // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
+    function moonNote(b) {
+        const p = b && b.primary;
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000 });
+    }
+
+    // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
+    function autoMoon(kind) {
+        const k = KINDS[kind];
+        const can = (b) => b && !b.minor && b.m > k.m && isFinite(b.hill) && 0.25 * b.hill > 2 * (b.R + k.R) / AU_KM;
+        let host = bodyById(selectedId);
+        if (!can(host)) { host = null; for (const b of bodies) if (can(b) && (!host || b.m > host.m)) host = b; }
+        if (!host) return null;
+        const n = bodies.filter((b) => b.primary === host && b.bound).length, ang = 0.6 + 2.4 * n;
+        const s = moonSpot(host, host.x + Math.cos(ang), host.y + Math.sin(ang), n);
+        const b = addBody(kind, s.x, s.y);
+        moonNote(b);
+        return b;
+    }
+
     // A tap on a palette chip: put the body at a free spot around the heaviest body, in view.
     function addBodyAuto(kind) {
         updateDrawnPositions();
+        if (kind === 'moon') { const b = autoMoon(kind); if (b) return b; }
         const top = heaviest();
         const k = KINDS[kind] || KINDS.custom;
         const half = Math.min(viewW, viewH) / (2 * scale);
@@ -7551,8 +7598,21 @@
         return { p, el: relElements(rx, ry, rel.v[0] - pv[0], rel.v[1] - pv[1], mu), vc, ve };
     }
 
+    // The body a drag would make a moon of (see moonHost): ringed while the drag is over it
+    let dropHost = null;
+    function drawDropHost(C) {
+        if (!dropHost || !bodies.includes(dropHost)) return;
+        ctx.strokeStyle = C.velocity;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(sx(dropHost.dx), sy(dropHost.dy), drawRadius(dropHost) + 7, 0, TAU);
+        ctx.stroke();
+    }
+
     // A body being dragged from the palette, drawn where it would land.
     function drawPaletteGhost() {
+        drawDropHost(colours());
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
         const x = paletteDrag.cx, y = paletteDrag.cy;
@@ -7560,7 +7620,7 @@
         ctx.globalAlpha = 0.85;
         drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
         ctx.globalAlpha = 1;
-        if (settings.placement === 'circular' && settings.preview) {
+        if (settings.placement === 'circular' && settings.preview && !dropHost) {
             const X = wx(x), Y = wy(y);
             const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
             if (p) {
@@ -7641,6 +7701,7 @@
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
     function theName(b) { return ['Sun', 'Moon'].includes(b.name) ? `the ${b.name}` : b.name; }
+    const sentenceCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // ------------------------------------------------------------------
     // The chosen body's orbit in the info bar: its period and eccentricity, and tooltips that name
@@ -9000,7 +9061,6 @@
             }
             const k = KINDS[d.kind];
             ghostEl.style.background = d.kind === 'custom' ? '#ae85ca' : k.color;
-            setHint('drop');   // (the drag layer, until it is let go)
         }
         if (!d.moved) return;
         traceDrag(d, e.clientX, e.clientY, e);   // (for a throw)
@@ -9009,6 +9069,7 @@
         d.cx = e.clientX - r.left; d.cy = e.clientY - r.top;
         ghostEl.style.display = d.over ? 'none' : 'block';
         ghostEl.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+        dropHint(d);   // (the drag layer, until it is let go)
     }
 
     function onChipUp(e) {
@@ -9023,10 +9084,15 @@
         if (d.over) {
             updateDrawnPositions();
             chipThrow = d;   // (thrown as it is let go, if bodies are thrown)
-            const w = unturnPoint(wx(d.cx), wy(d.cy)), b = addBody(d.kind, w.x, w.y);   // (from the drawn view to the world)
+            const k = KINDS[d.kind] || KINDS.custom, host = moonHost(d.cx, d.cy, k.m, k.R, null);
+            const w = unturnPoint(wx(d.cx), wy(d.cy));   // (from the drawn view to the world)
+            const at = host ? moonSpot(host, w.x, w.y, bodies.filter((q) => q.primary === host && q.bound).length) : w;
+            const b = addBody(d.kind, at.x, at.y);
             chipThrow = null;
+            if (b && host) moonNote(b);
             if (b && d.kind === 'custom') openPopover(b);
         }
+        dropHost = null;
         throwTipSeen(d);
         clearHint('drag');
     }
@@ -9037,6 +9103,7 @@
         paletteDrag = null;
         d.btn.classList.remove('is-dragging');
         if (ghostEl) ghostEl.style.display = 'none';
+        dropHost = null;
         clearHint('drag');
     }
 
@@ -9055,8 +9122,8 @@
     //   note         fresh feedback from a switch or an action (a few seconds)
     //   tip          the scene's tip, until the first press on the canvas or the palette
     //   (offer)      "Carry on where you left off", for a while after the page opens
-    //   (help)       the usual help; when the page opens, with a pointer to the missions
-    const hints = { drag: null, missionNote: null, note: null, tip: null, intro: false, open: false };
+    //   (help)       the usual help
+    const hints = { drag: null, missionNote: null, note: null, tip: null, open: false };
     const hintTimers = {};
 
     function showHint(layer, html, opts) {
@@ -9086,11 +9153,8 @@
             h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
                 : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
         } else {
-            h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
-                : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
+            h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
-        // (the gear kept on the line of the word before it)
-        if (hints.intro) h += ' <strong>New:</strong> Missions, in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
         return h;
     }
 
@@ -9111,11 +9175,23 @@
         hintClampCheck();
     }
 
-    // The older way in: setHint() refreshes, setHint('drop') is a drag from the palette, html a note
+    // The older way in: setHint() refreshes, html a note
     function setHint(kind, html) {
-        if (kind === 'drop') showHint('drag', `<strong>Drop it in space</strong> to add it.${throwTip(true)}`);
-        else if (html) showHint('note', html, { ms: 6000 });
+        if (html) showHint('note', html, { ms: 6000 });
         else refreshHint();
+    }
+
+    // A drag from the palette: what a drop just here would do
+    function dropHint(d) {
+        const k = KINDS[d.kind] || KINDS.custom;
+        dropHost = d.over ? moonHost(d.cx, d.cy, k.m, k.R, null) : null;
+        let h = '<strong>Drop it in space</strong>, or on a planet to make it a moon.';
+        if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
+        else if (d.over && settings.placement === 'circular') {
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
+            if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
+        }
+        showHint('drag', h + throwTip(true));
     }
 
     // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
@@ -9213,6 +9289,8 @@
         if (!b) return;
         const pr = predictLaunch(b);
         if (d.mode === 'move') {
+            dropHost = moonHost(sx(b.dx), sy(b.dy), b.m, b.R, b);
+            if (dropHost) { showHint('drag', `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`); return; }
             const p = pr && pr.p;
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
@@ -9454,6 +9532,8 @@
                 resetTracking(b);
                 k2.bid = null;
             } else if (d.mode === 'move' && d.moved) {
+                const host = moonHost(sx(b.dx), sy(b.dy), b.m, b.R, b);
+                if (host) { const at = moonSpot(host, b.x, b.y, bodies.filter((q) => q.primary === host && q.bound).length); b.x = at.x; b.y = at.y; }
                 launch(b, false, d);
             }
         }
@@ -9479,6 +9559,8 @@
         throwTipSeen(d);
         clearHint('drag');
         clearHint('tip');
+        if (dropHost && d.mode === 'move' && apply) moonNote(b);
+        dropHost = null;
         endGesture(d.mode === 'move' || apply);
     }
 
@@ -9487,6 +9569,7 @@
         drags.clear();
         pinch = null;
         freeze = null;
+        dropHost = null;
         if (hints.drag && !paletteDrag) { hints.drag = null; refreshHint(); }
     }
 
@@ -11177,7 +11260,6 @@
             + '<button type="button" class="orb-carry-x" aria-label="No thanks" title="No thanks"><span class="icon solid fa-times" aria-hidden="true"></span></button>';
         clearTimeout(share.offerTimer);
         share.offerTimer = setTimeout(endOffer, OFFER_MS);
-        hints.intro = false;   // (one thing at a time: the offer, not the missions' introduction too)
         refreshHint();
     }
 
@@ -11201,6 +11283,11 @@
             if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
         } else if (t.closest('.orb-carry-x')) {
             endOffer();
+        } else if (t.closest('.orb-hint-zoom')) {
+            clearHint('note');
+            zoomChosen();
+        } else if (t.closest('.orb-hint-help')) {
+            openHelp(false);
         }
     }
 
@@ -12875,15 +12962,6 @@
             ui.scene.appendChild(og);
             labelMissionOptions();
         }
-        setTimeout(introduceMissions, 0);
-    }
-
-    // When the page opens, the usual hint also points to the missions, until the first press anywhere
-    // (unless "Carry on where you left off" is on offer: one thing at a time)
-    function introduceMissions() {
-        if (mission.def || !ui.hint || share.offer) return;
-        hints.intro = true;
-        refreshHint();
     }
 
     // "3. Escape the Sun ★★☆"
@@ -13343,20 +13421,12 @@
 
         // Recolour when the theme changes (palette chips use fixed colours, the canvas redraws itself)
         new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        // The first press anywhere ends the missions' introduction; a press on the canvas or the
-        // palette (getting on with it) ends the scene's tip too. Notes run out by themselves.
+        // A press on the canvas or the palette (getting on with it) ends the scene's tip. Notes run out
+        // by themselves.
         window.addEventListener('pointerdown', (e) => {
             lastPointerType = e.pointerType || 'mouse';
-            hints.intro = false;
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
-            refreshHint();
-        }, true);
-        // (for the keyboard, a key pressed in the simulation, other than moving about with Tab)
-        window.addEventListener('keydown', (e) => {
-            if (!hints.intro || ['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
-            if (!(e.target && e.target.closest && e.target.closest('.simulation-area-wrapper'))) return;
-            hints.intro = false;
             refreshHint();
         }, true);
         bindHint();
