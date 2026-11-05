@@ -7794,12 +7794,11 @@
         return back || null;
     }
 
-    // Every frame: the achieved speed, the caption (it changes with the scene) and the step button
+    // Every frame: the achieved speed and the caption (it changes with the scene)
     function updateTimeControls() {
         measurePace();
         const key = `${settings.scene}|${settings.speed}`;
         if (key !== captionKey) { captionKey = key; setText(ui.speedNote, speedCaption(settings.speed)); }
-        if (ui.step && ui.step.disabled === paused) ui.step.disabled = !paused;
     }
 
     // One step while paused: a 60 fps frame's worth of time at the chosen speed, in whole integrator
@@ -7825,11 +7824,8 @@
     // or Option (which on Windows also reports Ctrl).
     function bindTimeControls() {
         if (ui.step) {
-            ui.step.addEventListener('click', (e) => {
-                stepForward();
-                // After a click or tap (not a key press), Space should play again rather than press
-                // this button once more
-                if (e.detail) ui.step.blur();
+            ui.step.addEventListener('click', () => {
+                if (paused) stepForward(); else setPaused(true);
             });
         }
         window.addEventListener('keydown', (e) => {
@@ -11481,8 +11477,7 @@
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
         for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
-        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
-        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); }); };
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.shareBtn, copyShareLink);
         onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
         document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
@@ -11971,10 +11966,7 @@
 
     function bindHistory() {
         Object.assign(ui, { undoBtn: byId('undoBtn'), redoBtn: byId('redoBtn'), rewindBtn: byId('rewindBtn') });
-        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
-        const onClick = (btn, action) => {
-            if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); });
-        };
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.undoBtn, undoStep);
         onClick(ui.redoBtn, redoStep);
         onClick(ui.rewindBtn, runAgain);
@@ -13227,6 +13219,8 @@
         if (icon) { icon.classList.toggle('fa-pause', !paused); icon.classList.toggle('fa-play', paused); }
     }
 
+    let focusByPointer = false;
+
     function bindControls() {
         const bindCheck = (el, key, after) => {
             if (!el) return;
@@ -13308,14 +13302,23 @@
                 e.preventDefault();
                 return;
             }
-            // Space pauses, unless it would type, press a button or tick a box
+            // Space pauses, unless it would type, or press what the keyboard has moved to. A button or
+            // switch last used with the pointer lets go instead (or Space would add that body again).
             const t = e.target;
-            const takesSpace = t && ((t.tagName === 'INPUT' && t.type !== 'range') || ['TEXTAREA', 'SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName) || t.isContentEditable);
-            if ((e.key === ' ' || e.code === 'Space') && !takesSpace && !e.repeat) {
-                setPaused(!paused);
-                e.preventDefault();
-            }
+            if ((e.key !== ' ' && e.code !== 'Space') || e.repeat || !t) return;
+            const types = (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable;
+            const presses = (t.tagName === 'INPUT' && t.type !== 'range') || ['SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName);
+            if (types || (presses && !focusByPointer)) return;
+            if (presses) t.blur();
+            setPaused(!paused);
+            e.preventDefault();
         }, true);
+        // (how the focus last moved: within a moment of a press or a click, it was the pointer's doing)
+        let pointerAt = -Infinity;
+        const pointerUsed = () => { pointerAt = performance.now(); };
+        window.addEventListener('pointerdown', pointerUsed, true);
+        window.addEventListener('click', (e) => { if (e.detail) pointerUsed(); }, true);
+        document.addEventListener('focusin', () => { focusByPointer = performance.now() - pointerAt < 100; });
 
         // Recolour when the theme changes (palette chips use fixed colours, the canvas redraws itself)
         new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
