@@ -9187,8 +9187,8 @@
         const v = settings.velocities;
         let h;
         if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
-                : '<strong>Drag</strong> a body into space. Tap one, then tap <strong>Edit</strong> to change it.';
+            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim its arrow or Edit it.'
+                : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
         } else {
             h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
