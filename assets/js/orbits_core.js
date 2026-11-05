@@ -1035,7 +1035,11 @@
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
-            track: null                   // period measurement (Kepler's 3rd law)
+            track: null,                  // period measurement (Kepler's 3rd law)
+            // Set later on, but named here so every body has the same shape: the integrator's loops run
+            // far faster over one shape than over many (with too many, each number written is boxed anew)
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null,
+            navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
 
@@ -7335,7 +7339,7 @@
         pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
-        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
+        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
         const me = list[src.indexOf(b)];
         me.vx = rel.v[0]; me.vy = rel.v[1];
         if (rel.p) { const pc = list[src.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
