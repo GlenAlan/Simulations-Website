@@ -3280,7 +3280,7 @@
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote'), frameNote: byId('frameNote') });
+    Object.assign(ui, { turnNote: byId('turnNote') });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -3499,7 +3499,6 @@
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
-            if (ui.frameNote) ui.frameNote.hidden = !!P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
                 const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
@@ -5227,6 +5226,7 @@
             const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
                 : (b ? `${b.name} is the heaviest body here. Click or tap a body that orbits it.` : '');
             if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
+            ui.eccNote.hidden = usable && !mission.def;   // (why the slider can't move; else its tooltip says)
         }
         syncOrbitFacts(b, usable);
         missionLockSidebar();
@@ -9259,6 +9259,8 @@
     // to where it fits, rather than leaving the header in view and the info column cut off below.
     function bindTurn() {
         const dc = canvas.closest('.simulation-display-container');
+        // (held sideways as the page opens: the simulation fills the screen straight away, under the header)
+        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) }); }, { once: true });
         if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
         let inView = false;
         new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
@@ -11558,9 +11560,30 @@
     // ------------------------------------------------------------------
     // Controls, the page's start, and the checks four times a second
     // ------------------------------------------------------------------
+    // A folded group of the settings says what it holds: the orbit's shape, the view, the laws switched on
+    function syncFolds() {
+        const on = [[ui.k1, '1st'], [ui.k2, '2nd'], [ui.k3, '3rd']].filter((k) => k[0] && k[0].checked).map((k) => k[1]);
+        setText(ui.foldKepler, on.join(', '));
+        const opt = ui.frame && ui.frame.options[ui.frame.selectedIndex];
+        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '') : '');
+        setText(ui.foldOrbit, ui.ecc && !ui.ecc.disabled && ui.eccVal ? `e = ${ui.eccVal.textContent}` : '');
+    }
+
+    // Everything panned or zoomed out of view: Fit view stands out, and says why once
+    function checkInView() {
+        if (!ui.fit || !viewW || !bodies.length || dragging()) return;
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy); return x > 0 && x < viewW && y > 0 && y < viewH; });
+        if (out === ui.fit.classList.contains('is-wanted')) return;
+        ui.fit.classList.toggle('is-wanted', out);
+        if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
+        else clearHint('note', 'lost');
+    }
+
     function shareTick() {
         const now = performance.now();
         syncSceneList();
+        syncFolds();
+        checkInView();
         stabilityTick(now);
         autosaveTick(now);
     }
@@ -11574,6 +11597,7 @@
 
     function bindShare() {
         Object.assign(ui, {
+            foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'), foldOrbit: byId('foldOrbit'),
             shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });

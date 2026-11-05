@@ -492,7 +492,7 @@ html:not(.dark-mode) .orb-hint.is-open::after {
     .orb-hint {
         order: 0;
         flex: 0 0 auto;
-        height: 7.1em;
+        height: auto;
         display: block;
         font-size: 0.88em;
         line-height: 1.4;
@@ -1051,6 +1051,44 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     margin-top: -0.35em;
     font-size: 0.8em;
     opacity: 0.75;
+}
+
+.sim-controls-content .orb-note:empty {
+    display: none;
+}
+
+/* What the speed means, beside it */
+.sim-controls-content label .orb-speed-note {
+    float: right;
+    margin: 0.15em 0 0;
+}
+
+/* Said only while it's on, as it's a lot to take in */
+.sim-controls-content .sim-control-group:has(#realisticToggle:not(:checked)) .orb-realistic-note {
+    display: none;
+}
+
+/* A folded group: its name, what it holds now, and the chevron */
+.sim-controls-more > summary .orb-fold-state {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 1.05em;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-align: right;
+    text-transform: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.75;
+}
+
+.sim-controls-more > summary > :first-child {
+    flex: 0 0 auto;
+    max-width: 75%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Arrow keys beside the "Show" switches */
@@ -1674,7 +1712,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     .orb-hint {
         grid-area: hint;
         height: auto;
-        min-height: 7.1em;
         max-height: 11.3em;
         overflow-y: auto;
     }
