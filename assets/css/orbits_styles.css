@@ -1533,10 +1533,11 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     opacity: 0.35;
 }
 
-/* Narrow screens: the buttons leave the hint less width, so it gets a third line */
+/* Narrow screens: the buttons leave the hint less width, so it gets a third line (or a line and a
+   finger-wide button, which is a little taller) */
 @media (max-width: 600px) {
     .orb-hint {
-        height: 4.05em;
+        height: 4.5em;
         -webkit-line-clamp: 3;
         line-clamp: 3;
     }

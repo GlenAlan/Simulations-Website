@@ -9187,7 +9187,7 @@
         const v = settings.velocities;
         let h;
         if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim its arrow or Edit it.'
+            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
                 : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
         } else {
             h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
@@ -12255,7 +12255,7 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: up.dv1 + up.dv2,
                 goal: { type: 'orbit', r: 1.5, tol: 0.05 },
-                goalText: 'Reach a round orbit on the ring, 1.5 AU from the Sun.',
+                goalText: 'Reach a round orbit on the ring.',
                 idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off: a Hohmann transfer, the cheapest way up.',
                 parText: `${f1(up.dv1)} km/s out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
                 teach: 'That was a Hohmann transfer: speeding up at one end of an orbit raises the other end.',
@@ -12267,7 +12267,7 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.2, 1.2, -1.2, 1.2], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: down.dv1 + down.dv2,
                 goal: { type: 'orbit', r: 0.723, tol: 0.05 },
-                goalText: 'Drop to a round orbit on the ring, at Venus\'s distance.',
+                goalText: 'Drop to a round orbit on the ring.',
                 idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Burn backwards again at the closest point to round it off. You speed up as you fall.',
                 parText: `${f1(down.dv1)} km/s backwards down to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
                 teach: 'You slowed down twice, yet you are now faster than when you started: lower orbits are quicker.',
