@@ -1533,10 +1533,11 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     opacity: 0.35;
 }
 
-/* Narrow screens: the buttons leave the hint less width, so it gets a third line */
+/* Narrow screens: the buttons leave the hint less width, so it gets a third line (or a line and a
+   finger-wide button, which is a little taller) */
 @media (max-width: 600px) {
     .orb-hint {
-        height: 4.05em;
+        height: 4.5em;
         -webkit-line-clamp: 3;
         line-clamp: 3;
     }
@@ -3448,20 +3449,6 @@ dialog.orb-help::backdrop {
         height: auto;
         min-height: 2.7em;
     }
-}
-
-/* ---------- About: "How to use it" in short groups, each headed by a quiet label ---------- */
-.description-area p.orb-howto-group {
-    margin: 0.9em 0 0.3em;
-    font-size: 0.78em;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    opacity: 0.85;
-}
-
-.description-area h4 + p.orb-howto-group {
-    margin-top: 0;
 }
 
 /* ---------- Phones held sideways (and other short, wide windows): the info bar beside the canvas ----------

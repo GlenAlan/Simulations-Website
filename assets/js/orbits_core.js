@@ -176,7 +176,7 @@
         },
         ellipse: {
             units: 'au', Tref: 1, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
-            tip: 'Turn on Kepler\'s 2nd law: the planet speeds up near the Sun, yet the shaded areas stay equal.',
+            tip: 'With Kepler\'s 2nd law on, the shaded areas stay equal as the planet speeds up.',
             bodies: [{ kind: 'sun' }, { kind: 'earth', name: 'Planet', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }]
         },
         inner: {
@@ -203,7 +203,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: 'View from the giant planet (double-click or double-tap it): then the star circles the planet, as the Sun seems to circle Earth.',
+            tip: 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.',
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -221,7 +221,7 @@
         },
         figure8: {
             units: 'au', Tref: 1.0067, subject: 0, trail: 4, vref: 5.5, box: [-1.1, 1.1, -0.45, 0.45],
-            tip: 'A rare stable dance: three equal stars chase each other round a figure of eight. Compare it with "Three stars: chaos".',
+            tip: 'Three equal stars chase each other round a figure of eight: a rare stable dance.',
             bodies: (function () {
                 // Chenciner & Montgomery's figure-of-eight orbit (G = m = 1), scaled to 1 AU and 1 M_sun.
                 const vs = Math.sqrt(G);           // velocity unit: AU/yr
@@ -240,7 +240,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? Nudge one a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
+            tip: 'Three stars start at rest. Who gets thrown out? Then try Run backwards.',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -253,7 +253,7 @@
         // system for good.
         slingshot: {
             units: 'au', Tref: 1.4, subject: 2, forceBody: 1, trail: 7, vref: 2.75, box: [-7.4, 1.8, -3.2, 3.6],
-            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun, and the close-up from Jupiter.',
+            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 103.14 } },
@@ -265,7 +265,7 @@
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
             units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
-            tip: 'Turn on Realistic physics in the settings: relativity makes the orbit swing round, a rosette instead of an ellipse.',
+            tip: 'With Realistic physics on, relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
                 { kind: 'neutron', orbit: { around: 0, a: 1500 / AU_KM, e: 0.5, w: 0, nu: 180 } }
@@ -277,7 +277,7 @@
         // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
         tde: {
             units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, box: [-0.64, 0.11, -0.23, 0.23],
-            tip: 'Turn on Realistic physics in the settings: the star dips inside its Roche limit and the black hole\'s tides tear it apart.',
+            tip: 'With Realistic physics on, the black hole\'s tides tear this star apart.',
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -292,7 +292,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter herds 500 asteroids: Trojans 60° ahead of and behind it, and Hildas in a triangle that turns with it. In View from, choose "Rotating with Jupiter and the Sun" to see them stand still.',
+            tip: 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.',
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -321,7 +321,7 @@
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
             units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. With Realistic physics on, tides tear apart clumps that stray too close to Earth.',
+            tip: 'Moonlets left by a giant impact collide and stick: watch a moon build up.',
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -341,7 +341,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Realistic physics is on (in the settings). Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
+            tip: 'Speed it up: with Realistic physics on, this orbit turns 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -367,7 +367,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Realistic physics is on (in the settings): gravitational waves carry off energy, so the black holes spiral together and merge.',
+                tip: 'With Realistic physics on, gravitational waves drain the orbit until the black holes merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -610,7 +610,7 @@
     // Scenes with dated: true start on the start date, and the info bar shows the date
     SCENES.solar = {
         units: 'au', Tref: 1, subject: 3, dated: true, box: [-1.8, 1.8, -1.8, 1.8],
-        tip: 'Real positions on the start date (change it in the settings). Fit view shows the outer planets. Orbits lie flat here; the real ones tilt a few degrees.',
+        tip: 'Real positions on the start date, in the settings. Fit view shows the outer planets.',
         get bodies() { return solarSystemBodies(startDate.chosen); }
     };
 
@@ -2285,7 +2285,7 @@
         // (said in the hint line too, which screen readers announce)
         const kind = big.kind === 'blackhole' ? 'black hole' : big.kind === 'neutron' ? 'neutron star' : 'body';
         const lost = m1 + m2 - big.m;
-        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
+        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `. ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
         // A black hole rings as it settles, at the frequency and damping of its main (l = m = 2) mode:
         // omega = 0.3737 c^3/(GM), damping time GM/(0.0890 c^3) (Berti, Cardoso & Will 2006)
         if (big.kind === 'blackhole') {
@@ -3045,7 +3045,7 @@
         // (the last scene's notes go with it; this one's tip shows until the canvas or palette is used)
         clearHint('note');
         clearHint('missionNote');
-        showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
+        showHint('tip', def.tip || null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
         stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
     }
@@ -3422,13 +3422,14 @@
         markPreview();
         syncFrameUi();
         updatePopover(true);
-        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`, { ms: 7000 });
+        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns, so both stand still.`, { ms: 7000, tag: 'turn' });
         return true;
     }
 
     // Choosing any other frame ends a rotating one (setFrame keeps the screen still; the turn glides off)
     function leaveTurning() {
         if (!turn.on) return;
+        clearHint('note', 'turn');
         Object.assign(turn, { on: false, aId: null, bId: null });
         pred.key = '';
         markPreview();
@@ -3511,9 +3512,9 @@
             ui.turnNote.hidden = !P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
-                const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
-                const lag = settings.lagrange ? '' : ' Lagrange points are in More options.';
-                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}${lag}`);
+                const ecc = el && el.bound && el.e > 0.03 ? ` ${sentenceCase(theName(P.B))} slides in and out along its ellipse.` : '';
+                const lag = settings.lagrange ? '' : ' Lagrange points: More options.';
+                setText(ui.turnNote, `Arrows show motion in this turning view.${ecc}${lag}`);
             }
         }
     }
@@ -3691,10 +3692,10 @@
         const b = theName(Q.B), a = theName(Q.A);
         if (i < 3) {
             const where = [`between ${b} and ${a}`, `just beyond ${b}`, `on the far side of ${a}`][i];
-            return `L${i + 1}, ${where}: a body here keeps pace with ${b}, but drifts away if nudged.`;
+            return `L${i + 1}, ${where}: keeps pace with ${b}, but drifts away if nudged.`;
         }
         const where = i === 3 ? 'ahead of' : 'behind';
-        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: a stable spot, where small bodies gather (like Jupiter's Trojans).`
+        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: stable, so small bodies gather (like Jupiter's Trojans).`
             : `L${i + 1}, 60° ${where} ${b}: not stable, as ${b} is too heavy compared with ${a}.`;
     }
 
@@ -3802,7 +3803,7 @@
     const WELL_LEVELS = 9;        // about this many steps between contour lines across the depths in view
     const WELL_SOFT_MS = 150;     // a picture shifted or scaled is painted afresh after this long
     Object.assign(settings, { well: false, lagrange: false });
-    Object.assign(ui, { wellToggle: byId('wellToggle'), wellNote: byId('wellNote'), lagrangeToggle: byId('lagrangeToggle') });
+    Object.assign(ui, { wellToggle: byId('wellToggle'), lagrangeToggle: byId('lagrangeToggle') });
     const well = {
         small: null, smallCtx: null, img: null,   // the shading, one pixel per grid point
         U: null,                          // the depth at each grid point
@@ -4058,20 +4059,12 @@
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
-    // (its note in the settings says what it is, and once it is on, how to read it)
-    const WELL_NOTE_OFF = 'Gravity well: how deep each body\'s pull reaches, as shading and contour lines';
-    const WELL_NOTE_ON = 'Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong';
-    function setWell(on, fromKey) {
+    function setWell(on, say) {
         settings.well = !!on;
         if (ui.wellToggle) ui.wellToggle.checked = settings.well;
-        if (ui.wellNote && ui.wellNote.firstChild && ui.wellNote.firstChild.nodeType === 3) {
-            ui.wellNote.firstChild.nodeValue = settings.well ? WELL_NOTE_ON : WELL_NOTE_OFF;
-        }
         well.sig = '';
-        if (fromKey) {
-            showHint('note', settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
-                : '<strong>Gravity well hidden.</strong> W shows it again.', { ms: 6000, tag: 'well' });
-        } else if (!settings.well) clearHint('note', 'well');
+        if (say && settings.well) showHint('note', '<strong>Gravity well:</strong> darker is deeper, and each line joins points of equal depth.', { ms: 6000, tag: 'well' });
+        else if (!settings.well) clearHint('note', 'well');
     }
     function setLagrange(on) {
         settings.lagrange = !!on;
@@ -4110,13 +4103,13 @@
         const m = lagrangeAt(pt.x, pt.y, LAGRANGE_TAP);
         if (!m) return;
         const comma = m.text.indexOf(',');
-        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
+        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000, tag: 'chosen' });
     }
 
     function bindWell() {
         if (ui.wellToggle) {
             ui.wellToggle.checked = settings.well;
-            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked));
+            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked, true));
         }
         if (ui.lagrangeToggle) {
             ui.lagrangeToggle.checked = settings.lagrange;
@@ -5017,6 +5010,7 @@
         k2.bid = null;
         resetOrbitChart();
         syncEccentricity(true);
+        clearHint('note', 'chosen');   // (about the last one: its Lagrange point, or a Zoom in that would now zoom elsewhere)
         refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
@@ -5099,10 +5093,10 @@
 
     // The note under "Bodies you drop or move" says what the chosen option does (see launch)
     const PLACEMENT_NOTES = {
-        circular: 'Each starts on a circular orbit round the body it would orbit there.',
-        keep: 'A body you move keeps its velocity; a new one starts at rest.',
-        rest: 'Each starts at rest in this view, then falls.',
-        throw: 'Flick a body as you let go, and it keeps your speed.'
+        circular: 'Round the body it would orbit there.',
+        keep: 'A new body starts at rest.',
+        rest: 'Then it falls.',
+        throw: 'Flick it as you let go.'
     };
     function syncPlacementNote() {
         setText(byId('placementNote'), PLACEMENT_NOTES[settings.placement] || PLACEMENT_NOTES.circular);
@@ -5146,7 +5140,7 @@
     // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
     function moonNote(b) {
         const p = b && b.primary;
-        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000 });
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000, tag: 'chosen' });
     }
 
     // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
@@ -5244,8 +5238,7 @@
         if (ui.eccNote) {
             const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
                 : (b ? `${b.name} is the heaviest body here. Click or tap a body that orbits it.` : '');
-            if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
-            ui.eccNote.hidden = usable && !mission.def;   // (why the slider can't move; else its tooltip says)
+            if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;   // (read out; the tab's own note shows)
         }
         missionLockSidebar();
         if (!usable) {
@@ -5839,7 +5832,7 @@
         if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
         const strip = Math.min(edges.strip, viewH - fs - 18);
         out.push([0, strip, Math.min(viewW, edges.scaleRight + 6), viewH]);
-        out.push([Math.min(edges.noteLeft, viewW - 120) - 6, strip, viewW, viewH]);
+        if (edges.noteLeft < viewW) out.push([edges.noteLeft - 6, strip, viewW, viewH]);
         if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
         return out;
     }
@@ -6597,10 +6590,21 @@
         return `${(+kms.toPrecision(2)).toLocaleString('en-US')} km/s`;
     }
 
+    // On a small canvas the key keeps out of the way: there for a few seconds as a scene opens or an
+    // arrow is switched on, then only while paused (in a mission the clock stops for each burn, so not
+    // there) or dragging
+    const KEY_MS = 6000;
+    const keyWake = { scene: null, v: false, f: false, until: 0 };
     function drawArrowLegend(C) {
         legend.shown = false;
         const showV = settings.velocities, showF = settings.forces;
         if (cleanRender || !bodies.length || !(showV || showF)) return;
+        const now = performance.now();
+        if (keyWake.scene !== scene || (showV && !keyWake.v) || (showF && !keyWake.f)) keyWake.until = now + KEY_MS;
+        Object.assign(keyWake, { scene, v: showV, f: showF });
+        const tight = viewW < 560 || viewH < 320;
+        const away = tight && now >= keyWake.until && !drags.size && !(paused && !mission.def);
+        if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
         // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
@@ -6614,13 +6618,11 @@
             if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
-        const now = performance.now();
         ctx.font = font(fs);
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
         const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
         const textW = Math.max(vTW, fTW);
         // On a small canvas the two arrows share one row, just above the scale bar; elsewhere a row each
-        const tight = viewW < 560 || viewH < 320;
         const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
         const oneRow = tight && rowW <= viewW * 0.8;
         const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
@@ -6640,7 +6642,7 @@
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
             }
         }
-        legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
+        legend.alpha += ((away ? 0 : legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
         // (the arrows as drawArrows draws them: the same width and lengths)
         const aw = clamp(2 * sizeScale, 1.5, 2.4);
         ctx.globalAlpha = legend.alpha;
@@ -6687,7 +6689,7 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
-            return `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${escapeHtml(theName(b))}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`;
+            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}, joined tip to tail.`;
         }, { ms: 9000, tag: 'pulls' });
     }
 
@@ -6699,8 +6701,11 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!(b && orbitingBody(b) && b.m >= 1e-17)) return '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.';
-            const who = escapeHtml(theName(b)), p = escapeHtml(theName(b.primary));
-            return `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`;
+            measureLimits(b);
+            const who = escapeHtml(theName(b)), says = [];
+            if (lim.hill > 0) says.push(`<strong>Hill sphere:</strong> ${who}'s moons stay inside`);
+            if (lim.roche > 0) says.push(`<strong>Roche limit:</strong> any closer, and tides would tear it apart`);
+            return says.length ? `${says.join('. ')}.` : `<strong>Hill sphere and Roche limit:</strong> none for ${who}.`;
         }, { ms: 9000, tag: 'limits' });
     }
 
@@ -6890,6 +6895,10 @@
         ctx.globalAlpha = 1;
     }
 
+    // "Sizes not to scale" says so for a few seconds as a scene opens or Realistic physics changes
+    const SIZE_NOTE_MS = 8000;
+    const sizeNote = { scene: null, realistic: null, until: 0 };
+
     // Overlays: Kepler cards (top right), scale bar (bottom left), "not to scale" note, pause label.
     function drawOverlays(C, subj) {
         if (cleanRender) return;
@@ -6910,12 +6919,19 @@
         ctx.fillStyle = C.subtle;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        const sl = scaleLabel(nice), note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+        const sl = scaleLabel(nice), now = performance.now();
         ctx.fillText(sl, x0 + len + 6, y0 + 2);
-        ctx.textAlign = 'right';
-        ctx.fillText(note, viewW - pad - 2, y0 + 2);
         edges.scaleRight = x0 + len + 6 + ctx.measureText(sl).width;
-        edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        if (sizeNote.scene !== scene || sizeNote.realistic !== settings.realistic) {
+            Object.assign(sizeNote, { scene, realistic: settings.realistic, until: now + SIZE_NOTE_MS });
+        }
+        edges.noteLeft = Infinity;
+        if (now < sizeNote.until) {
+            const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+            ctx.textAlign = 'right';
+            ctx.fillText(note, viewW - pad - 2, y0 + 2);
+            edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        }
         edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
@@ -7919,6 +7935,7 @@
     function timeNotice() {
         const back = timeDir < 0 ? 'Running backwards' : '';
         if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
+        if (paused && mission.def) return null;   // (its console says so, and the clock stops for each burn)
         if (paused) return back ? 'Paused · running backwards' : 'Paused';
         if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
         return back || null;
@@ -8162,29 +8179,14 @@
             s.setAttribute('aria-checked', s === on ? 'true' : 'false');
             s.tabIndex = s === (on || sw[0]) ? 0 : -1;   // (a colour of its own, as a star's: the stop is on the first)
         });
-        // Newton's law for this body and its primary, and its orbit
-        let info = '';
-        if (sr.p) {
-            const p = sr.p;
-            const r = Math.hypot(b.x - p.x, b.y - p.y);
-            const Fn = forceToNewtons((G * b.m * p.m) / (r * r));
-            const el = elementsOf(b, p);
-            const dd = fmtDistance(r);
-            info = `<strong>Pull of ${escapeHtml(theName(p))}:</strong> F = Gm₁m₂/r² = ${fmtSci(Fn, 2)} N<br>`;
-            info += el.bound ? `<strong>Orbit:</strong> ${dd.v} ${dd.u} away, e = ${el.e.toFixed(3)}, period ${fmtDuration(el.T, true)}`
-                : `<strong>Not bound:</strong> ${dd.v} ${dd.u} away and escaping (e = ${el.e.toFixed(2)})`;
-        } else if (bodies.length > 1) {
-            info = `<strong>Heaviest body.</strong> Pull of the others: ${fmtSci(forceToNewtons(Math.hypot(b.fx, b.fy)), 2)} N`;
-        } else {
-            info = '<strong>On its own:</strong> nothing to pull on it.';
-        }
-        info += `<br><strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
-        // How hard it is to leave its surface: sqrt(2GM/R), the speed of light at a black hole's horizon
-        if (hole) info += '<br><strong>Escape speed</strong> at the event horizon: the speed of light';
+        // Its mass in kg, and how hard it is to leave its surface: sqrt(2GM/R), the speed of light at a
+        // black hole's horizon. (Its pull and its orbit are in the info bar and the other tabs.)
+        let info = `<strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
+        if (hole) info += '<br><strong>Escape speed at its horizon:</strong> the speed of light';
         else if (b.R > 0.1) {
             const vs = Math.sqrt((2 * G * b.m) / (b.R / AU_KM)) * AUYR_KMS;
             const f = fmtSpeedKms(vs);
-            info += `<br><strong>Escape speed</strong> from its surface: ${f.v} ${f.u}${lightFraction(vs)}`;
+            info += `<br><strong>Surface escape speed:</strong> ${f.v} ${f.u}${lightFraction(vs)}`;
         }
         if (ui.popInfo.innerHTML !== info) ui.popInfo.innerHTML = info;
         updateEditor(force);
@@ -8648,8 +8650,7 @@
         const vc = s.p ? Math.sqrt((G * (b.m + s.p.m)) / Math.max(s.r, 1e-15)) : s.v;
         showField('speed', s.v, speedUnit(vc));
         showField('angle', s.angle, { label: '°', f: DEG });
-        setText(ui.popAngleNote, s.screen ? 'Relative to the centre of mass: 0° points right, 90° up.'
-            : '0° is sideways, as in a circle; + is outward, − inward.');
+        setText(ui.popAngleNote, s.screen ? '0° points right, 90° up.' : '0° is sideways, + outward, − inward.');
         ui.popSenseAcw.setAttribute('aria-pressed', !s.screen && s.sense > 0 ? 'true' : 'false');
         ui.popSenseCw.setAttribute('aria-pressed', !s.screen && s.sense < 0 ? 'true' : 'false');
         const usual = s.screen ? 0 : usualSense(s.p, b);
@@ -8670,18 +8671,16 @@
             ui.popPeriodIn.placeholder = 'escaping';
             ui.popApoIn.placeholder = 'never';
             const d = fmtDistance(o.el.a);
-            const e = o.el.e;
-            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}, e = ${e.toFixed(3)}: ${e < 0.005 ? 'a circle' : e < 0.995 ? 'an ellipse' : 'a very thin ellipse'}.`
-                : `Escaping (e = ${e.toFixed(2)}). Set a farthest distance to make it orbit.`;
+            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}` : 'Escaping. Set a farthest distance to make it orbit.';
         } else {
             showField('period', NaN, periodUnit(scene.Tref));
             for (const n of ['peri', 'apo']) showField(n, NaN, distUnit(scene.units === 'km' ? 0 : 1));
             ui.popPeriodIn.placeholder = ui.popApoIn.placeholder = '';
             // (the heavier of a pair that orbit each other: their orbit is set from the lighter one)
             const partner = b.primary && b.primary.primary === b ? b.primary : null;
-            shape = alone ? 'It is on its own: there is nothing to orbit.'
-                : partner ? `${b.name} and ${partner.name} orbit each other: set their orbit from ${partner.name}'s menu.`
-                    : `${b.name} is the heaviest body here: it doesn't orbit another. Choose one that orbits it.`;
+            shape = alone ? 'Nothing to orbit.'
+                : partner ? `${b.name} and ${partner.name} orbit each other: set it from ${partner.name}'s menu.`
+                    : `${b.name} is the heaviest: choose a body that orbits it.`;
         }
         setText(ui.popOrbitShape, shape);
         // (an escaping orbit's period and farthest distance can be typed, not stepped)
@@ -9045,9 +9044,9 @@
         btn.className = 'orb-chip';
         btn.dataset.kind = kind;
         const label = kind === 'custom' ? 'Custom' : k.name;
-        btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
-            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it onto a planet, or click to give the chosen planet a moon.`
-                : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
+        btn.dataset.title = kind === 'custom' ? 'Your own body: drop it, then set its mass, speed and colour'
+            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drop it on a planet, or click for a moon of the chosen planet`
+                : `${k.name}, ${k.info} (${fmtMass(k.m)})`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
         const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
@@ -9136,7 +9135,6 @@
             if (b && d.kind === 'custom') openPopover(b);
         }
         dropHost = null;
-        throwTipSeen(d);
         clearHint('drag');
     }
 
@@ -9193,8 +9191,8 @@
         const v = settings.velocities;
         let h;
         if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
-                : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
+            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
+                : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
         } else {
             h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
@@ -9235,7 +9233,7 @@
             const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
             if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
         }
-        showHint('drag', h + throwTip(true));
+        showHint('drag', settings.placement === 'throw' ? `${h} <strong>Flick</strong> it as you let go to throw it.` : h);
     }
 
     // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
@@ -9327,9 +9325,6 @@
         if (sideways.addEventListener) sideways.addEventListener('change', onTurn); else if (sideways.addListener) sideways.addListener(onTurn);
     }
 
-    // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
-    let throwTipShown = false;
-
     function dragHint(d) {
         const b = d.body;
         if (!b) return;
@@ -9341,26 +9336,26 @@
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
-            showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
+            showHint('drag', `<strong>Let go:</strong> it ${how}.`);
         } else if (b.aim && b.aim.burn) {
             showHint('drag', burnHint(b, d));
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
             const av = aimedVelocity(b), v = fmtSpeedKms(Math.hypot(av.x - (L ? L.vx : totals(bodies).vx), av.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
-            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
+            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
             const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
-            const fate = snap === 'circular' ? 'exactly the circular speed, a circle'
-                : snap === 'escape' ? 'exactly the escape speed, so it just escapes (a parabola)'
+            const fate = snap === 'circular' ? 'circular speed, a circle'
+                : snap === 'escape' ? 'escape speed, so it only just gets away'
                     : pr.el.bound ? (pr.el.e < 0.01 ? 'a circle' : `an ellipse, e = ${pr.el.e.toFixed(2)}`) : `it escapes (e = ${pr.el.e.toFixed(2)})`;
             let h = `<strong>${v.v} ${v.u}</strong> relative to ${escapeHtml(theName(pr.p))}: ${fate}.`;
             // (on a touch screen, fine control comes from holding the tip still before dragging it)
             const fineTouch = coarse() && aimFineTouch(d);
             if (!snap && !fineTouch) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
-            if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
-            else if (fineTouch) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+            if (!coarse()) h += d.fine ? ' <strong>Fine control.</strong>' : ' <strong>Shift:</strong> finer.';
+            else if (fineTouch) h += ' <strong>Fine control:</strong> a tenth of your finger\'s move.';
             showHint('drag', h);
         }
     }
@@ -9602,7 +9597,6 @@
         computeForces();
         computePrimaries();
         syncEccentricity(true);
-        throwTipSeen(d);
         clearHint('drag');
         clearHint('tip');
         if (dropHost && d.mode === 'move' && apply) moonNote(b);
@@ -9766,7 +9760,7 @@
             past.wall = null;
             setPaused(true);
             acc = 0;
-            pastNote('<strong>Stopped:</strong> two bodies merged about now, too long ago for the simulation to remember how to take them apart.', 8000);
+            pastNote('<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
         }
     }
 
@@ -9839,8 +9833,8 @@
         const back = list.filter((b) => !had.has(b));
         for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
         const name = back.length ? escapeHtml(back[0].name) : 'A body';
-        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself, so it is put back as it was just before.`
-            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself, so the bodies are put back as they were just before they met.`;
+        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
+            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
     }
 
@@ -9971,7 +9965,7 @@
         }
         if (past.drift && !past.noted) {
             past.noted = true;
-            pastNote('<strong>Drifted from the true past.</strong> Tiny rounding errors grow fast in chaos, so the bodies no longer retrace their paths. Faint dashed discs show where they really were.', 9000);
+            pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
         }
     }
 
@@ -10003,7 +9997,7 @@
     // the flyby card) start again; the history, the trails and any merges to undo carry on.
     function setReverse(on, quiet) {
         if (on && mission.def) {
-            missionNote('<strong>Mission rules:</strong> in a mission, time only runs forwards (Undo takes a burn back).');
+            missionNote('<strong>Mission rules:</strong> time only runs forwards. Undo takes a burn back.');
             on = false;
         }
         const dir = on ? -1 : 1;
@@ -10017,7 +10011,7 @@
             pred.key = '';
             edit.previewDirty = true;
             past.noted = false;
-            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> the clock counts down and every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
+            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
         }
         syncReverseUi();
     }
@@ -10139,22 +10133,11 @@
     // The hint while a body is moved, when it will be thrown: "flies off at 12 km/s ..."
     function throwHint(d) {
         const now = performance.now();
-        if (!flickPx(d, now)) return 'stays put in this view. <strong>Flick</strong> it as you let go to throw it';
+        if (!flickPx(d, now)) return 'stays put. <strong>Flick</strong> it as you let go to throw it';
         const v = throwVelocity(d, now), fv = throwBase(d);
         const s = fmtSpeedKms(Math.hypot(v[0] - fv.x, v[1] - fv.y) * AUYR_KMS);
-        return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
+        return `flies off at <strong>${s.v} ${s.u}</strong>`;
     }
-
-    // ...and how to find throwing, if it is off: during the first drag of a visit only (d: the drag)
-    function throwTip(drop, d) {
-        if (settings.placement === 'throw') return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
-        const g = d || paletteDrag;
-        if (throwTipShown && !(g && g.throwTipped)) return '';
-        if (g) g.throwTipped = true;
-        return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
-    }
-    // (at the end of a drag: the pointer to throwing has been seen)
-    function throwTipSeen(d) { if (d && d.throwTipped) throwTipShown = true; }
 
     // A body being dragged from the palette: the velocity it would be thrown with
     function drawThrowArrow(C) {
@@ -10636,7 +10619,7 @@
     };
     const CSV_EMPTY = {
         kepler: 'Nothing to list yet: choose a body that orbits something.',
-        graphs: 'No graph data yet: show the graphs (the chart button under the canvas) and let it run.',
+        graphs: 'No graph data yet: show the Graphs and let it run.',
         bodies: 'There are no bodies.'
     };
     Object.assign(settings, { stability: false });
@@ -10862,7 +10845,7 @@
         const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
-            tip: `System #${seed}: ${desc}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? Any change restarts the timer.`,
+            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years?`,
             bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
         };
     }
@@ -11181,7 +11164,7 @@
         pred.key = '';
     }
 
-    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused: press play to run it, or Undo to go back.`;
+    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused. Press play, or Undo to go back.`;
 
     // Open a link's setup. fromHash: it came with the page (or was pasted into its address), so the hash
     // is cleared afterwards and a reload doesn't open it again over any changes. Resolves to { ok, message }.
@@ -11231,7 +11214,7 @@
             }
         }
         const kb = `${Math.max(1, Math.round(link.length / 1024)).toLocaleString('en-US')} KB`;
-        let msg = ok ? 'Link copied. Opening it shows this setup, paused.' : 'Copy the link from the box below.';
+        let msg = ok ? 'Link copied.' : 'Copy the link from the box below.';
         if (link.length > LONG_LINK) {
             msg = `${ok ? 'Link copied, but it is' : 'This link is'} long (${kb}, ${n.toLocaleString('en-US')} ${n === 1 ? 'body' : 'bodies'}): some apps cut long links short.${ok ? '' : ' Copy it from the box below.'}`;
         }
@@ -11460,7 +11443,7 @@
         stab.ended = { kind, a: a.name, b: other ? other.name : '', years };
         const best = noteBest(years);
         saveStabilityBest();
-        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''} Change something and try again.`, 8000);
+        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''}`, 8000);
     }
 
     function eventText(e, dur) {
@@ -12276,9 +12259,9 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: up.dv1 + up.dv2,
                 goal: { type: 'orbit', r: 1.5, tol: 0.05 },
-                goalText: 'Reach a round orbit on the ring, 1.5 AU from the Sun.',
-                idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off. These two burns, a Hohmann transfer, are the cheapest way up.',
-                parText: `${f1(up.dv1)} km/s to stretch your orbit out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
+                goalText: 'Reach a round orbit on the ring.',
+                idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off: a Hohmann transfer, the cheapest way up.',
+                parText: `${f1(up.dv1)} km/s out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
                 teach: 'That was a Hohmann transfer: speeding up at one end of an orbit raises the other end.',
                 hint: (x) => transferHint(x, 1.5, 0.05, true),
                 fail: { fuel: 'Two burns are enough: forwards at the start, then forwards again at the far point.', crash: 'Burning backwards drops you towards the Sun.', time: 'Burn forwards until your orbit reaches the ring, then skip to the far point and burn again.' }
@@ -12288,9 +12271,9 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.2, 1.2, -1.2, 1.2], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: down.dv1 + down.dv2,
                 goal: { type: 'orbit', r: 0.723, tol: 0.05 },
-                goalText: 'Drop to a round orbit on the ring, at Venus\'s distance.',
-                idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Then burn backwards again at the closest point to round it off. You speed up as you fall, so a lower orbit is a faster one.',
-                parText: `${f1(down.dv1)} km/s backwards so your orbit dips to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
+                goalText: 'Drop to a round orbit on the ring.',
+                idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Burn backwards again at the closest point to round it off. You speed up as you fall.',
+                parText: `${f1(down.dv1)} km/s backwards down to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
                 teach: 'You slowed down twice, yet you are now faster than when you started: lower orbits are quicker.',
                 hint: (x) => transferHint(x, 0.723, 0.05, false),
                 fail: { fuel: 'Two burns are enough: backwards at the start, then backwards again at the closest point.', crash: 'Too much braking: you fell into the Sun. Burn backwards less.', time: 'Burn backwards until your orbit dips to the ring, then skip to the closest point and burn again.' }
@@ -12300,7 +12283,7 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-3.3, 0.65, -1.25, 1.25], bodies: [sun, probe({ around: 0, a: ea, e: ee, w: 0, nu: 180 })] },
                 craft: 1, ref: 0, target: null, budget: 8, limit: 2.5, par: escPeri,
                 goal: { type: 'escape' },
-                goalText: 'Escape the Sun for good, on as little fuel as you can.',
+                goalText: 'Escape the Sun on as little fuel as you can.',
                 idea: 'A burn adds the most energy where you are moving fastest (the Oberth effect). So wait until you swing closest to the Sun, then burn forwards.',
                 parText: `at 0.3 AU you move at ${f1(toKms(vPeri))} km/s and escaping takes ${f1(toKms(Math.sqrt(2 * G / 0.3)))} km/s (√(2GM/r)): ${f1(escPeri)} km/s more. Out at 3 AU it would take ${f1(escApo)} km/s.`,
                 teach: 'The same burn gives more energy when you are moving fast, which is why spacecraft burn close to a planet or the Sun.',
@@ -12316,8 +12299,8 @@
                 },
                 craft: 2, ref: 1, target: null, lock: 1, budget: 5, limit: 0.6, par: toKms(cVp - cVcap),
                 goal: { type: 'capture', lim: cLim, hill: hillJ },
-                goalText: 'You are falling past Jupiter too fast. Brake to stay in orbit, inside the ring.',
-                idea: 'Slow down where you are moving fastest, at the closest point to Jupiter: there each km/s of braking takes away the most energy (the Oberth effect again).',
+                goalText: 'Brake to stay in orbit round Jupiter, inside the ring.',
+                idea: 'Brake where you are moving fastest, at the closest point to Jupiter: there each km/s takes away the most energy (the Oberth effect again).',
                 parText: `at the closest point, ${Math.round(cRp * AU_KM / 1e6)} million km from Jupiter, slow from ${f1(toKms(cVp))} to ${f1(toKms(cVcap))} km/s: an orbit that stays inside the ring (from v² = GM(2/r − 1/a)).`,
                 teach: 'You braked at the closest point, where it counts most. The Juno probe was captured by Jupiter in just this way.',
                 hint: captureHint,
@@ -12332,7 +12315,7 @@
                 craft: 2, ref: 0, target: 1, budget: 6, limit: 2, par: mars.dv1, aim: mars.dv1, lead: marsLead,
                 goal: { type: 'reach', zone: marsHill },
                 goalText: 'Fly to Mars, and get inside the ring round it.',
-                idea: `One burn forwards stretches your orbit out to Mars's: half an orbit long. Mars moves on while you fly, so wait for the launch window, when Mars is about ${Math.round(marsLead)}° ahead of you.`,
+                idea: `One burn forwards stretches your orbit out to Mars's. Mars moves on while you fly, so wait for the launch window, when it is about ${Math.round(marsLead)}° ahead.`,
                 parText: `the one burn, ${f1(mars.dv1)} km/s. The trip takes ${Math.round(mars.T * 12)} months (Kepler's 3rd law), and Mars moves ${Math.round(180 - marsLead)}° in that time, so it must start ${Math.round(marsLead)}° ahead.`,
                 teach: 'Launch windows: Mars has to be in the right place when you set off. For real missions to Mars that happens every 26 months.',
                 hint: marsHint,
@@ -12362,7 +12345,7 @@
                 craft: 2, ref: 0, target: 1, budget: 2, limit: 20, par: 2 * lDv, aim: lDv,
                 goal: { type: 'meet', D: 0.3, l4: true, a: 5.2, da: 0.01, eMax: 0.03 },
                 goalText: 'Park at L4, 60° ahead of Jupiter, on an orbit like Jupiter\'s.',
-                idea: 'L4 is where the Sun\'s and Jupiter\'s pulls together keep Trojan asteroids going round with Jupiter. You start 90° ahead on its orbit. A slightly bigger orbit takes longer, so you slip back to L4; then a burn settles you there.',
+                idea: 'At L4 the Sun\'s and Jupiter\'s pulls keep Trojan asteroids in step with Jupiter. You start 90° ahead. A slightly bigger orbit takes longer, so you slip back to L4; then a burn settles you there.',
                 parText: `speed up ${f2(lDv)} km/s. Your orbit then takes ${f1(lT)} years instead of Jupiter's ${f1(TJ)} (Kepler's 3rd law), so one lap loses 30°. Then slow down ${f2(lDv)} km/s to stay.`,
                 teach: 'At L4 you go round in step with Jupiter, like the Trojan asteroids (the Lucy probe is on its way to visit them).',
                 hint: l4Hint,
@@ -12423,7 +12406,7 @@
     function escapeHint(x) {
         if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
         // (at the very start, at the far point, it may just be moving out by a rounding error)
-        if (x.out && x.nu < 170) return 'You have passed the closest point, so a burn costs far more. <strong>Retry</strong>, and burn close to the Sun.';
+        if (x.out && x.nu < 170) return 'Past the closest point, a burn costs far more. <strong>Retry</strong>, and burn near the Sun.';
         return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
             : 'Escaping costs less as you near the Sun. <strong>Skip to closest point</strong>, then burn.';
     }
@@ -12440,7 +12423,7 @@
         const more = x.d.aim - mission.used;
         return more > 0.12 * x.d.aim ? `Keep holding <strong>${btn}</strong>: about ${more.toFixed(digits)} km/s to go.` : '';
     }
-    const FINE_HINT = 'Close. Turn on <strong>Fine</strong> and burn a little more, or less, until your closest approach is inside the goal.';
+    const FINE_HINT = 'Close. Turn on <strong>Fine</strong> and adjust until your closest approach is inside the goal.';
     function marsHint(x) {
         const g = x.d.goal, p = mission.pred;
         if (!x.burns) {
@@ -12466,7 +12449,7 @@
             const m = matchBurn(x);
             return `<strong>Now:</strong> hold <strong>${m.btn}</strong>, about ${f1(m.kms)} km/s, to match the station's speed.`;
         }
-        if (x.el.a > 1.005) return 'You sped up, so your bigger orbit is slower and you are falling behind. <strong>Undo</strong>, and slow down instead.';
+        if (x.el.a > 1.005) return 'A bigger orbit is slower, so you are falling behind. <strong>Undo</strong>, and slow down instead.';
         if (p && p.d > g.D) return aimHint(x, 'Back', 1) || FINE_HINT;
         return 'On course. <strong>Skip to the station</strong>, then hold <strong>Forward</strong> to match its speed.';
     }
@@ -12475,7 +12458,7 @@
         if (!x.burns) return `Hold <strong>Forward</strong> for about ${f2(x.d.aim)} km/s: a bigger orbit is slower, so you drift back to L4.`;
         if (x.td < 2 * g.D) {
             const big = x.el.a > g.a * (1 + g.da), small = x.el.a < g.a * (1 - g.da);
-            if (big || small) return `<strong>Now:</strong> hold <strong>${big ? 'Back' : 'Forward'}</strong> until your orbit is the size of Jupiter's, to keep pace with L4.`;
+            if (big || small) return `<strong>Now:</strong> hold <strong>${big ? 'Back' : 'Forward'}</strong> until your orbit matches Jupiter's, to keep pace with L4.`;
             return `<strong>Now:</strong> hold <strong>${x.out ? 'In' : 'Out'}</strong> to round off your orbit.`;
         }
         if (p && p.d > g.D) return aimHint(x, 'Forward', 2) || FINE_HINT;
@@ -12595,13 +12578,13 @@
             return false;
         }
         const notes = {
-            add: 'No new bodies in a mission: choose another scene to build your own.',
-            delete: 'Nothing can be removed in a mission.',
-            move: craft ? 'Your probe can\'t be picked up: change its path with burns, or drag the tip of its arrow.'
-                : `${b ? escapeHtml(b.name) : 'It'} keeps to its path: in a mission only your probe can change course.`,
-            aim: craft ? 'The mission is over: retry, or undo your last burn.' : 'Only your probe has an engine: aim its arrow, not another body\'s.',
-            orbit: 'In a mission, orbits change only by burns of your probe\'s engine.',
-            other: 'In a mission, only your probe\'s engine can change anything.'
+            add: 'no new bodies. Leave the mission to build your own.',
+            delete: 'nothing can be removed.',
+            move: craft ? 'your probe changes course by burns, not by dragging.'
+                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only your probe can change course.`,
+            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : 'only your probe has an engine.',
+            orbit: 'orbits change only by your probe\'s burns.',
+            other: 'only your probe\'s engine can change anything.'
         };
         missionNote(`<strong>Mission rules:</strong> ${notes[what] || notes.orbit}`);
         return true;
@@ -12738,7 +12721,7 @@
         const def = mission.def, R = bodyById(mission.refId), av = aimedVelocity(b);
         const dvx = av.x - b.vx, dvy = av.y - b.vy, dv = toKms(Math.hypot(dvx, dvy));
         const left = Math.max(0, def.budget - mission.used), B = b.aim.burn;
-        if (!(dv >= 0.005)) return `<strong>Drag out a burn</strong> from the arrow's tip: along the arrow speeds you up, against it slows you down. Fuel: ${f1(left)} km/s.`;
+        if (!(dv >= 0.005)) return `<strong>Drag out a burn:</strong> along the arrow to speed up, against it to slow down.`;
         let way = '';
         if (R) {
             const vx = b.vx - R.vx, vy = b.vy - R.vy, v = Math.hypot(vx, vy), rx = b.x - R.x, ry = b.y - R.y, r = Math.hypot(rx, ry);
@@ -12747,11 +12730,10 @@
         }
         const s = fmtSpeedKms(dv);
         let h = `<strong>Burn ${s.v} ${s.u}${way}:</strong> `;
-        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left, so it stops when the tank runs dry.`
-            : `${f1(left - dv)} of ${f1(def.budget)} km/s of fuel left after it.`;
-        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Exactly the speed for a circular orbit.' : ' Exactly the escape speed.';
-        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
-        else if (aimFineTouch(d)) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left.` : `leaves ${f1(left - dv)} of ${f1(def.budget)} km/s of fuel.`;
+        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Circular speed.' : ' Escape speed.';
+        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control.</strong>' : ' <strong>Shift:</strong> finer.';
+        else if (aimFineTouch(d)) h += ' <strong>Fine control:</strong> a tenth of your finger\'s move.';
         return h;
     }
 
@@ -13196,7 +13178,7 @@
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'In a mission the orbit changes only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
+        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
         setText(ui.popOrbitShape, why);
         if (!craft) setText(ui.popAngleNote, why);
     }
@@ -13460,15 +13442,14 @@
                 };
             }
             const what = {
-                crash: `Your probe crashed into ${escapeHtml(theName({ name: mission.crashedInto }))}.`,
-                fuel: 'Your tank is empty, and coasting won\'t get you there.',
+                fuel: 'Coasting won\'t get you there.',
                 time: `Time's up: the limit was ${fmtDuration(d.limit)}.`,
-                missed: 'You passed Jupiter too fast for it to keep you.'
-            }[mission.reason] || 'The mission is over.';
+                missed: 'Too fast for it to keep you.'
+            }[mission.reason] || '';
             const hint = d.fail[mission.reason] || d.fail.time || d.fail.fuel || 'Undo your last burn and try another, or start again.';
             return {
                 kicker, title: mission.reason === 'crash' ? `You hit ${escapeHtml(theName({ name: mission.crashedInto }))}` : (LOST_TITLE[mission.reason] || 'Mission over'),
-                html: `<p>${what}</p><p><strong>Hint:</strong> ${hint}</p>`,
+                html: `${what ? `<p>${what}</p>` : ''}<p><strong>Hint:</strong> ${hint}</p>`,
                 acts: [['Retry', () => loadMission(d)]].concat(mission.log.length ? [['Undo last burn', () => { hideMissionPanel(); undoStep(); }]] : [], [['All missions', () => showMissionPanel('list')]])
             };
         }
