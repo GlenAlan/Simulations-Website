@@ -6108,7 +6108,6 @@
         t: -Infinity, alpha: 1, covered: false, vSqueezed: false, shown: false, right: false,
         kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0, top: 0
     };
-    const LEGEND_SQUEEZE = 'longer arrows are squeezed';
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // The pull of q on b (M_sun AU / yr^2) into pp; returns its size
@@ -6553,17 +6552,14 @@
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
         const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
         const textW = Math.max(vTW, fTW);
-        // On a small canvas the two arrows share one row, just above the scale bar, and the note that
-        // longer arrows are squeezed is left out (the About section says so); elsewhere a row each
+        // On a small canvas the two arrows share one row, just above the scale bar; elsewhere a row each
         const tight = viewW < 560 || viewH < 320;
         const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
         const oneRow = tight && rowW <= viewW * 0.8;
-        // A velocity arrow over three medium lengths, or any force arrow, is shorter than in proportion
-        const squeeze = !tight && (showF || (showV && legend.vSqueezed));
         const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
-        const w = oneRow ? rowW : Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
+        const w = oneRow ? rowW : arrowW + 8 + textW;
         const bottom = viewH - 12 - fs - (tight ? 6 : 10);
-        const top = bottom - (rows + (squeeze ? 1 : 0)) * lh;
+        const top = bottom - rows * lh;
         // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
         legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
         const left = legend.right ? viewW - 12 - w : 12;
@@ -6571,15 +6567,10 @@
         if (now - legend.t > 100) {
             legend.t = now;
             legend.covered = false;
-            legend.vSqueezed = false;
-            const fv = showV ? frameVelocity() : null;
             for (const b of bodies) {
                 if (b.minor && !isChosen(b)) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b) + 4;
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
-                // (the velocity as its arrow shows it: in a rotating frame, relative to the frame where the body is)
-                const u = fv && turn.on ? frameVelocity(b.x, b.y) : fv;
-                if (fv && Math.hypot(b.vx - u.x, b.vy - u.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
             }
         }
         legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
@@ -6595,10 +6586,9 @@
             const tx = left + arrowW + 8;
             if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
             if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
-            if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
         }
         ctx.globalAlpha = 1;
-        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w; legend.top = top;
+        legend.x = left; legend.shown = true; legend.w = w; legend.top = top;
     }
 
     // A legend row: an arrow px long (if any), then its text at tx
