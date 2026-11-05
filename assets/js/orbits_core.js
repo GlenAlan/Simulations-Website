@@ -3586,36 +3586,6 @@
         return { ox: (P.A.m * ax + P.B.m * bx) / M, oy: (P.A.m * ay + P.B.m * by) / M, c: Math.cos(a), s: Math.sin(a) };
     }
 
-    // traceTrail for a turned view: the same, with each point turned
-    function traceTurnedTrail(tr, ks, ke, minPx) {
-        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
-        const cs = tr.turn.cs, c0 = tr.turn.c, s0 = tr.turn.s;
-        const capT = T.length >> 1, capO = oT.length >> 1;
-        let i = 2 * (ks % capT), io = 2 * (ks % capO), j = 2 * (ks % TRAIL_CAP);
-        let c = cs ? cs[j] : c0, s = cs ? cs[j + 1] : s0;
-        let rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
-        let lx = offX + (c * rx - s * ry) * scale, ly = offY - (s * rx + c * ry) * scale;
-        let out = outcode(lx, ly), pen = true;
-        ctx.moveTo(lx, ly);
-        for (let k = ks + 1; k < ke; k += stride) {
-            if (k + stride >= ke) k = ke - 1;
-            i = 2 * (k % capT); io = 2 * (k % capO); j = 2 * (k % TRAIL_CAP);
-            if (cs) { c = cs[j]; s = cs[j + 1]; }
-            rx = T[i] - oT[io]; ry = T[i + 1] - oT[io + 1];
-            const x = offX + (c * rx - s * ry) * scale, y = offY - (s * rx + c * ry) * scale;
-            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
-            const o = outcode(x, y);
-            if (o & out) {
-                pen = false;
-            } else {
-                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
-                ctx.lineTo(x, y);
-            }
-            lx = x; ly = y; out = o;
-        }
-        if (!pen) ctx.moveTo(lx, ly);
-    }
-
     // ------------------------------------------------------------------
     // Lagrange points of a body B and the body A it orbits (A the heavier; mu = m_B / (m_A + m_B)), in
     // units of the distance d between them now, along the line from A to B and measured from their
@@ -5302,7 +5272,7 @@
         const turned = turnedTrails(first);
         const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
         const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned };
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, out: 0, pen: true };
         for (const g of minorGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
@@ -5368,31 +5338,65 @@
     }
 
     // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT; every tr.stride-th, and
-    // the last) to the current path, skipping points within minPx of the last one drawn and stretches
-    // wholly off one side of the canvas
+    // the last) to the current path, skipping points within minPx of the last one kept and stretches
+    // wholly off one side of the canvas. Painting a stroke takes far longer than anything else in a
+    // frame and goes by its corners, so a run of points goes as one straight line while that line
+    // stays within an eighth of minPx of them all, in the screen's own pixels (0.15 in the newest part):
+    // an orbit's long gentle curves need a quarter of the corners, and look the same. For that, the line
+    // from (ax, ay) must keep inside the narrowing wedge (lox, loy)..(hix, hiy) that each point's margin allows.
     function traceTrail(tr, ks, ke, minPx) {
-        if (tr.turn) { traceTurnedTrail(tr, ks, ke, minPx); return; }
-        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
-        const capT = T.length >> 1, capO = oT.length >> 1;
+        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride, zoom = scale;
+        const turned = tr.turn, cs = turned ? turned.cs : null;
+        const capT = T.length >> 1, capO = oT.length >> 1, tol = minPx / (8 * dpr);
+        let c = turned && !cs ? turned.c : 1, s = turned && !cs ? turned.s : 0;
+        if (cs) { const j = 2 * (ks % TRAIL_CAP); c = cs[j]; s = cs[j + 1]; }
         let i = 2 * (ks % capT), io = 2 * (ks % capO);
-        let lx = offX + (T[i] - oT[io]) * scale, ly = offY - (T[i + 1] - oT[io + 1]) * scale;
-        let out = outcode(lx, ly), pen = true;
-        ctx.moveTo(lx, ly);
+        let rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
+        let ax = turned ? offX + (c * rx - s * ry) * zoom : offX + rx * zoom, ay = turned ? offY - (s * rx + c * ry) * zoom : offY - ry * zoom;
+        let lx = ax, ly = ay, far = 0, held = false, lox = 0, loy = 0, hix = 0, hiy = 0;
+        tr.out = outcode(ax, ay);
+        tr.pen = true;
+        ctx.moveTo(ax, ay);
         for (let k = ks + 1; k < ke; k += stride) {
             if (k + stride >= ke) k = ke - 1;
             i = 2 * (k % capT); io = 2 * (k % capO);
-            const x = offX + (T[i] - oT[io]) * scale, y = offY - (T[i + 1] - oT[io + 1]) * scale;
-            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
-            const o = outcode(x, y);
-            if (o & out) {
-                pen = false;
+            rx = T[i] - oT[io]; ry = T[i + 1] - oT[io + 1];
+            let x, y;
+            if (turned) {
+                if (cs) { const j = 2 * (k % TRAIL_CAP); c = cs[j]; s = cs[j + 1]; }
+                x = offX + (c * rx - s * ry) * zoom; y = offY - (s * rx + c * ry) * zoom;
             } else {
-                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
-                ctx.lineTo(x, y);
+                x = offX + rx * zoom; y = offY - ry * zoom;
             }
-            lx = x; ly = y; out = o;
+            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
+            let dx = x - ax, dy = y - ay, d2 = dx * dx + dy * dy;
+            if (held && (d2 < far || lox * dy - loy * dx < 0 || hix * dy - hiy * dx > 0)) {
+                // (it leaves the wedge, or turns back: the line goes as far as the last point, and on from there)
+                trailLine(tr, ax, ay, lx, ly);
+                ax = lx; ay = ly;
+                dx = x - ax; dy = y - ay; d2 = dx * dx + dy * dy;
+                held = false;
+            }
+            const d = Math.sqrt(d2), nx = (-dy * tol) / d, ny = (dx * tol) / d;
+            const ax1 = dx - nx, ay1 = dy - ny, bx1 = dx + nx, by1 = dy + ny;
+            if (!held || lox * ay1 - loy * ax1 > 0) { lox = ax1; loy = ay1; }
+            if (!held || hix * by1 - hiy * bx1 < 0) { hix = bx1; hiy = by1; }
+            held = true; far = d2; lx = x; ly = y;
         }
-        if (!pen) ctx.moveTo(lx, ly);
+        if (held) trailLine(tr, ax, ay, lx, ly);
+        if (!tr.pen) ctx.moveTo(lx, ly);
+    }
+
+    // A straight stretch of a trail, unless it is wholly off one side of the canvas
+    function trailLine(tr, ax, ay, x, y) {
+        const o = outcode(x, y);
+        if (o & tr.out) {
+            tr.pen = false;
+        } else {
+            if (!tr.pen) { ctx.moveTo(ax, ay); tr.pen = true; }
+            ctx.lineTo(x, y);
+        }
+        tr.out = o;
     }
 
     // Which sides of the canvas (with a margin) a point is beyond, as bits
