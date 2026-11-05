@@ -176,7 +176,7 @@
         },
         ellipse: {
             units: 'au', Tref: 1, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
-            tip: 'Turn on Kepler\'s 2nd law: the planet speeds up near the Sun, yet the shaded areas stay equal.',
+            tip: 'With Kepler\'s 2nd law on, the shaded areas stay equal as the planet speeds up.',
             bodies: [{ kind: 'sun' }, { kind: 'earth', name: 'Planet', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }]
         },
         inner: {
@@ -203,7 +203,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: 'View from the giant planet (double-click or double-tap it): then the star circles the planet, as the Sun seems to circle Earth.',
+            tip: 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.',
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -221,7 +221,7 @@
         },
         figure8: {
             units: 'au', Tref: 1.0067, subject: 0, trail: 4, vref: 5.5, box: [-1.1, 1.1, -0.45, 0.45],
-            tip: 'A rare stable dance: three equal stars chase each other round a figure of eight. Compare it with "Three stars: chaos".',
+            tip: 'Three equal stars chase each other round a figure of eight: a rare stable dance.',
             bodies: (function () {
                 // Chenciner & Montgomery's figure-of-eight orbit (G = m = 1), scaled to 1 AU and 1 M_sun.
                 const vs = Math.sqrt(G);           // velocity unit: AU/yr
@@ -240,7 +240,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? Nudge one a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
+            tip: 'Three stars start at rest. Who gets thrown out? Then try Run backwards.',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -253,7 +253,7 @@
         // system for good.
         slingshot: {
             units: 'au', Tref: 1.4, subject: 2, forceBody: 1, trail: 7, vref: 2.75, box: [-7.4, 1.8, -3.2, 3.6],
-            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun, and the close-up from Jupiter.',
+            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 103.14 } },
@@ -265,7 +265,7 @@
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
             units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
-            tip: 'Turn on Realistic physics in the settings: relativity makes the orbit swing round, a rosette instead of an ellipse.',
+            tip: 'With Realistic physics on, relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
                 { kind: 'neutron', orbit: { around: 0, a: 1500 / AU_KM, e: 0.5, w: 0, nu: 180 } }
@@ -277,7 +277,7 @@
         // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
         tde: {
             units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, box: [-0.64, 0.11, -0.23, 0.23],
-            tip: 'Turn on Realistic physics in the settings: the star dips inside its Roche limit and the black hole\'s tides tear it apart.',
+            tip: 'With Realistic physics on, the black hole\'s tides tear this star apart.',
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -292,7 +292,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter herds 500 asteroids: Trojans 60° ahead of and behind it, and Hildas in a triangle that turns with it. In View from, choose "Rotating with Jupiter and the Sun" to see them stand still.',
+            tip: 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.',
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -321,7 +321,7 @@
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
             units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. With Realistic physics on, tides tear apart clumps that stray too close to Earth.',
+            tip: 'Moonlets left by a giant impact collide and stick: watch a moon build up.',
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -341,7 +341,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Realistic physics is on (in the settings). Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
+            tip: 'Speed it up: with Realistic physics on, this orbit turns 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -367,7 +367,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Realistic physics is on (in the settings): gravitational waves carry off energy, so the black holes spiral together and merge.',
+                tip: 'With Realistic physics on, gravitational waves drain the orbit until the black holes merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -610,7 +610,7 @@
     // Scenes with dated: true start on the start date, and the info bar shows the date
     SCENES.solar = {
         units: 'au', Tref: 1, subject: 3, dated: true, box: [-1.8, 1.8, -1.8, 1.8],
-        tip: 'Real positions on the start date (change it in the settings). Fit view shows the outer planets. Orbits lie flat here; the real ones tilt a few degrees.',
+        tip: 'Real positions on the start date, in the settings. Fit view shows the outer planets.',
         get bodies() { return solarSystemBodies(startDate.chosen); }
     };
 
@@ -3045,7 +3045,7 @@
         // (the last scene's notes go with it; this one's tip shows until the canvas or palette is used)
         clearHint('note');
         clearHint('missionNote');
-        showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
+        showHint('tip', def.tip || null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
         stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
     }
@@ -10862,7 +10862,7 @@
         const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
-            tip: `System #${seed}: ${desc}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? Any change restarts the timer.`,
+            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years?`,
             bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
         };
     }
