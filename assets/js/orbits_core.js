@@ -9972,7 +9972,7 @@
     // the flyby card) start again; the history, the trails and any merges to undo carry on.
     function setReverse(on, quiet) {
         if (on && mission.def) {
-            missionNote('<strong>Mission rules:</strong> in a mission, time only runs forwards (Undo takes a burn back).');
+            missionNote('<strong>Mission rules:</strong> time only runs forwards. Undo takes a burn back.');
             on = false;
         }
         const dir = on ? -1 : 1;
@@ -12235,8 +12235,8 @@
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: up.dv1 + up.dv2,
                 goal: { type: 'orbit', r: 1.5, tol: 0.05 },
                 goalText: 'Reach a round orbit on the ring, 1.5 AU from the Sun.',
-                idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off. These two burns, a Hohmann transfer, are the cheapest way up.',
-                parText: `${f1(up.dv1)} km/s to stretch your orbit out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
+                idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off: a Hohmann transfer, the cheapest way up.',
+                parText: `${f1(up.dv1)} km/s out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
                 teach: 'That was a Hohmann transfer: speeding up at one end of an orbit raises the other end.',
                 hint: (x) => transferHint(x, 1.5, 0.05, true),
                 fail: { fuel: 'Two burns are enough: forwards at the start, then forwards again at the far point.', crash: 'Burning backwards drops you towards the Sun.', time: 'Burn forwards until your orbit reaches the ring, then skip to the far point and burn again.' }
@@ -12247,8 +12247,8 @@
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: down.dv1 + down.dv2,
                 goal: { type: 'orbit', r: 0.723, tol: 0.05 },
                 goalText: 'Drop to a round orbit on the ring, at Venus\'s distance.',
-                idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Then burn backwards again at the closest point to round it off. You speed up as you fall, so a lower orbit is a faster one.',
-                parText: `${f1(down.dv1)} km/s backwards so your orbit dips to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
+                idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Burn backwards again at the closest point to round it off. You speed up as you fall.',
+                parText: `${f1(down.dv1)} km/s backwards down to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
                 teach: 'You slowed down twice, yet you are now faster than when you started: lower orbits are quicker.',
                 hint: (x) => transferHint(x, 0.723, 0.05, false),
                 fail: { fuel: 'Two burns are enough: backwards at the start, then backwards again at the closest point.', crash: 'Too much braking: you fell into the Sun. Burn backwards less.', time: 'Burn backwards until your orbit dips to the ring, then skip to the closest point and burn again.' }
@@ -12258,7 +12258,7 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-3.3, 0.65, -1.25, 1.25], bodies: [sun, probe({ around: 0, a: ea, e: ee, w: 0, nu: 180 })] },
                 craft: 1, ref: 0, target: null, budget: 8, limit: 2.5, par: escPeri,
                 goal: { type: 'escape' },
-                goalText: 'Escape the Sun for good, on as little fuel as you can.',
+                goalText: 'Escape the Sun on as little fuel as you can.',
                 idea: 'A burn adds the most energy where you are moving fastest (the Oberth effect). So wait until you swing closest to the Sun, then burn forwards.',
                 parText: `at 0.3 AU you move at ${f1(toKms(vPeri))} km/s and escaping takes ${f1(toKms(Math.sqrt(2 * G / 0.3)))} km/s (√(2GM/r)): ${f1(escPeri)} km/s more. Out at 3 AU it would take ${f1(escApo)} km/s.`,
                 teach: 'The same burn gives more energy when you are moving fast, which is why spacecraft burn close to a planet or the Sun.',
@@ -12274,8 +12274,8 @@
                 },
                 craft: 2, ref: 1, target: null, lock: 1, budget: 5, limit: 0.6, par: toKms(cVp - cVcap),
                 goal: { type: 'capture', lim: cLim, hill: hillJ },
-                goalText: 'You are falling past Jupiter too fast. Brake to stay in orbit, inside the ring.',
-                idea: 'Slow down where you are moving fastest, at the closest point to Jupiter: there each km/s of braking takes away the most energy (the Oberth effect again).',
+                goalText: 'Brake to stay in orbit round Jupiter, inside the ring.',
+                idea: 'Brake where you are moving fastest, at the closest point to Jupiter: there each km/s takes away the most energy (the Oberth effect again).',
                 parText: `at the closest point, ${Math.round(cRp * AU_KM / 1e6)} million km from Jupiter, slow from ${f1(toKms(cVp))} to ${f1(toKms(cVcap))} km/s: an orbit that stays inside the ring (from v² = GM(2/r − 1/a)).`,
                 teach: 'You braked at the closest point, where it counts most. The Juno probe was captured by Jupiter in just this way.',
                 hint: captureHint,
@@ -12290,7 +12290,7 @@
                 craft: 2, ref: 0, target: 1, budget: 6, limit: 2, par: mars.dv1, aim: mars.dv1, lead: marsLead,
                 goal: { type: 'reach', zone: marsHill },
                 goalText: 'Fly to Mars, and get inside the ring round it.',
-                idea: `One burn forwards stretches your orbit out to Mars's: half an orbit long. Mars moves on while you fly, so wait for the launch window, when Mars is about ${Math.round(marsLead)}° ahead of you.`,
+                idea: `One burn forwards stretches your orbit out to Mars's. Mars moves on while you fly, so wait for the launch window, when it is about ${Math.round(marsLead)}° ahead.`,
                 parText: `the one burn, ${f1(mars.dv1)} km/s. The trip takes ${Math.round(mars.T * 12)} months (Kepler's 3rd law), and Mars moves ${Math.round(180 - marsLead)}° in that time, so it must start ${Math.round(marsLead)}° ahead.`,
                 teach: 'Launch windows: Mars has to be in the right place when you set off. For real missions to Mars that happens every 26 months.',
                 hint: marsHint,
@@ -12320,7 +12320,7 @@
                 craft: 2, ref: 0, target: 1, budget: 2, limit: 20, par: 2 * lDv, aim: lDv,
                 goal: { type: 'meet', D: 0.3, l4: true, a: 5.2, da: 0.01, eMax: 0.03 },
                 goalText: 'Park at L4, 60° ahead of Jupiter, on an orbit like Jupiter\'s.',
-                idea: 'L4 is where the Sun\'s and Jupiter\'s pulls together keep Trojan asteroids going round with Jupiter. You start 90° ahead on its orbit. A slightly bigger orbit takes longer, so you slip back to L4; then a burn settles you there.',
+                idea: 'At L4 the Sun\'s and Jupiter\'s pulls keep Trojan asteroids in step with Jupiter. You start 90° ahead. A slightly bigger orbit takes longer, so you slip back to L4; then a burn settles you there.',
                 parText: `speed up ${f2(lDv)} km/s. Your orbit then takes ${f1(lT)} years instead of Jupiter's ${f1(TJ)} (Kepler's 3rd law), so one lap loses 30°. Then slow down ${f2(lDv)} km/s to stay.`,
                 teach: 'At L4 you go round in step with Jupiter, like the Trojan asteroids (the Lucy probe is on its way to visit them).',
                 hint: l4Hint,
@@ -12381,7 +12381,7 @@
     function escapeHint(x) {
         if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
         // (at the very start, at the far point, it may just be moving out by a rounding error)
-        if (x.out && x.nu < 170) return 'You have passed the closest point, so a burn costs far more. <strong>Retry</strong>, and burn close to the Sun.';
+        if (x.out && x.nu < 170) return 'Past the closest point, a burn costs far more. <strong>Retry</strong>, and burn near the Sun.';
         return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
             : 'Escaping costs less as you near the Sun. <strong>Skip to closest point</strong>, then burn.';
     }
@@ -12398,7 +12398,7 @@
         const more = x.d.aim - mission.used;
         return more > 0.12 * x.d.aim ? `Keep holding <strong>${btn}</strong>: about ${more.toFixed(digits)} km/s to go.` : '';
     }
-    const FINE_HINT = 'Close. Turn on <strong>Fine</strong> and burn a little more, or less, until your closest approach is inside the goal.';
+    const FINE_HINT = 'Close. Turn on <strong>Fine</strong> and adjust until your closest approach is inside the goal.';
     function marsHint(x) {
         const g = x.d.goal, p = mission.pred;
         if (!x.burns) {
@@ -12424,7 +12424,7 @@
             const m = matchBurn(x);
             return `<strong>Now:</strong> hold <strong>${m.btn}</strong>, about ${f1(m.kms)} km/s, to match the station's speed.`;
         }
-        if (x.el.a > 1.005) return 'You sped up, so your bigger orbit is slower and you are falling behind. <strong>Undo</strong>, and slow down instead.';
+        if (x.el.a > 1.005) return 'A bigger orbit is slower, so you are falling behind. <strong>Undo</strong>, and slow down instead.';
         if (p && p.d > g.D) return aimHint(x, 'Back', 1) || FINE_HINT;
         return 'On course. <strong>Skip to the station</strong>, then hold <strong>Forward</strong> to match its speed.';
     }
@@ -12433,7 +12433,7 @@
         if (!x.burns) return `Hold <strong>Forward</strong> for about ${f2(x.d.aim)} km/s: a bigger orbit is slower, so you drift back to L4.`;
         if (x.td < 2 * g.D) {
             const big = x.el.a > g.a * (1 + g.da), small = x.el.a < g.a * (1 - g.da);
-            if (big || small) return `<strong>Now:</strong> hold <strong>${big ? 'Back' : 'Forward'}</strong> until your orbit is the size of Jupiter's, to keep pace with L4.`;
+            if (big || small) return `<strong>Now:</strong> hold <strong>${big ? 'Back' : 'Forward'}</strong> until your orbit matches Jupiter's, to keep pace with L4.`;
             return `<strong>Now:</strong> hold <strong>${x.out ? 'In' : 'Out'}</strong> to round off your orbit.`;
         }
         if (p && p.d > g.D) return aimHint(x, 'Forward', 2) || FINE_HINT;
@@ -12553,13 +12553,13 @@
             return false;
         }
         const notes = {
-            add: 'No new bodies in a mission: choose another scene to build your own.',
-            delete: 'Nothing can be removed in a mission.',
-            move: craft ? 'Your probe can\'t be picked up: change its path with burns, or drag the tip of its arrow.'
-                : `${b ? escapeHtml(b.name) : 'It'} keeps to its path: in a mission only your probe can change course.`,
-            aim: craft ? 'The mission is over: retry, or undo your last burn.' : 'Only your probe has an engine: aim its arrow, not another body\'s.',
-            orbit: 'In a mission, orbits change only by burns of your probe\'s engine.',
-            other: 'In a mission, only your probe\'s engine can change anything.'
+            add: 'no new bodies. Leave the mission to build your own.',
+            delete: 'nothing can be removed.',
+            move: craft ? 'your probe changes course by burns, not by dragging.'
+                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only your probe can change course.`,
+            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : 'only your probe has an engine.',
+            orbit: 'orbits change only by your probe\'s burns.',
+            other: 'only your probe\'s engine can change anything.'
         };
         missionNote(`<strong>Mission rules:</strong> ${notes[what] || notes.orbit}`);
         return true;
@@ -12696,7 +12696,7 @@
         const def = mission.def, R = bodyById(mission.refId), av = aimedVelocity(b);
         const dvx = av.x - b.vx, dvy = av.y - b.vy, dv = toKms(Math.hypot(dvx, dvy));
         const left = Math.max(0, def.budget - mission.used), B = b.aim.burn;
-        if (!(dv >= 0.005)) return `<strong>Drag out a burn</strong> from the arrow's tip: along the arrow speeds you up, against it slows you down. Fuel: ${f1(left)} km/s.`;
+        if (!(dv >= 0.005)) return `<strong>Drag out a burn:</strong> along the arrow to speed up, against it to slow down.`;
         let way = '';
         if (R) {
             const vx = b.vx - R.vx, vy = b.vy - R.vy, v = Math.hypot(vx, vy), rx = b.x - R.x, ry = b.y - R.y, r = Math.hypot(rx, ry);
@@ -12705,11 +12705,10 @@
         }
         const s = fmtSpeedKms(dv);
         let h = `<strong>Burn ${s.v} ${s.u}${way}:</strong> `;
-        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left, so it stops when the tank runs dry.`
-            : `${f1(left - dv)} of ${f1(def.budget)} km/s of fuel left after it.`;
-        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Exactly the speed for a circular orbit.' : ' Exactly the escape speed.';
-        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
-        else if (aimFineTouch(d)) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left.` : `leaves ${f1(left - dv)} of ${f1(def.budget)} km/s of fuel.`;
+        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Circular speed.' : ' Escape speed.';
+        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control.</strong>' : ' <strong>Shift:</strong> finer.';
+        else if (aimFineTouch(d)) h += ' <strong>Fine control:</strong> a tenth of your finger\'s move.';
         return h;
     }
 
@@ -13418,15 +13417,14 @@
                 };
             }
             const what = {
-                crash: `Your probe crashed into ${escapeHtml(theName({ name: mission.crashedInto }))}.`,
-                fuel: 'Your tank is empty, and coasting won\'t get you there.',
+                fuel: 'Coasting won\'t get you there.',
                 time: `Time's up: the limit was ${fmtDuration(d.limit)}.`,
-                missed: 'You passed Jupiter too fast for it to keep you.'
-            }[mission.reason] || 'The mission is over.';
+                missed: 'Too fast for it to keep you.'
+            }[mission.reason] || '';
             const hint = d.fail[mission.reason] || d.fail.time || d.fail.fuel || 'Undo your last burn and try another, or start again.';
             return {
                 kicker, title: mission.reason === 'crash' ? `You hit ${escapeHtml(theName({ name: mission.crashedInto }))}` : (LOST_TITLE[mission.reason] || 'Mission over'),
-                html: `<p>${what}</p><p><strong>Hint:</strong> ${hint}</p>`,
+                html: `${what ? `<p>${what}</p>` : ''}<p><strong>Hint:</strong> ${hint}</p>`,
                 acts: [['Retry', () => loadMission(d)]].concat(mission.log.length ? [['Undo last burn', () => { hideMissionPanel(); undoStep(); }]] : [], [['All missions', () => showMissionPanel('list')]])
             };
         }
