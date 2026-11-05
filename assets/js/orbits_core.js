@@ -13399,7 +13399,32 @@
     // if drawing alone takes too long, the trails are drawn more coarsely first
     // (quality below 1), before the simulation itself has to slow down. Readouts, primaries in a crowded
     // scene and the graphs are updated about ten times a second rather than every frame.
+    // While paused with nothing going on, the picture can't change: frames rest, with one in full four
+    // times a second in case something else has changed it. Anything the visitor does (or a call of the
+    // public API) wakes them for a second. With the canvas scrolled out of sight, the physics and the
+    // readouts carry on but nothing is drawn.
     // ------------------------------------------------------------------
+    const REST_EVERY_MS = 250, WAKE_MS = 1000;
+    let wakeUntil = 0, restNext = 0, canvasInView = true;
+    const wake = () => { wakeUntil = performance.now() + WAKE_MS; };
+    function resting(now) {
+        if (!paused || now < wakeUntil || now >= restNext) return false;
+        return !drags.size && !paletteDrag && !view.anim && !flashes.length && !pred.job && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+    }
+    function bindRest() {
+        for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
+            window.addEventListener(t, wake, { capture: true, passive: true });
+        }
+        const api = window.orbitsSimulation;
+        for (const k of Object.keys(api)) {
+            const fn = api[k];
+            if (typeof fn === 'function') api[k] = function (...args) { wake(); return fn.apply(this, args); };
+        }
+        if (typeof IntersectionObserver !== 'undefined') {
+            new IntersectionObserver((es) => { canvasInView = es[es.length - 1].isIntersecting; }).observe(canvas);
+        }
+    }
+
     let fpsFrames = 0, fpsTime = 0;
     let eccNext = 0, readoutNext = 0, primNext = 0;
     const perf = { physics: 0, render: 0, other: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
@@ -13410,6 +13435,11 @@
         const dtReal = lastFrameTs ? Math.min(0.1, (ts - lastFrameTs) / 1000) : 0;
         lastFrameTs = ts;
         const t0 = performance.now();
+        if (resting(t0)) {
+            if (ui.fps) { fpsFrames++; fpsTime += dtReal; }
+            return;
+        }
+        restNext = t0 + REST_EVERY_MS;
         updateScale();
         applyHolds();
         let steps = 0;
@@ -13431,7 +13461,7 @@
         updateScale();
         updateDrawnPositions();
         const t2 = performance.now();
-        render();
+        if (canvasInView) render(); else syncTurnOptions();
         const t3 = performance.now();
         if (ts >= readoutNext) { updateReadouts(); readoutNext = ts + 100; }
         updatePopover(false);
@@ -14096,5 +14126,6 @@
     resizeCanvas();
     loadScene(settings.scene);
     setHint();
+    bindRest();
     requestAnimationFrame(frame);
 })();
