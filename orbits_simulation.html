@@ -418,7 +418,6 @@
 																<button type="button" data-push="out" title="Push it outward, away from what it orbits (→)">Out<span class="icon solid fa-caret-right" aria-hidden="true"></span></button>
 															</div>
 														</div>
-														
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelOrbit" aria-labelledby="popTabOrbit" hidden>
 														<div class="orb-pop-fields">
@@ -666,63 +665,61 @@
 											<h2 id="keysHelpTitle">Keys and gestures</h2>
 											<button type="button" class="orb-help-close" id="keysHelpClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
 										</div>
-										<p class="orb-help-intro" id="keysHelpIntro"><span class="orb-keys-note">The keys work once you have clicked or tabbed into the simulation, but not while you are typing in a box. </span>Everything here can also be done with the buttons and the settings.</p>
+										<p class="orb-help-intro orb-keys-note" id="keysHelpIntro">Keys work once you have clicked into the simulation.</p>
 										<div class="orb-help-groups">
 											<div class="orb-help-group orb-help-touch">
 												<h3 id="helpTouchTitle">On a touch screen</h3>
 												<dl>
-													<div><dt>Drag from the strip</dt><dd>Add a body where you let go (on a planet, it becomes its moon), or tap one to add it at a free spot. Swipe the strip sideways for more</dd></div>
-													<div><dt>Tap a body</dt><dd>Choose it: the info bar shows its distance, speed and period</dd></div>
-													<div><dt>Double-tap a body</dt><dd>View the motion from it (double-tap empty space to go back)</dd></div>
-													<div><dt>Long-press a body</dt><dd>Open its menu: its mass and colour, velocity, orbit and pulls</dd></div>
+													<div><dt>Drag from the strip</dt><dd>Add a body (on a planet, a moon), or just tap one</dd></div>
+													<div><dt>Tap a body</dt><dd>Choose it</dd></div>
+													<div><dt>Double-tap a body</dt><dd>View from it (double-tap space to go back)</dd></div>
+													<div><dt>Long-press a body</dt><dd>Open its menu</dd></div>
 													<div><dt>Drag a body</dt><dd>Move it</dd></div>
-													<div><dt>Drag an arrow's tip</dt><dd>Aim its velocity. Hold the tip still for a moment first for fine aim</dd></div>
-													<div><dt>Drag space · pinch</dt><dd>Move around · zoom in or out</dd></div>
-													<div><dt>Tap a long tip</dt><dd>Read all of it (a tip cut short ends in <em>More</em>)</dd></div>
+													<div><dt>Drag an arrow's tip</dt><dd>Aim it (hold the tip still first for fine aim)</dd></div>
+													<div><dt>Drag space · pinch</dt><dd>Move around · zoom</dd></div>
 												</dl>
 											</div>
 											<button type="button" class="orb-help-keys-toggle" id="helpKeysToggle" aria-expanded="false">Keys, with a keyboard<span class="orb-help-keys-chev" aria-hidden="true"></span></button>
 											<div class="orb-help-group">
 												<h3 id="helpChooseTitle">Choose and look</h3>
 												<dl>
-													<div><dt><kbd>N</kbd> · <kbd>Shift</kbd>+<kbd>N</kbd></dt><dd>Choose the next or previous body: heaviest first, moons after their planet</dd></div>
-													<div><dt><kbd>Z</kbd></dt><dd>Zoom to the chosen body's orbit</dd></div>
-													<div><dt>Bodies list</dt><dd>In the settings: find a body by name, then zoom to it, view from it, edit or delete it</dd></div>
-													<div><dt>Click · double-click</dt><dd>Choose a body · view the motion from it</dd></div>
-													<div><dt>Drag space · scroll</dt><dd>Move around · zoom in or out</dd></div>
+													<div><dt><kbd>N</kbd> · <kbd>Shift</kbd>+<kbd>N</kbd></dt><dd>Next or previous body</dd></div>
+													<div><dt><kbd>Z</kbd></dt><dd>Zoom to its orbit</dd></div>
+													<div><dt>Click · double-click</dt><dd>Choose a body · view from it</dd></div>
+													<div><dt>Drag space · scroll</dt><dd>Move around · zoom</dd></div>
 													<div><dt><kbd>Tab</kbd></dt><dd>Move between the simulation and its buttons</dd></div>
 												</dl>
 											</div>
 											<div class="orb-help-group">
 												<h3 id="helpChangeTitle">Change a body</h3>
 												<dl>
-													<div><dt><kbd>Enter</kbd> · right-click</dt><dd>Open the chosen body's menu</dd></div>
-													<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Push it faster or slower (in a mission, hold to fire the probe's engine)</dd></div>
-													<div><dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>Push it outward or inward (with <kbd>Shift</kbd> finer, <kbd>Alt</kbd> coarser)</dd></div>
-													<div><dt>Drag</dt><dd>Move a body, or aim it by its arrow's tip (hold <kbd>Shift</kbd> for fine aim)</dd></div>
+													<div><dt><kbd>Enter</kbd> · right-click</dt><dd>Open its menu</dd></div>
+													<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Push it faster or slower (in a mission, hold to fire)</dd></div>
+													<div><dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>Push it outward or inward (<kbd>Shift</kbd> finer, <kbd>Alt</kbd> coarser)</dd></div>
+													<div><dt>Drag</dt><dd>Move a body, or aim it by its arrow's tip (<kbd>Shift</kbd>: fine aim)</dd></div>
 													<div><dt>Drop on a planet</dt><dd>Make a body its moon</dd></div>
-													<div><dt><kbd>Delete</kbd></dt><dd>Delete the chosen body (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back)</dd></div>
+													<div><dt><kbd>Delete</kbd></dt><dd>Delete it (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back)</dd></div>
 												</dl>
 											</div>
 											<div class="orb-help-group">
 												<h3 id="helpTimeTitle">Time</h3>
 												<dl>
 													<div><dt><kbd>Space</kbd></dt><dd>Pause or play</dd></div>
-														<div><dt><kbd>M</kbd></dt><dd>Missions</dd></div>
 													<div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Slower · faster</dd></div>
-													<div><dt><kbd>.</kbd></dt><dd>Pause, then step forward a moment at a time</dd></div>
+													<div><dt><kbd>.</kbd></dt><dd>Pause, then step a moment at a time</dd></div>
 													<div><dt><kbd>B</kbd></dt><dd>Run backwards, or forwards again</dd></div>
-													<div><dt><kbd>R</kbd></dt><dd>Run again from your last change (always forwards)</dd></div>
+													<div><dt><kbd>R</kbd></dt><dd>Run again from your last change</dd></div>
 													<div><dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></dt><dd>Undo · redo (on a Mac <kbd>⌘</kbd>+<kbd>Z</kbd> · <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>Z</kbd>)</dd></div>
 												</dl>
 											</div>
 											<div class="orb-help-group">
-												<h3 id="helpShowTitle">Show</h3>
+												<h3 id="helpShowTitle">Show and open</h3>
 												<dl>
-													<div><dt><kbd>G</kbd></dt><dd>Pull lines: who pulls on the chosen body</dd></div>
-													<div><dt><kbd>W</kbd></dt><dd>Gravity well: shading and contour lines</dd></div>
+													<div><dt><kbd>M</kbd></dt><dd>Missions</dd></div>
+													<div><dt><kbd>G</kbd></dt><dd>Pull lines</dd></div>
+													<div><dt><kbd>W</kbd></dt><dd>Gravity well</dd></div>
 													<div><dt><kbd>F</kbd></dt><dd>Frame rate</dd></div>
-													<div><dt><kbd>?</kbd></dt><dd>This list (or <em>Help</em> in the settings)</dd></div>
+													<div><dt><kbd>?</kbd></dt><dd>This list</dd></div>
 													<div><dt><kbd>Esc</kbd></dt><dd>Close a menu, the settings or fullscreen</dd></div>
 												</dl>
 											</div>
