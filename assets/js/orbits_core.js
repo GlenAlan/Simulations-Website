@@ -2622,6 +2622,8 @@
     const GAS_TRAIL = 75;                 // trail samples drawn
     const GAS_STEPS = 1;                  // steps a trail sample are enough for pieces of gas (each is on its exact orbit)
     const GAS_MAX = 120;                  // pieces of gas at once: a further star breaks into the usual few
+    const GAS_CROWD = 6;                  // other bodies that make a crowd: see gasThin
+    const GAS_THIN = 30;
     const GAS_NT = 12;                    // (2 pi H^-1)
     const GAS_NR = 36;
     const GAS_BOOK = -3;                  // (among the body ids of groupEnergy)
@@ -2640,10 +2642,71 @@
     function gasTear(L, H) {
         if (L.minor || !isCompact(H) || mission.def || L.m < 4e-5) return 0;
         if (!(hyp(L.x - H.x, L.y - H.y) > 4 * gasFall(H.m))) return 0;
-        let n = GAS_MAX;
-        for (const b of bodies) if (b.grp < 0) n--;
+        let n = GAS_MAX, others = -2;   // (other than these two)
+        for (const b of bodies) { if (b.grp < 0) n--; else others++; }
+        if (others >= GAS_CROWD) return 0;
         n = Math.min(n, GAS_PIECES);
         return n >= GAS_PIECES / 2 ? n : 0;
+    }
+
+    // Each piece of gas costs an exact orbit solved three times a step, and in company the steps are short. So with
+    // GAS_CROWD or more other bodies about (whole, or pieces of anything else), the gas is thinned to GAS_THIN pieces per
+    // host, by merging those that share a cell, then a coarser cell, as a clump of its mass would. Mass and momentum
+    // are kept exactly, the centre of mass of each two stays put, and the energy that goes is booked with the gas's.
+    // It goes by counts of bodies alone, so Run again repeats it, and it is copied first, so running back undoes it. In
+    // a scene like the star and black hole, alone, it never happens.
+    function gasThin() {
+        let gasN = 0, others = -1;   // (other than the host)
+        const n = bodies.length;
+        for (let k = 0; k < n; k++) { if (bodies[k].grp < 0) gasN++; else others++; }
+        if (gasN <= GAS_THIN || others < GAS_CROWD) return;
+        let over = false;
+        for (const g of hostGroups) {
+            let c = 0;
+            for (const p of g.pairs) if (p.a.grp < 0 && p.a.stamp === mainStamp) c++;
+            if (c > GAS_THIN && g.h.stamp === mainStamp) over = true;
+        }
+        if (!over) return;
+        noteIrreversible('gas');
+        const before = systemEnergy().total;
+        listsWait = true;
+        for (const g of hostGroups) gasThinHost(g);
+        listsWait = false;
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        groupEnergy.set(GAS_BOOK, (groupEnergy.get(GAS_BOOK) || 0) + systemEnergy().total - before);
+    }
+
+    function gasThinHost(g) {
+        const H = g.h, list = [];
+        if (H.stamp !== mainStamp) return;
+        for (const p of g.pairs) if (p.a.grp < 0 && p.a.stamp === mainStamp) list.push(p.a);
+        let left = list.length;
+        // Cells of 1, 2, 4... times the size; within each, merged in the order of the list
+        for (let q = 1; left > GAS_THIN && q <= GAS_NR; q *= 2) {
+            GCM.fill(-1);
+            for (let i = 0; i < list.length && left > GAS_THIN; i++) {
+                const f = list[i];
+                if (!f) continue;
+                const rx = f.x - H.x, ry = f.y - H.y;
+                const r0 = Math.max(3 * H.R, 1) / AU_KM, ir = clamp(Math.floor(Math.log(hyp(rx, ry) / r0) / GAS_H), 0, GAS_NR - 1);
+                const it = Math.floor((Math.atan2(ry, rx) / TAU + 1) * GAS_NT) % GAS_NT;
+                const c = Math.floor(ir / q) * GAS_NT + Math.floor(it / Math.min(q, GAS_NT));
+                const j = GCM[c];
+                if (j < 0) { GCM[c] = i; continue; }
+                const a = list[j], M = a.m + f.m, fa = a.m / M, ff = f.m / M;
+                a.x = fa * a.x + ff * f.x; a.y = fa * a.y + ff * f.y;
+                a.vx = fa * a.vx + ff * f.vx; a.vy = fa * a.vy + ff * f.vy;
+                a.px = a.x; a.py = a.y;
+                a.R = Math.cbrt(a.R * a.R * a.R + f.R * f.R * f.R);
+                a.heat = fa * a.heat + ff * f.heat;
+                a.m = M; a.heft = 0;
+                removeBody(f, a);
+                list[i] = null;
+                left--;
+            }
+        }
     }
 
     // One go, if this step passed the next multiple of the interval. All from the positions and clock, so it
@@ -3737,6 +3800,7 @@
                 announceTear();
             }
             if (settings.realistic && timeDir > 0 && !past.replay) tidalPasses(dt);
+            if (gasRows >= 0 && settings.realistic && !past.replay) gasThin();
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
@@ -11535,12 +11599,12 @@
         computePrimaries();
         refreshBodyLists();
         const back = list.filter((b) => !had.has(b));
-        for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
+        for (const b of ev.kind === 'gas' ? [] : back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
         const name = back.length ? escapeHtml(back[0].name) : 'A body';
         const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
             : ev.kind === 'hit' ? '<strong>The debris is gone.</strong> A collision can\'t run backwards by itself.'
             : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
-        pastNote(note, 6000);
+        if (ev.kind !== 'gas') pastNote(note, 6000);   // (thinning is no event for the person watching)
         updateHistoryUi();
     }
 
