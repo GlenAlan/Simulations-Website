@@ -2063,6 +2063,7 @@
     function announceTear() {
         const n = tornNews;
         tornNews = null;
+        updateHistoryUi();   // (Undo now takes the break-up back: see tornInScene)
         if (!n || n.L.minor) return;
         clearHint('tip');
         if (n.chosen && bodies.includes(n.H)) selectBody(n.H.id);
@@ -10425,6 +10426,7 @@
         const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
             : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
+        updateHistoryUi();
     }
 
     // The trails after a step, either way in time. The kept samples always run one way (trailDir).
@@ -12746,9 +12748,23 @@
         while (hist.undo.length > 1 && size(hist.undo) + size(hist.redo) > HISTORY_BODIES) hist.undo.shift();
     }
 
+    // Nothing done in this scene, yet a body has broken up in it: Undo goes back to the scene's start,
+    // rather than out of the scene to the one before it
+    const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp);
+
     function undoStep() {
         flushEdit();
-        if (dragging() || !hist.undo.length) return false;
+        if (dragging()) return false;
+        if (tornInScene()) {
+            restoreSnapshot(hist.rw, 'rewind');
+            setReverse(false, true);
+            hist.rwFresh = true;
+            hist.open = null;
+            historyNote('<strong>Undone:</strong> the break-up. Back at the start of the scene.');
+            updateHistoryUi();
+            return true;
+        }
+        if (!hist.undo.length) return false;
         const st = hist.undo.pop();
         hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
@@ -12807,7 +12823,7 @@
     }
 
     function updateHistoryUi() {
-        const u = hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
+        const u = tornInScene() ? { label: 'the break-up' } : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
         historyButton(ui.undoBtn, 'Undo', u, `${KEYS_MOD}Z`);
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
