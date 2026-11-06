@@ -3574,11 +3574,40 @@
         return `${fmtSig(deg * 3600)}″`;
     }
 
+    // Does the turning of this orbit mean anything here? Only for a clear orbit round one host: Einstein's turn
+    // comes to at least 1" a century (Mercury's is 43", Earth's 3.8", Jupiter's 0.06"), no heavier body crosses the
+    // orbit, and other bodies leave Einstein at least a twentieth of the whole. (Their turn is about (3 pi / 2) tau
+    // an orbit against his 6 pi g, see othersPull: Mercury among the planets comes to a tenth.) So not a figure of
+    // eight, a comet crossing Earth's orbit, or Jupiter among its asteroids, where the numbers only confuse.
+    // Worked out at most with the other readouts (updateClock clears it), so it doesn't cost a loop a frame.
+    const TURN_MIN = 1;                   // arcseconds a century
+    const TURN_SHARE = 0.05;
+    const turnWorth = { id: null, pid: null, yes: false };
+    function turnMatters(b, p, el) {
+        const M = b.m + p.m, g = (G * M) / (C2 * el.p), a = el.a;
+        if (((6 * Math.PI * g) / el.T) * 100 * (648000 / Math.PI) < TURN_MIN) return false;
+        const near = a * (1 - el.e), far = a * (1 + el.e);
+        let tau = 0;
+        for (const q of bodies) {
+            if (q === b || q === p || !(q.m > 0)) continue;
+            const d = hyp(q.x - p.x, q.y - p.y);
+            if (q.m >= b.m && d > near && d < far) return false;
+            const k = d > a ? a / d : d / a;
+            tau += (q.m / M) * k * k * (d > a ? k : 1);
+        }
+        return g / (g + tau / 4) >= TURN_SHARE;
+    }
+
     function precessionLines(b, compact, title, C) {
         // (a piece of a torn-apart body has no orbit of its own to turn)
         if (b.grp || !orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
         const p = b.primary, el = elementsOf(b, p);
         if (!el || !el.bound) return null;
+        if (turnWorth.id !== b.id || turnWorth.pid !== p.id) {
+            turnWorth.id = b.id; turnWorth.pid = p.id;
+            turnWorth.yes = turnMatters(b, p, el);
+        }
+        if (!turnWorth.yes) return null;
         const r = precessionOf(b);
         // Round orbits have no clear closest point. (Until one is measured, the osculating e, which for a
         // round orbit this close to a black hole is about 3 GM/(rc^2), not 0)
@@ -3593,11 +3622,8 @@
             : `${fmtTurn(perOrbit)}${unit ? (compact ? ' a turn' : ' each time round') : ''}`);
         const lines = [];
         if (!done) {
-            const tr = r && r.tracker;
-            const f = tr && tr.peri ? clamp((simTime - tr.peri.t) / T, 0, 0.99) : 0;
-            const wait = `measuring… ${Math.round(100 * f)}%`;
-            if (compact) return [[title('Orbit turns: '), [`${wait} · Einstein ${say(eNow, eNow / T, false)}`]]];
-            return [[title('The orbit turns (precession)')], [[`Measured: ${wait}`]], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
+            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, false)}`]]];
+            return [[title('The orbit turns (precession)')], [['Measured: after a full orbit']], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
         }
         const einstein = say(r.einstein, r.others ? r.rateE : r.einstein / r.T, false);
         const measured = say(r.perOrbit, r.rate, true);
@@ -3643,14 +3669,14 @@
             const list = ecc && tr.orbits.length >= 2 ? tr.orbits : !ecc && tr.turns.length >= 2 ? tr.turns : null;
             if (list) shrink = (list[list.length - 2].a - list[list.length - 1].a) * AU_KM;
         }
-        const km = shrink === null ? 'measuring…' : shrink >= 1 ? `${fmtKm(shrink)} km` : `${fmtSig(shrink * 1000)} m`;
+        const km = shrink === null ? '' : shrink >= 1 ? `${fmtKm(shrink)} km` : `${fmtSig(shrink * 1000)} m`;
         const freq = `${fmtSig(2 / (T * YEAR_S))} Hz`;   // (twice a turn)
         const mine = b === a || b === c;
         if (compact) {
             lines.push([title('Waves: '), [shrink === null ? `${freq}, orbit shrinking` : `${freq}, orbit shrinks ${km} a turn`]]);
         } else {
             lines.push([title(mine ? 'Gravitational waves' : `Gravitational waves: ${a.name} and ${c.name}`)]);
-            lines.push([[`Orbit shrinks ${km}${shrink === null ? '' : ' each time round'}`]]);
+            lines.push([[shrink === null ? 'Orbit shrinking' : `Orbit shrinks ${km} each time round`]]);
             lines.push([[`Period ${fmtDuration(T, true)} · waves ${freq}`]]);
         }
         return { lines, wave: gw.waveN > 1 };
@@ -3665,20 +3691,42 @@
     // it says "about".) The body's own gravity isn't counted, so it
     // is a clock beside it, which for a star remnant, with strong gravity of its own, the words say. A
     // black hole has no surface to put one on. Worked out with the other readouts, not every frame.
+    // A year's loss is what is asked, so on a bound orbit its own part is the average over that orbit: the time
+    // average of 1/r on an ellipse is 1/a, and of the speed squared GM/a. So the figure holds still, where at any
+    // moment it swings as the body goes round (by seven times, on the giant's orbit). The rest, the pair's own
+    // motion and other bodies' pull, is as it is now. It is then smoothed over about one of the scene's reference
+    // periods of simulated time (at once if paused, as nothing moves then but an edit), for what the average misses:
+    // three stars on no one orbit, and a's own swing where relativity is strong.
     const CLOCK_MIN = 0.1 / YEAR_S;       // fraction: slower than this (0.1 s a year) isn't shown
-    const clock = { id: null, x: 0, loss: 0 };
+    const clock = { id: null, x: 0, loss: 0, swings: false, was: null, t: 0, mean: 0 };
     function updateClock() {
         const b = settings.realistic ? bodyById(selectedId) : null;
         clock.id = null;
-        if (!b || b.kind === 'blackhole' || b.held || bodies.length < 2) return;
+        turnWorth.id = null;   // (see turnMatters)
+        if (!b || b.grp || b.kind === 'blackhole' || b.held || bodies.length < 2) return;
         let U = 0;
         for (const q of bodies) {
             if (q === b) continue;
             const r = hyp(q.x - b.x, q.y - b.y);
             if (r > 0) U += (G * q.m) / r;
         }
-        const c = totals(bodies), vx = b.vx - c.vx, vy = b.vy - c.vy;
-        const x = (2 * U + vx * vx + vy * vy) / C2;
+        const c = totals(bodies);
+        let vx = b.vx - c.vx, vy = b.vy - c.vy, v2 = vx * vx + vy * vy;
+        const p = b.primary, el = p && p !== b && !p.held ? elementsOf(b, p) : null;
+        clock.swings = false;
+        if (el && el.bound && el.r > 0) {
+            const M = b.m + p.m, f = p.m / M;
+            U += G * p.m * (1 / el.a - 1 / el.r);
+            vx = (b.m * b.vx + p.m * p.vx) / M - c.vx;
+            vy = (b.m * b.vy + p.m * p.vy) / M - c.vy;
+            v2 = vx * vx + vy * vy + (f * f * el.mu) / el.a;
+            clock.swings = el.e > 0.1;
+        }
+        const raw = (2 * U + v2) / C2, dt = Math.abs(simTime - clock.t);
+        clock.mean = clock.was === b.id && dt > 0 ? clock.mean + (raw - clock.mean) * (1 - Math.exp(-dt / scene.Tref)) : raw;
+        clock.was = b.id;
+        clock.t = simTime;
+        const x = clock.mean;
         // (1 - sqrt(1 - x), not lost in rounding when x is a few billionths)
         const loss = x < 1 ? x / (1 + Math.sqrt(1 - x)) : 1;
         if (loss < CLOCK_MIN) return;
@@ -3691,11 +3739,11 @@
     }
     function clockLines(b, compact, title) {
         if (!b || clock.id !== b.id) return null;
-        const who = isCompact(b) ? 'A clock beside it' : 'Its clock', x = clock.x;
+        const who = isCompact(b) ? `A clock beside ${theName(b)}` : `${sentenceCase(theName(b))}'s clock`, x = clock.x;
         if (x > 0.9) return [[title(`${who} has almost stopped`)]];
         const lost = `${x > 0.1 ? 'about ' : ''}${clockLost(clock.loss)} a year`;
         if (compact) return [[title(`${who} loses `), [lost]]];
-        return [[title(`${who} runs slow`)], [[`Loses ${lost}`]]];
+        return [[title(`${who} runs slow`)], [[`Loses ${lost}${clock.swings ? ' on average' : ''}`]]];
     }
 
     function drawRelativityCard(C, subj, y, fs, compact) {
@@ -3703,7 +3751,8 @@
         const title = (t) => [t, true, C.kepler];
         const pl = precessionLines(subj, compact, title, C);
         const wl = waveLines(subj, compact, title, C);
-        const cl = clockLines(subj, compact, title);
+        // (a flyby's card says what the moment is about: the clock would only stack under it)
+        const cl = flybyLines(true) ? null : clockLines(subj, compact, title);
         if (!pl && !wl && !cl) return y;
         const lines = (pl || []).concat(cl || [], wl ? wl.lines : []);
         const lh = Math.round(fs * 1.4);
