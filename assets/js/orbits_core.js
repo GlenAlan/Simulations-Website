@@ -2276,7 +2276,7 @@
         for (const L of bodies) {
             if (L.grp || L.held || isCompact(L) || L.m < 1e-17) continue;   // not probes: they are held together by their structure
             for (const H of hs) {
-                if (H === L || H.held || H.m < 5 * L.m) continue;
+                if (H === L || H.held || H.m < 5 * L.m || H.grp < 0) continue;   // (gas is too thin to tear anything)
                 const dx = L.x - H.x, dy = L.y - H.y;
                 // (going round H it may have passed closer between the ends of the step: going forwards, as nothing
                 // that passed like that stayed whole, running back retraces it)
