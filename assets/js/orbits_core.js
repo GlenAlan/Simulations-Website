@@ -12267,9 +12267,14 @@
         if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
         // (a glide passes through views that show nothing: only where it ends counts)
         if (!ui.fit || !viewW || !bodies.length || dragging()) return;
-        if (view.anim) { if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned); return; }
         const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
-        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > -r && x < viewW + r && y > -r && y < viewH + r; });
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > visL - r && x < visR + r && y > -r && y < viewH + r; });
+        if (view.anim) {
+            if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned);
+            // (a glide that has brought bodies back: the note goes as soon as they show)
+            else if (!inside && !out) { viewLost = null; clearHint('note', 'lost'); }
+            return;
+        }
         ui.fit.classList.toggle('is-wanted', out || !!inside || !!view.panned);   // (moved by hand: the way back stands out too)
         const lost = inside ? inside.id : out ? -1 : null;
         if (lost === viewLost) return;
