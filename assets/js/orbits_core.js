@@ -15152,16 +15152,17 @@
     // script can take as long as the script, and then 80% of the time between frames is too much to hand out:
     // frames miss the screen's refresh. So once LATE_SHARE of them are over LATE_MS apart, and for LATE_HOLD_MS
     // after (as this cures them), the paint is timed, by a message posted at the end of the frame, which arrives
-    // once that is done, and 95% of the time less the paint is the limit if that is less. Elsewhere nothing is
-    // timed, nothing changes, and the physics has all it had.
+    // once that is done, and 95% of the time less the paint is the limit if that is less. (If that would leave next
+    // to nothing, the drawing alone makes them late, and giving up the physics wouldn't help.) Elsewhere nothing
+    // is timed, nothing changes, and the physics has all it had.
     const LATE_MS = 25, LATE_SHARE = 0.15, LATE_HOLD_MS = 5000;
     const paintClock = new MessageChannel();
     let lateShare = 0, lateUntil = 0, paintFrom = 0;
     paintClock.port1.onmessage = () => { perf.paint = smooth(perf.paint, performance.now() - paintFrom); };
     function physicsBudget(ts) {
         const t = Math.min(perf.interval, 20);
-        const share = ts < lateUntil ? Math.min(0.8 * t, 0.95 * t - perf.paint) : 0.8 * t;
-        return clamp(share - perf.render - perf.other, 3, PHYSICS_MS);
+        const busy = perf.render + perf.other, room = 0.95 * t - perf.paint - busy;
+        return clamp(ts < lateUntil && room >= 1 ? Math.min(0.8 * t - busy, room) : 0.8 * t - busy, 3, PHYSICS_MS);
     }
 
     function frame(ts) {
