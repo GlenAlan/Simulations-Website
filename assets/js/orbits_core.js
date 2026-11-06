@@ -14604,7 +14604,8 @@
         if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
         if (mission.status === 'lost') return '<strong>Retry</strong>, or undo your last burn and fly it differently.';
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
-        if (!mission.hints) return paused && mission.status === 'flying' ? 'Paused. Burn, or press <strong>Play</strong> to go on.' : 'Hold an engine button to burn. Stuck? Turn on <strong>Hints</strong>.';
+        // (one line, whatever the clock is doing: a held burn stops it, and the words mustn't flicker)
+        if (!mission.hints) return 'Burn, watch the dashed path, and play on. Stuck? Turn on <strong>Hints</strong>.';
         return x.d.hint(x);
     }
     // (setHint's default during a mission: the mission's own hint)
