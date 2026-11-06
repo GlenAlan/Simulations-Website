@@ -6382,6 +6382,7 @@
                     ctx.beginPath();
                     ctx.arc(tip.x, tip.y, 6.5 * sizeScale, 0, TAU);
                     ctx.stroke();
+                    if (b.id === mission.craftId) { const q = mission.tipBox, m = 8 * sizeScale; q.l = tip.x - m; q.r = tip.x + m; q.t = tip.y - m; q.b = tip.y + m; }
                 }
             } else if (hot && !b.aim) {
                 const h = handlePos(b), hl = Math.hypot(h.x - x, h.y - y) || 1;
@@ -12967,6 +12968,7 @@
         plan: null,            // the burn that would put that approach inside the goal (see burnPlan)
         tell: null,            // the burn the hint asks for, for the arrow on the probe: { ux, uy, kms }
         labels: [], labelBoxes: [],    // the marks' names to draw this frame, and where they went
+        tipBox: { l: 0, r: -1, t: 0, b: 0 },   // the ring on the probe's velocity arrow this frame (r < l: none)
         aimPaused: false,      // the clock was stopped for a moment (aiming, firing, reading a card)
         firing: null,          // the engine while it is held: { kind, fine, key, timer }
         fine: false,           // the Fine switch
@@ -14512,10 +14514,13 @@
             const L = clamp(40 + 30 * t.kms, 40, 90) * sizeScale, x1 = x0 + ux / n * L, y1 = y0 + uy / n * L;
             arrow(x0, y0, x1, y1, C.burn, 3);
             mission.labelBoxes.push({ l: Math.min(x0, x1) - 3, r: Math.max(x0, x1) + 3, t: Math.min(y0, y1) - 3, b: Math.max(y0, y1) + 3 });   // (names keep off it)
-            labels.push(markName(`burn ${kmsWords(t.kms)} km/s`, x1, y1, 5, uy < 0));
+            // (the arrow's end can lie on the ring on the velocity arrow, a burn being along the motion: its name stands clear)
+            const q = mission.tipBox, off = q.r > q.l ? Math.hypot((q.l + q.r) / 2 - x1, (q.t + q.b) / 2 - y1) : Infinity;
+            labels.push(markName(`burn ${kmsWords(t.kms)} km/s`, x1, y1, off < 28 ? off + (q.r - q.l) / 2 + 5 : 5, uy < 0));
         }
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12), pad = 3;
         const zones = edgeKeepOut(), boxes = mission.labelBoxes;
+        boxes.push(mission.tipBox);
         const discs = bodies.map((b) => ({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b) }));
         ctx.font = font(fs);
         ctx.textAlign = 'center';
@@ -14540,6 +14545,7 @@
             ctx.fillStyle = C.text;
             ctx.fillText(q.text, at.lx, at.t);
         }
+        mission.tipBox.r = -1;
         ctx.restore();
     }
 
