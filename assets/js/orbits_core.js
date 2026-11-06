@@ -13592,11 +13592,12 @@
         return T ? ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(c.y - R.y, c.x - R.x)) / DEG + 360) % 360 : 0;
     }
 
-    // The clock stops, waiting for the burn
+    // The clock stops, waiting for the burn (a full-sized one: Fine was for tuning the burn before)
     function missionWait() {
         endSkip();
         acc = 0;
         setPaused(true);
+        mission.fine = false;
     }
 
     // (each step) Got there by Play: the moment is short, so the clock stops for it where a skip would, at
@@ -13729,6 +13730,7 @@
             mission.result = { t: simTime };
         }
         mission.resultShown = false;
+        mission.fine = false;
         endSkip();
         if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
         mission.aimPaused = false;
