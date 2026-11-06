@@ -12845,11 +12845,20 @@
         if (document.body.classList.contains('sim-fullscreen-active')) return;
         if (visible) {
             chartsFrom = window.scrollY;
-            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
+            revealCharts();
         } else if (chartsFrom !== null) {
             window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
             chartsFrom = null;
         }
+    }
+
+    // Into view, if they are under the canvas (beside it they already are). In a window wider than tall, not so far
+    // that the canvas's top goes out of view: the last of them may wait for a scroll.
+    function revealCharts() {
+        if (window.innerWidth > window.innerHeight && window.innerHeight > 540) {
+            const over = ui.chartsContainer.getBoundingClientRect().bottom - window.innerHeight;
+            if (over > 0) window.scrollBy({ top: Math.max(0, Math.min(over + 8, canvas.getBoundingClientRect().top - 8)), behavior: quickMotion() });
+        } else ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
     }
 
     function resetCharts() {
@@ -16622,7 +16631,12 @@
         if (w === viewW && h === viewH && newDpr === dpr) { syncDrawer(rect); return; }
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        const wasWide = view.wide;
         view.wide = getComputedStyle(canvas).getPropertyValue('--orb-view-wide').trim() === '1';
+        // (Settings moves the graphs from beside the canvas to under it and back: the page follows them)
+        if (wasWide !== view.wide && chartsVisible() && !document.body.classList.contains('sim-fullscreen-active')) {
+            if (wasWide) revealCharts(); else if (chartsFrom !== null) window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
+        }
         syncDrawer(rect);
         if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
