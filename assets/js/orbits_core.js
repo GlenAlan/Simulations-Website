@@ -11464,7 +11464,10 @@
         }
         // (on a touch screen Help waits for the room: it is in the settings too)
         const help = tap && h ? '' : '<button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button> ';
-        if (isRandomKey(settings.scene)) h += `${NEW_SYSTEM_BTN} `;
+        const random = isRandomKey(settings.scene);
+        if (random) h += `${NEW_SYSTEM_BTN} `;
+        // (and there, Missions too: it is at the end of the scene list)
+        if (random && tap && !help) return h;
         return `${h}<span class="orb-hint-links">${help}<button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button></span>`;
     }
 
@@ -13318,10 +13321,7 @@
             const c = totals(list), far = (b) => Math.hypot(b.x - c.x, b.y - c.y);
             half = 1.15 * Math.max(far(list[0]) + half / 1.15, far(list[list.length - 1]));
         }
-        const extra = [];
-        if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
-        if (companion) extra.push('a second star');
-        const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
+        const desc = `${star.what} with ${planets.length} planets`;   // (any moons or second star are there to see)
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
             tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? ${NEW_SYSTEM_BTN}`,

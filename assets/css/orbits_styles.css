@@ -4304,6 +4304,18 @@ dialog.orb-help::backdrop {
     visibility: hidden;
 }
 
+/* ---------- A random system's hint ----------
+   Under the canvas, on a narrow screen, the line grows if it must, to keep its New system button in sight. */
+@media (orientation: portrait), (max-width: 639px) {
+    .orb-hint:has(.orb-hint-newsys) {
+        display: block;
+        height: auto;
+        min-height: 4.5em;
+        -webkit-line-clamp: unset;
+        line-clamp: unset;
+    }
+}
+
 /* ---------- The top of the settings ----------
    The start date, in a dated scene, and then Realistic physics: it changes the physics, not what is shown. */
 .sim-controls-content > .orb-date[hidden] + .sim-control-group {
