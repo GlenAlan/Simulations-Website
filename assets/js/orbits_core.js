@@ -24,7 +24,8 @@
  * Realistic physics (off by default) draws every body at its true size (with a small marker so it can be
  *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
- *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest.
+ *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest, and
+ *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest.
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
  *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
  *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
@@ -1120,8 +1121,11 @@
     // through each other feel a gentle pull, not an ever stronger one, and the clump can never force the
     // step down below about its own free-fall time (eps^3 / G(m_i + m_j)), whatever they do. That pull changes
     // smoothly (it never grows without limit, as a point mass's does close in), so those pairs need SOFT_STEP
-    // times fewer steps per free-fall time than a point-mass orbit: still about 200 per swing through the
-    // clump. (No relativity between them: GM/(rc^2) for a ninth of a star is a few millionths.)
+    // times fewer steps per free-fall time than a point-mass orbit: still about 50 per swing through the
+    // clump. (No relativity between them: GM/(rc^2) for a ninth of a star is a few millionths.) Pieces of
+    // different bodies don't pull on each other at all: streams of gas passing through each other, each
+    // pulled far harder by what it orbits. The pieces' relativity is in the turning of their orbits: see
+    // driftHosted.
     const DIRECT_MAX = 200;               // exact pair sums up to this many bodies (about the measured crossover with the tree)
     // With the tree, its force errors (a few parts in 10,000 of the swarm's own pull) are the limit on
     // accuracy, not the steps: ETA_SWARM still gives over 600 steps per orbit at 4th order, whose errors
@@ -1129,7 +1133,7 @@
     const ETA_SWARM = 0.01;
     const HEAVY_MAX = 8;                  // above it, the heaviest bodies that still pull pair by pair
     const PN_SKIP = 1e-9;
-    const SOFT_STEP = 8;
+    const SOFT_STEP = 32;
     const SOFT_T2 = SOFT_STEP * SOFT_STEP;   // (the times are kept squared)
     // A piece's softening length (AU): the radius of the body it came from, cbrt(FRAGMENTS) times its own
     const softLength = (b) => (b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
@@ -1541,10 +1545,10 @@
     const PN_PAIR_MAX = 1e-6;
     // A piece of a torn-apart body (see "Tidal disruption"), so light that it can't disturb its host much (at
     // most a HOST_MIN-th of its mass), is followed round it the same way, relativity or not, and many can
-    // share one host (see driftHosted). Then one that swings in close forces nothing on the rest: at most it
-    // keeps the step under HOST_TURN of its time near the host, for the sake of its trail, and never under
-    // HOST_STEPS steps a trail sample. PIECE_STEP: a piece that does set the step, passing some other
-    // body, is let off with that many times fewer steps (it only has to look right).
+    // share one host (see driftHosted). Then one that swings in close forces little on the rest: it keeps
+    // the step under HOST_TURN of its time near the host (for its trail, and for the others' small pull on
+    // it through the host), but to no more than HOST_STEPS steps a trail sample. PIECE_STEP: a piece that
+    // does set the step, passing some other body, is let off with that many times fewer steps.
     const HOST_MIN = 10;
     const HOST_TURN = 0.25;
     const HOST_STEPS = 32;
@@ -1664,7 +1668,7 @@
     // goes round (6 pi GM / (c^2 a (1 - e^2)) a turn, whatever the step). A body following a Kepler orbit turned
     // like that keeps its energy and angular momentum, and, turning about the host, commutes with the motion
     // round it, so all this stays time-reversible. A piece too close to its host to stay in orbit (inside
-    // the innermost stable orbit) falls in as a body would: see plunge.
+    // the innermost stable orbit) falls in: see piecesFallIn.
     function driftHosted(g, dt) {
         const H = g.h, list = g.pairs, n = list.length, mH = H.m, real = settings.realistic;
         let M = mH, X = mH * H.x, Y = mH * H.y, PX = mH * H.vx, PY = mH * H.vy;
@@ -1988,7 +1992,9 @@
 
     // Pieces that touched their hosts in the last step (hundreds at a time, when a swarm falls into a black
     // hole). Inside the innermost stable orbit, before it touches, a piece just falls in, as in plunge: what it
-    // takes with it is kept in the books, so the total stays level.
+    // takes with it is kept in the books (under FALLEN, among the body ids of groupEnergy), so the total stays
+    // level.
+    const FALLEN = -1;
     function piecesFallIn() {
         let merged = false;
         listsWait = true;
@@ -1998,7 +2004,7 @@
             const f = p.a, H = p.b, fell = settings.realistic && G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM;
             const before = fell ? energyOf([f, H]) : 0;
             mergeBodies(f, H);
-            if (fell) groupEnergy.set('fallen', (groupEnergy.get('fallen') || 0) + energyOf([H]) - before);
+            if (fell) groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([H]) - before);
             merged = true;
         }
         listsWait = false;
@@ -2039,11 +2045,13 @@
     // held together only by its own gravity), before their surfaces touch, is torn apart. It becomes a
     // line of fragments along the line to the heavy body, all moving as it did; the inner ones are more
     // tightly bound than the outer ones, so they spread out along the orbit into a stream, and if the
-    // pass was close enough about half escape. The fragments pull on each other (softened, see above)
-    // and on everything else, so self-gravity can gather some of the stream into clumps, as in
+    // pass was close enough about half escape. The fragments of one body pull on each other (softened, see
+    // above) and all pull on everything else, so self-gravity can gather some of the stream into clumps, as in
     // simulations of real disruptions. They don't merge with each other: they start overlapping (parts of
     // one fluid body), and streams of gas that meet pass through each other rather than sticking like
-    // solid bodies; they can still merge with anything else, or fall into the black hole.
+    // solid bodies; they can still merge with anything else, or fall into the black hole. A fragment
+    // swings round the body tearing it far faster than anything else moves, so each follows its own orbit
+    // round it exactly (see "Close pairs"), and it doesn't set the step for the rest.
     // In a crowded scene only the heaviest few bodies are tried as the heavy partner (bodies outside them
     // are light swarm bodies, whose Roche limits round each other are barely bigger than their own sizes,
     // so they merge rather than tear).
@@ -5534,7 +5542,7 @@
     // points that make a straight line to within a fraction of a pixel are drawn as one (a little more
     // in the older, fainter part, and if drawing is running slow: perf.quality; see traceTrail), and
     // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
-    // extra ones) is read every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
+    // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, TRAIL_POINTS = 1500;
     const minorGroups = new Map();
     function drawTrails(C) {
@@ -5584,7 +5592,7 @@
         }
         // The swarm: one path per colour for each of a few shades, in thinner lines with plain ends and
         // corners (round ones take far longer to paint); when drawing runs slow, only their newest part
-        if (perf.quality < 0.3) return;
+        const low = perf.quality < 0.3;
         ctx.lineWidth = Math.max(1, 0.6 * lw);
         ctx.lineCap = 'butt';
         ctx.lineJoin = 'miter';
@@ -5596,6 +5604,7 @@
                 ctx.globalAlpha = 0.06 + 0.5 * f;
                 ctx.beginPath();
                 for (const b of g) {
+                    if (low && b.minor) continue;
                     let k0 = Math.max(trailFirst(b), first, oFirst);
                     k0 = Math.max(k0, sampleCount - Math.ceil((sampleCount - k0) * perf.quality));
                     const count = sampleCount - k0;
@@ -6366,7 +6375,10 @@
         const dx = q.x - b.x, dy = q.y - b.y;
         const r2 = dx * dx + dy * dy;
         let s2 = r2;
-        if (b.grp && b.grp === q.grp) { const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e; }
+        if (b.grp && q.grp) {
+            if (b.grp !== q.grp) { pp.x = 0; pp.y = 0; return 0; }
+            const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
+        }
         if (!(s2 > 0)) { pp.x = 0; pp.y = 0; return 0; }
         const k = (G * b.m * q.m) / (s2 * Math.sqrt(s2));
         pp.x = k * dx; pp.y = k * dy;
@@ -9843,7 +9855,8 @@
     let trailEpoch = -1;                  // hist.epoch when trailFloor was last good
     const STEP_LOG = 1 << 17;             // steps logged for an exact retrace
     const LOG_MASK = STEP_LOG - 1;
-    const PAIR_SETS = 4096;               // different sets of close pairs logged (beyond: chosen afresh going back)
+    const PAIR_SETS = 4096;               // different sets of close pairs logged (beyond: chosen afresh going back)...
+    const PAIR_ROWS = 200000;             // ...and at most this many pairs in them
     const EVENT_MAX = 200;                // merges and break-ups remembered...
     const EVENT_BODIES = 20000;           // ...and at most this many bodies in their copies
     const RETRACE_NEAR = 1e-3;            // back at a merger's moment: within this fraction of its step
@@ -9851,7 +9864,7 @@
         key: null,                        // the edit history's state when this history began (pastKey)
         from: 0,                          // trail samples from this number on were taken during it
         dt: null, pairs: null, head: 0, count: 0, replay: false,   // the step log: signed steps, pair sets
-        sets: [[]], last: [], set: 0,     // the pair sets (as body ids), and the last step's pairs and set
+        sets: [[]], rows: 0, last: [], set: 0,   // the pair sets (as body ids), and the last step's pairs and set
         events: [], pending: null, wall: null,
         dropped: false,                   // the sample after the newest kept one was dropped (still readable)
         ghosted: false, drift: false, gap: 0, noted: false, noteTimer: 0   // (gap: the widest, px)
@@ -9872,7 +9885,7 @@
         past.key = key;
         past.head = past.count = 0;
         past.replay = false;
-        past.sets.length = 1; past.last = []; past.set = 0;
+        past.sets.length = 1; past.rows = 0; past.last = []; past.set = 0;
         past.events.length = 0; past.pending = null; past.wall = null;
         // (the sample just taken at this moment belongs to it)
         past.from = sampleCount > 0 && sampleTimes[(sampleCount - 1) % TRAIL_CAP] === simTime ? sampleCount - 1 : sampleCount;
@@ -9923,7 +9936,8 @@
         if (same) return past.set;
         past.last = mainPairs.slice();
         if (!mainPairs.length) return (past.set = 0);
-        if (past.sets.length >= PAIR_SETS) return (past.set = -1);
+        if (past.sets.length >= PAIR_SETS || past.rows >= PAIR_ROWS) return (past.set = -1);
+        past.rows += mainPairs.length;
         past.sets.push(mainPairs.map((p) => [p.a.id, p.b.id]));
         return (past.set = past.sets.length - 1);
     }
@@ -10118,7 +10132,8 @@
             const rx = T[i0] + f * (T[i1] - T[i0]) - ox, ry = T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy;
             return { x: offX + (rc * rx - rs * ry) * scale, y: offY - (rs * rx + rc * ry) * scale };
         };
-        const usable = (b) => !b.held && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
+        // (not pieces of a torn-apart body: their samples are too far apart at a swing past the host to say where they were)
+        const usable = (b) => !b.held && !b.grp && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
         for (const b of bodies) {
             if (!usable(b)) continue;
             const g = where(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -11221,10 +11236,14 @@
         const def = SCENES[key];
         const fin = (v, dflt) => (Number.isFinite(v) ? v : dflt);
         const idOf = (v) => (ids.has(v) ? v : null);
-        const pairs = [], paired = new Set();
+        const pairs = [], paired = new Set(), pieces = new Set();
+        for (let i = 0; i < n; i++) if (num[i * SNAP_W + 7]) pieces.add(num[i * SNAP_W]);
         for (const q of Array.isArray(d.pr) ? d.pr : []) {
-            if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0]) || paired.has(q[1])) continue;
-            paired.add(q[0]); paired.add(q[1]);
+            if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0])) continue;
+            // (many pieces of a torn-apart body can share a host)
+            if (!pieces.has(q[0]) && paired.has(q[1])) continue;
+            paired.add(q[0]);
+            if (!pieces.has(q[0])) paired.add(q[1]);
             pairs.push([q[0], q[1], q[2] ? 1 : 0]);
         }
         const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
