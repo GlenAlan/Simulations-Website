@@ -14375,8 +14375,9 @@
         // L4: one lap of an orbit 1/12 longer than Jupiter's, so 30 degrees are lost
         const TJ = TAU * Math.sqrt(Math.pow(5.2, 3) / (G * (1 + MJUP))), lT = TJ * 13 / 12;
         const lA = Math.cbrt(G * lT * lT / (TAU * TAU)), lDv = toKms(Math.sqrt(G * (2 / 5.2 - 1 / lA)) - Math.sqrt(G / 5.2));
-        // Deflect: an orbit crossing Earth's, met there on its way in after dL years. Earth starts where
-        // that puts it at the crossing then. Par and the later figures were found by flying it: see deflectFigs.
+        // Deflect: an orbit crossing Earth's, met there on its way in after dL years. Earth starts where that
+        // puts it at the crossing then. Par and the later figures in the words were found by flying it. (Its
+        // arrival shifts by about 3 dv t, Ahrens & Harris 1992: over ten years 1 cm/s is 9,500 km, as the win card says.)
         const dA = 1.5, dE = 0.4, dL = 1.2, dP = dA * (1 - dE * dE);
         const dCross = Math.acos((dP - 1) / dE), dEcc = 2 * Math.atan(Math.sqrt((1 - dE) / (1 + dE)) * Math.tan(dCross / 2));
         const dNu = trueAnomaly(-(dEcc - dE * Math.sin(dEcc)) - TAU * dL / Math.pow(dA, 1.5), dE) / DEG;
@@ -14385,10 +14386,11 @@
         const sR = 0.05, sOut = hohmann(1, 5.2), sVa = Math.sqrt(G * (2 / 5.2 - 1 / sOut.a));
         const sBack = toKms(sVa - Math.sqrt(G * (2 / 5.2 - 1 / (0.5 * (5.2 + sR)))));
         const sDirect = toKms(Math.sqrt(G) - Math.sqrt(G * (2 - 1 / (0.5 * (1 + sR))))), sLeave = toKms((Math.SQRT2 - 1) * Math.sqrt(G));
-        // Free return from a 40,000 km orbit: a path that crosses the Earth-Moon line square on 8,000 km behind
-        // the Moon is its own mirror image there, so it comes back as it went (the restricted three-body
-        // problem's symmetry, y to -y and t to -t). Following that crossing back to its perigee gives the
-        // place to start (the Moon this far ahead) and the burn.
+        // Free return from a 40,000 km orbit (Apollo's was 185 km up, too small to see here): a path that
+        // crosses the Earth-Moon line square on 8,000 km behind the Moon is its own mirror image there, so it
+        // comes back as it went (the restricted three-body problem's symmetry, y to -y and t to -t). Following
+        // that crossing back to its perigee gives where to start (the Moon this far ahead) and the burn: 1.115
+        // km/s, here the least that comes back inside the ring. Found by flying it, up to 1.29 still does.
         const fR = 40000 / AU_KM, fLead = 111.2, fBurn = 1.12;
         // Slingshot: the probe of the Slingshot scene a year on, with 1 km/s less speed than it had (its orbit
         // then, read off by flying that scene). What it would take to leave the Sun from there: sqrt(2GM/r) less its speed
@@ -14442,7 +14444,7 @@
                 craft: 2, ref: 0, target: 1, own: 'the asteroid', budget: 2, limit: dL + 0.6, par: 0.28, aim: 0.28,
                 goal: { type: 'miss', D: 0.2, safe: 0.204, T: dL },
                 goalText: 'Push the asteroid so it misses the ring round Earth.',
-                idea: 'Your rocket is on an asteroid heading for Earth. A small push changes its orbit a little, and the change adds up all the way. So the sooner you push, the less it takes. NASA\'s DART probe tested this on a real asteroid in 2022.',
+                idea: 'Your rocket is on an asteroid heading for Earth. A small push changes its orbit a little, and the change adds up. So the sooner you push, the less it takes. NASA\'s DART probe tested this in 2022.',
                 parText: 'a push now. Wait 6 months and it takes 1.0 km/s, and after 9 months your fuel can\'t do it. Watch the line above the fuel gauge as the clock runs.',
                 teach: 'The sooner you push, the smaller the push: ten years ahead, 1 cm/s moves an asteroid farther than Earth\'s radius.',
                 predict: () => predictApproach(Math.max(mission.def.limit - simTime, 0.02)),
@@ -14468,10 +14470,10 @@
             {
                 id: 'sun', title: 'Reach the Sun',
                 scene: { units: 'au', Tref: 2, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
-                craft: 1, ref: 0, target: null, budget: 22, limit: 9, par: sOut.dv1 + sBack,
+                craft: 1, ref: 0, target: null, budget: 22, limit: 12, par: sOut.dv1 + sBack,
                 goal: { type: 'dive', r: sR, far: 3 },
                 goalText: 'Get inside the small ring round the Sun.',
-                idea: 'You move round the Sun at 30 km/s, and falling in means losing nearly all of that. Far from the Sun you move slowly, so a small burn there drops you in. Fly away first. The Parker Solar Probe uses Venus to shed its speed.',
+                idea: 'You move round the Sun at 30 km/s, and falling in means losing nearly all of it. Far from the Sun you move slowly, so a small burn there drops you in. So fly away first. The Parker Solar Probe uses Venus to shed its speed.',
                 parText: `${f1(sOut.dv1)} km/s forwards, out to 5.2 AU, then ${f1(sBack)} km/s backwards at the far point. Straight down from here takes ${f1(sDirect)} km/s, from v² = GM(2/r − 1/a).`,
                 teach: `To reach the Sun, first fly away from it. Straight down costs more than leaving the Solar System, which takes only ${f1(sLeave)} km/s.`,
                 check: sunCheck, status: sunStatus, skip: sunSkip, coast: () => sunOn(missionContext()), hint: sunHint,
@@ -14518,7 +14520,7 @@
                 goal: { type: 'sling', far: 0.5, spare: 0.1 },
                 goalText: 'Pass just behind Jupiter to leave the Sun for good.',
                 idea: `Your fuel can't leave the Sun: that takes ${f1(fDirect)} km/s from here. But Jupiter is moving. Pass just behind it and its pull drags you along, so you leave faster than you came. The two Voyager probes left the Solar System this way.`,
-                parText: `the burn that moves your pass to just behind Jupiter. On your own, leaving the Sun from here takes ${f1(fDirect)} km/s.`,
+                parText: 'the burn that moves your pass to just behind Jupiter. Pass in front of it and you lose speed instead.',
                 teach: 'That was a gravity assist: Jupiter lost a tiny bit of speed and you gained it.',
                 predict: () => slingPredict(0),
                 check: slingCheck, status: slingStatus, skip: slingSkip, coast: () => slingOn(mission.pred), hint: slingHint,
