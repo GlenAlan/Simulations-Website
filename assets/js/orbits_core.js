@@ -1039,7 +1039,7 @@
             id: nextId++,
             name: props.name, kind: props.kind || 'custom', color: props.color,
             m: props.m, R: props.R,
-            x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0,
+            x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0, pvx: 0, pvy: 0,
             dx: 0, dy: 0,                 // drawn position (extrapolated)
             held: null,                   // { offX, offY } while dragged: position relative to the frame origin
             trail: null,                  // samples (allocated at the first one: see recordSample)
@@ -2046,7 +2046,7 @@
     }
 
     function step(dt) {
-        for (const b of bodies) { b.px = b.x; b.py = b.y; }
+        for (const b of bodies) { b.px = b.x; b.py = b.y; b.pvx = b.vx; b.pvy = b.vy; }
         for (const p of mainPairs) { p.touch = false; p.closest = Infinity; }
         yoshida(bodies, dt, computeForces, mainPairs);
     }
@@ -2132,7 +2132,7 @@
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            mergeBodies(a, b);
+            if (!(settings.realistic && collide(a, b))) mergeBodies(a, b);
             merged = true;
         }
         if (merged) computeForces();
@@ -2152,7 +2152,7 @@
             p.touch = false;
             const f = p.a, H = p.b, fell = settings.realistic && G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM;
             const before = fell ? energyOf([f, H]) : 0;
-            mergeBodies(f, H);
+            if (!(settings.realistic && collide(f, H))) mergeBodies(f, H);
             if (fell) groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([H]) - before);
             merged = true;
         }
@@ -2317,6 +2317,222 @@
         removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
         groupEnergy.set(L.id, energyOf(parts) - before);
         computeForces();
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Collisions that throw debris (realistic physics). What two bodies do when they meet comes from the
+    // scaling laws of Leinhardt & Stewart 2012 (ApJ 745, 79), for bodies held together by their own gravity:
+    //   Q_R = mu V^2 / (2 M), the impact's energy per unit of the two bodies' mass, and
+    //   Q*_RD,1 = c* (3/5) G M / R_C1, with c* = 1.9 (their fit for planets), R_C1 the size of the two together at
+    //   1000 kg/m^3 (or as they really are, if that is larger: a red giant is far less tightly bound);
+    //   Q*_RD = Q*_RD,1 [(gamma + 1)^2 / (4 gamma)]^(2 / (3 mubar) - 1), for mass ratio gamma, with mubar = 0.36; and
+    //   Q'*_RD = (mu / mu_alpha)^(2 - 3 mubar / 2) Q*_RD, as only part of the projectile (alpha) meets the target.
+    // The largest body left has M_lr / M = 1 - Q_R / (2 Q'*_RD), and 0.1 (Q_R / (1.8 Q'*_RD))^-1.5 past Q_R = 1.8 Q'*_RD.
+    // Below the two bodies' mutual escape speed they merge, as ever. A glancing hit (b > R / (R + r)) slower than
+    // V_c = V_esc (2.43 Gamma Th^2.5 - 0.0408 Gamma + 1.86 Th^2.5 + 1.08), Gamma = ((m1 - m2) / M)^2, Th = 1 - b
+    // (Kokubo & Genda 2010, ApJ 714, L21) still merges; a faster one, not fast enough to erode the target, is a
+    // hit and run: both go on, and the smaller sheds what a reverse impact takes from it (LS12 again).
+    // Debris is thrown past the escape speed from what is left at it, with a third of the energy to spare (a
+    // round figure: LS12's fragments go at about that speed), in pieces whose masses follow their
+    // size distribution (number larger than D going as D^-2.85). Mass and momentum are kept exactly. Angular
+    // momentum is kept by turning the debris round what is left, as far as a speed limit lets that go: the
+    // rest would be the spin of what is left, as in a merger, where all of it goes that way. (The bodies have
+    // no spin here.) What the books gain or lose (the heat of the impact, mostly) is kept under groupEnergy.
+    // Not for black holes, neutron stars or white dwarfs (their own binding is far beyond these laws: they
+    // swallow), a swarm's dots (they go by the hundred), pieces, or a mission's bodies.
+    // ------------------------------------------------------------------
+    const LS_CSTAR = 1.9, LS_MU = 0.36;
+    const RHO1 = (1000 * Math.pow(AU_KM * 1000, 3)) / MSUN_KG;   // 1000 kg/m^3 in M_sun / AU^3
+    const DEBRIS_MAX = 12;                // pieces from one collision
+    const DEBRIS_LOTS = 60;               // ...and with this many pieces about already, bodies just merge
+    const DEBRIS_EFF = 1 / 3;             // the share of the energy left after unbinding that goes into the debris
+    const DEBRIS_TURN = 0.7;              // (speed from turning the debris, as a share of its speed from the impact)
+
+    // The largest piece of two bodies left by a collision, as a share of their mass (LS12): mt is the target,
+    // mp what hits it, a the share of mp that meets it, r their size
+    function largestRemnant(mt, mp, a, V, rC) {
+        const M = mt + mp, mu = (mt * mp) / M, g = mp / mt;
+        const Rc = Math.max(Math.cbrt((3 * M) / (4 * Math.PI * RHO1)), rC);
+        const Q1 = LS_CSTAR * 0.6 * G * M / Rc;
+        const Qg = Q1 * Math.pow(((g + 1) * (g + 1)) / (4 * g), 2 / (3 * LS_MU) - 1);
+        const ma = (a * mp * mt) / (a * mp + mt);
+        const x = (0.5 * mu * V * V / M) / (Math.pow(mu / ma, 2 - 1.5 * LS_MU) * Qg);
+        return x < 1.8 ? 1 - 0.5 * x : 0.1 * Math.pow(x / 1.8, -1.5);
+    }
+
+    // The share of a sphere of radius R within a lens of depth l (LS12's interacting mass)
+    function lensShare(R, l) {
+        return l >= 2 * R ? 1 : clamp((3 * R * l * l - l * l * l) / (4 * R * R * R), 1e-6, 1);
+    }
+
+    // What a collision of a and b does; null means they merge. { big, small, Md (the debris' mass), V, b, and for a
+    // hit and run graze (the share of the small body that met the big one), sep and V2p (how they part) }
+    function collisionOutcome(a, b) {
+        const big = a.m >= b.m ? a : b, small = big === a ? b : a;
+        const m1 = big.m, m2 = small.m, M = m1 + m2;
+        const R1 = big.R / AU_KM, R2 = small.R / AU_KM, reach = R1 + R2;
+        // At the moment they touched, from the start of the step they touched in (the end of it may find them
+        // deep inside each other, with the last kick far too strong)
+        const rx = small.px - big.px, ry = small.py - big.py, vx = small.pvx - big.pvx, vy = small.pvy - big.pvy;
+        const r = hyp(rx, ry), gm = G * M;
+        const V2 = vx * vx + vy * vy + (r > reach ? 2 * gm * (1 / reach - 1 / r) : 0);
+        const esc2 = (2 * gm) / reach;
+        if (!(V2 > esc2)) return null;
+        const V = Math.sqrt(V2), h = rx * vy - ry * vx, b0 = Math.min(1, Math.abs(h) / (V * reach));
+        const l = reach * (1 - b0), rC = Math.cbrt(R1 * R1 * R1 + R2 * R2 * R2);
+        const al = R1 > b0 * reach + R2 ? 1 : lensShare(R2, l);
+        const lr = largestRemnant(m1, m2, al, V, rC);
+        const Md = M * (1 - lr);
+        if (b0 > R1 / reach && lr * M > m1) {
+            // A glancing hit that doesn't erode the target
+            const Gam = ((m1 - m2) / M) * ((m1 - m2) / M), th = Math.pow(1 - b0, 2.5);
+            if (V < Math.sqrt(esc2) * (2.43 * Gam * th - 0.0408 * Gam + 1.86 * th + 1.08)) return null;
+            // A hit and run. The part of the target that meets the projectile hits it in turn
+            const be = lensShare(R1, l), mi = be * m1;
+            const rC2 = Math.cbrt(R2 * R2 * R2 + be * R1 * R1 * R1);
+            const lr2 = mi > m2 ? largestRemnant(mi, m2, 1, V, rC2) : largestRemnant(m2, mi, 1, V, rC2);
+            const left = Math.min(m2, lr2 * (mi + m2));
+            const Mg = m2 - left;
+            // They part at a little over touching, having lost the share of their relative motion's energy that met
+            const sep = 1.02 * reach;
+            const V2p = V2 * (1 - al), vt = h / sep;
+            if (!(V2p > (2.04 * gm) / sep) || vt * vt > V2p) return null;   // (too slow to part after all)
+            return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p };
+        }
+        if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return null;
+        return { big, small, Md, graze: 0, V, b: b0 };
+    }
+
+    // Throw debris of mass Md from body c (the two together have this mass). c is what is left, and the debris and c
+    // keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as DEBRIS_TURN
+    // allows. extra: energy to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in tearPattern,
+    // so Run again and a shared link break them the same way; grp: the debris' group.
+    function throwDebris(c, mass, Md, X, Y, VX, VY, L, extra, volume, seed, color, grp) {
+        const Mc = mass - Md;
+        const n = Math.min(clamp(Math.round(4 + (30 * Md) / mass), 4, DEBRIS_MAX), MAX_BODIES - bodies.length);
+        const rnd = seeded(seed);
+        rnd(); rnd();
+        const share = new Array(n);
+        let W = 0;
+        for (let i = 0; i < n; i++) { share[i] = Math.pow(i + 1, -3 / 2.85) * (0.8 + 0.4 * rnd()); W += share[i]; }
+        c.m = Mc;
+        c.R = Math.cbrt(volume * Mc);
+        const parts = [], name = uniqueName('Debris');
+        const Rc = c.R / AU_KM;
+        const v8 = Math.sqrt((2 * DEBRIS_EFF * Math.max(0, extra)) / Md);
+        const a0 = TAU * rnd();
+        const speed = new Array(n);
+        let left = Md, sx0 = 0, sy0 = 0, svx = 0, svy = 0;
+        for (let i = 0; i < n; i++) {
+            const m = i < n - 1 ? Md * (share[i] / W) : left;
+            left -= m;
+            const f = newBody({ name, kind: c.kind, m, R: Math.cbrt(volume * m), color });
+            f.grp = grp;
+            f.heft = heftOf((n * m) / Md);
+            const ang = a0 + (TAU * (i + 0.7 * rnd())) / n, ux = Math.cos(ang), uy = Math.sin(ang);
+            // Far enough out that one step's backward leg (see yoshida) can't take it back to what it left: about
+            // where it would be by the next step anyway
+            const d0 = (Rc + f.R / AU_KM) * (1.3 + 0.5 * rnd()), vf = v8 * (0.6 + 0.8 * rnd());
+            const d = d0 + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt((2.04 * G * (Mc + m)) / d0 + vf * vf);
+            const esc2 = (2 * G * (Mc + m)) / d;
+            const w = Math.sqrt(esc2 * 1.02 + vf * vf);
+            f.x = d * ux; f.y = d * uy;
+            f.vx = w * ux; f.vy = w * uy;
+            speed[i] = w;
+            sx0 += m * f.x; sy0 += m * f.y; svx += m * f.vx; svy += m * f.vy;
+            parts.push(f);
+        }
+        // Relative to c so far. The centre of mass and momentum then fix where c goes
+        const cx = -sx0 / mass, cy = -sy0 / mass, cvx = -svx / mass, cvy = -svy / mass;
+        let Lp = 0, I = 0, kMax = Infinity;
+        for (let i = 0; i < n; i++) {
+            const f = parts[i], px = f.x + cx, py = f.y + cy, qx = f.vx + cvx, qy = f.vy + cvy;
+            Lp += f.m * (px * qy - py * qx);
+            I += f.m * (f.x * f.x + f.y * f.y);
+            kMax = Math.min(kMax, (DEBRIS_TURN * speed[i]) / hyp(f.x, f.y));
+        }
+        Lp += Mc * (cx * cvy - cy * cvx);
+        I -= (sx0 * sx0 + sy0 * sy0) / mass;
+        // A turn of the debris about c at rate k (k z x d each) adds k I, and keeps the momentum once c moves with it
+        const k = clamp((L - Lp) / I, -kMax, kMax);
+        let tx = 0, ty = 0;
+        for (const f of parts) {
+            const ax = -k * f.y, ay = k * f.x;
+            f.vx += ax; f.vy += ay;
+            tx += f.m * ax; ty += f.m * ay;
+        }
+        c.x = X + cx; c.y = Y + cy; c.vx = VX + cvx - tx / mass; c.vy = VY + cvy - ty / mass;
+        c.px = c.x; c.py = c.y;
+        for (const f of parts) {
+            f.x += c.x; f.y += c.y; f.vx += c.vx; f.vy += c.vy;
+            f.px = f.x; f.py = f.y;
+        }
+        return parts;
+    }
+
+    // A collision. Returns false if they just merge.
+    function collide(a, b) {
+        if (mission.def || a.grp || b.grp || a.minor || b.minor || isCompact(a) || isCompact(b) || a.m < 1e-17 || b.m < 1e-17 || scene.progress) return false;
+        const o = collisionOutcome(a, b);
+        if (!o) return false;
+        let lots = 0;
+        for (const q of bodies) if (q.grp) lots++;
+        if (lots >= DEBRIS_LOTS || bodies.length + 4 > MAX_BODIES) return false;
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        const { big, small, Md, graze, V, sep, V2p } = o;
+        const auto = autoColoured(big);
+        noteCollision(big, small);   // (the stability timer)
+        const before = systemEnergy().total;
+        const m1 = big.m, m2 = small.m, M = m1 + m2, mu = (m1 * m2) / M;
+        const X = (m1 * big.x + m2 * small.x) / M, Y = (m1 * big.y + m2 * small.y) / M;
+        const VX = (m1 * big.vx + m2 * small.vx) / M, VY = (m1 * big.vy + m2 * small.vy) / M;
+        const rx = small.x - big.x, ry = small.y - big.y, vx = small.vx - big.vx, vy = small.vy - big.vy;
+        const L = mu * (rx * vy - ry * vx);
+        const bits = new Uint32Array(new Float64Array([m1, m2, big.R, small.R]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        const seed = ((h >>> 0) % 2147483646) + 1;
+        const v1 = big.R * big.R * big.R / m1, v2 = small.R * small.R * small.R / m2;
+        const grp = nextId++;
+        flashes.push({ x: X, y: Y, t: performance.now(), color: big.color, r0: drawRadius(big), grow: 45 });
+        let parts = [];
+        if (graze) {
+            // The two go on, along the same line, keeping the pair's angular momentum
+            const r = hyp(rx, ry), ux = rx / r, uy = ry / r, vt = (rx * vy - ry * vx) / sep;
+            const vr = Math.sqrt(V2p - vt * vt), wx = vr * ux - vt * uy, wy = vr * uy + vt * ux;
+            const f1 = m2 / M, f2 = m1 / M;
+            big.x = X - f1 * sep * ux; big.y = Y - f1 * sep * uy; big.vx = VX - f1 * wx; big.vy = VY - f1 * wy;
+            big.px = big.x; big.py = big.y;
+            const sX = X + f2 * sep * ux, sY = Y + f2 * sep * uy, sVX = VX + f2 * wx, sVY = VY + f2 * wy;
+            // (the debris is what the graze scraped off: a tenth of the speed's energy to spare, a round figure)
+            if (Md > 0) parts = throwDebris(small, m2, Md, sX, sY, sVX, sVY, 0, 0.05 * Md * V * V, v2, seed, small.color, grp);
+            else { small.x = sX; small.y = sY; small.vx = sVX; small.vy = sVY; small.px = sX; small.py = sY; }
+            small.track = null;
+        } else {
+            // What is left is the heavier body, with the debris round it. (Its density stays that of what it is made of)
+            const vol = (v1 * m1 + v2 * m2) / M;
+            const extra = 0.5 * mu * V * V - 0.5 * Md * (2 * G * (M - Md)) / ((big.R + small.R) / AU_KM);
+            parts = throwDebris(big, M, Md, X, Y, VX, VY, L, extra, vol, seed, m2 > 0.3 * M ? small.color : big.color, grp);
+            // (a few pieces in the other's colour, for the mixture they are)
+            for (let k = 0; k < parts.length; k += 3) parts[k].color = small.color;
+            removeBody(small, big);
+        }
+        big.track = null;
+        if (parts.length) bodies.push(...parts);
+        forcesDirty = true;
+        collapseIfTooHeavy(big);
+        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
+        groupEnergy.set(grp, systemEnergy().total - before);
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();   // (Undo now takes it back: see tornInScene)
+        const them = escapeHtml(theName(big)), it = escapeHtml(sentenceCase(theName(small)));
+        if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
+        else if (!settings.stability) {
+            clearHint('tip');
+            showHint('note', graze ? `<strong>${it} clipped ${them}</strong> and flew on${parts.length ? ', shedding debris' : ''}.` : `<strong>${it} crashed into ${them}</strong> and threw out debris.`, { ms: 7000 });
+        }
         return true;
     }
 
@@ -10573,6 +10789,7 @@
         for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
         const name = back.length ? escapeHtml(back[0].name) : 'A body';
         const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
+            : ev.kind === 'hit' ? '<strong>The debris is gone.</strong> A collision can\'t run backwards by itself.'
             : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
         updateHistoryUi();
