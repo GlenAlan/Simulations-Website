@@ -2247,8 +2247,9 @@
             for (const H of hs) {
                 if (H === L || H.held || H.m < 5 * L.m) continue;
                 const dx = L.x - H.x, dy = L.y - H.y;
-                // (going round H it may have passed closer between the ends of the step)
-                const d = L.kep && L.kep.hosted && L.kep.b === H ? Math.min(Math.hypot(dx, dy), L.kep.closest) : Math.hypot(dx, dy);
+                // (going round H it may have passed closer between the ends of the step: going forwards, as nothing
+                // that passed like that stayed whole, running back retraces it)
+                const d = timeDir > 0 && L.kep && L.kep.hosted && L.kep.b === H ? Math.min(Math.hypot(dx, dy), L.kep.closest) : Math.hypot(dx, dy);
                 const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
                 if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
             }
@@ -2971,7 +2972,12 @@
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
-            if (checkTides()) { refreshBodyLists(); announceTear(); }
+            if (checkTides()) {
+                // (every one that passed its limit in this step: a body going round its host may not be near it by the next)
+                while (checkTides());
+                refreshBodyLists();
+                announceTear();
+            }
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
