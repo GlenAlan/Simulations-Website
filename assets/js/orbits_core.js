@@ -8862,7 +8862,7 @@
         const km = scene.units === 'km' || au < 0.01;
         if (au !== scaleMemo.au || km !== scaleMemo.km) {
             scaleMemo.au = au; scaleMemo.km = km;
-            scaleMemo.text = km ? `${fmtKm(Math.round(au * AU_KM))} km` : `${+au.toPrecision(3)} AU`;
+            scaleMemo.text = km ? `${fmtKm(Math.round(au * AU_KM))} km` : au >= 1000 ? `${(+au.toPrecision(3)).toLocaleString('en-US')} AU` : `${+au.toPrecision(3)} AU`;
         }
         return scaleMemo.text;
     }
