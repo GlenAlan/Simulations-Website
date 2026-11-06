@@ -2442,21 +2442,78 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     }
 }
 
-/* Phones held sideways: the engine, the clock and Undo come first, in sight; the goal, how it is going
-   and the links follow, and the column grows to hold them, with the page scrolling (the hint line is
-   under the canvas here). The console's parts join the toolbar's grid, so Undo can go among them. */
+/* Phones held sideways: the engine, the clock and Undo come first, then the time and the links, all in
+   sight on a phone. The console's parts join the toolbar's grid, so Undo can go among them. The goal and
+   how it is going have a line each over the hint line, under the canvas (placeHint in orbits_core.js),
+   which takes all the room left: it draws at any shape. */
 @media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on .simulation-display-container,
+    body.sim-fullscreen-active .orbits-sim.orb-mission-on .simulation-display-container {
+        width: 100%;
+        grid-template-rows: minmax(0, 1fr) auto auto auto;
+        grid-template-areas: "tools canvas info" "tools goal info" "tools status info" "tools hint info";
+    }
+
+    body:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .simulation-display-container {
+        min-height: calc(100vh - 16px);
+    }
+
+    @supports (height: 100svh) {
+        body:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .simulation-display-container {
+            min-height: calc(100svh - 16px);
+        }
+    }
+
+    .orbits-sim.orb-mission-on .sim-canvas-wrapper {
+        max-width: none;
+        min-height: 0;
+    }
+
+    .orbits-sim.orb-mission-on .sim-aspect-ratio-box {
+        box-sizing: border-box;
+        max-width: none;
+        height: 100%;
+        aspect-ratio: auto;
+    }
+
+    .simulation-display-container > .orb-mc-goal,
+    .simulation-display-container > .orb-mc-status {
+        padding: 0 2px;
+        font-size: 0.8em;
+    }
+
+    .simulation-display-container > .orb-mc-goal {
+        grid-area: goal;
+        margin-top: 4px;
+    }
+
+    /* (one line kept for it, two if that's too narrow, so the canvas never changes size as it changes) */
+    .simulation-display-container > .orb-mc-status {
+        grid-area: status;
+        min-height: 0;
+        height: 1.3em;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    @media (max-width: 739px) {
+        .simulation-display-container > .orb-mc-status {
+            height: 2.6em;
+            white-space: normal;
+        }
+    }
+
+    .orb-console .orb-mc-title {
+        font-size: 1em;
+    }
+
     .orbits-sim.orb-mission-on .orb-toolbar {
         grid-template-columns: repeat(6, minmax(0, 1fr));
         grid-template-rows: none;
         grid-template-areas: none;
         gap: 4px;
         overflow-y: auto;
-    }
-
-    body:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .orb-toolbar {
-        contain: none;
-        overflow: visible;
     }
 
     .orbits-sim.orb-mission-on .orb-console,
@@ -2469,8 +2526,6 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     .orb-mission-on .orb-mc-fuel,
     .orb-mission-on .orb-mc-pad,
     .orb-mission-on .orb-mc-skip,
-    .orb-mission-on .orb-mc-goal,
-    .orb-mission-on .orb-mc-status,
     .orb-mission-on .orb-mc-left-row,
     .orb-mission-on .orb-mc-links {
         grid-column: 1 / -1;
@@ -2487,10 +2542,8 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     .orbits-sim.orb-mission-on .orb-history { order: 6; grid-area: auto / span 3; }
     .orbits-sim.orb-mission-on .orb-toolbar .orb-history-btn { flex: 1 1 0%; width: auto; }
     .orbits-sim.orb-mission-on .orb-toolbar .orb-fit { order: 6; grid-area: auto / span 3; }
-    .orb-mission-on .orb-mc-goal { order: 7; }
-    .orb-mission-on .orb-mc-status { order: 8; }
-    .orb-mission-on .orb-mc-left-row { order: 9; }
-    .orb-mission-on .orb-mc-links { order: 10; }
+    .orb-mission-on .orb-mc-left-row { order: 7; }
+    .orb-mission-on .orb-mc-links { order: 8; }
 
     .orb-mc-pad-head strong {
         position: absolute;
@@ -3842,13 +3895,6 @@ dialog.orb-help::backdrop {
 
     .orb-toolbar .orb-fit {
         width: 100%;
-    }
-
-    /* (a mission's wider column: all on one row, leaving the console the room) */
-    .orbits-sim.orb-mission-on .orb-toolbar {
-        grid-template-columns: auto minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) auto;
-        grid-template-areas: "palette palette" "history fit";
     }
 
     .orbits-sim .simulation-display-container {
