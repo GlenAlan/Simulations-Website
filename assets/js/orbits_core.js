@@ -295,7 +295,7 @@
         // at full strength: its orbit shrinks and rounds off over a few passes, then the tide lets go.
         tidalgiant: {
             units: 'au', Tref: 0.67, subject: 1, trail: 4, realistic: true, box: [-1.7, 0.7, -0.9, 0.9],
-            tip: 'Close passes let tides take energy from the orbit, until it rounds off.',
+            tip: 'Close passes shrink the orbit, until it no longer comes close enough for tides.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'redgiant', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }
@@ -3048,7 +3048,7 @@
         // (said once a scene, for a pass that matters)
         if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
             tides.told = settings.scene;
-            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', ' Each close pass shrinks it a little more.', 7000);
+            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', ' Close passes shrink it, until it no longer comes close enough.', 7000);
         }
         return true;
     }
