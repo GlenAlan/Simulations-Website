@@ -286,6 +286,15 @@
 												<p class="orb-note" id="placementNote" aria-live="polite">Round the body it would orbit there.</p>
 											</div>
 											<div class="sim-control-group">
+												<p class="sim-control-group-label" id="arrowSizeLabel">Arrow size</p>
+												<select id="arrowSizeSelect" aria-labelledby="arrowSizeLabel" aria-describedby="arrowSizeNote">
+													<option value="auto" selected>Automatic</option>
+													<option value="fixed">Fixed on screen</option>
+													<option value="zoom">Scale with zoom</option>
+												</select>
+												<p class="orb-note" id="arrowSizeNote" aria-live="polite">They shrink to fit the orbits on screen. When crowded, only the chosen body's show.</p>
+											</div>
+											<div class="sim-control-group">
 												<p class="sim-control-group-label">Also show</p>
 												<div class="sim-checkbox-group">
 													<input type="checkbox" id="comToggle">
@@ -599,7 +608,7 @@
 											<h4>What you're seeing</h4>
 											<ul>
 												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun.</li>
-												<li><strong>Teal arrows:</strong> velocities. The key in the bottom corner gives each arrow's scale (on a small screen, while paused or dragging); longer arrows are squeezed to fit.</li>
+												<li><strong>Teal arrows:</strong> velocities. The key in the bottom corner gives each arrow's scale while paused or dragging, and for a few seconds as a scene opens; longer arrows are squeezed to fit. Arrows shrink to fit the orbits on screen: see <em>Arrow size</em> in <em>More options</em>.</li>
 												<li><strong>Pull lines</strong> draw one arrow for each body pulling on the chosen body. Beneath them, <em>Add up to the total force</em> joins the arrows tip to tail, ending at the tip of its pink arrow.</li>
 												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless Realistic physics is on).</li>
 												<li><strong>Cards</strong>, top right, measure what you have switched on. If they would cover too much of the canvas, the lowest shrink, then fold into a "+2 more" line.</li>

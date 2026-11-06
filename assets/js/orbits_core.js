@@ -1102,6 +1102,8 @@
             m: props.m, R: props.R,
             x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0, pvx: 0, pvy: 0,
             dx: 0, dy: 0,                 // drawn position (extrapolated)
+            dvx: 0, dvy: 0, dfx: 0, dfy: 0,   // drawn velocity and force (see updateDrawnPositions)
+            arrowV: 1, arrowF: 1,         // how strongly its velocity and force arrows are drawn (see quietMoons)
             held: null,                   // { offX, offY } while dragged: position relative to the frame origin
             trail: null,                  // samples (allocated at the first one: see recordSample)
             trailStart: sampleCount,      // first valid sample
@@ -4539,14 +4541,56 @@
         return { x: c.vx, y: c.vy };
     }
 
+    // How fast the force on b is changing, from where the bodies were at the last step's end: the derivative
+    // of Newton's pull, G m M (v / r^3 - 3 (r.v) r / r^5), softened between pieces as in pullAcross. Into JX, JY
+    let JX = 0, JY = 0;
+    function forceRate(b) {
+        JX = 0; JY = 0;
+        for (const q of bodies) {
+            if (q === b) continue;
+            const rx = q.x - b.x, ry = q.y - b.y, vx = q.vx - b.vx, vy = q.vy - b.vy;
+            let s2 = rx * rx + ry * ry;
+            if (b.grp && q.grp) {
+                if (b.grp !== q.grp) continue;
+                const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
+            }
+            if (!(s2 > 0)) continue;
+            const k = (G * b.m * q.m) / (s2 * Math.sqrt(s2)), c = (3 * (rx * vx + ry * vy)) / s2;
+            JX += k * (vx - c * rx); JY += k * (vy - c * ry);
+        }
+    }
+
+    // A body is drawn lag years on from the end of the last step: its place, velocity and force carried on
+    // from there by a Taylor series, so the arrows turn as smoothly as the bodies move, however many frames a
+    // step spans. For drawing only. What is left to land on at the next step's end is about (turn per step)^2 / 2
+    // of an arrow's length: a few hundredths of a px.
     function updateDrawnPositions() {
+        const t = lag;
         for (const b of bodies) {
+            b.dvx = b.vx; b.dvy = b.vy; b.dfx = b.fx; b.dfy = b.fy;
             if (b.held) { b.dx = b.x; b.dy = b.y; continue; }
-            // (a close pair going round faster than one step is drawn moving with its centre of mass)
+            // (a close pair going round faster than one step is drawn moving with its centre of mass, and its
+            // arrows can't be followed from one step to the next)
             const p = b.kep && b.kep.fast ? b.kep : null;
-            const M = p ? p.a.m + p.b.m : 0;
-            const vx = p ? (p.a.m * p.a.vx + p.b.m * p.b.vx) / M : b.vx, vy = p ? (p.a.m * p.a.vy + p.b.m * p.b.vy) / M : b.vy;
-            b.dx = b.x + vx * lag; b.dy = b.y + vy * lag;
+            if (p) {
+                const M = p.a.m + p.b.m;
+                const vx = (p.a.m * p.a.vx + p.b.m * p.b.vx) / M, vy = (p.a.m * p.a.vy + p.b.m * p.b.vy) / M;
+                b.dx = b.x + (vx + 0.5 * t * (p.a.fx + p.b.fx) / M) * t; b.dy = b.y + (vy + 0.5 * t * (p.a.fy + p.b.fy) / M) * t;
+                continue;
+            }
+            let ax = b.m > 0 ? (t * b.fx) / b.m : 0, ay = b.m > 0 ? (t * b.fy) / b.m : 0;
+            // (a step can take a body round a host by over a radian: then a curve would only fly off further than a line)
+            if (b.kep && b.kep.hosted) {
+                const H = b.kep.b, rx = b.x - H.x, ry = b.y - H.y;
+                if ((ax * ax + ay * ay) * t * t > rx * rx + ry * ry) { ax = 0; ay = 0; }
+            }
+            b.dx = b.x + (b.vx + 0.5 * ax) * t; b.dy = b.y + (b.vy + 0.5 * ay) * t;
+            b.dvx = b.vx + ax; b.dvy = b.vy + ay;
+            // (only for what has a force arrow or a name to place: see drawArrows, drawLabels)
+            if (t && (!(b.grp || b.minor) || isChosen(b))) {
+                forceRate(b);
+                b.dfx = b.fx + JX * t; b.dfy = b.fy + JY * t;
+            }
         }
         F = freeze ? frozenOrigin(simTime + lag) : liveFrameOrigin();
         turnDrawnPositions();   // (a rotating frame turns them about F: see "Rotating frame")
@@ -5107,6 +5151,7 @@
         phi: 0, c: 1, s: 0,       // the view's turn this frame, and its cosine and sine
         alpha: 0,                 // phi + theta: turns coordinates along the pair (A to B along +x) into the view
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
+        vx: 0, vy: 0, cx: 0, cy: 0, w: 0,   // the frame at the moment drawn (see turnFrameDrawn)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
     Object.assign(ui, { turnNote: byId('turnNote'), popTurn: byId('popTurn'), popTurnText: byId('popTurnText'), chipIcon: ui.frameChip ? ui.frameChip.querySelector('.icon') : null });
@@ -5164,6 +5209,13 @@
         return { x: vx - w * (y - c.y), y: vy + w * (x - c.x) };
     }
 
+    // The view's own velocity as the arrows are drawn: an ordinary frame's, at the moment drawn (the centre
+    // of mass's doesn't change). A rotating frame's depends on the place: see viewVelocity
+    function drawnFrameVelocity() {
+        const L = !turn.on && frameId !== null ? bodyById(frameId) : null;
+        return L ? { x: L.dvx, y: L.dvy } : frameVelocity();
+    }
+
     // From updateDrawnPositions, once the drawn positions (still world positions, extrapolated) and the
     // origin F are known: this frame's turn, and every drawn position turned by it about F
     function turnDrawnPositions() {
@@ -5176,6 +5228,7 @@
             } else {
                 turn.theta = Math.atan2(P.B.dy - P.A.dy, P.B.dx - P.A.dx);
                 turn.omega = pairOmega(P);
+                turnFrameDrawn(P);
                 phi += turn.up - turn.theta;
             }
         }
@@ -5190,6 +5243,15 @@
             b.dx = F.x + c * x - s * y;
             b.dy = F.y + s * x + c * y;
         }
+    }
+
+    // The rotating frame at the moment drawn, for the arrows (see viewVelocity): as turnVelocityAt, from the
+    // drawn places and velocities. (cx, cy): the pair's centre from F, which is F unless the frame is frozen
+    function turnFrameDrawn(P) {
+        const A = P.A, B = P.B, M = A.m + B.m, rx = B.dx - A.dx, ry = B.dy - A.dy, r2 = rx * rx + ry * ry;
+        turn.vx = (A.m * A.dvx + B.m * B.dvx) / M; turn.vy = (A.m * A.dvy + B.m * B.dvy) / M;
+        turn.cx = (A.m * A.dx + B.m * B.dx) / M - F.x; turn.cy = (A.m * A.dy + B.m * B.dy) / M - F.y;
+        turn.w = r2 > 0 ? (rx * (B.dvy - A.dvy) - ry * (B.dvx - A.dvx)) / r2 : 0;
     }
 
     // World vectors and points into the drawn view and back
@@ -5362,8 +5424,9 @@
     // A body's velocity as drawn: relative to the turning view (minus the frame's own velocity where the
     // body is), or in an ordinary frame relative to fv; turned as the view is
     function viewVelocity(b, fv) {
-        const u = turn.on ? frameVelocity(b.x, b.y) : fv;
-        return turnVec(b.vx - u.x, b.vy - u.y);
+        if (!turn.on) return turnVec(b.dvx - fv.x, b.dvy - fv.y);
+        const r = unturnVec(b.dx - F.x, b.dy - F.y), rx = r.x - turn.cx, ry = r.y - turn.cy;
+        return turnVec(b.dvx - turn.vx + turn.w * ry, b.dvy - turn.vy - turn.w * rx);
     }
 
     // An arrow grabbed in a turned view is aimed as drawn (its numbers are along the view's directions,
@@ -7891,11 +7954,110 @@
     // Force arrows: px length from the force, compressed for very strong pulls (equal forces always
     // get equal arrows, so the Sun's arrow matches Earth's).
     function forceLength(f) {
-        const Lmax = 100 * sizeScale;
+        const Lmax = 100 * sizeScale * arrowK;
         return Lmax * (1 - Math.exp(-Math.LN2 * f / forceRef));   // the reference force is half the maximum
     }
 
-    // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
+    // Arrow size (More options). Every arrow is multiplied by arrowK, the same for all of them, so equal
+    // speeds and forces keep equal arrows and the arrow key (which is drawn with the same lengths) stays
+    // true. It follows the zoom through the typical orbit on the screen: the middle one of the named bodies'
+    // (semi-major axis, or distance if unbound), which holds still as they go round.
+    //   Fixed: 1. Scale with zoom: a reference arrow is ARROW_ORBIT of that orbit, within limits. Automatic: 1
+    // until a reference arrow would be over ARROW_ROOM of it, or the fastest orbit's arrow over ARROW_TIGHT of
+    // its own radius (that ratio is the orbit's mean motion n times px per speed over px per AU, as v / a = n: in
+    // the Inner planets as they open, Mercury's arrow reaches past Venus's orbit), or a force arrow over ARROW_PULL
+    // of its orbit's radius (at the steady pull G m M / a^2: with its star's, it would span the gap between them).
+    // Then it shrinks with the view, to ARROW_K_MIN. Under that (ARROW_K_ALONE) the bodies crowd too closely for arrows to tell apart, so all but
+    // the chosen body's fade out; the arrows of bodies not chosen are drawn fainter (ARROW_BACK) if there are
+    // many; and a moon and its planet share an arrow's worth of room: see quietMoons.
+    const ARROW_ORBIT = 0.27, ARROW_ROOM = 0.36, ARROW_TIGHT = 0.75, ARROW_PULL = 0.35, ARROW_K_MIN = 0.35, ARROW_K_ALONE = 0.22, ARROW_BACK = 0.6;
+    const ARROW_NOTES = {
+        auto: 'They shrink to fit the orbits on screen. When crowded, only the chosen body\'s show.',
+        fixed: 'The same length at any zoom.',
+        zoom: 'They grow and shrink with the view, like the orbits.'
+    };
+    Object.assign(settings, { arrowSize: 'auto' });
+    Object.assign(ui, { arrowSize: byId('arrowSizeSelect') });
+    let arrowK = 1, arrowBack = 1;
+    const arrowSpan = { au: 0, want: 0, n: 0, nWant: 0, pull: 0, pullWant: 0, t: -Infinity, scene: null, list: [] };
+
+    // A moon: going round a heavier body that is itself going round something
+    const isMoon = (b) => { const p = b.primary; return !!p && b.bound && !!p.primary && p.primary !== b && b.m < p.m; };
+
+    // The typical orbit (AU; 0 if nothing orbits anything) and, of the bodies with arrows to show (only: just
+    // that one, in a busy scene), the fastest mean motion (radians a year; a moon's arrow mostly shows its planet's
+    // speed) and the longest force arrow for its orbit (px per AU)
+    function measureArrowSpan(only) {
+        const a = arrowSpan.list;
+        a.length = 0;
+        let n = 0, pull = 0;
+        for (const b of bodies) {
+            if (b.grp || b.minor || !b.primary || isMoon(b)) continue;
+            // (a is steady as an orbit goes round, but no use to a pair that has barely stayed together)
+            const r = hyp(b.x - b.primary.x, b.y - b.primary.y), el = b.bound ? elementsOf(b, b.primary) : null;
+            const au = el && el.a > 0 ? Math.min(el.a, 3 * r) : r;
+            a.push(au);
+            if (el && (!only || b === only)) {
+                n = Math.max(n, Math.sqrt(el.mu / au) / au);
+                pull = Math.max(pull, forceLength((G * b.m * b.primary.m) / (au * au)) / (arrowK * au));
+            }
+        }
+        arrowSpan.nWant = n; arrowSpan.pullWant = pull;
+        if (!a.length) return 0;
+        a.sort((p, q) => p - q);
+        return a[a.length >> 1];
+    }
+
+    // A moon's velocity is mostly its planet's, from all but the same place, so while its orbit on the screen is
+    // shorter than its arrow, the two arrows only lie across each other. Only the chosen one's velocity is then
+    // drawn (the planet's, if neither), and a moon not chosen has no force arrow either; a planet keeps its own,
+    // which is half of the pair with its star. They come back as the view zooms in, or where the planet's arrow is
+    // short beside the moon's, as in a view from the planet. (A mission's probe always keeps its arrows.)
+    function quietMoons(subj) {
+        for (const b of bodies) {
+            if (b.grp || b.minor || !isMoon(b) || b.id === mission.craftId) continue;
+            const p = b.primary, L = velocityTip(b).len, r = hyp(sx(b.dx) - sx(p.dx), sy(b.dy) - sy(p.dy));
+            const a = L > 0 ? Math.max(clamp((r / L - 0.7) / 0.3, 0, 1), clamp((0.5 - velocityTip(p).len / L) / 0.2, 0, 1)) : 1;
+            if (b === subj) p.arrowV = a;
+            else if (p !== subj || a < 1) { b.arrowV = a; b.arrowF = a; }
+        }
+    }
+
+    // From countArrows, each frame (n: the named bodies). The typical orbit is measured ten times a second, and
+    // a change of it glides (the arrows mustn't jump with a close passing), but the zoom counts at once.
+    function sizeArrows(n) {
+        const now = performance.now(), S = arrowSpan, subj = bodyById(selectedId);
+        if (S.scene !== scene || now - S.t >= 100) {
+            const au = measureArrowSpan(n > ARROWS_ALL_MAX ? subj : null);
+            if (au > 0 || S.scene !== scene) S.want = au;
+            if (S.scene !== scene || !(S.au > 0)) { S.au = S.want; S.n = S.nWant; S.pull = S.pullWant; }
+            S.scene = scene; S.t = now;
+        }
+        S.au += 0.01 * (S.want - S.au);
+        S.n += 0.01 * (S.nWant - S.n);
+        S.pull += 0.01 * (S.pullWant - S.pull);
+        arrowK = 1; arrowBack = 1;
+        for (const b of bodies) { b.arrowV = 1; b.arrowF = 1; }
+        if (settings.arrowSize === 'fixed' || !(S.au > 0)) return;
+        const room = (S.au * scale) / arrowUnit();
+        if (settings.arrowSize === 'zoom') { arrowK = clamp(ARROW_ORBIT * room, 0.1, 4); return; }
+        const fit = S.n > 0 ? Math.min((ARROW_TIGHT * scale) / (S.n * pxPerSpeed()), (ARROW_PULL * scale) / S.pull) : 1;
+        arrowK = clamp(Math.min(ARROW_ROOM * room, fit), ARROW_K_MIN, 1);
+        arrowBack = clamp((ARROW_ROOM * room - ARROW_K_ALONE) / (ARROW_K_MIN - ARROW_K_ALONE), 0, 1) * (n > 2 && selectedId !== null ? ARROW_BACK : 1);
+        quietMoons(subj);
+    }
+
+    function syncArrowSize() {
+        if (ui.arrowSize) ui.arrowSize.value = settings.arrowSize;
+        setText(byId('arrowSizeNote'), ARROW_NOTES[settings.arrowSize] || ARROW_NOTES.auto);
+    }
+    function bindArrowSize() {
+        if (!ui.arrowSize) return;
+        syncArrowSize();
+        ui.arrowSize.addEventListener('change', () => { settings.arrowSize = ui.arrowSize.value; syncArrowSize(); });
+    }
+
+    // Velocity arrows have a length in px that doesn't depend on the zoom (but for arrowK), like the force arrows: the
     // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
     // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
     // ARROW_PX long; arrows over twice that are squeezed, to at most two and a half times (a body swung
@@ -7906,7 +8068,7 @@
     const pxPerSpeed = () => arrowUnit() / vRef;
     function arrowLength(v) {
         const L = v * pxPerSpeed(), L0 = arrowUnit();
-        return L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0)));
+        return arrowK * (L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0))));
     }
 
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
@@ -7920,8 +8082,8 @@
             if (turn.phi && !b.aim.turn) ({ x: vx, y: vy } = turnVec(vx, vy));   // (a world aim, drawn turned)
             L = Math.hypot(vx, vy) * b.aim.k;
         } else {
-            const fv = frameV || frameVelocity();
-            vx = b.vx - fv.x; vy = b.vy - fv.y;
+            const fv = frameV || drawnFrameVelocity();
+            vx = b.dvx - fv.x; vy = b.dvy - fv.y;
             if (turn.on || turn.phi) ({ x: vx, y: vy } = viewVelocity(b, fv));   // (as seen in a turned view)
             L = arrowLength(Math.hypot(vx, vy));
         }
@@ -7950,9 +8112,9 @@
 
     // Which way a body's name goes (screen direction): away from the pull on it
     function labelDirection(b) {
-        const Fm = Math.hypot(b.fx, b.fy);
+        const Fm = Math.hypot(b.dfx, b.dfy);
         // (turn.c, turn.s: the world turned as the view is)
-        return Fm > 0 ? { x: -(turn.c * b.fx - turn.s * b.fy) / Fm, y: (turn.s * b.fx + turn.c * b.fy) / Fm } : { x: 0.6, y: 0.8 };
+        return Fm > 0 ? { x: -(turn.c * b.dfx - turn.s * b.dfy) / Fm, y: (turn.s * b.dfx + turn.c * b.dfy) / Fm } : { x: 0.6, y: 0.8 };
     }
 
     // Text kept inside the canvas whatever its alignment
@@ -7969,18 +8131,21 @@
     }
 
     // Above this many named bodies only the chosen body's arrows are drawn: the rest would swamp the view
+    // (and when they crowd too closely: see sizeArrows)
     const ARROWS_ALL_MAX = 8;
     let arrowsBusy = false;
     function countArrows() {
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
-        arrowsBusy = n > ARROWS_ALL_MAX || !!scene.sky;   // (the sky scene: only the planet it follows, or its loops are lost among them)
+        sizeArrows(n);
+        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0 || !!scene.sky;   // (the sky scene: only the planet it follows, or its loops are lost among them)
     }
 
     const gasHeld = new Set();
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        let drewF = false, drewV = false;
         countArrows();
         // (a torn-apart body's pieces only get arrows when one is chosen. What gas goes round gets none: the gas's
         // pull on it, unevenly spread, only swings a long arrow about and draws the eye from the gas)
@@ -7988,21 +8153,24 @@
             gasHeld.clear();
             for (const b of bodies) if (b.grp < 0 && b.primary) gasHeld.add(b.primary);
             for (const b of bodies) {
-                const Fm = Math.hypot(b.fx, b.fy);
+                const Fm = Math.hypot(b.dfx, b.dfy);
                 if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj) || gasHeld.has(b)) continue;
                 const L = forceLength(Fm * 1);
-                if (L < 3) continue;
+                if (L < 3 || !b.arrowF) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-                const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;   // (turned with the view)
+                const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;   // (turned with the view)
+                ctx.globalAlpha = (b === subj ? 1 : arrowBack) * b.arrowF;
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
+                drewF = true;
             }
+            ctx.globalAlpha = 1;
         }
         // Velocities only when they are switched on (or while one is being aimed): plain arrows, like
         // the forces. An arrow's tip is dragged to aim it (an invisible grab area round the tip); the
         // arrow under the pointer, or being aimed, is drawn thicker and brighter. A body hardly moving
         // has no arrow to grab, so hovering just off its disc shows a faint stub that can be pulled out.
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
-        const fv = frameVelocity();
+        const fv = drawnFrameVelocity();
         for (const b of bodies) {
             if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
@@ -8010,8 +8178,11 @@
             const dx = tip.x - x, dy = tip.y - y;
             const len = Math.hypot(dx, dy);
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
-            if (tip.len > 2.5) {
+            if (tip.len > 2.5 && (b.arrowV || b.aim)) {
+                ctx.globalAlpha = hot ? 1 : (b === subj ? 1 : arrowBack) * b.arrowV;
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+                ctx.globalAlpha = 1;
+                drewV = true;
                 // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
                 if (b === subj && !b.aim && !cleanRender && settings.velocities) {
                     ctx.strokeStyle = hot ? hotColour : C.velocity;
@@ -8029,6 +8200,7 @@
             }
             if (b.aim && b.aim.burn) drawBurn(C, b, w);
         }
+        noteArrowsDrawn(drewF, drewV);
     }
 
     // A burn being aimed in a mission (see beginAim): an arrow from where the velocity arrow's tip was
@@ -8139,8 +8311,13 @@
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // The pull of q on b (M_sun AU / yr^2) into pp; returns its size
-    function pairPull(b, q) {
-        const dx = q.x - b.x, dy = q.y - b.y;
+    function pairPull(b, q) { return pullAcross(b, q, q.x - b.x, q.y - b.y); }
+    // ...as drawn (turned back into the world): the parts of the force arrow, which moves between steps
+    function pairPullDrawn(b, q) {
+        const u = unturnVec(q.dx - b.dx, q.dy - b.dy);
+        return pullAcross(b, q, u.x, u.y);
+    }
+    function pullAcross(b, q, dx, dy) {
         const r2 = dx * dx + dy * dy;
         let s2 = r2;
         if (b.grp && q.grp) {
@@ -8322,23 +8499,23 @@
     function drawPullChain(C, b) {
         chainOut.drawn = false;
         if (bodies.length < 2) return;
-        const Fm = Math.hypot(b.fx, b.fy);
+        const Fm = Math.hypot(b.dfx, b.dfy);
         if (!(Fm > 0)) return;
         const L = forceLength(Fm);
         const P = gatherPulls(b);
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
         // (forces are world vectors: on the screen they are turned as the view is, by turn.c and turn.s)
         const tc = turn.c, ts = turn.s;
-        const ux = (tc * b.fx - ts * b.fy) / Fm, uy = -(ts * b.fx + tc * b.fy) / Fm;
+        const ux = (tc * b.dfx - ts * b.dfy) / Fm, uy = -(ts * b.dfx + tc * b.dfy) / Fm;
         const x0 = x + ux * r, y0 = y + uy * r;
         let sumX = 0, sumY = 0, big = 0;
         for (let i = 0; i < P.k; i++) {
-            const m = pairPull(b, P.who[i]);
+            const m = pairPullDrawn(b, P.who[i]);
             P.cx[i] = pp.x; P.cy[i] = pp.y;
             sumX += pp.x; sumY += pp.y;
             if (m > big) big = m;
         }
-        const ox = b.fx - sumX, oy = b.fy - sumY;
+        const ox = b.dfx - sumX, oy = b.dfy - sumY;
         big = Math.max(big, Math.hypot(ox, oy));
         let k = L / Fm;
         const cap = 160 * sizeScale;   // (1.6 times the longest force arrow)
@@ -8351,7 +8528,7 @@
         const wNet = clamp(2 * sizeScale, 1.5, 2.4), w = 0.55 * wNet;
         // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
         // drawn at a scale of its own (then dashed and thin)
-        const ex = x0 + (tc * b.fx - ts * b.fy) * k, ey = y0 - (ts * b.fx + tc * b.fy) * k;
+        const ex = x0 + (tc * b.dfx - ts * b.dfy) * k, ey = y0 - (ts * b.dfx + tc * b.dfy) * k;
         if (settings.pullSum && squeezed) {
             ctx.setLineDash([4, 3]);
             arrow(x0, y0, ex, ey, C.force, w);
@@ -8565,31 +8742,50 @@
         return `${(+kms.toPrecision(2)).toLocaleString('en-US')} km/s`;
     }
 
-    // On a small canvas the key keeps out of the way: there for a few seconds as a scene opens or an
-    // arrow is switched on, then only while paused (in a mission the clock stops for each burn, so not
-    // there) or dragging
-    const KEY_MS = 6000;
-    const keyWake = { scene: null, v: false, f: false, until: 0 };
+    // The key keeps out of the way: there for a few seconds (as "Sizes not to scale" is) as a scene opens,
+    // an arrow is switched on or the arrows change size, then only while paused (in a mission the clock
+    // stops for each burn, so not there) or dragging
+    const KEY_MS = 8000;
+    const keyWake = { scene: null, v: false, f: false, k: 1, until: 0 };
+    // Its rows are for the arrows there are (a lone star has none, a body coasting alone no force arrow). One gone
+    // for a moment doesn't count, or a row would flicker; when none are left it fades as it stands.
+    const KEY_HOLD_MS = 1000;
+    const keyDrawn = { v: false, f: false, tv: -Infinity, tf: -Infinity };
+    function noteArrowsDrawn(f, v) {
+        const now = performance.now();
+        keyDrawn.f = f; keyDrawn.v = v;
+        if (f) keyDrawn.tf = now;
+        if (v) keyDrawn.tv = now;
+    }
     function drawArrowLegend(C) {
         legend.shown = false;
-        const showV = settings.velocities, showF = settings.forces;
-        if (cleanRender || !bodies.length || !(showV || showF)) return;
-        const now = performance.now();
+        if (cleanRender || !bodies.length || !(settings.velocities || settings.forces)) return;
+        const now = performance.now(), same = keyWake.scene === scene;
+        // (a new scene's arrows are its own: the last one's don't count for the moment)
+        if (!same) { keyDrawn.tv = keyDrawn.v ? now : -Infinity; keyDrawn.tf = keyDrawn.f ? now : -Infinity; }
+        const drawnV = settings.velocities && now - keyDrawn.tv < KEY_HOLD_MS;
+        const drawnF = settings.forces && now - keyDrawn.tf < KEY_HOLD_MS;
+        const none = !drawnV && !drawnF;
+        const showV = none ? settings.velocities && keyWake.v : drawnV, showF = none ? settings.forces && keyWake.f : drawnF;
+        if (none && (!same || !(showV || showF))) { Object.assign(keyWake, { scene, v: false, f: false }); legend.alpha = 0; return; }
         if (keyWake.scene !== scene || (showV && !keyWake.v) || (showF && !keyWake.f)) keyWake.until = now + KEY_MS;
         Object.assign(keyWake, { scene, v: showV, f: showF });
+        if (Math.abs(arrowK - keyWake.k) > 0.05 * keyWake.k) { keyWake.k = arrowK; keyWake.until = now + KEY_MS; }
         const tight = viewW < 560 || viewH < 320;
-        const away = tight && now >= keyWake.until && !drags.size && !(paused && !mission.def);
-        if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
+        const away = none || (now >= keyWake.until && !drags.size && !(paused && !mission.def));
+        if (away && legend.alpha < 0.02) { legend.alpha = 0; if (none) keyWake.v = keyWake.f = false; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
-        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
+        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths (scaled with
+        // the zoom far enough for that to be too long or too short to read, other round values: see sizeArrows)
+        const nk = arrowK > 1 ? arrowK : arrowK < ARROW_K_MIN ? Math.max(arrowK / ARROW_K_MIN, 0.36) : 1;
         if (showV) {
-            const kms = niceNearest(0.7 * vRef * AUYR_KMS);
+            const kms = niceNearest((0.7 * vRef * AUYR_KMS) / nk);
             if (kms !== legend.kms) { legend.kms = kms; legend.vText = legendSpeedText(kms); }
             legend.vPx = arrowLength(kms / AUYR_KMS);
         }
         if (showF) {
-            const N = niceNearest(0.8 * forceToNewtons(forceRef));
+            const N = niceNearest((0.8 * forceToNewtons(forceRef)) / nk);
             if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
@@ -11637,7 +11833,7 @@
         for (const b of bodies) {
             if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
             const tip = velocityTip(b);
-            if (tip.len < 14) continue;
+            if (tip.len < 14 || !b.arrowV) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
             if (dd < bestD) { bestD = dd; best = b; }
         }
@@ -11664,12 +11860,12 @@
     // shaft is under it, or whose tip is close to it now or was a moment ago
     function nearArrow(x, y, shaft, tip) {
         if (!settings.velocities || bodies.length < 2 || mission.def) return null;
-        const fv = frameVelocity();
+        const fv = drawnFrameVelocity();
         let best = null, bestD = Infinity;
         for (const b of bodies) {
             if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId)) continue;
             const t = velocityTip(b, fv);
-            if (t.len < 14) continue;
+            if (t.len < 14 || !b.arrowV) continue;
             const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
             const lag = handLag(t.vx, t.vy);
             const ds = distToSegment(x, y, bx + ((t.x - bx) / n) * r, by + ((t.y - by) / n) * r, t.x, t.y);
@@ -11682,11 +11878,11 @@
 
     // A named body close to a press at (x, y), now or a moment ago
     function bodyNear(x, y, tol) {
-        const fv = frameVelocity();
+        const fv = drawnFrameVelocity();
         let best = null, bestD = tol;
         for (const b of bodies) {
             if (b.minor || b.grp || mission.def) continue;
-            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.vx - fv.x, y: b.vy - fv.y }, lag = handLag(v.x, v.y);
+            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.dvx - fv.x, y: b.dvy - fv.y }, lag = handLag(v.x, v.y);
             const d = distToSegment(x, y, bx, by, bx + lag.x, by + lag.y) - drawRadius(b);
             if (d < bestD) { bestD = d; best = b; }
         }
@@ -11697,11 +11893,11 @@
     function onForceArrow(x, y, tol) {
         if (!settings.forces) return null;
         for (const b of bodies) {
-            const Fm = Math.hypot(b.fx, b.fy);
+            const Fm = Math.hypot(b.dfx, b.dfy);
             if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId)) continue;
             const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
-            const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;
-            if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
+            const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;
+            if (L >= 3 && b.arrowF && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
         }
         return null;
     }
@@ -13119,7 +13315,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits, s.pullSum].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits, s.pullSum, s.arrowSize].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -13394,7 +13590,7 @@
             // (sh: what is shown; the last four came later, so an older link reads them as off)
             set: {
                 sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
-                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement,
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement, as: st.arrowSize,
                 ps: +st.pullSum
             },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
@@ -13499,7 +13695,8 @@
                 flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
             pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular',
-            ps: flag(raw.ps, false)
+            ps: flag(raw.ps, false),
+            as: ['auto', 'fixed', 'zoom'].includes(raw.as) ? raw.as : 'auto'
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -13630,6 +13827,8 @@
         settings.placement = set.pl;
         if (ui.placement) ui.placement.value = set.pl;
         syncPlacementNote();
+        settings.arrowSize = set.as;
+        syncArrowSize();
         forcesDirty = true;
         pred.key = '';
     }
@@ -16831,6 +17030,7 @@
         window.addEventListener('pointercancel', hintLetGo, true);
         window.addEventListener('click', () => { hintPressed = false; setTimeout(refreshHint, 0); }, true);
         bindHint();
+        bindArrowSize();
         bindTurn();
     }
 
@@ -17035,6 +17235,8 @@
             const ref = pp.refId !== null ? bodyById(pp.refId) : null;
             return { ref: ref ? ref.name : null, end: pp.end, pts: pp.pts.slice() };
         },
+        // The arrows' size as drawn last (see sizeArrows)
+        arrowSizing: () => ({ k: arrowK, back: arrowBack, busy: arrowsBusy, au: arrowSpan.au, mode: settings.arrowSize, vPx: legend.vPx, vKms: legend.kms, fPx: legend.fPx, N: legend.N }),
         // Where the velocity handle of a body is on the canvas (CSS px), and its arrow's length
         handle(name) {
             const b = bodies.find((q) => q.name === name);
@@ -17478,7 +17680,7 @@
             settings.placement = was;
             // (relative to the view where it is, along the screen's directions: see viewVelocity)
             updateDrawnPositions();
-            const rel = viewVelocity(b, frameVelocity()), v = Math.hypot(rel.x, rel.y);
+            const rel = viewVelocity(b, drawnFrameVelocity()), v = Math.hypot(rel.x, rel.y);
             const want = Math.hypot(dx, dy) / (ms / 1000) / (scale * settings.speed * rate());
             return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: rel.x, vy: rel.y };
         },
