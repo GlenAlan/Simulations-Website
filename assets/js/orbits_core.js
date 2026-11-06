@@ -24,7 +24,8 @@
  * Realistic physics (off by default) draws every body at its true size (with a small marker so it can be
  *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
- *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest.
+ *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest, and
+ *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest.
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
  *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
  *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
@@ -59,7 +60,7 @@
     const ui = {
         speed: byId('speedSlider'), speedVal: byId('speedVal'),
         scene: byId('sceneSelect'),
-        orbitGroupLabel: byId('orbitGroupLabel'), ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
+        ecc: byId('eccSlider'), eccVal: byId('eccVal'), eccName: byId('eccName'),
         eccNote: byId('eccNote'),
         forces: byId('forceToggle'), velocities: byId('velocityToggle'), labels: byId('labelsToggle'),
         realistic: byId('realisticToggle'),
@@ -113,6 +114,7 @@
     const TRAIL_PER_TREF = 300;           // trail samples per reference period
     const TRAIL_CAP = 6144;               // samples kept per body (20 reference periods)
     const SWARM_TRAIL = 256;              // samples kept for a minor body of a crowded scene (memory stays small)
+    const PIECE_TRAIL = 1024;             // ...and for a piece of a torn-apart body
     const TRAIL_STEPS = [0, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20]; // trail lengths in reference periods
     const K2_SECTORS = 12;                // Kepler's 2nd law: sectors per orbit
     const STAR_MASS = 0.07;               // M_sun: heavier bodies are drawn as stars
@@ -141,10 +143,8 @@
         probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
     const PALETTE = [
-        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
-        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
-        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
-        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
+        ['sun', 'earth', 'moon', 'jupiter', 'comet', 'blackhole'],
+        ['dwarf', 'redgiant', 'bluegiant', 'browndwarf', 'whitedwarf', 'neutron', 'mars', 'asteroid', 'custom']   // ("More bodies")
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
     // Values the mass and radius sliders snap to
@@ -178,7 +178,7 @@
         },
         ellipse: {
             units: 'au', Tref: 1, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
-            tip: 'Turn on Kepler\'s 2nd law: the planet speeds up near the Sun, yet the shaded areas stay equal.',
+            tip: 'With Kepler\'s 2nd law on, the shaded areas stay equal as the planet speeds up.',
             bodies: [{ kind: 'sun' }, { kind: 'earth', name: 'Planet', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }]
         },
         inner: {
@@ -205,7 +205,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: 'View from the giant planet (double-click or double-tap it): then the star circles the planet, as the Sun seems to circle Earth.',
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -223,7 +223,7 @@
         },
         figure8: {
             units: 'au', Tref: 1.0067, subject: 0, trail: 4, vref: 5.5, box: [-1.1, 1.1, -0.45, 0.45],
-            tip: 'A rare stable dance: three equal stars chase each other round a figure of eight. Compare it with "Three stars: chaos".',
+            tip: 'Three equal stars chase each other round a figure of eight: a rare stable dance.',
             bodies: (function () {
                 // Chenciner & Montgomery's figure-of-eight orbit (G = m = 1), scaled to 1 AU and 1 M_sun.
                 const vs = Math.sqrt(G);           // velocity unit: AU/yr
@@ -242,7 +242,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? Nudge one a hair and the dance ends differently. Once one has flown off, run time backwards (B): do they find their way back?',
+            tip: 'Three stars start at rest. Who gets thrown out? Then press Reverse.',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -255,7 +255,7 @@
         // system for good.
         slingshot: {
             units: 'au', Tref: 1.4, subject: 2, forceBody: 1, trail: 7, vref: 2.75, box: [-7.4, 1.8, -3.2, 3.6],
-            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun, and the close-up from Jupiter.',
+            tip: 'The probe passes just behind Jupiter. Watch its speed relative to the Sun.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 103.14 } },
@@ -266,8 +266,8 @@
         // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
-            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
-            tip: 'Turn on Realistic physics in the settings: relativity makes the orbit swing round, a rosette instead of an ellipse.',
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            tip: 'Relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
                 { kind: 'neutron', orbit: { around: 0, a: 1500 / AU_KM, e: 0.5, w: 0, nu: 180 } }
@@ -278,8 +278,8 @@
         // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
         // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
         tde: {
-            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, box: [-0.64, 0.11, -0.23, 0.23],
-            tip: 'Turn on Realistic physics in the settings: the star dips inside its Roche limit and the black hole\'s tides tear it apart.',
+            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.64, 0.11, -0.23, 0.23],
+            tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -294,7 +294,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter herds 500 asteroids: Trojans 60° ahead of and behind it, and Hildas in a triangle that turns with it. In View from, choose "Rotating with Jupiter and the Sun" to see them stand still.',
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -322,8 +322,7 @@
         // pull on each other, stir each other up, collide and stick; the biggest grow fastest. (In this flat
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
-            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact pull on each other, collide and stick: a moon builds up. With Realistic physics on, tides tear apart clumps that stray too close to Earth.',
+            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 0, forceBody: 1, vref: 0.75, trail: 1, swarm: true, progress: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -343,7 +342,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Realistic physics is on (in the settings). Speed it up and watch the card: relativity turns Mercury\'s orbit by 43″ a century.',
+            tip: 'Speed it up: this orbit turns 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -369,7 +368,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Realistic physics is on (in the settings): gravitational waves carry off energy, so the black holes spiral together and merge.',
+                tip: 'Gravitational waves drain the orbit until the black holes merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -612,7 +611,7 @@
     // Scenes with dated: true start on the start date, and the info bar shows the date
     SCENES.solar = {
         units: 'au', Tref: 1, subject: 3, dated: true, box: [-1.8, 1.8, -1.8, 1.8],
-        tip: 'Real positions on the start date (change it in the settings). Fit view shows the outer planets. Orbits lie flat here; the real ones tilt a few degrees.',
+        tip: 'Real positions on the start date, in the settings. Fit view shows the outer planets.',
         get bodies() { return solarSystemBodies(startDate.chosen); }
     };
 
@@ -906,8 +905,12 @@
     const sampleTimes = new Float64Array(TRAIL_CAP);
 
     // View: px per AU = zoom * min(canvas width, height), so the scene scales with the canvas
-    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null };
+    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0 };
     let viewW = 0, viewH = 0, dpr = 1;
+    // What can be seen of the canvas (its px): all of it, but for the Settings drawer over one side;
+    // and where the middle of the view goes on it (see syncDrawer)
+    let visL = 0, visR = 0, midX = 0;
+    const drawer = { open: false, moved: false, back: null, box: null };
     let scale = 1;            // px per AU (this frame)
     let sizeScale = 1;        // drawn body sizes and arrows scale a little with the canvas
     let lag = 0;              // years: bodies are drawn extrapolated by the leftover time
@@ -921,6 +924,8 @@
     // Small helpers
     // ------------------------------------------------------------------
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+    // (Math.hypot boxes its numbers and takes far longer: this one for what runs every step or for every body)
+    const hyp = (x, y) => Math.sqrt(x * x + y * y);
     const isDark = () => document.documentElement.classList.contains('dark-mode');
     const COMPACT = { whitedwarf: 1, neutron: 1, blackhole: 1 };
     const isCompact = (b) => !!COMPACT[b.kind];
@@ -969,6 +974,8 @@
         if (au < 1000) return { v: au.toFixed(1), u: 'AU' };
         return { v: fmtSci(au, 2), u: 'AU' };
     }
+    // A whole number with its thousands marked, or from a billion up as ×10ⁿ, so it stays short
+    const fmtWhole = (x) => (Math.abs(x) < 1e9 ? Math.round(x).toLocaleString('en-US') : fmtSci(x, 2));
     // Scenes count time in years, days (scene.time 'd', or scene.units 'km') or seconds (scene.time 's':
     // orbits round a black hole)
     const timeUnit = () => scene.time || (scene.units === 'km' ? 'd' : 'yr');
@@ -978,32 +985,35 @@
         const a = Math.abs;
         if (timeInSeconds()) {
             const s = yr * YEAR_S;
-            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : Math.round(s).toLocaleString('en-US'), u: 's' };
+            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : fmtWhole(s), u: 's' };
         }
         if (timeUnit() === 'd') {
             const d = yr * DAYS_PER_YEAR;
-            return { v: a(d) < 1000 ? d.toFixed(1) : Math.round(d).toLocaleString('en-US'), u: 'days' };
+            return { v: a(d) < 1000 ? d.toFixed(1) : fmtWhole(d), u: 'days' };
         }
-        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : Math.round(yr).toLocaleString('en-US'), u: 'yr' };
+        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : fmtWhole(yr), u: 'yr' };
     }
     // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
         if (timeInSeconds() || yr * YEAR_S < 600) {
             const s = yr * YEAR_S;
             if (s < 1) return `${precise ? s.toFixed(3) : +s.toFixed(3)} s`;
+            if (s >= 1e9) return `${fmtWhole(s)} s`;
             return `${precise ? s.toFixed(s < 100 ? 2 : 0) : +s.toFixed(s < 10 ? 2 : 0)} s`;
         }
         if (timeUnit() === 'd' || yr < 0.1) {
             const d = yr * DAYS_PER_YEAR;
+            if (d >= 1e9) return `${fmtWhole(d)} days`;
             if (precise) return `${d < 100 ? d.toFixed(1) : Math.round(d)} days`;
+            if (d < 0.1) return `${+(d * 24).toFixed(1)} h`;   // (not "0.0 days")
             return `${d < 10 ? d.toFixed(1) : Math.round(d)} ${d < 1.5 && d >= 0.5 ? 'day' : 'days'}`;
         }
-        if (precise) return `${yr < 100 ? yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
-        return `${yr < 10 ? +yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
+        if (precise) return `${yr < 100 ? yr.toFixed(2) : fmtWhole(yr)} yr`;
+        return `${yr < 10 ? +yr.toFixed(2) : fmtWhole(yr)} yr`;
     }
     function fmtSpeedKms(kms) {
         if (kms < 0.1) return { v: (kms * 1000).toFixed(kms < 0.01 ? 2 : 1), u: 'm/s' };
-        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : Math.round(kms).toLocaleString('en-US'), u: 'km/s' };
+        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : fmtWhole(kms), u: 'km/s' };
     }
     // " (0.24c)" for speeds of at least 1% of the speed of light
     function lightFraction(kms) {
@@ -1035,7 +1045,11 @@
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
-            track: null                   // period measurement (Kepler's 3rd law)
+            track: null,                  // period measurement (Kepler's 3rd law)
+            // Set later on, but named here so every body has the same shape: the integrator's loops run
+            // far faster over one shape than over many (with too many, each number written is boxed anew)
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
+            navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
 
@@ -1115,8 +1129,11 @@
     // through each other feel a gentle pull, not an ever stronger one, and the clump can never force the
     // step down below about its own free-fall time (eps^3 / G(m_i + m_j)), whatever they do. That pull changes
     // smoothly (it never grows without limit, as a point mass's does close in), so those pairs need SOFT_STEP
-    // times fewer steps per free-fall time than a point-mass orbit: still about 200 per swing through the
-    // clump. (No relativity between them: GM/(rc^2) for a ninth of a star is a few millionths.)
+    // times fewer steps per free-fall time than a point-mass orbit: still about 50 per swing through the
+    // clump. (No relativity between them: GM/(rc^2) for a ninth of a star is a few millionths.) Pieces of
+    // different bodies don't pull on each other at all: streams of gas passing through each other, each
+    // pulled far harder by what it orbits. The pieces' relativity is in the turning of their orbits: see
+    // driftHosted.
     const DIRECT_MAX = 200;               // exact pair sums up to this many bodies (about the measured crossover with the tree)
     // With the tree, its force errors (a few parts in 10,000 of the swarm's own pull) are the limit on
     // accuracy, not the steps: ETA_SWARM still gives over 600 steps per orbit at 4th order, whose errors
@@ -1124,13 +1141,15 @@
     const ETA_SWARM = 0.01;
     const HEAVY_MAX = 8;                  // above it, the heaviest bodies that still pull pair by pair
     const PN_SKIP = 1e-9;
-    const SOFT_STEP = 8;
+    const SOFT_STEP = 32;
     const SOFT_T2 = SOFT_STEP * SOFT_STEP;   // (the times are kept squared)
-    // A piece's softening length (AU): the radius of the body it came from, cbrt(FRAGMENTS) times its own
-    const softLength = (b) => (b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
+    // A piece's softening length (AU): about the size of the body it came from, more for a heavier piece.
+    // (Pieces of unequal mass have paths that cross: at half this, close passes leave the energy book worse.)
+    const softLength = (b) => (2 * b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
     let scrCap = 0;
     let SX, SY, SVX, SVY, SM, SEPS, SGRP, SAX, SAY, SA0, SBEST, SSECOND, SPART, SPAIR, SDIR, SDPOS;
     let PAX, PAY, NAX, NAY;                  // the 1PN part of the accelerations, and the Newtonian part
+    let HRX, HRY, HPX, HPY;                  // a host's pieces: positions relative to it, momenta (see driftHosted)
     let PNI = new Int32Array(256), PNJ = new Int32Array(256), pnCount = 0, pnList = null, pnN = -1, pnTmin = Infinity;
     function ensureScratch(n) {
         if (n <= scrCap) return;
@@ -1139,10 +1158,12 @@
         SX = f(); SY = f(); SVX = f(); SVY = f(); SM = f(); SEPS = f(); SGRP = f(); SAX = f(); SAY = f(); SA0 = f();
         SBEST = f(); SSECOND = f(); SPART = k(); SPAIR = k(); SDIR = k(); SDPOS = k();
         PAX = f(); PAY = f(); NAX = f(); NAY = f();
+        HRX = f(); HRY = f(); HPX = f(); HPY = f();
         growTreeCache(scrCap);
     }
 
     let gravStamp = 0;
+    let anyPieces = false;   // (a torn-apart body's among them: only then do the pair sums look for pieces)
     let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
     let heavyMax = HEAVY_MAX;
     const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
@@ -1155,11 +1176,13 @@
         const stamp = ++gravStamp;
         const useTree = forceMode === 'tree' || (forceMode === 'auto' && n > DIRECT_MAX);
         const xs = SX, ys = SY, vxs = SVX, vys = SVY, ms = SM, grp = SGRP, eps = SEPS, a0 = SA0, pair = SPAIR;
+        anyPieces = false;
         for (let k = 0; k < n; k++) {
             const b = list[k];
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
             grp[k] = g;
+            if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
             a0[k] = useTree && (b.ax || b.ay) ? Math.sqrt(b.ax * b.ax + b.ay * b.ay) : 0;
@@ -1168,7 +1191,7 @@
         }
         if (pairs) {
             for (const p of pairs) {
-                if (p.a.stamp === stamp && p.b.stamp === stamp) { SPAIR[p.a.slot] = p.b.slot; SPAIR[p.b.slot] = p.a.slot; }
+                if (p.a.stamp === stamp && p.b.stamp === stamp) { SPAIR[p.a.slot] = p.b.slot; if (!p.a.grp) SPAIR[p.b.slot] = p.a.slot; }
             }
         }
         const pn = settings.realistic;
@@ -1248,7 +1271,7 @@
     function pairRows(rows, nRows, n, pn) {
         // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
         const xs = SX, ys = SY, ms = SM, grp = SGRP, accX = SAX, accY = SAY, best = SBEST, second = SSECOND, part = SPART;
-        const inRows = SINDIR, rowOf = SDPOS;
+        const inRows = SINDIR, rowOf = SDPOS, some = anyPieces;
         let tmin = Infinity;
         for (let a = 0; a < nRows; a++) {
             const i = rows ? rows[a] : a;
@@ -1256,10 +1279,16 @@
             let axi = accX[i], ayi = accY[i], b1 = best[i], b2 = second[i], p1 = part[i];
             for (let j = rows ? 0 : i + 1; j < n; j++) {
                 if (rows && (j === i || (inRows[j] && rowOf[j] <= a))) continue;
+                let gj = 0, piece = false;
+                if (some) {
+                    gj = grp[j];
+                    piece = gi !== 0 || gj !== 0;
+                    if (piece && gi !== gj && ((gi !== 0 && gj !== 0) || pi === j || SPAIR[j] === i)) continue;   // (other bodies' pieces; a piece and its host)
+                }
                 const dx = xs[j] - xi, dy = ys[j] - yi;
                 const r2 = dx * dx + dy * dy;
                 const mj = ms[j], msum = mi + mj;
-                if (gi !== 0 && gi === grp[j]) {
+                if (piece && gi === gj) {
                     // pieces of one torn-apart body: softened
                     const e = 0.5 * (SEPS[i] + SEPS[j]);
                     const s2 = r2 + e * e, s = Math.sqrt(s2), is3 = 1 / (s2 * s);
@@ -1284,11 +1313,11 @@
                 }
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
-                    if (t < tmin && !kep) tmin = t;
+                    if (piece) { if (PIECE_T2 * t < tmin) tmin = PIECE_T2 * t; } else if (t < tmin && !kep) tmin = t;
                     // each body's two shortest pair times, and the partner of the shortest
                     if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = j; } else b2 = t; }
                     if (t < second[j]) { if (t < best[j]) { second[j] = best[j]; best[j] = t; part[j] = i; } else second[j] = t; }
-                    if (pn) {
+                    if (pn && !piece) {
                         const vx = SVX[i] - SVX[j], vy = SVY[i] - SVY[j];
                         if ((G * msum) / (C2 * r) > PN_SKIP || (vx * vx + vy * vy) / C2 > PN_SKIP) { pnPair(i, j); notePN(i, j); }
                     }
@@ -1429,13 +1458,17 @@
                 for (let s = tstart[nd], e = tend[nd]; s < e; s++) {
                     const j = bidx[s];
                     if (j === k) continue;
+                    let soft = false;
+                    if (gi !== 0 && sgrp[j] !== 0) {
+                        if (sgrp[j] !== gi) continue;   // (other bodies' pieces)
+                        soft = true;
+                    }
                     const ddx = bx[s] - xi, ddy = by[s] - yi;
                     let d2 = ddx * ddx + ddy * ddy;
-                    const soft = gi !== 0 && gi === sgrp[j];
                     if (soft) { const ee = 0.5 * (ei + seps[j]); d2 += ee * ee; } else if (d2 === 0) continue;
                     const id3 = 1 / (d2 * Math.sqrt(d2)), mj = bm[s];
                     ax += G * mj * id3 * ddx; ay += G * mj * id3 * ddy;
-                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : (mi + mj) * id3;
+                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : gi !== 0 ? (mi + mj) * id3 / PIECE_T2 : (mi + mj) * id3;
                     if (kk > k1) { k2 = k1; k1 = kk; p1 = soft ? -1 : j; } else if (kk > k2) k2 = kk;
                     count++;
                 }
@@ -1462,7 +1495,11 @@
         }
         SINDIR.fill(0, 0, n);
         for (let a = 0; a < nd; a++) SINDIR[SDIR[a]] = 1;
-        for (let i = 0; i < n; i++) if (SPAIR[i] >= 0 && !SINDIR[i]) { SINDIR[i] = 1; SDIR[nd++] = i; }
+        for (let i = 0; i < n; i++) {
+            if (SPAIR[i] < 0) continue;
+            const q = SGRP[i] !== 0 ? SPAIR[i] : i;   // (of a piece and its host, just the host)
+            if (!SINDIR[q]) { SINDIR[q] = 1; SDIR[nd++] = q; }
+        }
         for (let a = 0; a < nd; a++) SDPOS[SDIR[a]] = a;
         // The light bodies' pulls on each other, from the tree
         let treeWork = 0;
@@ -1522,6 +1559,17 @@
     const KEP_TURN = 0.05;                // step <= KEP_TURN x sqrt(r^3 / GM): about 4 degrees of the pair's turn
     const KEP_UNRESOLVED = 0.25;          // periods under this many trail samples are not followed turn by turn
     const PN_PAIR_MAX = 1e-6;
+    // A piece of a torn-apart body (see "Tidal disruption"), so light that it can't disturb its host much (at
+    // most a HOST_MIN-th of its mass), is followed round it the same way, relativity or not, and many can
+    // share one host (see driftHosted). Then one that swings in close forces little on the rest: it keeps
+    // the step under HOST_TURN of its time near the host (for its trail, and for the others' small pull on
+    // it through the host), but to no more than HOST_STEPS steps a trail sample. PIECE_STEP: a piece that
+    // does set the step, passing some other body, is let off with that many times fewer steps.
+    const HOST_MIN = 10;
+    const HOST_TURN = 0.25;
+    const HOST_STEPS = 32;
+    const PIECE_STEP = 4;
+    const PIECE_T2 = PIECE_STEP * PIECE_STEP;   // (the times are kept squared)
     const mainPairs = [];                 // { a, b, touch, fast } for the bodies
     let mainStamp = 0, mainN = 0;
 
@@ -1545,7 +1593,7 @@
         }
     }
 
-    let KX = 0, KY = 0, KVX = 0, KVY = 0, KMIN = 0, KR = 0;
+    let KX = 0, KY = 0, KVX = 0, KVY = 0, KMIN = 0, KR = 0, KTURNS = 0;
     // Kepler's equation in universal variables, r0 G1(s) + eta G2(s) + mu G3(s) - tau (sets KR = r(s), its slope)
     function keplerF(s, r0, eta, mu, beta, tau) {
         stumpff(beta * s * s);
@@ -1554,16 +1602,19 @@
         return r0 * g1 + eta * g2 + mu * s * s * s * SC3 - tau;
     }
 
-    function keplerDrift(rx, ry, vx, vy, mu, dt) {
+    // near: a short step, for which the universal variable's own series is a closer start (and fewer turns of the
+    // solver below)
+    function keplerDrift(rx, ry, vx, vy, mu, dt, near) {
         const r0 = Math.hypot(rx, ry);
         const eta = rx * vx + ry * vy;
         const beta = 2 * mu / r0 - (vx * vx + vy * vy);   // mu / a (negative for a hyperbola)
         let tau = dt, whole = false, s, lo, hi;
+        KTURNS = 0;
         if (beta > 0) {
             // An ellipse is only advanced by the part of dt left over after whole turns; one turn is
             // s = 2 pi / sqrt(beta), which brackets the answer
             const P = TAU * mu / (beta * Math.sqrt(beta));
-            if (Math.abs(tau) >= P) { tau -= P * Math.trunc(tau / P); whole = true; }
+            if (Math.abs(tau) >= P) { KTURNS = Math.trunc(tau / P); tau -= P * KTURNS; whole = true; }
             const sMax = TAU / Math.sqrt(beta);
             lo = tau >= 0 ? 0 : -sMax; hi = tau >= 0 ? sMax : 0;
             s = tau * beta / mu;
@@ -1577,6 +1628,7 @@
             lo = tau >= 0 ? 0 : s; hi = tau >= 0 ? s : 0;
             if (tau >= 0) { while (!(keplerF(hi, r0, eta, mu, beta, tau) >= 0)) { lo = hi; hi = 2 * hi + 1e-300; } } else { while (!(keplerF(lo, r0, eta, mu, beta, tau) <= 0)) { hi = lo; lo = 2 * lo - 1e-300; } }
         }
+        if (near) s = (dt / r0) * (1 - 0.5 * dt * eta / (r0 * r0));
         if (!(s >= lo && s <= hi)) s = 0.5 * (lo + hi);
         // Kepler's equation rises steadily with s (its slope is the distance r > 0): Laguerre-Conway
         // steps (which converge from rough starts in a few steps), falling back on bisection
@@ -1623,13 +1675,81 @@
         if (KMIN < (h.R + l.R) / AU_KM) p.touch = true;
     }
 
+    // Move a host and its pieces. The whole group's centre of mass goes in a straight line; each piece goes
+    // round the host exactly; and the pieces' pull on the host is the small term left (Duncan, Levison & Lee
+    // 1998: the "democratic heliocentric" form of the Wisdom-Holman splitting), in which each moves the host,
+    // and so all the others relative to it, by its own momentum / the host's mass, half before and half after.
+    // Momentum is kept exactly and, for one piece, it is the exact two-body motion.
+    // Relativity's main effect on a piece is that its orbit turns forward, by 3 GM / (c^2 p) for each radian it
+    // goes round (6 pi GM / (c^2 a (1 - e^2)) a turn, whatever the step). A body following a Kepler orbit turned
+    // like that keeps its energy and angular momentum, and, turning about the host, commutes with the motion
+    // round it, so all this stays time-reversible. A piece too close to its host to stay in orbit (inside
+    // the innermost stable orbit) falls in: see piecesFallIn.
+    function driftHosted(g, dt) {
+        const H = g.h, list = g.pairs, n = list.length, mH = H.m, real = settings.realistic;
+        let M = mH, X = mH * H.x, Y = mH * H.y, PX = mH * H.vx, PY = mH * H.vy;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a, m = f.m;
+            M += m; X += m * f.x; Y += m * f.y; PX += m * f.vx; PY += m * f.vy;
+        }
+        X /= M; Y /= M;
+        const cvx = PX / M, cvy = PY / M, half = 0.5 * dt / mH;
+        let sx = 0, sy = 0;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a, m = f.m;
+            HRX[i] = f.x - H.x; HRY[i] = f.y - H.y;
+            const px = m * (f.vx - cvx), py = m * (f.vy - cvy);
+            HPX[i] = px; HPY[i] = py;
+            sx += px; sy += py;
+        }
+        let tx = 0, ty = 0;
+        for (let i = 0; i < n; i++) {
+            const p = list[i], f = p.a, m = f.m, im = 1 / m + 1 / mH, gm = G * (mH + m);
+            const rx = HRX[i] + half * (sx - HPX[i]), ry = HRY[i] + half * (sy - HPY[i]);
+            const vx = HPX[i] * im, vy = HPY[i] * im;
+            const r2 = rx * rx + ry * ry;
+            keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
+            let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
+            if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN)) p.touch = true;
+            if (real) {
+                const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
+                let swept = Math.atan2(rx * ky - ry * kx, rx * kx + ry * ky);
+                if (swept * way < 0) swept += way * TAU;
+                const w = (3 * gm * gm / (C2 * h * h)) * (swept + way * TAU * Math.abs(KTURNS));
+                if (h !== 0 && w !== 0) {
+                    const c = Math.cos(w), s = Math.sin(w);
+                    const x1 = c * kx - s * ky, vx1 = c * kvx - s * kvy;
+                    ky = s * kx + c * ky; kvy = s * kvx + c * kvy;
+                    kx = x1; kvx = vx1;
+                }
+            }
+            HRX[i] = kx; HRY[i] = ky;
+            const px = kvx / im, py = kvy / im;
+            HPX[i] = px; HPY[i] = py;
+            tx += px; ty += py;
+        }
+        let mx = 0, my = 0;
+        for (let i = 0; i < n; i++) {
+            const m = list[i].a.m;
+            HRX[i] += half * (tx - HPX[i]); HRY[i] += half * (ty - HPY[i]);
+            mx += m * HRX[i]; my += m * HRY[i];
+        }
+        H.x = X + dt * cvx - mx / M; H.y = Y + dt * cvy - my / M;
+        H.vx = cvx - tx / mH; H.vy = cvy - ty / mH;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a;
+            f.x = H.x + HRX[i]; f.y = H.y + HRY[i];
+            f.vx = cvx + HPX[i] / f.m; f.vy = cvy + HPY[i] / f.m;
+        }
+    }
+
     // Can a and b be followed as a close pair? (gamma: how weakly the others must disturb them; read
     // from the packed shortest pair times of the last evaluation of the bodies' forces)
     function pairQualifies(a, b, gamma) {
         if (a.stamp !== mainStamp || b.stamp !== mainStamp) return false;
         const i = a.slot, j = b.slot;
         if (SPART[i] !== j || SPART[j] !== i) return false;
-        if (a.held || b.held || (a.grp && a.grp === b.grp) || !(a.m > 0 && b.m > 0)) return false;
+        if (a.held || b.held || a.grp || b.grp || !(a.m > 0 && b.m > 0)) return false;
         if (!(SBEST[i] < gamma * SSECOND[i] && SBEST[j] < gamma * SSECOND[j])) return false;
         if (settings.realistic && G * (a.m + b.m) / (C2 * Math.hypot(b.x - a.x, b.y - a.y)) > PN_PAIR_MAX) return false;
         return true;
@@ -1643,22 +1763,83 @@
         let changed = false;
         for (let k = mainPairs.length - 1; k >= 0; k--) {
             const p = mainPairs[k];
-            if (!pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
+            if (!p.a.grp && !pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
         }
         const n = bodies.length;
-        for (let k = 0; k < n; k++) bodies[k].kep = null;
-        for (const p of mainPairs) { p.a.kep = p; p.b.kep = p; }
+        let pieces = false;
+        for (let k = 0; k < n; k++) { const b = bodies[k]; b.kep = null; if (b.grp) pieces = true; }
+        for (const p of mainPairs) { p.a.kep = p; if (!p.a.grp) p.b.kep = p; }
         for (let k = 0; k < n; k++) {
             const j = SPART[k];
             if (j <= k || SPART[j] !== k) continue;
             const a = bodies[k], b = bodies[j];
             if (a.kep || b.kep || !pairQualifies(a, b, KEP_GAMMA)) continue;
-            const p = { a, b, touch: false, fast: false };
-            mainPairs.push(p);
-            a.kep = p; b.kep = p;
+            followPair(a, b, false);
             changed = true;
         }
+        if ((pieces || hostGroups.length) && choosePieceHosts()) changed = true;
+        if (changed && (pieces || hostGroups.length)) syncHosts();
         return changed;
+    }
+
+    // Follow a and b as a close pair (a, if a piece of a torn-apart body, round its host b)
+    function followPair(a, b, fast) {
+        const q = { a, b, touch: false, fast };
+        mainPairs.push(q);
+        a.kep = q;
+        if (!a.grp) b.kep = q;
+    }
+
+    // Each piece's host, if it has one: the body whose pull on it is so much the strongest that the others'
+    // tides are small beside it (as for a close pair, with the same hysteresis, among the bodies that aren't
+    // pieces: their own softened pull is gentle, and the steps follow it). Returns true if any changed.
+    const hostList = [];
+    function choosePieceHosts() {
+        let changed = false;
+        hostList.length = 0;
+        for (const b of bodies) {
+            if (b.grp || !(b.m > 0)) continue;
+            if (hostList.length < HEAVY_MAX) { hostList.push(b); continue; }
+            let lo = 0;
+            for (let k = 1; k < HEAVY_MAX; k++) if (hostList[k].m < hostList[lo].m) lo = k;
+            if (b.m > hostList[lo].m) hostList[lo] = b;
+        }
+        for (let k = mainPairs.length - 1; k >= 0; k--) {
+            // (a piece that has gone, or a host that has)
+            const p = mainPairs[k];
+            if (p.a.grp && (p.a.stamp !== mainStamp || p.b.stamp !== mainStamp)) { mainPairs.splice(k, 1); p.a.kep = null; changed = true; }
+        }
+        const nh = hostList.length;
+        for (const f of bodies) {
+            if (!f.grp) continue;
+            const xf = f.x, yf = f.y, mf = f.m;
+            let t1 = Infinity, t2 = Infinity, H = null;
+            for (let k = 0; k < nh; k++) {
+                const h = hostList[k], dx = h.x - xf, dy = h.y - yf, r2 = dx * dx + dy * dy;
+                const t = r2 * Math.sqrt(r2) / (h.m + mf);
+                if (t < t1) { t2 = t1; t1 = t; H = h; } else if (t < t2) t2 = t;
+            }
+            const q = f.kep;
+            const ok = H && !f.held && !H.held && !H.kep && H.m >= HOST_MIN * mf && t1 > 0 && t1 < (q && q.b === H ? 2 * KEP_GAMMA : KEP_GAMMA) * t2;
+            if (q && (!ok || q.b !== H)) { mainPairs.splice(mainPairs.indexOf(q), 1); f.kep = null; changed = true; }
+            if (ok && !f.kep) { followPair(f, H, false); changed = true; }
+        }
+        return changed;
+    }
+
+    // The hosts, each with the close pairs of its pieces (kept while they stay the same)
+    const hostGroups = [];
+    function syncHosts() {
+        for (const g of hostGroups) g.h.hosts = 0;
+        hostGroups.length = 0;
+        for (const p of mainPairs) {
+            if (!p.a.grp) continue;
+            let g = null;
+            if (p.b.hosts) g = hostGroups.find((q) => q.h === p.b);
+            if (!g) { g = { h: p.b, pairs: [] }; hostGroups.push(g); }
+            g.pairs.push(p);
+            p.b.hosts = g.pairs.length;
+        }
     }
 
     function refreshPairs() {
@@ -1689,7 +1870,8 @@
         const vx = b.vx - a.vx, vy = b.vy - a.vy;
         const beta = 2 * gm / r - (vx * vx + vy * vy);
         p.fast = beta > 0 && TAU * gm / (beta * Math.sqrt(beta)) < KEP_UNRESOLVED * sampleDt;
-        return p.fast ? Infinity : KEP_TURN * Math.sqrt(r2 * r / gm);
+        if (p.fast) return Infinity;
+        return a.grp ? Math.max(HOST_TURN * Math.sqrt(r2 * r / gm), sampleDt / HOST_STEPS) : KEP_TURN * Math.sqrt(r2 * r / gm);
     }
 
     // One kick-drift-kick leapfrog step for every body in the list that isn't held (close pairs drift
@@ -1701,9 +1883,12 @@
         for (const b of list) {
             if (b.held) continue;
             b.vx += h * b.ax; b.vy += h * b.ay;
-            if (!(pairs && b.kep)) { b.x += dt * b.vx; b.y += dt * b.vy; }
+            if (!(pairs && (b.kep || b.hosts))) { b.x += dt * b.vx; b.y += dt * b.vy; }
         }
-        if (pairs) for (const p of pairs) driftPair(p, dt);
+        if (pairs) {
+            for (const p of pairs) if (!p.a.grp) driftPair(p, dt);
+            for (const g of hostGroups) driftHosted(g, dt);
+        }
         let tmin = forces();
         for (const b of list) {
             if (b.held) continue;
@@ -1745,7 +1930,8 @@
 
     function touching(a, b) {
         if (a.held || b.held || (a.grp && a.grp === b.grp)) return false;
-        if (a.kep && a.kep === b.kep) return a.kep.touch;
+        if (a.kep && (a.kep === b.kep || a.kep.b === b)) return a.kep.touch;
+        if (b.kep && b.kep.b === a) return b.kep.touch;
         const reach = (a.R + b.R) / AU_KM;
         const x0 = b.px - a.px, y0 = b.py - a.py;
         const x1 = b.x - a.x, y1 = b.y - a.y;
@@ -1809,7 +1995,7 @@
 
     function checkMerges() {
         if (!settings.merge) return false;
-        let merged = false;
+        let merged = hostGroups.length > 0 && piecesFallIn();
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
@@ -1817,6 +2003,27 @@
             merged = true;
         }
         if (merged) computeForces();
+        return merged;
+    }
+
+    // Pieces that touched their hosts in the last step (hundreds at a time, when a swarm falls into a black
+    // hole). Inside the innermost stable orbit, before it touches, a piece just falls in, as in plunge: what it
+    // takes with it is kept in the books (under FALLEN, among the body ids of groupEnergy), so the total stays
+    // level.
+    const FALLEN = -1;
+    function piecesFallIn() {
+        let merged = false;
+        listsWait = true;
+        for (const p of mainPairs) {
+            if (!p.touch || !p.a.grp) continue;
+            p.touch = false;
+            const f = p.a, H = p.b, fell = settings.realistic && G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM;
+            const before = fell ? energyOf([f, H]) : 0;
+            mergeBodies(f, H);
+            if (fell) groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([H]) - before);
+            merged = true;
+        }
+        listsWait = false;
         return merged;
     }
 
@@ -1843,6 +2050,24 @@
         removeBody(small, big);
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
+        // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
+        // timer says so itself)
+        if (!small.minor && !small.grp && timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }   // (running backwards: not the usual crash)
+        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+    }
+
+    // Said as a merger is (not for a swarm's bodies, which go by the hundred; the stability timer says so
+    // itself). The scene's tip has done its job. If it was the chosen body, the choice goes to what tore
+    // it apart, not to a piece: one fragment means nothing, and its readouts would only confuse.
+    let tornNews = null;
+    function announceTear() {
+        const n = tornNews;
+        tornNews = null;
+        updateHistoryUi();   // (Undo now takes the break-up back: see tornInScene)
+        if (!n || n.L.minor) return;
+        clearHint('tip');
+        if (n.chosen && bodies.includes(n.H)) selectBody(n.H.id);
+        if (!settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(n.L)))} was torn apart</strong> by the tides of ${escapeHtml(theName(n.H))}.`, { ms: 7000 });
     }
 
     // ------------------------------------------------------------------
@@ -1851,17 +2076,20 @@
     // held together only by its own gravity), before their surfaces touch, is torn apart. It becomes a
     // line of fragments along the line to the heavy body, all moving as it did; the inner ones are more
     // tightly bound than the outer ones, so they spread out along the orbit into a stream, and if the
-    // pass was close enough about half escape. The fragments pull on each other (softened, see above)
-    // and on everything else, so self-gravity can gather some of the stream into clumps, as in
+    // pass was close enough about half escape. The fragments of one body pull on each other (softened, see
+    // above) and all pull on everything else, so self-gravity can gather some of the stream into clumps, as in
     // simulations of real disruptions. They don't merge with each other: they start overlapping (parts of
     // one fluid body), and streams of gas that meet pass through each other rather than sticking like
-    // solid bodies; they can still merge with anything else, or fall into the black hole.
+    // solid bodies; they can still merge with anything else, or fall into the black hole. A fragment
+    // swings round the body tearing it far faster than anything else moves, so each follows its own orbit
+    // round it exactly (see "Close pairs"), and it doesn't set the step for the rest.
     // In a crowded scene only the heaviest few bodies are tried as the heavy partner (bodies outside them
     // are light swarm bodies, whose Roche limits round each other are barely bigger than their own sizes,
     // so they merge rather than tear).
     // ------------------------------------------------------------------
     const ROCHE = 2.44;
     const FRAGMENTS = 9;
+    const MINOR_FRAGMENTS = 3;            // ...or of a light body of a crowded scene (a dot among many, all but unseen)
     const tideHeavy = [];
     // What the books gain at the break-up, which a whole body (a point) didn't have in them: mostly the
     // pieces' pull on each other (the binding energy that held it together), and the extra tidal energy of
@@ -1896,30 +2124,63 @@
         return false;
     }
 
+    // How a body breaks: ragged, not a row of equal beads. The pieces' masses, the gaps along the line to
+    // the heavy body and how far they sit off it all vary, in a pattern taken from the two bodies, their
+    // masses, size and name (never from the clock or Math.random, so Run again and a shared link break it
+    // the same way, bit for bit).
+    // Measured from their centre of mass, so all moving as one they keep the whole body's centre of mass,
+    // momentum and angular momentum. Returns each piece's share of the mass and place (in units of the radius).
+    function tearPattern(L, H, n) {
+        const bits = new Uint32Array(new Float64Array([L.m, L.R, H.m]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        for (let k = 0; k < L.name.length; k++) h = Math.imul(h ^ L.name.charCodeAt(k), 16777619);
+        const rnd = seeded(((h >>> 0) % 2147483646) + 1);
+        rnd(); rnd();   // (the first numbers from a small seed are much alike)
+        const share = [], along = [], off = [];
+        let W = 0, s = 0;
+        for (let i = 0; i < n; i++) {
+            share.push(Math.exp(0.8 * (2 * rnd() - 1)));
+            if (i) s += 0.35 + rnd();
+            along.push(s);
+            off.push(rnd() - 0.5);
+            W += share[i];
+        }
+        const stretch = 2 / s;
+        let A = 0, O = 0;
+        for (let i = 0; i < n; i++) { share[i] /= W; A += share[i] * along[i] * stretch; O += share[i] * off[i]; }
+        for (let i = 0; i < n; i++) { along[i] = along[i] * stretch - A; off[i] -= O; }
+        return { share, along, off };
+    }
+
     function disrupt(L, H) {
-        const n = Math.min(FRAGMENTS, MAX_BODIES - bodies.length + 1);
+        const n = Math.min(L.minor ? MINOR_FRAGMENTS : FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
         noteIrreversible('tear');   // (running backwards: a copy of the system from just before)
         noteTornApart(L, H);       // (the stability timer)
         const d = Math.hypot(L.x - H.x, L.y - H.y);
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
         const span = L.R / AU_KM;
-        const parts = [];
+        const parts = [], name = uniqueName('Fragment');
+        const shape = tearPattern(L, H, n);
+        let left = L.m;
         for (let i = 0; i < n; i++) {
-            const s = -1 + (2 * i) / (n - 1);
-            const f = newBody({ name: uniqueName('Fragment'), kind: L.kind, m: L.m / n, R: L.R / Math.cbrt(n), color: L.color });
+            const s = shape.along[i], q = shape.off[i];
+            const m = i < n - 1 ? L.m * shape.share[i] : left;   // (the last takes what rounding left: the mass adds up exactly)
+            left -= m;
+            const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = L.id;
-            f.x = L.x + ux * s * span; f.y = L.y + uy * s * span;
+            f.heft = heftOf(n * shape.share[i]);
+            f.x = L.x + (ux * s - uy * q) * span; f.y = L.y + (uy * s + ux * q) * span;
             f.vx = L.vx; f.vy = L.vy;
             f.px = f.x; f.py = f.y;
             parts.push(f);
         }
         flashes.push({ x: L.x, y: L.y, t: performance.now(), color: L.color, r0: drawRadius(L) });
-        const before = systemEnergy().total;
+        const before = energyOf([L]);
         bodies.push(...parts);
         removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
-        groupEnergy.set(L.id, 0);
-        groupEnergy.set(L.id, systemEnergy().total - before);
+        groupEnergy.set(L.id, energyOf(parts) - before);
         computeForces();
         return true;
     }
@@ -2154,7 +2415,7 @@
         const key = `${b.id}:${p.id}`;
         let tr = watched.get(key);
         const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy;
-        const rd = rx * vx + ry * vy, r = Math.hypot(rx, ry), phi = Math.atan2(ry, rx);
+        const rd = rx * vx + ry * vy, r = hyp(rx, ry), phi = Math.atan2(ry, rx);
         if (!tr || tr.n !== relSteps - 1 || tr.ref !== b.track) {
             // new, or it missed steps, or the body was changed: start again
             if (watched.size > 8) watched.clear();
@@ -2278,7 +2539,7 @@
         // (said in the hint line too, which screen readers announce)
         const kind = big.kind === 'blackhole' ? 'black hole' : big.kind === 'neutron' ? 'neutron star' : 'body';
         const lost = m1 + m2 - big.m;
-        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `, lighter than the two together: ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
+        showHint('note', `<strong>Merged:</strong> one ${kind} of ${fmtMass(big.m)}${lost > 0 ? `. ${fmtMass(lost)} of mass went into gravitational waves` : ''}.`, { ms: 8000 });
         // A black hole rings as it settles, at the frequency and damping of its main (l = m = 2) mode:
         // omega = 0.3737 c^3/(GM), damping time GM/(0.0890 c^3) (Berti, Cardoso & Will 2006)
         if (big.kind === 'blackhole') {
@@ -2336,7 +2597,15 @@
     // puts the switch back (unless it was changed by hand meanwhile), so "Three stars: chaos" isn't
     // quietly run with Einstein's corrections after a visit to Mercury
     let realisticByScene = false;
-    if (ui.realistic) ui.realistic.addEventListener('change', () => { realisticByScene = false; });
+    if (ui.realistic) {
+        ui.realistic.addEventListener('change', () => {
+            // (switched back on in such a scene, it is the scene's again, and goes when the scene does)
+            const needed = !!(scene && scene.realistic);
+            realisticByScene = needed && ui.realistic.checked;
+            if (needed && !ui.realistic.checked) showHint('note', '<strong>Realistic physics off:</strong> just Newton, so a plain ellipse.', { ms: 6000 });
+            else if (needed) clearHint('note');
+        });
+    }
     function setRealisticSwitch(on) {
         settings.realistic = on;
         if (ui.realistic) ui.realistic.checked = on;
@@ -2389,7 +2658,8 @@
     }
 
     function precessionLines(b, compact, title, C) {
-        if (!orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
+        // (a piece of a torn-apart body has no orbit of its own to turn)
+        if (b.grp || !orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
         const p = b.primary, el = elementsOf(b, p);
         if (!el || !el.bound) return null;
         const r = precessionOf(b);
@@ -2481,7 +2751,7 @@
         const sketchH = wl && wl.wave ? (compact ? 18 : 30) : 0;
         const w = Math.max(...lines.map(widthOf), sketchH ? (compact ? 120 : 170) : 0) + 20;
         const h = lines.length * lh + 10 + (sketchH ? sketchH + 6 : 0);
-        const x = viewW - 8 - w;
+        const x = visR - 8 - w;
         cardBox(C, x, y, w, h);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -2569,7 +2839,7 @@
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
-            if (checkTides()) { refreshBodyLists(); }
+            if (checkTides()) { refreshBodyLists(); announceTear(); }
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
@@ -2696,6 +2966,31 @@
         return best || pull;
     }
 
+    // A planet's Hill sphere is often smaller than its disc on the screen, so a moon can't be dropped
+    // inside it by eye. A body of mass m and radius R dropped on a heavier body that orbits something
+    // (at canvas point px, py) therefore goes to moonSpot, about the Moon's distance in Hill spheres;
+    // this is that body, unless at this zoom its Hill sphere is big enough to aim within.
+    function moonHost(px, py, m, R, exclude) {
+        if (settings.placement !== 'circular') return null;
+        let host = null, bestD = 6;
+        for (const b of bodies) {
+            if (b === exclude || b.minor || !(b.m > m) || !isFinite(b.hill) || !(0.25 * b.hill > 2 * (b.R + R) / AU_KM)) continue;
+            const d = Math.hypot(sx(b.dx) - px, sy(b.dy) - py) - drawRadius(b);
+            if (d < bestD) { bestD = d; host = b; }
+        }
+        if (!host) return null;
+        const w = unturnPoint(wx(px), wy(py)), r = Math.hypot(w.x - host.x, w.y - host.y);
+        return host.hill * scale > drawRadius(host) + 24 && r > 2 * (host.R + R) / AU_KM ? null : host;
+    }
+
+    // Where such a body goes, on the side of host that (x, y) is on. n: moons it has already, each a
+    // little farther out, so that they don't share an orbit.
+    function moonSpot(host, x, y, n) {
+        const dx = x - host.x, dy = y - host.y, d = Math.hypot(dx, dy) || 1;
+        const r = host.hill * Math.min(0.45, 0.25 + 0.1 * (n || 0));
+        return d > 1e-12 ? { x: host.x + (dx / d) * r, y: host.y + (dy / d) * r } : { x: host.x + r, y: host.y };
+    }
+
     // Sense of rotation for a new orbit around p: the way p's own satellites (or p itself) go round.
     function orbitSense(p, b) {
         let L = 0;
@@ -2738,9 +3033,9 @@
     function trackPeriods(t) {
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || !b.bound || b.held || p.held || (b.minor && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
+            if (!p || !b.bound || b.held || p.held || ((b.minor || b.grp) && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
             const rx = b.x - p.x, ry = b.y - p.y;
-            const r = Math.hypot(rx, ry);
+            const r = hyp(rx, ry);
             const phi = Math.atan2(ry, rx);
             let tr = b.track;
             if (!tr || tr.pid !== p.id) {
@@ -2841,8 +3136,8 @@
         if (flyby.active) {
             const q = bodyById(flyby.pid), s = bodyById(flyby.sid);
             if (!q || !s || q.held) { resetFlyby(); return; }
-            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
-            flyby.vNow = Math.hypot(b.vx - s.vx, b.vy - s.vy);
+            const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
+            flyby.vNow = hyp(b.vx - s.vx, b.vy - s.vy);
             if (r < flyby.rmin) {
                 // On the way in, the closest approach of the hyperbola it is on now (the star's pull
                 // shifts it as it goes); after it, the measured one. The close-up is scaled by it.
@@ -2854,7 +3149,7 @@
             }
             // points closer together near the planet (where the close-up shows them)
             const n = flyby.pts.length;
-            if (Math.hypot(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
+            if (hyp(dx - flyby.pts[n - 2], dy - flyby.pts[n - 1]) > 0.04 * Math.max(r, flyby.rp) && n < 6000) flyby.pts.push(dx, dy);
             if (r > flyby.hill) {
                 flyby.active = false; flyby.done = true;
                 flyby.vOut = flyby.vNow;
@@ -2868,7 +3163,7 @@
             const s = q.primary;
             if (q === b || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
             if (q.m < 10 * b.m || q.m > 0.1 * s.m) continue;   // a light body passing a planet
-            const dx = b.x - q.x, dy = b.y - q.y, r = Math.hypot(dx, dy);
+            const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
             if (r >= q.hill) continue;
             const el = relElements(dx, dy, b.vx - q.vx, b.vy - q.vy, G * (b.m + q.m));
             if (el.bound) continue;   // captured: an orbit, not a flyby
@@ -2896,7 +3191,7 @@
         sampleTimes[k] = simTime;
         for (const b of bodies) {
             let T = b.trail;
-            if (!T) T = b.trail = new Float64Array(2 * (b.minor ? SWARM_TRAIL : TRAIL_CAP));
+            if (!T) T = b.trail = new Float64Array(2 * (b.minor ? SWARM_TRAIL : b.grp ? PIECE_TRAIL : TRAIL_CAP));
             const i = 2 * (sampleCount % (T.length >> 1));
             T[i] = b.x;
             T[i + 1] = b.y;
@@ -2915,11 +3210,11 @@
         const k = sampleCount - 1;
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || b.minor || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
+            if (!p || b.minor || (b.grp && b.id !== selectedId) || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
             const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
             const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
-            if (Math.hypot(rx - ox, ry - oy) > 0.035 * Math.hypot(rx, ry)) return true;
+            if (hyp(rx - ox, ry - oy) > 0.035 * hyp(rx, ry)) return true;
         }
         return false;
     }
@@ -2944,6 +3239,8 @@
     // Scenes
     // ------------------------------------------------------------------
     function loadScene(key) {
+        restoreSpeed();   // (a zoom's slower time ends with it)
+        missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
         setReverse(false, true);   // (a new or restarted scene runs forwards)
         const def = SCENES[key] || SCENES['sun-earth'];
@@ -2951,6 +3248,7 @@
         scene = def;
         bodies = [];
         mainPairs.length = 0;
+        syncHosts();
         groupEnergy.clear();
         simTime = 0; acc = 0; sampleCount = 0; nextSampleT = 0;
         sampleDt = scene.Tref / TRAIL_PER_TREF;
@@ -3012,7 +3310,7 @@
         // (the last scene's notes go with it; this one's tip shows until the canvas or palette is used)
         clearHint('note');
         clearHint('missionNote');
-        showHint('tip', def.tip ? `<strong>Tip:</strong> ${def.tip}` : null);
+        showHint('tip', def.tip || null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
         stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
     }
@@ -3074,15 +3372,16 @@
         return { x: freeze.x + freeze.vx * dt, y: freeze.y + freeze.vy * dt, phi: freeze.phi };
     }
 
-    const sx = (x) => viewW / 2 + (x - F.x - view.panX) * scale;
+    const sx = (x) => midX + (x - F.x - view.panX) * scale;
     const sy = (y) => viewH / 2 - (y - F.y - view.panY) * scale;
-    const wx = (px) => F.x + view.panX + (px - viewW / 2) / scale;
+    const wx = (px) => F.x + view.panX + (px - midX) / scale;
     const wy = (py) => F.y + view.panY - (py - viewH / 2) / scale;
 
     function updateScale() {
         const m = Math.max(1, Math.min(viewW, viewH));
         scale = view.zoom * m;
         sizeScale = clamp(m / 560, 0.62, 1.1);
+        midX = viewW / 2 + view.shift;
     }
 
     // Drawn radius (CSS px) from the real radius: compressed, so a star is about twice a giant
@@ -3106,7 +3405,18 @@
     }
     // A torn-apart body's pieces are small, and so are the light bodies of a swarm
     const MINOR_SIZE = 2;
-    const bodySize = (b) => (b.grp ? 3.5 : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
+    const bodySize = (b) => (b.grp ? 3.5 * pieceHeft(b) : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
+    // How big a piece of a torn-apart body looks beside the others, by its mass among them (x: its mass over
+    // their average). Set as it breaks; a piece put back from a copy or a link works it out when it is drawn.
+    const heftOf = (x) => clamp(Math.sqrt(x), 0.55, 1.8);
+    function pieceHeft(b) {
+        if (!b.heft) {
+            let M = 0, n = 0;
+            for (const q of bodies) if (q.grp === b.grp) { M += q.m; n++; }
+            b.heft = heftOf((n * b.m) / M);
+        }
+        return b.heft;
+    }
 
     // Drawn radii for this frame. A moon close to its planet on screen shrinks both discs (down to
     // 3 px) so they never overlap; zoomed in far enough, bodies are drawn at their true size.
@@ -3127,17 +3437,20 @@
             p.rmax = Math.min(p.rmax, 0.45 * d);
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
-        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : 3, b.rmax, (b.R / AU_KM) * scale);
+        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : b.grp ? 1.8 : 3, b.rmax, (b.R / AU_KM) * scale);
     }
 
-    // Change the view so a world box (relative to the frame origin) fits the canvas.
-    function fitBox(box, animate) {
+    // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
+    // (at no more than the zoom most, if given).
+    function fitBox(box, animate, most) {
         const m = Math.max(1, Math.min(viewW, viewH));
         const w = Math.max(box[1] - box[0], 1e-9), h = Math.max(box[3] - box[2], 1e-9);
-        const W = viewW || 800, H = viewH || 500;
+        const W = visR - visL || 800, H = viewH || 500;
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
-        const target = { zoom: pxPerAu / m, panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
+        const target = { zoom: Math.min(pxPerAu / m, most || Infinity), panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
+        view.panned = false;
+        drawerCamera(box);
         if (animate) view.anim = target;
         else { view.zoom = target.zoom; view.panX = target.panX; view.panY = target.panY; view.anim = null; }
     }
@@ -3145,12 +3458,30 @@
     // Fit every body, and the whole orbit of each bound one, in the view.
     function fitAll() {
         if (!bodies.length) return;
+        // (a mission locked on a body has its own view: the Sun, far off, isn't part of it)
+        if (mission.def && mission.def.lock !== undefined) { fitBox(mission.def.scene.box, true); return; }
         updateDrawnPositions();
+        // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
+        if (bodies.length === 1) {
+            const b = bodies[0], w = 0.5 * (scene.box[1] - scene.box[0]), h = 0.5 * (scene.box[3] - scene.box[2]);
+            fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
+            return;
+        }
+        fitBox(paddedBox(sceneBox(true)), true);
+    }
+
+    const paddedBox = (q) => {
+        const pad = 0.08 * Math.max(q[1] - q[0], q[3] - q[2], 1e-6);
+        return [q[0] - pad, q[1] + pad, q[2] - pad, q[3] + pad];
+    };
+
+    // The box round every body, and with orbits, the whole orbit of each bound one (relative to the frame origin)
+    function sceneBox(orbits) {
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         const add = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
         for (const b of bodies) {
             add(b.dx - F.x, b.dy - F.y);
-            if (b.bound && b.primary && b.primary.primary !== b) {
+            if (orbits && b.bound && b.primary && b.primary.primary !== b) {
                 const el = turnedElements(elementsOf(b, b.primary));
                 if (el && el.bound) {
                     const fp = b.primary.m / (b.m + b.primary.m);
@@ -3165,29 +3496,59 @@
                 }
             }
         }
-        const pad = 0.08 * Math.max(x1 - x0, y1 - y0, 1e-6);
-        fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], true);
+        return [x0, x1, y0, y1];
     }
 
+    // The glide: the zoom and the way left to go close in together, counted in px on the screen, so what
+    // it is heading for comes steadily nearer even while the zoom races in. It aims at where a body that
+    // is moving through the view (a.ref) is now, not where it was at the start, for as long as the glide
+    // lasts (a target on the move is never quite caught, so that much is the limit).
+    const GLIDE_FOLLOW_MS = 1500;
     function stepViewAnimation(dtReal) {
+        if (view.shift !== view.shiftTo) {
+            view.shift = view.shiftTo + (view.shift - view.shiftTo) * Math.exp(-dtReal / 0.16);
+            if (Math.abs(view.shift - view.shiftTo) < 0.3) view.shift = view.shiftTo;
+        }
         const a = view.anim;
         if (!a) return;
-        const k = 1 - Math.exp(-dtReal / 0.16);
+        if (a.ref && bodies.includes(a.ref)) { a.panX = a.ref.dx - F.x + a.ox; a.panY = a.ref.dy - F.y + a.oy; }
+        const k = 1 - Math.exp(-dtReal / 0.16), zoom0 = view.zoom;
         view.zoom *= Math.pow(a.zoom / view.zoom, k);
-        view.panX += (a.panX - view.panX) * k;
-        view.panY += (a.panY - view.panY) * k;
-        if (Math.abs(Math.log(a.zoom / view.zoom)) < 0.002 && Math.abs(a.panX - view.panX) * scale < 0.3 && Math.abs(a.panY - view.panY) * scale < 0.3) {
-            view.zoom = a.zoom; view.panX = a.panX; view.panY = a.panY; view.anim = null;
-        }
+        const left = (1 - k) * Math.min(1, zoom0 / view.zoom);
+        view.panX = a.panX + (view.panX - a.panX) * left;
+        view.panY = a.panY + (view.panY - a.panY) * left;
+        const done = Math.abs(Math.log(a.zoom / view.zoom)) < 0.002 && Math.abs(a.panX - view.panX) * scale < 0.3 && Math.abs(a.panY - view.panY) * scale < 0.3;
+        if (done) { view.zoom = a.zoom; view.panX = a.panX; view.panY = a.panY; view.anim = null; }
+        else if (a.ref && performance.now() > a.until && Math.abs(Math.log(a.zoom / view.zoom)) < 0.002) view.anim = null;
+    }
+
+    // The glide just begun stays aimed at this body, wherever it goes meanwhile
+    function glideWith(ref) {
+        const a = view.anim;
+        if (!a || !ref) return;
+        a.ref = ref; a.ox = a.panX - (ref.dx - F.x); a.oy = a.panY - (ref.dy - F.y);
+        a.until = performance.now() + GLIDE_FOLLOW_MS;
     }
 
     function zoomAt(px, py, factor) {
         const x = wx(px), y = wy(py);
+        const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
         view.zoom = clamp(view.zoom * factor, 1e-7, 1e7);
         view.anim = null;
+        drawer.moved = true;
         updateScale();
-        view.panX = x - F.x - (px - viewW / 2) / scale;
+        view.panX = x - F.x - (px - midX) / scale;
         view.panY = y - F.y + (py - viewH / 2) / scale;
+        if (factor > 1 && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in: see insideOf)
+    }
+
+    // The body whose true disc covers the whole canvas, if any: the view is inside it, with nothing to see
+    function insideOf() {
+        for (const b of bodies) {
+            const x = sx(b.dx), y = sy(b.dy);
+            if (Math.hypot(Math.max(x, viewW - x), Math.max(y, viewH - y)) < (b.R / AU_KM) * scale) return b;
+        }
+        return null;
     }
 
     // Change the frame without the view jumping, then glide to the new centre.
@@ -3195,7 +3556,9 @@
         updateDrawnPositions();
         const before = viewOrigin();
         frameId = id !== null && bodyById(id) ? id : null;
+        if (frameId === null) restoreSpeed();   // (a zoom's slower time ends with it)
         freeze = null;
+        view.panned = false;
         leaveTurning();   // (a rotating frame ends: the view glides back square)
         updateDrawnPositions();
         keepScreen(before);
@@ -3212,6 +3575,7 @@
             if (L && ui.frameChipName) ui.frameChipName.textContent = L.name;
         }
         syncTurnUi();
+        refreshHint();   // (a scene's tip that names the view follows it)
     }
 
     // ------------------------------------------------------------------
@@ -3249,7 +3613,7 @@
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote'), frameNote: byId('frameNote') });
+    Object.assign(ui, { turnNote: byId('turnNote') });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -3381,13 +3745,14 @@
         markPreview();
         syncFrameUi();
         updatePopover(true);
-        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns with them, so both stand still. Arrows show velocities in this turning view.`, { ms: 7000 });
+        showHint('note', `<strong>Rotating with ${escapeHtml(theName(B))} and ${escapeHtml(theName(A))}:</strong> the view turns, so both stand still.`, { ms: 7000, tag: 'turn' });
         return true;
     }
 
     // Choosing any other frame ends a rotating one (setFrame keeps the screen still; the turn glides off)
     function leaveTurning() {
         if (!turn.on) return;
+        clearHint('note', 'turn');
         Object.assign(turn, { on: false, aId: null, bId: null });
         pred.key = '';
         markPreview();
@@ -3468,12 +3833,11 @@
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
-            if (ui.frameNote) ui.frameNote.hidden = !!P;
             if (P) {
                 const el = elementsOf(P.B, P.A);
-                const ecc = el && el.bound && el.e > 0.03 ? ` Its orbit is an ellipse, so ${theName(P.B)} slides in and out.` : '';
-                const lag = settings.lagrange ? '' : ' Lagrange points are in More options.';
-                setText(ui.turnNote, `The view turns with ${theName(P.B)} round ${theName(P.A)}, so both stand still. Arrows show velocities in this turning view.${ecc}${lag}`);
+                const ecc = el && el.bound && el.e > 0.03 ? ` ${sentenceCase(theName(P.B))} slides in and out along its ellipse.` : '';
+                const lag = settings.lagrange ? '' : ' Lagrange points: More options.';
+                setText(ui.turnNote, `Arrows show motion in this turning view.${ecc}${lag}`);
             }
         }
     }
@@ -3580,36 +3944,6 @@
         return { ox: (P.A.m * ax + P.B.m * bx) / M, oy: (P.A.m * ay + P.B.m * by) / M, c: Math.cos(a), s: Math.sin(a) };
     }
 
-    // traceTrail for a turned view: the same, with each point turned
-    function traceTurnedTrail(tr, ks, ke, minPx) {
-        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
-        const cs = tr.turn.cs, c0 = tr.turn.c, s0 = tr.turn.s;
-        const capT = T.length >> 1, capO = oT.length >> 1;
-        let i = 2 * (ks % capT), io = 2 * (ks % capO), j = 2 * (ks % TRAIL_CAP);
-        let c = cs ? cs[j] : c0, s = cs ? cs[j + 1] : s0;
-        let rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
-        let lx = offX + (c * rx - s * ry) * scale, ly = offY - (s * rx + c * ry) * scale;
-        let out = outcode(lx, ly), pen = true;
-        ctx.moveTo(lx, ly);
-        for (let k = ks + 1; k < ke; k += stride) {
-            if (k + stride >= ke) k = ke - 1;
-            i = 2 * (k % capT); io = 2 * (k % capO); j = 2 * (k % TRAIL_CAP);
-            if (cs) { c = cs[j]; s = cs[j + 1]; }
-            rx = T[i] - oT[io]; ry = T[i + 1] - oT[io + 1];
-            const x = offX + (c * rx - s * ry) * scale, y = offY - (s * rx + c * ry) * scale;
-            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
-            const o = outcode(x, y);
-            if (o & out) {
-                pen = false;
-            } else {
-                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
-                ctx.lineTo(x, y);
-            }
-            lx = x; ly = y; out = o;
-        }
-        if (!pen) ctx.moveTo(lx, ly);
-    }
-
     // ------------------------------------------------------------------
     // Lagrange points of a body B and the body A it orbits (A the heavier; mu = m_B / (m_A + m_B)), in
     // units of the distance d between them now, along the line from A to B and measured from their
@@ -3681,10 +4015,10 @@
         const b = theName(Q.B), a = theName(Q.A);
         if (i < 3) {
             const where = [`between ${b} and ${a}`, `just beyond ${b}`, `on the far side of ${a}`][i];
-            return `L${i + 1}, ${where}: a body here keeps pace with ${b}, but drifts away if nudged.`;
+            return `L${i + 1}, ${where}: keeps pace with ${b}, but drifts away if nudged.`;
         }
         const where = i === 3 ? 'ahead of' : 'behind';
-        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: a stable spot, where small bodies gather (like Jupiter's Trojans).`
+        return Q.mu < ROUTH_MU ? `L${i + 1}, 60° ${where} ${b}: stable, so small bodies gather (like Jupiter's Trojans).`
             : `L${i + 1}, 60° ${where} ${b}: not stable, as ${b} is too heavy compared with ${a}.`;
     }
 
@@ -3780,20 +4114,24 @@
     //   tadpoles that bodies can't cross without more energy.
     //   eps is about a body's drawn radius, so its well bottoms out under its disc.
     //   Worked out on a coarse grid (a point every WELL_CELL px, more when there are many bodies to add
-    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, drawn
-    //   smoothly scaled up, and the lines as paths. Again only when a body has moved a pixel or the view
-    //   has changed more than shifting and scaling the old picture can cover, and at most every few
-    //   frames if that is slow; in between, the old picture follows the zoom and pan.
+    //   up) with a margin round the view: the shading as a tiny image, one pixel per grid point, smoothly
+    //   scaled up, and the lines as paths, painted once onto a picture the size of the canvas and its
+    //   margin (painting them takes far longer than copying it). Again only when a body has moved a pixel
+    //   or the view has changed more than shifting and scaling the old picture can cover, and at most
+    //   every few frames if that is slow; in between, the old picture follows the zoom and pan.
     // ------------------------------------------------------------------
     const WELL_CELL = 7;          // px between grid points
     const WELL_WORK = 240000;     // at most about this many body-point sums per picture
     const WELL_BODIES = 24;       // the heaviest bodies that make the picture
     const WELL_LEVELS = 9;        // about this many steps between contour lines across the depths in view
+    const WELL_SOFT_MS = 150;     // a picture shifted or scaled is painted afresh after this long
     Object.assign(settings, { well: false, lagrange: false });
-    Object.assign(ui, { wellToggle: byId('wellToggle'), wellNote: byId('wellNote'), lagrangeToggle: byId('lagrangeToggle') });
+    Object.assign(ui, { wellToggle: byId('wellToggle'), lagrangeToggle: byId('lagrangeToggle') });
     const well = {
         small: null, smallCtx: null, img: null,   // the shading, one pixel per grid point
-        lines: null, strong: null,        // the contour lines (Path2D, in the screen points of the view below)
+        U: null,                          // the depth at each grid point
+        next: null,                       // what computeWell has worked out, until it is painted
+        pic: null, picCtx: null,          // the whole picture, in the canvas's own pixels, the margin included
         view: null,                       // what it was worked out for (origin, pan, scale, size, margin, grid)
         pos: [],                          // the screen positions of its bodies then
         sig: '',                          // what forces a new picture when it changes (theme, size, frame, bodies)
@@ -3873,9 +4211,10 @@
             return s;
         };
         // Grid point (i, j) is at screen point (i cell - margin, j cell - margin)
-        const x0 = F.x + view.panX + (-margin - viewW / 2) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
+        const x0 = F.x + view.panX + (-margin - midX) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
         const step = cell / scale;
-        const U = new Float32Array(gw * gh);
+        if (!well.U || well.U.length !== gw * gh) well.U = new Float32Array(gw * gh);
+        const U = well.U;
         let umin = Infinity, umax = -Infinity;
         for (let j = 0; j < gh; j++) {
             const y = y0 - j * step;
@@ -3940,11 +4279,11 @@
                 for (const v of crit) if (v > lo && v <= hi) cellContour(strong, x, y, cell, a, b, c, d, v);
             }
         }
-        well.lines = lines;
-        well.strong = crit.length ? strong : null;
-        well.view = { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh };
-        well.pos = src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }));
-        well.omega = P ? turn.omega : 0;
+        well.next = {
+            lines, strong: crit.length ? strong : null, omega: P ? turn.omega : 0,
+            view: { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, mid: midX, margin, cell, gw, gh, off: Math.ceil(margin * dpr) },
+            pos: src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }))
+        };
         well.t = performance.now();
         well.cost = well.t - t0;
         well.wait = clamp(10 * well.cost, 0, 100);
@@ -3952,12 +4291,43 @@
         well.info = { cell, grid: [gw, gh], bodies: n, step: dz, umin, umax, crit: crit.slice() };
     }
 
+    // Paint what computeWell worked out onto the picture that drawGravityWell copies (v.off: where the
+    // view's top-left corner is in it). In the frame after, unless it is needed at once, so one frame
+    // doesn't have to do both.
+    function paintWell(C) {
+        const N = well.next, v = N.view, c = v.cell;
+        well.next = null;
+        const pw = Math.ceil((v.w + 2 * v.margin) * dpr) + 1, ph = Math.ceil((v.h + 2 * v.margin) * dpr) + 1;
+        if (!well.pic || well.pic.width !== pw || well.pic.height !== ph) {
+            well.pic = document.createElement('canvas');
+            well.pic.width = pw; well.pic.height = ph;
+            well.picCtx = well.pic.getContext('2d');
+        }
+        const g = well.picCtx;
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.clearRect(0, 0, pw, ph);
+        g.setTransform(dpr, 0, 0, dpr, v.off, v.off);
+        g.imageSmoothingEnabled = true;
+        g.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        g.lineWidth = 1;
+        g.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
+        g.stroke(N.lines);
+        if (N.strong) {
+            g.lineWidth = 1.3;
+            g.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
+            g.stroke(N.strong);
+        }
+        well.view = v; well.pos = N.pos; well.omega = N.omega;
+    }
+
     // How the picture's screen points map onto the screen now: x' = k x + tx, y' = k y + ty
     function wellMap(v) {
         const k = scale / v.scale;
         return {
             k,
-            tx: viewW / 2 - (k * v.w) / 2 + scale * (v.fx + v.panX - F.x - view.panX),
+            tx: midX - k * v.mid + scale * (v.fx + v.panX - F.x - view.panX),
             ty: viewH / 2 - (k * v.h) / 2 - scale * (v.fy + v.panY - F.y - view.panY)
         };
     }
@@ -3965,6 +4335,8 @@
     // Is the old picture still good enough to shift into place?
     function wellStale(v, map, P) {
         if (map.k < 0.85 || map.k > 1.18) return true;
+        // (a copy shifted or scaled is a little softer: only for a moment, while the view moves)
+        if ((map.k !== 1 || map.tx !== 0 || map.ty !== 0) && performance.now() - well.t >= WELL_SOFT_MS) return true;
         // (the view must stay inside its margin, short of the outermost grid cell)
         const slack = v.margin - 16;
         if (-map.tx / map.k < -slack || (viewW - map.tx) / map.k > v.w + slack) return true;
@@ -3982,43 +4354,40 @@
         if (!src.length) return;
         const P = turnPair();
         const sig = [C.dark, viewW, viewH, dpr, P ? `${P.A.id}>${P.B.id}` : '-', src.map((b) => `${b.id}:${b.m}`).join(',')].join('|');
-        const forced = sig !== well.sig || !well.view;
-        if (forced || (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P))) {
+        let paintAt = 0;
+        if (sig !== well.sig || !well.view) {
             computeWell(C, src, P);
             well.sig = sig;
+            paintWell(C);
+        } else if (well.next) {
+            paintAt = performance.now();
+            paintWell(C);
+        } else if (performance.now() - well.t >= well.wait && wellStale(well.view, wellMap(well.view), P)) {
+            computeWell(C, src, P);
         }
-        // The shading (smoothly scaled up from its grid) and the lines, shifted and scaled into place
-        const v = well.view, map = wellMap(v), c = v.cell;
+        // The picture, shifted (by whole pixels, which keeps it sharp) or scaled into place
+        const v = well.view, map = wellMap(v), pic = well.pic;
         ctx.save();
-        ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
-        ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(well.small, -v.margin - c / 2, -v.margin - c / 2, v.gw * c, v.gh * c);
-        ctx.lineWidth = 1 / map.k;
-        ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.2)' : 'rgba(30,45,90,0.24)';
-        ctx.stroke(well.lines);
-        if (well.strong) {
-            ctx.lineWidth = 1.3 / map.k;
-            ctx.strokeStyle = C.dark ? 'rgba(205,214,240,0.36)' : 'rgba(30,45,90,0.42)';
-            ctx.stroke(well.strong);
+        if (map.k === 1) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.drawImage(pic, Math.round(dpr * map.tx) - v.off, Math.round(dpr * map.ty) - v.off);
+        } else {
+            ctx.setTransform(dpr * map.k, 0, 0, dpr * map.k, dpr * map.tx, dpr * map.ty);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(pic, -v.off / dpr, -v.off / dpr, pic.width / dpr, pic.height / dpr);
         }
         ctx.restore();
+        // (the painting, done by now, counts towards the wait before the next: a tenth of the time at most)
+        if (paintAt) well.wait = clamp(10 * (well.cost + performance.now() - paintAt), 0, 100);
     }
 
     // ---- The switches, the W key, and the Lagrange points' tooltips ----
-    // (its note in the settings says what it is, and once it is on, how to read it)
-    const WELL_NOTE_OFF = 'Gravity well: how deep each body\'s pull reaches, as shading and contour lines';
-    const WELL_NOTE_ON = 'Darker is deeper. Each line joins points at the same depth: where the lines crowd together, the pull is strong';
-    function setWell(on, fromKey) {
+    function setWell(on, say) {
         settings.well = !!on;
         if (ui.wellToggle) ui.wellToggle.checked = settings.well;
-        if (ui.wellNote && ui.wellNote.firstChild && ui.wellNote.firstChild.nodeType === 3) {
-            ui.wellNote.firstChild.nodeValue = settings.well ? WELL_NOTE_ON : WELL_NOTE_OFF;
-        }
         well.sig = '';
-        if (fromKey) {
-            showHint('note', settings.well ? '<strong>Gravity well:</strong> darker is deeper, and each line joins points at the same depth. W hides it.'
-                : '<strong>Gravity well hidden.</strong> W shows it again.', { ms: 6000, tag: 'well' });
-        } else if (!settings.well) clearHint('note', 'well');
+        if (say && settings.well) showHint('note', '<strong>Gravity well:</strong> darker is deeper, and each line joins points of equal depth.', { ms: 6000, tag: 'well' });
+        else if (!settings.well) clearHint('note', 'well');
     }
     function setLagrange(on) {
         settings.lagrange = !!on;
@@ -4057,13 +4426,13 @@
         const m = lagrangeAt(pt.x, pt.y, LAGRANGE_TAP);
         if (!m) return;
         const comma = m.text.indexOf(',');
-        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000 });
+        showHint('note', `<strong>${escapeHtml(m.text.slice(0, comma))}</strong>${escapeHtml(m.text.slice(comma))}`, { ms: 8000, tag: 'chosen' });
     }
 
     function bindWell() {
         if (ui.wellToggle) {
             ui.wellToggle.checked = settings.well;
-            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked));
+            ui.wellToggle.addEventListener('change', () => setWell(ui.wellToggle.checked, true));
         }
         if (ui.lagrangeToggle) {
             ui.lagrangeToggle.checked = settings.lagrange;
@@ -4079,7 +4448,9 @@
     // ------------------------------------------------------------------
     // Body lists in the UI (frame selector), after bodies are added, removed or renamed
     // ------------------------------------------------------------------
+    let listsWait = false;   // (many bodies are going at once: advance refreshes the lists after them)
     function refreshBodyLists() {
+        if (listsWait) return;
         if (frameId !== null && !bodyById(frameId)) frameId = null;
         if (selectedId !== null && !bodyById(selectedId)) selectedId = defaultSubject();
         if (ui.frame) {
@@ -4097,7 +4468,7 @@
         syncFrameUi();
         if (ui.palette) {
             const full = bodies.length >= MAX_BODIES;
-            ui.palette.querySelectorAll('button').forEach((btn) => {
+            ui.palette.querySelectorAll('.orb-chip').forEach((btn) => {
                 btn.disabled = full;
                 btn.title = full ? `At most ${MAX_BODIES} bodies` : btn.dataset.title;
             });
@@ -4624,7 +4995,8 @@
             // (nor when the view turns with its planet, which then stands still)
             if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id && !turnUses(p)) { setFrame(p.id); from = p; }
             fitBox(orbitBox(b, p, el), glide);
-            return { how: 'orbit', around: p, from, with: [] };
+            glideWith(p);
+            return { how: 'orbit', around: p, from, with: [], T: el.T };
         }
         const cx = b.dx - F.x, cy = b.dy - F.y;
         if (crowd.length) {
@@ -4636,12 +5008,14 @@
             }
             const pad = 0.15 * Math.max(x1 - x0, y1 - y0);
             fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], glide);
+            glideWith(b);
             return { how: 'near', around: null, from: null, with: all };
         }
         let near = Infinity;
         for (const q of bodies) if (q !== b) near = Math.min(near, Math.hypot(q.dx - b.dx, q.dy - b.dy));
         const r = isFinite(near) && near > 0 ? 1.25 * near : 0.5 * (scene.box[1] - scene.box[0]);
         fitBox([cx - r, cx + r, cy - r, cy + r], glide);
+        glideWith(b);
         return { how: 'near', around: null, from: null, with: [] };
     }
 
@@ -4654,17 +5028,39 @@
         if (!el || !el.bound || !viewW || !viewH || !(el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12))) return;
         updateDrawnPositions();
         const o = orbitBox(b, p, el);   // (relative to the frame origin, with a margin)
-        const xa = wx(0) - F.x, xb = wx(viewW) - F.x, ya = wy(0) - F.y, yb = wy(viewH) - F.y;
+        const xa = wx(visL) - F.x, xb = wx(visR) - F.x, ya = wy(0) - F.y, yb = wy(viewH) - F.y;
         const v = [Math.min(xa, xb), Math.max(xa, xb), Math.min(ya, yb), Math.max(ya, yb)];
         if (o[0] >= v[0] && o[1] <= v[1] && o[2] >= v[2] && o[3] <= v[3]) return;
         const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
         fitBox([Math.min(o[0], v[0]), Math.max(o[1], v[1]), Math.min(o[2], v[2]), Math.max(o[3], v[3])], glide);
     }
 
+    // Zooming to an orbit that goes by too fast to follow also slows time to suit it (a lap in about
+    // the time a scene's reference period takes) and says so; the old speed comes back on the way out:
+    // zooming out again, back to the centre of mass, or a new scene. Choosing a speed by hand ends all that.
+    const paceZoom = { was: 0, zoom: 0 };
+    function suitSpeed(b, z) {
+        if (mission.def || z.how !== 'orbit' || !(z.T / (settings.speed * rate()) < 1)) return;
+        const v = SPEED_STOPS[nearestStop(z.T / (SECONDS_PER_TREF * rate()))];
+        if (!paceZoom.was) paceZoom.was = settings.speed;
+        paceZoom.zoom = view.anim ? view.anim.zoom : view.zoom;
+        setSpeedValue(v);
+        showHint('note', `<strong>Slowed to ${fmtFactor(v)}×</strong> to suit this orbit: a lap in ${fig2(z.T / (v * rate()))} s.`, { ms: 7000, tag: 'pace' });
+    }
+    function restoreSpeed() {
+        if (!paceZoom.was) return;
+        const v = paceZoom.was;
+        paceZoom.was = 0;
+        setSpeedValue(v);
+        showHint('note', `<strong>Speed back to ${fmtFactor(v)}×.</strong>`, { ms: 4000, tag: 'pace' });
+    }
+
     function zoomChosen() {
         const b = bodyById(selectedId);
         const z = zoomToBody(b);
         if (!z) return null;
+        drawerCamera(null);
+        suitSpeed(b, z);
         const whose = theName(b);
         const others = z.with.length && z.with.length <= 3 ? z.with.map(theName) : null;
         announce(z.how === 'orbit' ? `Zoomed to ${whose}'s orbit round ${theName(z.around)}${z.from ? `, viewed from ${theName(z.from)}` : ''}`
@@ -4944,15 +5340,15 @@
         });
         // A press on the canvas gives it the keyboard (so Enter, N and Z act on it next), unless you are
         // working in the body's menu (leaving one of its fields would apply what is half typed)
-        // (A finger's press shows no ring: the browser counts the focus given here as visible, and on a
-        // phone a pink ring round the canvas after every tap only clutters it. A key brings it back.)
-        canvas.addEventListener('pointerdown', (e) => {
-            canvas.classList.toggle('orb-touch-focus', (e.pointerType || 'mouse') !== 'mouse');
+        // (A press shows no ring: the browser counts the focus given here as visible, and a pink ring
+        // round the canvas after every click only clutters it. Tab brings it back.)
+        canvas.addEventListener('pointerdown', () => {
+            canvas.classList.add('orb-press-focus');
             const a = document.activeElement;
             if (a === canvas || (ui.pop && ui.pop.contains(a))) return;
             canvas.focus({ preventScroll: true });
         });
-        document.addEventListener('keydown', () => canvas.classList.remove('orb-touch-focus'), true);
+        document.addEventListener('keydown', (e) => { if (e.key === 'Tab') canvas.classList.remove('orb-press-focus'); }, true);
         // A body chosen on the canvas shows in the list straight away (after the canvas's own handler)
         canvas.addEventListener('pointerup', () => setTimeout(() => { if (nav.visible && selectedId !== nav.shownSel) navReveal(); }, 0));
         setInterval(navTick, NAV_TICK_MS);
@@ -4964,6 +5360,7 @@
         k2.bid = null;
         resetOrbitChart();
         syncEccentricity(true);
+        clearHint('note', 'chosen');   // (about the last one: its Lagrange point, or a Zoom in that would now zoom elsewhere)
         refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
@@ -4991,6 +5388,7 @@
         if (wasFrame) frameId = null;
         updateDrawnPositions();
         keepScreen(before);
+        shiftComTrail(before);
         computePrimaries();
         refreshBodyLists();
         syncEccentricity(true);
@@ -5007,7 +5405,16 @@
         missionEnd(burn);
         forcesDirty = true;
         updateDrawnPositions();
-        if (!freeze) keepScreen(before);   // (also keeps a rotating frame's angle: see keepScreen)
+        if (!freeze) { keepScreen(before); shiftComTrail(before); }   // (also keeps a rotating frame's angle: see keepScreen)
+    }
+
+    // The trails are drawn relative to where the centre of mass was at each sample. A change that makes it
+    // jump (a heavy body added, say) would leave a long straight line in every trail where that happened,
+    // so the record of where it was goes with it: the trails stay where they are on the screen.
+    function shiftComTrail(before) {
+        const dx = F.x - before.x, dy = F.y - before.y;
+        if (frameId !== null || turn.on || (!dx && !dy)) return;
+        for (let i = 0; i < TRAIL_CAP; i++) { comTrail[2 * i] += dx; comTrail[2 * i + 1] += dy; }
     }
 
     // ------------------------------------------------------------------
@@ -5033,6 +5440,7 @@
         computePrimaries();
         refreshBodyLists();
         selectBody(b.id);
+        clearHint('note');   // (whatever it said before this)
         return added;
     }
 
@@ -5045,10 +5453,10 @@
 
     // The note under "Bodies you drop or move" says what the chosen option does (see launch)
     const PLACEMENT_NOTES = {
-        circular: 'Each starts on a circular orbit round the body it would orbit there.',
-        keep: 'A body you move keeps its velocity; a new one starts at rest.',
-        rest: 'Each starts at rest in this view, then falls.',
-        throw: 'Flick a body as you let go, and it keeps your speed.'
+        circular: 'Round the body it would orbit there.',
+        keep: 'A new body starts at rest.',
+        rest: 'Then it falls.',
+        throw: 'Flick it as you let go.'
     };
     function syncPlacementNote() {
         setText(byId('placementNote'), PLACEMENT_NOTES[settings.placement] || PLACEMENT_NOTES.circular);
@@ -5089,19 +5497,41 @@
         return senseAround(b, p);
     }
 
+    // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
+    function moonNote(b) {
+        const p = b && b.primary;
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { tag: 'chosen' });
+    }
+
+    // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
+    function autoMoon(kind) {
+        const k = KINDS[kind];
+        const can = (b) => b && !b.minor && b.m > k.m && isFinite(b.hill) && 0.25 * b.hill > 2 * (b.R + k.R) / AU_KM;
+        let host = bodyById(selectedId);
+        if (!can(host)) { host = null; for (const b of bodies) if (can(b) && (!host || b.m > host.m)) host = b; }
+        if (!host) return null;
+        const n = bodies.filter((b) => b.primary === host && b.bound).length, ang = 0.6 + 2.4 * n;
+        const s = moonSpot(host, host.x + Math.cos(ang), host.y + Math.sin(ang), n);
+        const b = addBody(kind, s.x, s.y);
+        moonNote(b);
+        return b;
+    }
+
     // A tap on a palette chip: put the body at a free spot around the heaviest body, in view.
     function addBodyAuto(kind) {
         updateDrawnPositions();
+        if (kind === 'moon') { const b = autoMoon(kind); if (b) return b; }
         const top = heaviest();
         const k = KINDS[kind] || KINDS.custom;
-        const half = Math.min(viewW, viewH) / (2 * scale);
-        let cx = wx(viewW / 2), cy = wy(viewH / 2), R = 0.6 * half;
+        const half = Math.min(visR - visL, viewH) / (2 * scale);
+        let cx = wx(midX), cy = wy(viewH / 2), R = 0.6 * half;
         if (top && top.m >= k.m) {
             const tx = sx(top.dx), ty = sy(top.dy);
-            if (tx > 0 && tx < viewW && ty > 0 && ty < viewH) {
+            if (tx > visL && tx < visR && ty > 0 && ty < viewH) {
                 cx = top.dx; cy = top.dy;
-                const spaceX = Math.min(tx, viewW - tx), spaceY = Math.min(ty, viewH - ty);
-                R = 0.7 * Math.min(spaceX, spaceY) / scale;
+                const spaceX = Math.min(tx - visL, visR - tx), spaceY = Math.min(ty, viewH - ty);
+                // (zoomed in close it may land out of view, rather than inside the body and merge with it)
+                R = Math.max(0.7 * Math.min(spaceX, spaceY) / scale, 4 * (top.R + k.R) / AU_KM);
             }
         }
         let best = null, bestD = -1;
@@ -5164,17 +5594,12 @@
         const b = bodyById(selectedId);
         const p = b && b.primary;
         const usable = !!(b && p && !(p.primary === b && b.m > p.m));
-        if (ui.orbitGroupLabel) {
-            const t = b ? `Orbit of ${b.name}` : 'Orbit';
-            if (ui.orbitGroupLabel.textContent !== t) ui.orbitGroupLabel.textContent = t;
-        }
         ui.ecc.disabled = !usable;
         if (ui.eccNote) {
             const note = usable ? 'Reshapes the orbit through where it is now: 0 is a circle, near 1 a long thin ellipse.'
                 : (b ? `${b.name} is the heaviest body here. Click or tap a body that orbits it.` : '');
-            if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;
+            if (ui.eccNote.textContent !== note) ui.eccNote.textContent = note;   // (read out; the tab's own note shows)
         }
-        syncOrbitFacts(b, usable);
         missionLockSidebar();
         if (!usable) {
             if (ui.eccVal) ui.eccVal.textContent = '–';
@@ -5266,6 +5691,7 @@
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
         drawGravityOver(C, subj);
+        drawMissionOver(C);
         drawLabels(C);
         drawOffscreen(C);
         drawFlashes();
@@ -5274,13 +5700,13 @@
     }
 
     // Each trail point is drawn relative to where the frame's origin (the centre of mass, or the locked
-    // body) was at that sample's time, so a locked view shows paths as seen from that body. A point
-    // closer than about a pixel to the last one drawn is skipped (two or three pixels in the older,
-    // fainter part, and more if drawing is running slow: perf.quality), and stretches off the canvas
-    // aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add extra ones) is read
-    // every few samples. The minor bodies of a crowded scene are drawn together, a path per colour and shade.
-    const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, TRAIL_POINTS = 1500;
-    const minorGroups = new Map();
+    // body) was at that sample's time, so a locked view shows paths as seen from that body. Runs of
+    // points that make a straight line to within a fraction of a pixel are drawn as one (a little more
+    // in the older, fainter part, and if drawing is running slow: perf.quality; see traceTrail), and
+    // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
+    // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
+    const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
+    const minorGroups = new Map(), pieceGroups = new Map();
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
@@ -5289,20 +5715,22 @@
         if (L && !L.trail) return;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
         const live = freeze ? liveFrameOrigin() : F;
-        const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        const offX = (live.x - F.x - view.panX) * scale + midX, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const lw = clamp(1.6 * sizeScale, 1.2, 2);
         // (a turned view: each sample turned by the angle at its own time, from the turning pair's own
         // samples; see turnedTrails)
         const turned = turnedTrails(first);
         const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
         const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned };
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
         for (const g of minorGroups.values()) g.length = 0;
+        for (const g of pieceGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
-            if (b.minor && !isChosen(b)) {
-                let g = minorGroups.get(b.color);
-                if (!g) { g = []; minorGroups.set(b.color, g); }
+            if ((b.minor || b.grp) && !isChosen(b)) {
+                const groups = b.minor ? minorGroups : pieceGroups;
+                let g = groups.get(b.color);
+                if (!g) { g = []; groups.set(b.color, g); }
                 g.push(b);
                 continue;
             }
@@ -5328,23 +5756,39 @@
         }
         // The swarm: one path per colour for each of a few shades, in thinner lines with plain ends and
         // corners (round ones take far longer to paint); when drawing runs slow, only their newest part
-        if (perf.quality < 0.3) return;
+        // (and only for the pieces of a torn-apart body, as bright as other trails, if slower still)
+        const low = perf.quality < 0.3;
         ctx.lineWidth = Math.max(1, 0.6 * lw);
         ctx.lineCap = 'butt';
-        ctx.lineJoin = 'miter';
-        for (const [color, g] of minorGroups) {
+        ctx.lineJoin = 'bevel';
+        trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
+        if (!low) {
+            ctx.lineJoin = 'miter';
+            trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
+        }
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+    }
+
+    // Groups of trails: a path per colour for each of chunks shades, from alpha a0 + a1 / chunks to a0 + a1
+    // (the pieces' old ends don't all stop at one moment: each gives up its own share, for a tapering end)
+    function trailGroups(groups, chunks, a0, a1, tr, first, oFirst, C) {
+        const pieces = groups === pieceGroups;
+        for (const [color, g] of groups) {
             if (!g.length) continue;
-            ctx.strokeStyle = bodyStroke(color, C.dark);
-            for (let c = 0; c < MINOR_CHUNKS; c++) {
-                const f = (c + 1) / MINOR_CHUNKS;
-                ctx.globalAlpha = 0.06 + 0.5 * f;
+            ctx.strokeStyle = pieces ? pieceColour(color, C) : bodyStroke(color, C.dark);
+            for (let c = 0; c < chunks; c++) {
+                const f = (c + 1) / chunks;
+                ctx.globalAlpha = a0 + a1 * f;
                 ctx.beginPath();
                 for (const b of g) {
                     let k0 = Math.max(trailFirst(b), first, oFirst);
                     k0 = Math.max(k0, sampleCount - Math.ceil((sampleCount - k0) * perf.quality));
+                    if (pieces) k0 += Math.floor(0.45 * ((b.id * 0.618034) % 1) * (sampleCount - k0));
                     const count = sampleCount - k0;
                     if (count < 1) continue;
-                    const chunk = Math.max(1, Math.ceil(count / MINOR_CHUNKS));
+                    const chunk = Math.max(1, Math.ceil(count / chunks));
                     const ks = k0 + c * chunk;
                     if (ks >= sampleCount) continue;
                     const ke = Math.min(sampleCount, ks + chunk + 1);
@@ -5356,37 +5800,83 @@
                 ctx.stroke();
             }
         }
-        ctx.globalAlpha = 1;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
     }
 
-    // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT; every tr.stride-th, and
-    // the last) to the current path, skipping points within minPx of the last one drawn and stretches
-    // wholly off one side of the canvas
+    // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT) to the current path,
+    // leaving out stretches wholly off one side of the canvas. Painting a stroke takes far longer than
+    // anything else in a frame and goes by its corners, so a run of samples goes as one straight line
+    // while it stays within an eighth of minPx of them, in the screen's own pixels (0.15 in the newest
+    // part): an orbit's long gentle curves need a quarter of the corners, and look the same. A line
+    // always ends on a round sample number (a multiple of a power of two, at most TRAIL_JUMP and at least
+    // tr.stride): the corners stay on the same samples from one frame to the next as the trail's ends
+    // move on, so its lines don't crawl. Lines shorter than minPx don't have to fit.
+    const TRAIL_JUMP = 64;
+    const TP = new Float64Array(2);   // (trailAt's answer: numbers returned from a function are boxed)
     function traceTrail(tr, ks, ke, minPx) {
-        if (tr.turn) { traceTurnedTrail(tr, ks, ke, minPx); return; }
-        const T = tr.T, oT = tr.oT, offX = tr.offX, offY = tr.offY, stride = tr.stride;
-        const capT = T.length >> 1, capO = oT.length >> 1;
-        let i = 2 * (ks % capT), io = 2 * (ks % capO);
-        let lx = offX + (T[i] - oT[io]) * scale, ly = offY - (T[i + 1] - oT[io + 1]) * scale;
-        let out = outcode(lx, ly), pen = true;
-        ctx.moveTo(lx, ly);
-        for (let k = ks + 1; k < ke; k += stride) {
-            if (k + stride >= ke) k = ke - 1;
-            i = 2 * (k % capT); io = 2 * (k % capO);
-            const x = offX + (T[i] - oT[io]) * scale, y = offY - (T[i + 1] - oT[io + 1]) * scale;
-            if (Math.abs(x - lx) + Math.abs(y - ly) < minPx && k < ke - 1) continue;
-            const o = outcode(x, y);
-            if (o & out) {
-                pen = false;
-            } else {
-                if (!pen) { ctx.moveTo(lx, ly); pen = true; }
-                ctx.lineTo(x, y);
+        tr.capT = tr.T.length >> 1;
+        tr.capO = tr.oT.length >> 1;
+        const tol = minPx / (8 * dpr), tol2 = tol * tol, last = ke - 1;
+        let s0 = 1;
+        while (s0 < tr.stride) s0 *= 2;
+        trailAt(tr, ks);
+        let a = ks, ax = TP[0], ay = TP[1];
+        tr.out = outcode(ax, ay);
+        tr.pen = true;
+        ctx.moveTo(ax, ay);
+        while (a < last) {
+            let b = Math.min(last, a - a % s0 + s0);
+            trailAt(tr, b);
+            let bx = TP[0], by = TP[1];
+            for (let s = 2 * s0; s <= TRAIL_JUMP && b < last; s *= 2) {
+                const c = Math.min(last, a - a % s + s);
+                if (c === b) continue;
+                trailAt(tr, c);
+                const cx = TP[0], cy = TP[1], ex = cx - ax, ey = cy - ay;
+                if (Math.abs(ex) + Math.abs(ey) >= minPx) {
+                    // (its middle and quarters, how far from the line)
+                    const q = (c - a) >> 2, ee = ex * ex + ey * ey;
+                    let fits = true;
+                    for (let i = q > 0 ? 1 : 2; fits && i <= (q > 0 ? 3 : 2); i++) {
+                        trailAt(tr, q > 0 ? a + i * q : a + 1);
+                        const px = TP[0] - ax, py = TP[1] - ay;
+                        const t = ee > 0 ? clamp((px * ex + py * ey) / ee, 0, 1) : 0;
+                        const dx = px - t * ex, dy = py - t * ey;
+                        fits = dx * dx + dy * dy <= tol2;
+                    }
+                    if (!fits) break;
+                }
+                b = c; bx = cx; by = cy;
             }
-            lx = x; ly = y; out = o;
+            trailLine(tr, ax, ay, bx, by);
+            a = b; ax = bx; ay = by;
         }
-        if (!pen) ctx.moveTo(lx, ly);
+        if (!tr.pen) ctx.moveTo(ax, ay);
+    }
+
+    // Where sample k of the trail is drawn, into TP (turned, in a turned view: see turnedTrails)
+    function trailAt(tr, k) {
+        const T = tr.T, oT = tr.oT, i = 2 * (k % tr.capT), io = 2 * (k % tr.capO), q = tr.turn;
+        const rx = T[i] - oT[io], ry = T[i + 1] - oT[io + 1];
+        if (!q) {
+            TP[0] = tr.offX + rx * scale;
+            TP[1] = tr.offY - ry * scale;
+            return;
+        }
+        const cs = q.cs, j = 2 * (k % TRAIL_CAP), c = cs ? cs[j] : q.c, sn = cs ? cs[j + 1] : q.s;
+        TP[0] = tr.offX + (c * rx - sn * ry) * scale;
+        TP[1] = tr.offY - (sn * rx + c * ry) * scale;
+    }
+
+    // A straight stretch of a trail, unless it is wholly off one side of the canvas
+    function trailLine(tr, ax, ay, x, y) {
+        const o = outcode(x, y);
+        if (o & tr.out) {
+            tr.pen = false;
+        } else {
+            if (!tr.pen) { ctx.moveTo(ax, ay); tr.pen = true; }
+            ctx.lineTo(x, y);
+        }
+        tr.out = o;
     }
 
     // Which sides of the canvas (with a margin) a point is beyond, as bits
@@ -5521,12 +6011,15 @@
         ctx.fill();
     }
 
+    const pieceColour = (color, C) => (C.dark ? color : bodyStroke(bodyStroke(color, false), false));
+
     function drawBody(b, x, y, r, C) {
         const look = lookOf(b);
         if (b.grp) {
-            // A piece of a torn-apart body: a glowing clump
-            glow(x, y, 0, Math.max(r * 2.4, 5), b.color, C.dark ? 0.55 : 0.6);
-            disc(x, y, Math.max(r * 0.8, 0.9), b.color, 0.5, C);
+            // A piece of a torn-apart body: a glowing clump (deeper on a light background, or it hardly shows)
+            const z = pieceHeft(b);
+            glow(x, y, 0, Math.max(r * 2.4, 5 * z), C.dark ? b.color : bodyStroke(b.color, false), C.dark ? 0.55 : 0.6);
+            disc(x, y, Math.max(r * 0.8, 1.1 * z), pieceColour(b.color, C), 0.5, C);
             return;
         }
         if (look === 'blackhole') { drawBlackHole(x, y, r, b, C); return; }
@@ -5623,14 +6116,14 @@
         ctx.font = font(fs);
         ctx.lineWidth = 3;
         ctx.strokeStyle = hexA(C.bg, 0.8);
-        const placed = [];
+        const placed = mission.def ? mission.labelBoxes.slice() : [];   // (a mission's marks are named first)
         const discs = [];
         for (const b of bodies) if (!b.minor || isChosen(b)) discs.push({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b), b });
         // the flyby close-up and its caption
         if (closeUp) placed.push({ l: closeUp.x - closeUp.R, r: closeUp.x + closeUp.R, t: closeUp.y - closeUp.R - 18, b: closeUp.y + closeUp.R });
         const order = discs.slice().sort((p, q) => (q.b.id === selectedId) - (p.b.id === selectedId) || q.b.m - p.b.m);
         for (const { x, y, r, b } of order) {
-            if (x < -60 || x > viewW + 60 || y < -60 || y > viewH + 60) continue;
+            if (x < visL - r || x > visR + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
             const chosen = b.id === selectedId || b === popBody;
             if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
@@ -5671,7 +6164,7 @@
             for (const strict of [true, false]) {
                 for (const [dx, dy] of spots) {
                     const box = { l: c.x + dx, t: c.y + dy, r: c.x + dx + w, b: c.y + dy + h };
-                    if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
+                    if (box.l < visL + 4 || box.r > visR - 4 || box.t < 4 || box.b > viewH - 4) continue;
                     if (placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)) continue;
                     if (strict && discs.some((d) => d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b)) continue;
                     at = box;
@@ -5690,14 +6183,14 @@
     function drawnCentreOfMass() {
         let M = 0, X = 0, Y = 0;
         for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
-        return M > 0 ? { x: sx(X / M), y: sy(Y / M) } : { x: viewW / 2, y: viewH / 2 };
+        return M > 0 ? { x: sx(X / M), y: sy(Y / M) } : { x: midX, y: viewH / 2 };
     }
 
     // The box of a name anchored at (x, y) on the side (ux, uy) of its body, kept inside the canvas
     function labelBox(x, y, ux, uy, w, fs) {
         let l = ux > 0.38 ? x : ux < -0.38 ? x - w : x - w / 2;
         let t = uy > 0.38 ? y : uy < -0.38 ? y - fs : y - fs / 2;
-        l = clamp(l, 4, Math.max(4, viewW - 4 - w));
+        l = clamp(l, visL + 4, Math.max(visL + 4, visR - 4 - w));
         t = clamp(t, 2, viewH - fs - 4);
         return { l, t, r: l + w, b: t + fs };
     }
@@ -5709,16 +6202,16 @@
     function edgeKeepOut() {
         const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
         let top = 0;
-        if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([0, 0, Math.min(viewW, 240), top]); }
+        if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([visL, 0, Math.min(visR, visL + 240), top]); }
         const t = timeNotice();
         if (t) {
             ctx.font = font(fs, true);
-            out.push([0, top, 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
+            out.push([visL, top, visL + 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
         }
-        if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
+        if (cards.bottom > 0 && cards.left < visR) out.push([cards.left - 6, 0, visR, cards.bottom + 4]);
         const strip = Math.min(edges.strip, viewH - fs - 18);
-        out.push([0, strip, Math.min(viewW, edges.scaleRight + 6), viewH]);
-        out.push([Math.min(edges.noteLeft, viewW - 120) - 6, strip, viewW, viewH]);
+        out.push([visL, strip, Math.min(visR, edges.scaleRight + 6), viewH]);
+        if (edges.noteLeft < visR) out.push([edges.noteLeft - 6, strip, visR, viewH]);
         if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
         return out;
     }
@@ -5727,7 +6220,7 @@
     // edge (where its name goes), are clear of every rectangle. Returns [x, y, clear]: on a small
     // canvas a stretch of edge may have no room left, and then the pointer goes without its name.
     function clearOfEdges(ex, ey, zones, inset, h) {
-        const onSide = ex <= inset + 0.5 || ex >= viewW - inset - 0.5;
+        const onSide = ex <= visL + inset + 0.5 || ex >= visR - inset - 0.5;
         const x0 = ex, y0 = ey;
         for (let pass = 0; pass < 7; pass++) {
             const z = onSide ? zones.find((r) => ex >= r[0] && ex <= r[2] && ey + h > r[1] && ey - h < r[3])
@@ -5740,7 +6233,7 @@
                 ey = (up >= inset && (ey - up <= down - ey || down > viewH - inset)) ? up : Math.min(down, viewH - inset);
             } else {
                 const lt = z[0] - h - 2, rt = z[2] + h + 2;
-                ex = (lt >= inset && (ex - lt <= rt - ex || rt > viewW - inset)) ? lt : Math.min(rt, viewW - inset);
+                ex = (lt >= visL + inset && (ex - lt <= rt - ex || rt > visR - inset)) ? lt : Math.min(rt, visR - inset);
             }
         }
         return [x0, y0, false];
@@ -5759,17 +6252,19 @@
         return w;
     }
 
+    const named = (l, t, r, b, zones) => zones.some((z) => l < z[2] && r > z[0] && t < z[3] && b > z[1]);
+
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
-        const cx = viewW / 2, cy = viewH / 2;
+        const cx = (visL + visR) / 2, cy = viewH / 2;
         const inset = 12;
         let zones = null;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (b.minor && !isChosen(b)) || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
+            if (b.grp || (b.minor && !isChosen(b)) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
-            const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
+            const k = Math.min(((visR - visL) / 2 - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
             // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
@@ -5788,12 +6283,18 @@
             ctx.globalAlpha = 1;
             let half = 10;
             if (settings.labels && clear) {
-                ctx.font = font(fs);
-                ctx.fillStyle = C.subtle;
-                ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
-                ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
-                ctx.fillText(b.name, ex - ux * 12, ey - uy * 12);
-                half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                // (where its name would go: left out if another pointer's is there)
+                const tx = ex - ux * 12, ty = ey - uy * 12;
+                const nl = ux > 0.5 ? tx - nw : ux < -0.5 ? tx : tx - nw / 2, nt = uy > 0.5 ? ty - fs : uy < -0.5 ? ty : ty - fs / 2;
+                if (!named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
+                    ctx.font = font(fs);
+                    ctx.fillStyle = C.subtle;
+                    ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
+                    ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
+                    ctx.fillText(b.name, tx, ty);
+                    half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                    zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                }
             }
             // (the next pointer along this edge keeps clear of this one and its name)
             zones.push([ex - half - 4, ey - fs - 14, ex + half + 4, ey + fs + 14]);
@@ -5841,14 +6342,15 @@
     // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
     // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
     // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
-    // ARROW_PX long; arrows over three times that are squeezed.
+    // ARROW_PX long; arrows over twice that are squeezed, to at most two and a half times (a body swung
+    // up to many times the scene's speeds shouldn't have an arrow across the whole view).
     const ARROW_PX = 60;
     let vRef = TAU;   // AU/yr (Earth's orbital speed until a scene sets it)
     const arrowUnit = () => ARROW_PX * sizeScale;
     const pxPerSpeed = () => arrowUnit() / vRef;
     function arrowLength(v) {
         const L = v * pxPerSpeed(), L0 = arrowUnit();
-        return L <= 3 * L0 ? L : 3 * L0 + L0 * (1 - Math.exp(-(L - 3 * L0) / L0));
+        return L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0)));
     }
 
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
@@ -5902,7 +6404,7 @@
         const w = ctx.measureText(text).width;
         const al = ctx.textAlign;
         let left = al === 'right' ? x - w : al === 'center' ? x - w / 2 : x;
-        left = clamp(left, 4, Math.max(4, viewW - 4 - w));
+        left = clamp(left, visL + 4, Math.max(visL + 4, visR - 4 - w));
         const ty = clamp(y, 10, viewH - 8);
         ctx.textAlign = 'left';
         if (halo) ctx.strokeText(text, left, ty);
@@ -5910,14 +6412,24 @@
         ctx.textAlign = al;
     }
 
+    // Above this many named bodies only the chosen body's arrows are drawn: the rest would swamp the view
+    const ARROWS_ALL_MAX = 8;
+    let arrowsBusy = false;
+    function countArrows() {
+        let n = 0;
+        for (const b of bodies) if (!b.grp && !b.minor) n++;
+        arrowsBusy = n > ARROWS_ALL_MAX;
+    }
+
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        countArrows();
         // (a torn-apart body's pieces only get arrows when one is chosen)
         if (settings.forces) {
             for (const b of bodies) {
                 const Fm = Math.hypot(b.fx, b.fy);
-                if (!(Fm > 0) || ((b.grp || b.minor) && b !== subj)) continue;
+                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -5932,7 +6444,7 @@
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         const fv = frameVelocity();
         for (const b of bodies) {
-            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor) && b !== subj)) continue;
+            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
@@ -5940,6 +6452,15 @@
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
             if (tip.len > 2.5) {
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+                // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
+                if (b === subj && !b.aim && !cleanRender && settings.velocities) {
+                    ctx.strokeStyle = hot ? hotColour : C.velocity;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(tip.x, tip.y, 6.5 * sizeScale, 0, TAU);
+                    ctx.stroke();
+                    if (b.id === mission.craftId) { const q = mission.tipBox, m = 8 * sizeScale; q.l = tip.x - m; q.r = tip.x + m; q.t = tip.y - m; q.b = tip.y + m; }
+                }
             } else if (hot && !b.aim) {
                 const h = handlePos(b), hl = Math.hypot(h.x - x, h.y - y) || 1;
                 ctx.globalAlpha = 0.6;
@@ -6054,7 +6575,6 @@
         t: -Infinity, alpha: 1, covered: false, vSqueezed: false, shown: false, right: false,
         kms: 0, vText: '', vPx: 0, N: 0, fText: '', fPx: 0, squeeze: false, x: 0, vy: 0, fy: 0, w: 0, top: 0
     };
-    const LEGEND_SQUEEZE = 'longer arrows are squeezed';
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // The pull of q on b (M_sun AU / yr^2) into pp; returns its size
@@ -6062,7 +6582,10 @@
         const dx = q.x - b.x, dy = q.y - b.y;
         const r2 = dx * dx + dy * dy;
         let s2 = r2;
-        if (b.grp && b.grp === q.grp) { const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e; }
+        if (b.grp && q.grp) {
+            if (b.grp !== q.grp) { pp.x = 0; pp.y = 0; return 0; }
+            const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
+        }
         if (!(s2 > 0)) { pp.x = 0; pp.y = 0; return 0; }
         const k = (G * b.m * q.m) / (s2 * Math.sqrt(s2));
         pp.x = k * dx; pp.y = k * dy;
@@ -6389,15 +6912,15 @@
         let x = cx, top = NaN;
         for (const s of below ? [1, -1] : [-1, 1]) {
             const t = s < 0 ? cy - R - 4 - fs : cy + R + 4;
-            if (cx >= 0 && cx <= viewW && t >= 4 && t + fs <= viewH - 30) { top = t; break; }
+            if (cx >= visL && cx <= visR && t >= 4 && t + fs <= viewH - 30) { top = t; break; }
         }
         if (isNaN(top)) {
-            const dx = viewW / 2 - cx, dy = viewH / 2 - cy, d = Math.hypot(dx, dy);
+            const dx = midX - cx, dy = viewH / 2 - cy, d = Math.hypot(dx, dy);
             if (!(d > 0)) return;
             x = cx + (dx / d) * R; top = cy + (dy / d) * R + 4;
-            if (x < 0 || x > viewW || top < 4 || top + fs > viewH - 30) return;
+            if (x < visL || x > visR || top < 4 || top + fs > viewH - 30) return;
         }
-        x = clamp(x, 4 + w / 2, Math.max(4 + w / 2, viewW - 4 - w / 2));
+        x = clamp(x, visL + 4 + w / 2, Math.max(visL + 4 + w / 2, visR - 4 - w / 2));
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.strokeStyle = hexA(C.bg, 0.85);
@@ -6477,10 +7000,21 @@
         return `${(+kms.toPrecision(2)).toLocaleString('en-US')} km/s`;
     }
 
+    // On a small canvas the key keeps out of the way: there for a few seconds as a scene opens or an
+    // arrow is switched on, then only while paused (in a mission the clock stops for each burn, so not
+    // there) or dragging
+    const KEY_MS = 6000;
+    const keyWake = { scene: null, v: false, f: false, until: 0 };
     function drawArrowLegend(C) {
         legend.shown = false;
         const showV = settings.velocities, showF = settings.forces;
         if (cleanRender || !bodies.length || !(showV || showF)) return;
+        const now = performance.now();
+        if (keyWake.scene !== scene || (showV && !keyWake.v) || (showF && !keyWake.f)) keyWake.until = now + KEY_MS;
+        Object.assign(keyWake, { scene, v: showV, f: showF });
+        const tight = viewW < 560 || viewH < 320;
+        const away = tight && now >= keyWake.until && !drags.size && !(paused && !mission.def);
+        if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
         // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
@@ -6494,41 +7028,31 @@
             if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
-        const now = performance.now();
         ctx.font = font(fs);
         const arrowW = Math.max(showV ? legend.vPx : 0, showF ? legend.fPx : 0);
         const vTW = showV ? ctx.measureText(legend.vText).width : 0, fTW = showF ? ctx.measureText(legend.fText).width : 0;
         const textW = Math.max(vTW, fTW);
-        // On a small canvas the two arrows share one row, just above the scale bar, and the note that
-        // longer arrows are squeezed is left out (the About section says so); elsewhere a row each
-        const tight = viewW < 560 || viewH < 320;
+        // On a small canvas the two arrows share one row, just above the scale bar; elsewhere a row each
         const rowW = (showV ? legend.vPx + 6 + vTW : 0) + (showV && showF ? 14 : 0) + (showF ? legend.fPx + 6 + fTW : 0);
         const oneRow = tight && rowW <= viewW * 0.8;
-        // A velocity arrow over three medium lengths, or any force arrow, is shorter than in proportion
-        const squeeze = !tight && (showF || (showV && legend.vSqueezed));
         const rows = oneRow ? 1 : (showV ? 1 : 0) + (showF ? 1 : 0);
-        const w = oneRow ? rowW : Math.max(arrowW + 8 + textW, squeeze ? ctx.measureText(LEGEND_SQUEEZE).width : 0);
+        const w = oneRow ? rowW : arrowW + 8 + textW;
         const bottom = viewH - 12 - fs - (tight ? 6 : 10);
-        const top = bottom - (rows + (squeeze ? 1 : 0)) * lh;
+        const top = bottom - rows * lh;
         // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
-        legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
-        const left = legend.right ? viewW - 12 - w : 12;
+        legend.right = !!(closeUp && closeUp.x < midX && closeUp.y > viewH / 2);
+        const left = legend.right ? visR - 12 - w : visL + 12;
         // Fade while a body (not a swarm's dot) is under it: checked ten times a second
         if (now - legend.t > 100) {
             legend.t = now;
             legend.covered = false;
-            legend.vSqueezed = false;
-            const fv = showV ? frameVelocity() : null;
             for (const b of bodies) {
                 if (b.minor && !isChosen(b)) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b) + 4;
                 if (x + r > left - 4 && x - r < left + w + 4 && y + r > top - 2 && y - r < bottom + 2) legend.covered = true;
-                // (the velocity as its arrow shows it: in a rotating frame, relative to the frame where the body is)
-                const u = fv && turn.on ? frameVelocity(b.x, b.y) : fv;
-                if (fv && Math.hypot(b.vx - u.x, b.vy - u.y) * pxPerSpeed() > 3 * arrowUnit()) legend.vSqueezed = true;
             }
         }
-        legend.alpha += ((legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
+        legend.alpha += ((away ? 0 : legend.covered ? 0.15 : 1) - legend.alpha) * 0.2;
         // (the arrows as drawArrows draws them: the same width and lengths)
         const aw = clamp(2 * sizeScale, 1.5, 2.4);
         ctx.globalAlpha = legend.alpha;
@@ -6541,10 +7065,9 @@
             const tx = left + arrowW + 8;
             if (showV) { legend.vy = y; legendRow(C, left, y, legend.vPx, aw, C.velocity, tx, legend.vText); y += lh; }
             if (showF) { legend.fy = y; legendRow(C, left, y, legend.fPx, aw, C.force, tx, legend.fText); y += lh; }
-            if (squeeze) legendRow(C, left, y, 0, 0, null, left, LEGEND_SQUEEZE);
         }
         ctx.globalAlpha = 1;
-        legend.x = left; legend.shown = true; legend.squeeze = squeeze; legend.w = w; legend.top = top;
+        legend.x = left; legend.shown = true; legend.w = w; legend.top = top;
     }
 
     // A legend row: an arrow px long (if any), then its text at tx
@@ -6576,7 +7099,7 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
-            return `<strong>Pull lines:</strong> each coloured arrow is one body's pull on ${escapeHtml(theName(b))}. Joined tip to tail, they add up to its pink force arrow.${coarse() ? '' : ' G hides them.'}`;
+            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}, joined tip to tail.`;
         }, { ms: 9000, tag: 'pulls' });
     }
 
@@ -6588,8 +7111,11 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!(b && orbitingBody(b) && b.m >= 1e-17)) return '<strong>Hill sphere and Roche limit:</strong> choose a body that orbits another.';
-            const who = escapeHtml(theName(b)), p = escapeHtml(theName(b.primary));
-            return `<strong>Hill sphere</strong> (round ${who}): its own moons must orbit inside it. <strong>Roche limit</strong> (round ${p}): any closer, and ${p}'s tides would tear ${who} apart.`;
+            measureLimits(b);
+            const who = escapeHtml(theName(b)), says = [];
+            if (lim.hill > 0) says.push(`<strong>Hill sphere:</strong> ${who}'s moons stay inside`);
+            if (lim.roche > 0) says.push(`<strong>Roche limit:</strong> any closer, and tides would tear it apart`);
+            return says.length ? `${says.join('. ')}.` : `<strong>Hill sphere and Roche limit:</strong> none for ${who}.`;
         }, { ms: 9000, tag: 'limits' });
     }
 
@@ -6699,7 +7225,7 @@
     // A label beyond a point along (ux, uy); if the canvas edge is in the way, on the inside instead.
     function labelOutward(text, q, ux, uy, gap) {
         const w = ctx.measureText(text).width;
-        const room = ux > 0.3 ? viewW - (q.x + gap) : ux < -0.3 ? q.x - gap : Infinity;
+        const room = ux > 0.3 ? visR - (q.x + gap) : ux < -0.3 ? q.x - gap - visL : Infinity;
         if (room < w + 4) { ux = -ux; uy = -uy; }
         ctx.textAlign = ux > 0.3 ? 'left' : ux < -0.3 ? 'right' : 'center';
         const x = q.x + ux * gap, y = q.y + uy * gap + (Math.abs(ux) <= 0.3 ? (uy > 0 ? 6 : -6) : 0);
@@ -6779,6 +7305,10 @@
         ctx.globalAlpha = 1;
     }
 
+    // "Sizes not to scale" says so for a few seconds as a scene opens or Realistic physics changes
+    const SIZE_NOTE_MS = 8000;
+    const sizeNote = { scene: null, realistic: null, until: 0 };
+
     // Overlays: Kepler cards (top right), scale bar (bottom left), "not to scale" note, pause label.
     function drawOverlays(C, subj) {
         if (cleanRender) return;
@@ -6789,7 +7319,7 @@
         const km = scene.units === 'km' || target < 0.01;
         const nice = km ? niceNumber(target * AU_KM) / AU_KM : niceNumber(target);
         const len = nice * scale;
-        const x0 = pad + 4, y0 = viewH - pad - 4;
+        const x0 = visL + pad + 4, y0 = viewH - pad - 4;
         ctx.strokeStyle = C.subtle;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -6799,12 +7329,19 @@
         ctx.fillStyle = C.subtle;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        const sl = scaleLabel(nice), note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+        const sl = scaleLabel(nice), now = performance.now();
         ctx.fillText(sl, x0 + len + 6, y0 + 2);
-        ctx.textAlign = 'right';
-        ctx.fillText(note, viewW - pad - 2, y0 + 2);
         edges.scaleRight = x0 + len + 6 + ctx.measureText(sl).width;
-        edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+        if (sizeNote.scene !== scene || sizeNote.realistic !== settings.realistic) {
+            Object.assign(sizeNote, { scene, realistic: settings.realistic, until: now + SIZE_NOTE_MS });
+        }
+        edges.noteLeft = Infinity;
+        if (now < sizeNote.until) {
+            const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+            ctx.textAlign = 'right';
+            ctx.fillText(note, visR - pad - 2, y0 + 2);
+            edges.noteLeft = visR - pad - 2 - ctx.measureText(note).width;
+        }
         edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
@@ -6814,7 +7351,7 @@
         if (t) {
             ctx.font = font(fs, true);
             const w = ctx.measureText(t).width + 18;
-            const x = pad, y = frameId !== null ? pad + 40 : pad;
+            const x = visL + pad, y = frameId !== null ? pad + 40 : pad;
             roundRect(x, y, w, fs + 10, 4);
             ctx.fillStyle = C.card;
             ctx.fill();
@@ -6829,23 +7366,22 @@
     }
 
     // ---- The cards down the top-right corner ----
-    // Top first, in this order: the mission, a flyby, the stability timer, relativity, Kepler's 1st, 2nd
+    // Top first, in this order: a flyby, the stability timer, relativity, Kepler's 1st, 2nd
     // and 3rd laws, the Hill sphere and Roche limit. The stack never covers much of the canvas: when it
     // would grow past its cap (about 60% of the height, and clear of the scale bar), the lowest cards
-    // turn compact (a line or two) first, the mission, a flyby and relativity last; if it is still too
+    // turn compact (a line or two) first, a flyby and relativity last; if it is still too
     // tall the lowest fold into one last line that names them, and any left compact that now fit are
     // shown in full again. (Small canvases show compact cards from the start.) The layout is worked out
     // a few times a second, by drawing the cards where nothing shows, and kept in between.
-    const CARD_ORDER = ['mission', 'flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
-    const CARD_NAMES = { mission: 'mission', flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
-    const CARD_KEEP = new Set(['mission', 'flyby', 'relativity']);
+    const CARD_ORDER = ['flyby', 'stability', 'relativity', 'k1', 'k2', 'k3', 'limits'];
+    const CARD_NAMES = { flyby: 'flyby', stability: 'stability', relativity: 'relativity', k1: '1st law', k2: '2nd law', k3: '3rd law', limits: 'Hill & Roche' };
+    const CARD_KEEP = new Set(['flyby', 'relativity']);
     const cards = { at: 0, sig: '', compact: {}, folded: [], left: Infinity, bottom: 0, over: false };
 
     // One card at y (compact or not): returns where the next one goes (y itself if it has nothing to show)
     function drawOneCard(C, id, subj, y, fs, compact) {
         let b = y;
-        if (id === 'mission') b = drawMissionCard(C, y, fs, compact);
-        else if (id === 'flyby') { const fl = flybyLines(compact); if (fl) b = drawCard(C, fl, y, fs) + 5; }
+        if (id === 'flyby') { const fl = flybyLines(compact); if (fl) b = drawCard(C, fl, y, fs) + 5; }
         else if (id === 'stability') b = drawStabilityCard(C, y, fs, compact);
         else if (id === 'relativity') { const e = drawRelativityCard(C, subj, y, fs, compact); if (e > y) b = e + 5; }
         else if (settings[id]) {
@@ -6874,7 +7410,7 @@
         const compact = {};
         let total = 0;
         for (const id of ids) { compact[id] = small; total += full[id]; }
-        // (the mission, a flyby and relativity are what the moment is about: they turn compact last)
+        // (a flyby and relativity are what the moment is about: they turn compact last)
         const squeeze = (keep) => {
             for (let i = ids.length - 1; i >= 0 && total > cap; i--) {
                 const id = ids[i];
@@ -6901,12 +7437,12 @@
     }
 
     function drawCardStack(C, subj, fs, pad) {
-        const small = viewW < 560;
+        const small = visR - visL < 560;
         const cfs = small ? clamp(fs - 0.5, 10, 12) : fs;
-        const y0 = frameId !== null && viewW < 520 ? 48 : pad;
+        const y0 = frameId !== null && visR - visL < 520 ? 48 : pad;
         const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
         const now = performance.now();
-        const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${mission.def ? mission.def.id : ''}|${selectedId}|${C.dark}`;
+        const sig = `${visR - visL}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${selectedId}|${C.dark}`;
         // (worked out again when what is switched on changes, and twice a second while the stack is
         // over its cap or has had to give way; a stack that fits as it is costs nothing more)
         const squeezed = cards.folded.length > 0 || (!small && CARD_ORDER.some((id) => cards.compact[id]));
@@ -6964,7 +7500,7 @@
         if (cleanRender || !b || flyby.bid !== b.id || !(flyby.active || flyby.done) || flyby.pts.length < 4 || !bodyById(flyby.pid)) return;
         const R = clamp(Math.min(viewW, viewH) * 0.15, 44, 80);
         const top = (frameId !== null ? 48 : 8) + (timeNotice() ? 32 : 0) + 18 + R;
-        const corners = [[viewW - 10 - R, viewH - 30 - R], [10 + R, viewH - 34 - R], [10 + R, top]];
+        const corners = [[visR - 10 - R, viewH - 30 - R], [visL + 10 + R, viewH - 34 - R], [visL + 10 + R, top]];
         const crowd = (c) => bodies.reduce((n, o) => n + Math.max(0, R + 60 - Math.hypot(sx(o.dx) - c[0], sy(o.dy) - c[1])), 0);
         let best = corners[0], least = crowd(best);
         for (const c of corners.slice(1)) { const n = crowd(c); if (n < least - 1) { least = n; best = c; } }
@@ -7027,9 +7563,15 @@
         ctx.fillText(`Seen from ${q.name}`, cx, cy - R - 4);
     }
 
+    // (kept: it is asked for every frame, and formatting a number with commas is slow)
+    const scaleMemo = { au: 0, km: false, text: '' };
     function scaleLabel(au) {
-        if (scene.units === 'km' || au < 0.01) return `${fmtKm(Math.round(au * AU_KM))} km`;
-        return `${+au.toPrecision(3)} AU`;
+        const km = scene.units === 'km' || au < 0.01;
+        if (au !== scaleMemo.au || km !== scaleMemo.km) {
+            scaleMemo.au = au; scaleMemo.km = km;
+            scaleMemo.text = km ? `${fmtKm(Math.round(au * AU_KM))} km` : `${+au.toPrecision(3)} AU`;
+        }
+        return scaleMemo.text;
     }
 
     // The largest 1, 2 or 5 x 10^n not much longer than x
@@ -7056,7 +7598,7 @@
         const widthOf = (line) => line.reduce((s, seg) => { ctx.font = font(fs, seg[1]); return s + ctx.measureText(seg[0]).width; }, 0);
         const w = Math.max(...lines.map(widthOf)) + 20;
         const h = lines.length * lh + 10;
-        const x = viewW - 8 - w;
+        const x = visR - 8 - w;
         cardBox(C, x, y, w, h);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -7204,7 +7746,7 @@
         w = Math.max(w, ctx.measureText(note).width, tableW) + 20;
         const nLines = 1 + (rows.length ? 1 + cells.length : 0) + 1;
         const h = nLines * lh + 10;
-        const x = viewW - 8 - w;
+        const x = visR - 8 - w;
         cardBox(C, x, y, w, h);
         ctx.textBaseline = 'middle';
         let ly = y + 5 + lh / 2;
@@ -7317,7 +7859,9 @@
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
         // (in a rotating frame the path is worked out as seen turning with the pair: see turnedSeen)
         const ref = turn.on ? null : L || (p && p.m >= b.m ? p : null);
-        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
+        // (with the zoom's rough size: its points are spaced for the zoom, and a path worked out zoomed
+        // out would be a few straight lines zoomed in)
+        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir, Math.round(Math.log2(scale))].join('|');
         const now = performance.now();
         // The one being worked out carries on; a new one starts when something has changed: at once
         // after a reset or an edit, for another body, or while paused; for a dragged body once the last
@@ -7335,7 +7879,7 @@
         pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
-        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0 }));
+        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
         const me = list[src.indexOf(b)];
         me.vx = rel.v[0]; me.vy = rel.v[1];
         if (rel.p) { const pc = list[src.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
@@ -7542,8 +8086,21 @@
         return { p, el: relElements(rx, ry, rel.v[0] - pv[0], rel.v[1] - pv[1], mu), vc, ve };
     }
 
+    // The body a drag would make a moon of (see moonHost): ringed while the drag is over it
+    let dropHost = null;
+    function drawDropHost(C) {
+        if (!dropHost || !bodies.includes(dropHost)) return;
+        ctx.strokeStyle = C.velocity;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(sx(dropHost.dx), sy(dropHost.dy), drawRadius(dropHost) + 7, 0, TAU);
+        ctx.stroke();
+    }
+
     // A body being dragged from the palette, drawn where it would land.
     function drawPaletteGhost() {
+        drawDropHost(colours());
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
         const x = paletteDrag.cx, y = paletteDrag.cy;
@@ -7551,7 +8108,7 @@
         ctx.globalAlpha = 0.85;
         drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
         ctx.globalAlpha = 1;
-        if (settings.placement === 'circular' && settings.preview) {
+        if (settings.placement === 'circular' && settings.preview && !dropHost) {
             const X = wx(x), Y = wy(y);
             const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
             if (p) {
@@ -7583,6 +8140,7 @@
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
             setText(ui.statDist, '–'); setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
+            setText(ui.statDistUnit, ''); setStatUnit(ui.statSpeed, ''); setStatUnit(ui.statForce, '');
             return;
         }
         if (ui.subjectDot) ui.subjectDot.style.background = b.color;
@@ -7591,9 +8149,11 @@
         const top = !p || (p.primary === b && b.m > p.m);
         let dist, speed, force;
         if (bodies.length < 2) {
+            // (no units for what isn't there)
             setText(ui.subjectAround, 'on its own');
-            setText(ui.statDist, '–'); setText(ui.statDistUnit, 'AU');
+            setText(ui.statDist, '–'); setText(ui.statDistUnit, '');
             setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
+            setStatUnit(ui.statSpeed, ''); setStatUnit(ui.statForce, '');
             return;
         }
         const pr = b.held && !top ? predictLaunch(b) : null;
@@ -7623,15 +8183,21 @@
         setText(ui.statDistUnit, d.u);
         const s = fmtSpeedKms(speed * AUYR_KMS);
         setText(ui.statSpeed, s.v);
-        if (ui.statSpeed && ui.statSpeed.nextSibling) {
-            const t = ` ${s.u}`;
-            if (ui.statSpeed.nextSibling.textContent !== t) ui.statSpeed.nextSibling.textContent = t;
-        }
+        setStatUnit(ui.statSpeed, s.u);
         setText(ui.statForce, force > 0 ? fmtSci(forceToNewtons(force), 2) : '0');
+        setStatUnit(ui.statForce, 'N');
+    }
+
+    // The unit after a readout's value (the text that follows it)
+    function setStatUnit(el, u) {
+        if (!el || !el.nextSibling) return;
+        const t = u ? ` ${u}` : ' ';
+        if (el.nextSibling.textContent !== t) el.nextSibling.textContent = t;
     }
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
     function theName(b) { return ['Sun', 'Moon'].includes(b.name) ? `the ${b.name}` : b.name; }
+    const sentenceCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // ------------------------------------------------------------------
     // The chosen body's orbit in the info bar: its period and eccentricity, and tooltips that name
@@ -7663,9 +8229,14 @@
             pull = top ? 'Total gravitational pull of all the other bodies on it' : `Gravitational pull of ${theName(p)} on it: F = Gm₁m₂/r²`;
             const el = pr ? pr.el : p ? elementsOf(b, p) : null;
             const bound = el && el.bound && (pr || b.bound);
-            if (el) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
+            // (pulled about by others as hard as by what it orbits, as in the three-star scenes: no one
+            // orbit, so no period to give, and the number would jump about with its partner)
+            const tossed = !pr && !top && p && !mission.def && bodies.length <= SWARM_N && disturbers(b, p).length > 0;
+            if (el && !tossed) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
             if (top && !p) {
                 tip = 'The heaviest body orbits nothing: it only wobbles round the centre of mass';
+            } else if (tossed) {
+                tip = `Other bodies pull on it about as hard as ${theName(p)}: it has no one orbit, so no period`;
             } else if (!bound) {
                 value = 'escaping';
                 tip = `Not bound to ${theName(p)}: it is going fast enough to escape, so it has no period`;
@@ -7761,6 +8332,8 @@
             if (dir < 0 && s < v * 0.9999) next = s;
         }
         if (next === null) return;
+        if (mission.def && next > MISSION_SPEED_MAX) { missionNote(`<strong>Up to ${MISSION_SPEED_MAX}×</strong> in a mission. <strong>Skip</strong> is the quick way.`); return; }
+        paceZoom.was = 0;
         setSpeedValue(next);
         speedFlash = performance.now() + 1500;
     }
@@ -7777,11 +8350,21 @@
         const dReal = (now - pace.t) / 1000, dSim = sim - pace.sim;
         const want = settings.speed * rate() * dReal;
         // Start again after a pause, a new scene, a jump back in time or a long gap (a hidden tab)
-        const fresh = paused || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
+        const fresh = paused || timeHeld() || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
         pace.t = now; pace.sim = sim; pace.scene = scene;
         if (fresh) { pace.ratio = 1; pace.behind = false; return; }
         pace.ratio += (Math.min(dSim / want, 1.5) - pace.ratio) * (1 - Math.exp(-dReal / 0.35));
         pace.behind = pace.ratio < (pace.behind ? 0.95 : 0.9);
+    }
+
+    // Moving targets are hard to hit, so time waits while a body from the palette is over the canvas and
+    // from the moment an arrow's tip is pressed until it is let go (not in a mission, whose clock is its own)
+    function timeHeld() {
+        if (mission.def) return false;
+        if (paletteDrag && paletteDrag.moved && paletteDrag.over) return true;
+        if (!drags.size) return false;
+        for (const d of drags.values()) if (d.mode === 'aim') return true;
+        return false;
     }
 
     // The note in the canvas's top-left corner: paused, the new speed just after a key changed it, or
@@ -7789,17 +8372,19 @@
     function timeNotice() {
         const back = timeDir < 0 ? 'Running backwards' : '';
         if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
+        if (paused && mission.def) return null;   // (its console says so, and the clock stops for each burn)
+        if (mission.skip) return null;   // (the speed jumps for a moment you asked to pass quickly: nothing to report)
         if (paused) return back ? 'Paused · running backwards' : 'Paused';
+        if (timeHeld()) return 'Time waits for you';
         if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
         return back || null;
     }
 
-    // Every frame: the achieved speed, the caption (it changes with the scene) and the step button
+    // Every frame: the achieved speed and the caption (it changes with the scene)
     function updateTimeControls() {
         measurePace();
         const key = `${settings.scene}|${settings.speed}`;
         if (key !== captionKey) { captionKey = key; setText(ui.speedNote, speedCaption(settings.speed)); }
-        if (ui.step && ui.step.disabled === paused) ui.step.disabled = !paused;
     }
 
     // One step while paused: a 60 fps frame's worth of time at the chosen speed, in whole integrator
@@ -7825,11 +8410,8 @@
     // or Option (which on Windows also reports Ctrl).
     function bindTimeControls() {
         if (ui.step) {
-            ui.step.addEventListener('click', (e) => {
-                stepForward();
-                // After a click or tap (not a key press), Space should play again rather than press
-                // this button once more
-                if (e.detail) ui.step.blur();
+            ui.step.addEventListener('click', () => {
+                if (paused) stepForward(); else setPaused(true);
             });
         }
         window.addEventListener('keydown', (e) => {
@@ -7931,7 +8513,7 @@
             ui.pop.style.top = '';
             const cr = canvas.getBoundingClientRect(), x = cr.left + sx(b.dx), w = ui.pop.offsetWidth;
             if (opening || !was) {
-                // (with the settings open beside the canvas the palette has stepped aside: then over them)
+                // (with the settings open over the palette: on the other side from them, if it can)
                 const bc = document.body.classList, settingsOpen = bc.contains('sim-panel-active') && bc.contains('sim-panel-side');
                 const rightOk = x < window.innerWidth - w - 16, leftOk = x > w + 16;
                 ui.pop.classList.toggle('on-left', settingsOpen ? !rightOk && leftOk : leftOk || (!rightOk && x > window.innerWidth / 2));
@@ -7965,7 +8547,8 @@
         const pw = ui.pop.offsetWidth, ph = ui.pop.offsetHeight;
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
         // Room in canvas coordinates: within the canvas when it fits, otherwise anywhere on screen
-        const minX = 6 - cr.left, maxX = window.innerWidth - cr.left - 6;
+        // (and clear of the settings, if they are open over the canvas)
+        const minX = visL > 0 ? visL + 6 : 6 - cr.left, maxX = visR < viewW ? visR - 6 : window.innerWidth - cr.left - 6;
         const fits = ph <= cr.height - 12;
         const minY = fits ? 6 : 6 - cr.top, maxY = fits ? cr.height - 6 : window.innerHeight - cr.top - 6;
         let left = x + r + 18;
@@ -8036,29 +8619,14 @@
             s.setAttribute('aria-checked', s === on ? 'true' : 'false');
             s.tabIndex = s === (on || sw[0]) ? 0 : -1;   // (a colour of its own, as a star's: the stop is on the first)
         });
-        // Newton's law for this body and its primary, and its orbit
-        let info = '';
-        if (sr.p) {
-            const p = sr.p;
-            const r = Math.hypot(b.x - p.x, b.y - p.y);
-            const Fn = forceToNewtons((G * b.m * p.m) / (r * r));
-            const el = elementsOf(b, p);
-            const dd = fmtDistance(r);
-            info = `<strong>Pull of ${escapeHtml(theName(p))}:</strong> F = Gm₁m₂/r² = ${fmtSci(Fn, 2)} N<br>`;
-            info += el.bound ? `<strong>Orbit:</strong> ${dd.v} ${dd.u} away, e = ${el.e.toFixed(3)}, period ${fmtDuration(el.T, true)}`
-                : `<strong>Not bound:</strong> ${dd.v} ${dd.u} away and escaping (e = ${el.e.toFixed(2)})`;
-        } else if (bodies.length > 1) {
-            info = `<strong>Heaviest body.</strong> Pull of the others: ${fmtSci(forceToNewtons(Math.hypot(b.fx, b.fy)), 2)} N`;
-        } else {
-            info = '<strong>On its own:</strong> nothing to pull on it.';
-        }
-        info += `<br><strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
-        // How hard it is to leave its surface: sqrt(2GM/R), the speed of light at a black hole's horizon
-        if (hole) info += '<br><strong>Escape speed</strong> at the event horizon: the speed of light';
+        // Its mass in kg, and how hard it is to leave its surface: sqrt(2GM/R), the speed of light at a
+        // black hole's horizon. (Its pull and its orbit are in the info bar and the other tabs.)
+        let info = `<strong>Mass:</strong> ${fmtSci(b.m * MSUN_KG, 2)} kg`;
+        if (hole) info += '<br><strong>Escape speed at its horizon:</strong> the speed of light';
         else if (b.R > 0.1) {
             const vs = Math.sqrt((2 * G * b.m) / (b.R / AU_KM)) * AUYR_KMS;
             const f = fmtSpeedKms(vs);
-            info += `<br><strong>Escape speed</strong> from its surface: ${f.v} ${f.u}${lightFraction(vs)}`;
+            info += `<br><strong>Surface escape speed:</strong> ${f.v} ${f.u}${lightFraction(vs)}`;
         }
         if (ui.popInfo.innerHTML !== info) ui.popInfo.innerHTML = info;
         updateEditor(force);
@@ -8093,11 +8661,7 @@
             syncEccentricity(true);
             updatePopover(true);
         });
-        ui.popDelete.addEventListener('click', () => {
-            const b = popBody;
-            closePopover();
-            deleteBody(b);
-        });
+        ui.popDelete.addEventListener('click', deleteChosen);
         ui.popName.addEventListener('input', () => {
             if (!popBody) return;
             const n = ui.popName.value.trim().slice(0, 18);
@@ -8194,7 +8758,6 @@
         popOrbitShape: byId('popOrbitShape'),
         popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
         subjectEdit: byId('statSubjectEdit'),
-        orbitFacts: byId('orbitFacts'), editOrbit: byId('editOrbitBtn')
     });
 
     const edit = {
@@ -8205,7 +8768,7 @@
         units: {},           // field -> the unit it is shown in, { label, f } (f: internal units per shown unit)
         forceField: null,    // a field to rewrite even though it has focus (just applied or stepped)
         usual: { bid: null, t: 0, sense: 0 },
-        engaged: false,      // the arrow keys act on the chosen body (the simulation was last pressed or focused)
+        engaged: null,       // the arrow keys act on the chosen body: the simulation was last pressed or focused (null: nothing has been yet)
         downAt: new Map(),   // pointerId -> when it went down (for fine aiming on touch screens)
         previewUntil: 0,     // after a push from the keyboard with the menu closed, show the path until then
         preview: null,       // the path last worked out for the preview
@@ -8418,8 +8981,8 @@
     function fieldText(x) {
         const ax = Math.abs(x);
         if (ax === 0) return '0';
-        if (ax >= 9999.5 && ax < 1e15) return Math.round(x).toLocaleString('en-US');
-        if (ax < 1e-3 || ax >= 1e15) return x.toExponential(3);
+        if (ax >= 9999.5 && ax < 1e9) return Math.round(x).toLocaleString('en-US');
+        if (ax < 1e-3 || ax >= 1e9) return x.toExponential(3);
         return x.toPrecision(4);
     }
 
@@ -8433,30 +8996,36 @@
         return f === undefined ? NaN : parseFloat(m[1]) * f;
     }
 
+    const MAX_SPEED = 0.99 * C_LIGHT;
     const FIELDS = {
         speed: {
             input: ui.popSpeedIn, unitEl: ui.popSpeedUnit, units: SPEED_UNITS, ok: (v) => v >= 0,
+            why: 'Speed needs a number, 0 or more.', max: MAX_SPEED, over: 'Kept below the speed of light.',
             apply: (b, v) => { const s = velocityParts(b); setVelocity(b, v, s.angle, s.sense); },
             step: (b, dir, k) => nudge(b, dir > 0 ? 'faster' : 'slower', k)
         },
         angle: {
             input: ui.popAngleIn, units: ANGLE_UNITS, ok: (v) => isFinite(v),
+            why: 'Direction needs a number of degrees.',
             apply: (b, v) => { const s = velocityParts(b); setVelocity(b, s.v, s.screen ? v : clamp(v, -Math.PI / 2, Math.PI / 2), s.sense); },
             // (10, 1 or 0.1 degrees)
             step: (b, dir, k) => FIELDS.angle.apply(b, velocityParts(b).angle + dir * k * 100 * DEG)
         },
         period: {
             input: ui.popPeriodIn, unitEl: ui.popPeriodUnit, units: TIME_UNITS, ok: (v) => v > 0,
+            why: 'Period needs a number above 0.', max: 1e9, over: 'Kept to a billion years.',
             apply: (b, v) => setPeriod(b, v),
             step: (b, dir, k) => { const o = orbitOf(b); if (o && o.el.bound) setPeriod(b, o.T * (1 + dir * k)); }
         },
         peri: {
             input: ui.popPeriIn, unitEl: ui.popPeriUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            why: 'Distance needs a number above 0.', max: 1e6, over: 'Kept to a million AU.',
             apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, v, Math.max(v, o.ra)); },
             step: (b, dir, k) => { const o = orbitOf(b); if (o) FIELDS.peri.apply(b, o.rp * (1 + dir * k)); }
         },
         apo: {
             input: ui.popApoIn, unitEl: ui.popApoUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            why: 'Distance needs a number above 0.', max: 1e6, over: 'Kept to a million AU.',
             apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, Math.min(v, o.rp), v); },
             step: (b, dir, k) => { const o = orbitOf(b); if (o && isFinite(o.ra)) FIELDS.apo.apply(b, o.ra * (1 + dir * k)); }
         }
@@ -8477,23 +9046,32 @@
         if (input.value !== t) input.value = t;
     }
 
-    // Apply what was typed in a field, if it changed. Something that can't be read is marked (and, when
-    // the field is left, put back).
-    function commitField(name, keepBad) {
+    // Apply what was typed in a field, if it changed. Something that can't be used is put back, saying
+    // why; something too big is cut down to size.
+    function commitField(name) {
         const F = FIELDS[name], input = F.input, b = popBody;
         if (!b || !input || input.value.trim() === (edit.shown[name] || '')) return;
-        const v = parseField(input.value, F.units, edit.units[name]);
+        let v = parseField(input.value, F.units, edit.units[name]);
         if (!(isFinite(v) && F.ok(v))) {
-            if (keepBad) { input.setAttribute('aria-invalid', 'true'); return; }
             input.value = edit.shown[name] || '';
-            input.removeAttribute('aria-invalid');
+            fieldSay(F.why);
             return;
         }
-        input.removeAttribute('aria-invalid');
+        if (F.max !== undefined && v > F.max) { v = F.max; fieldSay(F.over); }
         edit.forceField = name;
         F.apply(b, v);
         updateEditor(true);
         edit.forceField = null;
+    }
+
+    // A word under the menu's fields for a few seconds, when an entry was refused or cut down to size
+    function fieldSay(text) {
+        const el = byId('popFieldWhy');
+        if (!el) return;
+        el.textContent = text;
+        el.hidden = false;
+        clearTimeout(edit.whyTimer);
+        edit.whyTimer = setTimeout(() => { el.hidden = true; el.textContent = ''; }, 5000);
     }
 
     // A stepper (or the up and down keys in a field)
@@ -8527,8 +9105,7 @@
         const vc = s.p ? Math.sqrt((G * (b.m + s.p.m)) / Math.max(s.r, 1e-15)) : s.v;
         showField('speed', s.v, speedUnit(vc));
         showField('angle', s.angle, { label: '°', f: DEG });
-        setText(ui.popAngleNote, s.screen ? 'Relative to the centre of mass: 0° points right, 90° up.'
-            : '0° is sideways, as in a circle; + is outward, − inward.');
+        setText(ui.popAngleNote, s.screen ? '0° points right, 90° up.' : '0° is sideways, + outward, − inward.');
         ui.popSenseAcw.setAttribute('aria-pressed', !s.screen && s.sense > 0 ? 'true' : 'false');
         ui.popSenseCw.setAttribute('aria-pressed', !s.screen && s.sense < 0 ? 'true' : 'false');
         const usual = s.screen ? 0 : usualSense(s.p, b);
@@ -8549,18 +9126,16 @@
             ui.popPeriodIn.placeholder = 'escaping';
             ui.popApoIn.placeholder = 'never';
             const d = fmtDistance(o.el.a);
-            const e = o.el.e;
-            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}, e = ${e.toFixed(3)}: ${e < 0.005 ? 'a circle' : e < 0.995 ? 'an ellipse' : 'a very thin ellipse'}.`
-                : `Escaping (e = ${e.toFixed(2)}). Set a farthest distance to make it orbit.`;
+            shape = o.el.bound ? `Average distance a = ${d.v} ${d.u}` : 'Escaping. Set a farthest distance to make it orbit.';
         } else {
             showField('period', NaN, periodUnit(scene.Tref));
             for (const n of ['peri', 'apo']) showField(n, NaN, distUnit(scene.units === 'km' ? 0 : 1));
             ui.popPeriodIn.placeholder = ui.popApoIn.placeholder = '';
             // (the heavier of a pair that orbit each other: their orbit is set from the lighter one)
             const partner = b.primary && b.primary.primary === b ? b.primary : null;
-            shape = alone ? 'It is on its own: there is nothing to orbit.'
-                : partner ? `${b.name} and ${partner.name} orbit each other: set their orbit from ${partner.name}'s menu.`
-                    : `${b.name} is the heaviest body here: it doesn't orbit another. Choose one that orbits it.`;
+            shape = alone ? 'Nothing to orbit.'
+                : partner ? `${b.name} and ${partner.name} orbit each other: set it from ${partner.name}'s menu.`
+                    : `${b.name} is the heaviest: choose a body that orbits it.`;
         }
         setText(ui.popOrbitShape, shape);
         // (an escaping orbit's period and farthest distance can be typed, not stepped)
@@ -8598,21 +9173,6 @@
             const t = ui.popTabs.find((q) => q.getAttribute('aria-selected') === 'true');
             if (t) t.focus({ preventScroll: true });
         }
-    }
-
-    // The sidebar's "Orbit of ..." group: its period and closest and farthest distances
-    function syncOrbitFacts(b, usable) {
-        if (ui.editOrbit) ui.editOrbit.disabled = !usable;
-        if (!ui.orbitFacts) return;
-        let t = '';
-        const o = usable ? orbitOf(b) : null;
-        if (o) {
-            const names = apsisNames(o.p);
-            const d = (x) => { const f = fmtDistance(x); return `${f.v} ${f.u}`; };
-            t = o.el.bound ? `Period ${fmtDuration(o.T, true)}; ${names[0]} ${d(o.rp)}, ${names[1]} ${d(o.ra)}.`
-                : `Escaping; ${names[0]} ${d(o.rp)}.`;
-        }
-        setText(ui.orbitFacts, t);
     }
 
     // A button that acts once when pressed and, held down, again and again (steppers and pushes)
@@ -8655,7 +9215,6 @@
             const name = t && t.classList && t.classList.contains('orb-spin-input') ? Object.keys(FIELDS).find((n) => FIELDS[n].input === t) : null;
             if (name && t.value.trim() !== (edit.shown[name] || '')) {
                 t.value = edit.shown[name] || '';
-                t.removeAttribute('aria-invalid');
                 e.stopImmediatePropagation();
                 e.preventDefault();
             }
@@ -8663,8 +9222,10 @@
         }
         const kind = ARROW_PUSH[e.key];
         if (!kind || e.ctrlKey || e.metaKey || takesArrows(t)) return;
-        if (!popBody && !edit.engaged && !document.body.classList.contains('sim-fullscreen-active')) return;
-        const b = missionCraft() || popBody || (selectedId !== null ? bodyById(selectedId) : null);
+        // (on a page just opened they work too, as Space and B do, while the simulation is in sight)
+        if (!popBody && !edit.engaged && !(edit.engaged === null && canvasInView) && !document.body.classList.contains('sim-fullscreen-active')) return;
+        if (missionKey(e, kind)) return;
+        const b = popBody || (selectedId !== null ? bodyById(selectedId) : null);
         if (!b || b.held || bodies.length < 2) return;
         e.preventDefault();
         nudge(b, kind, stepFor(e));
@@ -8788,17 +9349,16 @@
         for (const name of Object.keys(FIELDS)) {
             const input = FIELDS[name].input;
             if (!input) continue;
-            input.addEventListener('blur', () => commitField(name, false));
+            input.addEventListener('blur', () => commitField(name));
             input.addEventListener('focus', () => input.select());
-            input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    commitField(name, true);
+                    commitField(name);
                     if (coarse()) input.blur(); else input.select();
                 } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                     e.preventDefault();
-                    commitField(name, true);
+                    commitField(name);
                     stepField(name, e.key === 'ArrowUp' ? 1 : -1, e);
                 }
             });
@@ -8807,7 +9367,7 @@
             const name = spin.dataset.field;
             spin.querySelectorAll('.orb-spin-btn').forEach((btn) => {
                 const dir = parseFloat(btn.dataset.dir);
-                holdRepeat(btn, (e) => { commitField(name, false); stepField(name, dir, e); });
+                holdRepeat(btn, (e) => { commitField(name); stepField(name, dir, e); });
             });
         });
         // Way round
@@ -8831,15 +9391,6 @@
                 syncEditButton();
             });
         }
-        // The sidebar's button: the Orbit tab (on a phone, the settings sheet closes first)
-        if (ui.editOrbit) {
-            ui.editOrbit.addEventListener('click', () => {
-                const b = selectedId !== null ? bodyById(selectedId) : null;
-                const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
-                if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
-                openEditor(b, 'orbit', true);
-            });
-        }
         // Keys (before the page's own Escape handler, so Escape in a field only puts it back)
         window.addEventListener('keydown', onEditorKey, true);
         const inSim = (el) => !!(el && el.closest && el.closest('.simulation-display-container'));
@@ -8859,26 +9410,32 @@
     let paletteDrag = null;
     let ghostEl = null;
 
-    // The chips come in groups (stars, dead stars, planets, small bodies): headed groups in the column
-    // beside the canvas, one flowing set of chips under it on narrow screens.
+    // In the column beside the canvas the usual kinds show, and the rest wait behind "More bodies"
+    // (open again next time if it was left open); on narrow screens, and on a phone held sideways, all
+    // the chips flow on in one set.
+    const PALETTE_STORE = 'orbitsPaletteMore';
     function buildPalette() {
         if (!ui.palette) return;
         ui.palette.textContent = '';
-        for (const group of PALETTE) {
-            const box = document.createElement('div');
-            box.className = 'orb-group';
-            box.setAttribute('role', 'group');
-            const head = document.createElement('p');
-            head.className = 'orb-group-label';
-            head.id = `orbGroup${group.label.replace(/\W/g, '')}`;
-            head.textContent = group.label;
-            box.setAttribute('aria-labelledby', head.id);
+        PALETTE.forEach((kinds, i) => {
             const chips = document.createElement('div');
             chips.className = 'orb-group-chips';
-            for (const kind of group.kinds) chips.appendChild(paletteChip(kind));
-            box.append(head, chips);
-            ui.palette.appendChild(box);
-        }
+            for (const kind of kinds) chips.appendChild(paletteChip(kind));
+            ui.palette.appendChild(chips);
+            if (i) return;
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'orb-palette-more';
+            more.textContent = 'More bodies';
+            const show = (on) => { ui.palette.classList.toggle('is-open', on); more.setAttribute('aria-expanded', on ? 'true' : 'false'); };
+            more.addEventListener('click', () => {
+                const on = !ui.palette.classList.contains('is-open');
+                show(on);
+                storeSet(PALETTE_STORE, on ? '1' : '');
+            });
+            show(storeGet(PALETTE_STORE) === '1');
+            ui.palette.appendChild(more);
+        });
         paletteRove(ui.palette.querySelector('.orb-chip'));
         if (!ui.palette.dataset.keys) {
             ui.palette.dataset.keys = '1';
@@ -8893,7 +9450,6 @@
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
     // fades at an end only while there are more chips beyond it
-    const paletteScrolls = () => !!ui.palette && ui.palette.scrollWidth > ui.palette.clientWidth + 2;
     function paletteEdges() {
         const p = ui.palette;
         if (!p) return;
@@ -8913,7 +9469,7 @@
     function onPaletteKey(e) {
         const c = e.target.closest && e.target.closest('.orb-chip');
         if (!c || e.altKey || e.ctrlKey || e.metaKey) return;
-        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled);
+        const list = Array.from(ui.palette.querySelectorAll('.orb-chip')).filter((q) => !q.disabled && q.offsetParent);
         const i = list.indexOf(c);
         if (i < 0) return;
         let to = null;
@@ -8941,8 +9497,9 @@
         btn.className = 'orb-chip';
         btn.dataset.kind = kind;
         const label = kind === 'custom' ? 'Custom' : k.name;
-        btn.dataset.title = kind === 'custom' ? 'Your own body: drag it into space, then set its mass, speed and colour'
-            : `${k.name}, ${k.info} (${fmtMass(k.m)}). Drag it into space, or click to add it.`;
+        btn.dataset.title = kind === 'custom' ? 'Your own body: drop it, then set its mass, speed and colour'
+            : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drop it on a planet, or click for a moon of the chosen planet`
+                : `${k.name}, ${k.info} (${fmtMass(k.m)})`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
         const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
@@ -8976,6 +9533,14 @@
         return btn;
     }
 
+    // Is this touch's move from where it began heading for the canvas (the chip beside it, or below it)?
+    function towardsCanvas(d, e) {
+        const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+        const c = canvas.getBoundingClientRect();
+        if (d.y0 < c.bottom && d.y0 > c.top) return Math.abs(dx) > Math.abs(dy) && dx * (c.left + c.width / 2 - d.x0) > 0;
+        return Math.abs(dy) >= Math.abs(dx) && dy * (c.top + c.height / 2 - d.y0) > 0;
+    }
+
     function onChipDown(e, btn) {
         if (btn.disabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
         paletteDrag = { kind: btn.dataset.kind, btn, id: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, over: false, cx: 0, cy: 0 };
@@ -8987,9 +9552,9 @@
         const d = paletteDrag;
         if (!d || e.pointerId !== d.id) return;
         if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 6) {
-            // (in a row of chips that scrolls sideways, a sideways swipe by touch scrolls it: only a drag
-            // up or down carries the body out)
-            if (e.pointerType !== 'mouse' && paletteScrolls() && Math.abs(e.clientX - d.x0) > Math.abs(e.clientY - d.y0)) return;
+            // (by touch, only a move towards the canvas carries the body out: any other is a swipe, for
+            // the chips or the page to scroll by, as they do by themselves: see touch-action in the styles)
+            if (e.pointerType !== 'mouse' && !towardsCanvas(d, e)) return;
             d.moved = true;
             d.btn.classList.add('is-dragging');
             if (!ghostEl) {
@@ -8999,7 +9564,6 @@
             }
             const k = KINDS[d.kind];
             ghostEl.style.background = d.kind === 'custom' ? '#ae85ca' : k.color;
-            setHint('drop');   // (the drag layer, until it is let go)
         }
         if (!d.moved) return;
         traceDrag(d, e.clientX, e.clientY, e);   // (for a throw)
@@ -9008,6 +9572,7 @@
         d.cx = e.clientX - r.left; d.cy = e.clientY - r.top;
         ghostEl.style.display = d.over ? 'none' : 'block';
         ghostEl.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+        dropHint(d);   // (the drag layer, until it is let go)
     }
 
     function onChipUp(e) {
@@ -9022,11 +9587,15 @@
         if (d.over) {
             updateDrawnPositions();
             chipThrow = d;   // (thrown as it is let go, if bodies are thrown)
-            const w = unturnPoint(wx(d.cx), wy(d.cy)), b = addBody(d.kind, w.x, w.y);   // (from the drawn view to the world)
+            const k = KINDS[d.kind] || KINDS.custom, host = moonHost(d.cx, d.cy, k.m, k.R, null);
+            const w = unturnPoint(wx(d.cx), wy(d.cy));   // (from the drawn view to the world)
+            const at = host ? moonSpot(host, w.x, w.y, bodies.filter((q) => q.primary === host && q.bound).length) : w;
+            const b = addBody(d.kind, at.x, at.y);
             chipThrow = null;
+            if (b && host) moonNote(b);
             if (b && d.kind === 'custom') openPopover(b);
         }
-        throwTipSeen(d);
+        dropHost = null;
         clearHint('drag');
     }
 
@@ -9036,7 +9605,20 @@
         paletteDrag = null;
         d.btn.classList.remove('is-dragging');
         if (ghostEl) ghostEl.style.display = 'none';
+        dropHost = null;
         clearHint('drag');
+    }
+
+    // Escape, with a body on its way from the palette: it goes back, and time carries on. The press that
+    // is still down lets go of nothing (its click, whenever it comes, adds nothing either).
+    function escapeChipDrag() {
+        const d = paletteDrag;
+        if (!d || !d.moved) return false;
+        d.btn.dataset.dragged = '1';
+        d.btn.addEventListener('lostpointercapture', () => setTimeout(() => { d.btn.dataset.dragged = ''; }, 400), { once: true });
+        onChipCancel({ pointerId: d.id });
+        showHint('note', '<strong>Cancelled:</strong> nothing added.', { ms: 3000 });
+        return true;
     }
 
     // ------------------------------------------------------------------
@@ -9045,6 +9627,7 @@
     let lastPointerType = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
     const coarse = () => lastPointerType !== 'mouse';
     let hintKey = '';
+    let hintPressed = false;   // a press on one of the line's own buttons: it stays as it is until that is over
 
     // One message at a time, by priority. Each layer holds { html, tag }; html may be a function, read
     // again whenever the line is refreshed, so a note that names the chosen body follows the choice.
@@ -9054,8 +9637,8 @@
     //   note         fresh feedback from a switch or an action (a few seconds)
     //   tip          the scene's tip, until the first press on the canvas or the palette
     //   (offer)      "Carry on where you left off", for a while after the page opens
-    //   (help)       the usual help; when the page opens, with a pointer to the missions
-    const hints = { drag: null, missionNote: null, note: null, tip: null, intro: false, open: false };
+    //   (help)       the usual help
+    const hints = { drag: null, missionNote: null, note: null, tip: null, open: false };
     const hintTimers = {};
 
     function showHint(layer, html, opts) {
@@ -9082,22 +9665,29 @@
         const v = settings.velocities;
         let h;
         if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. Tap one, then drag its <strong>arrow tip</strong> or tap <strong>Edit</strong>.'
-                : '<strong>Drag</strong> a body into space or around it. Tap one, then tap <strong>Edit</strong> to change it.';
+            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
+                : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
         } else {
-            h = v ? '<strong>Drag</strong> bodies into space or around it. Drag an <strong>arrow tip</strong> to aim. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.'
-                : '<strong>Drag</strong> bodies into space or around it. <strong>Right-click</strong> a body (or <strong>Edit</strong>) to change it. <strong>?</strong> lists every key.';
+            h = `<strong>Drag</strong> a body into space.${v ? ' Drag a <strong>teal tip</strong> to aim.' : ''} <span class="orb-hint-links"><button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
-        // (the gear kept on the line of the word before it)
-        if (hints.intro) h += ' <strong>New:</strong> Missions, in the settings&nbsp;<span class="icon solid fa-cog" aria-hidden="true"></span>';
+        h += ` <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>${coarse() ? '' : '</span>'}`;
         return h;
+    }
+
+    // "A moon forming": how far it has got, in place of the usual help
+    function moonProgress() {
+        const top = heaviest();
+        let big = 0, n = 0;
+        for (const b of bodies) if (b !== top) { n++; if (b.m > big) big = b.m; }
+        const pct = (100 * big) / KINDS.moon.m;
+        return `Moonlets collide and stick. Biggest: <strong>${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</strong> of the Moon, <strong>${n}</strong> pieces left.`;
     }
 
     // Write the line from the top layer that has something to say
     function refreshHint() {
-        if (!ui.hint) return;
+        if (!ui.hint || hintPressed) return;
         const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
-            || hintHtml(hints.note) || hintHtml(hints.tip) || carryOnHint() || usualHint();
+            || hintHtml(hints.note) || hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint();
         if (h === hintKey) return;
         hintKey = h;
         ui.hint.innerHTML = h;
@@ -9110,11 +9700,32 @@
         hintClampCheck();
     }
 
-    // The older way in: setHint() refreshes, setHint('drop') is a drag from the palette, html a note
+    // The older way in: setHint() refreshes, html a note
     function setHint(kind, html) {
-        if (kind === 'drop') showHint('drag', `<strong>Drop it in space</strong> to add it.${throwTip(true)}`);
-        else if (html) showHint('note', html, { ms: 6000 });
+        if (html) showHint('note', html, { ms: 6000 });
         else refreshHint();
+    }
+
+    // The body that one of radius R km at (x, y) would touch, and so merge with
+    function dropTouches(x, y, R) {
+        if (!settings.merge) return null;
+        for (const q of bodies) if (Math.hypot(q.x - x, q.y - y) < (q.R + R) / AU_KM) return q;
+        return null;
+    }
+
+    // A drag from the palette: what a drop just here would do
+    function dropHint(d) {
+        const k = KINDS[d.kind] || KINDS.custom;
+        dropHost = d.over ? moonHost(d.cx, d.cy, k.m, k.R, null) : null;
+        let h = settings.placement === 'circular' ? '<strong>Drop it in space</strong>, or on a planet to make it a moon.' : '<strong>Drop it in space.</strong>';
+        if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
+        else if (d.over) {
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), hit = dropTouches(w.x, w.y, k.R);
+            const p = settings.placement === 'circular' ? placementPrimary(w.x, w.y, k.m, null) : null;
+            if (hit) h = `<strong>Drop it here</strong> and it merges with ${escapeHtml(theName(hit))}.`;
+            else if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
+        }
+        showHint('drag', settings.placement === 'throw' ? `${h} <strong>Flick</strong> it as you let go to throw it.` : h);
     }
 
     // On a phone the line shows three lines at most: one cut short says so (…) and opens out when tapped
@@ -9172,13 +9783,19 @@
     }
 
     // Phones held sideways: the tool column beside the canvas has no room for the hint line, so it goes
-    // under the canvas (between the palette and the info bar: see orbits_styles.css)
+    // under the canvas (between the palette and the info bar: see orbits_styles.css), and in a mission
+    // the goal and how it is going, over it
     const sideways = window.matchMedia ? window.matchMedia('(orientation: landscape) and (min-width: 640px) and (max-height: 540px)') : null;
     function placeHint() {
         const toolbar = byId('orbToolbar'), wrap = canvas.closest('.sim-canvas-wrapper');
         if (!ui.hint || !toolbar || !wrap) return;
-        if (sideways.matches) { if (ui.hint.previousElementSibling !== wrap) wrap.after(ui.hint); }
+        if (sideways.matches) { if (ui.hint.parentElement === toolbar) wrap.after(ui.hint); }
         else if (ui.hint.parentElement !== toolbar) toolbar.appendChild(ui.hint);
+        const E = ui.mc;
+        if (E) {
+            if (sideways.matches && mission.def) { if (E.goal.parentElement === E.box) wrap.after(E.goal, E.status); }
+            else if (E.goal.parentElement !== E.box) E.head.after(E.goal, E.status);
+        }
         hintClampCheck();
     }
 
@@ -9188,6 +9805,9 @@
     // to where it fits, rather than leaving the header in view and the info column cut off below.
     function bindTurn() {
         const dc = canvas.closest('.simulation-display-container');
+        // (held sideways as the page opens: the simulation fills the screen straight away, under the header,
+        // with the small margin that opening the settings would otherwise scroll the page to make)
+        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) - 8 }); }, { once: true });
         if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
         let inView = false;
         new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
@@ -9197,45 +9817,44 @@
             // (with the body's menu open, as the menu places the page when it opens)
             requestAnimationFrame(() => requestAnimationFrame(() => {
                 if (popBody && !ui.pop.hidden) { positionPopover(popBody, true); return; }
-                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY : 0;
+                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY - 8 : 0;
                 window.scrollTo({ top: Math.max(0, Math.round(top)) });
             }));
         };
         if (sideways.addEventListener) sideways.addEventListener('change', onTurn); else if (sideways.addListener) sideways.addListener(onTurn);
     }
 
-    // The pointer to throwing at the end of the drag hints: once a visit, until bodies are thrown
-    let throwTipShown = false;
-
     function dragHint(d) {
         const b = d.body;
         if (!b) return;
         const pr = predictLaunch(b);
         if (d.mode === 'move') {
+            dropHost = moonHost(sx(b.dx), sy(b.dy), b.m, b.R, b);
+            if (dropHost) { showHint('drag', `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`); return; }
             const p = pr && pr.p;
             const where = p ? theName(p) : 'the others';
             const how = settings.placement === 'circular' ? `starts on a circular orbit around ${escapeHtml(where)}`
                 : settings.placement === 'rest' ? 'starts at rest in this view' : settings.placement === 'throw' ? throwHint(d) : 'keeps its velocity';
-            showHint('drag', `<strong>Release</strong> to place ${escapeHtml(b.name)}: it ${how}.${throwTip(false, d)}`);
+            showHint('drag', `<strong>Let go:</strong> it ${how}.`);
         } else if (b.aim && b.aim.burn) {
             showHint('drag', burnHint(b, d));
         } else if (pr && pr.p.m < b.m) {
             // The heaviest body orbits nothing: just its speed in this view
             const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
             const av = aimedVelocity(b), v = fmtSpeedKms(Math.hypot(av.x - (L ? L.vx : totals(bodies).vx), av.y - (L ? L.vy : totals(bodies).vy)) * AUYR_KMS);
-            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}. The others pull it round as it goes.`);
+            showHint('drag', `<strong>${v.v} ${v.u}</strong> relative to ${L ? escapeHtml(theName(L)) : 'the centre of mass'}.`);
         } else if (pr) {
             const kms = (v) => fmtSpeedKms(v * AUYR_KMS);
             const v = kms(pr.el.v), snap = b.aim && b.aim.snap;
-            const fate = snap === 'circular' ? 'exactly the circular speed, a circle'
-                : snap === 'escape' ? 'exactly the escape speed, so it just escapes (a parabola)'
+            const fate = snap === 'circular' ? 'circular speed, a circle'
+                : snap === 'escape' ? 'escape speed, so it only just gets away'
                     : pr.el.bound ? (pr.el.e < 0.01 ? 'a circle' : `an ellipse, e = ${pr.el.e.toFixed(2)}`) : `it escapes (e = ${pr.el.e.toFixed(2)})`;
             let h = `<strong>${v.v} ${v.u}</strong> relative to ${escapeHtml(theName(pr.p))}: ${fate}.`;
             // (on a touch screen, fine control comes from holding the tip still before dragging it)
             const fineTouch = coarse() && aimFineTouch(d);
             if (!snap && !fineTouch) h += ` Circular ${kms(pr.vc).v}, escape ${kms(pr.ve).v} ${kms(pr.ve).u}.`;
-            if (!coarse()) h += d.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
-            else if (fineTouch) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+            if (!coarse()) h += d.fine ? ' <strong>Fine control.</strong>' : ' <strong>Shift:</strong> finer.';
+            else if (fineTouch) h += ' <strong>Fine control:</strong> a tenth of your finger\'s move.';
             showHint('drag', h);
         }
     }
@@ -9255,8 +9874,11 @@
     let lastTap = { t: 0, x: 0, y: 0, id: null, quick: false };
     const TAP_MS = 250;        // a press longer than this isn't a tap (for double-clicks and double-taps)
     let longPressTimer = 0;
-    // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
-    const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
+    // An arrow's tip is grabbed within this many px of it (the arrow is the handle: only the chosen body's
+    // tip has a small ring), and failing anything closer, the arrow from a little farther off (see nearArrow)
+    const GRAB_MOUSE = 14, GRAB_TOUCH = 24;
+    const NEAR_MOUSE = 24, NEAR_TOUCH = 30;
+    const HAND_LAG_S = 0.12;   // by the time a hand has pressed, a moving target has moved on this long
     let hoverAim = null;   // id of the body whose arrow tip the mouse is over
 
     function canvasPoint(e) {
@@ -9289,13 +9911,75 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
             const tip = velocityTip(b);
             if (tip.len < 14) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
             if (dd < bestD) { bestD = dd; best = b; }
         }
         return best;
+    }
+
+    // How far from segment (x0, y0)-(x1, y1) a point is
+    function distToSegment(x, y, x0, y0, x1, y1) {
+        const ex = x1 - x0, ey = y1 - y0, ee = ex * ex + ey * ey;
+        const s = ee > 0 ? clamp(((x - x0) * ex + (y - y0) * ey) / ee, 0, 1) : 0;
+        return Math.hypot(x - x0 - s * ex, y - y0 - s * ey);
+    }
+
+    // Where a body was on the screen a hand's reaction ago, as an offset in px (at most 60: much faster
+    // than that nobody is aiming at it). Nothing while time stands still.
+    function handLag(vx, vy) {
+        if (paused || timeHeld()) return { x: 0, y: 0 };
+        const k = -timeDir * settings.speed * rate() * HAND_LAG_S * scale;
+        const ox = vx * k, oy = -vy * k, n = Math.hypot(ox, oy);
+        return n > 60 ? { x: (ox * 60) / n, y: (oy * 60) / n } : { x: ox, y: oy };
+    }
+
+    // The velocity arrow a press at (x, y) means, if it isn't right on a tip or a body: the nearest whose
+    // shaft is under it, or whose tip is close to it now or was a moment ago
+    function nearArrow(x, y, shaft, tip) {
+        if (!settings.velocities || bodies.length < 2 || mission.def) return null;
+        const fv = frameVelocity();
+        let best = null, bestD = Infinity;
+        for (const b of bodies) {
+            if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId)) continue;
+            const t = velocityTip(b, fv);
+            if (t.len < 14) continue;
+            const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
+            const lag = handLag(t.vx, t.vy);
+            const ds = distToSegment(x, y, bx + ((t.x - bx) / n) * r, by + ((t.y - by) / n) * r, t.x, t.y);
+            const dt = distToSegment(x, y, t.x, t.y, t.x + lag.x, t.y + lag.y);
+            const d = Math.min(ds, dt);
+            if ((ds <= shaft || dt <= tip) && d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
+    // A named body close to a press at (x, y), now or a moment ago
+    function bodyNear(x, y, tol) {
+        const fv = frameVelocity();
+        let best = null, bestD = tol;
+        for (const b of bodies) {
+            if (b.minor || b.grp || mission.def) continue;
+            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.vx - fv.x, y: b.vy - fv.y }, lag = handLag(v.x, v.y);
+            const d = distToSegment(x, y, bx, by, bx + lag.x, by + lag.y) - drawRadius(b);
+            if (d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
+    // The pink arrow under a press at (x, y)? They show a pull, and can't be dragged
+    function onForceArrow(x, y, tol) {
+        if (!settings.forces) return null;
+        for (const b of bodies) {
+            const Fm = Math.hypot(b.fx, b.fy);
+            if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId)) continue;
+            const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
+            const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;
+            if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------
@@ -9332,7 +10016,7 @@
         const base = ref ? { x: ref.vx, y: ref.vy } : fv;
         b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
         turnAim(b.aim);   // (a turned view: aimed as drawn, see aimedVelocity)
-        // Keep the grabbed point on the arrow. A body at rest has no arrow: it is grabbed just off the
+        // Keep the grabbed point on the arrow (wherever on it, or near it, the press was). A body at rest has no arrow: it is grabbed just off the
         // edge of its disc, and the arrow grows from there as soon as the pointer moves.
         let tip = velocityTip(b);
         if (tip.len < 1) {
@@ -9453,6 +10137,8 @@
                 resetTracking(b);
                 k2.bid = null;
             } else if (d.mode === 'move' && d.moved) {
+                const host = moonHost(sx(b.dx), sy(b.dy), b.m, b.R, b);
+                if (host) { const at = moonSpot(host, b.x, b.y, bodies.filter((q) => q.primary === host && q.bound).length); b.x = at.x; b.y = at.y; }
                 launch(b, false, d);
             }
         }
@@ -9475,9 +10161,10 @@
         computeForces();
         computePrimaries();
         syncEccentricity(true);
-        throwTipSeen(d);
         clearHint('drag');
         clearHint('tip');
+        if (dropHost && d.mode === 'move' && apply) moonNote(b);
+        dropHost = null;
         endGesture(d.mode === 'move' || apply);
     }
 
@@ -9486,6 +10173,7 @@
         drags.clear();
         pinch = null;
         freeze = null;
+        dropHost = null;
         if (hints.drag && !paletteDrag) { hints.drag = null; refreshHint(); }
     }
 
@@ -9518,6 +10206,8 @@
     //   forgotten, the run stops there with a note. Bodies that touch while running back still merge.
     //   An edit (or undo, run again, a restart, or switching realistic physics) starts a new history:
     //   what came before it isn't the past of the system as it is now.
+    //   Rewinding stops at the start, paused and ready to run forwards. Pressed there, Reverse runs on
+    //   into the past that would lead to this setup (there is no trail to compare it with).
     //   Hooks: stepSize, afterStep and sampleTrails in advance (the trails sampled either way in time,
     //   see sampleAtTime), noteIrreversible in mergeBodies and disrupt, the clock-based measurements
     //   (periods, Kepler's 2nd law) fed time running forwards, drawPast in renderFrame, and timeDir in
@@ -9529,20 +10219,22 @@
     let trailEpoch = -1;                  // hist.epoch when trailFloor was last good
     const STEP_LOG = 1 << 17;             // steps logged for an exact retrace
     const LOG_MASK = STEP_LOG - 1;
-    const PAIR_SETS = 4096;               // different sets of close pairs logged (beyond: chosen afresh going back)
+    const PAIR_SETS = 4096;               // different sets of close pairs logged (beyond: chosen afresh going back)...
+    const PAIR_ROWS = 200000;             // ...and at most this many pairs in them
     const EVENT_MAX = 200;                // merges and break-ups remembered...
     const EVENT_BODIES = 20000;           // ...and at most this many bodies in their copies
     const RETRACE_NEAR = 1e-3;            // back at a merger's moment: within this fraction of its step
+    const MERGE_BACK_NOTE = '<strong>A merge can\'t be rewound.</strong> Undo brings them back.';   // (bodies that touch while running back)
     const past = {
         key: null,                        // the edit history's state when this history began (pastKey)
         from: 0,                          // trail samples from this number on were taken during it
         dt: null, pairs: null, head: 0, count: 0, replay: false,   // the step log: signed steps, pair sets
-        sets: [[]], last: [], set: 0,     // the pair sets (as body ids), and the last step's pairs and set
+        sets: [[]], rows: 0, last: [], set: 0,   // the pair sets (as body ids), and the last step's pairs and set
         events: [], pending: null, wall: null,
         dropped: false,                   // the sample after the newest kept one was dropped (still readable)
         ghosted: false, drift: false, gap: 0, noted: false, noteTimer: 0   // (gap: the widest, px)
     };
-    Object.assign(ui, { reverse: byId('reverseToggle') });
+    Object.assign(ui, { reverse: byId('reverseBtn') });
 
     // The edit history's state: it changes with every edit, undo, run again, restart or new scene (the
     // "run again" copy is retaken, or the trail samples start again), and while a body is dragged
@@ -9558,7 +10250,7 @@
         past.key = key;
         past.head = past.count = 0;
         past.replay = false;
-        past.sets.length = 1; past.last = []; past.set = 0;
+        past.sets.length = 1; past.rows = 0; past.last = []; past.set = 0;
         past.events.length = 0; past.pending = null; past.wall = null;
         // (the sample just taken at this moment belongs to it)
         past.from = sampleCount > 0 && sampleTimes[(sampleCount - 1) % TRAIL_CAP] === simTime ? sampleCount - 1 : sampleCount;
@@ -9586,7 +10278,8 @@
         const want = idx >= 0 ? past.sets[idx] : null;
         if (!want) { refreshPairs(); return; }
         const has = (ia, ib) => mainPairs.some((p) => (p.a.id === ia && p.b.id === ib) || (p.a.id === ib && p.b.id === ia));
-        if (want.length === mainPairs.length && want.every(([ia, ib]) => has(ia, ib))) {
+        const inOrder = want.length === mainPairs.length && want.every(([ia, ib], k) => mainPairs[k].a.id === ia && mainPairs[k].b.id === ib);
+        if (inOrder || (want.length === mainPairs.length && want.every(([ia, ib]) => has(ia, ib)))) {
             if (forcesDirty) computeForces();
             return;
         }
@@ -9594,8 +10287,9 @@
         mainPairs.length = 0;
         for (const [ia, ib] of want) {
             const a = bodyById(ia), b = bodyById(ib);
-            if (a && b && !a.kep && !b.kep) { const q = { a, b, touch: false, fast: false }; mainPairs.push(q); a.kep = q; b.kep = q; }
+            if (a && b && !a.kep && (a.grp || !b.kep)) followPair(a, b, false);
         }
+        syncHosts();
         computeForces();   // (a pair's own pull is left out of the kicks)
     }
 
@@ -9607,7 +10301,8 @@
         if (same) return past.set;
         past.last = mainPairs.slice();
         if (!mainPairs.length) return (past.set = 0);
-        if (past.sets.length >= PAIR_SETS) return (past.set = -1);
+        if (past.sets.length >= PAIR_SETS || past.rows >= PAIR_ROWS) return (past.set = -1);
+        past.rows += mainPairs.length;
         past.sets.push(mainPairs.map((p) => [p.a.id, p.b.id]));
         return (past.set = past.sets.length - 1);
     }
@@ -9631,13 +10326,42 @@
             const ev = past.events[past.events.length - 1];
             if (ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) undoEvent(ev);
         }
+        // (rewound to the start: it stops there, ready to run forwards, as a tape does)
+        if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
+            setPaused(true);
+            setReverse(false, true);
+            // (off, and looking it, though the pointer that pressed it may still be on it)
+            if (ui.reverse && ui.reverse.matches(':hover')) ui.reverse.classList.add('is-rested');
+            if (driftedFromStart()) {
+                const again = canRunAgain() ? ' <button type="button" class="orb-hint-btn orb-hint-again">Run again</button>' : '';
+                pastNote(`<strong>Back at time 0, but not where it began:</strong> rounding errors grow in chaos.${again}`, 12000);
+            } else pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
+            return;
+        }
         const w = past.wall;
         if (w && w.dir === -timeDir && w.dir * (simTime - w.t) <= 0) {
             past.wall = null;
             setPaused(true);
             acc = 0;
-            pastNote('<strong>Stopped:</strong> two bodies merged about now, too long ago for the simulation to remember how to take them apart.', 8000);
+            pastNote('<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
         }
+    }
+
+    // Rewound to the start of the run: is any body away from where it began, by over 1% of the size of
+    // the system then, or gone? (Chaos does that at a high speed, where each step is far larger.)
+    function driftedFromStart() {
+        const s = hist.rw;
+        if (!s || hist.rwStale || Math.abs(s.t - simTime) > sampleDt) return false;
+        if (s.n !== bodies.length) return true;
+        const num = s.num, at = new Map(bodies.map((b) => [b.id, b]));
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, far = 0;
+        for (let i = 0; i < s.n; i++) {
+            const o = i * SNAP_W, x = num[o + 3], y = num[o + 4], b = at.get(num[o]);
+            if (!b) return true;
+            x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+            far = Math.max(far, Math.hypot(b.x - x, b.y - y));
+        }
+        return far > 0.01 * Math.hypot(x1 - x0, y1 - y0);
     }
 
     // Just before a merge (kind 'merge') or a tidal break-up ('tear'): copy the system, once a step
@@ -9680,8 +10404,9 @@
         mainPairs.length = 0;
         for (const [ia, ib, fast] of s.pairs) {
             const a = list.find((q) => q.id === ia), b = list.find((q) => q.id === ib);
-            if (a && b) { const q = { a, b, touch: false, fast: !!fast }; mainPairs.push(q); a.kep = q; b.kep = q; }
+            if (a && b) followPair(a, b, !!fast);
         }
+        syncHosts();
         groupEnergy.clear();
         for (const [id, u] of s.groupE) groupEnergy.set(id, u);
         // The choice of body (and the view) passes back to the one it came from
@@ -9709,9 +10434,10 @@
         const back = list.filter((b) => !had.has(b));
         for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
         const name = back.length ? escapeHtml(back[0].name) : 'A body';
-        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself, so it is put back as it was just before.`
-            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself, so the bodies are put back as they were just before they met.`;
+        const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
+            : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
+        updateHistoryUi();
     }
 
     // The trails after a step, either way in time. The kept samples always run one way (trailDir).
@@ -9777,6 +10503,7 @@
         if (trailDir === timeDir || !past.dropped || k < Math.max(trailFloor, past.from) || cleanRender) return;
         const kt = k % TRAIL_CAP, kt1 = (k + 1) % TRAIL_CAP;
         const t0 = sampleTimes[kt], t1 = sampleTimes[kt1];
+        if (timeDir * (simTime + lag - t0) > 0) return;   // (back before the oldest sample: there is no true past to compare with)
         const f = t1 !== t0 ? clamp((simTime + lag - t0) / (t1 - t0), 0, 1) : 0;
         // Relative to where the frame's origin was then, as the trails are drawn
         const L = frameId !== null ? bodyById(frameId) : null;
@@ -9795,13 +10522,14 @@
         if (tq && tq.ox !== undefined) { ox = tq.ox; oy = tq.oy; }
         const rc = tq ? tq.c : 1, rs = tq ? tq.s : 0;
         const live = freeze ? liveFrameOrigin() : F;
-        const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        const offX = (live.x - F.x - view.panX) * scale + midX, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const where = (b) => {
             const T = b.trail, i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1);
             const rx = T[i0] + f * (T[i1] - T[i0]) - ox, ry = T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy;
             return { x: offX + (rc * rx - rs * ry) * scale, y: offY - (rs * rx + rc * ry) * scale };
         };
-        const usable = (b) => !b.held && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
+        // (not pieces of a torn-apart body: their samples are too far apart at a swing past the host to say where they were)
+        const usable = (b) => !b.held && !b.grp && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
         for (const b of bodies) {
             if (!usable(b)) continue;
             const g = where(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -9841,7 +10569,9 @@
         }
         if (past.drift && !past.noted) {
             past.noted = true;
-            pastNote('<strong>Drifted from the true past.</strong> Tiny rounding errors grow fast in chaos, so the bodies no longer retrace their paths. Faint dashed discs show where they really were.', 9000);
+            // (bodies that merged on the way back left the true past for good: rounding has nothing to do with it)
+            if (past.events.some((e) => e.dir === timeDir)) pastNote(MERGE_BACK_NOTE, 8000);
+            else pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
         }
     }
 
@@ -9872,8 +10602,8 @@
     // the other way, and the measurements that run with the clock (periods, Kepler's 2nd law sectors,
     // the flyby card) start again; the history, the trails and any merges to undo carry on.
     function setReverse(on, quiet) {
-        if (on && mission.def && mission.status === 'flying') {
-            missionNote('<strong>Mission rules:</strong> in a mission, time only runs forwards (Undo takes a burn back).');
+        if (on && mission.def) {
+            missionNote('<strong>Mission rules:</strong> time only runs forwards. Undo takes a burn back.');
             on = false;
         }
         const dir = on ? -1 : 1;
@@ -9887,14 +10617,18 @@
             pred.key = '';
             edit.previewDirty = true;
             past.noted = false;
-            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> the clock counts down and every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
+            if (!quiet) pastNote(!on ? '<strong>Running forwards</strong> again.' : simTime > 0 ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Before the start:</strong> the past that would lead to this setup.', 5000);
         }
         syncReverseUi();
     }
 
     function syncReverseUi() {
         const back = timeDir < 0;
-        if (ui.reverse && ui.reverse.checked !== back) ui.reverse.checked = back;
+        if (ui.reverse) {
+            ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+            if (back) ui.reverse.classList.remove('is-rested');
+        }
+        if (ui.pause) ui.pause.classList.toggle('is-back', back);   // (its Play points the way time will run)
         if (ui.step) {
             const label = back ? 'Step back' : 'Step forward';
             if (ui.step.getAttribute('aria-label') !== label) {
@@ -9906,15 +10640,25 @@
         }
     }
 
-    // The settings' "Run backwards" box, and B (not while typing, nor with Ctrl, Cmd or Alt); and the
-    // moment a thrown body is let go
+    // A press of Reverse, or B. Turning it on sets time going, as nobody presses it to see nothing happen.
+    function pressReverse() {
+        const on = timeDir > 0;
+        setReverse(on);
+        if (on && timeDir < 0 && paused) setPaused(false);
+    }
+
+    // The Reverse button, and B (not while typing, nor with Ctrl, Cmd or Alt); and the moment a thrown
+    // body is let go
     function bindPlayControls() {
         window.addEventListener('pointerup', onThrowUp, true);
-        if (ui.reverse) ui.reverse.addEventListener('change', () => setReverse(ui.reverse.checked));
+        if (ui.reverse) {
+            ui.reverse.addEventListener('click', pressReverse);
+            ui.reverse.addEventListener('pointerleave', () => ui.reverse.classList.remove('is-rested'));
+        }
         window.addEventListener('keydown', (e) => {
             if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
             if (e.key !== 'b' && e.key !== 'B') return;
-            if (!e.repeat) setReverse(timeDir > 0);
+            if (!e.repeat) pressReverse();
             e.preventDefault();
         });
         syncReverseUi();
@@ -10009,22 +10753,11 @@
     // The hint while a body is moved, when it will be thrown: "flies off at 12 km/s ..."
     function throwHint(d) {
         const now = performance.now();
-        if (!flickPx(d, now)) return 'stays put in this view. <strong>Flick</strong> it as you let go to throw it';
+        if (!flickPx(d, now)) return 'stays put. <strong>Flick</strong> it as you let go to throw it';
         const v = throwVelocity(d, now), fv = throwBase(d);
         const s = fmtSpeedKms(Math.hypot(v[0] - fv.x, v[1] - fv.y) * AUYR_KMS);
-        return `flies off at <strong>${s.v} ${s.u}</strong>, the speed you let go at`;
+        return `flies off at <strong>${s.v} ${s.u}</strong>`;
     }
-
-    // ...and how to find throwing, if it is off: during the first drag of a visit only (d: the drag)
-    function throwTip(drop, d) {
-        if (settings.placement === 'throw') return drop ? ' <strong>Flick</strong> it as you let go to throw it.' : '';
-        const g = d || paletteDrag;
-        if (throwTipShown && !(g && g.throwTipped)) return '';
-        if (g) g.throwTipped = true;
-        return ' To fling bodies, choose <strong>Throw it</strong> in More options.';
-    }
-    // (at the end of a drag: the pointer to throwing has been seen)
-    function throwTipSeen(d) { if (d && d.throwTipped) throwTipShown = true; }
 
     // A body being dragged from the palette: the velocity it would be thrown with
     function drawThrowArrow(C) {
@@ -10084,7 +10817,11 @@
         // (by touch a Lagrange point's marker wins over a swarm's unnamed dots: the tap reads its note)
         if (b && touch && b.minor && !isChosen(b) && lagrangeShown.length && lagrangeAt(pt.x, pt.y, LAGRANGE_TAP) && !namedBodyAt(pt.x, pt.y, tol)) b = null;
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
+        // (not quite on anything: what the press was probably meant for, rather than moving the view)
+        if (!handleBody && !b && !right) handleBody = nearArrow(pt.x, pt.y, touch ? 12 : 7, touch ? NEAR_TOUCH : NEAR_MOUSE);
+        if (!handleBody && !b) b = bodyNear(pt.x, pt.y, touch ? 18 : 12);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
+        const forceOnly = !handleBody && !b && !right && !mission.def && onForceArrow(pt.x, pt.y, touch ? 10 : 6);
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
         if (handleBody) {
             d.mode = 'aim';
@@ -10108,6 +10845,10 @@
                     }, 520);
                 }
             }
+        } else if (forceOnly) {
+            // (a press on a pink arrow, which looks as if it could be dragged, says what it is)
+            d.mode = 'done';
+            showHint('note', '<strong>Pink arrows</strong> show gravity\'s pull. Drag a <strong>teal tip</strong> to aim.', { ms: 5000 });
         } else {
             d.mode = 'pending';
         }
@@ -10135,12 +10876,15 @@
                 const [a, b] = pts;
                 const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
                 const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+                const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
                 view.zoom = clamp(pinch.zoom0 * dist / pinch.d0, 1e-7, 1e7);
                 view.anim = null;
+                drawer.moved = true;
                 updateScale();
                 // keep the world point that was under the fingers' midpoint under it
-                view.panX = pinch.wx - F.x - (mx - viewW / 2) / scale;
+                view.panX = pinch.wx - F.x - (mx - midX) / scale;
                 view.panY = pinch.wy - F.y + (my - viewH / 2) / scale;
+                if (view.zoom > was.zoom && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in)
             }
             return;
         }
@@ -10149,6 +10893,8 @@
             view.panX -= dx / scale;
             view.panY += dy / scale;
             view.anim = null;
+            view.panned = true;
+            drawer.moved = true;
             return;
         }
         if (d.mode === 'press' && far && missionRefuse('move', d.body)) d.mode = 'pan';
@@ -10192,6 +10938,10 @@
             endHold(d, !cancelled && (d.mode === 'move' || d.moved));
             return;
         }
+        if (d.mode === 'pan' && !view.panTold && !mission.def && Math.hypot(d.x - d.x0, d.y - d.y0) > 30) {
+            view.panTold = true;
+            showHint('note', '<strong>You moved the view.</strong> Fit view puts it back.', { ms: 5000 });
+        }
         if (cancelled || d.mode === 'done') return;
         if (d.button === 2) {
             // Right-click on empty space just closes the menu
@@ -10233,7 +10983,7 @@
         updateDrawnPositions();
         let tipOf = onHandle(x, y, GRAB_MOUSE);
         if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
-        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1);
+        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
         if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
     }
 
@@ -10258,15 +11008,37 @@
 
     function supExp(n) { return String(n).split('').map((c) => SUP[c]).join(''); }
 
+    // Chart.js is fetched the first time the graphs are shown (most visits never need it)
+    const CHART_JS = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js';
+    let chartJsAsked = false;
+    function askForChartJs() {
+        if (chartJsAsked) return;
+        chartJsAsked = true;
+        const tag = document.createElement('script');
+        tag.src = CHART_JS;
+        tag.onload = () => {
+            if (charts || !ui.chartsContainer || ui.chartsContainer.style.display === 'none') return;
+            charts = makeCharts();
+            resetCharts();
+        };
+        tag.onerror = () => { chartJsAsked = false; };
+        document.head.appendChild(tag);
+    }
+
     function makeCharts() {
-        if (typeof Chart === 'undefined') return null;
+        if (typeof Chart === 'undefined') { askForChartJs(); return null; }
         const c = chartColors();
+        // (a steady line stays a steady line: its axis spans at least 1% of its value, not its last few digits)
+        const steadyAxis = (axis) => {
+            const mid = 0.5 * (axis.max + axis.min), least = 0.01 * Math.abs(mid);
+            if (axis.max - axis.min < least) { axis.min = mid - 0.5 * least; axis.max = mid + 0.5 * least; }
+        };
         const common = (yTitle) => ({
             responsive: true, maintainAspectRatio: false, animation: false,
             plugins: { legend: { labels: { color: c.text, boxWidth: 12 } } },
             scales: {
-                x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
-                y: { ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
+                x: { ticks: { color: c.text, maxTicksLimit: 6, maxRotation: 0, sampleSize: 8 }, grid: { color: c.grid }, title: { display: true, text: `Time (${fmtTime(0).u})`, color: c.text } },
+                y: { afterDataLimits: steadyAxis, ticks: { color: c.text }, grid: { color: c.grid }, title: { display: true, text: yTitle, color: c.text } }
             }
         });
         const e1 = byId('energyChart'), e2 = byId('orbitChart');
@@ -10284,7 +11056,7 @@
             options: common(`Energy (×10${supExp(energyExp)} J)`)
         });
         const opts = common('Distance');
-        opts.scales.y1 = { position: 'right', ticks: { color: c.text }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Speed (km/s)', color: c.text } };
+        opts.scales.y1 = { afterDataLimits: steadyAxis, position: 'right', ticks: { color: c.text }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Speed (km/s)', color: c.text } };
         const orbit = new Chart(e2, {
             type: 'line',
             data: {
@@ -10301,12 +11073,22 @@
 
     function chartsVisible() { return !!(charts && ui.chartsContainer && ui.chartsContainer.style.display !== 'none'); }
 
+    let chartsFrom = null;   // where the page was when the graphs opened
     function setChartsVisible(visible) {
         if (!ui.chartsContainer) return;
         ui.chartsContainer.style.display = visible ? 'block' : 'none';
         document.body.classList.toggle('charts-visible', visible);
         if (visible && !charts) charts = makeCharts();
         if (visible) resetCharts();
+        // (they open under the info bar, below the fold on most screens; closed, the page goes back)
+        if (document.body.classList.contains('sim-fullscreen-active')) return;
+        if (visible) {
+            chartsFrom = window.scrollY;
+            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
+        } else if (chartsFrom !== null) {
+            window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
+            chartsFrom = null;
+        }
     }
 
     function resetCharts() {
@@ -10341,37 +11123,53 @@
     // stays level round a black hole, where the Newtonian energy alone swings by tens of per cent each
     // orbit (to within the size of the next, 2PN, terms: about 2% for the neutron star at 0.24c). A compact,
     // close pair also has the 2PN terms in its motion, and so in its energy (energy2PN).
+    let sumKE = 0, sumPE = 0;
+    function addPairEnergy(bi, bj) {
+        const rx = bi.x - bj.x, ry = bi.y - bj.y;
+        if (bi.grp && bj.grp) {
+            // pieces of one torn-apart body: the softened potential of their softened pull
+            // (and pieces of different bodies don't pull on each other)
+            if (bi.grp !== bj.grp) return;
+            const e = 0.5 * (softLength(bi) + softLength(bj));
+            sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
+            return;
+        }
+        const r = Math.sqrt(rx * rx + ry * ry);
+        if (!(r > 0)) return;
+        sumPE -= (G * bi.m * bj.m) / r;
+        if (settings.realistic && !bi.grp && !bj.grp) {   // (a piece's orbit turns, without these: see driftHosted)
+            const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
+            const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
+            const rd = (rx * vx + ry * vy) / r;
+            sumKE += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
+            sumPE += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
+            // (and the 2PN terms for a compact, close pair, which has them in its motion too)
+            if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); sumKE += mu * e2.k; sumPE += mu * e2.p; }
+        }
+    }
+
     function systemEnergy() {
         const c = totals(bodies);
-        let ke = 0, pe = 0;
-        for (const b of bodies) ke += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
+        sumKE = 0; sumPE = 0;
+        for (const b of bodies) sumKE += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
         for (let i = 0; i < bodies.length; i++) {
             const bi = bodies[i];
-            for (let j = i + 1; j < bodies.length; j++) {
-                const bj = bodies[j];
-                const rx = bi.x - bj.x, ry = bi.y - bj.y;
-                if (bi.grp && bi.grp === bj.grp) {
-                    // pieces of one torn-apart body: the softened potential of their softened pull
-                    const e = 0.5 * (softLength(bi) + softLength(bj));
-                    pe -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
-                    continue;
-                }
-                const r = Math.sqrt(rx * rx + ry * ry);
-                if (!(r > 0)) continue;
-                pe -= (G * bi.m * bj.m) / r;
-                if (settings.realistic) {
-                    const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
-                    const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
-                    const rd = (rx * vx + ry * vy) / r;
-                    ke += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
-                    pe += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
-                    // (and the 2PN terms for a compact, close pair, which has them in its motion too)
-                    if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); ke += mu * e2.k; pe += mu * e2.p; }
-                }
-            }
+            for (let j = i + 1; j < bodies.length; j++) addPairEnergy(bi, bodies[j]);
         }
-        for (const u of groupEnergy.values()) pe -= u;
-        return { ke, pe, total: ke + pe };
+        for (const u of groupEnergy.values()) sumPE -= u;
+        return { ke: sumKE, pe: sumPE, total: sumKE + sumPE };
+    }
+
+    // The part of that energy that a few of the bodies have: their motion, and every pair they are in
+    function energyOf(list) {
+        const c = totals(bodies);
+        sumKE = 0; sumPE = 0;
+        for (const b of list) {
+            sumKE += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
+            for (const q of bodies) if (!list.includes(q)) addPairEnergy(b, q);
+        }
+        for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) addPairEnergy(list[i], list[j]);
+        return sumKE + sumPE;
     }
 
     function angularMomentum() {
@@ -10479,7 +11277,7 @@
     };
     const CSV_EMPTY = {
         kepler: 'Nothing to list yet: choose a body that orbits something.',
-        graphs: 'No graph data yet: show the graphs (the chart button under the canvas) and let it run.',
+        graphs: 'No graph data yet: show the Graphs and let it run.',
         bodies: 'There are no bodies.'
     };
     Object.assign(settings, { stability: false });
@@ -10530,6 +11328,7 @@
     function flashNote(el, text) {
         if (!el) return;
         el.textContent = text;
+        revealInPanel(el);
         clearTimeout(share.noteTimers.get(el));
         share.noteTimers.set(el, setTimeout(() => { el.textContent = el.dataset.text || ''; }, NOTE_MS));
     }
@@ -10693,14 +11492,19 @@
             list[0].name = 'Star A';
             companion = true;
         }
-        const half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        let half = 1.15 * Math.max(...planets.map((p) => p.a * (1 + p.e)));
+        // (with a second star the planets' star goes round the centre of mass too: all of it in view)
+        if (companion) {
+            const c = totals(list), far = (b) => Math.hypot(b.x - c.x, b.y - c.y);
+            half = 1.15 * Math.max(far(list[0]) + half / 1.15, far(list[list.length - 1]));
+        }
         const extra = [];
         if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
         if (companion) extra.push('a second star');
         const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
-            tip: `System #${seed}: ${desc}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? Any change restarts the timer.`,
+            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years?`,
             bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
         };
     }
@@ -10856,10 +11660,14 @@
         const def = SCENES[key];
         const fin = (v, dflt) => (Number.isFinite(v) ? v : dflt);
         const idOf = (v) => (ids.has(v) ? v : null);
-        const pairs = [], paired = new Set();
+        const pairs = [], paired = new Set(), pieces = new Set();
+        for (let i = 0; i < n; i++) if (num[i * SNAP_W + 7]) pieces.add(num[i * SNAP_W]);
         for (const q of Array.isArray(d.pr) ? d.pr : []) {
-            if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0]) || paired.has(q[1])) continue;
-            paired.add(q[0]); paired.add(q[1]);
+            if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0])) continue;
+            // (many pieces of a torn-apart body can share a host)
+            if (!pieces.has(q[0]) && paired.has(q[1])) continue;
+            paired.add(q[0]);
+            if (!pieces.has(q[0])) paired.add(q[1]);
             pairs.push([q[0], q[1], q[2] ? 1 : 0]);
         }
         const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
@@ -10996,10 +11804,12 @@
         updateScale();
         updateDrawnPositions();
         timedHint(note, 7000);
+        missionFromSetup(s);
     }
 
     function applySettings(set) {
         const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        paceZoom.was = 0;
         setSpeedValue(set.sp);
         check(ui.realistic, 'realistic', set.re);
         check(ui.merge, 'merge', set.me);
@@ -11018,7 +11828,7 @@
         pred.key = '';
     }
 
-    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused: press play to run it, or Undo to go back.`;
+    const OPEN_NOTE = (what) => `<strong>${what}</strong>, paused. Press play, or Undo to go back.`;
 
     // Open a link's setup. fromHash: it came with the page (or was pasted into its address), so the hash
     // is cleared afterwards and a reload doesn't open it again over any changes. Resolves to { ok, message }.
@@ -11068,7 +11878,7 @@
             }
         }
         const kb = `${Math.max(1, Math.round(link.length / 1024)).toLocaleString('en-US')} KB`;
-        let msg = ok ? 'Link copied. Opening it shows this setup, paused.' : 'Copy the link from the box below.';
+        let msg = ok ? 'Link copied.' : 'Copy the link from the box below.';
         if (link.length > LONG_LINK) {
             msg = `${ok ? 'Link copied, but it is' : 'This link is'} long (${kb}, ${n.toLocaleString('en-US')} ${n === 1 ? 'body' : 'bodies'}): some apps cut long links short.${ok ? '' : ' Copy it from the box below.'}`;
         }
@@ -11081,7 +11891,7 @@
     // ------------------------------------------------------------------
     // Not a built-in scene that hasn't been touched (it is one click away anyway), nor half-way
     // through moving a body
-    const saveEligible = () => bodies.length > 0 && (isRandomKey(settings.scene) || !hist.cleanLoad) && !editing();
+    const saveEligible = () => bodies.length > 0 && (isRandomKey(settings.scene) || !hist.cleanLoad) && !editing() && !mission.def;   // (a mission mustn't take the place of your own system)
     const autosaveSignature = () => `${editSignature()}#${settingsSignature()}`;
 
     function autosaveTick(now) {
@@ -11161,7 +11971,6 @@
             + '<button type="button" class="orb-carry-x" aria-label="No thanks" title="No thanks"><span class="icon solid fa-times" aria-hidden="true"></span></button>';
         clearTimeout(share.offerTimer);
         share.offerTimer = setTimeout(endOffer, OFFER_MS);
-        hints.intro = false;   // (one thing at a time: the offer, not the missions' introduction too)
         refreshHint();
     }
 
@@ -11185,6 +11994,13 @@
             if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
         } else if (t.closest('.orb-carry-x')) {
             endOffer();
+        } else if (t.closest('.orb-hint-zoom')) {
+            clearHint('note');
+            zoomChosen();
+        } else if (t.closest('.orb-hint-help')) {
+            openHelp(false);
+        } else if (t.closest('.orb-hint-again')) {
+            runAgain();
         }
     }
 
@@ -11283,6 +12099,7 @@
     }
 
     function noteTornApart(L, H) {
+        tornNews = { L, H, chosen: selectedId === L.id };
         if (!settings.stability) return;
         stabilityRestart(performance.now());
         if (!stab.ended) endStability('torn', L, H, simTime);
@@ -11293,7 +12110,7 @@
         stab.ended = { kind, a: a.name, b: other ? other.name : '', years };
         const best = noteBest(years);
         saveStabilityBest();
-        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''} Change something and try again.`, 8000);
+        timedHint(`<strong>${escapeHtml(eventText(stab.ended, fmtSpan(years)))}.</strong> ${best ? 'A new best!' : stab.best.yr > 0 ? `Your best: ${fmtYears(stab.best.yr)}.` : ''}`, 8000);
     }
 
     function eventText(e, dur) {
@@ -11461,9 +12278,44 @@
     // ------------------------------------------------------------------
     // Controls, the page's start, and the checks four times a second
     // ------------------------------------------------------------------
+    // A folded group of the settings says what it holds: the view, the laws switched on
+    function syncFolds() {
+        const on = [[ui.k1, '1st'], [ui.k2, '2nd'], [ui.k3, '3rd']].filter((k) => k[0] && k[0].checked).map((k) => k[1]);
+        setText(ui.foldKepler, on.join(', '));
+        const opt = ui.frame && ui.frame.options[ui.frame.selectedIndex];
+        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '') : '');
+    }
+
+    // Everything panned or zoomed out of view: Fit view stands out, and says why once
+    let viewLost = null;
+    function checkInView() {
+        // (zoomed well back out from where a slower time was set: the old speed again)
+        if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
+        // (a glide passes through views that show nothing: only where it ends counts)
+        if (!ui.fit || !viewW || !bodies.length || dragging()) return;
+        const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > visL - r && x < visR + r && y > -r && y < viewH + r; });
+        if (view.anim) {
+            if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned);
+            // (a glide that has brought bodies back: the note goes as soon as they show)
+            else if (!inside && !out) { viewLost = null; clearHint('note', 'lost'); }
+            return;
+        }
+        ui.fit.classList.toggle('is-wanted', out || !!inside || !!view.panned);   // (moved by hand: the way back stands out too)
+        const lost = inside ? inside.id : out ? -1 : null;
+        if (lost === viewLost) return;
+        viewLost = lost;
+        if (inside) showHint('note', `<strong>You are inside ${escapeHtml(theName(inside))}.</strong> Fit view brings it back.`, { tag: 'lost', ms: 6000 });
+        else if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
+        else clearHint('note', 'lost');
+    }
+
     function shareTick() {
         const now = performance.now();
+        if (scene.progress) refreshHint();
         syncSceneList();
+        syncFolds();
+        checkInView();
         stabilityTick(now);
         autosaveTick(now);
     }
@@ -11475,14 +12327,53 @@
         if (token) { setPaused(true); openSetup(token, true); } else offerAutosave();
     }
 
+    // Scroll the settings just enough to show what has just opened or appeared in them (the page itself stays)
+    function revealInPanel(el) {
+        const sc = el.closest ? el.closest('.sim-controls-content') : null;
+        if (!sc) return;
+        requestAnimationFrame(() => {
+            const r = el.getBoundingClientRect(), s = sc.getBoundingClientRect();
+            let d = 0;
+            if (r.bottom > s.bottom - 8) d = Math.min(r.bottom - s.bottom + 8, r.top - s.top - 8);
+            else if (r.top < s.top + 8) d = r.top - s.top - 8;
+            if (Math.abs(d) > 1) sc.scrollBy({ top: d, behavior: quickMotion() });
+        });
+    }
+
+    const quickMotion = () => (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+
+    // About opens with its heading at the top of the screen; closed again, the page goes back to where
+    // it was, as it does for the graphs (see setChartsVisible)
+    function bindPageFolds() {
+        const about = document.querySelector('details.description-area');
+        for (const d of document.querySelectorAll('.sim-controls-content details')) {
+            d.addEventListener('toggle', () => { if (d.open) revealInPanel(d); });
+        }
+        if (!about) return;
+        let from = null;
+        const sum = about.querySelector('summary');
+        about.addEventListener('toggle', () => {
+            if (about.open) {
+                from = window.scrollY;
+                const top = about.getBoundingClientRect().top;
+                if (top > 0.3 * window.innerHeight || top < 0) window.scrollBy({ top: top - 8, behavior: quickMotion() });
+            } else if (from !== null) {
+                window.scrollTo({ top: from, behavior: quickMotion() });
+                from = null;
+                if (sum) sum.blur();
+            }
+        });
+    }
+
     function bindShare() {
+        bindPageFolds();
         Object.assign(ui, {
+            foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
             shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
         for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
-        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
-        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); }); };
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.shareBtn, copyShareLink);
         onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
         document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
@@ -11629,8 +12520,9 @@
         for (const b of list) b.kep = null;
         for (const [ia, ib, fast] of s.pairs || []) {
             const a = byNewId.get(ia), b = byNewId.get(ib);
-            if (a && b) { const q = { a, b, touch: false, fast: !!fast }; mainPairs.push(q); a.kep = q; b.kep = q; }
+            if (a && b) followPair(a, b, !!fast);
         }
+        syncHosts();
         groupEnergy.clear();
         for (const [id, u] of s.groupE || []) groupEnergy.set(id, u);
         resetRelativity();
@@ -11649,6 +12541,7 @@
         k2.bid = null;
         resetFlyby();
         flashes.length = 0;
+        clearHint('note', 'chosen');   // (a "Zoom in" for a moon that may no longer be there)
         pred.key = '';
         eccDrag = null;
         forcesDirty = true;
@@ -11866,9 +12759,23 @@
         while (hist.undo.length > 1 && size(hist.undo) + size(hist.redo) > HISTORY_BODIES) hist.undo.shift();
     }
 
+    // Nothing done in this scene, yet a body has broken up in it: Undo goes back to the scene's start,
+    // rather than out of the scene to the one before it
+    const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp);
+
     function undoStep() {
         flushEdit();
-        if (dragging() || !hist.undo.length) return false;
+        if (dragging()) return false;
+        if (tornInScene()) {
+            restoreSnapshot(hist.rw, 'rewind');
+            setReverse(false, true);
+            hist.rwFresh = true;
+            hist.open = null;
+            historyNote('<strong>Undone:</strong> the break-up. Back at the start of the scene.');
+            updateHistoryUi();
+            return true;
+        }
+        if (!hist.undo.length) return false;
         const st = hist.undo.pop();
         hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
@@ -11911,7 +12818,8 @@
     // Delete or Backspace: delete the chosen body (if another is left)
     function deleteChosen() {
         const b = bodyById(selectedId);
-        if (!b || bodies.length < 2 || dragging() || missionRefuse('delete', b)) return;
+        if (!b || dragging() || missionRefuse('delete', b)) return;
+        if (bodies.length < 2) { historyNote(`<strong>${escapeHtml(b.name)} is the last body.</strong> Add another before deleting it.`); return; }
         const name = b.name;
         if (popBody === b) closePopover();
         deleteBody(b);
@@ -11926,7 +12834,7 @@
     }
 
     function updateHistoryUi() {
-        const u = hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
+        const u = tornInScene() ? { label: 'the break-up' } : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
         historyButton(ui.undoBtn, 'Undo', u, `${KEYS_MOD}Z`);
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
@@ -11971,10 +12879,7 @@
 
     function bindHistory() {
         Object.assign(ui, { undoBtn: byId('undoBtn'), redoBtn: byId('redoBtn'), rewindBtn: byId('rewindBtn') });
-        // After a click or tap the button lets go of the focus, so Space pauses rather than pressing it again
-        const onClick = (btn, action) => {
-            if (btn) btn.addEventListener('click', (e) => { action(); if (e.detail) btn.blur(); });
-        };
+        const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.undoBtn, undoStep);
         onClick(ui.redoBtn, redoStep);
         onClick(ui.rewindBtn, runAgain);
@@ -11999,11 +12904,15 @@
     // Missions: goals a student meets by firing a probe's engine within a fuel (delta-v) budget.
     //   Each mission is a scene of its own (the scene list's "Missions" group, or the Missions button
     //   under it): the bodies, the probe, the body its burns are measured from, a time limit and a
-    //   view. A briefing gives the goal, the physics idea and the par: the delta-v of the classic way
-    //   there, worked out from vis-viva, v^2 = GM (2/r - 1/a), and Kepler's 3rd law.
-    //   While a mission is loaded only the probe's velocity may change, and only by burns: the menu's
-    //   pushes and typed velocity, the arrow keys (which always fire the probe's engine) and aiming its
-    //   arrow (the clock stops while it is aimed, so it can't hover). Each burn costs |delta-v| in km/s.
+    //   view. It starts at once, paused: the mission console takes the palette's place (the goal in a
+    //   line, how it is going, the fuel, the engine, Play or a skip to the next moment that matters),
+    //   and the goal is drawn on the canvas. "How it works" gives the physics idea and the par: the
+    //   delta-v of the classic way there, worked out from vis-viva, v^2 = GM (2/r - 1/a), and Kepler's
+    //   3rd law.
+    //   While a mission is loaded only the probe's velocity may change, and only by burns: the engine's
+    //   buttons and the arrow keys (held, they keep firing, and the clock waits meanwhile), the menu's
+    //   pushes and typed velocity, and aiming its arrow (the clock stops while it is aimed, so it can't
+    //   hover). Each burn costs |delta-v| in km/s.
     //   Every edit already goes through keepView (an aimed arrow through endHold), which brackets it
     //   with missionBegin / missionEnd: a copy of every body before, compared after. A change to the
     //   probe's velocity alone is a burn and is charged (cut short if the tank runs dry); anything else
@@ -12017,16 +12926,28 @@
     //   the last burn with the fuel as it was then.
     //   Goals are checked on the simulated state: distances and relative speeds every step (a few
     //   multiplications, so a fast pass through Mars's Hill sphere is never stepped over), orbit
-    //   elements every ORBIT_CHECK_EVERY steps and after each burn. The card, the hint line and the
+    //   elements every ORBIT_CHECK_EVERY steps and after each burn. The console, the hint line and the
     //   results are updated ten times a second, with the readouts.
+    //   Leaving goes back to the system, speed and view it was started from (missionKeepHome, leaveMission).
     // ------------------------------------------------------------------
     const MISSION_STORE = 'orbitsMissions';  // localStorage: the best result of each mission
     const STARS_AT = [1.1, 1.35];            // delta-v up to these multiples of par: three stars, two (else one)
     const ORBIT_CHECK_EVERY = 16;            // steps between checks of the orbit elements
     const MSNAP_W = 7;                       // numbers kept per body while an edit is checked: id, m, R, x, y, vx, vy
+    // The engine, as shares of the mission's tank: a tap (the first ENGINE_WAIT_MS of a press), a second
+    // of holding, and how much smaller fine burns are. So a tank's par burn takes a second or few of holding.
+    const ENGINE_TAP = 0.015, ENGINE_HOLD = 0.12, ENGINE_FINE = 0.1;
+    const ENGINE_WAIT_MS = 220, ENGINE_EVERY_MS = 50;
+    const SKIP_S = 1.5;                      // a skip to the next moment that matters takes about this long to watch
+    const MISSION_SPEED_MAX = 2;             // the fastest the clock runs by choice: much faster and time runs out before you can fly (a skip goes faster)
+    const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
+    const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
+    const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
-    const auText = (d) => `${d < 0.1 ? d.toFixed(3) : d.toFixed(2)} AU`;
+    const auPlaces = (d) => (d < 0.1 ? 3 : 2);
+    const auText = (d) => `${d.toFixed(auPlaces(d))} AU`;
+    const auTextUp = (d) => { const n = auPlaces(d), k = Math.pow(10, n); return `${(Math.ceil(d * k - 1e-9) / k).toFixed(n)} AU`; };
     const starText = (n) => '★★★☆☆☆'.slice(3 - n, 6 - n);
 
     // The two burns of a Hohmann transfer between circular orbits of radii r1 and r2 round the Sun
@@ -12041,12 +12962,14 @@
 
     // The missions, easy to hard. Each: its scene (as in SCENES), the probe, the reference body and the
     // target (indices into the scene's bodies), the fuel budget and par (km/s), the time limit (years),
-    // the goal, and the words: the briefing, how par is worked out, what it teaches, hints.
+    // the size of the first burn, where a hint needs to give it (aim, km/s), the goal, and the words: the
+    // goal in a line, the idea and how par is worked out (on request), what it teaches, hints.
     //   goal types: orbit (a near-circle of radius r, within tol of it, round the reference body),
     //   escape (unbound from it), capture (bound to it, never farther than lim), reach (inside the
-    //   target's Hill sphere, zone) and meet (within D of the target, moving within V of it; l4: within D
-    //   of the point 60 degrees ahead of the target, on an orbit of its size a to within da and with an
-    //   eccentricity under eMax: a passing moment of slow relative motion isn't parking).
+    //   target's Hill sphere, zone) and meet (within D of the target, moving within V of it; a tick also
+    //   needs the path to arrive within arrive of its speed, as a burn to match any faster pass costs a
+    //   star; l4: within D of the point 60 degrees ahead of the target, on an orbit of its size a to within
+    //   da and with an eccentricity under eMax: a passing moment of slow relative motion isn't parking).
     const MISSIONS = (function () {
         const up = hohmann(1, 1.5), down = hohmann(1, 0.723), mars = hohmann(1, 1.524);
         // Escape from a 0.3 x 3 AU ellipse: escape speed sqrt(2GM/r) less the speed there
@@ -12080,36 +13003,36 @@
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: up.dv1 + up.dv2,
                 goal: { type: 'orbit', r: 1.5, tol: 0.05 },
-                goalText: 'Move your probe from its circular orbit at 1 AU (Earth\'s distance from the Sun) to a circular orbit at 1.5 AU.',
-                idea: 'A burn forwards (prograde) speeds you up, and that lifts the far side of your orbit. Two burns at opposite ends of an ellipse are the cheapest way up: a Hohmann transfer.',
-                parText: `burn forwards ${f1(up.dv1)} km/s to stretch your orbit into an ellipse that reaches 1.5 AU, then ${f1(up.dv2)} km/s more when you get there, to round it off. The speeds come from v² = GM(2/r − 1/a).`,
+                goalText: 'Reach a round orbit on the ring.',
+                idea: 'A burn forwards lifts the far side of your orbit. Burn once to reach the ring, then again at the far point to round it off: a Hohmann transfer, the cheapest way up.',
+                parText: `${f1(up.dv1)} km/s out to 1.5 AU, then ${f1(up.dv2)} km/s at the far point, from v² = GM(2/r − 1/a).`,
                 teach: 'That was a Hohmann transfer: speeding up at one end of an orbit raises the other end.',
                 hint: (x) => transferHint(x, 1.5, 0.05, true),
-                fail: { fuel: 'Two burns are enough: forwards at the start, then forwards again at the far point of the ellipse.', crash: 'Burning backwards drops you towards the Sun.' }
+                fail: { fuel: 'Two burns are enough: forwards at the start, then forwards again at the far point.', crash: 'Burning backwards drops you towards the Sun.', time: 'Burn forwards until your orbit reaches the ring, then skip to the far point and burn again.' }
             },
             {
                 id: 'venus', title: 'Down to Venus\'s orbit',
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-1.2, 1.2, -1.2, 1.2], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
                 craft: 1, ref: 0, target: null, budget: 9, limit: 5, par: down.dv1 + down.dv2,
                 goal: { type: 'orbit', r: 0.723, tol: 0.05 },
-                goalText: 'Move from a circular orbit at 1 AU to a circular orbit at 0.72 AU, where Venus goes round.',
-                idea: 'To go down, slow down: a burn backwards (retrograde) lowers the far side of your orbit. As you fall towards the Sun you speed up, so the lower orbit is the faster one.',
-                parText: `burn backwards ${f1(down.dv1)} km/s so your orbit dips to 0.72 AU, then backwards ${f1(down.dv2)} km/s more there, to round it off (v² = GM(2/r − 1/a) at both ends of the ellipse).`,
+                goalText: 'Drop to a round orbit on the ring.',
+                idea: 'To go down, slow down: a burn backwards lowers the far side of your orbit. Burn backwards again at the closest point to round it off. You speed up as you fall.',
+                parText: `${f1(down.dv1)} km/s backwards down to 0.72 AU, then ${f1(down.dv2)} km/s backwards at the closest point, from v² = GM(2/r − 1/a).`,
                 teach: 'You slowed down twice, yet you are now faster than when you started: lower orbits are quicker.',
                 hint: (x) => transferHint(x, 0.723, 0.05, false),
-                fail: { fuel: 'Two burns are enough: backwards at the start, then backwards again at the closest point.', crash: 'Too much braking: you fell into the Sun. Burn backwards less.' }
+                fail: { fuel: 'Two burns are enough: backwards at the start, then backwards again at the closest point.', crash: 'Too much braking: you fell into the Sun. Burn backwards less.', time: 'Burn backwards until your orbit dips to the ring, then skip to the closest point and burn again.' }
             },
             {
                 id: 'escape', title: 'Escape the Sun',
                 scene: { units: 'au', Tref: 1, subject: 1, box: [-3.3, 0.65, -1.25, 1.25], bodies: [sun, probe({ around: 0, a: ea, e: ee, w: 0, nu: 180 })] },
                 craft: 1, ref: 0, target: null, budget: 8, limit: 2.5, par: escPeri,
                 goal: { type: 'escape' },
-                goalText: 'Your probe is on a long ellipse that swings between 3 AU and 0.3 AU from the Sun. Leave the Solar System for good, using as little fuel as you can.',
+                goalText: 'Escape the Sun on as little fuel as you can.',
                 idea: 'A burn adds the most energy where you are moving fastest (the Oberth effect). So wait until you swing closest to the Sun, then burn forwards.',
-                parText: `at 0.3 AU you move at ${f1(toKms(vPeri))} km/s, and escaping needs ${f1(toKms(Math.sqrt(2 * G / 0.3)))} km/s there (the escape speed √(2GM/r)): ${f1(escPeri)} km/s more. Out at 3 AU it would take ${f1(escApo)} km/s.`,
+                parText: `at 0.3 AU you move at ${f1(toKms(vPeri))} km/s and escaping takes ${f1(toKms(Math.sqrt(2 * G / 0.3)))} km/s (√(2GM/r)): ${f1(escPeri)} km/s more. Out at 3 AU it would take ${f1(escApo)} km/s.`,
                 teach: 'The same burn gives more energy when you are moving fast, which is why spacecraft burn close to a planet or the Sun.',
                 hint: escapeHint,
-                fail: { fuel: 'Burn at the closest point to the Sun: there the same burn adds far more energy.', time: 'Pause as you swing closest to the Sun, then burn forwards.', crash: 'Burning backwards sends you into the Sun.' }
+                fail: { fuel: 'Burn at the closest point to the Sun: there the same burn adds far more energy.', time: 'Skip to the closest point to the Sun, then burn forwards.', crash: 'Burning backwards sends you into the Sun.' }
             },
             {
                 id: 'capture', title: 'Captured by Jupiter',
@@ -12120,12 +13043,12 @@
                 },
                 craft: 2, ref: 1, target: null, lock: 1, budget: 5, limit: 0.6, par: toKms(cVp - cVcap),
                 goal: { type: 'capture', lim: cLim, hill: hillJ },
-                goalText: `Your probe is falling past Jupiter too fast to stay. Burn so that it ends up orbiting Jupiter, never more than ${f2(cLim)} AU (${Math.round(cLim * AU_KM / 1e6)} million km) away.`,
-                idea: 'Slow down where you are moving fastest, at the closest point to Jupiter: there each km/s of braking takes away the most energy (the Oberth effect again).',
-                parText: `at the closest point, ${Math.round(cRp * AU_KM / 1e6)} million km from Jupiter, you pass at ${f1(toKms(cVp))} km/s; slowing to ${f1(toKms(cVcap))} km/s there gives an orbit that stays inside the ring (vis-viva at both ends of that orbit).`,
+                goalText: 'Brake to stay in orbit round Jupiter, inside the ring.',
+                idea: 'Brake where you are moving fastest, at the closest point to Jupiter: there each km/s takes away the most energy (the Oberth effect again).',
+                parText: `at the closest point, ${Math.round(cRp * AU_KM / 1e6)} million km from Jupiter, slow from ${f1(toKms(cVp))} to ${f1(toKms(cVcap))} km/s: an orbit that stays inside the ring (from v² = GM(2/r − 1/a)).`,
                 teach: 'You braked at the closest point, where it counts most. The Juno probe was captured by Jupiter in just this way.',
                 hint: captureHint,
-                fail: { fuel: 'Brake at the closest point to Jupiter, where it counts most.', missed: 'Pause just before the closest point, then burn backwards: two 10% pushes is about right.', crash: 'You hit Jupiter! Try a gentler burn.' }
+                fail: { fuel: 'Brake at the closest point to Jupiter, where it counts most.', missed: 'Skip to the closest point, then hold Back until Jupiter keeps you.', crash: 'You hit Jupiter! Try a gentler burn.' }
             },
             {
                 id: 'mars', title: 'Get to Mars',
@@ -12133,14 +13056,14 @@
                     units: 'au', Tref: 1, subject: 2, forceBody: 1, box: [-1.75, 1.75, -1.75, 1.75],
                     bodies: [sun, { kind: 'mars', orbit: { around: 0, a: 1.524, e: 0, nu: 100 } }, probe({ around: 0, a: 1, e: 0, nu: 0 })]
                 },
-                craft: 2, ref: 0, target: 1, budget: 6, limit: 2, par: mars.dv1, lead: marsLead,
+                craft: 2, ref: 0, target: 1, budget: 6, limit: 2, par: mars.dv1, aim: mars.dv1, lead: marsLead,
                 goal: { type: 'reach', zone: marsHill },
-                goalText: `Fly from Earth's orbit (1 AU) to Mars (1.52 AU) and get inside its Hill sphere, where Mars's pull beats the Sun's: within ${auText(marsHill)} (${f1(marsHill * AU_KM / 1e6)} million km) of it.`,
-                idea: `One burn forwards stretches your orbit out to Mars's: a Hohmann transfer, half an orbit long. Mars moves on while you fly, so time it: burn when Mars is about ${Math.round(marsLead)}° ahead of you.`,
-                parText: `the Hohmann burn, ${f1(mars.dv1)} km/s. The trip takes ${Math.round(mars.T * 12)} months (Kepler's 3rd law for the transfer ellipse), and Mars moves ${Math.round(180 - marsLead)}° in that time, so it must start ${Math.round(marsLead)}° ahead.`,
+                goalText: 'Fly to Mars, and get inside the ring round it.',
+                idea: `One burn forwards stretches your orbit out to Mars's. Mars moves on while you fly, so wait for the launch window, when it is about ${Math.round(marsLead)}° ahead.`,
+                parText: `the one burn, ${f1(mars.dv1)} km/s. The trip takes ${Math.round(mars.T * 12)} months (Kepler's 3rd law), and Mars moves ${Math.round(180 - marsLead)}° in that time, so it must start ${Math.round(marsLead)}° ahead.`,
                 teach: 'Launch windows: Mars has to be in the right place when you set off. For real missions to Mars that happens every 26 months.',
                 hint: marsHint,
-                fail: { fuel: `One burn of about 3 km/s, when Mars is ${Math.round(marsLead)}° ahead, is nearly all it takes; small pushes then fine-tune it.`, time: `Burn when Mars is about ${Math.round(marsLead)}° ahead of you, then fine-tune until your closest approach in the card is inside the goal.` }
+                fail: { fuel: 'One burn of about 3 km/s, at the launch window, is nearly all it takes. Fine burns then tune it.', time: 'Skip to the launch window, burn until your closest approach is inside the goal, then skip to Mars.' }
             },
             {
                 id: 'station', title: 'Catch the station',
@@ -12148,14 +13071,14 @@
                     units: 'au', Tref: 1, subject: 2, box: [-1.25, 1.25, -1.25, 1.25],
                     bodies: [sun, { kind: 'probe', name: 'Station', color: '#ae85ca', orbit: { around: 0, a: 1, e: 0, nu: 30 } }, probe({ around: 0, a: 1, e: 0, nu: 0 })]
                 },
-                craft: 2, ref: 0, target: 1, budget: 4, limit: 1.6, par: 2 * rDv,
-                goal: { type: 'meet', D: 0.01, V: 0.3 / AUYR_KMS },
-                goalText: 'A space station shares your orbit, 30° ahead. Meet it: get within 0.01 AU (1.5 million km) of it, moving within 0.3 km/s of its speed.',
+                craft: 2, ref: 0, target: 1, budget: 4, limit: 1.6, par: 2 * rDv, aim: rDv,
+                goal: { type: 'meet', D: 0.02, V: 0.3 / AUYR_KMS, arrive: 1.1 / AUYR_KMS },
+                goalText: 'Catch the station, 30° ahead of you, and match its speed.',
                 idea: 'Speeding up raises your orbit and makes each lap longer, so you fall behind. To catch up, slow down: a smaller orbit is a quicker lap.',
-                parText: `slow down ${f1(rDv)} km/s. Your smaller orbit takes 11 months instead of 12 (Kepler's 3rd law), so after one lap you have gained 30°. Then speed up ${f1(rDv)} km/s to match the station.`,
+                parText: `slow down ${f1(rDv)} km/s. Your smaller orbit takes 11 months instead of 12 (Kepler's 3rd law), so one lap gains 30°. Then speed up ${f1(rDv)} km/s to match the station.`,
                 teach: 'Slow down to catch up: a lower orbit takes less time. Spacecraft meeting a space station use the same trick.',
                 hint: stationHint,
-                fail: { fuel: `Slow down about ${f1(rDv)} km/s, wait a lap, then speed up by the same amount when you meet the station.`, time: `Slow down about ${f1(rDv)} km/s at the start: that smaller orbit brings you to the station in one lap.` }
+                fail: { fuel: `Slow down about ${f1(rDv)} km/s, skip to the station, then follow the arrow to match its speed.`, time: `Slow down about ${f1(rDv)} km/s at the start: that smaller orbit brings you to the station in one lap.` }
             },
             {
                 id: 'l4', title: 'Park at L4',
@@ -12163,14 +13086,14 @@
                     units: 'au', Tref: 11.86, subject: 2, forceBody: 1, box: [-6.3, 6.3, -6.3, 6.3],
                     bodies: [sun, { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0 } }, probe({ around: 0, a: 5.2, e: 0, nu: 90 })]
                 },
-                craft: 2, ref: 0, target: 1, budget: 2, limit: 20, par: 2 * lDv,
+                craft: 2, ref: 0, target: 1, budget: 2, limit: 20, par: 2 * lDv, aim: lDv,
                 goal: { type: 'meet', D: 0.3, l4: true, a: 5.2, da: 0.01, eMax: 0.03 },
-                goalText: 'Jupiter\'s Trojan asteroids gather 60° ahead of it, at L4, where the Sun\'s and Jupiter\'s pulls together keep them going round with Jupiter. Park your probe there: within 0.3 AU of L4, on an orbit like Jupiter\'s (the same size to within 1%, and nearly round), so that you keep pace with it.',
-                idea: 'You start 90° ahead of Jupiter, on its orbit. A slightly bigger orbit takes longer, so you slip back towards L4; then a burn settles you there.',
-                parText: `speed up ${f2(lDv)} km/s. Your orbit then takes ${f1(lT)} years instead of Jupiter's ${f1(TJ)} (Kepler's 3rd law), so after one lap you are 30° further back, at L4. Then slow down ${f2(lDv)} km/s to stay.`,
-                teach: 'Parked at L4 on Jupiter\'s orbit, you go round in step with Jupiter, and the Sun and Jupiter together keep you near L4, like the Trojan asteroids (the Lucy probe is on its way to visit them).',
+                goalText: 'Park at L4, 60° ahead of Jupiter, on an orbit like Jupiter\'s.',
+                idea: 'At L4 the Sun\'s and Jupiter\'s pulls keep Trojan asteroids in step with Jupiter. You start 90° ahead. A slightly bigger orbit takes longer, so you slip back to L4; then a burn settles you there.',
+                parText: `speed up ${f2(lDv)} km/s. Your orbit then takes ${f1(lT)} years instead of Jupiter's ${f1(TJ)} (Kepler's 3rd law), so one lap loses 30°. Then slow down ${f2(lDv)} km/s to stay.`,
+                teach: 'At L4 you go round in step with Jupiter, like the Trojan asteroids (the Lucy probe is on its way to visit them).',
                 hint: l4Hint,
-                fail: { fuel: `Speed up about ${f2(lDv)} km/s, wait one lap (about 13 years), then slow down by the same amount at L4.`, time: `Speed up about ${f2(lDv)} km/s at the start: one lap of that bigger orbit brings you back to L4.`, crash: 'Stay clear of Jupiter!' }
+                fail: { fuel: `Speed up about ${f1(lDv)} km/s, skip to L4 (about 13 years), then follow the arrow to settle there.`, time: `Speed up about ${f1(lDv)} km/s at the start: one lap of that bigger orbit brings you back to L4.`, crash: 'Stay clear of Jupiter!' }
             }
         ].map((m, i) => Object.assign(m, { n: i + 1, key: `mission-${m.id}` }));
     })();
@@ -12180,7 +13103,7 @@
 
     const mission = {
         def: null,             // the mission loaded (null: none)
-        status: 'off',         // 'ready' (the briefing is up), 'flying', 'won' or 'lost'
+        status: 'off',         // 'ready' (the clock hasn't started), 'flying', 'won' or 'lost'
         reason: '',            // why it was lost: crash, fuel, time or missed
         crashedInto: '',
         craftId: null, refId: null, targetId: null,
@@ -12191,83 +13114,236 @@
         result: null,          // { stars, used, t, prev, better } once it is over
         resultShown: false,
         pred: null, predDirty: true,   // the coming closest approach to the target
-        aimPaused: false,      // the clock was stopped while the probe's arrow is aimed
-        burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one note for them all)
+        plan: null,            // the burn that would put that approach inside the goal (see burnPlan)
+        tell: null,            // the burn the hint asks for, for the arrow on the probe: { ux, uy, kms }
+        labels: [], labelBoxes: [],    // the marks' names to draw this frame, and where they went
+        tipBox: { l: 0, r: -1, t: 0, b: 0 },   // the ring on the probe's velocity arrow this frame (r < l: none)
+        aimPaused: false,      // the clock was stopped for a moment (aiming, firing, reading a card)
+        firing: null,          // the engine while it is held: { kind, fine, key, timer }
+        fine: false,           // the Fine switch
+        skip: null,            // a skip going on: { kind, t, late, out, speed }
+        arrived: false,        // the clock has stopped for this pass of the target, or a burn has been made in it
+        gap2: Infinity, gapWas: Infinity,   // the distance to the target squared, this step and the last
+        ahead: false,          // the target is short of the launch window (as of the last step)
+        home: null,            // what to go back to on leaving (see missionKeepHome)
+        burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
         hintShown: '',         // the mission hint last put in the hint line
-        panel: null,           // what the briefing card shows: 'brief' or 'result' (null: hidden)
+        panel: null,           // what the card over the canvas shows: 'how', 'list' or 'result' (null: hidden)
+        okSaid: false, sceneKeyAt: -1e9, keyed: false,
         menuLocked: false
     };
 
     // ---- Words ----
-    const PUSH_KEY = { faster: '↑', slower: '↓', out: '→', in: '←' };
-    const PUSH_WORD = { faster: 'Faster', slower: 'Slower', out: 'Out', in: 'In' };
-    function press(kind) {
-        return coarse() ? `Tap <strong>Edit</strong>, then <strong>${PUSH_WORD[kind]}</strong>,` : `Press <strong>${PUSH_KEY[kind]}</strong>`;
-    }
-    function howToBurn() {
-        return coarse() ? 'Fire the engine with the pushes in the probe\'s menu (tap <strong>Edit</strong>) or by dragging the tip of its arrow. Every burn uses fuel; Undo gives it back.'
-            : 'Fire the engine with the arrow keys (<strong>↑</strong> forwards, <strong>↓</strong> backwards, <strong>→</strong> out, <strong>←</strong> in; hold Shift for small burns), the probe\'s menu, or by dragging the tip of its arrow. Every burn uses fuel; Undo gives it back.';
-    }
     const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter' };
 
     // Hints for a move between circular orbits (up: outwards). The end of the orbit that moves is the
     // far one going up and the near one going down; the second burn goes there, the same way again.
     function transferHint(x, r, tol, up) {
         const lo = r * (1 - tol), hi = r * (1 + tol);
-        const way = up ? 'forwards' : 'backwards', where = up ? 'far point' : 'closest point';
+        const way = up ? 'forwards' : 'backwards', where = up ? 'far point' : 'closest point', btn = up ? 'Forward' : 'Back';
         const reach = up ? x.ra : x.rp;
-        if (!x.burns) return `${press(up ? 'faster' : 'slower')} to burn ${way}: it ${up ? 'raises' : 'lowers'} the far side of your orbit.`;
-        if (!x.el.bound) return 'You are escaping the Sun! Undo that burn and try a smaller one.';
+        if (!x.burns) return `Hold <strong>${btn}</strong> until your dashed orbit ${up ? 'reaches' : 'dips to'} the ring.`;
+        if (!x.el.bound) return 'You are escaping the Sun! <strong>Undo</strong>, and try a smaller burn.';
         // (the first burn went the wrong way: the orbit shrank going up, or grew going down)
-        if (up ? x.el.a < 0.995 : x.el.a > 1.005) return `That burn ${up ? 'lowered' : 'raised'} your orbit. Burn ${way} instead (Undo gives the fuel back).`;
-        if (up ? reach < lo : reach > hi) return `Your orbit reaches ${f2(reach)} AU. Burn ${way} a little more to reach ${r} AU.`;
-        if (up ? reach > hi : reach < lo) return `Your orbit goes past ${r} AU. A burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'} brings it back, but costs fuel.`;
+        if (up ? x.el.a < 0.995 : x.el.a > 1.005) return `That burn ${up ? 'lowered' : 'raised'} your orbit. <strong>Undo</strong>, then burn ${way}.`;
+        if (up ? reach < lo : reach > hi) return `Not there yet: hold <strong>${btn}</strong> until your orbit ${up ? 'reaches' : 'dips to'} the ring.`;
+        if (up ? reach > hi : reach < lo) return `Too far: your orbit goes past the ring. <strong>Undo</strong>, or burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'}.`;
         const at = up ? x.nu > 165 : x.nu < 15;
-        return at ? `<strong>Now:</strong> you are at the ${where}. Burn ${way} to round off your orbit.`
-            : `Good: your orbit reaches ${r} AU. Coast to the ${where}, then burn ${way} again to round it off.`;
+        return at ? `<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`
+            : `Good. <strong>Skip to ${where}</strong>, then burn ${way} again.`;
     }
     // (within 45 degrees of the closest point, 0.35 AU from the Sun, a burn still earns three stars)
     function escapeHint(x) {
-        if (x.nu < 45) return `<strong>Now:</strong> you are close to the Sun and moving fastest. ${press('faster')} to burn forwards!`;
-        if (x.out) return 'You are past the closest point and slowing down: a burn out here costs far more. Try again, and burn as you swing round the Sun.';
-        return x.burns ? 'A burn out here adds less energy than the same burn near the Sun. Wait for the closest point.'
-            : 'Wait: you are falling towards the Sun and speeding up. Pause as you swing closest to it, then burn forwards.';
+        if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
+        // (at the very start, at the far point, it may just be moving out by a rounding error)
+        if (x.out && x.nu < 170) return 'Past the closest point, a burn costs far more. <strong>Retry</strong>, and burn near the Sun.';
+        return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
+            : 'Escaping costs less as you near the Sun. <strong>Skip to closest point</strong>, then burn.';
     }
     function captureHint(x) {
         const g = x.d.goal;
-        if (x.el.bound && x.ra > g.lim) return 'You are orbiting Jupiter, but too widely. Burn backwards again at the closest point to shrink the orbit.';
-        if (x.nu < 20) return `<strong>Now:</strong> closest point. ${press('slower')} to burn backwards!`;
+        if (x.el.bound && x.ra > g.lim) return 'Jupiter has you, but too widely. Hold <strong>Back</strong> at the closest point to shrink your orbit.';
+        if (x.nu < 20) return '<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.';
         if (x.out) return 'You are past the closest point and climbing away: braking now costs more.';
-        return 'Pause as you near Jupiter, then burn backwards at the closest point (the card shows the speed to get below).';
+        return '<strong>Skip to closest point</strong>, where braking counts most.';
     }
-    function marsHint(x) {
-        const g = x.d.goal, lead = Math.round(x.d.lead), p = mission.pred;
-        if (!x.burns) {
-            return Math.abs(x.phase - x.d.lead) < 3 ? `<strong>Now:</strong> Mars is ${lead}° ahead. ${press('faster')} to burn forwards about 3 km/s.`
-                : `Pause when Mars is about ${lead}° ahead of you (the card shows the angle), then burn forwards about 3 km/s.`;
+    // ---- Hints for flying to a target: they say what the physics says from here ----
+    // The goal's reach, and whether the coming pass keeps the tick's promise: a skip stops inside the
+    // goal, with the fuel to do what is left there.
+    const goalReach = (g) => (g.type === 'reach' ? g.zone : g.D);
+    // (what the tick asks for, the goal the status line gives: a little inside the goal, at the figures it
+    // shows. Its reading of the pass is rounded up, so a reading no higher than this is a tick, and only that.)
+    const goalAim = (g) => { const k = Math.pow(10, auPlaces(goalReach(g))); return Math.floor(PROMISE * goalReach(g) * k) / k; };
+    // (L4: how far from the size of Jupiter's orbit a nearly round orbit can still be)
+    const parkable = (g, r) => Math.abs(r / g.a - 1) < 0.7 * g.da + 0.9 * g.eMax;
+    function passWorks(x, p) {
+        const g = x.d.goal;
+        if (!p || !(p.d < goalAim(g))) return false;
+        if (g.type === 'reach') return true;
+        if (g.l4 && !parkable(g, Math.hypot(p.cx, p.cy))) return false;
+        if (g.arrive && p.dv > g.arrive) return false;
+        return toKms(p.dv) - (g.l4 ? 0 : toKms(g.V)) <= x.left;
+    }
+    const onCourse = (x) => x.burns > 0 && !!mission.pred && mission.pred.t > simTime && passWorks(x, mission.pred);
+
+    // The burn along the probe's motion, from here and now, that brings the coming pass closest inside
+    // the goal: the smallest such burn the fuel pays for ({ kms: + forward, - back, speed: the speed that
+    // makes }), or null if there is none, so what a hint asks for has been flown ahead first. While the
+    // clock waits and only the speed changes, the answer stands; otherwise it is worked out again, four
+    // times a second at most. (A few dozen predictions: a few milliseconds.)
+    const PLAN_EVERY_MS = 250, PLAN_GRID = 12;
+    function burnPlan(x) {
+        const q = mission.plan, now = performance.now(), v = x.el.v;
+        const same = !!q && q.t === simTime && Math.abs(x.vx * q.vy - x.vy * q.vx) < 1e-9 * v * v;
+        if (q && (same || now - q.at < PLAN_EVERY_MS)) return q.none ? null : Object.assign(q, { kms: toKms(q.speed - v) });
+        const g = x.d.goal, H = Math.max(x.d.limit - simTime, 0.02), left = x.left;
+        const score = (kms) => {
+            if (kms < -0.98 * toKms(v) || Math.abs(kms) > left) return Infinity;
+            const p = predictApproach(H, kms / AUYR_KMS);
+            if (!p) return Infinity;
+            return passWorks({ d: x.d, left: left - Math.abs(kms) }, p) ? p.d : p.d + goalReach(g);
+        };
+        // Sampled more closely near no burn at all and near what the textbook burn would still take (a
+        // pass inside the goal can be narrow: Mars's is 0.05 km/s across); then each dip, nearest first,
+        // narrowed down
+        const at = [];
+        for (let k = -PLAN_GRID; k <= PLAN_GRID; k++) at.push(Math.sign(k) * left * (k / PLAN_GRID) * (k / PLAN_GRID));
+        for (const sign of [-1, 1]) for (const f of [-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15]) at.push(sign * (x.d.aim - mission.used + f * x.d.aim));
+        at.sort((a, b) => a - b);
+        const val = at.map(score);
+        const dips = [];
+        for (let i = 0; i < at.length; i++) {
+            if (val[i] < Infinity && (i === 0 || val[i] <= val[i - 1]) && (i === at.length - 1 || val[i] <= val[i + 1])) dips.push(i);
         }
-        if (p && p.d < g.zone) return 'On course for Mars! Sit back and watch.';
-        if (x.ra < 1.45) return `Your orbit doesn't reach Mars's yet (${f2(x.ra)} AU). Burn forwards a little more.`;
-        return `Fine-tune with small pushes (${coarse() ? 'the 0.1% step' : 'Shift + arrow keys'}) until your closest approach to Mars, in the card, is under ${auText(g.zone)}.`;
+        dips.sort((a, b) => Math.abs(at[a]) - Math.abs(at[b]));
+        let found = null;
+        for (const i of dips.slice(0, 4)) {
+            let lo = at[Math.max(0, i - 1)], hi = at[Math.min(at.length - 1, i + 1)];
+            const r = 0.381966;
+            let a = lo + r * (hi - lo), b = hi - r * (hi - lo), fa = score(a), fb = score(b);
+            for (let it = 0; it < 14; it++) {
+                if (fa < fb) { hi = b; b = a; fb = fa; a = lo + r * (hi - lo); fa = score(a); } else { lo = a; a = b; fa = fb; b = hi - r * (hi - lo); fb = score(b); }
+            }
+            const kms = fa < fb ? a : b;
+            if (Math.min(fa, fb) < goalAim(g)) { found = kms; break; }
+        }
+        mission.plan = { t: simTime, at: now, vx: x.vx, vy: x.vy, none: found === null, speed: v + (found || 0) / AUYR_KMS, kms: found };
+        return found === null ? null : mission.plan;
     }
-    // Near the target: which way to burn to match its velocity (along the probe's motion or against it)
-    const matchWay = (x) => ((x.vx - x.tvx) * x.vx + (x.vy - x.tvy) * x.vy < 0 ? 'forwards' : 'backwards');
+
+    // A burn the hint asks for: the arrow on the probe, and if the engine is firing the opposite way, a word
+    const BURN_KIND = { Forward: 'faster', Back: 'slower', In: 'in', Out: 'out' };
+    const BURN_OPPOSITE = { Forward: 'slower', Back: 'faster', In: 'out', Out: 'in' };
+    function askBurn(btn, ux, uy, kms, html) {
+        mission.tell = { ux, uy, kms };
+        const f = mission.firing;
+        return f && f.kind === BURN_OPPOSITE[btn] ? `Wrong way: the gap is growing. Hold <strong>${btn}</strong> instead.` : html;
+    }
+    // (Rounded, so a screen reader isn't read every hundredth of a km/s)
+    const kmsWords = (kms) => (kms < 1 ? Math.max(0.05, Math.round(kms * 20) / 20).toFixed(2) : kms.toFixed(1));
+    // The way to go on from a burn along the motion: hold it, then Fine for the last of it, to the tick
+    function planHint(x, q, first) {
+        const btn = q.kms > 0 ? 'Forward' : 'Back', more = Math.abs(q.kms), v = x.el.v;
+        const sign = q.kms > 0 ? 1 : -1, ux = sign * x.vx / v, uy = sign * x.vy / v;
+        // (the first burn, on a clock that is running: no figure, which would change with every small move)
+        if (first && !paused) return `Hold <strong>${btn}</strong>${first[1]}`;
+        const words = kmsWords(more);
+        let h;
+        if (first) h = `${first[0]}${first[0] ? 'hold' : 'Hold'} <strong>${btn}</strong> for about ${words} km/s${first[1]}`;
+        else if (mission.fine) h = `${more > TAP_FROM * x.d.budget ? 'Hold' : 'Tap'} <strong>${btn}</strong> until you see the ✓.`;
+        else if (more > FINE_FROM * x.d.budget) h = `Keep holding <strong>${btn}</strong>: about ${words} km/s to go.`;
+        else h = `Nearly. Turn on <strong>Fine</strong>, then hold <strong>${btn}</strong> until you see the ✓.`;
+        return askBurn(btn, ux, uy, more, h);
+    }
+    // Is a burn from here worth asking for, or is going back better? (Up to the fuel of two stars; or
+    // whatever the fuel so far, if it is a near miss, which a small burn finishes)
+    const planWorthIt = (x, q) => !!q && (mission.used + Math.abs(q.kms) <= STARS_AT[1] * x.d.par
+        || (!!mission.pred && mission.pred.d < 3 * goalReach(x.d.goal) && Math.abs(q.kms) <= FINE_FROM * x.d.budget));
+
+    function marsHint(x) {
+        if (onCourse(x)) return `On course for Mars! <strong>Skip to Mars</strong>${mission.skip ? '' : ', or press play and watch'}.`;
+        if (!x.burns) {
+            // (running, the clock will stop at the window; run on past it, it is gone)
+            if (x.phase > x.d.lead + (paused ? 3 : 0)) return '<strong>Skip to launch window</strong>, when Mars reaches the marked spot.';
+            if (!paused) return 'You missed the launch window. <strong>Retry</strong>, or pause to see if a burn still works.';
+            const q = burnPlan(x);
+            if (x.phase > x.d.lead - 3) return planHint(x, q || { kms: x.d.aim }, ['<strong>Launch window, time waits:</strong> ', '.']);
+            return q ? planHint(x, q, ['You missed the launch window. <strong>Retry</strong>, or ', '.']) : 'You missed the launch window. <strong>Retry</strong>.';
+        }
+        if (!paused) return offPathHint('Mars');
+        const q = burnPlan(x);
+        return planWorthIt(x, q) ? planHint(x, q) : 'This path misses Mars. <strong>Undo</strong>, then burn at the launch window.';
+    }
+
+    // At the target: the burn that matches its velocity (for L4, the speed of an orbit of Jupiter's size,
+    // or as near as the distance allows, square to the Sun), worked out from the actual difference. The
+    // engine's buttons push along the motion, or straight out or in, so it is split that way: the two
+    // parts of it, along the motion first. Then a burn along the motion leaves the other part as it was
+    // and that one leaves nothing to come back to, so the hint doesn't swap back and forth. tol (AU/yr):
+    // how much of the difference the goal lets you keep.
+    function matchBurn(x) {
+        const g = x.d.goal, el = x.el, r = el.r, v = el.v;
+        let wx = x.tvx, wy = x.tvy, tol = g.V;
+        if (g.l4) {
+            const size = clamp(r, g.a * (1 - 0.7 * g.da), g.a * (1 + 0.7 * g.da));
+            const k = Math.sqrt(el.mu * (2 / r - 1 / size)) * (el.h >= 0 ? 1 : -1) / r;
+            wx = -k * x.ry; wy = k * x.rx;
+            tol = el.mu * g.da / (2 * g.a * v);
+        }
+        const ux = wx - x.vx, uy = wy - x.vy, tx = x.vx / v, ty = x.vy / v, nx = x.rx / r, ny = x.ry / r;
+        const det = tx * ny - ty * nx;
+        const along = (ux * ny - uy * nx) / det, out = (tx * uy - ty * ux) / det;
+        const left = (a, b) => toKms(Math.abs(a) - (g.l4 ? 0 : Math.sqrt(Math.max(0, tol * tol - b * b))));
+        // (L4: the size first, then whichever part is the bigger: all of it would settle the orbit for sure)
+        const first = g.l4 ? Math.abs(el.a / g.a - 1) >= 0.85 * g.da || (el.e < 0.9 * g.eMax ? false : Math.abs(along) >= Math.abs(out)) : Math.abs(along) > 0.7 * tol;
+        return {
+            ux, uy, first, cost: toKms(Math.abs(along) + Math.abs(out)) - toKms(tol),
+            btn: first ? (along > 0 ? 'Forward' : 'Back') : (out > 0 ? 'Out' : 'In'),
+            kms: first ? left(along, out) : left(out, along)
+        };
+    }
+    function matchHint(x, what) {
+        const m = matchBurn(x), kms = Math.max(0, m.kms), u = Math.hypot(m.ux, m.uy) || 1;
+        if (m.cost > x.left) return 'Not enough fuel left to match it. <strong>Undo</strong> or <strong>Retry</strong>.';
+        return askBurn(m.btn, m.ux / u, m.uy / u, kms, `<strong>${mission.aimPaused ? 'Now' : 'Arrived, time waits'}:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`);
+    }
+    // While the clock runs with nothing pressed, the advice holds still: what the best burn is changes with
+    // every small move, so that waits until the clock stops.
+    const offPathHint = (what) => `This path misses ${what}. <strong>Pause</strong> for what to do next.`;
+    const passHint = (what) => (mission.arrived ? `Passing ${what}. <strong>Pause</strong> to burn here.` : 'Arriving. Time will wait for your burn.');
+
     function stationHint(x) {
         const g = x.d.goal;
-        if (!x.burns) return `The station is ${Math.round(x.phase)}° ahead. ${press('slower')} to slow down about 0.9 km/s: a smaller orbit is a quicker lap.`;
-        if (x.td < 5 * g.D) return x.tdv > g.V ? `<strong>Nearly there:</strong> burn ${matchWay(x)} to match the station's speed.` : 'Close in: you are matching the station.';
-        if (x.el.a > 1.005) return 'You sped up, so your bigger orbit is slower and you are falling behind. Slow down instead.';
-        return 'Now wait a lap. When you meet the station, burn forwards to match its speed.';
+        if (x.td < g.D) return paused ? matchHint(x, () => 'to match the station\'s speed') : passHint('the station');
+        if (onCourse(x)) return 'On course. <strong>Skip to the station</strong>, then match its speed.';
+        if (!x.burns) {
+            const q = burnPlan(x);
+            return q ? planHint(x, q, ['', ': a smaller orbit is a quicker lap.']) : 'Too late to catch it from here. <strong>Retry</strong>.';
+        }
+        if (x.el.a > 1.005) return 'A bigger orbit is slower, so you are falling behind. <strong>Undo</strong>, and slow down instead.';
+        if (!paused) return offPathHint('the station');
+        const q = burnPlan(x);
+        return planWorthIt(x, q) ? planHint(x, q) : 'This path misses the station. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
     }
     function l4Hint(x) {
         const g = x.d.goal;
-        if (!x.burns) return `L4 is ${Math.round(Math.abs(x.phase))}° behind you. ${press('faster')} to speed up about 0.3 km/s: a bigger orbit is slower, so you drift back to L4.`;
-        if (x.td < 3 * g.D) return `<strong>Nearly there:</strong> burn ${matchWay(x)} to match L4's motion and round off your orbit.`;
-        return 'Now wait a lap, about 13 years. When you reach L4, burn backwards to match its motion.';
+        if (x.td < g.D) {
+            if (!paused) return passHint('L4');
+            if (!parkable(g, x.el.r)) return 'Too far from Jupiter\'s orbit to settle here. <strong>Undo</strong> or <strong>Retry</strong>.';
+            return matchHint(x, (m) => (m.first ? 'until your orbit matches Jupiter\'s' : 'to round off your orbit'));
+        }
+        if (onCourse(x)) return 'On course. <strong>Skip to L4</strong>, then settle there.';
+        if (!x.burns) {
+            const q = burnPlan(x);
+            return q ? planHint(x, q, ['', ': a bigger orbit drifts you back to L4.']) : 'Too late to reach L4 from here. <strong>Retry</strong>.';
+        }
+        if (!paused) return offPathHint('L4');
+        const q = burnPlan(x);
+        return planWorthIt(x, q) ? planHint(x, q) : 'This path misses L4. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
     }
 
-    // ---- The state the card, hints and checks read ----
+    // ---- The state the console, hints and checks read ----
     // The target as seen from the reference body (rotated 60 degrees ahead for L4)
     function targetNow(R, T, l4) {
         let x = T.x - R.x, y = T.y - R.y, vx = T.vx - R.vx, vy = T.vy - R.vy;
@@ -12281,6 +13357,7 @@
     function missionContext() {
         const d = mission.def, c = d && bodyById(mission.craftId), R = d && bodyById(mission.refId);
         if (!c || !R) return null;
+        if (mission.predDirty && !missionIsOver()) refreshPrediction(false);
         const rx = c.x - R.x, ry = c.y - R.y, vx = c.vx - R.vx, vy = c.vy - R.vy;
         const el = relElements(rx, ry, vx, vy, G * (R.m + c.m));
         const x = {
@@ -12297,6 +13374,7 @@
             x.tname = d.goal.l4 ? 'L4' : T.name;
             x.tvx = t.vx; x.tvy = t.vy;
             x.td = Math.hypot(rx - t.x, ry - t.y);
+            x.tr = Math.hypot(t.x, t.y);
             x.tdv = Math.hypot(vx - t.vx, vy - t.vy);
             // how far ahead (+) or behind (-) the target is round the orbit, degrees
             x.phase = (((Math.atan2(t.y, t.x) - Math.atan2(ry, rx)) / DEG + 540) % 360) - 180;
@@ -12304,47 +13382,52 @@
         return x;
     }
 
-    // The card's middle lines (the first is all a phone shows)
+    // How the goal stands, for the console: { text, ok } (ok: on track)
     function missionStatus(x) {
-        if (mission.status === 'won') return [`Complete: ${starText(mission.result.stars)} with ${f1(mission.result.used)} km/s`];
-        if (mission.status === 'lost') return [`${LOST_TITLE[mission.reason] || 'Mission over'}: try again`];
-        if (!x) return [];
-        const d = x.d, g = d.goal, kms = (v) => f1(toKms(v));
+        if (mission.status === 'won') return { text: `Complete: ${f1(mission.result.used)} km/s used`, ok: true };
+        if (mission.status === 'lost') return { text: LOST_TITLE[mission.reason] || 'Mission over', ok: false };
+        if (!x) return { text: '', ok: false };
+        const d = x.d, g = d.goal;
         switch (g.type) {
-            case 'orbit':
-                return [x.el.bound ? `Orbit ${f2(x.rp)}–${f2(x.ra)} AU · goal ${f2(g.r)}` : 'Escaping the Sun!'];
-            case 'escape':
-                return [`Speed ${kms(x.el.v)} · escape ${kms(Math.sqrt(2 * x.el.mu / x.el.r))} km/s`, `${f2(x.el.r)} AU from the Sun`];
-            case 'capture':
-                if (x.el.bound) return [`Orbit out to ${f2(x.ra)} AU · goal ${f2(g.lim)}`];
-                if (x.el.r > g.lim) return [`${f2(x.el.r)} AU from Jupiter · ${kms(x.el.v)} km/s`];
-                return [`${kms(x.el.v)} km/s · capture below ${kms(Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))))}`];
+            case 'orbit': {
+                if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
+                const up = g.r > 1, reach = up ? x.ra : x.rp;
+                return { text: `${up ? 'Far point' : 'Closest point'} ${f2(reach)} AU, goal ${f2(g.r)}`, ok: Math.abs(reach / g.r - 1) <= g.tol };
+            }
+            case 'escape': {
+                const need = toKms(Math.sqrt(2 * x.el.mu / x.el.r) - x.el.v);
+                return { text: `To escape from here: ${f1(Math.max(need, 0))} km/s`, ok: x.nu < 45 && need <= x.left };
+            }
+            case 'capture': {
+                if (x.el.bound) return { text: `Orbit reaches ${f2(x.ra)} AU, goal ${f2(g.lim)}`, ok: false };
+                if (x.el.r > g.lim) return { text: `${f2(x.el.r)} AU from Jupiter, ring at ${f2(g.lim)}`, ok: false };
+                const need = toKms(x.el.v - Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))));
+                return { text: `To stay from here: brake ${f1(need)} km/s`, ok: x.nu < 20 && need <= x.left };
+            }
             default: {
-                const goal = g.type === 'reach' ? `Goal: within ${auText(g.zone)}`
-                    : g.l4 ? `Goal: within ${auText(g.D)}; a ${f2(g.a * (1 - g.da))}–${f2(g.a * (1 + g.da))} AU, e < ${g.eMax}`
-                        : `Goal: within ${auText(g.D)}, ${f2(toKms(g.V))} km/s`;
+                const reach = goalReach(g), p = mission.pred;
                 if (!x.burns) {
                     const where = `${x.tname} ${Math.round(Math.abs(x.phase))}° ${x.phase >= 0 ? 'ahead' : 'behind'}`;
-                    return [d.lead ? `${where} · burn at ${Math.round(d.lead)}°` : `${where} · ${auText(x.td)}`, goal];
+                    return d.lead ? { text: `${where}, launch at ${Math.round(d.lead)}°`, ok: Math.abs(x.phase - d.lead) < 3 } : { text: where, ok: false };
                 }
-                if (g.type === 'meet' && x.td < 5 * g.D) {
-                    return [g.l4 ? `${auText(x.td)} from L4 · a ${f2(x.el.a)} AU, e ${f2(x.el.e)}` : `${auText(x.td)} away · ${f2(toKms(x.tdv))} km/s apart`, goal];
+                if (g.type === 'meet' && x.td < reach) {
+                    const fits = matchBurn(x).cost <= x.left;
+                    if (!g.l4) return { text: `Inside the ring, ${f2(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: fits };
+                    const size = Math.abs(x.el.a / g.a - 1) >= g.da;
+                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: fits && parkable(g, x.el.r) };
                 }
-                const p = mission.pred;
-                return [p ? `Closest: ${auText(p.d)} in ${fmtDuration(Math.max(0, p.t - simTime))}` : `${x.tname} ${auText(x.td)} away`, goal];
+                if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving too fast: ${f1(toKms(p.dv))} km/s, goal under ${f1(toKms(g.arrive))}`, ok: false };
+                return p ? { text: `Closest to ${x.tname}: ${auTextUp(p.d)}, goal ${auText(goalAim(g))}`, ok: onCourse(x) } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
             }
         }
     }
 
     function missionHintText() {
         const x = missionContext();
-        if (!x) return mission.status === 'lost' ? 'Press <strong>Try again</strong>, or Undo your last burn.' : '';
-        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or try again with less fuel.' : 'That was the last one: can you beat your fuel?'}`;
-        if (mission.status === 'lost') return 'Press <strong>Try again</strong>, or Undo your last burn and fly it differently.';
-        if (mission.status === 'ready') {
-            return mission.panel === 'brief' ? `<strong>${escapeHtml(mission.def.title)}:</strong> read the briefing, then press <strong>Start</strong>.`
-                : `<strong>${escapeHtml(mission.def.title)}:</strong> press play to start the clock, or fire the engine.`;
-        }
+        mission.tell = null;
+        if (!x) return mission.status === 'lost' ? '<strong>Retry</strong>, or undo your last burn.' : '';
+        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
+        if (mission.status === 'lost') return '<strong>Retry</strong>, or undo your last burn and fly it differently.';
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
         return x.d.hint(x);
     }
@@ -12359,8 +13442,6 @@
     const missionCraft = () => (mission.def ? bodyById(mission.craftId) : null);
 
     // A note in the hint line for something a mission doesn't allow (the same one at most every 1.5 s).
-    // A burn's note waits until one has been up for RULES_MS (see noteBurn).
-    const RULES_MS = 2500;
     function missionNote(html) {
         const now = performance.now();
         if (html === mission.refusedText && now - mission.refusedAt < 1500) return;
@@ -12368,23 +13449,25 @@
         historyNote(html);
     }
 
+    const missionIsOver = () => mission.status === 'won' || mission.status === 'lost';
+
     // Is this edit off limits in a mission? Shows a friendly note if so. Aiming the probe's own arrow is
     // allowed, and stops the clock while it is aimed (a held body stays put while time runs).
     function missionRefuse(what, b) {
         if (!mission.def) return false;
         const craft = !!b && b.id === mission.craftId;
-        if (what === 'aim' && craft) {
+        if (what === 'aim' && craft && !missionIsOver()) {
             if (!paused) { setPaused(true); mission.aimPaused = true; }
             return false;
         }
         const notes = {
-            add: 'No new bodies in a mission: choose another scene to build your own.',
-            delete: 'Nothing can be removed in a mission.',
-            move: craft ? 'Your probe can\'t be picked up: change its path with burns, or drag the tip of its arrow.'
-                : `${b ? escapeHtml(b.name) : 'It'} keeps to its path: in a mission only your probe can change course.`,
-            aim: 'Only your probe has an engine: aim its arrow, not another body\'s.',
-            orbit: 'In a mission, orbits change only by burns of your probe\'s engine.',
-            other: 'In a mission, only your probe\'s engine can change anything.'
+            add: 'no new bodies. Leave the mission to build your own.',
+            delete: 'nothing can be removed.',
+            move: craft ? 'your probe changes course by burns, not by dragging.'
+                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only your probe can change course.`,
+            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : 'only your probe has an engine.',
+            orbit: 'orbits change only by your probe\'s burns.',
+            other: 'only your probe\'s engine can change anything.'
         };
         missionNote(`<strong>Mission rules:</strong> ${notes[what] || notes.orbit}`);
         return true;
@@ -12443,6 +13526,11 @@
         const dv = toKms(Math.hypot(dvx, dvy));
         if (!(dv > 1e-9) || !c) { resumeAfterAim(); return; }
         const d = mission.def, left = d.budget - mission.used;
+        if (missionIsOver()) {
+            c.vx = s[vo]; c.vy = s[vo + 1];
+            missionNote('The mission is over: <strong>Retry</strong>, or undo your last burn.');
+            return;
+        }
         if (left <= 1e-6) {
             c.vx = s[vo]; c.vy = s[vo + 1];
             missionNote('<strong>Out of fuel:</strong> you can only coast now.');
@@ -12454,9 +13542,11 @@
         mission.used = Math.min(d.budget, mission.used + dv * f);
         mission.log.push(simTime, dv * f);
         mission.predDirty = true;
-        noteBurn(dv * f, f < 1);
+        mission.arrived = true;
+        noteBurn(dv * f);
+        endSkip();
         if (mission.status === 'ready') startFlying();
-        // Show the new path for a few seconds (the editor's preview of the chosen body)
+        // Show the new path (the editor's preview of the chosen body)
         if (selectedId !== c.id) selectBody(c.id);
         edit.previewUntil = performance.now() + 5000;
         markPreview();
@@ -12465,29 +13555,29 @@
             if (out) missionOver(out === 'missed' ? 'lost' : out, out === 'missed' ? 'missed' : '');
             else if (d.budget - mission.used <= 1e-6) missionFuelCheck();
         }
+        updateMissionConsole();
         resumeAfterAim();
     }
 
-    // The clock goes on again once the probe's arrow has been let go (if it was stopped for that)
+    // The clock goes on again once the probe's arrow or engine has been let go, or a card closed (if it
+    // was stopped for that)
     function resumeAfterAim() {
-        if (!mission.aimPaused || bodies.some((q) => q.held)) return;
+        if (!mission.aimPaused || mission.firing || bodies.some((q) => q.held) || mission.panel === 'how' || mission.panel === 'list') return;
         mission.aimPaused = false;
         if (mission.status === 'flying' || mission.status === 'ready') setPaused(false);
     }
 
-    // One note for burns in quick succession (a held key, a stepper): read out once they stop
-    function noteBurn(dv, cut) {
+    // Burns in quick succession (a held engine, a stepper) are read out once, when they stop: on the
+    // screen the fuel gauge has already fallen with them
+    function noteBurn(dv) {
         mission.burst += dv;
         clearTimeout(mission.burstTimer);
-        mission.burstTimer = setTimeout(function showBurn() {
-            // (a "Mission rules" note put up a moment ago keeps the line long enough to be read first)
-            const h = hints.missionNote, wait = RULES_MS - (performance.now() - mission.refusedAt);
-            if (h && h.html === mission.refusedText && wait > 0) { mission.burstTimer = setTimeout(showBurn, wait); return; }
+        mission.burstTimer = setTimeout(() => {
             const d = mission.def, burst = mission.burst;
             mission.burst = 0;
-            if (!d || mission.status === 'won' || mission.status === 'lost') return;
-            const left = Math.max(0, d.budget - mission.used), s = fmtSpeedKms(burst);
-            historyNote(`<strong>Burn: ${s.v} ${s.u}.</strong> ${left > 1e-6 ? `Fuel left: ${f1(left)} of ${f1(d.budget)} km/s.` : (cut ? 'The tank ran dry during that burn.' : 'That was the last of your fuel.')}`);
+            if (!d || missionIsOver()) return;
+            const left = Math.max(0, d.budget - mission.used), v = fmtSpeedKms(burst);
+            announce(`Burn: ${v.v} ${v.u}. ${left > 1e-6 ? `Fuel left: ${f1(left)} of ${f1(d.budget)} kilometres a second.` : 'That was the last of your fuel.'}`);
         }, 450);
     }
 
@@ -12515,7 +13605,7 @@
         const def = mission.def, R = bodyById(mission.refId), av = aimedVelocity(b);
         const dvx = av.x - b.vx, dvy = av.y - b.vy, dv = toKms(Math.hypot(dvx, dvy));
         const left = Math.max(0, def.budget - mission.used), B = b.aim.burn;
-        if (!(dv >= 0.005)) return `<strong>Drag out a burn</strong> from the arrow's tip: along the arrow speeds you up, against it slows you down. Fuel: ${f1(left)} km/s.`;
+        if (!(dv >= 0.005)) return `<strong>Drag out a burn:</strong> along the arrow to speed up, against it to slow down.`;
         let way = '';
         if (R) {
             const vx = b.vx - R.vx, vy = b.vy - R.vy, v = Math.hypot(vx, vy), rx = b.x - R.x, ry = b.y - R.y, r = Math.hypot(rx, ry);
@@ -12524,12 +13614,56 @@
         }
         const s = fmtSpeedKms(dv);
         let h = `<strong>Burn ${s.v} ${s.u}${way}:</strong> `;
-        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left, so it stops when the tank runs dry.`
-            : `${f1(left - dv)} of ${f1(def.budget)} km/s of fuel left after it.`;
-        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Exactly the speed for a circular orbit.' : ' Exactly the escape speed.';
-        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control</strong> while Shift is held.' : ' Hold <strong>Shift</strong> for fine control.';
-        else if (aimFineTouch(d)) h += ' <strong>Fine control</strong>: it moves a tenth as far as your finger.';
+        h += dv > left + 1e-6 ? `more than the ${f1(left)} km/s of fuel left.` : `leaves ${f1(left - dv)} of ${f1(def.budget)} km/s of fuel.`;
+        if (b.aim.snap) h += b.aim.snap === 'circular' ? ' Circular speed.' : ' Escape speed.';
+        if (!coarse()) h += B.from && B.from.fine ? ' <strong>Fine control.</strong>' : ' <strong>Shift:</strong> finer.';
+        else if (aimFineTouch(d)) h += ' <strong>Fine control:</strong> a tenth of your finger\'s move.';
         return h;
+    }
+
+    // ---- The engine ----
+    // Pressed (a button, or an arrow key), it fires a tap at once, and held it goes on firing. The clock
+    // waits meanwhile, so a burn happens at one place, and watching the fuel and the new path takes the
+    // time it needs: it runs again on letting go if it was running. (Before Play or a skip it wasn't.)
+    function engineFire(kind, fine, key) {
+        engineStop();
+        if (!mission.def) return;
+        if (missionIsOver()) { missionNote('The mission is over: <strong>Retry</strong>, or undo your last burn.'); return; }
+        const c = missionCraft();
+        if (!c || c.held) return;
+        endSkip();
+        if (!paused) { setPaused(true); mission.aimPaused = true; }
+        const tank = mission.def.budget / AUYR_KMS, size = fine ? ENGINE_FINE : 1;
+        const f = { kind, key: key || '', timer: 0 };
+        mission.firing = f;
+        mission.keyed = !!key;
+        missionPush(c, kind, tank * ENGINE_TAP * size);
+        const again = () => {
+            const q = missionCraft();
+            if (mission.firing !== f || !q || missionIsOver() || mission.used >= mission.def.budget - 1e-6) { if (mission.firing === f) engineStop(); return; }
+            missionPush(q, kind, tank * ENGINE_HOLD * size * ENGINE_EVERY_MS / 1000);
+            f.timer = setTimeout(again, ENGINE_EVERY_MS);
+        };
+        f.timer = setTimeout(again, ENGINE_WAIT_MS);
+    }
+
+    function engineStop() {
+        const f = mission.firing;
+        if (!f) return;
+        clearTimeout(f.timer);
+        mission.firing = null;
+        // (an orbit stretched past the view: the view makes room for it)
+        if (mission.def && mission.def.goal.type === 'orbit') keepOrbitInView(missionCraft());
+        resumeAfterAim();
+        updateMissionConsole();
+    }
+
+    // (from the arrow keys, once they are for the simulation) In a mission they fire the probe's engine
+    function missionKey(e, kind) {
+        if (!mission.def) return false;
+        e.preventDefault();
+        if (!e.repeat) engineFire(kind, mission.fine || e.shiftKey, e.key);
+        return true;
     }
 
     // (nudge's way in: a step is a fraction of the speed relative to the reference body)
@@ -12538,6 +13672,118 @@
         const R = bodyById(mission.refId);
         if (R && step > 0) missionPush(b, kind, step * Math.hypot(b.vx - R.vx, b.vy - R.vy));
         return true;
+    }
+
+    // ---- Skipping to the next moment that matters ----
+    // Years until the far point (apo) or the closest point of the orbit it is on (null: never again)
+    function apsisIn(x, apo) {
+        const el = x.el;
+        if (!el.bound) {
+            if (apo || x.out || !(el.e > 1)) return null;
+            const a = -el.a, F = Math.acosh(Math.max(1, (1 + el.r / a) / el.e));
+            return (el.e * Math.sinh(F) - F) / Math.sqrt(el.mu / (a * a * a));
+        }
+        if (el.e < 1e-3) return null;
+        const c = clamp((1 - el.r / el.a) / el.e, -1, 1), E = x.out ? Math.acos(c) : TAU - Math.acos(c);
+        const dM = (apo ? Math.PI : TAU) - (E - el.e * Math.sin(E));
+        return ((dM + TAU) % TAU) / (TAU / el.T);
+    }
+
+    // What the skip button offers now: { kind, word, dt } (dt in years, inside the time left), or null.
+    // Not when it is there already: the burn comes next.
+    function skipTarget(x) {
+        if (!x || missionIsOver()) return null;
+        const d = x.d, g = d.goal;
+        let s = null;
+        if (g.type === 'orbit') {
+            const apo = g.r > 1;
+            // (once the orbit touches the ring: short of it or past it, the second burn won't round it off there)
+            if (x.burns && x.el.bound && Math.abs((apo ? x.ra : x.rp) / g.r - 1) <= g.tol && (apo ? x.nu < 170 : x.nu > 10)) s = { kind: apo ? 'apo' : 'peri', word: apo ? 'far point' : 'closest point', dt: apsisIn(x, apo) };
+        } else if (g.type === 'escape' || g.type === 'capture') {
+            if (x.nu > 10) s = { kind: 'peri', word: 'closest point', dt: apsisIn(x, false) };
+        } else if (!x.burns) {
+            // (Mars's angle falls behind at the difference of the two rates of going round)
+            if (d.lead && x.phase > d.lead) s = { kind: 'window', word: 'launch window', dt: (x.phase - d.lead) * DEG / (x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3))) };
+        } else if (onCourse(x) && x.td > goalReach(g)) {
+            // (once the tick is earned; until then the burn isn't finished)
+            s = { kind: 'meet', word: g.l4 ? 'L4' : x.tname === 'Station' ? 'the station' : x.tname, dt: mission.pred.t - simTime };
+        }
+        return s && s.dt > 0 && s.dt < d.limit - simTime ? s : null;
+    }
+
+    // Time runs faster up to that moment, then stops there, waiting for the burn. The speed chosen comes
+    // back afterwards. It ends when anything else stops the clock or changes the path.
+    function startSkip() {
+        const x = missionContext(), s = skipTarget(x);
+        if (!s) return;
+        engineStop();
+        if (mission.status === 'ready') startFlying();
+        mission.skip = { kind: s.kind, t: simTime + s.dt, late: simTime + s.dt * (s.kind === 'apo' || s.kind === 'peri' ? 1.1 : 1), out: x.out, speed: settings.speed };
+        setSpeedValue(clamp(s.dt / (SKIP_S * rate()), settings.speed, 100));
+        mission.aimPaused = false;
+        setPaused(false);
+        updateMissionConsole();
+    }
+
+    // The speed slider's reach, in a mission or out of one
+    function missionSpeedRange(on) {
+        if (!ui.speed) return;
+        ui.speed.max = String(on ? nearestStop(MISSION_SPEED_MAX) : SPEED_STOPS.length - 1);
+        ui.speed.title = on ? `Up to ${MISSION_SPEED_MAX}× in a mission. Skip is the quick way.` : '';
+    }
+
+    function endSkip() {
+        const k = mission.skip;
+        if (!k) return;
+        mission.skip = null;
+        setSpeedValue(k.speed);
+    }
+
+    // (each step of a skip) Has it got there?
+    function skipArrived(c) {
+        const k = mission.skip, R = bodyById(mission.refId);
+        if (simTime >= k.late || !R) return true;
+        const rx = c.x - R.x, ry = c.y - R.y;
+        if (k.kind === 'apo' || k.kind === 'peri') {
+            const out = rx * (c.vx - R.vx) + ry * (c.vy - R.vy) > 0, was = k.out;
+            k.out = out;
+            return k.kind === 'apo' ? was && !out : !was && out;
+        }
+        if (k.kind === 'window') return windowAngle(c, R) <= mission.def.lead;
+        return false;
+    }
+
+    // How far ahead round the orbit the target is, degrees (0 to 360)
+    function windowAngle(c, R) {
+        const T = bodyById(mission.targetId);
+        return T ? ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(c.y - R.y, c.x - R.x)) / DEG + 360) % 360 : 0;
+    }
+
+    // The clock stops, waiting for the burn (a full-sized one: Fine was for tuning the burn before)
+    function missionWait() {
+        endSkip();
+        acc = 0;
+        setPaused(true);
+        mission.fine = false;
+    }
+
+    // (each step) Got there by Play: the moment is short, so the clock stops for it where a skip would, at
+    // the launch window and at the closest point of a pass inside the goal. Once: Play goes on from there.
+    function missionArrival(c) {
+        const d = mission.def, g = d.goal;
+        if (d.lead) {
+            const R = mission.log.length ? null : bodyById(mission.refId);
+            if (!R) return;
+            const was = mission.ahead;
+            mission.ahead = windowAngle(c, R) > d.lead;
+            if (was && !mission.ahead) missionWait();
+        } else if (g.type === 'meet') {
+            // (a path can dip twice in the ring, seen from L4: on, if a closer point is still to come)
+            const was = mission.gapWas, p = mission.pred;
+            mission.gapWas = mission.gap2;
+            if (mission.gap2 >= g.D * g.D) mission.arrived = false;
+            else if (!mission.arrived && mission.gap2 > was && !(p && p.t > simTime && p.d * p.d < mission.gap2)) { mission.arrived = true; missionWait(); }
+        }
     }
 
     // ---- Goals ----
@@ -12566,7 +13812,20 @@
             const out = missionCheckNow(c);
             if (out) { missionOver(out === 'missed' ? 'lost' : out, out === 'missed' ? 'missed' : ''); return; }
         }
-        if (d.limit && simTime > d.limit) missionOver('lost', 'time');
+        if (d.limit && simTime > d.limit) { missionOver('lost', 'time'); return; }
+        if (mission.skip && skipArrived(c)) {
+            const meet = mission.skip.kind === 'meet';
+            missionWait();
+            if (meet) { mission.arrived = true; skipReport(); }
+        }
+        missionArrival(c);
+    }
+
+    // (a skip to the target has stopped) It says so if that was short of the goal, which only a change of
+    // course nothing here saw coming could do: the tick is worked out to prevent it
+    function skipReport() {
+        const x = missionContext();
+        if (x && x.td >= goalReach(x.d.goal)) missionNote(`Arrived ${auText(x.td)} from ${escapeHtml(x.tname)}, short of the goal of ${auText(goalReach(x.d.goal))}.`);
     }
 
     // Within reach of the target (and, to meet it, moving with it)?
@@ -12575,6 +13834,7 @@
         if (!R || !T) return false;
         const t = targetNow(R, T, g.l4);
         const dx = c.x - R.x - t.x, dy = c.y - R.y - t.y, d2 = dx * dx + dy * dy;
+        mission.gap2 = d2;
         if (g.type === 'reach') return d2 < g.zone * g.zone;
         if (d2 >= g.D * g.D) return false;
         if (g.l4) return l4Orbit(c, R);
@@ -12614,7 +13874,7 @@
             const p = mission.pred;
             const c = bodyById(mission.craftId), R = bodyById(mission.refId);
             const along = g.type === 'reach' || (g.l4 ? !!(c && R && l4Orbit(c, R)) : !!p && p.dv < g.V);
-            if (p && along && p.d < (g.type === 'reach' ? g.zone : g.D)) return;
+            if (p && along && p.d < goalReach(g)) return;
         }
         missionOver('lost', 'fuel');
     }
@@ -12638,44 +13898,87 @@
             mission.result = { t: simTime };
         }
         mission.resultShown = false;
+        mission.fine = false;
+        endSkip();
+        if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
+        mission.aimPaused = false;
         acc = 0;
         setPaused(true);
     }
 
     // ---- The coming closest approach to the target ----
-    // The probe and the target followed on their two-body orbits round the reference body (the Sun)
-    // from now: sampled over the time left, the best sample then narrowed down (golden section). About
-    // 450 Kepler solutions, a fraction of a millisecond; worked out again after a burn, once the
-    // approach it found has passed, and every tenth of the time it looked ahead.
-    const PA = { x: 0, y: 0, vx: 0, vy: 0 }, PB = { x: 0, y: 0, vx: 0, vy: 0 };
-    function driftState(s, t, out) {
-        keplerDrift(s.x, s.y, s.vx, s.vy, s.mu, t);
-        let x = KX, y = KY, vx = KVX, vy = KVY;
-        if (s.l4) {
-            const c = 0.5, sn = Math.sqrt(3) / 2;
-            [x, y, vx, vy] = [c * x - sn * y, sn * x + c * y, c * vx - sn * vy, sn * vx + c * vy];
+    // Every body followed on from now under the same gravity as the simulation (4th-order steps, each a
+    // share of the shortest pair's time), so Jupiter's pull on a probe near L4 is in it: two-body orbits
+    // put the probe 0.18 AU off after 13 years, and what a tick promises is where a skip stops. About 500
+    // steps, a fraction of a millisecond; worked out again after a burn, once the approach it found has
+    // passed, and every tenth of the time it looked ahead. The answer is the closest of all (to reach a
+    // zone, the first pass inside it, which is all it takes). kick: a change of speed along the probe's
+    // motion to try first (AU/yr).
+    const PRED_ETA = 0.02, PRED_MAX_STEPS = 6000;
+    const PRX = new Float64Array(3), PRY = new Float64Array(3), PRVX = new Float64Array(3), PRVY = new Float64Array(3);
+    const PRAX = new Float64Array(3), PRAY = new Float64Array(3), PRM = new Float64Array(3);
+    function predForces(n) {
+        let tmin = Infinity;
+        PRAX.fill(0); PRAY.fill(0);
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const dx = PRX[j] - PRX[i], dy = PRY[j] - PRY[i], r2 = dx * dx + dy * dy, r = Math.sqrt(r2), k = G / (r2 * r);
+                PRAX[i] += k * PRM[j] * dx; PRAY[i] += k * PRM[j] * dy;
+                PRAX[j] -= k * PRM[i] * dx; PRAY[j] -= k * PRM[i] * dy;
+                const t2 = r2 * r / (G * (PRM[i] + PRM[j]));
+                if (t2 < tmin) tmin = t2;
+            }
         }
-        out.x = x; out.y = y; out.vx = vx; out.vy = vy;
+        return Math.sqrt(tmin);
     }
 
-    function predictApproach(H) {
-        const c = bodyById(mission.craftId), R = bodyById(mission.refId), T = bodyById(mission.targetId);
-        if (!c || !R || !T) return null;
-        const cs = { x: c.x - R.x, y: c.y - R.y, vx: c.vx - R.vx, vy: c.vy - R.vy, mu: G * (R.m + c.m) };
-        const ts = { x: T.x - R.x, y: T.y - R.y, vx: T.vx - R.vx, vy: T.vy - R.vy, mu: G * (R.m + T.m), l4: !!mission.def.goal.l4 };
-        const gap = (t) => { driftState(cs, t, PA); driftState(ts, t, PB); return Math.hypot(PA.x - PB.x, PA.y - PB.y); };
-        const N = 160;
-        let best = 0, bestD = Infinity;
-        for (let k = 0; k <= N; k++) { const g = gap((H * k) / N); if (g < bestD) { bestD = g; best = k; } }
-        let lo = (H * Math.max(0, best - 1)) / N, hi = (H * Math.min(N, best + 1)) / N;
-        const q = 0.381966;
-        let x1 = lo + q * (hi - lo), x2 = hi - q * (hi - lo), g1 = gap(x1), g2 = gap(x2);
-        for (let i = 0; i < 40 && hi - lo > 1e-9 * H; i++) {
-            if (g1 < g2) { hi = x2; x2 = x1; g2 = g1; x1 = lo + q * (hi - lo); g1 = gap(x1); } else { lo = x1; x1 = x2; g1 = g2; x2 = hi - q * (hi - lo); g2 = gap(x2); }
+    function predictApproach(H, kick) {
+        const n = bodies.length, g = mission.def.goal, reach = g.zone;
+        const ci = bodies.findIndex((q) => q.id === mission.craftId), ri = bodies.findIndex((q) => q.id === mission.refId), ti = bodies.findIndex((q) => q.id === mission.targetId);
+        if (ci < 0 || ri < 0 || ti < 0 || n > PRX.length) return null;
+        bodies.forEach((q, i) => { PRX[i] = q.x; PRY[i] = q.y; PRVX[i] = q.vx; PRVY[i] = q.vy; PRM[i] = q.m; });
+        if (kick) {
+            const ux = PRVX[ci] - PRVX[ri], uy = PRVY[ci] - PRVY[ri], k = Math.max(0, 1 + kick / Math.hypot(ux, uy));
+            PRVX[ci] = PRVX[ri] + k * ux; PRVY[ci] = PRVY[ri] + k * uy;
         }
-        let t = 0.5 * (lo + hi), dmin = gap(t);
-        if (dmin > bestD) { t = (H * best) / N; dmin = gap(t); }
-        return { t0: simTime, h: H, t: simTime + t, d: dmin, dv: Math.hypot(PA.vx - PB.vx, PA.vy - PB.vy), cx: PA.x, cy: PA.y, tx: PB.x, ty: PB.y };
+        const touch = bodies.map((q, i) => (i === ci ? 0 : (q.R + bodies[ci].R) / AU_KM));
+        const c = g.l4 ? 0.5 : 1, s = g.l4 ? Math.sqrt(3) / 2 : 0;
+        // (the gap between the probe and the target, both from the reference body)
+        const read = (o) => {
+            const tx = PRX[ti] - PRX[ri], ty = PRY[ti] - PRY[ri], tvx = PRVX[ti] - PRVX[ri], tvy = PRVY[ti] - PRVY[ri];
+            o.tx = c * tx - s * ty; o.ty = s * tx + c * ty;
+            o.cx = PRX[ci] - PRX[ri]; o.cy = PRY[ci] - PRY[ri];
+            o.gx = o.cx - o.tx; o.gy = o.cy - o.ty;
+            o.ux = PRVX[ci] - PRVX[ri] - (c * tvx - s * tvy); o.uy = PRVY[ci] - PRVY[ri] - (s * tvx + c * tvy);
+        };
+        let tau = predForces(n), t = 0, d = Infinity, bt = 0, inside = false;
+        const a = {}, b = {}, best = {};
+        read(a);
+        for (let k = 0; k < PRED_MAX_STEPS && t < H; k++) {
+            const dt = Math.min(PRED_ETA * tau, H - t);
+            for (const w of [YOSHIDA_W1, YOSHIDA_W0, YOSHIDA_W1]) {
+                const h = w * dt;
+                for (let i = 0; i < n; i++) { PRVX[i] += 0.5 * h * PRAX[i]; PRVY[i] += 0.5 * h * PRAY[i]; PRX[i] += h * PRVX[i]; PRY[i] += h * PRVY[i]; }
+                tau = predForces(n);
+                for (let i = 0; i < n; i++) { PRVX[i] += 0.5 * h * PRAX[i]; PRVY[i] += 0.5 * h * PRAY[i]; }
+            }
+            read(b);
+            // The closest point of this step, the gap moving in a straight line over so short a time
+            const ex = b.gx - a.gx, ey = b.gy - a.gy, ee = ex * ex + ey * ey;
+            const f = ee > 0 ? clamp(-(a.gx * ex + a.gy * ey) / ee, 0, 1) : 0, gd = Math.hypot(a.gx + f * ex, a.gy + f * ey);
+            if (gd < d) {
+                d = gd; bt = t + f * dt;
+                for (const key of ['cx', 'cy', 'tx', 'ty', 'ux', 'uy']) best[key] = a[key] + f * (b[key] - a[key]);
+                if (g.type === 'reach' && gd < reach) inside = true;
+            } else if (inside) break;
+            t += dt;
+            Object.assign(a, b);
+            let hit = false;
+            for (let i = 0; i < n; i++) if (i !== ci && Math.hypot(PRX[i] - PRX[ci], PRY[i] - PRY[ci]) < touch[i]) hit = true;
+            if (hit) break;
+        }
+        if (!(d < Infinity)) return null;
+        return { t0: simTime, h: H, t: simTime + bt, d, dv: Math.hypot(best.ux, best.uy), cx: best.cx, cy: best.cy, tx: best.tx, ty: best.ty };
     }
 
     function refreshPrediction(force) {
@@ -12691,30 +13994,45 @@
     // (from loadScene: a mission's scene starts the mission, any other ends one)
     function missionSceneLoaded() {
         const def = missionByKey(settings.scene);
-        if (!def) { if (mission.def) endMission(); return; }
+        if (!def) { if (mission.def) { endMission(); setPaused(false); } else hideMissionPanel(); return; }   // (a mission waits for Play)
         Object.assign(mission, {
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
-            nearId: null, pred: null, predDirty: true, aimPaused: false, burst: 0
+            nearId: null, pred: null, predDirty: true, plan: null, tell: null, aimPaused: false, burst: 0,
+            arrived: false, gapWas: Infinity, ahead: false
         });
         clearTimeout(mission.burstTimer);
+        endSkip();
+        engineStop();
         if (def.lock !== undefined) {
             // (the view follows the body it is about, and the box is round it)
             frameId = bodies[def.lock].id;
             syncFrameUi();
             fitBox(def.scene.box, false);
         }
+        // Every mission starts at the same pace, and the arrow keys are for the engine from now on
+        // (not for the scene list, if it was picked there with the mouse)
+        missionSpeedRange(true);
+        setSpeedValue(1);
+        mission.fine = false;
+        edit.engaged = true;
+        if (document.activeElement === ui.scene && performance.now() - mission.sceneKeyAt > 1000) ui.scene.blur();
+        closeSettingsSheet();
+        hideMissionPanel();
         missionUi(true);
         quietFlyby();
         setPaused(true);
         syncEccentricity(true);
-        showMissionPanel('brief');
         setHint();
     }
 
     function endMission() {
         clearTimeout(mission.burstTimer);
-        Object.assign(mission, { def: null, status: 'off', pred: null, aimPaused: false, result: null });
+        endSkip();
+        engineStop();
+        missionSpeedRange(false);
+        if (mission.home) setSpeedValue(mission.home.speed);
+        Object.assign(mission, { def: null, status: 'off', pred: null, plan: null, tell: null, aimPaused: false, result: null, home: null });
         hideMissionPanel();
         missionUi(false);
         if (popBody) updatePopover(true);
@@ -12724,7 +14042,45 @@
 
     function startFlying() {
         mission.status = 'flying';
-        if (mission.panel === 'brief') hideMissionPanel();
+    }
+
+    // (from loadScene, before anything changes) Going into a mission from anything else: what to come
+    // back to. (Not from a mission's scene without its mission: a link's, about to start it properly.)
+    function missionKeepHome(key) {
+        if (mission.def || !missionByKey(key)) return;
+        mission.home = missionByKey(settings.scene) ? { speed: settings.speed } : {
+            snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup(), stability: settings.stability, stabAuto: stab.auto
+        };
+    }
+
+    // Back to free play: the system as it was, its speed, its view, its way of time, running or paused.
+    // Undo goes back into the mission.
+    function leaveMission() {
+        const h = mission.home;
+        if (!h || !h.snap) {
+            if (ui.scene) ui.scene.value = 'sun-earth';
+            loadScene('sun-earth');
+            setPaused(false);
+            return;
+        }
+        flushEdit();
+        dragging();
+        hideMissionPanel();
+        commitStep(snapshot(), { label: 'leave the mission', target: null, key: 'scene' }, false);
+        restoreSnapshot(h.snap, 'undo');
+        if (h.back) setReverse(true, true);
+        if (h.turn) restoreTurning({ a: h.turn[0], up: h.turn[1] });
+        if (h.stability) setStability(true, h.stabAuto);
+        syncFrameUi();
+        Object.assign(hist, { open: null, cleanLoad: h.clean, rwStale: true, rwFresh: false, rwFromStart: h.clean });
+        updateHistoryUi();
+        setPaused(h.paused);
+    }
+
+    // (the end of applySetup) A link or an autosave made in a mission holds no fuel or burns, so its
+    // mission starts afresh
+    function missionFromSetup(s) {
+        if (missionByKey(s.scene)) loadScene(s.scene);
     }
 
     // (part of each edit-history snapshot)
@@ -12732,25 +14088,36 @@
         if (!mission.def) return null;
         return {
             id: mission.def.id, craftId: mission.craftId, refId: mission.refId, targetId: mission.targetId,
-            used: mission.used, log: mission.log.slice(), status: mission.status
+            used: mission.used, log: mission.log.slice(), status: mission.status,
+            reason: mission.reason, crashedInto: mission.crashedInto, result: mission.result
         };
     }
 
-    // Undo, redo or run again: the mission as it was (a result is undone with what led to it)
+    // Undo, redo or run again: the mission as it was. (A result is undone with what led to it, and a
+    // redo back to the end of a mission brings the result back with it, and its card.)
     function missionRestore(m, how) {
         const def = m ? missionById(m.id) : null;
         if (!def) { if (mission.def) endMission(); return; }
-        const was = mission.def, usedBefore = mission.used;
+        const was = mission.def, usedBefore = mission.used, over = m.status === 'won' || m.status === 'lost';
         Object.assign(mission, {
-            def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(),
-            status: m.status === 'won' || m.status === 'lost' ? 'flying' : m.status,
-            reason: '', crashedInto: '', result: null, resultShown: false, aimPaused: false, predDirty: true, steps: 0
+            def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(), status: m.status,
+            reason: over ? m.reason : '', crashedInto: over ? m.crashedInto : '', result: over ? m.result : null,
+            resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0,
+            arrived: true, gapWas: Infinity, ahead: false   // (back in the ring by undo: no second stop for it)
         });
         clearTimeout(mission.burstTimer);
         mission.burst = 0;
+        endSkip();
+        if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
         hideMissionPanel();
         quietFlyby();
-        if (was !== def) { missionUi(true); syncEccentricity(true); }
+        if (over) setPaused(true);
+        if (was !== def) {
+            if (!was) { mission.home = { speed: settings.speed }; missionSpeedRange(true); setSpeedValue(1); }
+            missionUi(true);
+            syncEccentricity(true);
+        }
+        updateMissionConsole();
         // (the undo note, put up just after this, says how much fuel came back)
         if (how === 'undo' && Math.abs(usedBefore - m.used) > 1e-9) {
             setTimeout(() => {
@@ -12790,20 +14157,20 @@
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'In a mission the orbit changes only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
+        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
         setText(ui.popOrbitShape, why);
         if (!craft) setText(ui.popAngleNote, why);
     }
-    // (syncEccentricity) the eccentricity slider and "Set its period and distances"
+    // (syncEccentricity) the eccentricity slider
     function missionLockSidebar() {
         if (!mission.def) return;
         if (ui.ecc) ui.ecc.disabled = true;
-        if (ui.editOrbit) ui.editOrbit.disabled = true;
         setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
     }
 
-    // ---- The briefing and result card, the Missions button, the scene list ----
-    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), missionPanel: null, missionsBtn: null });
+    // ---- The console, the card over the canvas, the Missions button, the scene list ----
+    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, missionsBtn: null, mc: null });
+    const toolIcon = (name) => `<span class="icon solid fa-${name}" aria-hidden="true"></span>`;
 
     function buildMissionUi() {
         const wrap = canvas.closest('.sim-canvas-wrapper');
@@ -12814,21 +14181,23 @@
             P.hidden = true;
             P.setAttribute('aria-labelledby', 'missionTitle');
             P.setAttribute('aria-live', 'polite');
-            P.innerHTML = '<button type="button" class="orb-mission-x" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>'
+            P.innerHTML = `<button type="button" class="orb-mission-x" aria-label="Close" title="Close (Esc)">${toolIcon('times')}</button>`
                 + '<p class="orb-mission-kicker" id="missionKicker"></p><h3 class="orb-mission-title" id="missionTitle"></h3>'
                 + '<div class="orb-mission-text" id="missionText"></div><div class="orb-mission-actions" id="missionActions"></div>';
             wrap.appendChild(P);
             ui.missionPanel = P;
             P.querySelector('.orb-mission-x').addEventListener('click', () => hideMissionPanel(true));
-            P.addEventListener('keydown', (e) => {
-                if (e.key !== 'Escape') return;
+            // (Escape closes it, wherever the focus is, before anything else that Escape would close)
+            window.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape' || P.hidden) return;
                 hideMissionPanel(true);
-                e.stopPropagation();
+                e.stopImmediatePropagation();
                 e.preventDefault();
-            });
+            }, true);
             // (clicks and drags in it stay away from the canvas and the page)
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
+        if (ui.toolbar) buildMissionConsole();
         // In the settings, under the scene list: a button into the missions (beside "Random system"),
         // and the line saying what they are
         if (ui.scene) {
@@ -12839,8 +14208,8 @@
             btn.className = 'orb-mission-btn';
             btn.id = 'missionsBtn';
             btn.setAttribute('aria-describedby', 'missionsNote');
-            btn.title = `${MISSIONS.length} missions, easy to hard (also at the end of the scene list)`;
-            btn.innerHTML = '<span class="icon solid fa-rocket" aria-hidden="true"></span>Missions';
+            btn.title = `${MISSIONS.length} missions, easy to hard (M)`;
+            btn.innerHTML = `${toolIcon('rocket')}Missions`;
             let note = byId('missionsNote');
             if (!note) {
                 note = document.createElement('p');
@@ -12861,16 +14230,80 @@
             }
             ui.scene.appendChild(og);
             labelMissionOptions();
+            ui.scene.addEventListener('keydown', () => { mission.sceneKeyAt = performance.now(); });
         }
-        setTimeout(introduceMissions, 0);
+        // The usual hint's "Missions", and M
+        if (ui.hint) ui.hint.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('.orb-hint-missions')) openMissions(); });
+        window.addEventListener('keydown', (e) => {
+            if ((e.key !== 'm' && e.key !== 'M') || e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
+            if (!(nav.inUse || document.body.classList.contains('sim-fullscreen-active'))) return;
+            e.preventDefault();
+            openMissions(e);
+        });
+        // The engine stops when its key comes up, wherever the focus has gone (or the window with it)
+        window.addEventListener('keyup', (e) => { if (mission.firing && mission.firing.key === e.key) engineStop(); });
+        window.addEventListener('blur', engineStop);
     }
 
-    // When the page opens, the usual hint also points to the missions, until the first press anywhere
-    // (unless "Carry on where you left off" is on offer: one thing at a time)
-    function introduceMissions() {
-        if (mission.def || !ui.hint || share.offer) return;
-        hints.intro = true;
-        refreshHint();
+    // The console: in the palette's place while a mission is loaded
+    function buildMissionConsole() {
+        const C = document.createElement('section');
+        C.className = 'orb-console';
+        C.id = 'missionConsole';
+        C.hidden = true;
+        C.setAttribute('aria-labelledby', 'mcTitle');
+        const pad = [['faster', 'Forward', 'arrow-up', '↑'], ['in', 'In', 'arrow-left', '←'], ['out', 'Out', 'arrow-right', '→'], ['slower', 'Back', 'arrow-down', '↓']];
+        C.innerHTML = '<div class="orb-mc-head"><h3 class="orb-mc-title" id="mcTitle"></h3>'
+            + `<button type="button" class="orb-mc-leave" id="mcLeave" aria-label="Leave the mission" title="Leave the mission, back to free play">${toolIcon('times')}</button></div>`
+            + '<p class="orb-mc-goal" id="mcGoal"></p><p class="orb-mc-status" id="mcStatus"></p>'
+            + '<div class="orb-mc-fuel" id="mcFuel" role="meter" aria-label="Fuel left" aria-valuemin="0"><div class="orb-mc-row"><strong>Fuel</strong><span id="mcFuelNum"></span></div>'
+            + '<div class="orb-mc-bar"><div class="orb-mc-fill" id="mcFill"></div><div class="orb-mc-tick" id="mcTick" title="Keep your fuel above this mark for three stars"></div></div></div>'
+            + '<div class="orb-mc-row orb-mc-left-row"><strong>Time</strong><span id="mcLeft"></span></div>'
+            + '<div class="orb-mc-row orb-mc-pad-head"><strong id="mcPadLabel">Engine: hold to fire</strong><button type="button" class="orb-mc-fine" id="mcFine" aria-pressed="false" title="Much smaller burns, to fine-tune (or hold Shift)">Fine</button></div>'
+            + `<div class="orb-mc-pad" role="group" aria-labelledby="mcPadLabel">${pad.map(([k, w, i, key]) => `<button type="button" class="orb-mc-burn orb-mc-${k}" data-kind="${k}" title="Burn ${w.toLowerCase()} (${key})">${toolIcon(i)}${w}</button>`).join('')}</div>`
+            + `<button type="button" class="orb-mc-skip" id="mcSkip" hidden>${toolIcon('fast-forward')}<span id="mcSkipText"></span></button>`
+            + `<div class="orb-mc-time"><button type="button" class="orb-mc-play" id="mcPlay">${toolIcon('play')}<span id="mcPlayText"></span></button>`
+            + '<button type="button" class="orb-mc-retry" id="mcRetry" title="Start this mission again">Retry</button></div>'
+            + '<div class="orb-mc-links"><button type="button" id="mcHow">How it works</button><button type="button" id="mcList">All missions</button></div>';
+        ui.toolbar.prepend(C);
+        const E = { box: C };
+        ['Title', 'Goal', 'Status', 'Fuel', 'FuelNum', 'Fill', 'Tick', 'Fine', 'Play', 'PlayText', 'Skip', 'SkipText', 'Left', 'Retry', 'How', 'List', 'Leave'].forEach((n) => { E[n.toLowerCase()] = byId(`mc${n}`); });
+        E.head = C.querySelector('.orb-mc-head');
+        E.playIcon = E.play.querySelector('.icon');
+        E.burns = Array.from(C.querySelectorAll('.orb-mc-burn'));
+        ui.mc = E;
+        // A button pressed with the pointer leaves the focus where it was, so Space still plays and pauses
+        C.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button')) e.preventDefault(); });
+        E.burns.forEach((b) => {
+            const kind = b.dataset.kind;
+            b.addEventListener('pointerdown', (e) => {
+                if (e.button) return;
+                try { b.setPointerCapture(e.pointerId); } catch (err) { /* not captured: the window's events still end it */ }
+                b.classList.add('is-firing');
+                engineFire(kind, mission.fine || e.shiftKey);
+            });
+            const up = () => { b.classList.remove('is-firing'); engineStop(); };
+            ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => b.addEventListener(t, up));
+            b.addEventListener('contextmenu', (e) => e.preventDefault());
+            // (Enter or Space on the button: a tap)
+            b.addEventListener('click', (e) => { if (!e.detail) { engineFire(kind, mission.fine); engineStop(); } });
+        });
+        E.fine.addEventListener('click', () => { mission.fine = !mission.fine; updateMissionConsole(); });
+        E.play.addEventListener('click', (e) => {
+            if (mission.status === 'won') {
+                const next = MISSIONS[mission.def.n];
+                if (next) loadMission(next, !e.detail); else showMissionPanel('list', !e.detail);
+                return;
+            }
+            if (mission.status === 'ready') startFlying();
+            setPaused(!paused);
+            updateMissionConsole();
+        });
+        E.skip.addEventListener('click', startSkip);
+        E.retry.addEventListener('click', (e) => loadMission(mission.def, !e.detail));
+        E.how.addEventListener('click', (e) => showMissionPanel('how', !e.detail));
+        E.list.addEventListener('click', (e) => showMissionPanel('list', !e.detail));
+        E.leave.addEventListener('click', leaveMission);
     }
 
     // "3. Escape the Sun ★★☆"
@@ -12883,83 +14316,175 @@
         }
     }
 
-    // The Missions button: in a mission, its briefing again; otherwise the first mission not yet done
-    function openMissions() {
+    // On a phone the settings cover the canvas: they step aside for a mission (any: on a wider screen
+    // too, where they take room from it)
+    function closeSettingsSheet(any) {
         const panel = byId('simulationControlsPanel'), toggle = document.querySelector('.sim-panel-toggle-button');
-        if (panel && toggle && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-sheet')) toggle.click();
-        if (mission.def) { showMissionPanel('brief', true); return; }
-        loadMission(MISSIONS.find((m) => !bestOf(m.id)) || MISSIONS[0], true);
+        if (panel && toggle && panel.classList.contains('panel-open') && (any || document.body.classList.contains('sim-panel-sheet'))) toggle.click();
+    }
+
+    // The Missions button (and M): straight into the first mission the first time, afterwards the list.
+    // (From the keyboard, a key press or a button's click with no pointer, the focus goes along.)
+    function openMissions(e) {
+        closeSettingsSheet(true);
+        const keyed = !!e && !e.detail;
+        if (mission.def || MISSIONS.some((m) => bestOf(m.id))) showMissionPanel('list', keyed);
+        else loadMission(MISSIONS[0], keyed);
     }
 
     function loadMission(def, focus) {
         if (!def) return;
         if (ui.scene) ui.scene.value = def.key;
         loadScene(def.key);
-        if (focus) focusMissionPanel();
+        if (focus && ui.mc) ui.mc.play.focus({ preventScroll: true });
     }
 
     function focusMissionPanel() {
-        const btn = ui.missionPanel && !ui.missionPanel.hidden ? ui.missionPanel.querySelector('.orb-mission-actions button') : null;
+        const btn = ui.missionPanel && !ui.missionPanel.hidden ? ui.missionPanel.querySelector('.orb-mission-actions button, .orb-mission-list button') : null;
         if (btn) btn.focus({ preventScroll: true });
     }
 
     function missionUi(on) {
         if (ui.simWrap) ui.simWrap.classList.toggle('orb-mission-on', on);
+        if (ui.toolbar) ui.toolbar.setAttribute('aria-label', on ? 'Mission controls' : 'Add bodies');
+        if (ui.mc) ui.mc.box.hidden = !on;
+        if (sideways) placeHint();
+        if (on) updateMissionConsole();
+    }
+
+    // The console, ten times a second and after each burn
+    function updateMissionConsole() {
+        const d = mission.def, E = ui.mc;
+        if (!d || !E) return;
+        const x = missionContext(), m = missionStatus(x), st = mission.status, over = missionIsOver();
+        // (the button the hint names is marked, and the arrow on the probe follows the hint)
+        const told = /(?:hold|holding|tap) <strong>(Forward|Back|In|Out)<\/strong>/i.exec(missionHintText() || '');
+        const left = Math.max(0, d.budget - mission.used), best = bestOf(d.id);
+        // (always three stars, full or empty, so a first win doesn't wrap the title and move everything)
+        setText(E.title, `${d.n}. ${d.title} ${starText(best ? best.stars : 0)}`);
+        setAttr(E.title, 'aria-label', `Mission ${d.n} of ${MISSIONS.length}: ${d.title}${best ? `, best ${best.stars} of 3 stars` : ''}`);
+        setText(E.goal, d.goalText);
+        setText(E.status, `${m.ok ? '✓ ' : ''}${m.text}`);
+        E.status.classList.toggle('is-ok', m.ok);
+        if (m.ok !== mission.okSaid) { mission.okSaid = m.ok; if (m.ok && !over) announce(`On track. ${m.text}`); }
+        // The gauge: a mark where three stars are lost
+        const frac = d.budget > 0 ? left / d.budget : 0;
+        E.fill.style.width = `${(100 * frac).toFixed(1)}%`;
+        E.fill.classList.toggle('is-low', frac < 0.15);
+        E.tick.style.left = `${(100 * clamp(1 - STARS_AT[0] * d.par / d.budget, 0, 1)).toFixed(1)}%`;
+        setText(E.fuelnum, `${f1(left)} of ${f1(d.budget)} km/s`);
+        setAttr(E.fuel, 'aria-valuemax', f1(d.budget));
+        setAttr(E.fuel, 'aria-valuenow', f1(left));
+        setAttr(E.fuel, 'aria-valuetext', `${f1(left)} of ${f1(d.budget)} kilometres a second`);
+        for (const b of E.burns) {
+            if (b.disabled !== over) b.disabled = over;
+            b.classList.toggle('is-told', !over && !!told && b.dataset.kind === BURN_KIND[told[1]]);
+        }
+        E.fine.disabled = over;
+        setAttr(E.fine, 'aria-pressed', mission.fine ? 'true' : 'false');
+        // The clock's button, and the skip
+        // (after a win it is the way on, and Retry is the plain button beside it)
+        const ready = st === 'ready', won = st === 'won', running = !paused || !!(mission.firing && mission.aimPaused && !ready);
+        const clockWord = won ? (MISSIONS[d.n] ? 'Next mission' : 'All missions') : running ? 'Pause' : 'Play';
+        setText(E.playtext, clockWord);
+        setAttr(E.play, 'aria-label', clockWord);
+        E.play.classList.toggle('is-primary', ready || won);
+        E.play.classList.toggle('is-next', won);
+        E.playIcon.hidden = won;
+        E.playIcon.classList.toggle('fa-play', !running);
+        E.playIcon.classList.toggle('fa-pause', running);
+        E.play.hidden = st === 'lost';
+        const s = over ? null : skipTarget(x);
+        E.skip.hidden = !s && !mission.skip;
+        E.skip.disabled = !!mission.skip;
+        if (s || mission.skip) setText(E.skiptext, mission.skip ? 'Skipping…' : `Skip to ${s.word}`);
+        setText(E.left, over ? `${fmtDuration(simTime)} taken` : `${fmtDuration(Math.max(0, d.limit - simTime))} left`);
+        E.retry.classList.toggle('is-primary', st === 'lost');
     }
 
     const starsHtml = (n) => `<span class="orb-mission-stars" role="img" aria-label="${n} of 3 stars">${starText(n)}</span>`;
+    const panelWords = {
+        how(d) {
+            return {
+                kicker: `Mission ${d.n} of ${MISSIONS.length}`, title: 'How it works',
+                html: `<p>${d.idea}</p><p class="orb-mission-small"><strong>Par ${f1(d.par)} km/s:</strong> ${d.parText}</p>`
+                    + '<p class="orb-mission-small">Keep your fuel above the mark on the gauge for three stars. Undo gives fuel back.</p>',
+                acts: [['Carry on', () => hideMissionPanel(true)]]
+            };
+        },
+        list() {
+            const total = MISSIONS.reduce((n, m) => n + (bestOf(m.id) ? bestOf(m.id).stars : 0), 0);
+            const next = MISSIONS.find((m) => !bestOf(m.id));
+            const rows = MISSIONS.map((m) => {
+                const b = bestOf(m.id), here = mission.def === m;
+                return `<li><button type="button" data-mission="${m.id}"${here ? ' aria-current="true"' : ''}${m === next ? ' class="is-next"' : ''}><span class="orb-mission-row-name">${m.n}. ${escapeHtml(m.title)}</span>`
+                    + `<span class="orb-mission-stars" role="img" aria-label="${b ? `${b.stars} of 3 stars` : 'not flown yet'}">${starText(b ? b.stars : 0)}</span></button></li>`;
+            }).join('');
+            return {
+                kicker: `${total} of ${3 * MISSIONS.length} stars`, title: 'Missions',
+                html: `<ol class="orb-mission-list">${rows}</ol>`,
+                acts: mission.def ? [['Back to free play', leaveMission]] : []
+            };
+        },
+        result(d) {
+            const kicker = `Mission ${d.n} of ${MISSIONS.length}`;
+            if (mission.status === 'won') {
+                const r = mission.result, next = MISSIONS[d.n];
+                const best = r.better ? (r.prev ? ' A new best!' : '') : ` Your best: ${starText(r.prev.stars)}.`;
+                return {
+                    kicker, title: 'Mission complete!',
+                    html: `<p>${starsHtml(r.stars)}</p><p>${f1(r.used)} km/s of fuel; par ${f1(d.par)}.${best}</p><p class="orb-mission-small">${d.teach}</p>`,
+                    acts: [next ? ['Next mission', () => loadMission(next)] : ['All missions', () => showMissionPanel('list')], ['Retry', () => loadMission(d)]].concat(next ? [['All missions', () => showMissionPanel('list')]] : [])
+                };
+            }
+            const what = {
+                fuel: 'Coasting won\'t get you there.',
+                time: `Time's up: the limit was ${fmtDuration(d.limit)}.`,
+                missed: 'Too fast for it to keep you.'
+            }[mission.reason] || '';
+            const hint = d.fail[mission.reason] || d.fail.time || d.fail.fuel || 'Undo your last burn and try another, or start again.';
+            return {
+                kicker, title: mission.reason === 'crash' ? `You hit ${escapeHtml(theName({ name: mission.crashedInto }))}` : (LOST_TITLE[mission.reason] || 'Mission over'),
+                html: `${what ? `<p>${what}</p>` : ''}<p><strong>Hint:</strong> ${hint}</p>`,
+                acts: [['Retry', () => loadMission(d)]].concat(mission.log.length ? [['Undo last burn', () => { hideMissionPanel(); undoStep(); }]] : [], [['All missions', () => showMissionPanel('list')]])
+            };
+        }
+    };
 
+    // The card over the canvas, on request ('how', 'list') or for the outcome ('result'). The clock
+    // waits while one asked for is open.
     function showMissionPanel(kind, focus) {
         const d = mission.def, P = ui.missionPanel;
-        if (!d || !P) return;
-        let title, html;
-        const acts = [];
-        const kicker = `Mission ${d.n} of ${MISSIONS.length}`;
-        if (kind === 'brief') {
-            const best = bestOf(d.id);
-            title = d.title;
-            html = `<p>${d.goalText}</p><p><strong>The idea:</strong> ${d.idea}</p>`
-                + `<p class="orb-mission-facts"><strong>Fuel</strong> ${f1(d.budget)} km/s · <strong>Par</strong> ${f1(d.par)} km/s${d.limit ? ` · <strong>Time</strong> ${fmtDuration(d.limit)}` : ''}</p>`
-                + `<details class="orb-mission-more"><summary>How par is worked out</summary><p class="orb-mission-small">Par is the classic route: ${d.parText}</p></details>`
-                + `<p class="orb-mission-small">${howToBurn()}</p>`
-                + (best ? `<p class="orb-mission-small">Your best: ${starsHtml(best.stars)} with ${f1(best.used)} km/s.</p>` : '');
-            acts.push([mission.status === 'ready' ? 'Start' : 'Carry on', () => { hideMissionPanel(true); startFlying(); setPaused(false); }]);
-        } else if (mission.status === 'won') {
-            const r = mission.result, next = MISSIONS[d.n];
-            title = 'Mission complete!';
-            const words = r.stars === 3 ? (r.used < d.par ? 'Under par: brilliant flying.' : 'Right on par: superb flying.') : r.stars === 2 ? 'Well done. Can you get closer to par?' : 'You made it! Now try it with less fuel.';
-            html = `<p>${starsHtml(r.stars)}</p><p>You used <strong>${f1(r.used)} km/s</strong> of fuel; par is ${f1(d.par)} km/s. ${words}</p>`
-                + `<p class="orb-mission-small">${d.teach}</p>`
-                + `<p class="orb-mission-small">${r.better ? (r.prev ? 'A new best!' : 'Your result is saved in this browser.') : `Your best is still ${starText(r.prev.stars)} with ${f1(r.prev.used)} km/s.`}${next ? '' : ' That was the last mission.'}</p>`;
-            if (next) acts.push(['Next mission', () => loadMission(next, true)]);
-            acts.push(['Try again', () => loadMission(d, true)]);
-        } else {
-            const what = {
-                crash: `Your probe crashed into ${escapeHtml(theName({ name: mission.crashedInto }))}.`,
-                fuel: 'Your tank is empty, and coasting won\'t get you there.',
-                time: `Time's up: the limit was ${fmtDuration(d.limit)}.`,
-                missed: 'You passed Jupiter too fast for it to keep you.'
-            }[mission.reason] || 'The mission is over.';
-            const hint = d.fail[mission.reason] || d.fail.time || d.fail.fuel || 'Undo your last burn and try another, or start again.';
-            title = mission.reason === 'crash' ? `You hit ${escapeHtml(theName({ name: mission.crashedInto }))}` : (LOST_TITLE[mission.reason] || 'Mission over');
-            html = `<p>${what}</p><p><strong>Hint:</strong> ${hint}</p>`;
-            acts.push(['Try again', () => loadMission(d, true)]);
-            if (mission.log.length) acts.push(['Undo last burn', () => { hideMissionPanel(); undoStep(); }]);
-        }
+        if (!P || (kind !== 'list' && !d)) return;
+        endSkip();
+        const w = panelWords[kind](d);
         mission.panel = kind;
-        byId('missionKicker').textContent = kicker;
-        byId('missionTitle').innerHTML = title;
-        byId('missionText').innerHTML = html;
+        if (d && mission.status === 'flying' && !paused && kind !== 'result') { setPaused(true); mission.aimPaused = true; }
+        byId('missionKicker').textContent = w.kicker;
+        byId('missionTitle').innerHTML = w.title;
+        const text = byId('missionText');
+        text.innerHTML = w.html;
+        text.querySelectorAll('[data-mission]').forEach((b) => b.addEventListener('click', (e) => {
+            hideMissionPanel(true);
+            loadMission(missionById(b.dataset.mission), !e.detail);
+        }));
         const box = byId('missionActions');
         box.textContent = '';
-        acts.forEach(([label, fn], i) => {
+        w.acts.forEach(([label, fn], i) => {
             const b = document.createElement('button');
             b.type = 'button';
             b.textContent = label;
-            if (i === 0) b.className = 'is-primary';
-            b.addEventListener('click', (e) => { fn(); if (e.detail) b.blur(); });
+            if (i === 0 && kind !== 'list') b.className = 'is-primary';
+            b.addEventListener('click', (e) => {
+                const keyed = !e.detail;
+                fn();
+                if (keyed && ui.missionPanel.hidden && mission.def && ui.mc) ui.mc.play.focus({ preventScroll: true });
+                else if (keyed) focusMissionPanel();
+                else b.blur();
+            });
             box.appendChild(b);
         });
+        P.classList.toggle('is-list', kind === 'list');
         P.hidden = false;
         P.scrollTop = 0;
         if (focus) focusMissionPanel();
@@ -12967,26 +14492,23 @@
 
     function hideMissionPanel(byUser) {
         const P = ui.missionPanel;
-        if (!P || P.hidden) { mission.panel = null; return; }
+        const wasOpen = !!P && !P.hidden;
+        mission.panel = null;
+        if (!wasOpen) return;
         // (if the focus was in it, it goes back to the page rather than to nowhere)
         const had = P.contains(document.activeElement);
         P.hidden = true;
-        mission.panel = null;
         if (had && byUser) document.activeElement.blur();
+        if (byUser) resumeAfterAim();
     }
 
-    // The outcome, once: the card, a gentle ring round the probe, and a line read out in the hint
+    // The outcome, once: the card, and a gentle ring round the probe. (The keyboard's user can go on with
+    // Enter at once.)
     function showResult() {
-        const d = mission.def, c = bodyById(mission.craftId);
+        const c = bodyById(mission.craftId);
         mission.resultShown = true;
-        showMissionPanel('result');
-        if (mission.status === 'won') {
-            const r = mission.result;
-            if (c) flashes.push({ x: c.x, y: c.y, t: performance.now(), color: colours().velocity, r0: drawRadius(c), grow: 40 });
-            historyNote(`<strong>Mission complete!</strong> ${r.stars} of 3 stars: ${f1(r.used)} km/s of fuel (par ${f1(d.par)}).`, 8000);
-        } else {
-            historyNote(`<strong>${byId('missionTitle').textContent}.</strong> ${d.fail[mission.reason] || d.fail.time || ''}`, 10000);
-        }
+        showMissionPanel('result', mission.keyed);
+        if (mission.status === 'won' && c) flashes.push({ x: c.x, y: c.y, t: performance.now(), color: colours().velocity, r0: drawRadius(c), grow: 40 });
     }
 
     // In a mission the probe's flybys get no card or close-up (the mission card says what matters):
@@ -12996,33 +14518,36 @@
     }
 
     // Ten times a second (with the readouts): the start, the clock while aiming, the prediction, the
-    // result, and the hint line following the mission's progress (unless a note is showing)
+    // result, the console, and the hint line following the mission's progress (unless a note is showing)
     function updateMission() {
         if (!mission.def) return;
         if (mission.status === 'ready' && !paused) startFlying();
         const c = bodyById(mission.craftId);
         if (c && c.held && !paused) { setPaused(true); mission.aimPaused = true; }
-        if (mission.status === 'flying') refreshPrediction(false);
-        if ((mission.status === 'won' || mission.status === 'lost') && !mission.resultShown) showResult();
+        if (mission.status === 'flying' || mission.status === 'ready') refreshPrediction(false);
+        // (the clock stopped some other way during a skip: that ends it)
+        if (mission.skip && paused) endSkip();
+        if (missionIsOver() && !mission.resultShown) showResult();
         quietFlyby();
+        // (the probe's path, as it stands, is always on show while flying)
+        if (!missionIsOver()) edit.previewUntil = performance.now() + 500;
+        updateMissionConsole();
         refreshHint();   // (the guidance follows the mission's progress; the line only changes if it does)
     }
 
     // ---- Drawing ----
-    // Under the bodies: the goal ring (with the band the orbit must stay in), L4 and its zone, and where
-    // the probe and the target will be at their coming closest approach.
+    // Under the bodies: the goal ring (with the band the orbit must stay in), the target's ring, L4 and
+    // its zone, where the next burn goes (the far or closest point, the launch window) and where the
+    // probe and the target will be at their coming closest approach. Their names are noted for
+    // drawMissionOver, which puts them on top.
     function drawMissionMarks(C) {
         const d = mission.def;
         if (!d || cleanRender) return;
         const R = bodyById(mission.refId);
         if (!R) return;
         const g = d.goal, col = C.velocity, cx = sx(R.dx), cy = sy(R.dy);
-        const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
+        const labels = mission.labels = [];
         ctx.save();
-        const zones = edgeKeepOut();
-        ctx.font = font(fs);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
         const ring = (x, y, r, label) => {
             ctx.strokeStyle = hexA(col, C.dark ? 0.6 : 0.75);
             ctx.lineWidth = 1.2;
@@ -13031,21 +14556,8 @@
             ctx.arc(x, y, r, 0, TAU);
             ctx.stroke();
             ctx.setLineDash([]);
-            if (!label || r <= 14) return;
-            // Under the ring, or over it, or just inside it: wherever it is on the canvas and clear of the
-            // cards, the arrow key and the scale bar (a ring that fills a phone's canvas reaches them)
-            const w = ctx.measureText(label).width;
-            const spots = [[x, y + r + 3], [x, y - r - 3 - fs], [x, y + r - 4 - fs], [x, y - r + 4],
-                [x - r + 9 + w / 2, y - fs / 2], [x + r - 9 - w / 2, y - fs / 2]];
-            let at = null;
-            for (const [cx0, ty] of spots) {
-                if (ty < 2 || ty + fs > viewH - 2) continue;
-                const lx = clamp(cx0, w / 2 + 4, viewW - w / 2 - 4), l = lx - w / 2, rr = lx + w / 2;
-                const clear = !zones.some((z) => l < z[2] && rr > z[0] && ty < z[3] && ty + fs > z[1]);
-                if (at === null || clear) at = [lx, ty];
-                if (clear) break;
-            }
-            if (at) { ctx.fillStyle = C.subtle; ctx.fillText(label, at[0], at[1]); }
+            // (a ring that fills a phone's canvas has its name just inside it, if under or over it won't do)
+            if (label && r > 14) labels.push({ text: label, spots: (w, fs) => [[x, y + r + 5], [x, y - r - 5 - fs], [x, y + r - 6 - fs], [x, y - r + 6], [x - r + 11 + w / 2, y - fs / 2], [x + r - 11 - w / 2, y - fs / 2]] });
         };
         if (g.type === 'orbit') {
             ctx.fillStyle = hexA(col, C.dark ? 0.08 : 0.1);
@@ -13068,12 +14580,36 @@
             ctx.beginPath();
             ctx.moveTo(lx - 5, ly); ctx.lineTo(lx + 5, ly); ctx.moveTo(lx, ly - 5); ctx.lineTo(lx, ly + 5);
             ctx.stroke();
-            ctx.fillStyle = C.label;
-            ctx.textBaseline = 'bottom';
-            ctx.fillText('L4', lx, ly - Math.max(7, g.D * scale) - 2);
-            ctx.textBaseline = 'top';
+            labels.push(markName('L4', lx, ly, Math.max(7, g.D * scale) + 1, true));
+        } else if (T) {
+            // The ring to get inside, round the target; and Mars's path, to fly out to
+            ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), null);
+            if (g.type === 'reach') ring(cx, cy, Math.hypot(T.dx - R.dx, T.dy - R.dy) * scale, null);
         }
         const p = mission.pred, c = bodyById(mission.craftId);
+        // Where the next burn goes: a world offset from R, turned as the view is turned
+        const x = c && !missionIsOver() ? missionContext() : null, next = skipTarget(x);
+        if (next && next.kind !== 'meet') {
+            const ang = turn.on ? turnAngleIn(0) : 0;
+            const at = (wx, wy) => [cx + (Math.cos(ang) * wx - Math.sin(ang) * wy) * scale, cy - (Math.sin(ang) * wx + Math.cos(ang) * wy) * scale];
+            let spot, label = 'burn here';
+            if (next.kind === 'window') {
+                const a = Math.atan2(x.ry, x.rx) + d.lead * DEG;
+                spot = at(x.tr * Math.cos(a), x.tr * Math.sin(a));
+                label = 'launch when Mars is here';
+            } else {
+                const k = (next.kind === 'apo' ? -x.ra : x.rp) / x.el.e;
+                spot = at(x.el.ex * k, x.el.ey * k);
+            }
+            ctx.strokeStyle = C.dark ? C.text : '#16181c';
+            ctx.fillStyle = hexA(col, 0.35);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(spot[0], spot[1], 6, 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+            labels.push(markName(label, spot[0], spot[1], 9));
+        }
         const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
         // (the places predicted are world offsets from R at that time: turned as the view will be turned
         // then, so in a rotating frame they are seen from the pair as it will be)
@@ -13099,65 +14635,72 @@
             ctx.beginPath(); ctx.arc(tx, ty, 6, 0, TAU); ctx.stroke();
             ctx.fillStyle = bodyStroke(c.color, C.dark);
             ctx.beginPath(); ctx.arc(kx, ky, 2.5, 0, TAU); ctx.fill();
-            ctx.fillStyle = C.subtle;
-            ctx.fillText(`${g.l4 ? 'L4' : T.name} in ${fmtDuration(p.t - simTime)}`, tx, ty + 9);
+            labels.push(markName(`${g.l4 ? 'L4' : T.name} in ${fmtDuration(p.t - simTime)}`, tx, ty, 9));
         }
         ctx.restore();
     }
 
-    // The mission card, heading the cards in the top-right corner: the mission, how it is going, the
-    // fuel gauge (a tick marks where it would stand after using exactly par) and, room permitting, the
-    // fuel used, par and time left. Returns where the next card goes.
-    function drawMissionCard(C, y, fs, compact) {
-        const d = mission.def;
-        if (!d || cleanRender) return y;
-        const x = missionContext();
-        const accent = C.dark ? C.velocity : '#1d6f65';
-        const title = compact ? `${d.n}. ${d.title}` : `Mission ${d.n}: ${d.title}`;
-        const status = missionStatus(x).slice(0, compact ? 1 : 2);
-        const left = Math.max(0, d.budget - mission.used);
-        const fuel = compact ? `${f1(left)} km/s left` : `${f1(left)} of ${f1(d.budget)} km/s left`;
-        const over = mission.status === 'won' || mission.status === 'lost';
-        const foot = compact ? null : `Used ${f1(mission.used)} · par ${f1(d.par)} km/s${d.limit && !over ? ` · ${fmtDuration(Math.max(0, d.limit - simTime))} left` : ''}`;
-        const lh = Math.round(fs * 1.4), gw = compact ? 54 : 84;
-        ctx.font = font(fs, true);
-        let w = ctx.measureText(title).width;
-        ctx.font = font(fs);
-        for (const s of status) w = Math.max(w, ctx.measureText(s).width);
-        if (foot) w = Math.max(w, ctx.measureText(foot).width);
-        w = Math.max(w, gw + 8 + ctx.measureText(fuel).width) + 20;
-        const rows = 2 + status.length + (foot ? 1 : 0);
-        const h = rows * lh + 10, x0 = viewW - 8 - w;
-        cardBox(C, x0, y, w, h);
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        let ly = y + 5 + lh / 2;
-        ctx.font = font(fs, true);
-        ctx.fillStyle = accent;
-        ctx.fillText(title, x0 + 10, ly);
-        ctx.font = font(fs);
-        ctx.fillStyle = C.text;
-        for (const s of status) { ly += lh; ctx.fillText(s, x0 + 10, ly); }
-        ly += lh;
-        // The gauge
-        const gx = x0 + 10, gh = 7, frac = d.budget > 0 ? left / d.budget : 0;
-        roundRect(gx, ly - gh / 2, gw, gh, 3);
-        ctx.fillStyle = C.faint;
-        ctx.fill();
-        if (frac > 0) {
-            roundRect(gx, ly - gh / 2, Math.max(gh, gw * frac), gh, 3);
-            ctx.fillStyle = frac < 0.15 ? C.force : C.velocity;
-            ctx.fill();
-        }
-        const tick = gx + gw * clamp(1 - d.par / d.budget, 0, 1);
-        ctx.strokeStyle = C.text;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(tick, ly - gh / 2 - 2); ctx.lineTo(tick, ly + gh / 2 + 2); ctx.stroke();
-        ctx.fillStyle = C.text;
-        ctx.fillText(fuel, gx + gw + 8, ly);
-        if (foot) { ly += lh; ctx.fillStyle = C.subtle; ctx.fillText(foot, x0 + 10, ly); }
-        return y + h + 5;
+    // A mark's name: the spots to try round a mark of radius r at (x, y), under it first (or over it)
+    function markName(text, x, y, r, over) {
+        return {
+            text,
+            spots: (w, fs) => {
+                const under = [x, y + r + 3], above = [x, y - r - 3 - fs];
+                return [over ? above : under, over ? under : above, [x + r + 5 + w / 2, y - fs / 2], [x - r - 5 - w / 2, y - fs / 2]];
+            }
+        };
     }
+
+    // Over the bodies and arrows: the burn the hint asks for, as an arrow on the probe; and the names of
+    // the marks, each on a backing of the canvas's colour so the lines under it don't strike it through,
+    // in the first spot clear of the canvas's edges, the bodies and each other. (drawLabels, next, keeps
+    // the bodies' names clear of them too.)
+    function drawMissionOver(C) {
+        mission.labelBoxes = [];
+        if (!mission.def || cleanRender) return;
+        const labels = mission.labels, t = mission.tell, c = missionCraft();
+        ctx.save();
+        if (t && c && !missionIsOver()) {
+            const a = turn.on ? turnAngleIn(0) : 0, ux = Math.cos(a) * t.ux - Math.sin(a) * t.uy, uy = -(Math.sin(a) * t.ux + Math.cos(a) * t.uy), n = Math.hypot(ux, uy) || 1;
+            const x0 = sx(c.dx) + ux / n * (drawRadius(c) + 3), y0 = sy(c.dy) + uy / n * (drawRadius(c) + 3);
+            const L = clamp(40 + 30 * t.kms, 40, 90) * sizeScale, x1 = x0 + ux / n * L, y1 = y0 + uy / n * L;
+            arrow(x0, y0, x1, y1, C.burn, 3);
+            mission.labelBoxes.push({ l: Math.min(x0, x1) - 3, r: Math.max(x0, x1) + 3, t: Math.min(y0, y1) - 3, b: Math.max(y0, y1) + 3 });   // (names keep off it)
+            // (the arrow's end can lie on the ring on the velocity arrow, a burn being along the motion: its name stands clear)
+            const q = mission.tipBox, off = q.r > q.l ? Math.hypot((q.l + q.r) / 2 - x1, (q.t + q.b) / 2 - y1) : Infinity;
+            labels.push(markName(`burn ${kmsWords(t.kms)} km/s`, x1, y1, off < 28 ? off + (q.r - q.l) / 2 + 5 : 5, uy < 0));
+        }
+        const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12), pad = 3;
+        const zones = edgeKeepOut(), boxes = mission.labelBoxes;
+        boxes.push(mission.tipBox);
+        const discs = bodies.map((b) => ({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b) }));
+        ctx.font = font(fs);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (const q of labels) {
+            const w = ctx.measureText(q.text).width;
+            let at = null;
+            for (const [cx0, ty] of q.spots(w, fs)) {
+                if (ty < 2 || ty + fs > viewH - 2) continue;
+                const lx = clamp(cx0, w / 2 + 4, viewW - w / 2 - 4), l = lx - w / 2 - pad, r = lx + w / 2 + pad, b = ty + fs + 1;
+                const clear = !zones.some((z) => l < z[2] && r > z[0] && ty < z[3] && b > z[1])
+                    && !boxes.some((z) => l < z.r && r > z.l && ty < z.b && b > z.t)
+                    && !discs.some((d) => d.x + d.r > l && d.x - d.r < r && d.y + d.r > ty && d.y - d.r < b);
+                if (at === null || clear) at = { l, r, t: ty, b, lx };
+                if (clear) break;
+            }
+            if (!at) continue;
+            boxes.push(at);
+            ctx.fillStyle = hexA(C.bg, 0.86);
+            roundRect(at.l, at.t - 1, at.r - at.l, at.b - at.t + 1, 3);
+            ctx.fill();
+            ctx.fillStyle = C.text;
+            ctx.fillText(q.text, at.lx, at.t);
+        }
+        mission.tipBox.r = -1;
+        ctx.restore();
+    }
+
     // For testing: the mission as it stands (the goal's own numbers in goal, km/s and AU)
     function missionState() {
         const d = mission.def;
@@ -13176,7 +14719,9 @@
             result: mission.result ? Object.assign({}, mission.result) : null, best: bestOf(d.id),
             goal: Object.assign({ type: g.type }, g, g.V ? { V: toKms(g.V) } : {}), now,
             closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
-            panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null
+            panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null,
+            skip: mission.skip ? mission.skip.kind : null, offers: skipTarget(x), speed: settings.speed, firing: !!mission.firing,
+            tell: mission.tell ? Object.assign({}, mission.tell) : null
         };
     }
 
@@ -13190,9 +14735,11 @@
         const w = Math.max(1, Math.round(rect.width));
         const h = Math.max(1, Math.round(rect.height));
         const newDpr = Math.min(2, window.devicePixelRatio || 1);
-        if (w === viewW && h === viewH && newDpr === dpr) return;
+        if (w === viewW && h === viewH && newDpr === dpr) { syncDrawer(rect); return; }
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        syncDrawer(rect);
+        if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
         if ((first || view.pendingBox) && scene) {
@@ -13204,6 +14751,76 @@
         updateDrawnPositions();
         render();
         if (popBody) positionPopover(popBody);
+    }
+
+    // ---- The Settings drawer ----
+    // Beside the canvas, Settings is a drawer over one side of it, which moves no control. While it is
+    // open the rest of the canvas is the frame: the cards, the corner text and the body's menu keep to
+    // that (visL, visR), and the middle of the view eases to its middle (view.shift, in px, so it holds at
+    // any zoom); a scene that would be cut off there is eased to fit. As it shuts all that eases back, but
+    // a view panned or zoomed meanwhile stays where it is on the screen. Worked out only when the layout
+    // changes: the page sends a resize as the panel opens and shuts.
+    function syncDrawer(cr) {
+        const panel = byId('simulationControlsPanel');
+        let l = 0, r = viewW;
+        if (panel && panel.offsetParent && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-side')) {
+            // (by its place in the layout: as it opens it is still sliding in)
+            const o = panel.offsetParent, a = o.getBoundingClientRect().left + o.clientLeft + panel.offsetLeft - cr.left, b = a + panel.offsetWidth;
+            if (a + b > viewW) r = clamp(Math.round(a), 0, viewW); else l = clamp(Math.round(b), 0, viewW);
+        }
+        if (l === visL && r === visR) return;
+        const was = drawer.open;
+        visL = l; visR = r;
+        drawer.open = l > 0 || r < viewW;
+        view.shiftTo = (l + r - viewW) / 2;
+        if (ui.simWrap) ui.simWrap.style.setProperty('--orb-vis-l', `${l}px`);
+        const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        if (drawer.open && !was) drawerOpened(glide); else if (was && !drawer.open) drawerShut(glide);
+        if (!glide) view.shift = view.shiftTo;
+        if (popBody) positionPopover(popBody);
+    }
+
+    // A fit (box) or another move by a command, while the drawer is open: nothing to put back as it shuts but that
+    function drawerCamera(box) {
+        if (!drawer.open) return;
+        Object.assign(drawer, { moved: false, back: null, box });
+    }
+
+    function drawerOpened(glide) {
+        drawerCamera(null);
+        if (view.panned || mission.def || !bodies.length) return;
+        updateDrawnPositions();
+        const to = view.anim || view, k = to.zoom * Math.max(1, Math.min(viewW, viewH));
+        const inside = (q, mid, a, b) => mid + (q[0] - to.panX) * k >= a && mid + (q[1] - to.panX) * k <= b;
+        // (the scene with its orbits; if the view was already closer in than those, its bodies)
+        for (const orbits of [true, false]) {
+            const q = sceneBox(orbits);
+            const y0 = viewH / 2 - (q[3] - to.panY) * k, y1 = viewH / 2 - (q[2] - to.panY) * k;
+            if (!inside(q, viewW / 2, 0, viewW) || y0 < 0 || y1 > viewH) continue;
+            if (inside(q, (visL + visR) / 2, visL + 6, visR - 6)) return;
+            const back = { zoom: to.zoom, panX: to.panX, panY: to.panY, scene };
+            fitBox(paddedBox(q), glide, to.zoom);
+            Object.assign(drawer, { back, box: null });
+            return;
+        }
+    }
+
+    function drawerShut(glide) {
+        const { moved, back, box } = drawer;
+        Object.assign(drawer, { moved: false, back: null, box: null });
+        if (moved) {
+            if (view.anim) return;
+            updateScale();
+            view.panX -= view.shift / scale;
+            view.shift = 0;
+            view.panned = true;
+            updateScale();
+        } else if (back && back.scene === scene) {
+            const to = { zoom: back.zoom, panX: back.panX, panY: back.panY };
+            if (glide) view.anim = to; else { Object.assign(view, to); view.anim = null; }
+        } else if (box) {
+            fitBox(box, glide);
+        }
     }
 
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resizeCanvas).observe(canvas);
@@ -13227,6 +14844,8 @@
         if (icon) { icon.classList.toggle('fa-pause', !paused); icon.classList.toggle('fa-play', paused); }
     }
 
+    let focusByPointer = false;
+
     function bindControls() {
         const bindCheck = (el, key, after) => {
             if (!el) return;
@@ -13248,7 +14867,8 @@
                 settings.speed = SPEED_STOPS[clamp(parseInt(ui.speed.value, 10) || 0, 0, SPEED_STOPS.length - 1)];
                 showSpeed();
             };
-            ui.speed.addEventListener('input', upd);
+            // (the canvas says what the new speed means, as it does for [ and ])
+            ui.speed.addEventListener('input', () => { upd(); paceZoom.was = 0; speedFlash = performance.now() + 1500; });
             upd();
         }
         if (ui.scene) {
@@ -13302,39 +14922,51 @@
         // Escape closes the popover first (before the shared handler closes settings or fullscreen);
         // Space pauses.
         window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && escapeChipDrag()) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                return;
+            }
             if (e.key === 'Escape' && popBody) {
                 closePopover();
                 e.stopImmediatePropagation();
                 e.preventDefault();
                 return;
             }
-            // Space pauses, unless it would type, press a button or tick a box
+            // Space pauses, unless it would type, or press what the keyboard has moved to. A button or
+            // switch last used with the pointer lets go instead (or Space would add that body again).
             const t = e.target;
-            const takesSpace = t && ((t.tagName === 'INPUT' && t.type !== 'range') || ['TEXTAREA', 'SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName) || t.isContentEditable);
-            if ((e.key === ' ' || e.code === 'Space') && !takesSpace && !e.repeat) {
-                setPaused(!paused);
-                e.preventDefault();
-            }
+            if ((e.key !== ' ' && e.code !== 'Space') || e.repeat || !t) return;
+            const types = (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable;
+            const presses = (t.tagName === 'INPUT' && t.type !== 'range') || ['SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName);
+            if (types || (presses && !focusByPointer)) return;
+            if (presses) t.blur();
+            setPaused(!paused);
+            e.preventDefault();
         }, true);
+        // (how the focus last moved: within a moment of a press or a click, it was the pointer's doing)
+        let pointerAt = -Infinity;
+        const pointerUsed = () => { pointerAt = performance.now(); };
+        window.addEventListener('pointerdown', pointerUsed, true);
+        window.addEventListener('click', (e) => { if (e.detail) pointerUsed(); }, true);
+        document.addEventListener('focusin', () => { focusByPointer = performance.now() - pointerAt < 100; });
 
         // Recolour when the theme changes (palette chips use fixed colours, the canvas redraws itself)
         new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        // The first press anywhere ends the missions' introduction; a press on the canvas or the
-        // palette (getting on with it) ends the scene's tip too. Notes run out by themselves.
+        // A press on the canvas or the palette (getting on with it) ends the scene's tip. Notes run out
+        // by themselves.
         window.addEventListener('pointerdown', (e) => {
             lastPointerType = e.pointerType || 'mouse';
-            hints.intro = false;
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            if (t && t.closest && t.closest('#orbHint button')) hintPressed = true;
             refreshHint();
         }, true);
-        // (for the keyboard, a key pressed in the simulation, other than moving about with Tab)
-        window.addEventListener('keydown', (e) => {
-            if (!hints.intro || ['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
-            if (!(e.target && e.target.closest && e.target.closest('.simulation-area-wrapper'))) return;
-            hints.intro = false;
-            refreshHint();
-        }, true);
+        // (over with the click, or a moment after a press that became none: the click comes just after the release)
+        const hintLetGo = () => { if (hintPressed) { hintPressed = false; refreshHint(); } };
+        window.addEventListener('pointerup', () => setTimeout(hintLetGo, 250), true);
+        window.addEventListener('pointercancel', hintLetGo, true);
+        window.addEventListener('click', () => { hintPressed = false; setTimeout(refreshHint, 0); }, true);
         bindHint();
         bindTurn();
     }
@@ -13346,7 +14978,33 @@
     // if drawing alone takes too long, the trails are drawn more coarsely first
     // (quality below 1), before the simulation itself has to slow down. Readouts, primaries in a crowded
     // scene and the graphs are updated about ten times a second rather than every frame.
+    // While paused with nothing going on, the picture can't change: frames rest, with one in full four
+    // times a second in case something else has changed it. Anything the visitor does (or a call of the
+    // public API) wakes them for a second. With the canvas scrolled out of sight, the physics and the
+    // readouts carry on but nothing is drawn.
     // ------------------------------------------------------------------
+    const REST_EVERY_MS = 250, WAKE_MS = 1000;
+    let wakeUntil = 0, restNext = 0, canvasInView = true;
+    const wake = () => { wakeUntil = performance.now() + WAKE_MS; };
+    function resting(now) {
+        if (!paused || now < wakeUntil || now >= restNext) return false;
+        if (pred.job || (pred.shown && now - pred.shown.t < PATH_BLEND_MS)) return false;
+        return !drags.size && !paletteDrag && !view.anim && view.shift === view.shiftTo && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+    }
+    function bindRest() {
+        for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
+            window.addEventListener(t, wake, { capture: true, passive: true });
+        }
+        const api = window.orbitsSimulation;
+        for (const k of Object.keys(api)) {
+            const fn = api[k];
+            if (typeof fn === 'function') api[k] = function (...args) { wake(); return fn.apply(this, args); };
+        }
+        if (typeof IntersectionObserver !== 'undefined') {
+            new IntersectionObserver((es) => { canvasInView = es[es.length - 1].isIntersecting; }).observe(canvas);
+        }
+    }
+
     let fpsFrames = 0, fpsTime = 0;
     let eccNext = 0, readoutNext = 0, primNext = 0;
     const perf = { physics: 0, render: 0, other: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
@@ -13357,10 +15015,15 @@
         const dtReal = lastFrameTs ? Math.min(0.1, (ts - lastFrameTs) / 1000) : 0;
         lastFrameTs = ts;
         const t0 = performance.now();
+        if (resting(t0)) {
+            if (ui.fps) { fpsFrames++; fpsTime += dtReal; }
+            return;
+        }
+        restNext = t0 + REST_EVERY_MS;
         updateScale();
         applyHolds();
         let steps = 0;
-        if (!paused && dtReal > 0) {
+        if (!paused && dtReal > 0 && !timeHeld()) {
             const want = dtReal * settings.speed * rate();
             const before = timeDir * simTime + acc;
             steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));
@@ -13378,7 +15041,7 @@
         updateScale();
         updateDrawnPositions();
         const t2 = performance.now();
-        render();
+        if (canvasInView) render(); else syncTurnOptions();
         const t3 = performance.now();
         if (ts >= readoutNext) { updateReadouts(); readoutNext = ts + 100; }
         updatePopover(false);
@@ -13434,7 +15097,7 @@
     }
 
     window.orbitsSimulation = {
-        reset() { loadScene(settings.scene); setPaused(false); },
+        reset() { loadScene(settings.scene); if (!mission.def) setPaused(false); },
         loadScene(key) { if (ui.scene) ui.scene.value = key; loadScene(key); },
         scenes: () => Object.keys(SCENES),
         getState() {
@@ -13444,7 +15107,7 @@
                 selected: selectedId !== null && bodyById(selectedId) ? bodyById(selectedId).name : null,
                 frame: frameId !== null && bodyById(frameId) ? bodyById(frameId).name : 'com',
                 popover: popBody ? popBody.name : null,
-                view: { zoom: view.zoom, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH },
+                view: { zoom: view.zoom, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, shift: view.shift, visL, visR },
                 energy: E, angularMomentum: angularMomentum(), momentum: totals(bodies),
                 bodies: bodies.map(bodyInfo), settings: Object.assign({}, settings), slowedDown
             };
@@ -14043,5 +15706,6 @@
     resizeCanvas();
     loadScene(settings.scene);
     setHint();
+    bindRest();
     requestAnimationFrame(frame);
 })();
