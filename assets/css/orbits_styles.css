@@ -1349,10 +1349,6 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     opacity: 0.35;
 }
 
-.orb-spin:has(input[aria-invalid="true"]) {
-    box-shadow: inset 0 0 0 2px #ff5f5f;
-}
-
 .orb-spin-unit {
     align-self: center;
     flex: 0 0 auto;
