@@ -9603,6 +9603,18 @@
         clearHint('drag');
     }
 
+    // Escape, with a body on its way from the palette: it goes back, and time carries on. The press that
+    // is still down lets go of nothing (its click, whenever it comes, adds nothing either).
+    function escapeChipDrag() {
+        const d = paletteDrag;
+        if (!d || !d.moved) return false;
+        d.btn.dataset.dragged = '1';
+        d.btn.addEventListener('lostpointercapture', () => setTimeout(() => { d.btn.dataset.dragged = ''; }, 400), { once: true });
+        onChipCancel({ pointerId: d.id });
+        showHint('note', '<strong>Cancelled:</strong> nothing added.', { ms: 3000 });
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // Hint line under the palette
     // ------------------------------------------------------------------
@@ -14809,6 +14821,11 @@
         // Escape closes the popover first (before the shared handler closes settings or fullscreen);
         // Space pauses.
         window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && escapeChipDrag()) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                return;
+            }
             if (e.key === 'Escape' && popBody) {
                 closePopover();
                 e.stopImmediatePropagation();
