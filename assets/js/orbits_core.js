@@ -14117,6 +14117,7 @@
     const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
     const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
     const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
+    const UNFINE_FROM = 1.5 * FINE_FROM;     // and back to full burns, if Fine is on and this share is still to burn (over 10 s of holding): above FINE_FROM, so the hint can't swap to and fro
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
     const f1Up = (x) => (Math.ceil(x * 10) / 10).toFixed(1);   // (what is still needed: never "0.0" while any is)
@@ -14314,25 +14315,28 @@
     // ---- Words ----
     const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter' };
 
+    // A hint asking for a full-sized burn, while Fine is still on: a Fine burn would take a long hold
+    const unFine = (html, big = true) => (mission.fine && big ? `Turn off <strong>Fine</strong>. ${html}` : html);
+
     // Hints for a move between circular orbits (up: outwards). The end of the orbit that moves is the
     // far one going up and the near one going down; the second burn goes there, the same way again.
     function transferHint(x, r, tol, up) {
         const lo = r * (1 - tol), hi = r * (1 + tol);
         const way = up ? 'forwards' : 'backwards', where = up ? 'far point' : 'closest point', btn = up ? 'Forward' : 'Back';
         const reach = up ? x.ra : x.rp;
-        if (!x.burns) return `Hold <strong>${btn}</strong> until your dashed orbit ${up ? 'reaches' : 'dips to'} the ring.`;
+        if (!x.burns) return unFine(`Hold <strong>${btn}</strong> until your dashed orbit ${up ? 'reaches' : 'dips to'} the ring.`);
         if (!x.el.bound) return 'You are escaping the Sun! <strong>Undo</strong>, and try a smaller burn.';
         // (the first burn went the wrong way: the orbit shrank going up, or grew going down)
         if (up ? x.el.a < 0.995 : x.el.a > 1.005) return `That burn ${up ? 'lowered' : 'raised'} your orbit. <strong>Undo</strong>, then burn ${way}.`;
         if (up ? reach < lo : reach > hi) return `Not there yet: hold <strong>${btn}</strong> until your orbit ${up ? 'reaches' : 'dips to'} the ring.`;
         if (up ? reach > hi : reach < lo) return `Too far: your orbit goes past the ring. <strong>Undo</strong>, or burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'}.`;
         const at = up ? x.nu > 165 : x.nu < 15;
-        return at ? `<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`
+        return at ? unFine(`<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`)
             : `Good. <strong>Skip to ${where}</strong>, then burn ${way} again.`;
     }
     // (within 45 degrees of the closest point, 0.35 AU from the Sun, a burn still earns three stars)
     function escapeHint(x) {
-        if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
+        if (x.nu < 45) return unFine('<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!');
         // (at the very start, at the far point, it may just be moving out by a rounding error)
         if (x.out && x.nu < 170) return 'Past the closest point, a burn costs far more. <strong>Retry</strong>, and burn near the Sun.';
         return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
@@ -14341,7 +14345,7 @@
     function captureHint(x) {
         const g = x.d.goal;
         if (x.el.bound && x.ra > g.lim) return 'Jupiter has you, but too widely. Hold <strong>Back</strong> at the closest point to shrink your orbit.';
-        if (x.nu < 20) return '<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.';
+        if (x.nu < 20) return unFine('<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.');
         if (x.out) return 'You are past the closest point and climbing away: braking now costs more.';
         return '<strong>Skip to closest point</strong>, where braking counts most.';
     }
@@ -14424,14 +14428,15 @@
         const btn = q.kms > 0 ? 'Forward' : 'Back', more = Math.abs(q.kms), v = x.el.v;
         const sign = q.kms > 0 ? 1 : -1, ux = sign * x.vx / v, uy = sign * x.vy / v;
         // (the first burn, on a clock that is running: no figure, which would change with every small move)
-        if (first && !paused) return `Hold <strong>${btn}</strong>${first[1]}`;
+        const big = more > UNFINE_FROM * x.d.budget;
+        if (first && !paused) return unFine(`Hold <strong>${btn}</strong>${first[1]}`, big);
         const words = kmsWords(more);
         let h;
         if (first) h = `${first[0]}${first[0] ? 'hold' : 'Hold'} <strong>${btn}</strong> for about ${words} km/s${first[1]}`;
         else if (mission.fine) h = `${more > TAP_FROM * x.d.budget ? 'Hold' : 'Tap'} <strong>${btn}</strong> until you see the ✓.`;
         else if (more > FINE_FROM * x.d.budget) h = `Keep holding <strong>${btn}</strong>: about ${words} km/s to go.`;
         else h = `Nearly. Turn on <strong>Fine</strong>, then hold <strong>${btn}</strong> until you see the ✓.`;
-        return askBurn(btn, ux, uy, more, h);
+        return askBurn(btn, ux, uy, more, unFine(h, big));
     }
     // Is a burn from here worth asking for, or is going back better? (Up to the fuel of two stars; or
     // whatever the fuel so far, if it is a near miss, which a small burn finishes)
@@ -14483,7 +14488,7 @@
     function matchHint(x, what) {
         const m = matchBurn(x), kms = Math.max(0, m.kms), u = Math.hypot(m.ux, m.uy) || 1;
         if (m.cost > x.left) return 'Not enough fuel left to match it. <strong>Undo</strong> or <strong>Retry</strong>.';
-        return askBurn(m.btn, m.ux / u, m.uy / u, kms, `<strong>${mission.aimPaused ? 'Now' : 'Arrived, time waits'}:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`);
+        return askBurn(m.btn, m.ux / u, m.uy / u, kms, unFine(`<strong>${mission.aimPaused ? 'Now' : 'Arrived, time waits'}:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`, kms > UNFINE_FROM * x.d.budget));
     }
     // While the clock runs with nothing pressed, the advice holds still: what the best burn is changes with
     // every small move, so that waits until the clock stops.
@@ -14942,12 +14947,12 @@
         return T ? ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(c.y - R.y, c.x - R.x)) / DEG + 360) % 360 : 0;
     }
 
-    // The clock stops, waiting for the burn (a full-sized one: Fine was for tuning the burn before)
+    // The clock stops, waiting for the burn. (Fine stays as the player left it: a hint asking for a
+    // full-sized burn says to turn it off, see unFine.)
     function missionWait() {
         endSkip();
         acc = 0;
         setPaused(true);
-        mission.fine = false;
     }
 
     // (each step) Got there by Play: the moment is short, so the clock stops for it where a skip would, at
