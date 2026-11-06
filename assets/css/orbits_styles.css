@@ -118,7 +118,9 @@ html:not(.dark-mode) .orbits-sim {
     padding: 3px 2px 2px;
     overflow: hidden;
     cursor: grab;
-    touch-action: none;             /* a drag from a chip carries the body, it doesn't scroll the page */
+    /* A move up towards the canvas (the chips are below it) carries the body; a swipe down scrolls the page */
+    touch-action: none;
+    touch-action: pan-up;
     -webkit-user-select: none;
     user-select: none;
 }
@@ -350,6 +352,7 @@ html:not(.dark-mode) .orb-hint.is-open::after {
         max-width: none;
         scroll-snap-align: start;
         touch-action: pan-x;
+        touch-action: pan-x pan-up;
     }
 }
 
@@ -470,12 +473,14 @@ html:not(.dark-mode) .orb-hint.is-open::after {
         display: none;
     }
 
+    /* (beside the canvas a move across carries the body; up or down scrolls the column) */
     .orb-toolbar .orb-chip {
         max-width: none;
         width: 100%;
         gap: 3px;
         padding-left: 4px;
         padding-right: 4px;
+        touch-action: pan-y;
     }
 
     .orb-toolbar .orb-chip-disc {
@@ -505,8 +510,8 @@ html:not(.dark-mode) .orb-hint.is-open::after {
         padding: 0 2px;
     }
 
-    /* Phones held sideways: no room for the hint; slim chips (disc beside the name) so the whole
-       palette fits beside the canvas */
+    /* Phones held sideways: no room for the hint; one column of slim chips, which scrolls, so the canvas
+       can have the room */
     @media (max-height: 540px) {
         .orb-hint,
         .orb-toolbar-label,
@@ -516,6 +521,7 @@ html:not(.dark-mode) .orb-hint.is-open::after {
 
         .orbits-sim {
             --orb-chip-w: 76px;
+            --orb-cols: 1;
         }
 
         .orb-toolbar {
@@ -1837,17 +1843,22 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     }
 
     .orbits-sim .stats-container > .orb-subject {
-        flex: 1 1 15em;
+        flex: 1 0 100%;
         min-width: 0;
         max-width: none;
     }
 }
 
-/* Desktop: each button says what it does, under its icon. A value that grows takes room from the
-   chosen body's name: the row never wraps, so the canvas above it never changes size. */
+/* Desktop: each button says what it does, under its icon. The chosen body shares its row with the
+   readouts. A value that grows takes room from the name: the row never wraps, so the canvas above it
+   never changes size. */
 @media screen and (min-width: 900px) and (min-height: 541px) and (pointer: fine) {
     .orbits-sim .stats-container {
         flex-wrap: nowrap;
+    }
+
+    .orbits-sim .stats-container > .orb-subject {
+        flex: 1 1 15em;
     }
 
     .orbits-sim .sim-info-actions .orb-cap {
@@ -2788,6 +2799,7 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     justify-content: center;
     gap: 0.5em;
     flex: 1 1 auto;
+    width: auto;
     min-width: 0;
     height: 34px;
     margin: 0;
@@ -3694,8 +3706,13 @@ dialog.orb-help::backdrop {
     }
 }
 
-/* A tablet held upright has only two lines of hint: it grows a little while the offer is there */
+/* A tablet held upright has only two lines of hint: a little more, for a finger-wide button in them,
+   and it grows a little while the offer is there */
 @media (pointer: coarse) and (min-width: 601px) and (orientation: portrait) {
+    .orb-hint {
+        height: 3.4em;
+    }
+
     .orb-hint:has(.orb-carry-on) {
         height: auto;
         min-height: 2.7em;
@@ -3710,8 +3727,34 @@ dialog.orb-help::backdrop {
    canvas's, and the canvas's height with the bar's: the two fed each other and the canvas flipped
    between two sizes every frame. */
 @media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    :root {
+        --sim-page-gutter: 8px;
+    }
+
     .orbits-sim {
         --orb-info-w: 172px;
+    }
+
+    /* The chips scroll; under them undo and redo, and "Fit view" */
+    .orb-toolbar {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto auto;
+        grid-template-areas: "palette" "history" "fit";
+    }
+
+    .orb-history {
+        justify-content: space-between;
+    }
+
+    .orb-toolbar .orb-fit {
+        width: 100%;
+    }
+
+    /* (a mission's wider column: all on one row, leaving the console the room) */
+    .orbits-sim.orb-mission-on .orb-toolbar {
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto;
+        grid-template-areas: "palette palette" "history fit";
     }
 
     .orbits-sim .simulation-display-container {
@@ -3724,10 +3767,31 @@ dialog.orb-help::backdrop {
     /* The hint line, moved under the canvas (by placeHint in orbits_core.js): two lines, always the
        same height, so the canvas's size still depends on the screen alone (until a long message is
        opened out with a tap) */
+    .orbits-sim .simulation-display-container > .orb-hint .orb-hint-btn {
+        -webkit-appearance: none;
+        appearance: none;
+        display: inline-block;
+        height: auto;
+        min-height: 36px;
+        margin: 0;
+        padding: 0 0.6em;
+        font-size: 1em;
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: 0;
+        text-transform: none;
+        vertical-align: baseline;
+        color: var(--color-text) !important;
+        background-color: var(--color-bg-alt);
+        border-radius: 4px;
+        box-shadow: inset 0 0 0 1px var(--color-border);
+        cursor: pointer;
+    }
+
     .orbits-sim .simulation-display-container > .orb-hint {
         grid-area: hint;
         display: -webkit-box;
-        height: 2.7em;
+        height: 38px;
         min-height: 0;
         max-height: none;
         margin: 4px 0 0;

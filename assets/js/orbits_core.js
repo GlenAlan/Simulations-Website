@@ -8217,7 +8217,7 @@
             ui.pop.style.top = '';
             const cr = canvas.getBoundingClientRect(), x = cr.left + sx(b.dx), w = ui.pop.offsetWidth;
             if (opening || !was) {
-                // (with the settings open beside the canvas the palette has stepped aside: then over them)
+                // (with the settings open over the palette: on the other side from them, if it can)
                 const bc = document.body.classList, settingsOpen = bc.contains('sim-panel-active') && bc.contains('sim-panel-side');
                 const rightOk = x < window.innerWidth - w - 16, leftOk = x > w + 16;
                 ui.pop.classList.toggle('on-left', settingsOpen ? !rightOk && leftOk : leftOk || (!rightOk && x > window.innerWidth / 2));
@@ -9153,7 +9153,6 @@
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
     // fades at an end only while there are more chips beyond it
-    const paletteScrolls = () => !!ui.palette && ui.palette.scrollWidth > ui.palette.clientWidth + 2;
     function paletteEdges() {
         const p = ui.palette;
         if (!p) return;
@@ -9237,6 +9236,14 @@
         return btn;
     }
 
+    // Is this touch's move from where it began heading for the canvas (the chip beside it, or below it)?
+    function towardsCanvas(d, e) {
+        const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+        const c = canvas.getBoundingClientRect();
+        if (d.y0 < c.bottom && d.y0 > c.top) return Math.abs(dx) > Math.abs(dy) && dx * (c.left + c.width / 2 - d.x0) > 0;
+        return Math.abs(dy) >= Math.abs(dx) && dy * (c.top + c.height / 2 - d.y0) > 0;
+    }
+
     function onChipDown(e, btn) {
         if (btn.disabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
         paletteDrag = { kind: btn.dataset.kind, btn, id: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, over: false, cx: 0, cy: 0 };
@@ -9248,9 +9255,9 @@
         const d = paletteDrag;
         if (!d || e.pointerId !== d.id) return;
         if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 6) {
-            // (in a row of chips that scrolls sideways, a sideways swipe by touch scrolls it: only a drag
-            // up or down carries the body out)
-            if (e.pointerType !== 'mouse' && paletteScrolls() && Math.abs(e.clientX - d.x0) > Math.abs(e.clientY - d.y0)) return;
+            // (by touch, only a move towards the canvas carries the body out: any other is a swipe, for
+            // the chips or the page to scroll by, as they do by themselves: see touch-action in the styles)
+            if (e.pointerType !== 'mouse' && !towardsCanvas(d, e)) return;
             d.moved = true;
             d.btn.classList.add('is-dragging');
             if (!ghostEl) {
@@ -9482,8 +9489,9 @@
     // to where it fits, rather than leaving the header in view and the info column cut off below.
     function bindTurn() {
         const dc = canvas.closest('.simulation-display-container');
-        // (held sideways as the page opens: the simulation fills the screen straight away, under the header)
-        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) }); }, { once: true });
+        // (held sideways as the page opens: the simulation fills the screen straight away, under the header,
+        // with the small margin that opening the settings would otherwise scroll the page to make)
+        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) - 8 }); }, { once: true });
         if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
         let inView = false;
         new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
@@ -9493,7 +9501,7 @@
             // (with the body's menu open, as the menu places the page when it opens)
             requestAnimationFrame(() => requestAnimationFrame(() => {
                 if (popBody && !ui.pop.hidden) { positionPopover(popBody, true); return; }
-                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY : 0;
+                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY - 8 : 0;
                 window.scrollTo({ top: Math.max(0, Math.round(top)) });
             }));
         };
