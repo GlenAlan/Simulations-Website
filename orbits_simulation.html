@@ -435,6 +435,21 @@
 															</label>
 															<div class="orb-pop-colours" id="popColours" role="radiogroup" aria-label="Colour"></div>
 														</div>
+														<div class="orb-pop-disc" id="popDisc">
+															<button type="button" id="popDiscAdd" title="Surround it with real pieces, each on its own orbit">Add a disc</button>
+															<p class="orb-pop-note" id="popDiscNote" hidden>Its rings here are only drawn. A disc adds real pieces.</p>
+															<div id="popDiscSet" hidden>
+																<div class="orb-pop-fields">
+																	<label>Pieces: <span class="orb-pop-val" id="popDiscNVal">300</span>
+																		<input type="range" id="popDiscN" min="50" max="500" step="50" value="300">
+																	</label>
+																	<label>Out to: <span class="orb-pop-val" id="popDiscWVal">&ndash;</span>
+																		<input type="range" id="popDiscW" min="0" max="1000" step="1" value="500">
+																	</label>
+																</div>
+																<button type="button" id="popDiscOff">Remove the disc</button>
+															</div>
+														</div>
 														<p class="orb-pop-info" id="popInfo" aria-live="polite">&nbsp;</p>
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelPull" aria-labelledby="popTabPull" hidden>
@@ -523,6 +538,7 @@
 													<option value="inspiral">Black holes spiral together</option>
 													<option value="trojans">Jupiter's Trojans and Hildas</option>
 													<option value="moondisc">A moon forming</option>
+													<option value="rings">Saturn's rings and a moon</option>
 													<option value="random">Random system</option>
 													<option value="empty">A lone star (build your own)</option>
 												</select>
@@ -635,6 +651,7 @@
 												<li><strong>True sizes:</strong> every body is drawn at its true size (a ring marks the tiny ones).</li>
 												<li><strong>Relativity:</strong> Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette. Mercury's turns too, by 43&Prime; a century.</li>
 												<li><strong>Tides:</strong> a star or planet inside the Roche limit of a much denser body is torn apart, as in "Star and black hole". Its pieces still pull on each other, so some may gather into clumps again. In "A moon forming", tides tear apart clumps that stray too close to Earth. Just outside that limit, a star or gas giant stays whole, drawn stretched to its true shape. Each close pass takes energy from its orbit, so the orbit shrinks, and a slow fly-by can be captured.</li>
+												<li><strong>Discs and rings:</strong> "Add a disc" in a body's menu gives it real pieces, each on its own orbit. A Saturn without one has rings that are only drawn. In "Saturn's rings and a moon", a moon as heavy as Pluto clears gaps in about a minute. Real shepherd moons are far lighter: their gaps are narrower and take years.</li>
 											</ul>
 											<p>Either way, bodies merge when their real surfaces touch, and a black hole swallows anything that crosses its event horizon.</p>
 											<p>A card measures how far the chosen body's orbit turns each time round, against Einstein's formula, 6&pi;<em>GM</em>/(<em>c</em><sup>2</sup><em>a</em>(1&nbsp;&minus;&nbsp;<em>e</em><sup>2</sup>)). Where other planets pull on it too, it shows how much of the turn is Einstein's.</p>
