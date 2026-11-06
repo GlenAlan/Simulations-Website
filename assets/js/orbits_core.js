@@ -9490,7 +9490,12 @@
     }
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
-    function theName(b) { return ['Sun', 'Moon'].includes(b.name) ? `the ${b.name}` : b.name; }
+    // A body's name as it goes in a sentence. (Names with a number or letter on the end, "Star A", stay as they are)
+    const COMMON_NAMES = new Set(['Black hole', 'Neutron star', 'White dwarf', 'Red dwarf', 'Red giant', 'Blue giant', 'Brown dwarf', 'Star', 'Planet', 'Giant planet', 'Comet', 'Asteroid', 'Probe', 'Fragment', 'Gas', 'Debris']);
+    function theName(b) {
+        if (b.name === 'Sun' || b.name === 'Moon') return `the ${b.name}`;
+        return COMMON_NAMES.has(b.name) ? `the ${b.name.toLowerCase()}` : b.name;
+    }
     const sentenceCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // ------------------------------------------------------------------
