@@ -13016,7 +13016,18 @@
             if (out) { missionOver(out === 'missed' ? 'lost' : out, out === 'missed' ? 'missed' : ''); return; }
         }
         if (d.limit && simTime > d.limit) { missionOver('lost', 'time'); return; }
-        if (mission.skip && skipArrived(c)) endSkip(true);
+        if (mission.skip && skipArrived(c)) {
+            const meet = mission.skip.kind === 'meet';
+            endSkip(true);
+            if (meet) skipReport();
+        }
+    }
+
+    // (a skip to the target has stopped) It says so if that was short of the goal, which only a change of
+    // course nothing here saw coming could do: the tick is worked out to prevent it
+    function skipReport() {
+        const x = missionContext();
+        if (x && x.td >= goalReach(x.d.goal)) missionNote(`Arrived ${auText(x.td)} from ${escapeHtml(x.tname)}, short of the goal of ${auText(goalReach(x.d.goal))}.`);
     }
 
     // Within reach of the target (and, to meet it, moving with it)?
