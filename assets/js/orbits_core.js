@@ -11030,12 +11030,13 @@
         const list = ui.popTabs.length ? ui.popTabs[0].parentElement : null;
         if (list) {
             list.addEventListener('keydown', (e) => {
-                const i = ui.popTabs.indexOf(document.activeElement), n = ui.popTabs.length;
+                const tabs = ui.popTabs.filter((t) => t.offsetParent !== null);   // (a mission hides some)
+                const i = tabs.indexOf(document.activeElement), n = tabs.length;
                 if (i < 0) return;
                 const j = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
                 if (j < 0) return;
                 e.preventDefault();
-                selectTab(TAB_OF[ui.popTabs[j].id], true);
+                selectTab(TAB_OF[tabs[j].id], true);
             });
         }
         // Typed fields: Enter or leaving the field applies; up and down step it
@@ -14754,7 +14755,7 @@
     //   probe's velocity alone is a burn and is charged (cut short if the tank runs dry); anything else
     //   is put back, with a friendly note. Edits that would pass as burns but aren't (the Orbit tab,
     //   the eccentricity slider) and those keepView never sees (adding, deleting, dragging) are refused
-    //   where they start (missionRefuse), and their controls are greyed out (missionLockMenu,
+    //   where they start (missionRefuse), and their controls aren't shown (missionLockMenu,
     //   missionLockSidebar). Pushes are measured from the mission's reference body (Jupiter when being
     //   captured by it), whatever the probe's primary is.
     //   The fuel used and the burn log are part of the edit history's snapshots (missionSnapshot,
@@ -16029,23 +16030,25 @@
     }
 
     // ---- Locks on the menu and the sidebar ----
-    // (the end of updateEditor) In a mission the Orbit tab, mass, radius, Circular and Delete are greyed
-    // out, and for any body but the probe the Velocity tab too
+    // (the end of updateEditor) In a mission the menu shows only what can be changed (see orbits_styles.css):
+    // no Orbit tab, sliders for mass and radius, Circular or Delete, and for any body but the probe no
+    // Velocity tab. They are disabled too, so no key reaches them.
     function missionLockMenu(b) {
         const on = !!mission.def;
         if (!on && !mission.menuLocked) return;
         mission.menuLocked = on;
+        const craft = on && b.id === mission.craftId;
+        ui.pop.classList.toggle('is-mission', on);
+        ui.pop.classList.toggle('is-other', on && !craft);
         if (ui.popMass) ui.popMass.disabled = on;
         if (ui.popDelete) ui.popDelete.disabled = on;
         if (!on) return;
-        const craft = b.id === mission.craftId;
         for (const el of edit.orbitEls) el.disabled = true;
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
-        setText(ui.popOrbitShape, why);
-        if (!craft) setText(ui.popAngleNote, why);
+        // (the tab it was on has gone: the Velocity tab for the probe, as it opens, or Body)
+        if (edit.tab === 'orbit' || (edit.tab === 'vel' && !craft)) selectTab(craft ? 'vel' : 'body');
     }
     // (syncEccentricity) the eccentricity slider
     function missionLockSidebar() {

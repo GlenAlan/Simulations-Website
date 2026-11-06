@@ -4394,6 +4394,28 @@ dialog.orb-help::backdrop {
     display: none;
 }
 
+/* (the body's menu: what can't be changed in a mission isn't shown, see missionLockMenu) */
+.orb-popover.is-mission #popCircular,
+.orb-popover.is-mission #popDelete,
+.orb-popover.is-mission #popTurn:disabled,
+.orb-popover.is-mission #popTabOrbit,
+.orb-popover.is-mission.is-other #popTabVel,
+.orb-popover.is-mission #popMass,
+.orb-popover.is-mission #popRadius {
+    display: none;
+}
+
+/* (what's left of its buttons shares one row) */
+.orb-popover.is-mission .orb-pop-actions {
+    flex-wrap: nowrap;
+}
+
+.orb-popover.is-mission .orb-pop-actions #popLock,
+.orb-popover.is-mission .orb-pop-actions #popTurn {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 /* (while a won mission's card is up, Next is on the card: Retry has the row to itself) */
 @media not all and (orientation: landscape) and (min-width: 640px) {
     .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
