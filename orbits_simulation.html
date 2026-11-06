@@ -187,17 +187,17 @@
 										<button type="button" class="orb-keys-btn" id="keysHelpBtn" aria-haspopup="dialog" title="Keys and gestures (?)"><span class="orb-keys-q" aria-hidden="true">?</span>Help</button>
 									</div>
 									<div class="sim-controls-content">
+										<div class="sim-control-group orb-date" id="startDateRow" hidden>
+											<label for="startDateInput">Start date</label>
+											<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
+											<p class="orb-note" id="startDateNote">1800 to 2050.</p>
+										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label">Other ways to start</p>
-											<div class="orb-date" id="startDateRow" hidden>
-												<label for="startDateInput">Start date</label>
-												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
-												<p class="orb-note" id="startDateNote">1800 to 2050.</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
+												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
-											<div class="orb-scene-row" id="sceneButtons" role="group" aria-label="Other ways to start">
-												<button type="button" id="randomSystemBtn" aria-describedby="missionsNote" title="A new star with planets each time: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
-											</div>
-											<p class="orb-note" id="missionsNote" hidden>Missions: fly a probe to a goal on a fuel budget. Random system: a new star with planets; how long will they last?</p>
+											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Show</p>
@@ -214,12 +214,9 @@
 												<label for="pullSumToggle" class="orb-subswitch" title="Join the pulls tip to tail: they end at the tip of the pink force arrow">Add up to the total force</label>
 												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
 												<label for="wellToggle" title="How deep each body's pull reaches, as shading and contour lines (W)">Gravity well</label>
-												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
-												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
 											<p class="orb-note" id="pullsNote" hidden>Pull lines draw one arrow for each body pulling on the chosen body<span class="orb-keys-note"> (G)</span>.</p>
 											<p class="orb-note" id="wellNote" hidden>Gravity well: how deep each body's pull reaches, as shading and contour lines<span class="orb-keys-note"> (W)</span>.</p>
-											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
@@ -623,7 +620,7 @@
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>
 												<li><strong>Throw a body:</strong> in <em>More options</em> choose <em>Throw it</em>, then flick a body as you let go.</li>
 												<li><strong>Try again:</strong> <span class="icon solid fa-undo"></span> Undo takes back a whole drag or slider sweep, even Restart or a change of scene. <span class="icon solid fa-history"></span> Run again replays from your last change, so you can tweak, watch and try again.</li>
-												<li><strong>Random systems:</strong> <span class="icon solid fa-dice"></span> Random system, in the settings, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years?</li>
+												<li><strong>Random systems:</strong> Random system, in the scene list, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years? <em>New system</em>, in the hint by the canvas, makes another.</li>
 												<li><strong>Save and share:</strong> <span class="icon solid fa-link"></span> Copy a link, at the end of the settings, copies a link that opens this exact setup, paused. Your work is also saved in this browser: next time, "Carry on where you left off" appears for a while.</li>
 												<li><strong>Download data (CSV):</strong> in <em>More options</em> or under the graphs, for Kepler's 3rd law, the graphs or every body.</li>
 												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step, the scene and the speed, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-history"></span> run again, <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
@@ -665,7 +662,7 @@
 											<p>It comes out as in the real sky: Mars backs up about 10 to 20&deg; over 60 to 80 days, every 780 days, Jupiter 10&deg; over 4 months every 399 days and Mercury about 13&deg; over 3 weeks every 116 days. In this flat simulation a planet only runs back and forth along the strip. The real orbits' small tilts open that into a narrow loop or zigzag in the sky.</p>
 
 											<h4>Missions</h4>
-											<p>Seven missions, easy to hard. Press <span class="icon solid fa-rocket"></span> Missions, in the hint by the canvas or in the settings, or M, or pick one at the end of the scene list.</p>
+											<p>Seven missions, easy to hard. Press Missions, in the hint by the canvas, or M, or pick one at the end of the scene list.</p>
 											<p>Each gives your probe a goal, such as reaching Mars or parking at Jupiter's L4 point, and a fuel budget: the change of speed (&Delta;<em>v</em>) its engine can give. Only burns can change anything. Hold Forward, Back, In or Out, or the arrow keys, to burn: the clock waits while you do. Skip jumps to the next moment that matters. Every burn uses fuel, and Undo gives it back. Turn on Hints for what to do next and where to burn.</p>
 											<p>Par, the &Delta;<em>v</em> of the classic route, comes from <em>v</em><sup>2</sup> = <em>GM</em>(2/<em>r</em> &minus; 1/<em>a</em>). The closer you get to it, the more stars you earn.</p>
 

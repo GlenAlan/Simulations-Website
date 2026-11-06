@@ -217,7 +217,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from">the giant planet</button>: the star circles it.'),
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from or rotate">the giant planet</button>: the star circles it.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -344,7 +344,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in its menu, and in Settings under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in its menu, and in Settings under View from or rotate">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -11464,6 +11464,7 @@
         }
         // (on a touch screen Help waits for the room: it is in the settings too)
         const help = tap && h ? '' : '<button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button> ';
+        if (isRandomKey(settings.scene)) h += `${NEW_SYSTEM_BTN} `;
         return `${h}<span class="orb-hint-links">${help}<button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button></span>`;
     }
 
@@ -13201,6 +13202,8 @@
     // Random systems
     // ------------------------------------------------------------------
     const isRandomKey = (key) => typeof key === 'string' && /^random-[1-9]\d{0,9}$/.test(key);
+    // The hint line's way to another random system, as the scene list can't pick the one it is on
+    const NEW_SYSTEM_BTN = '<button type="button" class="orb-hint-btn orb-hint-newsys" title="A new star with planets: how long will they last?">New system</button>';
     function randomSeed(key) {
         if (!isRandomKey(key)) return 0;
         const n = +key.slice(7);
@@ -13321,7 +13324,7 @@
         const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
-            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years?`,
+            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? ${NEW_SYSTEM_BTN}`,
             bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
         };
     }
@@ -13875,6 +13878,11 @@
             if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
         } else if (t.closest('.orb-carry-x')) {
             endOffer();
+        } else if (t.closest('.orb-hint-newsys')) {
+            loadRandomSystem(newRandomSeed());
+            // (from the keyboard, the focus stays on the button, for another)
+            const again = e.detail ? null : ui.hint.querySelector('.orb-hint-newsys');
+            if (again) again.focus({ preventScroll: true });
         } else if (t.closest('.orb-hint-zoom')) {
             clearHint('note');
             zoomChosen();
@@ -14270,13 +14278,12 @@
         bindPageFolds();
         Object.assign(ui, {
             foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
-            shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
+            shareBtn: byId('shareLinkBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
         for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
         const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.shareBtn, copyShareLink);
-        onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
         document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
         onClick(ui.chartCsvBtn, () => downloadCsv('graphs', ui.chartCsvNote));
         if (ui.stability) {
@@ -14811,8 +14818,8 @@
 
     // ------------------------------------------------------------------
     // Missions: goals a student meets by firing a probe's engine within a fuel (delta-v) budget.
-    //   Each mission is a scene of its own (the scene list's "Missions" group, or the Missions button
-    //   under it): the bodies, the probe, the body its burns are measured from, a time limit and a
+    //   Each mission is a scene of its own (the scene list's "Missions" group, or the hint line's
+    //   Missions button): the bodies, the probe, the body its burns are measured from, a time limit and a
     //   view. It starts at once, paused: the mission console takes the palette's place (the goal in a
     //   line, how it is going, the fuel, the engine, Play or a skip to the next moment that matters),
     //   and the goal is drawn on the canvas. "How it works" gives the physics idea and the par: the
@@ -16094,8 +16101,8 @@
         setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
     }
 
-    // ---- The console, the card over the canvas, the Missions button, the scene list ----
-    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, missionsBtn: null, mc: null });
+    // ---- The console, the card over the canvas, the hint's Missions button, the scene list ----
+    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, mc: null });
     const toolIcon = (name) => `<span class="icon solid fa-${name}" aria-hidden="true"></span>`;
 
     function buildMissionUi() {
@@ -16124,29 +16131,8 @@
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
         if (ui.toolbar) buildMissionConsole();
-        // In the settings, under the scene list: a button into the missions (beside "Random system"),
-        // and the line saying what they are
+        // The missions' group, at the end of the scene list
         if (ui.scene) {
-            const group = ui.scene.closest('.sim-control-group') || ui.scene.parentElement;
-            const row = byId('sceneButtons');
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'orb-mission-btn';
-            btn.id = 'missionsBtn';
-            btn.setAttribute('aria-describedby', 'missionsNote');
-            btn.title = `${MISSIONS.length} missions, easy to hard (M)`;
-            btn.innerHTML = `${toolIcon('rocket')}Missions`;
-            let note = byId('missionsNote');
-            if (!note) {
-                note = document.createElement('p');
-                note.className = 'orb-note';
-                note.id = 'missionsNote';
-                note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
-                group.append(note);
-            }
-            if (row) row.prepend(btn); else group.insertBefore(btn, note);
-            ui.missionsBtn = btn;
-            btn.addEventListener('click', openMissions);
             const og = document.createElement('optgroup');
             og.label = 'Missions';
             for (const m of MISSIONS) {
@@ -16257,7 +16243,7 @@
         if (panel && toggle && panel.classList.contains('panel-open') && (any || document.body.classList.contains('sim-panel-sheet'))) toggle.click();
     }
 
-    // The Missions button (and M): straight into the first mission the first time, afterwards the list.
+    // The hint's Missions button (and M): straight into the first mission the first time, afterwards the list.
     // (From the keyboard, a key press or a button's click with no pointer, the focus goes along.)
     function openMissions(e) {
         closeSettingsSheet(true);
