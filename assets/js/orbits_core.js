@@ -25,7 +25,9 @@
  *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
  *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest, and
- *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest.
+ *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest. Just
+ *   outside that limit, a star or gas giant stays whole, but each close pass takes energy out of the orbit, and it
+ *   is drawn stretched by the tide (see "Tides on a body that stays whole").
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
  *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
  *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
@@ -2499,7 +2501,7 @@
     // tide, a height h2 (m / M) (R / d)^3 R P2(cos angle) with h2 = 1 + k2 (Murray & Dermott 1999, section 4.3; k2 from the
     // apsidal constants of Brooker & Olle 1955). Sets tides.angle, long and short; false if under half a pixel.
     function tideStretch(b, x, y, rd) {
-        if (rd < 2) return false;
+        if (rd < 2 || b.grp) return false;
         const index = tideIndex(b);
         if (!index) return false;
         const R = b.R / AU_KM;
