@@ -13016,8 +13016,9 @@
         for (let i = 0; i < n; i++) if (num[i * SNAP_W + 7]) pieces.add(num[i * SNAP_W]);
         for (const q of Array.isArray(d.pr) ? d.pr : []) {
             if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0])) continue;
-            // (many pieces of a torn-apart body can share a host)
-            if (!pieces.has(q[0]) && paired.has(q[1])) continue;
+            // (many pieces of a torn-apart body can share a host, and so can whole bodies going round it)
+            const many = pieces.has(q[0]) || q[3];
+            if (!many && paired.has(q[1])) continue;
             paired.add(q[0]);
             if (!pieces.has(q[0])) paired.add(q[1]);
             pairs.push([q[0], q[1], q[2] ? 1 : 0]);
