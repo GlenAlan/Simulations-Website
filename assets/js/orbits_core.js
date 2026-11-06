@@ -284,7 +284,7 @@
         // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
         // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
         tde: {
-            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.64, 0.11, -0.23, 0.23],
+            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.62, 0.3, -0.3, 0.3],
             tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
@@ -1053,7 +1053,7 @@
             id: nextId++,
             name: props.name, kind: props.kind || 'custom', color: props.color,
             m: props.m, R: props.R,
-            x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0,
+            x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0, pvx: 0, pvy: 0,
             dx: 0, dy: 0,                 // drawn position (extrapolated)
             held: null,                   // { offX, offY } while dragged: position relative to the frame origin
             trail: null,                  // samples (allocated at the first one: see recordSample)
@@ -1064,7 +1064,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, hostMass: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, hostMass: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0, heat: 0, hot: 0,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1181,6 +1181,7 @@
     let gravStamp = 0;
     let anyPieces = false;   // (a torn-apart body's among them: only then do the pair sums look for pieces)
     let anyHosted = false;   // (a whole body is going round a host: see "Close pairs")
+    let gasRows = -1, gasList = null;   // (with gas among them, the bodies that aren't: see gravityDirect)
     let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
     let heavyMax = HEAVY_MAX;
     const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
@@ -1195,11 +1196,13 @@
         const xs = SX, ys = SY, vxs = SVX, vys = SVY, ms = SM, grp = SGRP, eps = SEPS, a0 = SA0, pair = SPAIR;
         anyPieces = false;
         anyHosted = false;
+        gasRows = -1;
         for (let k = 0; k < n; k++) {
             const b = list[k];
+            if (b.grp < 0 && gasRows < 0) gasRows = 0;
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g && b.minor ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other: no group)
+            grp[k] = g && (b.minor || g < 0) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -1226,6 +1229,7 @@
         } else {
             pnCount = 0;
             if (pn) for (let k = 0; k < n; k++) { PAX[k] = 0; PAY[k] = 0; }
+            gasList = list;
             tmin = useTree ? gravityTree(n, pn) : gravityDirect(n, pn);
             if (pn) {
                 for (let k = 0; k < n; k++) { NAX[k] = SAX[k]; NAY[k] = SAY[k]; SAX[k] += PAX[k]; SAY[k] += PAY[k]; }
@@ -1282,7 +1286,16 @@
     function gravityDirect(n, pn) {
         for (let k = 0; k < n; k++) { SAX[k] = 0; SAY[k] = 0; SBEST[k] = Infinity; SSECOND[k] = Infinity; SPART[k] = -1; }
         work.pairs = (n * (n - 1)) / 2; work.tree = 0;
-        return pairRows(null, n, n, pn);
+        if (gasRows < 0) return pairRows(null, n, n, pn);
+        // Pieces of gas don't pull each other, so the pair sums need only run over what isn't gas
+        SINDIR.fill(0, 0, n);
+        gasRows = 0;
+        for (let k = 0; k < n; k++) {
+            if (gasList[k].grp < 0) continue;
+            SDIR[gasRows] = k; SDPOS[k] = gasRows; SINDIR[k] = 1; gasRows++;
+        }
+        work.pairs = gasRows * n - (gasRows * (gasRows + 1)) / 2;
+        return pairRows(SDIR, gasRows, n, pn);
     }
 
     // The exact pull of each pair, added both ways to accelerations already started. Rows: each body i
@@ -1752,7 +1765,7 @@
             const r2 = rx * rx + ry * ry;
             keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
             let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
-            if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN)) p.touch = true;
+            if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN) || (f.grp < 0 && KMIN < gasFall(mH))) p.touch = true;
             if (KMIN < p.closest) p.closest = KMIN;
             if (real) {
                 const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
@@ -2019,6 +2032,7 @@
             const R = a.R / AU_KM;
             if (r2 * r < ROCHE_NEAR * R * R * R * b.m / a.m) return own;
         }
+        if (a.grp < 0) return Math.max(own, sampleDt / GAS_STEPS);
         return Math.max(own, sampleDt / (!a.grp && hostShared(a.m, b.m, b.hostMass - a.m) ? HOST_FINE * HOST_STEPS : HOST_STEPS));
     }
 
@@ -2061,7 +2075,7 @@
     }
 
     function step(dt) {
-        for (const b of bodies) { b.px = b.x; b.py = b.y; }
+        for (const b of bodies) { b.px = b.x; b.py = b.y; b.pvx = b.vx; b.pvy = b.vy; }
         for (const p of mainPairs) { p.touch = false; p.closest = Infinity; }
         yoshida(bodies, dt, computeForces, mainPairs);
     }
@@ -2147,7 +2161,7 @@
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            mergeBodies(a, b);
+            if (!(settings.realistic && collide(a, b))) mergeBodies(a, b);
             merged = true;
         }
         if (merged) computeForces();
@@ -2165,9 +2179,9 @@
         for (const p of mainPairs) {
             if (!p.touch || !p.hosted) continue;
             p.touch = false;
-            const f = p.a, H = p.b, fell = settings.realistic && G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM;
+            const f = p.a, H = p.b, fell = settings.realistic && (f.grp < 0 || G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM);
             const before = fell ? energyOf([f, H]) : 0;
-            mergeBodies(f, H);
+            if (!(settings.realistic && collide(f, H))) mergeBodies(f, H);
             if (fell) groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([H]) - before);
             merged = true;
         }
@@ -2186,7 +2200,7 @@
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
-        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: big.minor && small.minor ? 8 : 30 });
+        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 ? 8 : 30 });
         big.vx = M > 0 ? (a.m * a.vx + b.m * b.vx) / M : big.vx;
         big.vy = M > 0 ? (a.m * a.vy + b.m * b.vy) / M : big.vy;
         big.x = fx; big.y = fy;
@@ -2304,7 +2318,8 @@
     }
 
     function disrupt(L, H) {
-        const n = Math.min(L.minor ? MINOR_FRAGMENTS : FRAGMENTS, MAX_BODIES - bodies.length + 1);
+        const gas = gasTear(L, H);
+        const n = Math.min(L.minor ? MINOR_FRAGMENTS : gas || FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
         noteIrreversible('tear');   // (running backwards: a copy of the system from just before)
         noteTornApart(L, H);       // (the stability timer)
@@ -2319,7 +2334,8 @@
             const m = i < n - 1 ? L.m * shape.share[i] : left;   // (the last takes what rounding left: the mass adds up exactly)
             left -= m;
             const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
-            f.grp = L.id;
+            f.grp = gas ? -L.id : L.id;
+            f.minor = gas > 0;
             f.heft = heftOf(n * shape.share[i]);
             f.x = L.x + (ux * s - uy * q) * span; f.y = L.y + (uy * s + ux * q) * span;
             f.vx = L.vx; f.vy = L.vy;
@@ -2331,8 +2347,504 @@
         bodies.push(...parts);
         removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
         groupEnergy.set(L.id, energyOf(parts) - before);
+        if (gas) { gasNoted = false; gasPeak = 0; }
         computeForces();
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Collisions that throw debris (realistic physics). What two bodies do when they meet comes from the
+    // scaling laws of Leinhardt & Stewart 2012 (ApJ 745, 79), for bodies held together by their own gravity:
+    //   Q_R = mu V^2 / (2 M), the impact's energy per unit of the two bodies' mass, and
+    //   Q*_RD,1 = c* (3/5) G M / R_C1, with c* = 1.9 (their fit for planets), R_C1 the size of the two together at
+    //   1000 kg/m^3 (or as they really are, if that is larger: a red giant is far less tightly bound);
+    //   Q*_RD = Q*_RD,1 [(gamma + 1)^2 / (4 gamma)]^(2 / (3 mubar) - 1), for mass ratio gamma, with mubar = 0.36; and
+    //   Q'*_RD = (mu / mu_alpha)^(2 - 3 mubar / 2) Q*_RD, as only part of the projectile (alpha) meets the target.
+    // The largest body left has M_lr / M = 1 - Q_R / (2 Q'*_RD), and 0.1 (Q_R / (1.8 Q'*_RD))^-1.5 past Q_R = 1.8 Q'*_RD.
+    // Below the two bodies' mutual escape speed they merge, as ever. A glancing hit (b > R / (R + r)) slower than
+    // V_c = V_esc (2.43 Gamma Th^2.5 - 0.0408 Gamma + 1.86 Th^2.5 + 1.08), Gamma = ((m1 - m2) / M)^2, Th = 1 - b
+    // (Kokubo & Genda 2010, ApJ 714, L21) still merges; a faster one, not fast enough to erode the target, is a
+    // hit and run: both go on, and the smaller sheds what a reverse impact takes from it (LS12 again).
+    // Debris is thrown past the escape speed from what is left at it, with a third of the energy to spare (a
+    // round figure: LS12's fragments go at about that speed), in pieces whose masses follow their
+    // size distribution (number larger than D going as D^-2.85). Mass and momentum are kept exactly. Angular
+    // momentum is kept by turning the debris round what is left, as far as a speed limit lets that go: the
+    // rest would be the spin of what is left, as in a merger, where all of it goes that way. (The bodies have
+    // no spin here.) What the books gain or lose (the heat of the impact, mostly) is kept under groupEnergy.
+    // Not for black holes, neutron stars or white dwarfs (their own binding is far beyond these laws: they
+    // swallow), a swarm's dots (they go by the hundred), pieces, or a mission's bodies.
+    // ------------------------------------------------------------------
+    const LS_CSTAR = 1.9, LS_MU = 0.36;
+    const RHO1 = (1000 * Math.pow(AU_KM * 1000, 3)) / MSUN_KG;   // 1000 kg/m^3 in M_sun / AU^3
+    const DEBRIS_MAX = 12;                // pieces from one collision
+    const DEBRIS_LOTS = 60;               // ...and with this many pieces about already, bodies just merge
+    const DEBRIS_EFF = 1 / 3;             // the share of the energy left after unbinding that goes into the debris
+    const DEBRIS_TURN = 0.7;              // (speed from turning the debris, as a share of its speed from the impact)
+
+    // The largest piece of two bodies left by a collision, as a share of their mass (LS12): mt is the target,
+    // mp what hits it, a the share of mp that meets it, r their size
+    function largestRemnant(mt, mp, a, V, rC) {
+        const M = mt + mp, mu = (mt * mp) / M, g = mp / mt;
+        const Rc = Math.max(Math.cbrt((3 * M) / (4 * Math.PI * RHO1)), rC);
+        const Q1 = LS_CSTAR * 0.6 * G * M / Rc;
+        const Qg = Q1 * Math.pow(((g + 1) * (g + 1)) / (4 * g), 2 / (3 * LS_MU) - 1);
+        const ma = (a * mp * mt) / (a * mp + mt);
+        const x = (0.5 * mu * V * V / M) / (Math.pow(mu / ma, 2 - 1.5 * LS_MU) * Qg);
+        return x < 1.8 ? 1 - 0.5 * x : 0.1 * Math.pow(x / 1.8, -1.5);
+    }
+
+    // The share of a sphere of radius R within a lens of depth l (LS12's interacting mass)
+    function lensShare(R, l) {
+        return l >= 2 * R ? 1 : clamp((3 * R * l * l - l * l * l) / (4 * R * R * R), 1e-6, 1);
+    }
+
+    // What a collision of a and b does; null means they merge. { big, small, Md (the debris' mass), V, b, and for a
+    // hit and run graze (the share of the small body that met the big one), sep and V2p (how they part) }
+    function collisionOutcome(a, b) {
+        const big = a.m >= b.m ? a : b, small = big === a ? b : a;
+        const m1 = big.m, m2 = small.m, M = m1 + m2;
+        const R1 = big.R / AU_KM, R2 = small.R / AU_KM, reach = R1 + R2;
+        // At the moment they touched, from the start of the step they touched in (the end of it may find them
+        // deep inside each other, with the last kick far too strong)
+        const rx = small.px - big.px, ry = small.py - big.py, vx = small.pvx - big.pvx, vy = small.pvy - big.pvy;
+        const r = hyp(rx, ry), gm = G * M;
+        const V2 = vx * vx + vy * vy + (r > reach ? 2 * gm * (1 / reach - 1 / r) : 0);
+        const esc2 = (2 * gm) / reach;
+        if (!(V2 > esc2)) return null;
+        const V = Math.sqrt(V2), h = rx * vy - ry * vx, b0 = Math.min(1, Math.abs(h) / (V * reach));
+        const l = reach * (1 - b0), rC = Math.cbrt(R1 * R1 * R1 + R2 * R2 * R2);
+        const al = R1 > b0 * reach + R2 ? 1 : lensShare(R2, l);
+        const lr = largestRemnant(m1, m2, al, V, rC);
+        const Md = M * (1 - lr);
+        if (b0 > R1 / reach && lr * M > m1) {
+            // A glancing hit that doesn't erode the target
+            const Gam = ((m1 - m2) / M) * ((m1 - m2) / M), th = Math.pow(1 - b0, 2.5);
+            if (V < Math.sqrt(esc2) * (2.43 * Gam * th - 0.0408 * Gam + 1.86 * th + 1.08)) return null;
+            // A hit and run. The part of the target that meets the projectile hits it in turn
+            const be = lensShare(R1, l), mi = be * m1;
+            const rC2 = Math.cbrt(R2 * R2 * R2 + be * R1 * R1 * R1);
+            const lr2 = mi > m2 ? largestRemnant(mi, m2, 1, V, rC2) : largestRemnant(m2, mi, 1, V, rC2);
+            const left = Math.min(m2, lr2 * (mi + m2));
+            const Mg = m2 - left;
+            // They part at a little over touching, having lost the share of their relative motion's energy that met
+            const part = 1.02 * reach, V2c = V2 * (1 - al);
+            if (!(V2c > (2 * gm) / part)) return null;   // (too slow to part after all)
+            // (placed where one step's backward leg can't take them back to touching: see throwDebris)
+            const sep = part + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt(V2c);
+            const V2p = V2c - 2 * gm * (1 / part - 1 / sep), vt = h / sep;
+            if (vt * vt > V2p) return null;
+            return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p };
+        }
+        if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return null;
+        return { big, small, Md, graze: 0, V, b: b0 };
+    }
+
+    // Throw debris of mass Md from body c (the two together have this mass). c is what is left, and the debris and c
+    // keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as DEBRIS_TURN
+    // allows. extra: energy to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in tearPattern,
+    // so Run again and a shared link break them the same way; grp: the debris' group.
+    function throwDebris(c, mass, Md, X, Y, VX, VY, L, extra, volume, seed, color, grp) {
+        const Mc = mass - Md;
+        const n = Math.min(clamp(Math.round(4 + (30 * Md) / mass), 4, DEBRIS_MAX), MAX_BODIES - bodies.length);
+        const rnd = seeded(seed);
+        rnd(); rnd();
+        const share = new Array(n);
+        let W = 0;
+        for (let i = 0; i < n; i++) { share[i] = Math.pow(i + 1, -3 / 2.85) * (0.8 + 0.4 * rnd()); W += share[i]; }
+        c.m = Mc;
+        c.R = Math.cbrt(volume * Mc);
+        const parts = [], name = uniqueName('Debris');
+        const Rc = c.R / AU_KM;
+        const v8 = Math.sqrt((2 * DEBRIS_EFF * Math.max(0, extra)) / Md);
+        const a0 = TAU * rnd();
+        const speed = new Array(n);
+        let left = Md, sx0 = 0, sy0 = 0, svx = 0, svy = 0;
+        for (let i = 0; i < n; i++) {
+            const m = i < n - 1 ? Md * (share[i] / W) : left;
+            left -= m;
+            const f = newBody({ name, kind: c.kind, m, R: Math.cbrt(volume * m), color });
+            f.grp = grp;
+            f.heft = heftOf((n * m) / Md);
+            const ang = a0 + (TAU * (i + 0.7 * rnd())) / n, ux = Math.cos(ang), uy = Math.sin(ang);
+            // Far enough out that one step's backward leg (see yoshida) can't take it back to what it left: about
+            // where it would be by the next step anyway
+            const d0 = (Rc + f.R / AU_KM) * (1.3 + 0.5 * rnd()), vf = v8 * (0.6 + 0.8 * rnd());
+            const d = d0 + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt((2.04 * G * (Mc + m)) / d0 + vf * vf);
+            const esc2 = (2 * G * (Mc + m)) / d;
+            const w = Math.sqrt(esc2 * 1.02 + vf * vf);
+            f.x = d * ux; f.y = d * uy;
+            f.vx = w * ux; f.vy = w * uy;
+            speed[i] = w;
+            sx0 += m * f.x; sy0 += m * f.y; svx += m * f.vx; svy += m * f.vy;
+            parts.push(f);
+        }
+        // Relative to c so far. The centre of mass and momentum then fix where c goes
+        const cx = -sx0 / mass, cy = -sy0 / mass, cvx = -svx / mass, cvy = -svy / mass;
+        let Lp = 0, I = 0, kMax = Infinity;
+        for (let i = 0; i < n; i++) {
+            const f = parts[i], px = f.x + cx, py = f.y + cy, qx = f.vx + cvx, qy = f.vy + cvy;
+            Lp += f.m * (px * qy - py * qx);
+            I += f.m * (f.x * f.x + f.y * f.y);
+            kMax = Math.min(kMax, (DEBRIS_TURN * speed[i]) / hyp(f.x, f.y));
+        }
+        Lp += Mc * (cx * cvy - cy * cvx);
+        I -= (sx0 * sx0 + sy0 * sy0) / mass;
+        // A turn of the debris about c at rate k (k z x d each) adds k I, and keeps the momentum once c moves with it
+        const k = clamp((L - Lp) / I, -kMax, kMax);
+        let tx = 0, ty = 0;
+        for (const f of parts) {
+            const ax = -k * f.y, ay = k * f.x;
+            f.vx += ax; f.vy += ay;
+            tx += f.m * ax; ty += f.m * ay;
+        }
+        c.x = X + cx; c.y = Y + cy; c.vx = VX + cvx - tx / mass; c.vy = VY + cvy - ty / mass;
+        c.px = c.x; c.py = c.y;
+        for (const f of parts) {
+            f.x += c.x; f.y += c.y; f.vx += c.vx; f.vy += c.vy;
+            f.px = f.x; f.py = f.y;
+        }
+        return parts;
+    }
+
+    // A collision. Returns false if they just merge.
+    function collide(a, b) {
+        if (mission.def || a.grp || b.grp || a.minor || b.minor || isCompact(a) || isCompact(b) || a.m < 1e-17 || b.m < 1e-17 || scene.progress) return false;
+        const o = collisionOutcome(a, b);
+        if (!o) return false;
+        let lots = 0;
+        for (const q of bodies) if (q.grp) lots++;
+        if (lots >= DEBRIS_LOTS || bodies.length + 4 > MAX_BODIES) return false;
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        const { big, small, Md, graze, V, sep, V2p } = o;
+        const auto = autoColoured(big);
+        noteCollision(big, small);   // (the stability timer)
+        const before = systemEnergy().total;
+        const m1 = big.m, m2 = small.m, M = m1 + m2, mu = (m1 * m2) / M;
+        const X = (m1 * big.x + m2 * small.x) / M, Y = (m1 * big.y + m2 * small.y) / M;
+        const VX = (m1 * big.vx + m2 * small.vx) / M, VY = (m1 * big.vy + m2 * small.vy) / M;
+        const rx = small.x - big.x, ry = small.y - big.y, vx = small.vx - big.vx, vy = small.vy - big.vy;
+        const L = mu * (rx * vy - ry * vx);
+        const bits = new Uint32Array(new Float64Array([m1, m2, big.R, small.R]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        const seed = ((h >>> 0) % 2147483646) + 1;
+        const v1 = big.R * big.R * big.R / m1, v2 = small.R * small.R * small.R / m2;
+        const grp = nextId++;
+        flashes.push({ x: X, y: Y, t: performance.now(), color: big.color, r0: drawRadius(big), grow: 45 });
+        let parts = [];
+        if (graze) {
+            // The two go on, along the same line, keeping the pair's angular momentum
+            const r = hyp(rx, ry), ux = rx / r, uy = ry / r, vt = (rx * vy - ry * vx) / sep;
+            const vr = Math.sqrt(V2p - vt * vt), wx = vr * ux - vt * uy, wy = vr * uy + vt * ux;
+            const f1 = m2 / M, f2 = m1 / M;
+            big.x = X - f1 * sep * ux; big.y = Y - f1 * sep * uy; big.vx = VX - f1 * wx; big.vy = VY - f1 * wy;
+            big.px = big.x; big.py = big.y;
+            const sX = X + f2 * sep * ux, sY = Y + f2 * sep * uy, sVX = VX + f2 * wx, sVY = VY + f2 * wy;
+            // (the debris is what the graze scraped off: a tenth of the speed's energy to spare, a round figure)
+            if (Md > 0) parts = throwDebris(small, m2, Md, sX, sY, sVX, sVY, 0, 0.05 * Md * V * V, v2, seed, small.color, grp);
+            else { small.x = sX; small.y = sY; small.vx = sVX; small.vy = sVY; small.px = sX; small.py = sY; }
+            small.track = null;
+        } else {
+            // What is left is the heavier body, with the debris round it. (Its density stays that of what it is made of)
+            const vol = (v1 * m1 + v2 * m2) / M;
+            const extra = 0.5 * mu * V * V - 0.5 * Md * (2 * G * (M - Md)) / ((big.R + small.R) / AU_KM);
+            parts = throwDebris(big, M, Md, X, Y, VX, VY, L, extra, vol, seed, m2 > 0.3 * M ? small.color : big.color, grp);
+            // (a few pieces in the other's colour, for the mixture they are)
+            for (let k = 0; k < parts.length; k += 3) parts[k].color = small.color;
+            removeBody(small, big);
+        }
+        big.track = null;
+        if (parts.length) bodies.push(...parts);
+        forcesDirty = true;
+        collapseIfTooHeavy(big);
+        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
+        const them = escapeHtml(theName(big)), it = escapeHtml(sentenceCase(theName(small)));
+        // (LS12's "super-catastrophic": nothing much is left of either. So what is left is one more piece, and the choice
+        // of body, if it was this, goes back to the scene's own: a fragment's readouts would only confuse)
+        const shattered = !graze && big.m < 0.1 * M;
+        if (shattered) {
+            big.grp = grp;
+            big.name = parts[0].name;
+            big.heft = heftOf((parts.length * big.m) / Md);
+            big.trailStart = sampleCount;
+            if (selectedId === big.id) selectedId = defaultSubject();
+        }
+        groupEnergy.set(grp, systemEnergy().total - before);
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();   // (Undo now takes it back: see tornInScene)
+        if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
+        else if (!settings.stability) {
+            clearHint('tip');
+            showHint('note', shattered ? `<strong>${it} and ${them} shattered</strong> each other.` : graze ? `<strong>${it} clipped ${them}</strong> and flew on${parts.length ? ', shedding debris' : ''}.` : `<strong>${it} crashed into ${them}</strong> and threw out debris.`, { ms: 7000 });
+        }
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Gas round a compact body (realistic physics). A star or a giant planet torn apart by a black hole, neutron
+    // star or white dwarf is gas, not a few lumps: GAS_PIECES pieces (marked by a group below zero), each still
+    // following its own orbit exactly (see driftHosted), which share their motion through the gas like this.
+    // Every GAS_SAMPLES trail samples each host's pieces are sorted into cells one scale height H across, in
+    // ln r and angle, on a grid shifted each time (so it leaves no mark). For a disc this thick H / r = GAS_H = 0.5:
+    // a star's worth of gas falling in within days is millions of times over its Eddington limit, so the
+    // heat stays in the gas and puffs it up (Strubbe & Quataert 2009; Shiokawa et al. 2015 find such thick flows).
+    // 1. Within a cell, each piece's radial speed, and its angular momentum beyond that of a circular orbit
+    //    where it is, relax towards the cell's mean at the rate Omega, the local orbital rate: pressure crosses H at
+    //    the speed of sound in H / c_s = 1 / Omega. So streams that meet share their motion. The mean angular
+    //    momentum is kept exactly. A ring in circular orbits is left as it is, as it should be: this is not a viscosity.
+    // 2. Between neighbouring rings of cells, the viscous torque of an alpha disc (Shakura & Sunyaev 1973), at the
+    //    real strength: nu = alpha (H/r)^2 r^2 Omega, with alpha = GAS_ALPHA (simulations of magnetic turbulence find
+    //    about 0.02; observed discs suggest 0.1 to 0.4: King, Pringle & Livio 2007), G = 3 pi nu Sigma r^2 Omega = (3/2) alpha (H/r)^2 (GM/r) M_ring / GAS_H, carries angular
+    //    momentum out, so that most of the gas falls in, as what is left spreads. (Limited to GAS_LIM of what the lighter ring
+    //    has, per go. That only matters in the innermost rings, far smaller than can be seen.)
+    // The pieces' velocity changes don't change their places; the host takes up what they lose of their momentum, which
+    // is little. So mass, momentum and angular momentum are all kept exactly, and the energy lost (which goes
+    // to heat: colour and glow) is exactly the kinetic energy they lose. It is kept in the books, under GAS_BOOK.
+    // In the scene (a star on a bound orbit round a 1,000 solar mass hole), the gas has a mean eccentricity of 0.25 in
+    // four orbits (9 days), round the circularisation radius a (1 - e^2) = 0.11 AU, half of it fallen in by 8 orbits.
+    // Simulations of real gas find a disc in several returns of the stream too, though theirs keeps a good part of its
+    // eccentricity for longer (Shiokawa et al. 2015). It is the real rate: nothing here is sped up. It is a cheaper
+    // model than real gas, though: no pressure force, and how fast a stream rounds off rests on the cells' size. A
+    // narrow ring spreads with about 0.4 of the variance 6 nu t in this code: the cells are coarse beside it.
+    // It can't run backwards by itself, so the state is logged just before each go (GAS_LOG numbers, kept only once
+    // there is gas: at 120 pieces about 57 orbits' worth), and put back when running back reaches that moment. Past the
+    // oldest, the run stops with a note, as for a merger. (Positions too: velocities alone, put back on positions a
+    // rounding error out, are on a slightly different orbit, and the errors grow by the turn each go. Then they
+    // couldn't reach the start.) Going back past the start of the log, it loses heat again (as bodies that touch
+    // running back still merge), logged the same way.
+    // ------------------------------------------------------------------
+    const GAS_PIECES = 120;
+    const GAS_H = 0.5;
+    const GAS_ALPHA = 0.02;
+    const GAS_LIM = 0.02;
+    const GAS_SAMPLES = 4;
+    const GAS_TRAIL = 75;                 // trail samples drawn
+    const GAS_STEPS = 1;                  // steps a trail sample are enough for pieces of gas (each is on its exact orbit)
+    const GAS_MAX = 120;                  // pieces of gas at once: a further star breaks into the usual few
+    const GAS_NT = 12;                    // (2 pi H^-1)
+    const GAS_NR = 36;
+    const GAS_BOOK = -3;                  // (among the body ids of groupEnergy)
+    const GAS_LOG = 1 << 21, GAS_FRAMES = 1 << 14, GAS_MASK = GAS_FRAMES - 1;
+    const gasLog = { buf: null, at: null, n: null, head: null, t: null, book: null, dir: null, first: 0, count: 0, pos: 0 };
+    const GCM = new Float64Array(GAS_NR * GAS_NT), GCI = new Float64Array(GAS_NR * GAS_NT), GCD = new Float64Array(GAS_NR * GAS_NT), GCV = new Float64Array(GAS_NR * GAS_NT);
+    const GRM = new Float64Array(GAS_NR), GRI = new Float64Array(GAS_NR), GRT = new Float64Array(GAS_NR + 1);
+    let GCELL = new Int32Array(0), GRVR = new Float64Array(0), GRD = new Float64Array(0), GRR = new Float64Array(0);
+    let gasNoted = false, gasPeak = 0, gasE = 1;
+    // Gas that reaches where an orbit takes under four trail samples (0.019 AU in the scene) has fallen in, as far as
+    // anyone can see: the viscous time there is under a tenth of the disc's, and following it at one step
+    // a sample would only cost the energy book its level
+    const gasFall = (mH) => Math.cbrt((G * mH * 16 * sampleDt * sampleDt) / (TAU * TAU));
+    // A body mostly of gas (from Uranus up), tearing round a compact body, where the disc would show: its orbits there
+    // must take a good many trail samples. How many pieces it makes (none: the usual few).
+    function gasTear(L, H) {
+        if (L.minor || !isCompact(H) || mission.def || L.m < 4e-5) return 0;
+        if (!(hyp(L.x - H.x, L.y - H.y) > 4 * gasFall(H.m))) return 0;
+        let n = GAS_MAX;
+        for (const b of bodies) if (b.grp < 0) n--;
+        n = Math.min(n, GAS_PIECES);
+        return n >= GAS_PIECES / 2 ? n : 0;
+    }
+
+    // One go, if this step passed the next multiple of the interval. All from the positions and clock, so it
+    // is the same on every run.
+    function gasStep(dt) {
+        const gd = GAS_SAMPLES * sampleDt, i1 = Math.floor(simTime / gd);
+        if (i1 === Math.floor((simTime - timeDir * dt) / gd)) return;
+        let any = false;
+        for (let k = 0; k < hostGroups.length && !any; k++) {
+            const list = hostGroups[k].pairs;
+            for (let i = 0; i < list.length && !any; i++) any = list[i].a.grp < 0;
+        }
+        if (!any) return;
+        gasNote();
+        const before = groupEnergy.get(GAS_BOOK) || 0;
+        let lost = 0, M = 0, E = 0;
+        for (const g of hostGroups) {
+            lost += gasHost(g, gd, i1);
+            M += gasM; E += gasEM;
+        }
+        groupEnergy.set(GAS_BOOK, before - lost);
+        gasE = M > 0 ? E / M : 1;
+        if (M > 0 && gasE < 0.45 && !gasNoted && timeDir > 0) {
+            gasNoted = true;
+            if (!settings.stability && !scene.progress) showHint('note', '<strong>The gas has settled into a disc.</strong> It glows as it spirals in.', { ms: 7000 });
+        }
+    }
+
+    // The velocities as they are, on the log
+    function gasNote() {
+        const L = gasLog, w = 4 * bodies.length;
+        if (!L.buf) {
+            L.buf = new Float64Array(GAS_LOG);
+            L.at = new Int32Array(GAS_FRAMES); L.n = new Int32Array(GAS_FRAMES);
+            L.head = new Float64Array(GAS_FRAMES); L.t = new Float64Array(GAS_FRAMES); L.book = new Float64Array(GAS_FRAMES); L.dir = new Int8Array(GAS_FRAMES);
+        }
+        if (L.pos + w > GAS_LOG) L.pos = 0;
+        const lo = L.pos, hi = L.pos + w;
+        // (the oldest go, if it is in the way, or the step log has forgotten its step: running back can't get past it)
+        while (L.count > 0) {
+            const k = L.first & GAS_MASK, a = L.at[k], b = a + 4 * L.n[k];
+            if (!(L.count >= GAS_FRAMES || (a < hi && b > lo) || L.head[k] <= past.head - STEP_LOG)) break;
+            past.wall = { t: L.t[k], dir: L.dir[k], gas: true };
+            L.first++; L.count--;
+        }
+        const k = (L.first + L.count) & GAS_MASK;
+        L.at[k] = lo; L.n[k] = bodies.length; L.head[k] = past.head; L.t[k] = simTime; L.dir[k] = timeDir;
+        L.book[k] = groupEnergy.get(GAS_BOOK) || 0;
+        L.count++;
+        const buf = L.buf;
+        let o = lo;
+        for (const b of bodies) { buf[o++] = b.x; buf[o++] = b.y; buf[o++] = b.vx; buf[o++] = b.vy; }
+        L.pos = hi;
+    }
+
+    // Running back: the newest logged go, if this is its moment
+    function gasBack() {
+        const L = gasLog;
+        while (L.count > 0) {
+            const k = (L.first + L.count - 1) & GAS_MASK;
+            if (L.head[k] < past.head) return;
+            L.count--;
+            L.pos = L.at[k];
+            if (L.head[k] > past.head || L.n[k] !== bodies.length) continue;
+            const buf = L.buf, gd = GAS_SAMPLES * sampleDt;
+            let o = L.at[k];
+            for (const b of bodies) {
+                const x = buf[o++], y = buf[o++], vx = buf[o++], vy = buf[o++];
+                b.x = x; b.y = y;
+                if (b.grp < 0) {
+                    // (it glows as it did: the heat it lost in this go)
+                    const dvx = b.vx - vx, dvy = b.vy - vy;
+                    b.heat += 0.25 * ((0.5 * (dvx * dvx + dvy * dvy)) / gd - b.heat);
+                    if (b.kep) { const rx = x - b.kep.b.x, ry = y - b.kep.b.y; b.hot = (b.heat * b.m) / (rx * rx + ry * ry); }
+                }
+                b.vx = vx; b.vy = vy;
+            }
+            if (L.book[k] || groupEnergy.has(GAS_BOOK)) groupEnergy.set(GAS_BOOK, L.book[k]);
+            return;
+        }
+    }
+
+    // Goes logged at this step of the log or after it are no longer needed
+    function gasForget(head) {
+        const L = gasLog;
+        while (L.count > 0) {
+            const k = (L.first + L.count - 1) & GAS_MASK;
+            if (L.head[k] < head) return;
+            L.pos = L.at[k];
+            L.count--;
+        }
+    }
+
+    // One host's gas. Returns the energy lost.
+    let gasM = 0, gasEM = 0;
+    function gasHost(g, gd, i1) {
+        const H = g.h, list = g.pairs, n = list.length, gm = G * H.m;
+        gasM = 0; gasEM = 0;
+        if (H.stamp !== mainStamp) return 0;
+        if (GCELL.length < n) {
+            const c = Math.max(n, 2 * GCELL.length, 256);
+            GCELL = new Int32Array(c); GRVR = new Float64Array(c); GRD = new Float64Array(c); GRR = new Float64Array(c);
+        }
+        const r0 = Math.max(3 * H.R, 1) / AU_KM;
+        // (shifted by the golden ratio's multiples: a new place each time, and evenly)
+        const sr = i1 * 0.6180339887, st = i1 * 0.7548776662, shR = sr - Math.floor(sr), shT = st - Math.floor(st);
+        GCM.fill(0); GCI.fill(0); GCD.fill(0); GCV.fill(0); GRM.fill(0); GRI.fill(0);
+        let any = false;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a;
+            GCELL[i] = -1;
+            if (!(f.grp < 0) || f.stamp !== mainStamp) continue;   // (one that has just fallen in is still on the list)
+            any = true;
+            const rx = f.x - H.x, ry = f.y - H.y, vx = f.vx - H.vx, vy = f.vy - H.vy;
+            const r = hyp(rx, ry), ir = Math.floor(Math.log(r / r0) / GAS_H + shR);
+            if (!(r > 0)) continue;
+            const vr = (rx * vx + ry * vy) / r, l = rx * vy - ry * vx, d = l - Math.sqrt(gm * r);
+            GRVR[i] = vr; GRD[i] = d; GRR[i] = r;
+            const ex = (l * l) / (gm * r) - 1, ey = (vr * l) / gm;
+            gasM += f.m; gasEM += f.m * hyp(ex, ey);
+            if (ir < 0 || ir >= GAS_NR) continue;
+            const it = Math.floor((Math.atan2(ry, rx) / TAU + 1) * GAS_NT + shT) % GAS_NT, c = ir * GAS_NT + it, m = f.m;
+            GCELL[i] = c;
+            GCM[c] += m; GCI[c] += m * r * r; GCD[c] += m * d; GCV[c] += m * vr;
+            GRM[ir] += m; GRI[ir] += m / r;
+        }
+        if (!any) return 0;
+        // The torque across each ring's inner edge, over this time, and limited
+        GRT[0] = 0; GRT[GAS_NR] = 0;
+        const kG = (1.5 * GAS_ALPHA * GAS_H * GAS_H * gm * gd) / GAS_H;
+        for (let k = 1; k < GAS_NR; k++) {
+            const m0 = GRM[k - 1], m1 = GRM[k];
+            if (!(m0 > 0 && m1 > 0)) { GRT[k] = 0; continue; }
+            const T = 0.5 * kG * (GRI[k - 1] + GRI[k]);
+            const l0 = m0 * Math.sqrt((gm * m0) / GRI[k - 1]), l1 = m1 * Math.sqrt((gm * m1) / GRI[k]);
+            GRT[k] = Math.min(T, GAS_LIM * Math.min(l0, l1));
+        }
+        let px = 0, py = 0, lost = 0, tMax = 0;
+        for (let i = 0; i < n; i++) {
+            const c = GCELL[i];
+            if (c < 0) continue;
+            const f = list[i].a, m = f.m, r = GRR[i], cm = GCM[c];
+            const ir = (c / GAS_NT) | 0;
+            const mv = GCV[c] / cm, md = GCD[c] / cm;
+            const om2 = gm / (GCI[c] / cm), rate = Math.sqrt(om2 / Math.sqrt(GCI[c] / cm));
+            const q = Math.exp(-rate * gd);
+            const rx = f.x - H.x, ry = f.y - H.y, vx = f.vx - H.vx, vy = f.vy - H.vy;
+            const vr = mv + (GRVR[i] - mv) * q;
+            const l = Math.sqrt(gm * r) + md + (GRD[i] - md) * q + (GRT[ir] - GRT[ir + 1]) / GRM[ir];
+            const ur = vr / r, uw = l / (r * r);
+            const nx = ur * rx - uw * ry, ny = ur * ry + uw * rx;
+            const dvx = nx - vx, dvy = ny - vy;
+            px += m * dvx; py += m * dvy;
+            const de = 0.5 * (vx * vx + vy * vy - nx * nx - ny * ny);
+            lost += m * de;
+            f.vx += dvx; f.vy += dvy;
+            f.heat += 0.25 * ((de > 0 ? de / gd : 0) - f.heat);
+            // (how hot it looks: flux to the fourth root, the flux being this power over the area round it)
+            const T4 = (f.heat * m) / (r * r);
+            if (T4 > tMax) tMax = T4;
+            f.hot = T4;
+        }
+        const dVx = px / H.m, dVy = py / H.m;
+        H.vx -= dVx; H.vy -= dVy;
+        lost -= 0.5 * H.m * (dVx * dVx + dVy * dVy);
+        gasPeak = Math.max(tMax, 0.99 * gasPeak);
+        return lost;
+    }
+
+    // The gas: soft glows, added up where it is thick, in colours by how hot it is
+    const GAS_COLOURS = ['#ff6a2b', '#ff9a3d', '#ffc964', '#fff0c9', '#d6e6ff'];
+    const GAS_COLOURS_LIGHT = ['#c9713a', '#d9701c', '#e8740a', '#ef5a00', '#d63200'];   // (deeper on a light background, or it hardly shows)
+    const GAS_ALPHAS = [0.34, 0.4, 0.46, 0.55, 0.7];
+    const gasSprites = [null, null, null, null, null, null, null, null, null, null];
+    function gasSprite(k, dark) {
+        const j = dark ? k : k + 5;
+        if (gasSprites[j]) return gasSprites[j];
+        const color = dark ? GAS_COLOURS[k] : GAS_COLOURS_LIGHT[k], a = dark ? GAS_ALPHAS[k] : Math.min(1, 1.3 * GAS_ALPHAS[k]);
+        const s = document.createElement('canvas');
+        s.width = s.height = 2 * SPRITE_PX;
+        const g = s.getContext('2d'), gr = g.createRadialGradient(SPRITE_PX, SPRITE_PX, 0, SPRITE_PX, SPRITE_PX, SPRITE_PX);
+        gr.addColorStop(0, hexA(color, a));
+        gr.addColorStop(1, hexA(color, 0));
+        g.fillStyle = gr;
+        g.fillRect(0, 0, s.width, s.height);
+        return (gasSprites[j] = s);
+    }
+    function drawGas(C) {
+        let first = true;
+        const peak = gasPeak > 0 ? Math.sqrt(Math.sqrt(gasPeak)) : 1;
+        for (const b of bodies) {
+            if (!(b.grp < 0) || isChosen(b)) continue;
+            const x = sx(b.dx), y = sy(b.dy);
+            if (x < -12 || x > viewW + 12 || y < -12 || y > viewH + 12) continue;
+            if (first) { first = false; if (C.dark) ctx.globalCompositeOperation = 'lighter'; }
+            const t = b.hot > 0 ? Math.sqrt(Math.sqrt(b.hot)) / peak : 0;
+            const k = t > 0.8 ? 4 : t > 0.6 ? 3 : t > 0.4 ? 2 : t > 0.2 ? 1 : 0;
+            const r = (5 + 2.5 * k) * pieceHeft(b);
+            ctx.drawImage(gasSprite(k, C.dark), x - r, y - r, 2 * r, 2 * r);
+        }
+        if (!first) ctx.globalCompositeOperation = 'source-over';
     }
 
     // A neutron star over about 2.3 solar masses can't hold itself up: it becomes a black hole.
@@ -3285,12 +3797,14 @@
         primOrder.length = 0;
         for (const b of bodies) primOrder.push(b);
         const order = primOrder.sort((a, b) => b.m - a.m || a.id - b.id);
-        const crowded = order.length > SWARM_N || !!scene.swarm;
+        let gasN = 0;
+        for (let k = 0; k < order.length; k++) if (order[k].grp < 0) gasN++;
+        const crowded = order.length - gasN > SWARM_N || !!scene.swarm;   // (gas doesn't crowd a scene)
         const typical = crowded ? 30 * order[order.length >> 1].m : 0, notable = crowded ? 1e-3 * order[0].m : 0;
         for (let i = 0; i < order.length; i++) {
             const b = order[i];
             b.primary = null; b.bound = false; b.hill = Infinity;
-            b.minor = crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable));
+            b.minor = b.grp < 0 || (crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable)));
         }
         for (let i = 1; i < order.length; i++) {
             const b = order[i];
@@ -3546,7 +4060,7 @@
         if (flyby.done) return;
         for (const q of bodies) {
             const s = q.primary;
-            if (q === b || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
+            if (q === b || q.grp || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
             if (q.m < 10 * b.m || q.m > 0.1 * s.m) continue;   // a light body passing a planet
             const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
             if (r >= q.hill) continue;
@@ -6092,7 +6606,7 @@
     // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
     // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
-    const minorGroups = new Map(), pieceGroups = new Map();
+    const minorGroups = new Map(), pieceGroups = new Map(), gasGroups = new Map();
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
@@ -6111,10 +6625,11 @@
         const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
         for (const g of minorGroups.values()) g.length = 0;
         for (const g of pieceGroups.values()) g.length = 0;
+        for (const g of gasGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
             if ((b.minor || b.grp) && !isChosen(b)) {
-                const groups = b.minor ? minorGroups : pieceGroups;
+                const groups = b.grp < 0 ? gasGroups : b.minor ? minorGroups : pieceGroups;
                 let g = groups.get(b.color);
                 if (!g) { g = []; groups.set(b.color, g); }
                 g.push(b);
@@ -6148,6 +6663,8 @@
         ctx.lineCap = 'butt';
         ctx.lineJoin = 'bevel';
         trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
+        // (gas: short and faint, a sign of how it moves. Its glow is the thing to see)
+        trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
         if (!low) {
             ctx.lineJoin = 'miter';
             trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
@@ -6615,7 +7132,7 @@
     function drawMinorBodies(C) {
         for (const g of dotGroups.values()) g.length = 0;
         for (const b of bodies) {
-            if (!b.minor || isChosen(b)) continue;
+            if (!b.minor || b.grp < 0 || isChosen(b)) continue;
             const x = sx(b.dx), y = sy(b.dy);
             if (x < -10 || x > viewW + 10 || y < -10 || y > viewH + 10) continue;
             let g = dotGroups.get(b.color);
@@ -6638,8 +7155,9 @@
     function drawBodies(C) {
         const real = settings.realistic && !cleanRender;
         drawMinorBodies(C);
+        drawGas(C);
         for (const b of bodies) {
-            if (b.minor && !isChosen(b)) continue;
+            if ((b.minor || b.grp < 0) && !isChosen(b)) continue;
             const x = sx(b.dx), y = sy(b.dy);
             const r = drawRadius(b);
             if (x < -r - 60 || x > viewW + r + 60 || y < -r - 60 || y > viewH + r + 60) continue;
@@ -10824,6 +11342,7 @@
         past.replay = false;
         past.sets.length = 1; past.rows = 0; past.last = []; past.set = 0;
         past.events.length = 0; past.pending = null; past.wall = null;
+        gasLog.count = 0; gasLog.pos = 0;
         // (the sample just taken at this moment belongs to it)
         past.from = sampleCount > 0 && sampleTimes[(sampleCount - 1) % TRAIL_CAP] === simTime ? sampleCount - 1 : sampleCount;
         past.dropped = false;
@@ -10838,6 +11357,7 @@
             if (s * timeDir < 0) {
                 usePairs(past.pairs[k]);
                 past.replay = true;
+                if (gasLog.count) gasBack();   // (the heat lost at the end of this step goes back first)
                 return -s * timeDir;
             }
         }
@@ -10886,6 +11406,7 @@
     // After each step (from advance): log it (or take a replayed one off the log), and keep track of
     // merges and break-ups: copy the system before a new one, or undo the newest when back at its moment
     function afterStep(dt) {
+        const wasReplay = past.replay;
         if (past.replay) {
             past.head--; past.count--; past.replay = false;
         } else {
@@ -10899,9 +11420,14 @@
         if (past.pending) {
             commitEvent(dt);
         } else if (past.events.length) {
-            const ev = past.events[past.events.length - 1];
-            if (ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) undoEvent(ev);
+            // (the step an undo retraces may land on the moment of the one before)
+            let ev = past.events[past.events.length - 1];
+            while (ev && ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) {
+                undoEvent(ev);
+                ev = past.events[past.events.length - 1];
+            }
         }
+        if (!wasReplay && settings.realistic && hostGroups.length) gasStep(dt);
         // (rewound to the start: it stops there, ready to run forwards, as a tape does)
         if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
             setPaused(true);
@@ -10919,7 +11445,7 @@
             past.wall = null;
             setPaused(true);
             acc = 0;
-            pastNote('<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
+            pastNote(w.gas ? '<strong>Stopped:</strong> the gas lost its heat here, too long ago to put back.' : '<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
         }
     }
 
@@ -10956,7 +11482,7 @@
         while (past.events.length > EVENT_MAX || (rows > EVENT_BODIES && past.events.length > 1)) {
             const old = past.events.shift();
             rows -= old.snap.n;
-            past.wall = { t: old.t, dir: old.dir };   // (running back can't get past this one)
+            past.wall = { t: old.t, dir: old.dir, gas: false };   // (running back can't get past this one)
         }
     }
 
@@ -11000,6 +11526,7 @@
         k2.bid = null;
         resetFlyby();
         computeForces();
+        gasForget(past.head);   // (what the gas lost since that moment went back with the copy)
         // The step itself, off the log too if it is there
         if (past.count > 0 && past.dt[(past.head - 1) & LOG_MASK] === ev.dir * ev.dt) { past.head--; past.count--; }
         step(-ev.dir * ev.dt);
@@ -11011,6 +11538,7 @@
         for (const b of back.slice(0, 12)) flashes.push({ x: b.x, y: b.y, t: performance.now(), color: b.color, r0: drawRadius(b), grow: b.minor ? 8 : 20 });
         const name = back.length ? escapeHtml(back[0].name) : 'A body';
         const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
+            : ev.kind === 'hit' ? '<strong>The debris is gone.</strong> A collision can\'t run backwards by itself.'
             : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
         updateHistoryUi();
@@ -11705,7 +12233,7 @@
         if (bi.grp && bj.grp) {
             // pieces of one torn-apart body: the softened potential of their softened pull
             // (and pieces of different bodies don't pull on each other)
-            if (bi.grp !== bj.grp) return;
+            if (bi.grp !== bj.grp || bi.grp < 0) return;   // (nor do pieces of gas: see "Gas round a compact body")
             const e = 0.5 * (softLength(bi) + softLength(bj));
             sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
             return;
@@ -12224,8 +12752,8 @@
             if (Number.isInteger(id) && id > 0 && id <= 1e9 && !ids.has(id)) { ids.add(id); num[o] = id; maxId = Math.max(maxId, id); } else renumber.push(o);
             for (let k = 0; k < 6; k++) num[o + 1 + k] = vals[k];
             const grp = r.length > 10 ? r[10] : 0;
-            num[o + 7] = Number.isInteger(grp) && grp > 0 && grp <= 1e9 ? grp : 0;
-            maxGrp = Math.max(maxGrp, num[o + 7]);
+            num[o + 7] = Number.isInteger(grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas)
+            maxGrp = Math.max(maxGrp, Math.abs(num[o + 7]));
             names[i] = typeof r[1] === 'string' && r[1].trim() ? r[1].trim().slice(0, 40) : KINDS[kind].name;
             kinds[i] = kind;
             colors[i] = typeof r[3] === 'string' && /^#[0-9a-f]{6}$/i.test(r[3]) ? r[3] : (KINDS[kind].color || KINDS.custom.color);
@@ -15915,6 +16443,14 @@
     Object.assign(window.orbitsSimulation, {
         // The close pairs followed by the exact two-body drift
         pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast, hosted: p.hosted })),
+        // The gas round compact bodies: how much of it, its mean eccentricity, the energy it has lost, goes logged
+        gas() {
+            const r = [];
+            let m = 0, n = 0;
+            for (const b of bodies) if (b.grp < 0) { const H = b.kep && b.kep.b; if (H) r.push(hyp(b.x - H.x, b.y - H.y)); m += b.m; n++; }
+            r.sort((a, b) => a - b);
+            return { n, m, e: gasE, rMed: r.length ? r[r.length >> 1] : 0, rLo: r.length ? r[r.length >> 3] : 0, rHi: r.length ? r[(7 * r.length) >> 3] : 0, lost: -(groupEnergy.get(GAS_BOOK) || 0), frames: gasLog.count, noted: gasNoted };
+        },
         step: () => ({ dt: nextDt, bodies: bodies.length, direct: bodies.length <= DIRECT_MAX, work: Object.assign({}, work) }),
         // Milliseconds per force evaluation of the bodies as they are now, by each method
         timeForces(reps) {
