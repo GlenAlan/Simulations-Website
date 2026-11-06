@@ -10601,10 +10601,34 @@
             ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
             ui.palette.addEventListener('keydown', onPaletteKey);
             ui.palette.addEventListener('scroll', paletteEdges, { passive: true });
-            if (typeof ResizeObserver !== 'undefined') new ResizeObserver(paletteEdges).observe(ui.palette);
-            else window.addEventListener('resize', paletteEdges);
+            if (typeof ResizeObserver !== 'undefined') {
+                new ResizeObserver(paletteEdges).observe(ui.palette);
+                const cut = new ResizeObserver(paletteCut);
+                cut.observe(ui.toolbar || ui.palette);
+                if (ui.hint) cut.observe(ui.hint);   // (a longer hint leaves the chips less room)
+            } else window.addEventListener('resize', paletteEdges);
         }
         paletteEdges();
+    }
+
+    // Beside the canvas, a column too short for all the chips ends at the edge of a row, not halfway
+    // through one. (When its room changes, not while drawing.)
+    function paletteCut() {
+        const p = ui.palette;
+        if (!p) return;
+        p.style.maxHeight = p.style.overflowY = '';
+        const room = p.clientHeight;
+        if (!room || p.scrollHeight <= room + 1) return;
+        const top = p.getBoundingClientRect().top - p.scrollTop;
+        let edge = 0, end = 0;
+        for (const c of p.querySelectorAll('.orb-chip')) {
+            const b = c.getBoundingClientRect().bottom - top;
+            if (b > end) end = b;
+            if (b <= room && b > edge) edge = b;
+        }
+        // (every chip in sight, short of the padding under them: nothing to scroll to)
+        if (end <= room) p.style.overflowY = 'hidden';
+        else if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
     }
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
