@@ -407,7 +407,8 @@
             };
         })(),
         empty: {
-            units: 'au', Tref: 1, subject: 0, vref: TAU, box: [-1.5, 1.5, -1.5, 1.5],
+            // (its star feels no pull as it opens, so its force arrows are set by Earth's pull from the Sun, as its velocities by Earth's speed)
+            units: 'au', Tref: 1, subject: 0, vref: TAU, fref: G * MEARTH, box: [-1.5, 1.5, -1.5, 1.5],
             bodies: [{ kind: 'sun' }]
         }
     };
@@ -4323,7 +4324,7 @@
         // read as medium-length arrows
         const subj = bodies[def.forceBody !== undefined ? def.forceBody : def.subject] || null;
         const fs = subj ? Math.hypot(subj.fx, subj.fy) : 0;
-        forceRef = fs > 0 ? fs : 1;
+        forceRef = fs > 0 ? fs : def.fref || 1;
         const vs = bodies[def.subject];
         const el = vs && orbitingBody(vs) ? elementsOf(vs, vs.primary) : null;
         vRef = def.vref || (el ? (el.bound ? Math.sqrt(el.mu / el.a) : el.v) : TAU);
@@ -13226,7 +13227,7 @@
             customCount: Number.isInteger(d.cc) && d.cc >= 0 ? d.cc : 0,
             scene: key, sel: idOf(d.sel), frame: idOf(d.fr), pairs, groupE,
             turn: Array.isArray(d.ro) && idOf(d.ro[0]) !== null && idOf(d.fr) !== null && d.ro[0] !== d.fr ? { a: d.ro[0], up: fin(d.ro[1], 0) } : null,
-            forceRef: fin(sca[0], 0) > 0 ? sca[0] : 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,
+            forceRef: fin(sca[0], 0) > 0 && !(def.fref && sca[0] === 1) ? sca[0] : def.fref || 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,   // (an older link from a scene with fref says 1: no arrow would show)
             energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
             com: !!sca[4],
