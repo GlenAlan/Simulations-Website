@@ -4326,3 +4326,15 @@ dialog.orb-help::backdrop {
         display: none;
     }
 }
+
+/* ---------- The scene list: headings, in bold, over plain names ---------- */
+.sim-info-actions .orb-scene-pick optgroup {
+    font-style: normal;
+    font-weight: 700;
+    color: var(--color-text);
+    background: var(--color-bg-alt);
+}
+
+.sim-info-actions .orb-scene-pick option {
+    font-weight: 400;
+}

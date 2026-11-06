@@ -513,28 +513,38 @@
 												<div class="orb-scene-pick">
 													<label for="sceneSelect">Scene</label>
 													<select id="sceneSelect" title="Choose what to watch">
-													<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
-													<option value="ellipse">Elliptical orbit</option>
-													<option value="inner">Inner planets</option>
-													<option value="solar">The Solar System on a date</option>
-													<option value="sky">Planets seen from Earth</option>
-													<option value="comet">Comet and Earth</option>
-													<option value="earth-moon">Earth &amp; Moon</option>
-													<option value="moon">Planet with a moon</option>
-													<option value="binary">Binary stars</option>
-													<option value="figure8">Three stars: figure of eight</option>
-													<option value="pythagorean">Three stars: chaos</option>
-													<option value="slingshot">Slingshot (gravity assist)</option>
-													<option value="blackhole">Neutron star and black hole</option>
-													<option value="tde">Star and black hole</option>
-													<option value="collide">Two planets collide</option>
-													<option value="tidalgiant">Giant star squeezed by tides</option>
-													<option value="mercury">Mercury's orbit turns</option>
-													<option value="inspiral">Black holes spiral together</option>
-													<option value="trojans">Jupiter's Trojans and Hildas</option>
-													<option value="moondisc">A moon forming</option>
-													<option value="random">Random system</option>
-													<option value="empty">A lone star (build your own)</option>
+													<optgroup label="Planets and moons">
+														<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
+														<option value="ellipse">Elliptical orbit</option>
+														<option value="inner">Inner planets</option>
+														<option value="solar">The Solar System on a date</option>
+														<option value="sky">Planets seen from Earth</option>
+														<option value="comet">Comet and Earth</option>
+														<option value="earth-moon">Earth &amp; Moon</option>
+														<option value="moon">Planet with a moon</option>
+														<option value="moondisc">A moon forming</option>
+														<option value="trojans">Jupiter's Trojans and Hildas</option>
+													</optgroup>
+													<optgroup label="Stars">
+														<option value="binary">Binary stars</option>
+														<option value="figure8">Three stars: figure of eight</option>
+														<option value="pythagorean">Three stars: chaos</option>
+														<option value="tidalgiant">Giant star squeezed by tides</option>
+													</optgroup>
+													<optgroup label="Black holes and relativity">
+														<option value="mercury">Mercury's orbit turns</option>
+														<option value="blackhole">Neutron star and black hole</option>
+														<option value="tde">Star and black hole</option>
+														<option value="inspiral">Black holes spiral together</option>
+													</optgroup>
+													<optgroup label="Flights and crashes">
+														<option value="slingshot">Slingshot (gravity assist)</option>
+														<option value="collide">Two planets collide</option>
+													</optgroup>
+													<optgroup label="New systems">
+														<option value="empty">A lone star (build your own)</option>
+														<option value="random">Random system</option>
+													</optgroup>
 												</select>
 												</div>
 												<button type="button" id="reverseBtn" class="sim-icon-button orb-cap orb-reverse" data-cap="Reverse" aria-label="Run time backwards" title="Run time backwards (B)" aria-pressed="false">
