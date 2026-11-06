@@ -7676,15 +7676,19 @@
         arrowsBusy = n > ARROWS_ALL_MAX;
     }
 
+    const gasHeld = new Set();
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
         countArrows();
-        // (a torn-apart body's pieces only get arrows when one is chosen)
+        // (a torn-apart body's pieces only get arrows when one is chosen. What gas goes round gets none: the gas's
+        // pull on it, unevenly spread, only swings a long arrow about and draws the eye from the gas)
         if (settings.forces) {
+            gasHeld.clear();
+            for (const b of bodies) if (b.grp < 0 && b.primary) gasHeld.add(b.primary);
             for (const b of bodies) {
                 const Fm = Math.hypot(b.fx, b.fy);
-                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
+                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj) || gasHeld.has(b)) continue;
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
