@@ -14119,6 +14119,7 @@
     const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
+    const f1Up = (x) => (Math.ceil(x * 10) / 10).toFixed(1);   // (what is still needed: never "0.0" while any is)
     const auPlaces = (d) => (d < 0.1 ? 3 : 2);
     const auText = (d) => `${d.toFixed(auPlaces(d))} AU`;
     const auTextUp = (d) => { const n = auPlaces(d), k = Math.pow(10, n); return `${(Math.ceil(d * k - 1e-9) / k).toFixed(n)} AU`; };
@@ -14557,7 +14558,8 @@
         return x;
     }
 
-    // How the goal stands, for the console: { text, ok } (ok: on track)
+    // How the goal stands, for the console: { text, ok }. A tick, on the line (ok) or on a part of it, says
+    // nothing more is needed on that measure: a line that still asks for a burn has none.
     function missionStatus(x) {
         if (mission.status === 'won') return { text: `Complete: ${f1(mission.result.used)} km/s used`, ok: true };
         if (mission.status === 'lost') return { text: LOST_TITLE[mission.reason] || 'Mission over', ok: false };
@@ -14566,18 +14568,20 @@
         switch (g.type) {
             case 'orbit': {
                 if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
-                const up = g.r > 1, reach = up ? x.ra : x.rp;
-                return { text: `${up ? 'Far point' : 'Closest point'} ${f2(reach)} AU, goal ${f2(g.r)}`, ok: Math.abs(reach / g.r - 1) <= g.tol };
+                // (both ends of the orbit, the one the first burn moves first; a tick for an end on the ring)
+                const on = (r) => Math.abs(r / g.r - 1) <= g.tol, end = (r) => `${f2(r)}${on(r) ? ' ✓' : ''}`;
+                const ends = g.r > 1 ? `Far ${end(x.ra)}, near ${end(x.rp)}` : `Near ${end(x.rp)}, far ${end(x.ra)}`;
+                return { text: `${ends} AU, goal\u00a0${f2(g.r)}`, ok: on(x.ra) && on(x.rp) };
             }
             case 'escape': {
                 const need = toKms(Math.sqrt(2 * x.el.mu / x.el.r) - x.el.v);
-                return { text: `To escape from here: ${f1(Math.max(need, 0))} km/s`, ok: x.nu < 45 && need <= x.left };
+                return { text: `Burn ${f1Up(Math.max(need, 0))} km/s from here to escape`, ok: false };
             }
             case 'capture': {
                 if (x.el.bound) return { text: `Orbit reaches ${f2(x.ra)} AU, goal ${f2(g.lim)}`, ok: false };
                 if (x.el.r > g.lim) return { text: `${f2(x.el.r)} AU from Jupiter, ring at ${f2(g.lim)}`, ok: false };
                 const need = toKms(x.el.v - Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))));
-                return { text: `To stay from here: brake ${f1(need)} km/s`, ok: x.nu < 20 && need <= x.left };
+                return { text: `Brake ${f1Up(Math.max(need, 0))} km/s from here to stay`, ok: false };
             }
             default: {
                 const reach = goalReach(g), p = mission.pred;
@@ -14586,10 +14590,9 @@
                     return d.lead ? { text: `${where}, launch at ${Math.round(d.lead)}°`, ok: Math.abs(x.phase - d.lead) < 3 } : { text: where, ok: false };
                 }
                 if (g.type === 'meet' && x.td < reach) {
-                    const fits = matchBurn(x).cost <= x.left;
-                    if (!g.l4) return { text: `Inside the ring, ${f2(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: fits };
+                    if (!g.l4) return { text: `Inside the ring, ${f2(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: false };
                     const size = Math.abs(x.el.a / g.a - 1) >= g.da;
-                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: fits && parkable(g, x.el.r) };
+                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: false };
                 }
                 if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving too fast: ${f1(toKms(p.dv))} km/s, goal under ${f1(toKms(g.arrive))}`, ok: false };
                 return p ? { text: `Closest to ${x.tname}: ${auTextUp(p.d)}, goal ${auText(goalAim(g))}`, ok: onCourse(x) } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
@@ -15551,7 +15554,8 @@
         setText(E.goal, d.goalText);
         setText(E.status, `${m.ok ? '✓ ' : ''}${m.text}`);
         E.status.classList.toggle('is-ok', m.ok);
-        if (m.ok !== mission.okSaid) { mission.okSaid = m.ok; if (m.ok && !over) announce(`On track. ${m.text}`); }
+        const ticked = m.ok || m.text.includes('✓');
+        if (ticked !== mission.okSaid) { mission.okSaid = ticked; if (ticked && !over) announce(`On track. ${m.text}`); }
         // The gauge: a mark where three stars are lost
         const frac = d.budget > 0 ? left / d.budget : 0;
         E.fill.style.width = `${(100 * frac).toFixed(1)}%`;
