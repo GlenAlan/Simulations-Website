@@ -1862,6 +1862,12 @@ html.dark-mode .orb-date-input {
     display: none;
 }
 
+/* (in a mission, Retry is the one do-over) */
+.orbits-sim.orb-mission-on #rewindBtn,
+.orbits-sim.orb-mission-on #resetSimulationBtn {
+    display: none;
+}
+
 .orbits-sim {
     --orb-mc-go: #7fd6c2;
 }
@@ -2056,8 +2062,13 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 }
 
 .orb-console .orb-mc-play[hidden],
-.orb-console .orb-mc-skip[hidden] {
+.orb-console .orb-mc-play .icon[hidden] {
     display: none;
+}
+
+/* (its place is kept, so the buttons round it never move under a finger when it comes and goes) */
+.orb-console .orb-mc-skip[hidden] {
+    visibility: hidden;
 }
 
 .orb-console .orb-mc-skip {
