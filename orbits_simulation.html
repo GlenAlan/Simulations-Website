@@ -601,6 +601,10 @@
 											<div class="chart-box">
 												<canvas id="orbitChart" role="img" aria-label="Distance and speed of the chosen body over time"></canvas>
 											</div>
+											<div class="chart-box orb-k3-box" id="k3Box" hidden>
+												<canvas id="k3Chart" role="img" aria-label="T squared against a cubed for each orbiting body"></canvas>
+												<button type="button" class="orb-k3-axes" id="k3Axes" aria-pressed="false" aria-label="Linear axes" title="Even steps from zero, not steps of ×10. Small orbits bunch up at zero.">Linear</button>
+											</div>
 										</div>
 										<div class="orb-chart-actions">
 											<span class="orb-chart-note" id="chartCsvNote" aria-live="polite"></span>
@@ -660,7 +664,7 @@
 											<ul>
 												<li>Press Edit, raise the eccentricity on the Orbit tab and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
 												<li>On the Orbit tab, give Earth a period of 2 years: Kepler's 3rd law moves its orbit out to 1.59 AU.</li>
-												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Download the table and plot <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>: a straight line through the origin.</li>
+												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Open <em>Graphs</em> to watch each planet land on the straight line of <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>. For the numbers, download <em>Kepler's 3rd law</em> in <em>More options</em>.</li>
 												<li>Set the Solar System's start date to your birthday and see where the planets were.</li>
 												<li>Open "Planets seen from Earth" and watch the strip at the top: as Earth passes Mars, Mars backs up against the stars. Press See from above to find out why.</li>
 												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>

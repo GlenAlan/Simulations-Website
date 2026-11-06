@@ -4526,3 +4526,75 @@ html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
 #simulationCanvas.orb-can-pick {
     cursor: pointer;
 }
+
+/* The 3rd law's graph, beside the others while that law is on. It takes a line of its own when three
+   side by side would be too narrow, and comes first when they stack: it's what the law's switch asked for. */
+.orb-k3-box[hidden] {
+    display: none;
+}
+
+@media (min-width: 601px) {
+    body:not(.sim-fullscreen-active) #charts-container .sim-charts-row {
+        flex-wrap: wrap;
+    }
+
+    body:not(.sim-fullscreen-active) #charts-container .chart-box {
+        flex-basis: 260px;
+    }
+}
+
+#charts-container .orb-k3-axes {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    height: auto;
+    min-height: 26px;
+    margin: 0;
+    padding: 0.15em 0.6em;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.2;
+    letter-spacing: 0;
+    text-transform: none;
+    background-color: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+#charts-container .orb-k3-axes[aria-pressed="true"] {
+    box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+#charts-container .orb-k3-axes:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (hover: hover) {
+    #charts-container .orb-k3-axes:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+@media (pointer: coarse) {
+    #charts-container .orb-k3-axes {
+        top: 2px;
+        right: 2px;
+        min-height: 40px;
+        min-width: 40px;
+    }
+}
+
+@media (max-width: 600px) {
+    body:not(.sim-fullscreen-active) #charts-container .orb-k3-box {
+        order: -1;
+        height: 280px;
+    }
+}
+
+/* Fullscreen keeps a small space for the graphs: where a third wouldn't fit, the two there are keep it
+   (leaving fullscreen brings this one back) */
+@media (max-width: 800px), (max-height: 600px) {
+    body.sim-fullscreen-active #charts-container .orb-k3-box {
+        display: none;
+    }
+}

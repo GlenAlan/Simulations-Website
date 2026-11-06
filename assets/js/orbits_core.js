@@ -10478,6 +10478,20 @@
         return { P, rows };
     }
 
+    // The rows worth a line: those measured and, of those yet to go once round, the one due next (the
+    // time left goes with a^1.5). Neptune takes 16 minutes at 1×, so the rest are only counted. (Up to
+    // two waiting are both listed: the second takes no more room than a line that would count it.)
+    function kepler3Listed(rows) {
+        let next = null, soonest = Infinity, waiting = 0;
+        for (const r of rows) {
+            if (r.measured) continue;
+            waiting++;
+            const left = (1 - r.progress) * Math.pow(r.aEst, 1.5);
+            if (left < soonest) { soonest = left; next = r; }
+        }
+        return waiting < 3 ? rows : rows.filter((r) => r.measured || r === next);
+    }
+
     // A table: one row per orbiting body, the same T^2/a^3 for all of them, and Newton's value.
     function drawKepler3Card(C, subj, y, fs, compact) {
         const { P, rows } = kepler3Rows(subj);
@@ -10490,9 +10504,10 @@
         const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
         // Up to 10 rows (5 compact); past that, the last row says how many more there are
-        const most = compact ? 5 : 10, shown = rows.length > most ? most - 1 : rows.length;
-        const more = rows.length - shown;
-        const cells = rows.slice(0, shown).map((r) => {
+        const most = compact ? 5 : 10, list = kepler3Listed(rows);
+        const listed = list.length + (list.length < rows.length ? 1 : 0) > most ? list.slice(0, most - 1) : list;
+        const more = rows.length - listed.length;
+        const cells = listed.map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
             const Tv = r.T * tf;
@@ -10501,7 +10516,7 @@
             const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
-        if (more > 0) cells.push({ name: `+${more} more`, body: null, cols: ['', '', ''] });
+        if (more > 0) cells.push({ name: `+${more} ${rows.every((r) => !r.measured || listed.includes(r)) ? 'still going round' : 'more'}`, body: null });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
@@ -10515,14 +10530,15 @@
         ctx.font = font(fs, true);
         head.forEach((t, i) => { colW[i] = Math.max(colW[i], ctx.measureText(t).width); });
         ctx.font = font(fs);
-        let measW = 0;
+        let measW = 0, moreW = 0;
         for (const c of cells) {
+            if (!c.body) { moreW = ctx.measureText(c.name).width + dot; continue; }   // (it runs across the columns)
             colW[0] = Math.max(colW[0], ctx.measureText(c.name).width + dot);
             if (c.cols) c.cols.forEach((t, i) => { colW[i + 1] = Math.max(colW[i + 1], ctx.measureText(t).width); });
             else measW = Math.max(measW, ctx.measureText(c.measuring).width);
         }
         const numW = Math.max(colW[1] + gap + colW[2] + gap + colW[3], measW);
-        const tableW = rows.length ? colW[0] + gap + numW : 0;
+        const tableW = rows.length ? Math.max(colW[0] + gap + numW, moreW) : 0;
         ctx.font = font(fs, true);
         let w = ctx.measureText(title).width;
         ctx.font = font(fs);
@@ -10562,7 +10578,7 @@
                     ctx.textAlign = 'right';
                     let nx = numX;
                     for (let i = 1; i < 4; i++) { nx += colW[i]; ctx.fillText(c.cols[i - 1], nx, ly); nx += gap; }
-                } else {
+                } else if (c.measuring) {
                     ctx.fillStyle = C.subtle;
                     ctx.fillText(c.measuring, numX, ly);
                 }
@@ -14204,6 +14220,7 @@
     function sampleCharts() {
         if (!chartsVisible()) return;
         const now = performance.now();
+        k3GraphTick(now);
         if (chartsDirty && now >= chartsNextDraw) {
             charts.energy.update('none');
             charts.orbit.update('none');
@@ -14242,6 +14259,242 @@
             }
         }
         chartsDirty = true;
+    }
+
+    // ------------------------------------------------------------------
+    // The 3rd law as a graph: T^2 against a^3 for the bodies on the 3rd law card, among the graphs while
+    // that law is on. It keeps nothing of its own: each redraw reads the measurements (kepler3Rows), so an
+    // undo, a restart or a merge can't leave an old point behind.
+    //   The line is the law for a light planet, T^2/a^3 = 4 pi^2/GM, which is 1/M in years, AU and Suns.
+    //   Log axes by default: Pluto's a^3 is a million times Mercury's, so on even axes the inner planets
+    //   are one dot. There the line still has slope 1, and M moves it up or down.
+    //   A body yet to go once round is a ring at its present a, as high as the time so far, squared. So
+    //   it shows what has been measured, not what the law says, and climbs to the line as the orbit ends.
+    // ------------------------------------------------------------------
+    const K3_EVERY_MS = 200, K3_OFF = 0.05;   // (redrawn this often; further than this from the line is "off" it)
+    const k3g = { chart: null, on: false, log: true, next: 0, sig: '', dark: null, note: [], legend: [], aria: '' };
+
+    // (from sampleCharts, so only while the graphs are open)
+    function k3GraphTick(now) {
+        if (settings.k3 !== k3g.on) showK3Graph(settings.k3);
+        if (!k3g.on || now < k3g.next) return;
+        k3g.next = now + K3_EVERY_MS;
+        drawK3Graph();
+    }
+
+    function showK3Graph(on) {
+        const box = byId('k3Box');
+        k3g.on = on;
+        k3g.sig = '';
+        k3g.next = 0;
+        if (!box) return;
+        box.hidden = !on;
+        if (on && !k3g.chart) k3g.chart = makeK3Chart();
+    }
+
+    // An axis's numbers: plain where they are short, a power of ten where they aren't
+    function k3Tick(v) {
+        if (!(v > 0)) return '0';
+        if (k3g.log) {
+            const e = Math.round(Math.log10(v));
+            return e >= -3 && e <= 3 ? String(+v.toPrecision(1)) : `10${supExp(e)}`;
+        }
+        return v >= 1e5 || v < 1e-3 ? fmtSci(v, 1) : String(+v.toPrecision(3));
+    }
+
+    // Names beside the points where there's room, the farthest out first (points on top of one another
+    // share a name: "Saturn +5"), and what the graph is saying in its empty corner
+    const k3Marks = {
+        id: 'k3Marks',
+        afterDatasetsDraw(ch) {
+            const c = ch.ctx, A = ch.chartArea, lh = 14, type = `11px ${Chart.defaults.font.family}`;
+            const els = ch.getDatasetMeta(1).data, pts = ch.data.datasets[1].data, note = k3g.note.slice();
+            c.save();
+            c.textBaseline = 'middle';
+            c.font = type;
+            c.fillStyle = chartColors().text;
+            const taken = note.map((t, i) => ({ x: A.left + 6, y: A.top + 5 + i * lh, w: c.measureText(t).width, h: lh - 4 }));
+            for (const e of els) taken.push({ x: e.x - 4, y: e.y - 4, w: 8, h: 8 });
+            const clash = (x, y, w, h) => taken.some((q) => x < q.x + q.w && q.x < x + w && y < q.y + q.h && q.y < y + h);
+            const near = (p, q) => Math.abs(p.x - q.x) < 7 && Math.abs(p.y - q.y) < 7;
+            for (let i = els.length - 1; i >= 0; i--) {
+                const e = els[i];
+                let n = 0, placed = false;
+                while (i - n > 0 && near(els[i - n], els[i - n - 1])) n++;
+                const name = n ? `${pts[i].name} +${n}` : pts[i].name, w = c.measureText(name).width, h = 12;
+                i -= n;
+                // (below right of the point, clear of a rising line; then above left)
+                for (const [x, y] of [[e.x + 7, e.y + 1], [e.x - 7 - w, e.y - 1 - h], [e.x + 7, e.y - 1 - h], [e.x - 7 - w, e.y + 1]]) {
+                    if (x < A.left || x + w > ch.width - 2 || y < A.top || y + h > A.bottom || clash(x, y, w, h)) continue;
+                    c.fillText(name, x, y + h / 2);
+                    taken.push({ x, y, w, h });
+                    placed = true;
+                    break;
+                }
+                if (!placed && n) note.push(`Bunched up: ${name}.`);
+            }
+            note.forEach((t, i) => {
+                c.font = i === 0 ? `bold ${type}` : type;
+                c.fillText(t, A.left + 6, A.top + 3 + (i + 0.5) * lh);
+            });
+            c.restore();
+        }
+    };
+
+    function makeK3Chart() {
+        const canvas = byId('k3Chart'), btn = byId('k3Axes');
+        if (!canvas || typeof Chart === 'undefined') return null;
+        const c = chartColors();
+        const spot = (key) => (q) => (q.raw && q.raw[key]) || 'transparent';
+        // (on log axes, a tick only at each power of ten: the steps the axis titles describe)
+        const tens = (axis) => {
+            if (!k3g.log) return;
+            const lo = Math.ceil(Math.log10(axis.min) - 1e-9), hi = Math.floor(Math.log10(axis.max) + 1e-9);
+            axis.ticks = [];
+            for (let e = lo; e <= hi; e++) axis.ticks.push({ value: Math.pow(10, e) });
+        };
+        const axis = () => ({
+            type: 'logarithmic', afterBuildTicks: tens,
+            ticks: { color: c.text, maxRotation: 0, callback: k3Tick }, grid: { color: c.grid }, title: { display: true, text: '', color: c.text }
+        });
+        if (btn) {
+            btn.addEventListener('click', () => {
+                k3g.log = !k3g.log;
+                btn.setAttribute('aria-pressed', k3g.log ? 'false' : 'true');
+                k3g.sig = '';
+                drawK3Graph();
+            });
+        }
+        return new Chart(canvas, {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    { type: 'line', data: [], borderColor: colours().kepler, borderWidth: 2, pointRadius: 0, pointHitRadius: 0, order: 2 },
+                    { data: [], clip: false, pointRadius: 5, pointHoverRadius: 6, pointBorderWidth: 1, pointBackgroundColor: spot('fill'), pointBorderColor: spot('edge'), order: 1 },
+                    { data: [], clip: false, pointRadius: 4, pointHoverRadius: 5, pointBorderWidth: 1.5, pointBackgroundColor: 'transparent', pointBorderColor: spot('edge'), order: 1 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                // (room on the right for a name, and on a phone for the taller button)
+                layout: { padding: { right: 16, top: window.matchMedia('(pointer: coarse)').matches ? 8 : 0 } },
+                plugins: {
+                    legend: { align: 'start', onClick: () => {}, labels: { color: c.text, boxHeight: 7, pointStyleWidth: 14, usePointStyle: true, generateLabels: () => k3g.legend } },
+                    tooltip: { filter: (q) => q.datasetIndex > 0, callbacks: { label: (q) => q.raw.tip } }
+                },
+                scales: { x: axis(), y: axis() }
+            },
+            plugins: [k3Marks]
+        });
+    }
+
+    // What the graph says: whose orbits, then what to see in them
+    function k3GraphNote(P, rows, pts, rings, slope) {
+        if (!P) return ['Add bodies to compare.'];
+        const who = `Orbits of ${P.name}`;
+        if (!rows.length) return [who, 'Add bodies that orbit it to compare.'];
+        // (half as long again as the law's T^2, and still not round: as for a figure of eight, no one orbit)
+        const late = rings.find((q) => q.y > 1.5 * slope * q.x);
+        if (!pts.length && !late) return [who, 'Each ring lands on the line', 'when it has gone once round.'];
+        let far = null, most = K3_OFF;
+        for (const p of pts) {
+            const off = Math.abs(p.y / (p.x * slope) - 1);
+            if (off > most) { most = off; far = p; }
+        }
+        if (!far && late) return [who, `${late.name} has passed the line without`, 'going round: it has no steady orbit.'];
+        if (!far) return [who, 'Double a³ and T² doubles too.'];
+        // (two bodies go round each other, so its own mass counts: 4 pi^2/G(M + m). Otherwise it's the others' pull)
+        const own = (far.y / (far.x * slope)) * (1 + far.row.body.m / P.m);
+        if (Math.abs(own - 1) < K3_OFF) return [who, `${far.name} is heavy too, and the law`, 'needs M + m: it sits below the line.'];
+        return [who, 'Off the line: the simple law', "doesn't hold here."];   // (others' pull, or relativity: it doesn't say which)
+    }
+
+    function drawK3Graph() {
+        const ch = k3g.chart;
+        if (!ch) return;
+        const { P, rows } = kepler3Rows(bodyById(selectedId));
+        // In the scene's own units, as on the card
+        const km = scene.units === 'km', tu = timeUnit();
+        const tf = tu === 's' ? YEAR_S : tu === 'd' ? DAYS_PER_YEAR : 1, af = km ? AU_KM : 1;
+        const plain = !km && tu === 'yr';
+        const num = (v) => (plain && v >= 0.001 && v < 1000 ? v.toFixed(3) : fmtSci(v, 2));
+        const slope = P ? ((4 * Math.PI * Math.PI) / (G * P.m)) * (tf * tf) / (af * af * af) : 1;
+        const dark = isDark();
+        const pts = [], rings = [];
+        let xLo = Infinity, xHi = 0, yLo = Infinity, yHi = 0;
+        let sig = `${k3g.log}|${dark}|${P ? P.id : ''}|${slope}|${km}|${tu}`;
+        for (const r of rows) {
+            const a = (r.measured ? r.a : r.aEst) * af, x = a * a * a;
+            if (!(x > 0) || !Number.isFinite(x)) continue;
+            xLo = Math.min(xLo, x);
+            xHi = Math.max(xHi, x);
+            const name = r.body.name, edge = bodyStroke(r.body.color, dark), tr = r.body.track;
+            const t = r.measured ? r.T * tf : tr ? (tr.tPrev - tr.t0) * tf : 0, y = t * t;
+            if (r.measured) {
+                yLo = Math.min(yLo, y);
+                yHi = Math.max(yHi, y);
+                pts.push({ x, y, name, row: r, fill: r.body.color, edge, tip: `${name}: T²/a³ = ${num(y / x)}` });
+            } else {
+                if (y > slope * x) yHi = Math.max(yHi, y);   // (one that has passed the line stays on the scale)
+                rings.push({ x, y, name, edge, tip: `${name}: going round, ${Math.round(r.progress * 100)}%` });
+            }
+            sig += `|${name},${r.body.color},${r.measured},${x},${y}`;
+        }
+        if (sig === k3g.sig) return;   // (nothing has changed, as while paused)
+        k3g.sig = sig;
+        if (!(xHi > 0)) { xLo = xHi = af * af * af; }
+        pts.sort((p, q) => p.x - q.x);
+        // The axes reach all the bodies, those still going round too, so they stay put as points arrive
+        yLo = Math.min(yLo, slope * xLo);
+        yHi = Math.max(yHi, slope * xHi);
+        const X = ch.options.scales.x, Y = ch.options.scales.y;
+        let line;
+        if (k3g.log) {
+            // (ending on half powers of ten, so they keep still as a point moves a little, with room round
+            // the points and more above them for a name; never less than a step each side of a lone point)
+            const span = (l, h) => {
+                let lo = Math.floor(2 * (Math.log10(l) - 0.15)) / 2, hi = Math.ceil(2 * (Math.log10(h) + 0.3)) / 2;
+                if (hi - lo < 2) { lo -= 0.5; hi += 0.5; }
+                return [Math.pow(10, lo), Math.pow(10, hi)];
+            };
+            X.type = Y.type = 'logarithmic';
+            [X.min, X.max] = span(xLo, xHi);
+            [Y.min, Y.max] = span(yLo, yHi);
+            line = [{ x: X.min, y: slope * X.min }, { x: X.max, y: slope * X.max }];
+        } else {
+            // (ending on a round number, so the last number on the axis is one too)
+            const round = (v) => { const p = Math.pow(10, Math.floor(Math.log10(v))); return (Math.ceil((2.1 * v) / p) * p) / 2; };
+            X.type = Y.type = 'linear';
+            X.min = Y.min = 0;
+            X.max = round(xHi);
+            Y.max = round(yHi);
+            line = [{ x: 0, y: 0 }, { x: X.max, y: slope * X.max }];
+        }
+        // (a ring is at the axis's foot until its time so far is on the scale)
+        for (const q of rings) q.y = Math.max(q.y, Y.min);
+        X.title.text = `a³ (${km ? 'km' : 'AU'}³)${k3g.log ? '. Both axes: each step ×10' : ''}`;
+        Y.title.text = `T² (${tu === 'd' ? 'days' : tu}²)`;
+        const colr = chartColors();
+        const law = colours().kepler;
+        const ds = ch.data.datasets;
+        ds[0].data = P ? line : [];
+        ds[0].borderColor = law;
+        ds[1].data = pts;
+        ds[2].data = rings;
+        for (const fine of [X, Y]) {
+            fine.ticks.color = colr.text;
+            fine.grid.color = colr.grid;
+            fine.title.color = colr.text;
+        }
+        const leg = ch.options.plugins.legend.labels;
+        leg.color = colr.text;
+        const item = (text, pointStyle, fill, stroke, lineWidth) => ({ text, pointStyle, fillStyle: fill, strokeStyle: stroke, lineWidth, hidden: false, fontColor: colr.text });
+        k3g.legend = P ? [item(`T²/a³ = ${plain ? '1/M = ' : ''}${num(slope)}`, 'line', law, law, 2)] : [];
+        if (rings.length) k3g.legend.push(item('Going round', 'circle', 'transparent', colr.text, 1.5));
+        k3g.note = k3GraphNote(P, rows, pts, rings, slope);
+        ch.update('none');
+        const aria = P ? `T squared against a cubed for the orbits of ${P.name}: ${pts.length} measured, ${rings.length} still going round.` : 'T squared against a cubed: no bodies yet.';
+        if (aria !== k3g.aria) { k3g.aria = aria; ch.canvas.setAttribute('aria-label', aria); }
     }
 
     // ------------------------------------------------------------------
