@@ -1167,6 +1167,7 @@
     let gravStamp = 0;
     let anyPieces = false;   // (a torn-apart body's among them: only then do the pair sums look for pieces)
     let anyHosted = false;   // (a whole body is going round a host: see "Close pairs")
+    let gasRows = -1, gasList = null;   // (with gas among them, the bodies that aren't: see gravityDirect)
     let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
     let heavyMax = HEAVY_MAX;
     const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
@@ -1181,8 +1182,10 @@
         const xs = SX, ys = SY, vxs = SVX, vys = SVY, ms = SM, grp = SGRP, eps = SEPS, a0 = SA0, pair = SPAIR;
         anyPieces = false;
         anyHosted = false;
+        gasRows = -1;
         for (let k = 0; k < n; k++) {
             const b = list[k];
+            if (b.grp < 0 && gasRows < 0) gasRows = 0;
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
             grp[k] = g && (b.minor || g < 0) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
@@ -1212,6 +1215,7 @@
         } else {
             pnCount = 0;
             if (pn) for (let k = 0; k < n; k++) { PAX[k] = 0; PAY[k] = 0; }
+            gasList = list;
             tmin = useTree ? gravityTree(n, pn) : gravityDirect(n, pn);
             if (pn) {
                 for (let k = 0; k < n; k++) { NAX[k] = SAX[k]; NAY[k] = SAY[k]; SAX[k] += PAX[k]; SAY[k] += PAY[k]; }
@@ -1268,7 +1272,16 @@
     function gravityDirect(n, pn) {
         for (let k = 0; k < n; k++) { SAX[k] = 0; SAY[k] = 0; SBEST[k] = Infinity; SSECOND[k] = Infinity; SPART[k] = -1; }
         work.pairs = (n * (n - 1)) / 2; work.tree = 0;
-        return pairRows(null, n, n, pn);
+        if (gasRows < 0) return pairRows(null, n, n, pn);
+        // Pieces of gas don't pull each other, so the pair sums need only run over what isn't gas
+        SINDIR.fill(0, 0, n);
+        gasRows = 0;
+        for (let k = 0; k < n; k++) {
+            if (gasList[k].grp < 0) continue;
+            SDIR[gasRows] = k; SDPOS[k] = gasRows; SINDIR[k] = 1; gasRows++;
+        }
+        work.pairs = gasRows * n - (gasRows * (gasRows + 1)) / 2;
+        return pairRows(SDIR, gasRows, n, pn);
     }
 
     // The exact pull of each pair, added both ways to accelerations already started. Rows: each body i
@@ -2291,7 +2304,7 @@
 
     function disrupt(L, H) {
         const gas = gasTear(L, H);
-        const n = Math.min(L.minor ? MINOR_FRAGMENTS : gas ? GAS_PIECES : FRAGMENTS, MAX_BODIES - bodies.length + 1);
+        const n = Math.min(L.minor ? MINOR_FRAGMENTS : gas || FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
         noteIrreversible('tear');   // (running backwards: a copy of the system from just before)
         noteTornApart(L, H);       // (the stability timer)
@@ -2307,7 +2320,7 @@
             left -= m;
             const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = gas ? -L.id : L.id;
-            f.minor = gas;
+            f.minor = gas > 0;
             f.heft = heftOf(n * shape.share[i]);
             f.x = L.x + (ux * s - uy * q) * span; f.y = L.y + (uy * s + ux * q) * span;
             f.vx = L.vx; f.vy = L.vy;
@@ -2575,10 +2588,10 @@
     // to heat: colour and glow) is exactly the kinetic energy they lose. It is kept in the books, under GAS_BOOK.
     // In the scene (a star on a bound orbit round a 1,000 solar mass hole), the gas has a mean eccentricity of 0.25 in
     // four orbits (9 days), round the circularisation radius a (1 - e^2) = 0.11 AU, half of it fallen in by 10 orbits.
-    // Simulations of real gas find a disc in several returns of the stream too, though theirs stays rounder only
-    // slowly (Shiokawa et al. 2015). It is the real rate: nothing here is sped up. It is a cheaper model than real
-    // gas, though: no pressure force, and how fast a stream rounds off rests on the cells' size. A narrow ring
-    // spreads at about 0.4 of the variance 6 nu t (the narrow ring's cells are coarse), from this code.
+    // Simulations of real gas find a disc in several returns of the stream too, though theirs keeps a good part of its
+    // eccentricity for longer (Shiokawa et al. 2015). It is the real rate: nothing here is sped up. It is a cheaper
+    // model than real gas, though: no pressure force, and how fast a stream rounds off rests on the cells' size. A
+    // narrow ring spreads with about 0.4 of the variance 6 nu t in this code: the cells are coarse beside it.
     // It can't run backwards by itself, so the state is logged just before each go (GAS_LOG numbers, kept only once
     // there is gas: at 120 pieces about 57 orbits' worth), and put back when running back reaches that moment. Past the
     // oldest, the run stops with a note, as for a merger. (Positions too: velocities alone, put back on positions a
@@ -2592,7 +2605,8 @@
     const GAS_LIM = 0.02;
     const GAS_SAMPLES = 4;
     const GAS_TRAIL = 75;                 // trail samples drawn
-    const GAS_STEPS = 4;                  // steps a trail sample are enough for pieces of gas
+    const GAS_STEPS = 1;                  // steps a trail sample are enough for pieces of gas (each is on its exact orbit)
+    const GAS_MAX = 120;                  // pieces of gas at once: a further star breaks into the usual few
     const GAS_NT = 12;                    // (2 pi H^-1)
     const GAS_NR = 36;
     const GAS_BOOK = -3;                  // (among the body ids of groupEnergy)
@@ -2605,7 +2619,16 @@
     // Gas that reaches where an orbit takes less than a trail sample has fallen in, as far as anyone can see: the
     // viscous time there is under a hundredth of the disc's, and following it, step by step, is no use
     const gasFall = (mH) => Math.cbrt((G * mH * sampleDt * sampleDt) / (TAU * TAU));
-    const gasTear = (L, H) => !L.minor && isCompact(H) && !mission.def && L.m >= 4e-5;   // (4e-5: from Uranus up, the bodies mostly of gas)
+    // A body mostly of gas (from Uranus up), tearing round a compact body, where the disc would show: its orbits there
+    // must take a good many trail samples. How many pieces it makes (none: the usual few).
+    function gasTear(L, H) {
+        if (L.minor || !isCompact(H) || mission.def || L.m < 4e-5) return 0;
+        if (!(hyp(L.x - H.x, L.y - H.y) > 4 * gasFall(H.m))) return 0;
+        let n = GAS_MAX;
+        for (const b of bodies) if (b.grp < 0) n--;
+        n = Math.min(n, GAS_PIECES);
+        return n >= GAS_PIECES / 2 ? n : 0;
+    }
 
     // One go, if this step passed the next multiple of the interval. All from the positions and clock, so it
     // is the same on every run.
@@ -3527,12 +3550,14 @@
         primOrder.length = 0;
         for (const b of bodies) primOrder.push(b);
         const order = primOrder.sort((a, b) => b.m - a.m || a.id - b.id);
-        const crowded = order.length > SWARM_N || !!scene.swarm;
+        let gasN = 0;
+        for (let k = 0; k < order.length; k++) if (order[k].grp < 0) gasN++;
+        const crowded = order.length - gasN > SWARM_N || !!scene.swarm;   // (gas doesn't crowd a scene)
         const typical = crowded ? 30 * order[order.length >> 1].m : 0, notable = crowded ? 1e-3 * order[0].m : 0;
         for (let i = 0; i < order.length; i++) {
             const b = order[i];
             b.primary = null; b.bound = false; b.hill = Infinity;
-            b.minor = crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable));
+            b.minor = b.grp < 0 || (crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable)));
         }
         for (let i = 1; i < order.length; i++) {
             const b = order[i];
@@ -10955,8 +10980,12 @@
         if (past.pending) {
             commitEvent(dt);
         } else if (past.events.length) {
-            const ev = past.events[past.events.length - 1];
-            if (ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) undoEvent(ev);
+            // (the step an undo retraces may land on the moment of the one before)
+            let ev = past.events[past.events.length - 1];
+            while (ev && ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) {
+                undoEvent(ev);
+                ev = past.events[past.events.length - 1];
+            }
         }
         if (!wasReplay && settings.realistic && hostGroups.length) gasStep(dt);
         // (rewound to the start: it stops there, ready to run forwards, as a tape does)
