@@ -4375,10 +4375,10 @@
     }
 
     // How fast the force on b is changing, from where the bodies were at the last step's end: the derivative
-    // of Newton's pull, G m M (v / r^3 - 3 (r.v) r / r^5), softened between pieces as in pullAcross. Into jx, jy
-    let jx = 0, jy = 0;
+    // of Newton's pull, G m M (v / r^3 - 3 (r.v) r / r^5), softened between pieces as in pullAcross. Into JX, JY
+    let JX = 0, JY = 0;
     function forceRate(b) {
-        jx = 0; jy = 0;
+        JX = 0; JY = 0;
         for (const q of bodies) {
             if (q === b) continue;
             const rx = q.x - b.x, ry = q.y - b.y, vx = q.vx - b.vx, vy = q.vy - b.vy;
@@ -4389,7 +4389,7 @@
             }
             if (!(s2 > 0)) continue;
             const k = (G * b.m * q.m) / (s2 * Math.sqrt(s2)), c = (3 * (rx * vx + ry * vy)) / s2;
-            jx += k * (vx - c * rx); jy += k * (vy - c * ry);
+            JX += k * (vx - c * rx); JY += k * (vy - c * ry);
         }
     }
 
@@ -4411,13 +4411,18 @@
                 b.dx = b.x + (vx + 0.5 * t * (p.a.fx + p.b.fx) / M) * t; b.dy = b.y + (vy + 0.5 * t * (p.a.fy + p.b.fy) / M) * t;
                 continue;
             }
-            const ax = b.m > 0 ? (t * b.fx) / b.m : 0, ay = b.m > 0 ? (t * b.fy) / b.m : 0;
+            let ax = b.m > 0 ? (t * b.fx) / b.m : 0, ay = b.m > 0 ? (t * b.fy) / b.m : 0;
+            // (a step can take a body round a host by over a radian: then a curve would only fly off further than a line)
+            if (b.kep && b.kep.hosted) {
+                const H = b.kep.b, rx = b.x - H.x, ry = b.y - H.y;
+                if ((ax * ax + ay * ay) * t * t > rx * rx + ry * ry) { ax = 0; ay = 0; }
+            }
             b.dx = b.x + (b.vx + 0.5 * ax) * t; b.dy = b.y + (b.vy + 0.5 * ay) * t;
             b.dvx = b.vx + ax; b.dvy = b.vy + ay;
             // (only for what has a force arrow or a name to place: see drawArrows, drawLabels)
             if (t && (!(b.grp || b.minor) || isChosen(b))) {
                 forceRate(b);
-                b.dfx = b.fx + jx * t; b.dfy = b.fy + jy * t;
+                b.dfx = b.fx + JX * t; b.dfy = b.fy + JY * t;
             }
         }
         F = freeze ? frozenOrigin(simTime + lag) : liveFrameOrigin();
@@ -7714,7 +7719,7 @@
         ui.arrowSize.addEventListener('change', () => { settings.arrowSize = ui.arrowSize.value; syncArrowSize(); });
     }
 
-    // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
+    // Velocity arrows have a length in px that doesn't depend on the zoom (but for arrowK), like the force arrows: the
     // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
     // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
     // ARROW_PX long; arrows over twice that are squeezed, to at most two and a half times (a body swung
