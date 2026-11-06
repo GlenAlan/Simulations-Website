@@ -5247,6 +5247,7 @@
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
         for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : b.grp ? 1.8 : 3, b.rmax, (b.R / AU_KM) * scale);
+        if (mission.def && mission.def.goal.type === 'dive') sunDrawSize();
     }
 
     // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
@@ -15941,6 +15942,7 @@
     const ENGINE_TAP = 0.015, ENGINE_HOLD = 0.12, ENGINE_FINE = 0.1;
     const ENGINE_WAIT_MS = 220, ENGINE_EVERY_MS = 50;
     const SKIP_S = 1.5;                      // a skip to the next moment that matters takes about this long to watch
+    const SUN_RING_PX = 11;                  // the ring close to the Sun is drawn no smaller than this
     const MISSION_SPEED_MAX = 2;             // the fastest the clock runs by choice: much faster and time runs out before you can fly (a skip goes faster)
     const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
     const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
@@ -15974,7 +15976,10 @@
     //   target's Hill sphere, zone) and meet (within D of the target, moving within V of it; a tick also
     //   needs the path to arrive within arrive of its speed, as a burn to match any faster pass costs a
     //   star; l4: within D of the point 60 degrees ahead of the target, on an orbit of its size a to within
-    //   da and with an eccentricity under eMax: a passing moment of slow relative motion isn't parking).
+    //   da and with an eccentricity under eMax: a passing moment of slow relative motion isn't parking);
+    //   and four with functions of their own (see "Missions with goals of their own"): miss (keep the
+    //   craft out of the ring of D round the target), dive (inside r of the reference body), free (behind the
+    //   target inside zone, then back inside ring of the reference body) and sling (unbound once past the target).
     const MISSIONS = (function () {
         const up = hohmann(1, 1.5), down = hohmann(1, 0.723), mars = hohmann(1, 1.524);
         // Escape from a 0.3 x 3 AU ellipse: escape speed sqrt(2GM/r) less the speed there
@@ -16001,6 +16006,27 @@
         // L4: one lap of an orbit 1/12 longer than Jupiter's, so 30 degrees are lost
         const TJ = TAU * Math.sqrt(Math.pow(5.2, 3) / (G * (1 + MJUP))), lT = TJ * 13 / 12;
         const lA = Math.cbrt(G * lT * lT / (TAU * TAU)), lDv = toKms(Math.sqrt(G * (2 / 5.2 - 1 / lA)) - Math.sqrt(G / 5.2));
+        // Deflect: an orbit crossing Earth's, met there on its way in after dL years. Earth starts where that
+        // puts it at the crossing then. Par and the later figures in the words were found by flying it. (Its
+        // arrival shifts by about 3 dv t, Ahrens & Harris 1992: over ten years 1 cm/s is 9,500 km, as the win card says.)
+        const dA = 1.5, dE = 0.4, dL = 1.2, dP = dA * (1 - dE * dE);
+        const dCross = Math.acos((dP - 1) / dE), dEcc = 2 * Math.atan(Math.sqrt((1 - dE) / (1 + dE)) * Math.tan(dCross / 2));
+        const dNu = trueAnomaly(-(dEcc - dE * Math.sin(dEcc)) - TAU * dL / Math.pow(dA, 1.5), dE) / DEG;
+        const dEarth = -dCross / DEG - 360 * dL * Math.sqrt(1 + MEARTH);
+        // Reach the Sun: straight down, or out to 5.2 AU first, where you move slowly (vis-viva at each end)
+        const sR = 0.05, sOut = hohmann(1, 5.2), sVa = Math.sqrt(G * (2 / 5.2 - 1 / sOut.a));
+        const sBack = toKms(sVa - Math.sqrt(G * (2 / 5.2 - 1 / (0.5 * (5.2 + sR)))));
+        const sDirect = toKms(Math.sqrt(G) - Math.sqrt(G * (2 - 1 / (0.5 * (1 + sR))))), sLeave = toKms((Math.SQRT2 - 1) * Math.sqrt(G));
+        // Free return from a 40,000 km orbit (Apollo's was 185 km up, too small to see here): a path that
+        // crosses the Earth-Moon line square on 8,000 km behind the Moon is its own mirror image there, so it
+        // comes back as it went (the restricted three-body problem's symmetry, y to -y and t to -t). Following
+        // that crossing back to its perigee gives where to start (the Moon this far ahead) and the burn: 1.115
+        // km/s, here the least that comes back inside the ring. Found by flying it, up to 1.29 still does.
+        const fR = 40000 / AU_KM, fLead = 111.2, fBurn = 1.12;
+        // Slingshot: the probe of the Slingshot scene a year on, with 1 km/s less speed than it had (its orbit
+        // then, read off by flying that scene). What it would take to leave the Sun from there: sqrt(2GM/r) less its speed
+        const fA = 3.151426, fE = 0.725994, fNu = 146.0887, fRs = fA * (1 - fE * fE) / (1 + fE * Math.cos(fNu * DEG));
+        const fDirect = toKms(Math.sqrt(2 * G / fRs) - Math.sqrt(G * (2 / fRs - 1 / fA)));
         const sun = { kind: 'sun' }, probe = (orbit) => ({ kind: 'probe', orbit });
         return [
             {
@@ -16040,6 +16066,23 @@
                 fail: { fuel: 'Burn at the closest point to the Sun: there the same burn adds far more energy.', time: 'Skip to the closest point to the Sun, then burn forwards.', crash: 'Burning backwards sends you into the Sun.' }
             },
             {
+                id: 'deflect', title: 'Nudge the asteroid',
+                scene: {
+                    units: 'au', Tref: 0.6, subject: 2, forceBody: 1, trail: 7, box: [-2.3, 2.3, -2.3, 2.3],
+                    bodies: [sun, { kind: 'earth', orbit: { around: 0, a: 1, e: 0, nu: dEarth } },
+                        { kind: 'asteroid', m: 5e-19, R: 1, orbit: { around: 0, a: dA, e: dE, w: 0, nu: dNu } }]
+                },
+                craft: 2, ref: 0, target: 1, own: 'the asteroid', budget: 2, limit: dL + 0.6, par: 0.28, aim: 0.28,
+                goal: { type: 'miss', D: 0.2, safe: 0.204, T: dL },
+                goalText: 'Push the asteroid so it misses the ring round Earth.',
+                idea: 'Your rocket is on an asteroid heading for Earth. A small push changes its orbit a little, and the change adds up. So the sooner you push, the less it takes. NASA\'s DART probe tested this in 2022.',
+                parText: 'a push now. Wait 6 months and it takes 1.0 km/s, and after 9 months your fuel can\'t do it. Watch the line above the fuel gauge as the clock runs.',
+                teach: 'The sooner you push, the smaller the push: ten years ahead, 1 cm/s moves an asteroid farther than Earth\'s radius.',
+                predict: () => predictApproach(Math.max(mission.def.limit - simTime, 0.02)),
+                check: deflectCheck, status: deflectStatus, skip: deflectSkip, coast: () => deflectCoast(), hint: deflectHint,
+                fail: { hit: 'Push sooner: every month you wait makes the push bigger.', fuel: 'Too late for the fuel you have. Push at the very start, and only a little.', crash: 'You pushed it into the Sun! A far smaller push will do.', time: 'Push at the very start, and only a little.' }
+            },
+            {
                 id: 'capture', title: 'Captured by Jupiter',
                 scene: {
                     units: 'au', time: 'd', Tref: 0.1, subject: 2, forceBody: 1, vref: 1.5, trail: 5, box: [-0.24, 0.24, -0.24, 0.24],
@@ -16056,6 +16099,18 @@
                 fail: { fuel: 'Brake at the closest point to Jupiter, where it counts most.', missed: 'Skip to the closest point, then hold Back until Jupiter keeps you.', crash: 'You hit Jupiter! Try a gentler burn.' }
             },
             {
+                id: 'sun', title: 'Reach the Sun',
+                scene: { units: 'au', Tref: 2, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
+                craft: 1, ref: 0, target: null, budget: 22, limit: 12, par: sOut.dv1 + sBack,
+                goal: { type: 'dive', r: sR, far: 3 },
+                goalText: 'Get inside the small ring round the Sun.',
+                idea: 'You move round the Sun at 30 km/s, and falling in means losing nearly all of it. Far from the Sun you move slowly, so a small burn there drops you in. So fly away first. The Parker Solar Probe uses Venus to shed its speed.',
+                parText: `${f1(sOut.dv1)} km/s forwards, out to 5.2 AU, then ${f1(sBack)} km/s backwards at the far point. Straight down from here takes ${f1(sDirect)} km/s, from v² = GM(2/r − 1/a).`,
+                teach: `To reach the Sun, first fly away from it. Straight down costs more than leaving the Solar System, which takes only ${f1(sLeave)} km/s.`,
+                check: sunCheck, status: sunStatus, skip: sunSkip, coast: () => sunOn(missionContext()), hint: sunHint,
+                fail: { fuel: 'Burn forwards first, out past Mars. Then slow down at the far point, where you move slowly.', time: 'Burn forwards, skip to the far point, then burn backwards until your orbit dips into the ring.', crash: 'You hit the Sun: you only need to get inside the ring.' }
+            },
+            {
                 id: 'mars', title: 'Get to Mars',
                 scene: {
                     units: 'au', Tref: 1, subject: 2, forceBody: 1, box: [-1.75, 1.75, -1.75, 1.75],
@@ -16069,6 +16124,38 @@
                 teach: 'Launch windows: Mars has to be in the right place when you set off. For real missions to Mars that happens every 26 months.',
                 hint: marsHint,
                 fail: { fuel: 'One burn of about 3 km/s, at the launch window, is nearly all it takes. Fine burns then tune it.', time: 'Skip to the launch window, burn until your closest approach is inside the goal, then skip to Mars.' }
+            },
+            {
+                id: 'free', title: 'Round the Moon',
+                scene: {
+                    units: 'km', time: 'd', Tref: 8 / DAYS_PER_YEAR, subject: 2, forceBody: 1, trail: 6, box: [-90000 / AU_KM, 450000 / AU_KM, -125000 / AU_KM, 125000 / AU_KM],
+                    bodies: [{ kind: 'earth' }, { kind: 'moon', orbit: { around: 0, a: 384400 / AU_KM, e: 0, nu: 0 } }, probe({ around: 0, a: fR, e: 0, nu: -fLead })]
+                },
+                craft: 2, ref: 0, target: 1, lock: 1, spin: 0, budget: 2, limit: 18 / DAYS_PER_YEAR, par: fBurn, aim: fBurn, lead: fLead, noGhost: true,
+                goal: { type: 'free', D: 40000 / AU_KM, ring: 60000 / AU_KM },
+                goalText: 'One burn: loop round the Moon and back inside the ring.',
+                idea: 'Aim to pass just behind the Moon. Its pull swings you round and sends you home with no second burn, on a figure of eight. Apollo 13\'s crew got home this way in 1970.',
+                parText: `the one burn. A little less hits the Moon, and much more loses you. The figure of eight takes about 8 days.`,
+                teach: 'That was a free return: even with a dead engine, the Moon sends you home.',
+                predict: () => freePredict(0),
+                check: freeCheck, status: freeStatus, skip: freeSkip, coast: () => freeOn(mission.pred), hint: freeHint,
+                fail: { fuel: 'One burn of about 1.1 km/s is all it takes: fine burns then tune it.', time: 'Hold Forward until your dashed path loops round the Moon and back inside the ring.', crash: 'Close! A little more burn passes just behind the Moon instead.' }
+            },
+            {
+                id: 'slingshot', title: 'Jupiter slingshot',
+                scene: {
+                    units: 'au', Tref: 1, subject: 2, forceBody: 1, trail: 7, vref: 2.75, box: [-8, 1.6, -4, 4.6],
+                    bodies: [sun, { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 133.5024 } }, probe({ around: 0, a: fA, e: fE, w: -6.678, nu: fNu })]
+                },
+                craft: 2, ref: 0, target: 1, budget: 3, limit: 2, par: 0.96, aim: 0.98,
+                goal: { type: 'sling', far: 0.5, spare: 0.1 },
+                goalText: 'Pass just behind Jupiter to leave the Sun for good.',
+                idea: `Your fuel can't leave the Sun: that takes ${f1(fDirect)} km/s from here. But Jupiter is moving. Pass just behind it and its pull drags you along, so you leave faster than you came. The two Voyager probes left the Solar System this way.`,
+                parText: 'the burn that moves your pass to just behind Jupiter. Pass in front of it and you lose speed instead. Use Fine for the last of it.',
+                teach: 'That was a gravity assist: Jupiter lost a tiny bit of speed and you gained it.',
+                predict: () => slingPredict(0),
+                check: slingCheck, status: slingStatus, skip: slingSkip, coast: () => slingOn(mission.pred), hint: slingHint,
+                fail: { fuel: 'A small burn is all it takes. Fine burns then tune it.', time: 'Burn until the line says you leave the Sun, then skip to Jupiter.', crash: 'A little less burn passes just behind it.' }
             },
             {
                 id: 'station', title: 'Catch the station',
@@ -16128,6 +16215,7 @@
         fine: false,           // the Fine switch
         skip: null,            // a skip going on: { kind, t, late, out, speed }
         arrived: false,        // the clock has stopped for this pass of the target, or a burn has been made in it
+        rounded: false,        // free return: it has been behind the target
         gap2: Infinity, gapWas: Infinity,   // the distance to the target squared, this step and the last
         ahead: false,          // the target is short of the launch window (as of the last step)
         home: null,            // what to go back to on leaving (see missionKeepHome)
@@ -16141,7 +16229,7 @@
     };
 
     // ---- Words ----
-    const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter' };
+    const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter', hit: 'Too close to Earth' };
 
     // A hint asking for a full-sized burn, while Fine is still on: a Fine burn would take a long hold
     const unFine = (html, big = true) => (mission.fine && big ? `Turn off <strong>Fine</strong>. ${html}` : html);
@@ -16353,6 +16441,219 @@
         return planWorthIt(x, q) ? planHint(x, q) : 'This path misses L4. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
     }
 
+    // ---- Missions with goals of their own ----
+    // Each has check (every step: the goal, which ends the mission itself and says so), status, skip, coast
+    // (with the tank empty, does the path still get there?) and hint; those that look ahead have predict.
+    //
+    // The smallest burn along the motion, either way, that works(km/s) says does the job, as burnPlan does
+    // for a pass of a target: { kms, speed }, or null if the fuel can't pay for one. Checked at a few burns,
+    // more closely near the textbook one, then narrowed down, so what a hint asks for has been flown ahead.
+    function goalPlan(x, works) {
+        const q = mission.plan, now = performance.now(), v = x.el.v;
+        const same = !!q && q.t === simTime && Math.abs(x.vx * q.vy - x.vy * q.vx) < 1e-9 * v * v;
+        if (q && same) return q.none ? null : Object.assign(q, { kms: toKms(q.speed - v) });
+        if (q && now - q.at < PLAN_EVERY_MS) return q.none ? null : q;   // (running, the speed itself changes along the orbit)
+        const left = x.left, back = Math.min(left, 0.98 * toKms(v)), at = [], aim = x.d.aim - mission.used;
+        for (let k = 1; k <= PLAN_GRID; k++) at.push(left * (k / PLAN_GRID) * (k / PLAN_GRID));
+        for (const f of [-0.1, -0.05, -0.02, 0, 0.02, 0.05, 0.1]) if (aim > 0) at.push(aim * (1 + f));
+        at.sort((a, b) => a - b);
+        let found = null;
+        for (const sign of [1, -1]) {
+            let lo = 0;
+            for (const a of at) {
+                if (a > (sign > 0 ? left : back) || (found !== null && a >= Math.abs(found))) break;
+                if (works(sign * a)) {
+                    let hi = a;
+                    for (let it = 0; it < 8; it++) { const m = 0.5 * (lo + hi); if (works(sign * m)) hi = m; else lo = m; }
+                    found = sign * hi;
+                    break;
+                }
+                lo = a;
+            }
+        }
+        mission.plan = { t: simTime, at: now, vx: x.vx, vy: x.vy, none: found === null, speed: v + (found || 0) / AUYR_KMS, kms: found };
+        return found === null ? null : mission.plan;
+    }
+    // (a line that says a skip or Play will do)
+    const orWatch = () => (mission.skip ? '' : ', or press play and watch');
+    // (a distance of tens of thousands of km, to the nearest thousand)
+    const kmText = (au) => `${(Math.round(au * AU_KM / 1000) * 1000).toLocaleString('en-GB')} km`;
+    // (after predictApproach, its arrays hold where it stopped) Has the craft hit something there?
+    function predTouching(ci) {
+        for (let i = 0; i < bodies.length; i++) if (i !== ci && Math.hypot(PRX[i] - PRX[ci], PRY[i] - PRY[ci]) < (bodies[i].R + bodies[ci].R) / AU_KM) return i;
+        return -1;
+    }
+
+    // Nudge the asteroid: it must stay out of the ring until it has gone past, which it has once the gap
+    // grows near the time it would have hit
+    function deflectCheck(c) {
+        const g = mission.def.goal, T = bodyById(mission.targetId);
+        if (!T) return false;
+        const dx = c.x - T.x, dy = c.y - T.y, d2 = dx * dx + dy * dy, was = mission.gapWas;
+        mission.gapWas = d2;
+        if (d2 < g.D * g.D) { missionOver('lost', 'hit'); return true; }
+        if (simTime > g.T - 0.25 && d2 > was) { missionOver('won'); return true; }
+        return false;
+    }
+    const deflectOn = (x) => !!mission.pred && mission.pred.d >= x.d.goal.safe;
+    function deflectPlan(x) {
+        const g = x.d.goal, H = Math.max(x.d.limit - simTime, 0.02);
+        return goalPlan(x, (kms) => { const p = predictApproach(H, kms / AUYR_KMS); return !!p && p.d >= g.safe; });
+    }
+    // (the burn it would take, from here and now: the figure that climbs as the clock runs is the lesson)
+    function deflectStatus(x) {
+        if (deflectOn(x)) return { text: `Misses Earth by ${auText(mission.pred.d)}, goal ${auText(x.d.goal.D)}`, ok: true };
+        const q = deflectPlan(x);
+        return { text: q ? `Burn ${f2Up(Math.abs(q.kms))} km/s now to make it miss` : 'Too late: not enough fuel to make it miss', ok: false };
+    }
+    function deflectSkip(x) {
+        return deflectOn(x) ? { kind: 'pass', word: 'the pass', dt: mission.pred.t - simTime + 0.02 } : null;
+    }
+    const deflectCoast = () => !!mission.pred && mission.pred.d >= mission.def.goal.D;
+    function deflectHint(x) {
+        if (deflectOn(x)) return `Earth is safe. <strong>Skip to the pass</strong>${orWatch()}.`;
+        const q = deflectPlan(x);
+        return q ? planHint(x, q, x.burns ? null : ['', ': a small push now moves it a long way.']) : 'Too late: your fuel can\'t make it miss now. <strong>Retry</strong>, and push sooner.';
+    }
+
+    // Reach the Sun: it is won on getting there. The burn out goes to the far point; then down from there.
+    function sunCheck(c) {
+        const g = mission.def.goal, R = bodyById(mission.refId);
+        if (!R) return false;
+        const dx = c.x - R.x, dy = c.y - R.y;
+        if (dx * dx + dy * dy >= g.r * g.r) return false;
+        missionOver('won');
+        return true;
+    }
+    const sunOn = (x) => !!x && x.el.bound && x.rp <= PROMISE * x.d.goal.r;
+    function sunStatus(x) {
+        if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
+        const on = sunOn(x);
+        return { text: `Far ${f2(x.ra)}, near ${f2(x.rp)} AU, goal near ${f2(x.d.goal.r)}`, ok: on };
+    }
+    function sunSkip(x) {
+        if (!x.burns || !x.el.bound) return null;
+        if (sunOn(x)) { const dt = apsisIn(x, false); return dt ? { kind: 'pass', word: 'the Sun', dt: dt + 0.05 } : null; }
+        return x.ra >= x.d.goal.far && x.nu < 170 ? { kind: 'apo', word: 'far point', dt: apsisIn(x, true) } : null;
+    }
+    function sunHint(x) {
+        const g = x.d.goal;
+        if (!x.el.bound) return 'You are escaping the Sun! <strong>Undo</strong>, and try a smaller burn.';
+        if (sunOn(x)) return `On course! <strong>Skip to the Sun</strong>${orWatch()}.`;
+        if (!x.burns) return unFine('Hold <strong>Forward</strong> until your far point is past 5 AU: far out, you move slowly.');
+        if (x.el.a < 0.995) return 'That is the hard way down. <strong>Undo</strong>, then burn forwards first, away from the Sun.';
+        // (close to where it burned, it can still go on; farther round, a far point past g.far will do)
+        if (x.ra < 5 && x.nu < 15) return unFine('Keep going: hold <strong>Forward</strong> until your far point is past 5 AU.');
+        if (x.ra < g.far) return 'Not far enough out to save fuel. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
+        if (x.nu > 165) return unFine('<strong>Now:</strong> hold <strong>Back</strong> until your orbit dips into the ring.');
+        return skipTarget(x) ? '<strong>Skip to far point</strong>, then burn backwards: out there, you move slowly.' : 'That far point takes too long to reach. <strong>Undo</strong> your last burn.';
+    }
+    // (a small ring beside a big Sun: drawn smaller, inside its ring)
+    function sunDrawSize() {
+        const g = mission.def.goal, S = bodies[mission.def.ref];
+        S.rd = S.rh = Math.max(3, Math.min(S.rd, 0.7 * Math.max(g.r * scale, SUN_RING_PX)));
+    }
+
+    // Free return: behind the target (farther from the reference body than it is, and inside its ring),
+    // and then back inside the ring. Worked out each step, so it is the same every run.
+    function freeCheck(c) {
+        const g = mission.def.goal, R = bodyById(mission.refId), T = bodyById(mission.targetId);
+        if (!R || !T) return false;
+        const ex = c.x - R.x, ey = c.y - R.y, e2 = ex * ex + ey * ey;
+        if (!mission.rounded) {
+            const mx = c.x - T.x, my = c.y - T.y, tx = T.x - R.x, ty = T.y - R.y;
+            if (mx * mx + my * my < g.D * g.D && e2 > tx * tx + ty * ty) mission.rounded = true;
+        }
+        if (mission.rounded && e2 < g.ring * g.ring) { missionOver('won'); return true; }
+        return false;
+    }
+    // The same, looking ahead: the closest pass of the target (d), then from behind it the closest to home
+    // (back) and when it comes inside the ring (t)
+    function freePredict(kick) {
+        const d = mission.def, g = d.goal, ci = d.craft, ri = d.ref, ti = d.target;
+        let behind = mission.rounded, back = Infinity, tIn = 0;
+        const H = Math.max(d.limit - simTime, 1e-3);
+        const p = predictApproach(H, kick, (t) => {
+            const ex = PRX[ci] - PRX[ri], ey = PRY[ci] - PRY[ri], e2 = ex * ex + ey * ey;
+            if (!behind) {
+                const mx = PRX[ci] - PRX[ti], my = PRY[ci] - PRY[ti], tx = PRX[ti] - PRX[ri], ty = PRY[ti] - PRY[ri];
+                if (mx * mx + my * my < g.D * g.D && e2 > tx * tx + ty * ty) behind = true;
+            }
+            if (!behind) return false;
+            if (!tIn && e2 < g.ring * g.ring) tIn = t;
+            if (e2 < back) back = e2;
+            return tIn > 0 && e2 > 1.01 * back;   // (past the closest point: that is all it is asked)
+        });
+        if (!p) return null;
+        const hit = predTouching(ci);
+        return Object.assign(p, { behind, back: Math.sqrt(back), home: tIn > 0, t: simTime + (tIn || H), hit: hit < 0 || tIn ? '' : theName(bodies[hit]) });
+    }
+    const freeOn = (p) => !!p && !p.hit && p.home && p.back < PROMISE * mission.def.goal.ring;
+    function freeStatus(x) {
+        const g = x.d.goal, p = mission.pred;
+        if (!p) return { text: '', ok: false };
+        if (p.hit) return { text: `This path hits ${p.hit}`, ok: false };
+        if (!p.behind) return { text: `Closest to the Moon: ${kmText(p.d)}`, ok: false };
+        return { text: `Round the Moon, back to ${kmText(p.back)}, goal ${kmText(g.ring)}`, ok: freeOn(p) };
+    }
+    function freeSkip(x) {
+        if (freeOn(mission.pred)) return { kind: 'pass', word: 'Earth', dt: mission.pred.t - simTime + 1e-3 };
+        // (it comes round each lap, so the clock stops there, on the step after: see missionArrival)
+        const off = x.phase - x.d.lead;
+        if (x.burns || (off < 1.5 && off > -6)) return null;
+        const rate = x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3));
+        return { kind: 'pass', word: 'launch window', dt: 1.02 * ((off + 360) % 360) * DEG / rate };
+    }
+    function freeHint(x) {
+        if (freeOn(mission.pred)) return `On course! <strong>Skip to Earth</strong>${orWatch()}.`;
+        const wait = '<strong>Skip to launch window</strong>: the Moon has to be in the right place.';
+        if (!paused) return x.burns ? 'This path won\'t come home. <strong>Pause</strong> for what to do next.' : wait;
+        const q = goalPlan(x, (kms) => freeOn(freePredict(kms / AUYR_KMS)));
+        if (x.burns) return q ? planHint(x, q) : 'This path won\'t come home. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
+        // (a burn from anywhere else on the way round would cost more than the window's)
+        return q && Math.abs(q.kms) <= STARS_AT[0] * x.d.par ? planHint(x, q, ['', ': your dashed path loops round the Moon.']) : wait;
+    }
+
+    // Slingshot: bound or not is worth asking only well clear of the target, moving away from it. The
+    // pull of the planet there is a few hundredths of the energies in question.
+    function slingCheck(c) {
+        const g = mission.def.goal, R = bodyById(mission.refId), T = bodyById(mission.targetId);
+        if (!R || !T) return false;
+        const dx = c.x - T.x, dy = c.y - T.y, ux = c.vx - T.vx, uy = c.vy - T.vy;
+        if (dx * dx + dy * dy < g.far * g.far || dx * ux + dy * uy < 0) return false;
+        const rx = c.x - R.x, ry = c.y - R.y, vx = c.vx - R.vx, vy = c.vy - R.vy;
+        if (0.5 * (vx * vx + vy * vy) - G * (R.m + c.m) / hyp(rx, ry) < 0) return false;
+        missionOver('won');
+        return true;
+    }
+    // The coming pass (predictApproach), and how the path stands at the end of the time, well past the target:
+    // how many km/s it is short of the speed to leave (under 0: to spare)
+    function slingPredict(kick) {
+        const d = mission.def, ci = d.craft, ri = d.ref;
+        const p = predictApproach(Math.max(d.limit - simTime, 0.02), kick);
+        if (!p) return null;
+        const r = Math.hypot(PRX[ci] - PRX[ri], PRY[ci] - PRY[ri]), v = Math.hypot(PRVX[ci] - PRVX[ri], PRVY[ci] - PRVY[ri]), esc = 2 * G * (PRM[ri] + PRM[ci]) / r;
+        return Object.assign(p, { short: toKms(v * v >= esc ? -Math.sqrt(v * v - esc) : Math.sqrt(esc) - v), hit: predTouching(ci) >= 0 });
+    }
+    const slingOn = (p) => !!p && !p.hit && p.short <= -mission.def.goal.spare;
+    function slingStatus() {
+        const p = mission.pred;
+        if (!p) return { text: '', ok: false };
+        if (p.hit) return { text: 'This path hits Jupiter', ok: false };
+        return slingOn(p) ? { text: `You leave the Sun, ${f1(-p.short)} km/s to spare`, ok: true } : { text: `Falls back after Jupiter, ${f1Up(Math.max(p.short, 0))} km/s short`, ok: false };
+    }
+    function slingSkip() {
+        const p = mission.pred;
+        return slingOn(p) ? { kind: 'pass', word: 'Jupiter', dt: p.t - simTime + 0.4 } : null;
+    }
+    function slingHint(x) {
+        if (slingOn(mission.pred)) return `On course! <strong>Skip to Jupiter</strong>${orWatch()}.`;
+        if (!paused) return 'This path falls back. <strong>Pause</strong> for what to do next.';
+        const q = goalPlan(x, (kms) => slingOn(slingPredict(kms / AUYR_KMS)));
+        if (q) return planHint(x, q, x.burns ? null : ['', ': it moves your pass to just behind Jupiter.']);
+        return x.burns ? 'This path falls back. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.' : 'Too late from here. <strong>Retry</strong>.';
+    }
+
     // ---- The state the console, hints and checks read ----
     // The target as seen from the reference body (rotated 60 degrees ahead for L4)
     function targetNow(R, T, l4) {
@@ -16399,6 +16700,7 @@
         if (mission.status === 'lost') return { text: LOST_TITLE[mission.reason] || 'Mission over', ok: false };
         if (!x) return { text: '', ok: false };
         const d = x.d, g = d.goal;
+        if (d.status) return d.status(x);
         switch (g.type) {
             case 'orbit': {
                 if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
@@ -16472,7 +16774,7 @@
     // allowed, and stops the clock while it is aimed (a held body stays put while time runs).
     function missionRefuse(what, b) {
         if (!mission.def) return false;
-        const craft = !!b && b.id === mission.craftId;
+        const craft = !!b && b.id === mission.craftId, own = mission.def.own || 'your probe';
         if (what === 'aim' && craft && !missionIsOver()) {
             if (!paused) { setPaused(true); mission.aimPaused = true; }
             return false;
@@ -16480,11 +16782,11 @@
         const notes = {
             add: 'no new bodies. Leave the mission to build your own.',
             delete: 'nothing can be removed.',
-            move: craft ? 'your probe changes course by burns, not by dragging.'
-                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only your probe can change course.`,
-            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : 'only your probe has an engine.',
-            orbit: 'orbits change only by your probe\'s burns.',
-            other: 'only your probe\'s engine can change anything.'
+            move: craft ? `${own} changes course by burns, not by dragging.`
+                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only ${own} can change course.`,
+            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : `only ${own} has an engine.`,
+            orbit: `orbits change only by ${own}'s burns.`,
+            other: `only ${own}'s engine can change anything.`
         };
         missionNote(`<strong>Mission rules:</strong> ${notes[what] || notes.orbit}`);
         return true;
@@ -16670,7 +16972,7 @@
         clearTimeout(f.timer);
         mission.firing = null;
         // (an orbit stretched past the view: the view makes room for it)
-        if (mission.def && mission.def.goal.type === 'orbit') keepOrbitInView(missionCraft());
+        if (mission.def && (mission.def.goal.type === 'orbit' || mission.def.goal.type === 'dive')) keepOrbitInView(missionCraft());
         resumeAfterAim();
         updateMissionConsole();
     }
@@ -16712,7 +17014,8 @@
         if (!x || missionIsOver()) return null;
         const d = x.d, g = d.goal;
         let s = null;
-        if (g.type === 'orbit') {
+        if (d.skip) s = d.skip(x);
+        else if (g.type === 'orbit') {
             const apo = g.r > 1;
             // (once the orbit touches the ring: short of it or past it, the second burn won't round it off there)
             if (x.burns && x.el.bound && Math.abs((apo ? x.ra : x.rp) / g.r - 1) <= g.tol && (apo ? x.nu < 170 : x.nu > 10)) s = { kind: apo ? 'apo' : 'peri', word: apo ? 'far point' : 'closest point', dt: apsisIn(x, apo) };
@@ -16823,7 +17126,9 @@
         if (near) mission.nearId = near.id;
         if (nearK < 1) { missionOver('lost', 'crash'); return; }
         const d = mission.def, g = d.goal;
-        if (g.type === 'reach' || g.type === 'meet') {
+        if (d.check) {
+            if (d.check(c)) return;
+        } else if (g.type === 'reach' || g.type === 'meet') {
             if (missionMet(c)) { missionOver('won'); return; }
         } else if (++mission.steps % ORBIT_CHECK_EVERY === 0) {
             const out = missionCheckNow(c);
@@ -16886,6 +17191,7 @@
     // The tank is empty: lost, unless coasting still gets there (a target ahead on the path)
     function missionFuelCheck() {
         const g = mission.def.goal;
+        if (mission.def.coast) { refreshPrediction(true); if (mission.def.coast()) return; }
         if (g.type === 'reach' || g.type === 'meet') {
             refreshPrediction(true);
             const p = mission.pred;
@@ -16949,7 +17255,7 @@
         return Math.sqrt(tmin);
     }
 
-    function predictApproach(H, kick) {
+    function predictApproach(H, kick, watch) {
         const n = bodies.length, g = mission.def.goal, reach = g.zone;
         const ci = bodies.findIndex((q) => q.id === mission.craftId), ri = bodies.findIndex((q) => q.id === mission.refId), ti = bodies.findIndex((q) => q.id === mission.targetId);
         if (ci < 0 || ri < 0 || ti < 0 || n > PRX.length) return null;
@@ -16980,6 +17286,7 @@
                 for (let i = 0; i < n; i++) { PRVX[i] += 0.5 * h * PRAX[i]; PRVY[i] += 0.5 * h * PRAY[i]; }
             }
             read(b);
+            if (watch && watch(t + dt)) break;
             // The closest point of this step, the gap moving in a straight line over so short a time
             const ex = b.gx - a.gx, ey = b.gy - a.gy, ee = ex * ex + ey * ey;
             const f = ee > 0 ? clamp(-(a.gx * ex + a.gy * ey) / ee, 0, 1) : 0, gd = Math.hypot(a.gx + f * ex, a.gy + f * ey);
@@ -17000,11 +17307,11 @@
 
     function refreshPrediction(force) {
         const d = mission.def;
-        if (!d || (d.goal.type !== 'reach' && d.goal.type !== 'meet')) { mission.pred = null; return; }
+        if (!d || (d.goal.type !== 'reach' && d.goal.type !== 'meet' && !d.predict)) { mission.pred = null; return; }
         const p = mission.pred;
         if (!force && !mission.predDirty && p && simTime < p.t && simTime - p.t0 < 0.1 * p.h && simTime >= p.t0) return;
         mission.predDirty = false;
-        mission.pred = predictApproach(Math.max(d.limit - simTime, 0.02));
+        mission.pred = d.predict ? d.predict() : predictApproach(Math.max(d.limit - simTime, 0.02));
     }
 
     // ---- Starting, leaving, undo ----
@@ -17016,7 +17323,7 @@
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
             nearId: null, pred: null, predDirty: true, plan: null, tell: null, aimPaused: false, burst: 0,
-            arrived: false, gapWas: Infinity, ahead: false
+            arrived: false, gapWas: Infinity, ahead: false, rounded: false
         });
         clearTimeout(mission.burstTimer);
         endSkip();
@@ -17024,6 +17331,7 @@
         if (def.lock !== undefined) {
             // (the view follows the body it is about, and the box is round it)
             frameId = bodies[def.lock].id;
+            missionSpin(def);
             syncFrameUi();
             fitBox(def.scene.box, false);
         }
@@ -17042,6 +17350,12 @@
         syncEccentricity(true);
         updateHistoryUi();
         setHint();
+    }
+
+    // A mission that turns with a pair (lock and spin, bodies in the scene) has them stand still, as a
+    // rotating view would, no glide and no note; the line between them always across the canvas
+    function missionSpin(def) {
+        if (def.spin !== undefined) restoreTurning({ a: bodies[def.spin].id, up: 0 });
     }
 
     function endMission() {
@@ -17108,7 +17422,7 @@
         return {
             id: mission.def.id, craftId: mission.craftId, refId: mission.refId, targetId: mission.targetId,
             used: mission.used, log: mission.log.slice(), status: mission.status,
-            reason: mission.reason, crashedInto: mission.crashedInto, result: mission.result
+            reason: mission.reason, crashedInto: mission.crashedInto, result: mission.result, rounded: mission.rounded
         };
     }
 
@@ -17122,7 +17436,7 @@
             def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(), status: m.status,
             reason: over ? m.reason : '', crashedInto: over ? m.crashedInto : '', result: over ? m.result : null,
             resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0,
-            arrived: true, gapWas: Infinity, ahead: false   // (back in the ring by undo: no second stop for it)
+            arrived: true, gapWas: Infinity, ahead: false, rounded: !!m.rounded   // (back in the ring by undo: no second stop for it)
         });
         clearTimeout(mission.burstTimer);
         mission.burst = 0;
@@ -17133,6 +17447,7 @@
         if (over) setPaused(true);
         if (was !== def) {
             if (!was) { mission.home = { speed: settings.speed }; missionSpeedRange(true); setSpeedValue(1); }
+            if (!turn.on) missionSpin(def);
             missionUi(true);
             syncEccentricity(true);
         }
@@ -17176,7 +17491,7 @@
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
+        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only ${mission.def.own || 'your probe'} has an engine: ${theName(b)} keeps to its path.`;
         setText(ui.popOrbitShape, why);
         if (!craft) setText(ui.popAngleNote, why);
     }
@@ -17184,7 +17499,7 @@
     function missionLockSidebar() {
         if (!mission.def) return;
         if (ui.ecc) ui.ecc.disabled = true;
-        setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
+        setText(ui.eccNote, `In a mission, orbits change only by burns of ${mission.def.own || 'your probe'}'s engine.`);
     }
 
     // ---- The console, the card over the canvas, the Missions button, the scene list ----
@@ -17599,6 +17914,12 @@
             ring(cx, cy, g.r * scale, `goal: ${g.r} AU`);
         } else if (g.type === 'capture') {
             ring(cx, cy, g.lim * scale, 'goal: orbit inside');
+        } else if (g.type === 'dive') {
+            const r = Math.max(g.r * scale, SUN_RING_PX);
+            ring(cx, cy, r, null);
+            labels.push(markName(`goal: ${g.r} AU`, cx, cy, r));
+        } else if (g.type === 'free') {
+            ring(cx, cy, g.ring * scale, 'goal: back inside');
         }
         const T = mission.targetId !== null ? bodyById(mission.targetId) : null;
         if (g.l4 && T) {
@@ -17614,13 +17935,13 @@
             labels.push(markName('L4', lx, ly, Math.max(7, g.D * scale) + 1, true));
         } else if (T) {
             // The ring to get inside, round the target; and Mars's path, to fly out to
-            ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), null);
+            if (g.type !== 'sling') ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), g.type === 'miss' ? 'keep out' : null);
             if (g.type === 'reach') ring(cx, cy, Math.hypot(T.dx - R.dx, T.dy - R.dy) * scale, null);
         }
         const p = mission.pred, c = bodyById(mission.craftId);
         // Where the next burn goes: a world offset from R, turned as the view is turned
         const x = c && mission.hints && !missionIsOver() ? missionContext() : null, next = skipTarget(x);
-        if (next && next.kind !== 'meet') {
+        if (next && next.kind !== 'meet' && next.kind !== 'pass') {
             const ang = turn.on ? turnAngleIn(0) : 0;
             const at = (wx, wy) => [cx + (Math.cos(ang) * wx - Math.sin(ang) * wy) * scale, cy - (Math.sin(ang) * wx + Math.cos(ang) * wy) * scale];
             let spot, label = 'burn here';
@@ -17641,7 +17962,8 @@
             ctx.stroke();
             labels.push(markName(label, spot[0], spot[1], 9));
         }
-        const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
+        // (those that look ahead for themselves show it from the start, when it is what the mission is about)
+        const ghost = p && T && c && !d.noGhost && (d.predict ? !missionIsOver() : mission.log.length && mission.status === 'flying') && p.t > simTime;
         // (the places predicted are world offsets from R at that time: turned as the view will be turned
         // then, so in a rotating frame they are seen from the pair as it will be)
         const ga = ghost ? turnAngleIn(p.t - simTime) : 0, gc = Math.cos(ga), gs = Math.sin(ga);
@@ -17749,7 +18071,7 @@
             burns: mission.log.length / 2, log: mission.log.slice(), time: simTime, paused,
             result: mission.result ? Object.assign({}, mission.result) : null, best: bestOf(d.id),
             goal: Object.assign({ type: g.type }, g, g.V ? { V: toKms(g.V) } : {}), now,
-            closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
+            closest: p && (g.type === 'reach' || g.type === 'meet' || d.predict) ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
             panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null,
             skip: mission.skip ? mission.skip.kind : null, offers: skipTarget(x), speed: settings.speed, firing: !!mission.firing,
             tell: mission.tell ? Object.assign({}, mission.tell) : null
