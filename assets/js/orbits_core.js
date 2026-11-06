@@ -14611,7 +14611,7 @@
                 // (both ends of the orbit, the one the first burn moves first; a tick for an end on the ring)
                 const on = (r) => Math.abs(r / g.r - 1) <= g.tol, end = (r) => `${f2(r)}${on(r) ? ' ✓' : ''}`;
                 const ends = g.r > 1 ? `Far ${end(x.ra)}, near ${end(x.rp)}` : `Near ${end(x.rp)}, far ${end(x.ra)}`;
-                return { text: `${ends} AU, goal\u00a0${f2(g.r)}`, ok: on(x.ra) && on(x.rp) };
+                return { text: `${ends} AU, goal ${f2(g.r)}`, ok: on(x.ra) && on(x.rp) };
             }
             case 'escape': {
                 const need = toKms(Math.sqrt(2 * x.el.mu / x.el.r) - x.el.v);
@@ -15597,7 +15597,8 @@
         setText(E.title, `${d.n}. ${d.title} ${starText(best ? best.stars : 0)}`);
         setAttr(E.title, 'aria-label', `Mission ${d.n} of ${MISSIONS.length}: ${d.title}${best ? `, best ${best.stars} of 3 stars` : ''}`);
         setText(E.goal, d.goalText);
-        setText(E.status, `${m.ok ? '✓ ' : ''}${m.text}`);
+        // (if it wraps, the goal goes to the next line whole)
+        setText(E.status, `${m.ok ? '✓ ' : ''}${m.text.replace(/goal .*$/, (g) => g.replace(/ /g, '\u00a0'))}`);
         E.status.classList.toggle('is-ok', m.ok);
         const ticked = m.ok || m.text.includes('✓');
         if (ticked !== mission.okSaid) { mission.okSaid = ticked; if (ticked && !over) announce(`On track. ${m.text}`); }
