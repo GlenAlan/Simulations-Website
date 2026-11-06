@@ -10448,6 +10448,7 @@
         popApoIn: byId('popApoIn'), popApoUnit: byId('popApoUnit'), popApoName: byId('popApoName'),
         popOrbitShape: byId('popOrbitShape'),
         popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
+        popVelMore: byId('popVelMore'), popMoreState: byId('popMoreState'),
         subjectEdit: byId('statSubjectEdit'),
     });
 
@@ -10783,6 +10784,8 @@
         if (!(step > 0)) return;
         edit.step = step;
         if (ui.pop) ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.setAttribute('aria-pressed', parseFloat(btn.dataset.step) === step ? 'true' : 'false'));
+        // (folded, the line says what is in the fold, or a step that isn't the usual 1%, as it changes what - and + do)
+        setText(ui.popMoreState, step === 0.01 ? 'Goes round, push, step' : `Step ${+(step * 100).toPrecision(3)}%`);
     }
 
     // The fields follow the body as it moves (from updatePopover, a few times a second)
@@ -10844,8 +10847,9 @@
             if (panel) panel.hidden = !on;
             if (on && focus) t.focus();
         }
-        // (the steps don't apply to the Body and Gravity tabs)
-        if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
+        // (one row of steps: under More on the Velocity tab, at the foot of the Orbit tab; the Body and Gravity
+        // tabs have nothing to step)
+        if (ui.popStep) (name === 'orbit' ? byId('popPanelOrbit') : ui.popVelMore).appendChild(ui.popStep);
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
         if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
@@ -11074,6 +11078,12 @@
         }));
         ui.pop.querySelectorAll('[data-push]').forEach((btn) => holdRepeat(btn, (e) => { if (popBody) nudge(popBody, btn.dataset.push, stepFor(e)); }));
         ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.addEventListener('click', () => setStep(parseFloat(btn.dataset.step))));
+        // More: as tall as a tab that grows (selectTab keeps the menu on the page), and its rows in sight. It stays
+        // as it was left when the menu next opens, until the page is reloaded
+        ui.popVelMore.addEventListener('toggle', () => {
+            selectTab(edit.tab);
+            if (ui.popVelMore.open && !ui.pop.hidden) ui.popStep.scrollIntoView({ block: 'nearest' });
+        });
         // The stats bar's Edit button opens (or closes) the menu of the chosen body
         if (ui.subjectEdit) {
             ui.subjectEdit.addEventListener('click', () => {

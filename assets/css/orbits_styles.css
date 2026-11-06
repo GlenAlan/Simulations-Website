@@ -1397,11 +1397,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     border-top: 1px solid var(--color-border);
 }
 
-/* (the Body and Gravity tabs have nothing to step) */
-.orb-pop-step.is-idle {
-    display: none;
-}
-
 /* The arrow keys only matter with a keyboard */
 @media (hover: none), (pointer: coarse) {
     .orb-keys-note {
@@ -4401,5 +4396,102 @@ dialog.orb-help::backdrop {
 @media (max-height: 760px) {
     .orb-help dl > div {
         padding: 3px 0;
+    }
+}
+
+/* ---------- The body's menu: Goes round, Push it and Step folded under one line ----------
+   The Velocity tab's speed and direction stay open; these are less often wanted and took half a phone.
+   Styled like the settings' folds, with what it holds on the line. */
+.orb-pop-more {
+    margin-top: 6px;
+    border-top: 1px solid var(--color-border);
+}
+
+/* (nothing in it can be used: alone in space, or another body than the probe in a mission) */
+.orb-pop-more:not(:has(button:enabled)) {
+    display: none;
+}
+
+.orb-pop-more > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-height: 34px;
+    padding: 0 2px;
+    font-size: 0.9em;
+    list-style: none;
+    cursor: pointer;
+    border-radius: 4px;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-pop-more > summary::-webkit-details-marker {
+    display: none;
+}
+
+.orb-pop-more > summary::after {
+    content: '\f078';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    font-size: 0.8em;
+    line-height: 1;
+    transition: transform 0.2s ease;
+}
+
+.orb-pop-more[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.orb-pop-more > summary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (hover: hover) {
+    .orb-pop-more > summary:hover {
+        color: var(--color-accent);
+    }
+}
+
+.orb-pop-more-state {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.9em;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.75;
+}
+
+.orb-pop-more[open] .orb-pop-more-state {
+    visibility: hidden;
+}
+
+/* (open, its rows follow the line as the fields above do; the first one has the line above it) */
+.orb-pop-more > .orb-field:first-of-type {
+    margin-top: 0;
+}
+
+.orb-pop-more .orb-pop-step {
+    padding-top: 0;
+    margin-top: 6px;
+    border-top: 0;
+}
+
+.orb-pop-more[open] {
+    padding-bottom: 2px;
+}
+
+.orb-popover.is-sheet .orb-pop-more > summary,
+.orb-popover.is-side .orb-pop-more > summary {
+    font-size: 1em;
+}
+
+@media (pointer: coarse) {
+    .orb-pop-more > summary {
+        min-height: 42px;
     }
 }
