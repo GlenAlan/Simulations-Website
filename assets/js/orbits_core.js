@@ -15128,8 +15128,7 @@
     // rest) and smoothed. The physics gets what is left of 80% of the time between frames (as measured,
     // so a 120 Hz screen gets half as much per frame) after the other two, between 3 and PHYSICS_MS ms;
     // if drawing alone takes too long, the trails are drawn more coarsely first
-    // (quality below 1), before the simulation itself has to slow down. Where frames have been coming late
-    // (see physicsBudget), the painting after the frame's script counts as well. Readouts, primaries in a crowded
+    // (quality below 1), before the simulation itself has to slow down. Readouts, primaries in a crowded
     // scene and the graphs are updated about ten times a second rather than every frame.
     // While paused with nothing going on, the picture can't change: frames rest, with one in full four
     // times a second in case something else has changed it. Anything the visitor does (or a call of the
@@ -15160,25 +15159,8 @@
 
     let fpsFrames = 0, fpsTime = 0;
     let eccNext = 0, readoutNext = 0, primNext = 0;
-    const perf = { physics: 0, render: 0, other: 0, paint: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
+    const perf = { physics: 0, render: 0, other: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
     const smooth = (old, v) => old + 0.1 * (v - old);
-
-    // The physics' share of a frame. On a weak device the browser's painting of the canvas after the frame's
-    // script can take as long as the script, and then 80% of the time between frames is too much to hand out:
-    // frames miss the screen's refresh. So once LATE_SHARE of them are over LATE_MS apart, and for LATE_HOLD_MS
-    // after (as this cures them), the paint is timed, by a message posted at the end of the frame, which arrives
-    // once that is done, and 95% of the time less the paint is the limit if that is less. (If that would leave next
-    // to nothing, the drawing alone makes them late, and giving up the physics wouldn't help.) Elsewhere nothing
-    // is timed, nothing changes, and the physics has all it had.
-    const LATE_MS = 25, LATE_SHARE = 0.15, LATE_HOLD_MS = 5000;
-    const paintClock = new MessageChannel();
-    let lateShare = 0, lateUntil = 0, paintFrom = 0;
-    paintClock.port1.onmessage = () => { perf.paint = smooth(perf.paint, performance.now() - paintFrom); };
-    function physicsBudget(ts) {
-        const t = Math.min(perf.interval, 20);
-        const busy = perf.render + perf.other, room = 0.95 * t - perf.paint - busy;
-        return clamp(ts < lateUntil && room >= 1 ? Math.min(0.8 * t - busy, room) : 0.8 * t - busy, 3, PHYSICS_MS);
-    }
 
     function frame(ts) {
         requestAnimationFrame(frame);
@@ -15196,7 +15178,7 @@
         if (!paused && dtReal > 0 && !timeHeld()) {
             const want = dtReal * settings.speed * rate();
             const before = timeDir * simTime + acc;
-            steps = advance(want, 0, physicsBudget(ts));
+            steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));
             applyHolds();
             perf.req += want;
             perf.got += timeDir * simTime + acc - before;
@@ -15237,10 +15219,6 @@
         const lateFrames = perf.interval > 24 && perf.frame < 0.75 * perf.interval;
         if ((perf.render > 7 || lateFrames) && perf.quality > 0.2) perf.quality = Math.max(0.2, perf.quality * 0.95);
         else if (perf.render < 4 && perf.interval < 19 && perf.quality < 1) perf.quality = Math.min(1, perf.quality * 1.02);
-
-        if (dtReal > 0) lateShare += 0.02 * ((1000 * dtReal > LATE_MS ? 1 : 0) - lateShare);   // (over about a second: a late frame here and there is nothing)
-        if (lateShare > LATE_SHARE) lateUntil = ts + LATE_HOLD_MS;
-        if (ts < lateUntil) { paintFrom = performance.now(); paintClock.port2.postMessage(0); }
 
         if (ui.fps) {
             fpsFrames++;
@@ -15512,7 +15490,7 @@
         // Smoothed per-frame milliseconds (physics, drawing, the rest), steps per frame, the simulated
         // time achieved over the time asked for, and the drawing quality (1 = full)
         perf: () => ({
-            physics: perf.physics, render: perf.render, other: perf.other, paint: perf.paint, frame: perf.frame,
+            physics: perf.physics, render: perf.render, other: perf.other, frame: perf.frame,
             steps: perf.steps, speedRatio: perf.ratio, quality: perf.quality, bodies: bodies.length, slowedDown
         })
     });
