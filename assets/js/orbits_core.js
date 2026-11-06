@@ -9692,13 +9692,19 @@
     }
 
     // Phones held sideways: the tool column beside the canvas has no room for the hint line, so it goes
-    // under the canvas (between the palette and the info bar: see orbits_styles.css)
+    // under the canvas (between the palette and the info bar: see orbits_styles.css), and in a mission
+    // the goal and how it is going, over it
     const sideways = window.matchMedia ? window.matchMedia('(orientation: landscape) and (min-width: 640px) and (max-height: 540px)') : null;
     function placeHint() {
         const toolbar = byId('orbToolbar'), wrap = canvas.closest('.sim-canvas-wrapper');
         if (!ui.hint || !toolbar || !wrap) return;
-        if (sideways.matches) { if (ui.hint.previousElementSibling !== wrap) wrap.after(ui.hint); }
+        if (sideways.matches) { if (ui.hint.parentElement === toolbar) wrap.after(ui.hint); }
         else if (ui.hint.parentElement !== toolbar) toolbar.appendChild(ui.hint);
+        const E = ui.mc;
+        if (E) {
+            if (sideways.matches && mission.def) { if (E.goal.parentElement === E.box) wrap.after(E.goal, E.status); }
+            else if (E.goal.parentElement !== E.box) E.head.after(E.goal, E.status);
+        }
         hintClampCheck();
     }
 
@@ -14118,6 +14124,7 @@
         ui.toolbar.prepend(C);
         const E = { box: C };
         ['Title', 'Goal', 'Status', 'Fuel', 'FuelNum', 'Fill', 'Tick', 'Fine', 'Play', 'PlayText', 'Skip', 'SkipText', 'Left', 'Retry', 'How', 'List', 'Leave'].forEach((n) => { E[n.toLowerCase()] = byId(`mc${n}`); });
+        E.head = C.querySelector('.orb-mc-head');
         E.playIcon = E.play.querySelector('.icon');
         E.burns = Array.from(C.querySelectorAll('.orb-mc-burn'));
         ui.mc = E;
@@ -14197,6 +14204,7 @@
         if (ui.simWrap) ui.simWrap.classList.toggle('orb-mission-on', on);
         if (ui.toolbar) ui.toolbar.setAttribute('aria-label', on ? 'Mission controls' : 'Add bodies');
         if (ui.mc) ui.mc.box.hidden = !on;
+        if (sideways) placeHint();
         if (on) updateMissionConsole();
     }
 
