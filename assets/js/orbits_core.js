@@ -4206,8 +4206,8 @@
     // the body it orbits (so a fast swing past the closest point stays a smooth curve).
     function recordSample() {
         const k = sampleCount % TRAIL_CAP;
-        const c = totals(bodies);
-        comTrail[2 * k] = c.x; comTrail[2 * k + 1] = c.y;
+        const c = totals(bodies), lone = bodies.length === 1;   // (see liveFrameOrigin)
+        comTrail[2 * k] = lone ? 0 : c.x; comTrail[2 * k + 1] = lone ? 0 : c.y;
         sampleTimes[k] = simTime;
         for (const b of bodies) {
             let T = b.trail;
@@ -4342,6 +4342,8 @@
         if (turn.on) { const P = turnPair(); if (P) return pairCentre(P, true); }   // (a rotating frame: the pair's centre)
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.dx, y: L.dy };
+        // (the last body left isn't followed, or it would never seem to move: the view stays put as it coasts off)
+        if (bodies.length === 1) return { x: 0, y: 0 };
         let M = 0, X = 0, Y = 0;
         for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
         return M > 0 ? { x: X / M, y: Y / M } : { x: 0, y: 0 };
@@ -4352,6 +4354,7 @@
         if (turn.on) { const v = turnVelocityAt(x, y); if (v) return v; }
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.vx, y: L.vy };
+        if (bodies.length === 1) return { x: 0, y: 0 };   // (see liveFrameOrigin)
         const c = totals(bodies);
         return { x: c.vx, y: c.vy };
     }
@@ -4379,6 +4382,7 @@
         if (turn.on) { const P = turnPair(); if (P) return pairCentre(P, false); }
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L) return { x: L.x, y: L.y };
+        if (bodies.length === 1) return { x: 0, y: 0 };   // (see liveFrameOrigin)
         const c = totals(bodies);
         return { x: c.x, y: c.y };
     }
@@ -6395,6 +6399,13 @@
         forcesDirty = true;
         k2.bid = null;
         refreshBodyLists();
+        // (a merger that leaves one body: the view stops following, without a jump. See liveFrameOrigin)
+        if (heir && bodies.length === 1 && frameId === null) {
+            const before = viewOrigin();
+            updateDrawnPositions();
+            keepScreen(before);
+            shiftComTrail(before);
+        }
     }
 
     function deleteBody(b) {
@@ -13576,13 +13587,21 @@
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
     let viewLost = null;
+    const nothingInView = () => !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > visL - r && x < visR + r && y > -r && y < viewH + r; });
+
+    // After going back in time: with a last body coasting off, the view may have followed it a long way
+    function refitIfLost() {
+        updateDrawnPositions();
+        if (nothingInView()) fitAll();
+    }
+
     function checkInView() {
         // (zoomed well back out from where a slower time was set: the old speed again)
         if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
         // (a glide passes through views that show nothing: only where it ends counts)
         if (!ui.fit || !viewW || !bodies.length || dragging()) return;
         const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
-        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > visL - r && x < visR + r && y > -r && y < viewH + r; });
+        const out = nothingInView();
         if (view.anim) {
             if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned);
             // (a glide that has brought bodies back: the note goes as soon as they show)
@@ -14067,6 +14086,7 @@
         const st = hist.undo.pop();
         hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
+        refitIfLost();
         afterUndoRedo(`<strong>Undone:</strong> ${escapeHtml(st.label)}`);
         return true;
     }
@@ -14077,6 +14097,7 @@
         const st = hist.redo.pop();
         hist.undo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
+        refitIfLost();
         afterUndoRedo(`<strong>Redone:</strong> ${escapeHtml(st.label)}`);
         return true;
     }
@@ -14094,6 +14115,7 @@
         flushEdit();
         if (dragging() || !canRunAgain()) return false;
         restoreSnapshot(hist.rw, 'rewind');
+        refitIfLost();
         setReverse(false, true);   // (running again always plays forwards)
         hist.rwFresh = true;
         hist.open = null;
