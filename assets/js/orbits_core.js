@@ -4498,7 +4498,7 @@
     function fitAll() {
         if (!bodies.length) return;
         // (a mission locked on a body has its own view: the Sun, far off, isn't part of it)
-        if (mission.def && mission.def.lock !== undefined) { fitBox(missionBox(mission.def), true); return; }
+        if (mission.def && mission.def.lock !== undefined) { fitBox(mission.def.scene.box, true); return; }
         updateDrawnPositions();
         // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
         if (bodies.length === 1) {
@@ -14817,7 +14817,8 @@
     function goalPlan(x, works) {
         const q = mission.plan, now = performance.now(), v = x.el.v;
         const same = !!q && q.t === simTime && Math.abs(x.vx * q.vy - x.vy * q.vx) < 1e-9 * v * v;
-        if (q && (same || now - q.at < PLAN_EVERY_MS)) return q.none ? null : Object.assign(q, { kms: toKms(q.speed - v) });
+        if (q && same) return q.none ? null : Object.assign(q, { kms: toKms(q.speed - v) });
+        if (q && now - q.at < PLAN_EVERY_MS) return q.none ? null : q;   // (running, the speed itself changes along the orbit)
         const left = x.left, back = Math.min(left, 0.98 * toKms(v)), at = [], aim = x.d.aim - mission.used;
         for (let k = 1; k <= PLAN_GRID; k++) at.push(left * (k / PLAN_GRID) * (k / PLAN_GRID));
         for (const f of [-0.1, -0.05, -0.02, 0, 0.02, 0.05, 0.1]) if (aim > 0) at.push(aim * (1 + f));
@@ -14963,18 +14964,20 @@
     }
     function freeSkip(x) {
         if (freeOn(mission.pred)) return { kind: 'pass', word: 'Earth', dt: mission.pred.t - simTime + 1e-3 };
-        if (x.burns || Math.abs(x.phase - x.d.lead) < 1.5) return null;
-        // (it comes round each lap, so the clock stops there: see missionArrival)
+        // (it comes round each lap, so the clock stops there, on the step after: see missionArrival)
+        const off = x.phase - x.d.lead;
+        if (x.burns || (off < 1.5 && off > -6)) return null;
         const rate = x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3));
-        return { kind: 'pass', word: 'launch window', dt: 1.02 * ((x.phase - x.d.lead + 360) % 360) * DEG / rate };
+        return { kind: 'pass', word: 'launch window', dt: 1.02 * ((off + 360) % 360) * DEG / rate };
     }
     function freeHint(x) {
         if (freeOn(mission.pred)) return `On course! <strong>Skip to Earth</strong>${orWatch()}.`;
-        if (!x.burns && Math.abs(x.phase - x.d.lead) >= 1.5) return '<strong>Skip to launch window</strong>: the Moon has to be in the right place.';
-        if (!paused) return 'This path won\'t come home. <strong>Pause</strong> for what to do next.';
+        const wait = '<strong>Skip to launch window</strong>: the Moon has to be in the right place.';
+        if (!paused) return x.burns ? 'This path won\'t come home. <strong>Pause</strong> for what to do next.' : wait;
         const q = goalPlan(x, (kms) => freeOn(freePredict(kms / AUYR_KMS)));
-        if (q) return planHint(x, q, x.burns ? null : ['', ': your dashed path loops round the Moon.']);
-        return x.burns ? 'This path won\'t come home. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.' : 'Too late from here. <strong>Retry</strong>.';
+        if (x.burns) return q ? planHint(x, q) : 'This path won\'t come home. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
+        // (a burn from anywhere else on the way round would cost more than the window's)
+        return q && Math.abs(q.kms) <= STARS_AT[0] * x.d.par ? planHint(x, q, ['', ': your dashed path loops round the Moon.']) : wait;
     }
 
     // Slingshot: bound or not is worth asking only well clear of the target, moving away from it. The
@@ -15696,7 +15699,7 @@
             frameId = bodies[def.lock].id;
             missionSpin(def);
             syncFrameUi();
-            fitBox(missionBox(def), false);
+            fitBox(def.scene.box, false);
         }
         // Every mission starts at the same pace, and the arrow keys are for the engine from now on
         // (not for the scene list, if it was picked there with the mouse)
@@ -15716,13 +15719,9 @@
     }
 
     // A mission that turns with a pair (lock and spin, bodies in the scene) has them stand still, as a
-    // rotating view would, no glide and no note; on a tall canvas with its line upright (see startTurning)
+    // rotating view would, no glide and no note; the line between them always across the canvas
     function missionSpin(def) {
-        if (def.spin !== undefined) restoreTurning({ a: bodies[def.spin].id, up: viewH > 1.15 * viewW ? Math.PI / 2 : 0 });
-    }
-    function missionBox(def) {
-        const b = def.scene.box;
-        return def.spin !== undefined && viewH > 1.15 * viewW ? [-b[3], -b[2], b[0], b[1]] : b;
+        if (def.spin !== undefined) restoreTurning({ a: bodies[def.spin].id, up: 0 });
     }
 
     function endMission() {
