@@ -1283,7 +1283,7 @@
             if (b.grp < 0 && gasRows < 0) gasRows = 0;
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g && (b.minor || g < 0 || b.kind === 'ring') ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
+            grp[k] = g && (b.minor || g < 0 || g % 1 || b.kind === 'ring') ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, gas is held up by its pressure, and for debris see throwDebris: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -1816,7 +1816,7 @@
         keplerDrift(l.x - h.x, l.y - h.y, l.vx - h.vx, l.vy - h.vy, G * M, dt);
         h.x = cx - fl * KX; h.y = cy - fl * KY; h.vx = cvx - fl * KVX; h.vy = cvy - fl * KVY;
         l.x = h.x + KX; l.y = h.y + KY; l.vx = h.vx + KVX; l.vy = h.vy + KVY;
-        if (KMIN < (h.R + l.R) / AU_KM) p.touch = true;
+        if (KMIN < (h.R + l.R) / AU_KM && KMIN < contactReach(h, l)) p.touch = true;
         if (KMIN < p.closest) p.closest = KMIN;
     }
 
@@ -1855,7 +1855,7 @@
             const r2 = rx * rx + ry * ry;
             keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
             let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
-            if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN) || (f.grp < 0 && KMIN < gasFall(mH))) p.touch = true;
+            if ((KMIN < (H.R + f.R) / AU_KM && KMIN < contactReach(H, f)) || (real && gm > ISCO_C2 * KMIN) || (f.grp < 0 && KMIN < gasFall(mH))) p.touch = true;
             if (KMIN < p.closest) p.closest = KMIN;
             if (real) {
                 const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
@@ -2196,8 +2196,10 @@
         const ex = x1 - x0, ey = y1 - y0;
         const ee = ex * ex + ey * ey;
         const t = ee > 0 ? clamp(-(x0 * ex + y0 * ey) / ee, 0, 1) : 1;
-        const cx = x0 + t * ex, cy = y0 + t * ey;
-        return cx * cx + cy * cy < reach * reach;
+        const cx = x0 + t * ex, cy = y0 + t * ey, d2 = cx * cx + cy * cy;
+        if (!(d2 < reach * reach)) return false;
+        const c = contactReach(a, b);
+        return d2 < c * c;
     }
 
     function firstContact() {
@@ -2257,9 +2259,11 @@
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            if (!(settings.realistic && ((holePair(a, b) && plunge(a, b)) || collide(a, b)))) mergeBodies(a, b);
+            if (!settings.realistic) mergeBodies(a, b);
+            else if (!((holePair(a, b) && plunge(a, b)) || collide(a, b))) mergeBooked(a, b);
             merged = true;
         }
+        if (overLimit) { whiteDwarfBlast(overLimit); merged = true; }
         if (merged) computeForces();
         return merged;
     }
@@ -2275,44 +2279,57 @@
         for (const p of mainPairs) {
             if (!p.touch || !p.hosted) continue;
             p.touch = false;
-            const f = p.a, H = p.b, fell = settings.realistic && (f.grp < 0 || G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM);
-            const before = fell ? energyOf([f, H]) : 0;
-            if (!(settings.realistic && collide(f, H))) mergeBodies(f, H);
-            if (fell) groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([H]) - before);
+            const f = p.a, H = p.b;
+            if (!settings.realistic) mergeBodies(f, H);
+            else if (!collide(f, H)) mergeBooked(f, H);
             merged = true;
         }
         listsWait = false;
         return merged;
     }
 
+    // A merger in realistic physics: what it takes with it is kept in the books (under FALLEN), as a collision's heat is.
+    function mergeBooked(a, b) {
+        const before = energyOf([a, b]);
+        mergeBodies(a, b);
+        groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([bodies.includes(a) ? a : b]) - before);
+    }
+
     // The survivor is the heavier body, or the black hole if there is one (it swallows the other from
-    // the inside, whatever their masses).
+    // the inside, whatever their masses). In realistic physics: see survivorOf.
     function mergeBodies(a, b) {
         noteIrreversible('merge');   // (running backwards: a copy of the system from just before)
         const bh = (q) => q.kind === 'blackhole';
-        const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
+        const big = settings.realistic ? survivorOf(a, b) : bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
         const auto = autoColoured(big);   // (a star's colour follows its mass: see starColour)
         noteCollision(big, small);   // (the stability timer)
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
-        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 || small.kind === 'ring' ? 8 : 30 });
+        if (settings.realistic) impactFlash(big, small, (small.x - big.x) / (hyp(small.x - big.x, small.y - big.y) || 1), (small.y - big.y) / (hyp(small.x - big.x, small.y - big.y) || 1));
+        else flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 || small.kind === 'ring' ? 8 : 30 });
         big.vx = M > 0 ? (a.m * a.vx + b.m * b.vx) / M : big.vx;
         big.vy = M > 0 ? (a.m * a.vy + b.m * b.vy) / M : big.vy;
         big.x = fx; big.y = fy;
+        const grown = settings.realistic ? grownRadius(big, M, (a.R * a.R * a.R + b.R * b.R * b.R) / M) : 0;   // (see "What a merged body becomes")
         big.m = M;
         // A black hole's horizon grows with its mass; a white dwarf or neutron star keeps its size (they
         // are held up by pressure, not by being big); anything else keeps its density.
-        if (!isCompact(big)) big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);
+        if (grown) big.R = grown;
+        else if (!isCompact(big)) big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);
         big.track = null;
         if (small.kind === 'ring') { const H = bodyById(small.grp); if (H && H.ringN) H.ringN--; }   // (at once, not at the next count: what goes round H depends on it)
         removeBody(small, big);
         collapseIfTooHeavy(big);
+        if (settings.realistic) settleMerged(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
         // timer says so itself)
         if (!small.minor && !small.grp && timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }   // (running backwards: not the usual crash)
-        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) {
+            const swallowed = settings.realistic && isStar(big) && small.m < 0.01 * big.m, sank = settings.realistic && isCompact(small) && !isCompact(big);
+            showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} ${swallowed ? 'fell into' : sank ? 'sank into' : 'crashed into'} ${escapeHtml(theName(big))}</strong>${swallowed ? ' and was swallowed.' : sank ? ', down to its centre.' : ' and merged with it.'}`, { ms: 6000 });
+        }
     }
 
     // Said as a merger is (not for a swarm's bodies, which go by the hundred; the stability timer says so
@@ -2371,18 +2388,37 @@
             hs = tideHeavy;
         }
         for (const L of bodies) {
-            if (L.grp || L.held || isCompact(L) || L.m < 1e-17) continue;   // not probes: they are held together by their structure
+            if (L.grp || L.held || L.kind === 'neutron' || L.kind === 'blackhole' || L.m < 1e-17) continue;   // not probes: they are held together by their structure
             for (const H of hs) {
                 if (H === L || H.held || H.m < 5 * L.m || H.grp < 0) continue;   // (gas is too thin to tear anything)
+                if (L.kind === 'whitedwarf' && H.kind !== 'neutron' && H.kind !== 'blackhole') continue;   // (only something far denser tears a white dwarf)
                 const dx = L.x - H.x, dy = L.y - H.y;
                 // (going round H it may have passed closer between the ends of the step: going forwards, as nothing
                 // that passed like that stayed whole, running back retraces it)
                 const d = timeDir > 0 && L.kep && L.kep.hosted && L.kep.b === H ? Math.min(Math.hypot(dx, dy), L.kep.closest) : Math.hypot(dx, dy);
                 const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
-                if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
+                if (d < roche && roche > (H.R + L.R) / AU_KM && tideWins(L, H) && disrupt(L, H)) return true;
             }
         }
         return false;
+    }
+
+    // Inside the limit, does the tide have the time to tear it? The limit is for a body that stays there. One on its way
+    // past or into H has only the pass. A body on an orbit that reaches H's surface hits it whole: from the limit to the
+    // surface takes under two of its own free-fall times, at any mass (so an asteroid or a moon makes a crater, not a stream
+    // of beads). Only a compact H has no surface to reach first. A body passing faster than H's escape speed is torn only if
+    // the pass's impulse, 2 G M R / (b^2 v) on its edge with b no closer than R, tops its own escape speed (Spitzer 1958;
+    // that puts the distance near R (M / m)^(1/3), as in Sridhar & Tremaine 1992, Icarus 95, 86, and Guillochon &
+    // Ramirez-Ruiz 2013, ApJ 767, 25). So a star at a tenth of the speed of light goes by a black hole whole.
+    function tideWins(L, H) {
+        const rx = L.x - H.x, ry = L.y - H.y, vx = L.vx - H.vx, vy = L.vy - H.vy;
+        const gm = G * (L.m + H.m), r = hyp(rx, ry), v2 = vx * vx + vy * vy, h = rx * vy - ry * vx;
+        const beta = 2 * gm / r - v2, p = (h * h) / gm;
+        const closest = p / (1 + Math.sqrt(Math.max(0, 1 - (p * beta) / gm)));
+        if (!isCompact(H) && closest < (H.R + L.R) / AU_KM) return false;
+        if (beta >= 0) return true;
+        const R = L.R / AU_KM, b = Math.max(closest, R), kick = (2 * G * H.m * R) / (b * b * Math.sqrt(2 * gm / b - beta));
+        return kick * kick >= (2 * G * L.m) / R;
     }
 
     // How a body breaks: ragged, not a row of equal beads. The pieces' masses, the gaps along the line to
@@ -2430,7 +2466,7 @@
             const s = shape.along[i], q = shape.off[i];
             const m = i < n - 1 ? L.m * shape.share[i] : left;   // (the last takes what rounding left: the mass adds up exactly)
             left -= m;
-            const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
+            const f = newBody({ name, kind: isCompact(L) ? 'custom' : L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = gas ? -L.id : L.id;
             f.minor = gas > 0;
             f.heft = heftOf(n * shape.share[i]);
@@ -2461,15 +2497,31 @@
     // Below the two bodies' mutual escape speed they merge, as ever. A glancing hit (b > R / (R + r)) slower than
     // V_c = V_esc (2.43 Gamma Th^2.5 - 0.0408 Gamma + 1.86 Th^2.5 + 1.08), Gamma = ((m1 - m2) / M)^2, Th = 1 - b
     // (Kokubo & Genda 2010, ApJ 714, L21) still merges; a faster one, not fast enough to erode the target, is a
-    // hit and run: both go on, and the smaller sheds what a reverse impact takes from it (LS12 again).
-    // Debris is thrown past the escape speed from what is left at it, with a third of the energy to spare (a
-    // round figure: LS12's fragments go at about that speed), in pieces whose masses follow their
-    // size distribution (number larger than D going as D^-2.85). Mass and momentum are kept exactly. Angular
-    // momentum is kept by turning the debris round what is left, as far as a speed limit lets that go: the
-    // rest would be the spin of what is left, as in a merger, where all of it goes that way. (The bodies have
-    // no spin here.) What the books gain or lose (the heat of the impact, mostly) is kept under groupEnergy.
-    // Not for black holes, neutron stars or white dwarfs (their own binding is far beyond these laws: they
-    // swallow), a swarm's dots (they go by the hundred), pieces, or a mission's bodies.
+    // hit and run: both go on along the orbit they were on, past each other, and the smaller sheds what a reverse
+    // impact takes from it (LS12 again).
+    // Stars and gas giants have no strength and their mass is at their middle, so: R_C1 is their real size; they lose
+    // mass even from a bound orbit; and the loss falls off as exp(-1.8 r_p / (R1,half + R2,half)), r_p the closest the
+    // orbit would come, with half a star's mass inside a quarter of its radius (Lombardi et al. 2002, ApJ 568, 939).
+    // Head on at the escape speed that gives 0.3 q / (1 + q)^2 of the mass, as Glebbeek et al. 2013 find (7.5% for equals).
+    // Debris goes from where they hit. Its speeds are past the escape speed from what is left, with a third of the energy
+    // to spare (a round figure: LS12's fragments go at about that speed), up to half the impact's speed, smaller pieces
+    // faster, as m^(-1/6) (Nakamura & Fujiwara 1991, Icarus 92, 132), in pieces whose masses follow LS12's size
+    // distribution (number larger than D going as D^-2.85). No piece outweighs what is left, unless there are too few
+    // pieces to carry the mass that way (12: each then stands for a cloud of smaller ones). Directions are a hollow cone,
+    // two lobes in this flat world, at 45 degrees to the surface for a small impactor (Melosh 1989), tipped downrange by
+    // half the impact's obliquity, with the downrange lobe the heavier (Gault & Wedekind 1978), opening out to a sheet at
+    // right angles to a head-on pair of equals. These directions are a sketch of what the simulations show, not a fit.
+    // Mass and momentum are kept exactly, so what is left recoils from its debris. Angular momentum is kept by turning
+    // the debris round what is left, as far as a speed limit lets that go: the rest would be the spin of what is left,
+    // as in a merger, where all of it goes that way. (The bodies have no spin here.) What the books gain or lose (the
+    // heat of the impact, mostly) is kept under groupEnergy.
+    // A far smaller impactor makes a crater and a plume instead: mass above speed v going as
+    // M(>v) / m = (3 k / 4 pi) (C1)^(3 mu) (v / U)^(-3 mu), the scaling of Housen & Holsapple 2011 (Icarus 211, 856) for
+    // rock (k = 0.3, C1 = 1.5, mu = 0.55), taken from where it can rise a fifth of the radius. What doesn't escape falls
+    // back. On a star there is nothing to throw: it is just swallowed. A slower, oblique giant impact merges but leaves a disc in
+    // orbit: DISC_K of the part of the impactor that missed the target, fitted to Canup & Asphaug 2001 (Nature 412, 708) and
+    // Canup 2004 (Icarus 168, 433): 2% of the mass, about 1.6 Moons, for a tenth of the Earth hitting at 45 degrees.
+    // Not for a swarm's dots (they go by the hundred), pieces, or a mission's bodies. Dead stars: see deadStarHit.
     // ------------------------------------------------------------------
     const LS_CSTAR = 1.9, LS_MU = 0.36;
     const RHO1 = (1000 * Math.pow(AU_KM * 1000, 3)) / MSUN_KG;   // 1000 kg/m^3 in M_sun / AU^3
@@ -2477,12 +2529,18 @@
     const DEBRIS_LOTS = 60;               // ...and with this many pieces about already, bodies just merge
     const DEBRIS_EFF = 1 / 3;             // the share of the energy left after unbinding that goes into the debris
     const DEBRIS_TURN = 0.7;              // (speed from turning the debris, as a share of its speed from the impact)
+    const FLUID_LOSS = 7.2;               // (1.8 / a quarter: see above)
+    const CRATER_MAX = 0.01;              // an impactor lighter than this share of the target makes a crater
+    const CRATER_K = 0.14;                // (3 k / 4 pi) C1^(3 mu), and 3 mu:
+    const CRATER_POW = 1.65;
+    const CRATER_VMIN = 0.4;              // the slowest ejecta followed, as a share of the escape speed
+    const DISC_K = 0.27;
 
     // The largest piece of two bodies left by a collision, as a share of their mass (LS12): mt is the target,
     // mp what hits it, a the share of mp that meets it, r their size
-    function largestRemnant(mt, mp, a, V, rC) {
+    function largestRemnant(mt, mp, a, V, rC, fluid) {
         const M = mt + mp, mu = (mt * mp) / M, g = mp / mt;
-        const Rc = Math.max(Math.cbrt((3 * M) / (4 * Math.PI * RHO1)), rC);
+        const Rc = fluid ? rC : Math.max(Math.cbrt((3 * M) / (4 * Math.PI * RHO1)), rC);
         const Q1 = LS_CSTAR * 0.6 * G * M / Rc;
         const Qg = Q1 * Math.pow(((g + 1) * (g + 1)) / (4 * g), 2 / (3 * LS_MU) - 1);
         const ma = (a * mp * mt) / (a * mp + mt);
@@ -2495,99 +2553,107 @@
         return l >= 2 * R ? 1 : clamp((3 * R * l * l - l * l * l) / (4 * R * R * R), 1e-6, 1);
     }
 
+    // How they met, at the moment they touched, from the start of the step they touched in (the end of it may find them
+    // deep inside each other, with the last kick far too strong): the speed squared, the escape speed squared, the impact
+    // parameter, the pair's h and the direction from big to small where they touch
+    const hit = { V2: 0, esc2: 0, b: 0, h: 0, nx: 1, ny: 0, rx: 0, ry: 0, vx: 0, vy: 0 };
+    function readHit(big, small) {
+        const reach = (big.R + small.R) / AU_KM, gm = G * (big.m + small.m);
+        const rx = small.px - big.px, ry = small.py - big.py, vx = small.pvx - big.pvx, vy = small.pvy - big.pvy;
+        const r = hyp(rx, ry), v2 = vx * vx + vy * vy, rv = rx * vx + ry * vy, c = r * r - reach * reach;
+        hit.V2 = v2 + (r > reach ? 2 * gm * (1 / reach - 1 / r) : 0);
+        hit.esc2 = (2 * gm) / reach;
+        hit.h = rx * vy - ry * vx;
+        hit.b = Math.min(1, Math.abs(hit.h) / (Math.sqrt(hit.V2) * reach));
+        hit.rx = rx; hit.ry = ry; hit.vx = vx; hit.vy = vy;
+        // (one step's path is near enough straight)
+        let t = 0;
+        if (c > 0 && v2 > 0) {
+            const d = rv * rv - v2 * c;
+            t = Math.max(0, d > 0 ? (-rv - Math.sqrt(d)) / v2 : -rv / v2);
+        }
+        const px = rx + t * vx, py = ry + t * vy, q = hyp(px, py);
+        hit.nx = q > 0 ? px / q : 1; hit.ny = q > 0 ? py / q : 0;
+    }
+
     // What a collision of a and b does; null means they merge. { big, small, Md (the debris' mass), V, b, and for a
-    // hit and run graze (the share of the small body that met the big one), sep and V2p (how they part) }
+    // hit and run graze (the share of the small body that met the big one), sep, V2p, ux, uy (how they part); or crater, disc }
     function collisionOutcome(a, b) {
         const big = a.m >= b.m ? a : b, small = big === a ? b : a;
         const m1 = big.m, m2 = small.m, M = m1 + m2;
         const R1 = big.R / AU_KM, R2 = small.R / AU_KM, reach = R1 + R2;
-        // At the moment they touched, from the start of the step they touched in (the end of it may find them
-        // deep inside each other, with the last kick far too strong)
-        const rx = small.px - big.px, ry = small.py - big.py, vx = small.pvx - big.pvx, vy = small.pvy - big.pvy;
-        const r = hyp(rx, ry), gm = G * M;
-        const V2 = vx * vx + vy * vy + (r > reach ? 2 * gm * (1 / reach - 1 / r) : 0);
-        const esc2 = (2 * gm) / reach;
-        if (!(V2 > esc2)) return null;
-        const V = Math.sqrt(V2), h = rx * vy - ry * vx, b0 = Math.min(1, Math.abs(h) / (V * reach));
+        readHit(big, small);
+        const fluid = tideIndex(big) > 0 && tideIndex(small) > 0, gm = G * M, h = hit.h, esc2 = hit.esc2;
+        const V2 = fluid ? Math.max(hit.V2, esc2) : hit.V2, V = Math.sqrt(V2), b0 = Math.min(1, Math.abs(h) / (V * reach));
         const l = reach * (1 - b0), rC = Math.cbrt(R1 * R1 * R1 + R2 * R2 * R2);
         const al = R1 > b0 * reach + R2 ? 1 : lensShare(R2, l);
-        const lr = largestRemnant(m1, m2, al, V, rC);
+        if (!fluid && !(V2 > esc2)) return gentleHit(big, small, V2, esc2, b0, al);
+        if (m2 < CRATER_MAX * m1) return gentleHit(big, small, V2, esc2, b0, al);
+        let lr = largestRemnant(m1, m2, al, V, rC, fluid);
+        if (fluid) {
+            const p = (h * h) / gm, e = Math.sqrt(Math.max(0, 1 + (p * (V2 - esc2)) / gm));
+            lr = 1 - (1 - lr) * Math.exp(-FLUID_LOSS * (p / (1 + e)) / reach);
+        }
         const Md = M * (1 - lr);
         if (b0 > R1 / reach && lr * M > m1) {
             // A glancing hit that doesn't erode the target
             const Gam = ((m1 - m2) / M) * ((m1 - m2) / M), th = Math.pow(1 - b0, 2.5);
-            if (V < Math.sqrt(esc2) * (2.43 * Gam * th - 0.0408 * Gam + 1.86 * th + 1.08)) return null;
+            if (V < Math.sqrt(esc2) * (2.43 * Gam * th - 0.0408 * Gam + 1.86 * th + 1.08)) return gentleHit(big, small, V2, esc2, b0, al);
             // A hit and run. The part of the target that meets the projectile hits it in turn
             const be = lensShare(R1, l), mi = be * m1;
             const rC2 = Math.cbrt(R2 * R2 * R2 + be * R1 * R1 * R1);
-            const lr2 = mi > m2 ? largestRemnant(mi, m2, 1, V, rC2) : largestRemnant(m2, mi, 1, V, rC2);
+            const lr2 = mi > m2 ? largestRemnant(mi, m2, 1, V, rC2, fluid) : largestRemnant(m2, mi, 1, V, rC2, fluid);
             const left = Math.min(m2, lr2 * (mi + m2));
-            const Mg = m2 - left;
+            const Mg = Math.min(m2 - left, al * m2);   // (the part that missed the target flies on, whatever hit the rest)
             // They part at a little over touching, having lost the share of their relative motion's energy that met
             const part = 1.02 * reach, V2c = V2 * (1 - al);
-            if (!(V2c > (2 * gm) / part)) return null;   // (too slow to part after all)
+            if (!(V2c > (2 * gm) / part)) return gentleHit(big, small, V2, esc2, b0, al);   // (too slow to part after all)
             // (placed where one step's backward leg can't take them back to touching: see throwDebris)
             const sep = part + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt(V2c);
             const V2p = V2c - 2 * gm * (1 / part - 1 / sep), vt = h / sep;
-            if (vt * vt > V2p) return null;
-            return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p };
+            if (vt * vt > V2p) return gentleHit(big, small, V2, esc2, b0, al);
+            // On the way out of the orbit they came in on, past its closest point (not back the way they came)
+            const r = hyp(hit.rx, hit.ry), k = (hit.vx * hit.vx + hit.vy * hit.vy - gm / r) / gm, rv = (hit.rx * hit.vx + hit.ry * hit.vy) / gm;
+            const ex = k * hit.rx - rv * hit.vx, ey = k * hit.ry - rv * hit.vy, ee = hyp(ex, ey);
+            const e2 = Math.sqrt(1 + ((h * h) / (gm * gm)) * (V2c - (2 * gm) / part));
+            const f = (h < 0 ? -1 : 1) * Math.acos(clamp(((h * h) / (gm * sep) - 1) / e2, -1, 1));
+            const cf = Math.cos(f), sf = Math.sin(f), wx = ee > 0 ? ex / ee : hit.nx, wy = ee > 0 ? ey / ee : hit.ny;
+            return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p, ux: cf * wx - sf * wy, uy: sf * wx + cf * wy };
         }
-        if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return null;
+        if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return gentleHit(big, small, V2, esc2, b0, al);
         return { big, small, Md, graze: 0, V, b: b0 };
     }
 
-    // Throw debris of mass Md from body c (the two together have this mass). c is what is left, and the debris and c
-    // keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as DEBRIS_TURN
-    // allows. extra: energy to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in tearPattern,
-    // so Run again and a shared link break them the same way; grp: the debris' group.
-    function throwDebris(c, mass, Md, X, Y, VX, VY, L, extra, volume, seed, color, grp) {
-        const Mc = mass - Md;
-        const n = Math.min(clamp(Math.round(4 + (30 * Md) / mass), 4, DEBRIS_MAX), MAX_BODIES - bodies.length);
-        const rnd = seeded(seed);
-        rnd(); rnd();
-        const share = new Array(n);
-        let W = 0;
-        for (let i = 0; i < n; i++) { share[i] = Math.pow(i + 1, -3 / 2.85) * (0.8 + 0.4 * rnd()); W += share[i]; }
-        c.m = Mc;
-        c.R = Math.cbrt(volume * Mc);
-        const parts = [], name = uniqueName('Debris');
-        const Rc = c.R / AU_KM;
-        const v8 = Math.sqrt((2 * DEBRIS_EFF * Math.max(0, extra)) / Md);
-        const a0 = TAU * rnd();
-        const speed = new Array(n);
-        let left = Md, sx0 = 0, sy0 = 0, svx = 0, svy = 0;
-        for (let i = 0; i < n; i++) {
-            const m = i < n - 1 ? Md * (share[i] / W) : left;
-            left -= m;
-            const f = newBody({ name, kind: c.kind, m, R: Math.cbrt(volume * m), color });
-            f.grp = grp;
-            f.heft = heftOf((n * m) / Md);
-            const ang = a0 + (TAU * (i + 0.7 * rnd())) / n, ux = Math.cos(ang), uy = Math.sin(ang);
-            // Far enough out that one step's backward leg (see yoshida) can't take it back to what it left: about
-            // where it would be by the next step anyway
-            const d0 = (Rc + f.R / AU_KM) * (1.3 + 0.5 * rnd()), vf = v8 * (0.6 + 0.8 * rnd());
-            const d = d0 + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt((2.04 * G * (Mc + m)) / d0 + vf * vf);
-            const esc2 = (2 * G * (Mc + m)) / d;
-            const w = Math.sqrt(esc2 * 1.02 + vf * vf);
-            f.x = d * ux; f.y = d * uy;
-            f.vx = w * ux; f.vy = w * uy;
-            speed[i] = w;
-            sx0 += m * f.x; sy0 += m * f.y; svx += m * f.vx; svy += m * f.vy;
-            parts.push(f);
+    // What a hit too small or too gentle to throw debris by LS12 leaves: a crater and a plume, a disc, or (null) nothing
+    function gentleHit(big, small, V2, esc2, b0, al) {
+        const m1 = big.m, m2 = small.m, V = Math.sqrt(V2), rock = tideIndex(big) === 0 && tideIndex(small) === 0;
+        if (m2 < CRATER_MAX * m1) {
+            if (m1 >= STAR_MASS || !(V2 > esc2)) return null;
+            return { big, small, Md: Math.min(0.2 * m1, CRATER_K * Math.pow(V / (CRATER_VMIN * Math.sqrt(esc2)), CRATER_POW) * m2), graze: 0, V, b: b0, crater: true };
         }
-        // Relative to c so far. The centre of mass and momentum then fix where c goes
+        const Md = DISC_K * (1 - al) * m2;
+        return rock && Md >= 0.002 * (m1 + m2) ? { big, small, Md, graze: 0, V, b: b0, disc: true } : null;
+    }
+
+    // Each piece's place and velocity, so far relative to c, become the world's. The centre of mass (X, Y), its velocity
+    // and, by turning the pieces (L: null, not at all), the angular momentum L about it are kept
+    function settleDebris(c, parts, mass, X, Y, VX, VY, L, limit) {
+        let sx0 = 0, sy0 = 0, svx = 0, svy = 0;
+        for (const f of parts) { sx0 += f.m * f.x; sy0 += f.m * f.y; svx += f.m * f.vx; svy += f.m * f.vy; }
+        // The centre of mass and momentum then fix where c goes
         const cx = -sx0 / mass, cy = -sy0 / mass, cvx = -svx / mass, cvy = -svy / mass;
-        let Lp = 0, I = 0, kMax = Infinity;
-        for (let i = 0; i < n; i++) {
-            const f = parts[i], px = f.x + cx, py = f.y + cy, qx = f.vx + cvx, qy = f.vy + cvy;
-            Lp += f.m * (px * qy - py * qx);
-            I += f.m * (f.x * f.x + f.y * f.y);
-            kMax = Math.min(kMax, (DEBRIS_TURN * speed[i]) / hyp(f.x, f.y));
+        let k = 0;
+        if (L !== null) {
+            let Lp = c.m * (cx * cvy - cy * cvx), I = -(sx0 * sx0 + sy0 * sy0) / mass, kMax = Infinity;
+            for (const f of parts) {
+                const px = f.x + cx, py = f.y + cy, qx = f.vx + cvx, qy = f.vy + cvy;
+                Lp += f.m * (px * qy - py * qx);
+                I += f.m * (f.x * f.x + f.y * f.y);
+                kMax = Math.min(kMax, (limit * hyp(f.vx, f.vy)) / hyp(f.x, f.y));
+            }
+            // A turn of the debris about c at rate k (k z x d each) adds k I, and keeps the momentum once c moves with it
+            k = clamp((L - Lp) / I, -kMax, kMax);
         }
-        Lp += Mc * (cx * cvy - cy * cvx);
-        I -= (sx0 * sx0 + sy0 * sy0) / mass;
-        // A turn of the debris about c at rate k (k z x d each) adds k I, and keeps the momentum once c moves with it
-        const k = clamp((L - Lp) / I, -kMax, kMax);
         let tx = 0, ty = 0;
         for (const f of parts) {
             const ax = -k * f.y, ay = k * f.x;
@@ -2600,19 +2666,129 @@
             f.x += c.x; f.y += c.y; f.vx += c.vx; f.vy += c.vy;
             f.px = f.x; f.py = f.y;
         }
+    }
+
+    // The pieces' masses, as LS12's size distribution (none over top)
+    function debrisMasses(n, Md, top, rnd) {
+        const share = new Array(n), out = new Array(n);
+        let W = 0;
+        for (let i = 0; i < n; i++) { share[i] = Math.pow(i + 1, -3 / 2.85) * (0.8 + 0.4 * rnd()); W += share[i]; }
+        let left = Md;
+        for (let i = 0; i < n; i++) {
+            const m = i < n - 1 ? Math.min((left * share[i]) / W, top) : left;
+            out[i] = m;
+            left -= m;
+            W -= share[i];
+        }
+        return out;
+    }
+
+    // Throw debris of mass Md from body c, left with radius Rc0 (the two together have this mass). c is what is left, and
+    // the debris and c keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as
+    // DEBRIS_TURN allows. v8: its speed to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in
+    // tearPattern, so Run again and a shared link break them the same way; grp: the debris' group, half a number, as
+    // debris doesn't pull on itself: what its gravity would gather again is already in what is left (LS12's largest
+    // remnant is that), and a clump of it would hold back the steps of the whole system.
+    // fan: where they leave from (angle at), the lobes' middle (axis), their angle either side of it (lobe) and width
+    // (spread: from pi they go all round), how much more goes the way of way (bias), and how many pieces (n). With vMin
+    // their speeds are those of a plume, from vMin up to vTop. The radius they start at is from, if given.
+    function throwDebris(c, Rc0, mass, Md, X, Y, VX, VY, L, v8, volume, seed, color, grp, fan) {
+        const Mc = mass - Md;
+        const n = Math.min(fan.n || clamp(Math.round(4 + (30 * Md) / mass), 4, DEBRIS_MAX), MAX_BODIES - bodies.length);
+        const rnd = seeded(seed);
+        rnd(); rnd();
+        const masses = debrisMasses(n, Md, Math.max(Mc, 1.2 * Md / n), rnd);
+        c.m = Mc;
+        c.R = Rc0;
+        const parts = [], name = uniqueName('Debris');
+        const Rc = c.R / AU_KM, lead = 0.6 * sampleDt / HOST_STEPS, round = fan.spread >= Math.PI, a0 = TAU * rnd();
+        let bx = 0, by = 0, bvx = 0, bvy = 0, bm = 0;
+        const pace = new Array(n);
+        let S = 0, down = 0, sum = 0, inWay = 0, inOther = 0;
+        for (let i = 0; i < n; i++) {
+            pace[i] = Math.pow((n * masses[i]) / Md, -1 / 6) * (0.75 + 0.5 * rnd());
+            S += masses[i] * pace[i] * pace[i];
+        }
+        S = Math.sqrt(Md / S);
+        for (let i = 0; i < n; i++) {
+            const m = masses[i];
+            const f = newBody({ name, kind: fan.kind || c.kind, m, R: Math.cbrt(volume * m), color });
+            f.grp = grp;
+            f.heft = heftOf((n * m) / Md);
+            const Rf = f.R / AU_KM;
+            // Which lobe: the one behind what it should have, so the two balance as they should
+            const toWay = sum === 0 || down < 0.5 * (1 + fan.bias) * (sum + m);
+            if (toWay) down += m;
+            sum += m;
+            // (spaced along the lobe by the golden ratio, however many there are: none on top of another)
+            const u = (0.618034 * (toWay ? inWay++ : inOther++) + 0.13 * rnd() + 0.2) % 1;
+            const ang = round ? a0 + 2.39996 * i + 0.3 * rnd() : fan.axis + (toWay ? fan.way : -fan.way) * fan.lobe + fan.spread * (2 * u - 1);
+            // It starts between where they hit and where it is heading, and just clear of c
+            const at = round ? ang : fan.at + 0.5 * Math.atan2(Math.sin(ang - fan.at), Math.cos(ang - fan.at));
+            const d0 = fan.from ? fan.from * (0.9 + 0.3 * rnd()) : (Rc + Rf) * (1.05 + 0.15 * rnd());
+            const gm = G * (c.m + m), ux = Math.cos(ang), uy = Math.sin(ang);
+            const vf = v8 * pace[i] * S;
+            const w = fan.vMin ? Math.min(fan.vTop, fan.vMin * Math.pow(1 - (i + 0.5 * (0.8 + 0.4 * rnd())) / n, -1 / CRATER_POW)) : Math.sqrt((2.04 * gm) / d0 + vf * vf);
+            // Far enough on that one step's backward leg (see yoshida) can't take it back to what it left: about where
+            // it would be by the next step anyway. (What falls back by then just stays with c.)
+            keplerDrift(d0 * Math.cos(at), d0 * Math.sin(at), w * ux, w * uy, gm, lead, false);
+            if (KMIN < Rc + Rf) { c.m += m; continue; }
+            f.x = KX; f.y = KY; f.vx = KVX; f.vy = KVY;
+            parts.push(f);
+            bx += m * KX; by += m * KY; bvx += m * KVX; bvy += m * KVY; bm += m;
+        }
+        // (an explosion, or a shell of gas leaving, has no direction to recoil from)
+        if (round) for (const f of parts) { f.x -= bx / bm; f.y -= by / bm; f.vx -= bvx / bm; f.vy -= bvy / bm; }
+        settleDebris(c, parts, mass, X, Y, VX, VY, L, DEBRIS_TURN);
         return parts;
+    }
+
+    // What a giant impact leaves in orbit round what it made: a spiral arm unwinding from where it hit, going the way the
+    // impact went, from just outside c to just beyond the Roche limit (2.9 of c's radii), the heaviest pieces furthest out.
+    function throwDisc(c, Rc0, mass, Md, X, Y, VX, VY, way, volume, seed, color, grp) {
+        const n = Math.min(8, MAX_BODIES - bodies.length);
+        const rnd = seeded(seed);
+        rnd(); rnd();
+        const masses = debrisMasses(n, Md, Md, rnd);
+        c.m = mass - Md;
+        c.R = Rc0;
+        const parts = [], name = uniqueName('Debris'), Rc = c.R / AU_KM, at = Math.atan2(hit.ny, hit.nx);
+        for (let i = 0; i < n; i++) {
+            const m = masses[i], f = newBody({ name, kind: c.kind, m, R: Math.cbrt(volume * m), color });
+            f.grp = grp;
+            f.heft = heftOf((n * m) / Md);
+            const r = Rc * (3.2 - (1.9 * i) / (n - 1)), a = at + way * (0.35 + (4.6 * (i + 0.5 * rnd())) / n);
+            const v = Math.sqrt((G * (c.m + m)) / r) * (0.98 + 0.04 * rnd()), vr = 0.05 * v * (rnd() - 0.5);
+            const ux = Math.cos(a), uy = Math.sin(a);
+            f.x = r * ux; f.y = r * uy;
+            f.vx = vr * ux - way * v * uy; f.vy = vr * uy + way * v * ux;
+            parts.push(f);
+        }
+        settleDebris(c, parts, mass, X, Y, VX, VY, null, 0);
+        return parts;
+    }
+
+    // A ring of flash where they touched, as big as what hit (the same for the two bodies of a swarm)
+    function impactFlash(big, small, nx, ny) {
+        flashes.push({
+            x: big.x + (nx * big.R) / AU_KM, y: big.y + (ny * big.R) / AU_KM, t: performance.now(), color: big.color,
+            r0: Math.min(drawRadius(small), drawRadius(big)),
+            grow: (big.minor && small.minor) || small.grp < 0 ? 8 : clamp(60 * Math.cbrt(small.m / (big.m + small.m)), 6, 45)
+        });
     }
 
     // A collision. Returns false if they just merge.
     function collide(a, b) {
-        if (mission.def || a.grp || b.grp || a.minor || b.minor || isCompact(a) || isCompact(b) || a.m < 1e-17 || b.m < 1e-17 || scene.progress) return false;
+        if (mission.def || a.grp || b.grp || a.minor || b.minor || a.m < 1e-17 || b.m < 1e-17 || scene.progress) return false;
+        if (a.kind === 'redgiant' || b.kind === 'redgiant') return false;   // (it has reached the core: see "Inside a red giant")
+        if (isCompact(a) || isCompact(b)) return deadStarHit(a, b);
         const o = collisionOutcome(a, b);
         if (!o) return false;
         let lots = 0;
         for (const q of bodies) if (q.grp) lots++;
         if (lots >= DEBRIS_LOTS || bodies.length + 4 > MAX_BODIES) return false;
         noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
-        const { big, small, Md, graze, V, sep, V2p } = o;
+        const { big, small, Md, graze, V, sep, V2p, crater, disc } = o;
         const auto = autoColoured(big);
         noteCollision(big, small);   // (the stability timer)
         const before = systemEnergy().total;
@@ -2626,26 +2802,36 @@
         for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
         const seed = ((h >>> 0) % 2147483646) + 1;
         const v1 = big.R * big.R * big.R / m1, v2 = small.R * small.R * small.R / m2;
-        const grp = nextId++;
-        flashes.push({ x: X, y: Y, t: performance.now(), color: big.color, r0: drawRadius(big), grow: 45 });
+        const grp = nextId++ + 0.5;
+        impactFlash(big, small, hit.nx, hit.ny);
+        const way = hit.h < 0 ? -1 : 1, at = Math.atan2(hit.ny, hit.nx);
         let parts = [];
         if (graze) {
-            // The two go on, along the same line, keeping the pair's angular momentum
-            const r = hyp(rx, ry), ux = rx / r, uy = ry / r, vt = (rx * vy - ry * vx) / sep;
+            // The two go on, keeping the pair's angular momentum
+            const ux = o.ux, uy = o.uy, vt = (rx * vy - ry * vx) / sep;
             const vr = Math.sqrt(V2p - vt * vt), wx = vr * ux - vt * uy, wy = vr * uy + vt * ux;
             const f1 = m2 / M, f2 = m1 / M;
             big.x = X - f1 * sep * ux; big.y = Y - f1 * sep * uy; big.vx = VX - f1 * wx; big.vy = VY - f1 * wy;
             big.px = big.x; big.py = big.y;
             const sX = X + f2 * sep * ux, sY = Y + f2 * sep * uy, sVX = VX + f2 * wx, sVY = VY + f2 * wy;
-            // (the debris is what the graze scraped off: a tenth of the speed's energy to spare, a round figure)
-            if (Md > 0) parts = throwDebris(small, m2, Md, sX, sY, sVX, sVY, 0, 0.05 * Md * V * V, v2, seed, small.color, grp);
-            else { small.x = sX; small.y = sY; small.vx = sVX; small.vy = sVY; small.px = sX; small.py = sY; }
+            // (the debris is what the graze scraped off, trailing behind it: a tenth of the speed's energy to spare, a round figure)
+            if (Md > 0) {
+                const back = Math.atan2(-wy, -wx);
+                parts = throwDebris(small, grownRadius(small, m2 - Md, v2), m2, Md, sX, sY, sVX, sVY, 0, Math.sqrt(0.1 * DEBRIS_EFF) * V, v2, seed, small.color, grp,
+                    { at: back, axis: back, lobe: 0.3, way, spread: 0.4, bias: 0 });
+            } else { small.x = sX; small.y = sY; small.vx = sVX; small.vy = sVY; small.px = sX; small.py = sY; }
             small.track = null;
         } else {
-            // What is left is the heavier body, with the debris round it. (Its density stays that of what it is made of)
-            const vol = (v1 * m1 + v2 * m2) / M;
-            const extra = 0.5 * mu * V * V - 0.5 * Md * (2 * G * (M - Md)) / ((big.R + small.R) / AU_KM);
-            parts = throwDebris(big, M, Md, X, Y, VX, VY, L, extra, vol, seed, m2 > 0.3 * M ? small.color : big.color, grp);
+            // What is left is the heavier body, with the debris round it
+            const vol = (v1 * m1 + v2 * m2) / M, Rc = grownRadius(big, M - Md, vol), color = m2 > 0.3 * M ? small.color : big.color;
+            if (disc) parts = throwDisc(big, Rc, M, Md, X, Y, VX, VY, way, vol, seed, color, grp);
+            else {
+                const size = Math.min(1, (2 * m2) / m1), wreck = Md > 0.9 * M, axis = at + way * 0.5 * Math.asin(o.b);
+                const extra = 0.5 * mu * V * V - 0.5 * Md * (2 * G * (M - Md)) / ((big.R + small.R) / AU_KM);
+                const fan = { at, axis, way, bias: o.b, lobe: (Math.PI / 4) * (1 + size), spread: wreck ? 1.2 : 0.35 + 0.45 * size };
+                if (crater) Object.assign(fan, { n: 4, lobe: Math.PI / 4, spread: 0.35, vMin: CRATER_VMIN * Math.sqrt((2 * G * M) / ((big.R + small.R) / AU_KM)), vTop: 0.9 * V });
+                parts = throwDebris(big, Rc, M, Md, X, Y, VX, VY, crater ? null : L, Math.min(0.5 * V, Math.sqrt((2 * DEBRIS_EFF * Math.max(0, extra)) / Md)), vol, seed, color, grp, fan);
+            }
             // (a few pieces in the other's colour, for the mixture they are)
             for (let k = 0; k < parts.length; k += 3) parts[k].color = small.color;
             removeBody(small, big);
@@ -2653,9 +2839,10 @@
         big.track = null;
         if (parts.length) bodies.push(...parts);
         forcesDirty = true;
-        collapseIfTooHeavy(big);
-        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         const them = theName(big), it = sentenceCase(theName(small));
+        collapseIfTooHeavy(big);
+        settleMerged(big);
+        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (LS12's "super-catastrophic": nothing much is left of either. So what is left is one more piece, and the choice
         // of body, if it was this, goes back to the scene's own: a fragment's readouts would only confuse)
         const shattered = !graze && big.m < 0.1 * M;
@@ -2675,9 +2862,337 @@
             clearHint('tip');
             if (shattered) eventNote(`${it} and ${them} shattered`, ' each other.', 7000);
             else if (graze) eventNote(`${it} clipped ${them}`, ` and flew on${parts.length ? ', shedding debris' : ''}.`, 7000);
+            else if (disc) eventNote(`${it} crashed into ${them}`, ' and left a disc of debris in orbit.', 7000);
+            else if (crater) eventNote(`${it} hit ${them}`, ' and threw up a plume.', 7000);
             else eventNote(`${it} crashed into ${them}`, ' and threw out debris.', 7000);
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // What a merged body becomes (realistic physics).
+    //   A main-sequence star's radius follows its mass, R ~ M^0.74 (the fit its colour comes from: see "Star colours"),
+    //   from the star's own size, so a planet falling in leaves it as it was. (The real one stays swollen by the shock for
+    //   a while: Lombardi et al. 2002. Not shown: it would be gone within thousands of years.) A body that reaches
+    //   STAR_MASS has become a star. Gas giants and brown dwarfs keep their size as they gain mass, about Jupiter's from
+    //   0.3 to 80 Jupiters (Chabrier et al. 2009, AIP Conf. Proc. 1094, 102); a red giant's size is set by its core; rock
+    //   keeps its density. A white dwarf shrinks as it gains mass: R = 0.0112 R_sun sqrt(x^(-2/3) - x^(2/3)), x = M / 1.44
+    //   (Nauenberg 1972, ApJ 175, 417: 8,700 km at 0.6 solar masses, as the palette's). A neutron star keeps its size.
+    //   Whichever is denser survives, unless a star is well over the heavier: then a dead star just sinks to its centre, and
+    //   it goes on as a star (with a neutron star, a Thorne-Zytkow object: Thorne & Zytkow 1977, ApJ 212, 832). A black
+    //   hole swallows it from the inside whatever their masses. A red giant takes in what reaches its core.
+    // ------------------------------------------------------------------
+    const CHANDRASEKHAR = 1.44;           // M_sun (Chandrasekhar 1931)
+    const SINKS = 1.5;                    // a star this many times heavier than a dead star keeps it inside
+    const DEAD_RANK = { blackhole: 3, neutron: 2, whitedwarf: 1 };
+
+    const whiteDwarfRadius = (m) => {
+        const x = Math.cbrt(Math.min(m / CHANDRASEKHAR, 0.999));
+        return 0.0112 * KINDS.sun.R * Math.sqrt(1 / (x * x) - x * x);
+    };
+
+    // (vol: rock's volume per unit mass. Before its mass changes.)
+    function grownRadius(b, M, vol) {
+        if (b.kind === 'whitedwarf') return whiteDwarfRadius(M);
+        if (isCompact(b) || b.kind === 'redgiant') return b.R;
+        if (b.m >= STAR_MASS) return b.R * Math.pow(M / b.m, 0.74);
+        if (M >= STAR_MASS) return KINDS.sun.R * Math.pow(M, 0.74);
+        return b.kind === 'jupiter' || b.kind === 'browndwarf' ? b.R : Math.cbrt(vol * M);
+    }
+
+    function survivorOf(a, b) {
+        const ra = DEAD_RANK[a.kind] || 0, rb = DEAD_RANK[b.kind] || 0;
+        if (ra < 3 && rb < 3 && (a.kind === 'redgiant') !== (b.kind === 'redgiant')) return a.kind === 'redgiant' ? a : b;
+        if (ra === rb) return a.m >= b.m ? a : b;
+        const hi = ra > rb ? a : b, lo = hi === a ? b : a;
+        return hi.kind !== 'blackhole' && !isCompact(lo) && lo.m >= SINKS * hi.m ? lo : hi;
+    }
+
+    // After a body's mass has grown
+    let overLimit = null, detonate = false;
+    function settleMerged(b) {
+        if (b.kind === 'whitedwarf' && (detonate || b.m > CHANDRASEKHAR)) overLimit = b;
+        detonate = false;
+        if (b.kind === 'browndwarf' && b.m >= STAR_MASS) {
+            b.kind = 'dwarf';
+            if (/^Brown dwarf/.test(b.name)) b.name = uniqueName('Red dwarf');
+        }
+        if (b.name === 'Sun' && Math.abs(b.m - KINDS.sun.m) > 0.05) b.name = uniqueName('Star');   // (no longer our Sun)
+    }
+
+    // A star or planet (or white dwarf) meeting a dead star. Returns false if they just merge (see survivorOf).
+    // Two white dwarfs that hit nearly head on, or whose mass tops Chandrasekhar's limit, go off: see whiteDwarfBlast.
+    // (A slow merger of the heaviest might collapse to a neutron star instead: Nomoto & Iben 1985, ApJ 297, 531. It is
+    // still argued over, and is not done here.)
+    // A dead star is so small that it goes through a star, and gathers only what its gravity can pull in from a tube of
+    // the Bondi-Hoyle radius r = 2 G M / V^2 (Hoyle & Lyttleton 1939). Fast enough, that is little: both go on, the
+    // relative speed cut by what the tube's mass takes, with a Coulomb factor of 3. Slower than that it is caught. A
+    // body far lighter is torn by the tide as ever. A star up to SINKS times the dead star's mass is torn up on it,
+    // and the dead star keeps only about a tenth (a round figure): the heat of what falls in blows the rest away (Kremer
+    // et al. 2019, ApJ 881, 75; 2022, ApJ 933, 203). Where its orbits would show, that is a disc of gas (see "Gas round a
+    // compact body"). A star any heavier closes over it. (SINKS is a judgement, not a published limit.)
+    function deadStarHit(a, b) {
+        const c = (DEAD_RANK[a.kind] || 0) >= (DEAD_RANK[b.kind] || 0) ? a : b, s = c === a ? b : a;
+        if (isCompact(s) && s.kind !== 'whitedwarf') return false;   // (neutron stars and black holes: see collapseIfTooHeavy and plunge)
+        readHit(c, s);
+        if (s.kind === 'whitedwarf' && c.kind === 'whitedwarf') {
+            // Head on, the shock sets them off whatever their mass, from about this total up (Rosswog et al. 2009, ApJ 705,
+            // L128; Kushnir et al. 2013, ApJ 778, L37)
+            detonate = hit.V2 > hit.esc2 && hit.b < 0.5 && c.m + s.m >= 1;
+            return false;
+        }
+        const ra = (2 * G * c.m) / hit.V2, Rs = s.R / AU_KM, tube = Math.min(1, 1.5 * (ra / Rs) * (ra / Rs));
+        const cut = Math.max(0, 1 - (3 * tube * s.m) / c.m);
+        if (s.R > c.R && tube < 0.5 && !tideWins(s, c) && cut * cut * hit.V2 > hit.esc2) { passThrough(c, s, tube * s.m, cut); return true; }
+        if (s.m >= SINKS * c.m) return false;
+        if (s.m >= 0.2 * c.m && !gasTear(s, c)) { tornOnto(c, s); return true; }
+        if (!disrupt(s, c)) return false;
+        announceTear();
+        return true;
+    }
+
+    function tornOnto(c, s) {
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        noteCollision(c, s);   // (the stability timer)
+        const before = systemEnergy().total, M = c.m + s.m, Md = 0.9 * s.m, grp = nextId++ + 0.5;
+        const X = (c.m * c.x + s.m * s.x) / M, Y = (c.m * c.y + s.m * s.y) / M;
+        const VX = (c.m * c.vx + s.m * s.vx) / M, VY = (c.m * c.vy + s.m * s.vy) / M;
+        const bits = new Uint32Array(new Float64Array([c.m, s.m, s.R]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        const it = sentenceCase(theName(s)), them = theName(c);
+        impactFlash(c, s, 0, 0);
+        const parts = throwDebris(c, grownRadius(c, M - Md, 0), M, Md, X, Y, VX, VY, null, 0.5 * Math.sqrt(hit.V2), (s.R * s.R * s.R) / s.m, ((h >>> 0) % 2147483646) + 1, s.color, grp,
+            { spread: Math.PI, bias: 0, kind: isCompact(s) ? 'custom' : s.kind });
+        removeBody(s, c);
+        bodies.push(...parts);
+        c.track = null;
+        forcesDirty = true;
+        collapseIfTooHeavy(c);
+        settleMerged(c);
+        groupEnergy.set(grp, systemEnergy().total - before);
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
+        else if (!settings.stability) { clearHint('tip'); eventNote(`${it} was torn up on ${them}`, ', which kept a tenth of it.', 7000); }
+    }
+
+    // Going on through, as described above: placed on their way out, at the far side
+    function passThrough(c, s, dm, cut) {
+        noteIrreversible('hit');
+        noteCollision(c, s);   // (the stability timer)
+        const before = systemEnergy().total;
+        impactFlash(c, s, 0, 0);
+        const M = c.m + s.m, X = (c.m * c.x + s.m * s.x) / M, Y = (c.m * c.y + s.m * s.y) / M;
+        const VX = (c.m * c.vx + s.m * s.vx) / M, VY = (c.m * c.vy + s.m * s.vy) / M;
+        const vx = cut * (s.vx - c.vx), vy = cut * (s.vy - c.vy), V = hyp(vx, vy), ux = vx / V, uy = vy / V;
+        const rx0 = s.x - c.x, ry0 = s.y - c.y, along = rx0 * ux + ry0 * uy, gone = Math.abs(along) + (0.6 * sampleDt / HOST_STEPS) * V;
+        const reach = 1.02 * (s.R + c.R) / AU_KM, off = rx0 * uy - ry0 * ux, out = Math.max(gone, Math.sqrt(Math.max(0, reach * reach - off * off)));
+        const rx = out * ux + off * uy, ry = out * uy - off * ux;
+        const auto = autoColoured(s), mass = s.m;
+        s.R = grownRadius(s, mass - dm, (s.R * s.R * s.R) / mass);
+        s.m -= dm; c.R = grownRadius(c, c.m + dm, 0); c.m += dm;
+        const fs = c.m / M, fc = s.m / M;
+        s.x = X + fs * rx; s.y = Y + fs * ry; s.vx = VX + fs * vx; s.vy = VY + fs * vy; s.px = s.x; s.py = s.y;
+        c.x = X - fc * rx; c.y = Y - fc * ry; c.vx = VX - fc * vx; c.vy = VY - fc * vy; c.px = c.x; c.py = c.y;
+        s.track = c.track = null;
+        if (auto && !KEEPS_LOOK[s.kind]) s.color = colourForMass(s);
+        collapseIfTooHeavy(c);
+        settleMerged(c);
+        groupEnergy.set(nextId++, systemEnergy().total - before);
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (timeDir > 0 && !settings.stability) eventNote(`${sentenceCase(theName(c))} went straight through ${theName(s)}`, ', too fast to be caught.', 7000);
+    }
+
+    // ------------------------------------------------------------------
+    // Inside a red giant (realistic physics). A red giant is a tiny core inside a vast envelope of gas thinner than air,
+    // so it is no wall: a body flies in, and only reaching the core counts as a hit (contactReach). The pull is still that
+    // of a point at its centre, which overstates it a little inside.
+    //   The envelope's density is that of a convective envelope, a polytrope of index 3/2 round a point (Hjellming &
+    //   Webbink 1987, ApJ 318, 794): rho = (4 M_env / pi^2 R^3) (R / r - 1)^(3/2). Its drag on a body moving at V is
+    //   F = rho V^2 pi (R_b^2 / 2 + 3 min(2 G m / V^2, r)^2), the gas it hits plus its wake's pull on it, with a Coulomb
+    //   factor of 3 (Ostriker 1999, ApJ 513, 252). That takes a planet years to spiral down, and a star only an orbit or
+    //   two. Given as an impulse along the motion, ENV_TICKS times a trail sample, on both bodies, so momentum and angular
+    //   momentum about the pair's centre stay as they should. The energy goes into the books. Going forwards, the impulses
+    //   are logged, and running back takes them off again (as for tides).
+    //   This is a common envelope (Paczynski 1976; Ivanova et al. 2013, A&A Rev. 21, 59). The energy lost by the orbit
+    //   heats the gas, and once it tops the envelope's binding energy, alpha dE = G M M_env / (lambda R), the envelope leaves
+    //   (alpha about 0.25: Zorotovic et al. 2010, A&A 520, A86; lambda taken as 1). What is left is the core, now a white dwarf,
+    //   and the body in a tight orbit: which is how the close pairs seen today were made. A planet has too little orbit
+    //   to do that. It is lost when the core's tide tears it (2.44 R (M_core / m)^(1/3)), or when it reaches the core.
+    //   The core's mass is from the giant's radius, R = 3700 M_c^4 / (1 + M_c^3 + 1.75 M_c^4) R_sun (Joss, Rappaport & Lewis
+    //   1987, ApJ 319, 180), 0.335 solar masses at the palette's 43 R_sun, near there as M_c ~ R^0.26.
+    // ------------------------------------------------------------------
+    const ENV_CORE = 12000;               // km: the size of the core, a white dwarf of that mass
+    const ENV_AL = 0.25;
+    const ENV_TICKS = 4;
+    const ENV_BOOK = -5;                  // (among the body ids of groupEnergy)
+    const ENV_LOG = 1 << 13, ENV_ROW = 5;
+    const env = { log: null, n: 0, low: 0, key: null, told: -1 };
+    const coreMass = (H) => Math.min(0.9 * H.m, 0.335 * Math.pow(H.R / 3e7, 0.26));
+
+    // How close (AU) a and b are when they touch
+    function contactReach(a, b) {
+        if (settings.realistic && (a.kind === 'redgiant' || b.kind === 'redgiant') && !a.grp && !b.grp && !a.minor && !b.minor && !mission.def) {
+            return ((a.kind === 'redgiant' ? ENV_CORE : a.R) + (b.kind === 'redgiant' ? ENV_CORE : b.R)) / AU_KM;
+        }
+        return (a.R + b.R) / AU_KM;
+    }
+
+    // After each step going forwards
+    function envelopeDrag(dt) {
+        const gd = sampleDt / ENV_TICKS, ticks = Math.floor(simTime / gd) - Math.floor((simTime - dt) / gd);
+        if (!ticks || mission.def) return;
+        const n = bodies.length;
+        for (let g = 0; g < n; g++) {
+            const H = bodies[g];
+            if (H.kind !== 'redgiant' || H.grp || H.held) continue;
+            const Rg = H.R / AU_KM, core = coreMass(H), Me = H.m - core, rho0 = (4 * Me) / (Math.PI * Math.PI * Rg * Rg * Rg);
+            for (let k = 0; k < n; k++) {
+                const f = bodies[k];
+                if (f === H || f.grp || f.minor || f.held || f.m < 1e-17) continue;
+                const rx = f.x - H.x, ry = f.y - H.y, r2 = rx * rx + ry * ry;
+                if (!(r2 < Rg * Rg)) continue;
+                const r = Math.sqrt(r2), vx = f.vx - H.vx, vy = f.vy - H.vy, V2 = vx * vx + vy * vy, V = Math.sqrt(V2);
+                const M = f.m + H.m, mu = (f.m * H.m) / M, Rb = f.R / AU_KM, wake = Math.min((2 * G * f.m) / V2, r), x = Rg / r - 1;
+                const k1 = rho0 * x * Math.sqrt(x) * Math.PI * (0.5 * Rb * Rb + 3 * wake * wake) * V / mu;
+                const q = 1 / (1 + k1 * ticks * gd);
+                // The orbit's energy given up since its surface, against the binding energy. (Instead of this impulse: the
+                // copy made just before either of these is of the step alone, so running back retraces it.)
+                const gm = G * M, given = mu * (0.5 * q * q * V2 - gm / r + gm / (2 * Rg));
+                if (-given * ENV_AL >= (G * H.m * Me) / Rg) { envelopeOff(H, f, core); return; }
+                if (r < Math.max(contactReach(H, f), (ROCHE * Rb) * Math.cbrt(core / f.m))) {
+                    const it = sentenceCase(theName(f)), them = theName(H);
+                    mergeBooked(f, H);
+                    computeForces();
+                    refreshBodyLists();
+                    if (!settings.stability && !scene.progress) eventNote(`${it} sank to the core of ${them}`, ' and was lost.', 7000);
+                    return;
+                }
+                // (the books count what systemEnergy does: a pair with its relativistic terms unless it is hosted)
+                const full = !(f.kep && f.kep.hosted && f.kep.b === H) && !(H.kep && H.kep.hosted && H.kep.b === f);
+                const was = full ? pairEnergy(f, H) : 0.5 * mu * V2;
+                envelopeNote(f, H, q);
+                const dvx = (q - 1) * vx, dvy = (q - 1) * vy, fF = H.m / M, fH = f.m / M;
+                f.vx += fF * dvx; f.vy += fF * dvy;
+                H.vx -= fH * dvx; H.vy -= fH * dvy;
+                const now = full ? pairEnergy(f, H) : 0.5 * mu * q * q * V2;
+                groupEnergy.set(ENV_BOOK, (groupEnergy.get(ENV_BOOK) || 0) + now - was);
+                f.track = H.track = null;
+                forcesDirty = true;
+                if (env.told !== f.id && !settings.stability && !scene.progress) {
+                    env.told = f.id;
+                    eventNote(`${sentenceCase(theName(f))} went into ${theName(H)}`, ': its thin gas slows it down.', 6000);
+                }
+            }
+        }
+    }
+
+    function envelopeNote(f, H, q) {
+        if (env.key !== past.key) { env.key = past.key; env.n = env.low = 0; env.told = -1; }
+        if (!env.log) env.log = new Float64Array(ENV_LOG * ENV_ROW);
+        const o = (env.n & (ENV_LOG - 1)) * ENV_ROW, g = env.log;
+        g[o] = past.head; g[o + 1] = f.id; g[o + 2] = H.id; g[o + 3] = q;
+        g[o + 4] = groupEnergy.get(ENV_BOOK) || 0;
+        env.n++;
+        if (env.n - env.low > ENV_LOG) env.low = env.n - ENV_LOG;
+    }
+
+    // Running back, about to retrace logged step k: take back the impulses at its end, from the velocities the run back
+    // has reached (see tideBack)
+    function envelopeBack(k) {
+        if (env.n === env.low) return;
+        if (env.key !== past.key) { env.n = env.low = 0; return; }
+        const g = env.log;
+        let any = false;
+        while (env.n > env.low) {
+            const o = ((env.n - 1) & (ENV_LOG - 1)) * ENV_ROW;
+            if (g[o] < k) break;
+            env.n--;
+            if (g[o] > k) continue;
+            const f = bodyById(g[o + 1]), H = bodyById(g[o + 2]);
+            if (!f || !H) continue;
+            const M = f.m + H.m, up = 1 / g[o + 3] - 1, dvx = up * (f.vx - H.vx), dvy = up * (f.vy - H.vy);
+            f.vx += (H.m / M) * dvx; f.vy += (H.m / M) * dvy;
+            H.vx -= (f.m / M) * dvx; H.vy -= (f.m / M) * dvy;
+            if (g[o + 4]) groupEnergy.set(ENV_BOOK, g[o + 4]); else groupEnergy.delete(ENV_BOOK);
+            any = true;
+        }
+        if (any) computeForces();
+    }
+
+    // The envelope leaves. The body had been going round the mass inside its orbit, not the whole of the giant, and so
+    // it stays in orbit round what is left (its speed relative to the core is set by what is left).
+    function envelopeOff(H, f, core) {
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        noteCollision(H, f);   // (the stability timer)
+        const before = systemEnergy().total, grp = nextId++ + 0.5, m0 = H.m, M0 = m0 + f.m;
+        const it = sentenceCase(theName(f)), them = theName(H);
+        const rvx = f.vx - H.vx, rvy = f.vy - H.vy, Rg = H.R / AU_KM;
+        const bits = new Uint32Array(new Float64Array([m0, H.R, f.m, f.R]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        flashes.push({ x: H.x, y: H.y, t: performance.now(), color: H.color, r0: drawRadius(H), grow: 60 });
+        const x0 = H.x, y0 = H.y, vx0 = H.vx, vy0 = H.vy;
+        // (gas that leaves at a little over the escape speed from the surface, a third of it to spare)
+        const vol = (KINDS.sun.R * KINDS.sun.R * KINDS.sun.R) / KINDS.sun.m;
+        const parts = throwDebris(H, whiteDwarfRadius(core), m0, m0 - core, H.x, H.y, H.vx, H.vy, null, Math.sqrt((2 * G * (f.m + m0 / 3)) / Rg), vol, ((h >>> 0) % 2147483646) + 1, H.color, grp,
+            { spread: Math.PI, bias: 0, n: DEBRIS_MAX, from: Rg, kind: 'custom' });
+        // (what the debris's lumpiness did to the core, the body goes along with: the whole keeps its centre of mass and momentum)
+        const dx = H.x - x0, dy = H.y - y0, dvx = H.vx - vx0, dvy = H.vy - vy0, sh = f.m / M0;
+        f.x += dx; f.y += dy; f.vx += dvx; f.vy += dvy;
+        for (const q of [H, f].concat(parts)) { q.x -= sh * dx; q.y -= sh * dy; q.vx -= sh * dvx; q.vy -= sh * dvy; q.px = q.x; q.py = q.y; }
+        H.kind = 'whitedwarf';
+        H.color = KINDS.whitedwarf.color;
+        if (/^Red giant/.test(H.name)) H.name = uniqueName('White dwarf');
+        H.track = f.track = null;
+        const M1 = H.m + f.m, sc = Math.sqrt(M1 / M0);
+        const cvx = (H.m * H.vx + f.m * f.vx) / M1, cvy = (H.m * H.vy + f.m * f.vy) / M1;
+        f.vx = cvx + (H.m / M1) * sc * rvx; f.vy = cvy + (H.m / M1) * sc * rvy;
+        H.vx = cvx - (f.m / M1) * sc * rvx; H.vy = cvy - (f.m / M1) * sc * rvy;
+        bodies.push(...parts);
+        groupEnergy.set(grp, systemEnergy().total - before);
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (!settings.stability) { clearHint('tip'); eventNote(`${it} blew off the envelope of ${them}`, ', leaving its core, a white dwarf.', 8000); }
+    }
+
+    // A white dwarf pushed past the limit, or set off by a head-on hit, goes off as a Type Ia supernova: all of it burns and
+    // nothing is left (Whelan & Iben 1973, ApJ 186, 1007). The energy is the classic 1.3 x 10^44 J (Nomoto et al. 1984,
+    // ApJ 286, 644), so the debris goes at about 8,000 km/s, whatever the planets and stars round it do.
+    const IA_ENERGY = 1.3e44 / ENERGY_J;
+    function whiteDwarfBlast(b) {
+        overLimit = null;
+        if (!bodies.includes(b) || b.grp || bodies.length + 12 > MAX_BODIES) return;
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        const before = systemEnergy().total, M = b.m, grp = nextId++ + 0.5, name = sentenceCase(theName(b));
+        const bits = new Uint32Array(new Float64Array([M, b.R, b.x]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        flashes.push({ x: b.x, y: b.y, t: performance.now(), color: '#ffffff', r0: drawRadius(b), grow: 120 });
+        const parts = throwDebris(b, b.R, M, (12 / 13) * M, b.x, b.y, b.vx, b.vy, null, Math.sqrt((2 * IA_ENERGY) / M), (b.R * b.R * b.R) / M, ((h >>> 0) % 2147483646) + 1, b.color, grp,
+            { n: 12, spread: Math.PI, kind: 'custom', bias: 0 });
+        b.kind = 'custom';
+        b.grp = grp;
+        b.name = parts[0].name;
+        b.heft = heftOf((13 * b.m) / M);
+        b.trailStart = sampleCount;
+        b.track = null;
+        bodies.push(...parts);
+        if (selectedId === b.id) selectedId = defaultSubject();
+        groupEnergy.set(grp, systemEnergy().total - before);
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
+        else if (!settings.stability) { clearHint('tip'); eventNote(`${name} blew itself apart`, ': a Type Ia supernova. Only debris is left.', 8000); }
     }
 
     // ------------------------------------------------------------------
@@ -3119,7 +3634,7 @@
         const e = Math.sqrt(Math.max(0, 1 - p * beta / gm));
         if (e < TIDE_E_MIN) return false;
         const rp = p / (1 + e), R = L.R / AU_KM, q = rp / R, eta = Math.sqrt((L.m / M) * q * q * q);
-        if (eta > TIDE_ETA_MAX) return false;
+        if (eta > TIDE_ETA_MAX || q < 1) return false;   // (a pass inside a body is no tide on it: only a red giant allows one)
         const at = Math.min(p, 3 * rp);
         if (r < at) return false;
         if (hyp(L.px - H.px, L.py - H.py) >= at) {
@@ -4061,7 +4576,7 @@
                 const used = performance.now() - t0;
                 if (used + 0.5 * used / steps > budget) { timedOut = true; break; }
             }
-            if (past.replay && timeDir < 0) tideBack(past.head - 1);
+            if (past.replay && timeDir < 0) { tideBack(past.head - 1); envelopeBack(past.head - 1); }
             step(timeDir * dt);
             simTime += timeDir * dt;
             acc -= dt;
@@ -4073,7 +4588,7 @@
                 refreshBodyLists();
                 announceTear();
             }
-            if (settings.realistic && timeDir > 0 && !past.replay) tidalPasses(dt);
+            if (settings.realistic && timeDir > 0 && !past.replay) { tidalPasses(dt); envelopeDrag(dt); }
             if (gasRows >= 0 && settings.realistic && !past.replay) gasThin();
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
@@ -8668,7 +9183,7 @@
         const r2 = dx * dx + dy * dy;
         let s2 = r2;
         if (b.grp && q.grp) {
-            if (b.grp !== q.grp) { pp.x = 0; pp.y = 0; return 0; }
+            if (b.grp !== q.grp || b.grp % 1) { pp.x = 0; pp.y = 0; return 0; }
             const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
         }
         if (!(s2 > 0)) { pp.x = 0; pp.y = 0; return 0; }
@@ -10087,7 +10602,7 @@
             for (const q of list) {
                 if (!settings.merge) break;
                 if (q === me) continue;
-                const reach = (q.R + me.R) / AU_KM;
+                const reach = contactReach(q, me);
                 const ex = me.x - x0, ey = me.y - y0;
                 const ee = ex * ex + ey * ey;
                 const qx = q.x - x0, qy = q.y - y0;
@@ -12684,6 +13199,7 @@
     // merges and break-ups: copy the system before a new one, or undo the newest when back at its moment
     function afterStep(dt) {
         const wasReplay = past.replay;
+        let last = dt;
         if (past.replay) {
             past.head--; past.count--; past.replay = false;
         } else {
@@ -12701,12 +13217,13 @@
             let ev = past.events[past.events.length - 1];
             while (ev && ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) {
                 undoEvent(ev);
+                if (settings.realistic) last = ev.dt;   // (the step it retraced: the one after the event may be far longer)
                 ev = past.events[past.events.length - 1];
             }
         }
         if (!wasReplay && settings.realistic && hostGroups.length) gasStep(dt);
         // (rewound to the start: it stops there, ready to run forwards, as a tape does)
-        if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
+        if (timeDir < 0 && simTime + last >= 0.5 * last && simTime < 0.5 * last) {
             setPaused(true);
             setReverse(false, true);
             // (off, and looking it, though the pointer that pressed it may still be on it)
@@ -13511,7 +14028,7 @@
         if (bi.grp && bj.grp) {
             // pieces of one torn-apart body: the softened potential of their softened pull
             // (and pieces of different bodies don't pull on each other)
-            if (bi.grp !== bj.grp || bi.grp < 0 || bi.kind === 'ring') return;   // (nor do pieces of gas: see "Gas round a compact body"; nor a disc's)
+            if (bi.grp !== bj.grp || bi.grp < 0 || bi.grp % 1 || bi.kind === 'ring') return;   // (nor do pieces of gas: see "Gas round a compact body"; nor debris: see throwDebris; nor a disc's)
             const e = 0.5 * (softLength(bi) + softLength(bj));
             sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
             return;
@@ -14094,8 +14611,8 @@
             if (Number.isInteger(id) && id > 0 && id <= 1e9 && !ids.has(id)) { ids.add(id); num[o] = id; maxId = Math.max(maxId, id); } else renumber.push(o);
             for (let k = 0; k < 6; k++) num[o + 1 + k] = vals[k];
             const grp = r.length > 10 ? r[10] : 0;
-            num[o + 7] = Number.isInteger(grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas)
-            maxGrp = Math.max(maxGrp, Math.abs(num[o + 7]));
+            num[o + 7] = Number.isInteger(2 * grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas; half a number: debris)
+            maxGrp = Math.max(maxGrp, Math.ceil(Math.abs(num[o + 7])));
             names[i] = typeof r[1] === 'string' && r[1].trim() ? r[1].trim().slice(0, 40) : KINDS[kind].name;
             kinds[i] = kind;
             colors[i] = typeof r[3] === 'string' && /^#[0-9a-f]{6}$/i.test(r[3]) ? r[3] : (KINDS[kind].color || KINDS.custom.color);
@@ -14118,7 +14635,7 @@
             if (!many) paired.add(q[1]);
             pairs.push([q[0], q[1], q[2] ? 1 : 0, q[3] ? 1 : 0]);
         }
-        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
+        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(2 * q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
         const vw = Array.isArray(d.vw) ? d.vw : [], sca = Array.isArray(d.sca) ? d.sca : [];
         const raw = d.set && typeof d.set === 'object' ? d.set : {};
         const flag = (v, dflt) => (v === 0 || v === 1 || typeof v === 'boolean' ? !!v : dflt);
