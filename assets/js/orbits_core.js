@@ -13274,19 +13274,21 @@
         if (!mission.def) return null;
         return {
             id: mission.def.id, craftId: mission.craftId, refId: mission.refId, targetId: mission.targetId,
-            used: mission.used, log: mission.log.slice(), status: mission.status
+            used: mission.used, log: mission.log.slice(), status: mission.status,
+            reason: mission.reason, crashedInto: mission.crashedInto, result: mission.result
         };
     }
 
-    // Undo, redo or run again: the mission as it was (a result is undone with what led to it)
+    // Undo, redo or run again: the mission as it was. (A result is undone with what led to it, and a
+    // redo back to the end of a mission brings the result back with it, and its card.)
     function missionRestore(m, how) {
         const def = m ? missionById(m.id) : null;
         if (!def) { if (mission.def) endMission(); return; }
-        const was = mission.def, usedBefore = mission.used;
+        const was = mission.def, usedBefore = mission.used, over = m.status === 'won' || m.status === 'lost';
         Object.assign(mission, {
-            def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(),
-            status: m.status === 'won' || m.status === 'lost' ? 'flying' : m.status,
-            reason: '', crashedInto: '', result: null, resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0
+            def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(), status: m.status,
+            reason: over ? m.reason : '', crashedInto: over ? m.crashedInto : '', result: over ? m.result : null,
+            resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0
         });
         clearTimeout(mission.burstTimer);
         mission.burst = 0;
@@ -13294,6 +13296,7 @@
         if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
         hideMissionPanel();
         quietFlyby();
+        if (over) setPaused(true);
         if (was !== def) {
             if (!was) { mission.home = { speed: settings.speed }; setSpeedValue(1); }
             missionUi(true);
