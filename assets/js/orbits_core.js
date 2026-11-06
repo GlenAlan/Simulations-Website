@@ -1571,7 +1571,9 @@
         }
         tCount = 0;
         let kmax = 0;
-        if (nl > 0) {
+        // (one body alone has nothing in the tree to feel: its own cell, a rounding error from it, mustn't count as something else)
+        if (nl === 1) { const k = BIDX[0]; CAX[k] = 0; CAY[k] = 0; CB1[k] = 0; CB2[k] = 0; CP1[k] = -1; }
+        if (nl > 1) {
             const half = 0.5 * Math.max(x1 - x0, y1 - y0) * (1 + 1e-9) + 1e-300;
             buildCell(0, nl, 0.5 * (x0 + x1), 0.5 * (y0 + y1), half, 0);
             for (let s = 0; s < nl; s++) { const k = BIDX[s]; BX[s] = SX[k]; BY[s] = SY[k]; BM[s] = SM[k]; }
