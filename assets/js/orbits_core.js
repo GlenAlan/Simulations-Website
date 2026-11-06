@@ -31,7 +31,8 @@
  *   It also shows relativity without changing any path: starlight bent round a black hole ("Bent starlight"),
  *   and how slow the chosen body's clock runs (the relativity card).
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
- *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
+ *   so they spiral in. Two black holes then plunge until their horizons meet; anything else that is compact falls
+ *   in at the innermost stable orbit. A card measures how far the
  *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
  *
  * Crowded scenes (more than SWARM_N bodies, or made as a swarm) draw their light bodies as plain dots
@@ -403,9 +404,9 @@
         // about to enter LIGO's range. They start on a circular orbit as relativity has it here (r omega^2
         // equal to the pull with its 1PN and 2PN terms: about 0.93 of Kepler's omega), already closing at
         // Peters' rate, dr/dt = -(64/5) eta (GM)^3/(c^5 r^3). The waves carry off their orbital energy: they
-        // spiral together, faster and faster, and plunge at their innermost stable orbit (576 km) after
-        // about 0.4 s (Peters' formula: 0.61 s to reach zero; at this distance the relativistic corrections
-        // to that are large).
+        // spiral together, faster and faster, and start to plunge 576 km apart after about 0.38 s (Peters'
+        // formula: 0.61 s to reach zero; at this distance the relativistic corrections to that are large).
+        // Their horizons meet 18 ms later, 192 km apart (see plungeForce).
         inspiral: (function () {
             const m1 = 36, m2 = 29, M = m1 + m2, eta = (m1 * m2) / (M * M), r = 1200 / AU_KM, gm = G * M, g = gm / (C2 * r);
             // x = r^3 omega^2 / GM: 1 + (1 + 3 eta) x g - (4 + 2 eta) g + 2PN terms (from pnPair at rdot = 0)
@@ -418,7 +419,8 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Gravitational waves drain the orbit until the black holes merge.',
+                tip: () => (settings.realistic ? 'Gravitational waves drain the orbit until the black holes merge.' : 'Just Newton: no waves, so these black holes orbit for ever.'),
+                offNote: 'no waves, so they orbit for ever. Drawn larger than life.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -1309,6 +1311,11 @@
                 const k = 1.6 * eta * gm * gm / (C5 * r2 * r);
                 A += k * (18 * v2 + (2 / 3) * gr - 25 * rd2) * rd;
                 B -= k * (6 * v2 - 2 * gr - 15 * rd2);
+            }
+            // (gasList: the bodies these slots belong to)
+            if (gm > ISCO_C2 * r && holePair(gasList[i], gasList[j])) {
+                plungeForce(r, rd, (nx * vy - ny * vx) / r, gm, eta);
+                A = PLF.A; B = PLF.B;
             }
         }
         const ax = A * nx + B * vx, ay = A * ny + B * vy;
@@ -2209,7 +2216,7 @@
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            if (!(settings.realistic && collide(a, b))) mergeBodies(a, b);
+            if (!(settings.realistic && ((holePair(a, b) && plunge(a, b)) || collide(a, b)))) mergeBodies(a, b);
             merged = true;
         }
         if (merged) computeForces();
@@ -3190,8 +3197,9 @@
     // (Checked: the energy is what the 2PN motion keeps constant, to order GM/(rc^2)^3.)
     //
     // The plunge. RR_MIN is far above PN_PAIR_MAX, so these pairs are never left to the two-body (Kepler)
-    // drift; their step follows the shrinking orbit (it scales with the pair's free-fall time). At their
-    // innermost stable orbit they plunge together and merge (see plunge), keeping momentum.
+    // drift; their step follows the shrinking orbit (it scales with the pair's free-fall time). Close in, two
+    // black holes follow plungeForce until their horizons meet; anything else falls in (see plunge). Either
+    // way momentum is kept.
     //
     // The energy carried off is the work the radiation reaction does on the system's energy (with its
     // 1PN and 2PN terms, as systemEnergy counts it), added up step by step (trapezium rule): total +
@@ -3225,7 +3233,8 @@
         a: null, b: null,                 // the pair radiating most (b the lighter)
         merged: null,                     // { t, id, m, m1, m2 } after two compact bodies merged
         wave: new Float64Array(WAVE_N), waveT: 0, waveN: 0, waveDt: 0, frozen: false,
-        ring: null                        // ringing of a new black hole: { t0, A, w, tau }
+        ring: null,                       // ringing of a new black hole: { t0, A, w, tau }
+        retaken: false                    // a merger was taken back in this step (running backwards)
     };
     const watched = new Map();            // trackers of orbits: "bodyId:primaryId" -> tracker
     const apiWatch = new Set();           // bodies the test API asked about
@@ -3243,6 +3252,7 @@
         RR_X = -dx; RR_Y = -dy; RR_VX = i.vx - j.vx; RR_VY = i.vy - j.vy;
         if (!(r > 0) || !(gm > RR_MIN_C2 * r)) return 0;
         const eta = (i.m * j.m) / (msum * msum), mu = eta * msum;
+        if (gm > ISCO_C2 * r && holePair(i, j)) return gwOn ? plungePower(r, gm, mu, eta) : 0;
         const nx = -dx / r, ny = -dy / r, vx = RR_VX, vy = RR_VY;
         const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy, gr = gm / r;
         const k = 1.6 * eta * gm * gm / (C5 * r2 * r);
@@ -3280,7 +3290,8 @@
         for (let q = 0; q < pnCount; q++) {
             const i = bodies[PNI[q]], j = bodies[PNJ[q]];
             if (!i || !j) continue;
-            if (G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && plunge(i, j)) return P;
+            if (i.kind === 'blackhole' && j.kind === 'blackhole') holesCross(i, j);
+            if (G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && !holePair(i, j) && plunge(i, j)) return P;
             const p = gwOn ? radiationPower(i, j) : 0;
             if (!p) continue;
             P += p;
@@ -3295,8 +3306,9 @@
     // mass M exactly that, in Schwarzschild's coordinates; much the same for two equal masses), no orbit
     // lasts: the two plunge together within an orbit, which the 1PN terms can't follow (pushed that far,
     // they even turn gravity round: a body dropped straight onto a black hole would bounce back). So a
-    // pair (two compact bodies, as nothing else gets that close) merges there, through mergeBodies (mass
-    // and momentum kept). Two black holes make one a little lighter than the two: what the final plunge
+    // pair with a neutron star or a much lighter hole in it merges there, through mergeBodies (mass and
+    // momentum kept). Comparable black holes go on to plungeForce, and merge when their horizons meet.
+    // Two black holes make one a little lighter than the two: what the final plunge
     // and ringing radiate, from the fit E/(Mc^2) = (1 - sqrt(8/9)) eta + 4 eta^2 (4 p0 + sqrt(8/9) - 1),
     // p0 = 0.04827, to numerical-relativity mergers of black holes without spin (Barausse, Morozova &
     // Rezzolla 2012, ApJ 758, 63): 4.8% of the mass for two equal ones, 36 + 29 -> 62 solar masses, as LIGO
@@ -3305,6 +3317,7 @@
     // orbit's energy taken into the new hole) is kept, like a tidal break-up's, so the total stays level.
     const ISCO = 6;
     const ISCO_C2 = C2 / ISCO;
+    const HOLES_BOOK = -9;                // (among the body ids of groupEnergy)
     function plunge(i, j) {
         if (!settings.merge || i.held || j.held) return false;
         const bothHoles = i.kind === 'blackhole' && j.kind === 'blackhole';
@@ -3319,14 +3332,118 @@
         if (bothHoles) { big.m = M - eFit / C2; collapseIfTooHeavy(big); }
         noteMerger(big, mi, mj);
         gw.radiated += burst;
-        groupEnergy.set(`plunge ${big.id} ${simTime}`, systemEnergy().total - before + burst);
+        groupEnergy.set(HOLES_BOOK, (groupEnergy.get(HOLES_BOOK) || 0) + systemEnergy().total - before + burst);
         computeForces();
         refreshBodyLists();
         return true;
     }
 
-    // A pair's own energy, with its 1PN terms (as in systemEnergy)
+    // The last of an orbit between two black holes. The PN terms are no use here: carried on down to the horizons they
+    // reach 318 Hz at 0.89 c, and their energy turns positive. So from 6 GM/c^2 in (r, in their harmonic coordinates) the
+    // pair follows the effective-one-body picture (Buonanno & Damour 2000, PRD 62, 064015), which is cheap and keeps no
+    // state: a body of the reduced mass goes round the total mass in
+    //   ds^2 = -A dt^2 + (D/A) drho^2 + rho^2 dphi^2,  A = (1 + n1 u)/(1 + d1 u + d2 u^2 + d3 u^3),
+    //   1/D = 1 + 6 eta u^2 + 2 (26 - 3 eta) eta u^3,  u = GM/(rho c^2)
+    // (3PN, A a Pade approximant: Damour, Jaranowski & Schäfer 2000, PRD 62, 084011), while the waves take angular
+    // momentum at the quadrupole rate for its frequency, dp_phi/dt = -(32/5) eta (GM omega/c^3)^(7/3). Its equations of
+    // motion in coordinate time (Schwarzschild's geodesics at eta = 0), with h = E/(Mc^2) turning effective time into
+    // real time, kept at its value for H_eff = sqrt(8/9):
+    //   rho'' = -A A'/(2 D h^2) + rho A omega^2/D + rho'^2 (3 A'/(2 A) - D'/(2 D)),  omega' = omega rho' (A'/A - 2/rho)
+    // A choice of ours: rho = r + b, with b (0.32 for 36 + 29; 1 at eta = 0, where it is exact) setting the model's light
+    // ring, where the waves peak in this picture, at r = 2 GM/c^2, where the drawn horizons touch. So they merge as they
+    // touch, 192 km apart for 36 + 29. How far apart two holes are this close depends on the coordinates, so that is a
+    // rule for drawing, not a measurement: simulations in harmonic-like coordinates have the horizons' centres 1.7 to
+    // 2.4 GM/c^2 apart as the common horizon forms (SXS:BBH:0198, 1132). It also meets the PN orbit at 6 GM/c^2 within 2%
+    // in frequency, so nothing jumps there.
+    // Checked for 36 + 29 against SXS:BBH:0198 (q = 1.2), by the time before the common horizon: the orbit's frequency
+    // here is within 15% of half the wave's over the last 55 GM/c^3, within 6% over the last 30, and they touch at 155 Hz
+    // (2% from it, and 13% under the wave's peak, 178 Hz, which comes 5 GM/c^3 later). From this model's own innermost
+    // stable orbit (r = 4.65 GM/c^2, 446 km) to touching is 29 GM/c^3, 9.3 ms and half an orbit (simulation, from that
+    // frequency: 33.5). From 576 km it is short, 18 ms and 0.83 orbits (simulation, from that frequency: 28 ms, 1.2): the
+    // PN inspiral arrives closing at 2.3 times the rate of a model that has been on this path all along.
+    const PLUNGE_ETA = 1e-3;              // (a lighter hole would take hundreds of orbits to fall in, unseen: it falls in at once)
+    const holePair = (a, b) => a.kind === 'blackhole' && b.kind === 'blackhole' && settings.merge && !a.held && !b.held
+        && (a.m * b.m) / ((a.m + b.m) * (a.m + b.m)) > PLUNGE_ETA;
+    const PL = { eta: -1, n1: 0, d1: 0, d2: 0, d3: 0, h: 1, b: 0, A: 1, Ap: 0, E: 1, Ep: 0 };
+    const PLF = { A: 0, B: 0 };
+    // A and dA/drho (GM/c^2 = 1), 1/D and its slope, at rho, for the pair's eta
+    function plungeMetric(rho) {
+        const eta = PL.eta, u = 1 / rho, f = 2 * (26 - 3 * eta) * eta;
+        const N = 1 + PL.n1 * u, Q = 1 + u * (PL.d1 + u * (PL.d2 + u * PL.d3));
+        PL.A = N / Q;
+        PL.Ap = -u * u * (PL.n1 * Q - N * (PL.d1 + u * (2 * PL.d2 + 3 * u * PL.d3))) / (Q * Q);
+        PL.E = 1 + u * u * (6 * eta + u * f);
+        PL.Ep = -u * u * u * (12 * eta + 3 * u * f);
+    }
+    // The constants for a pair's eta (few pairs, so kept for the last one): the Pade coefficients of A, and b, from the
+    // light ring, (u^2 A)' = 0
+    function plungeFit(eta) {
+        if (eta === PL.eta) return;
+        PL.eta = eta;
+        const a3 = 2 * eta, a4 = (94 / 3 - 41 * Math.PI * Math.PI / 32) * eta;
+        PL.d1 = (a4 + 2 * a3) / (8 - a3); PL.n1 = PL.d1 - 2; PL.d2 = 2 * PL.d1; PL.d3 = 4 * PL.d1 - a3;
+        PL.h = Math.sqrt(1 + 2 * eta * (Math.sqrt(8 / 9) - 1));
+        let lo = 1.5, hi = 4;
+        for (let k = 0; k < 50; k++) {
+            const rho = 0.5 * (lo + hi);
+            plungeMetric(rho);
+            if (rho * PL.Ap - 2 * PL.A > 0) lo = rho; else hi = rho;   // (zero at the ring, above zero inside it)
+        }
+        PL.b = 0.5 * (lo + hi) - 2;
+    }
+    // The effective energy over the reduced mass, H_eff, as a share of its rest energy (from the last plungeMetric)
+    function plungeHeff(rho, rd, w) {
+        const h = PL.h, root = PL.A - (h * rd * h * rd) / (PL.E * PL.A) - (rho * h * w) * (rho * h * w);
+        return PL.A / Math.sqrt(root > 1e-4 ? root : 1e-4);   // (a hole thrown in by hand at more than c: no worse than this)
+    }
+    // Sets PLF: the pair's relative acceleration as A n + B v, less Newton's pull (added in the pair sums). (In the step
+    // before they merge they can be closer than they touch, or put there by hand: PLUNGE_R keeps A above zero.)
+    const PLUNGE_R = 1.5;
+    function plungeForce(r, rd, w, gm, eta) {
+        plungeFit(eta);
+        const L = gm / C2, R = r / L, Rd = rd / C_LIGHT, W = (w * L) / C_LIGHT;
+        const rho = Math.max(R, PLUNGE_R) + PL.b, h = PL.h;
+        plungeMetric(rho);
+        const A = PL.A, Ap = PL.Ap, E = PL.E, Ep = PL.Ep;
+        const Fw = gwOn ? -6.4 * eta * Math.abs(W) * Math.cbrt(Math.abs(W)) : 0;   // (dp_phi/dt, over omega)
+        const he = plungeHeff(rho, Rd, W);
+        // (a kick to p_phi moves H_eff by h omega dp_phi, which also slows rho' a little)
+        const rdd = -A * Ap * E / (2 * h * h) + rho * A * E * W * W + Rd * Rd * (1.5 * Ap / A + 0.5 * Ep / E) - Rd * h * W * W * Fw / he;
+        const Q = Rd * (Ap / A - 2 / rho) + Fw * (A / (rho * rho) - h * h * W * W) / (he * h) + 2 * Rd / R;
+        PLF.A = ((rdd - R * W * W - Q * Rd) * C2) / L + gm / (r * r);
+        PLF.B = (Q * C_LIGHT) / L;
+    }
+    // The pair's energy: the real energy less its rest energy, M c^2 (sqrt(1 + 2 eta (H_eff - 1)) - 1)
+    function plungeEnergy(r, rd, w, gm, eta) {
+        plungeFit(eta);
+        const L = gm / C2, rho = Math.max(r / L, PLUNGE_R) + PL.b;
+        plungeMetric(rho);
+        return ((gm / G) * C2) * (Math.sqrt(1 + 2 * eta * (plungeHeff(rho, rd / C_LIGHT, (w * L) / C_LIGHT) - 1)) - 1);
+    }
+    // Crossing 6 GM/c^2 the pair's energy changes from the PN terms' to this one (about 40% apart by then, the PN terms
+    // being out of their depth, this one the better measure): the difference, worked out at that moment, goes in a book
+    function holesCross(i, j) {
+        const gm = G * (i.m + j.m), near = ISCO_C2 * hyp(j.x - i.x, j.y - i.y) < gm;
+        if (near === (ISCO_C2 * hyp(j.px - i.px, j.py - i.py) < gm) || !holePair(i, j)) return;
+        const d = plungeBookEnergy(i, j) - pnEnergy(i, j);
+        groupEnergy.set(HOLES_BOOK, (groupEnergy.get(HOLES_BOOK) || 0) + (near ? d : -d));
+    }
+    function plungeBookEnergy(i, j) {
+        const rx = i.x - j.x, ry = i.y - j.y, r = Math.hypot(rx, ry), vx = i.vx - j.vx, vy = i.vy - j.vy, M = i.m + j.m;
+        return plungeEnergy(r, (rx * vx + ry * vy) / r, (rx * vy - ry * vx) / (r * r), G * M, (i.m * j.m) / (M * M));
+    }
+    // What the waves carry off per unit time: the kick above, at omega
+    function plungePower(r, gm, mu, eta) {
+        const W = (Math.abs(RR_X * RR_VY - RR_Y * RR_VX) * gm) / (r * r * C2 * C_LIGHT);
+        return (6.4 * eta * Math.pow(W, 10 / 3) * mu * C2 * C_LIGHT * C2) / gm;
+    }
+
+    // A pair's own energy, as systemEnergy has it
     function pairEnergy(i, j) {
+        return G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && holePair(i, j) ? plungeBookEnergy(i, j) : pnEnergy(i, j);
+    }
+    // ...with its 1PN terms
+    function pnEnergy(i, j) {
         const M = i.m + j.m, mu = (i.m * j.m) / M, eta = mu / M, gm = G * M;
         const rx = i.x - j.x, ry = i.y - j.y, r = Math.hypot(rx, ry);
         const vx = i.vx - j.vx, vy = i.vy - j.vy, v2 = vx * vx + vy * vy, rd = (rx * vx + ry * vy) / r;
@@ -3340,6 +3457,7 @@
     // a merger of the radiating pair, and the wave sketch
     function relativityStep(dt) {
         relSteps++;
+        if (gw.retaken) { gw.retaken = false; dt = 0; }   // (that step's waves went with the copy: dt was the step after the merger)
         const pair = gw.a && gw.b ? [gw.a, gw.b] : null;
         let P = 0;
         gw.found = false;
@@ -3520,7 +3638,7 @@
     function sampleWave() {
         if (gw.frozen && gw.a) { gw.frozen = false; gw.waveN = 0; gw.ring = null; }   // (a new pair)
         if (gw.frozen) return;
-        if (!gw.waveDt) gw.waveDt = (2.5 * scene.Tref) / WAVE_N;
+        if (!gw.waveDt) { gw.waveDt = (2.5 * scene.Tref) / WAVE_N; gw.waveT = simTime; }
         if (!gw.a && !gw.ring && !gw.waveN) { gw.waveT = simTime; return; }
         while (gw.waveT + gw.waveDt <= simTime) {
             gw.waveT += gw.waveDt;
@@ -3562,7 +3680,7 @@
             // (switched back on in such a scene, it is the scene's again, and goes when the scene does)
             const needed = !!(scene && scene.realistic);
             realisticByScene = needed && ui.realistic.checked;
-            if (needed && !ui.realistic.checked) showHint('note', '<strong>Realistic physics off:</strong> just Newton, so a plain ellipse.', { ms: 6000 });
+            if (needed && !ui.realistic.checked) showHint('note', `<strong>Realistic physics off:</strong> ${scene.offNote || 'just Newton, so a plain ellipse.'}`, { ms: 6000 });
             else if (needed) clearHint('note');
         });
     }
@@ -3715,11 +3833,13 @@
         const km = shrink === null ? '' : shrink >= 1 ? `${fmtKm(shrink)} km` : `${fmtSig(shrink * 1000)} m`;
         const freq = `${fmtSig(2 / (T * YEAR_S))} Hz`;   // (twice a turn)
         const mine = b === a || b === c;
+        // (in its last orbit the distance a turn has stopped meaning much)
+        const falling = G * M > ISCO_C2 * r && holePair(a, c);
         if (compact) {
-            lines.push([title('Waves: '), [shrink === null ? `${freq}, orbit shrinking` : `${freq}, orbit shrinks ${km} a turn`]]);
+            lines.push([title('Waves: '), [falling ? `${freq}, falling together` : shrink === null ? `${freq}, orbit shrinking` : `${freq}, orbit shrinks ${km} a turn`]]);
         } else {
             lines.push([title(mine ? 'Gravitational waves' : `Gravitational waves: ${a.name} and ${c.name}`)]);
-            lines.push([[shrink === null ? 'Orbit shrinking' : `Orbit shrinks ${km} each time round`]]);
+            lines.push([[falling ? 'Falling together' : shrink === null ? 'Orbit shrinking' : `Orbit shrinks ${km} each time round`]]);
             lines.push([[`Period ${fmtDuration(T, true)} · waves ${freq}`]]);
         }
         return { lines, wave: gw.waveN > 1 };
@@ -4469,6 +4589,7 @@
         return symbolicRadius(Rkm);
     }
     const MARKER_R = 7;   // px: the ring that marks a body drawn at its true (tiny) size
+    const HOLE_LARGER = 1.5;   // with realistic physics off, a black hole zoomed in on still looks larger than life
 
     // The radius that arrows, names and clicks keep clear of (the disc, or the marker ring around it)
     function drawRadius(b) {
@@ -4500,7 +4621,7 @@
             }
             return;
         }
-        for (const b of bodies) b.rmax = bodySize(b) * sizeScale;
+        for (const b of bodies) b.rmax = b.kind === 'blackhole' ? Math.max(bodySize(b) * sizeScale, HOLE_LARGER * (b.R / AU_KM) * scale) : bodySize(b) * sizeScale;
         for (const b of bodies) {
             const p = b.primary;
             if (!p || !b.bound || b.m >= p.m || b.minor) continue;
@@ -9522,7 +9643,7 @@
         pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
-        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
+        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, kind: q.kind, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
         const me = list[src.indexOf(b)];
         me.vx = rel.v[0]; me.vy = rel.v[1];
         if (rel.p) { const pc = list[src.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
@@ -12110,6 +12231,7 @@
         syncHosts();
         groupEnergy.clear();
         for (const [id, u] of s.groupE) groupEnergy.set(id, u);
+        gw.radiated = s.gwE || 0; gw.power = s.gwP || 0; gw.retaken = true;   // (a plunge's final burst goes back too)
         // The choice of body (and the view) passes back to the one it came from
         if (selectedId === ev.selAfter) selectedId = ev.sel;
         if (frameId === ev.frameAfter) frameId = ev.frame;
@@ -12846,6 +12968,8 @@
             const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
             const rd = (rx * vx + ry * vy) / r;
             sumKE += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
+            // (in their plunge the rest of it, whatever makes it up to the plunge's energy, goes in the potential energy's column)
+            if (gm > ISCO_C2 * r && holePair(bi, bj)) { sumPE += plungeEnergy(r, rd, (rx * vy - ry * vx) / (r * r), gm, eta) - 0.5 * mu * v2 - (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2 + (G * bi.m * bj.m) / r; return; }
             sumPE += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
             // (and the 2PN terms for a compact, close pair, which has them in its motion too)
             if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); sumKE += mu * e2.k; sumPE += mu * e2.p; }
