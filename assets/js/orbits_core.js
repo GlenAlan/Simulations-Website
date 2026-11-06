@@ -7937,6 +7937,7 @@
         const back = timeDir < 0 ? 'Running backwards' : '';
         if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
         if (paused && mission.def) return null;   // (its console says so, and the clock stops for each burn)
+        if (mission.skip) return null;   // (the speed jumps for a moment you asked to pass quickly: nothing to report)
         if (paused) return back ? 'Paused · running backwards' : 'Paused';
         if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
         return back || null;
