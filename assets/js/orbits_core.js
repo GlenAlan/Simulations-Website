@@ -358,7 +358,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Speed it up: this orbit turns 43″ a century.',
+            tip: 'This orbit turns 43″ a century: too small to see, so the card measures it.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
