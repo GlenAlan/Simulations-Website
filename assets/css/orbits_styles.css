@@ -4292,3 +4292,33 @@ dialog.orb-help::backdrop {
         }
     }
 }
+
+/* "Rotate with it" joins the body menu's row: the two views on one line, the rest on the next */
+.orb-pop-actions {
+    flex-wrap: wrap;
+}
+
+.orb-pop-actions #popLock,
+.orb-pop-actions #popTurn {
+    flex: 1 1 45%;
+}
+
+/* ...and the list's row, which has room for all five only as words in the docked settings */
+.orb-bodies-actions.is-tight button .icon {
+    display: none;
+}
+
+.orb-bodies-actions.is-tight button[data-act="zoom"] .icon,
+.orb-bodies-actions.is-tight button[data-act="delete"] .icon {
+    display: inline-block;
+}
+
+.orb-bodies-actions.is-tight button[data-act="zoom"] {
+    flex: 0 0 auto;
+    width: calc(var(--orb-bl-act, 42px) - 8px);
+    padding: 0;
+}
+
+.orb-bodies-actions.is-tight .orb-act-word {
+    display: none;
+}

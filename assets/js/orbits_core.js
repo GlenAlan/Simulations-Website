@@ -325,7 +325,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in Settings, under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in its menu, and in Settings under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -4651,7 +4651,7 @@
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote') });
+    Object.assign(ui, { turnNote: byId('turnNote'), popTurn: byId('popTurn'), popTurnText: byId('popTurnText'), chipIcon: ui.frameChip ? ui.frameChip.querySelector('.icon') : null });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -4819,6 +4819,19 @@
         syncFrameUi();
     }
 
+    // "Rotate with it", in a body's menu and its row in the list: starts the frame, or ends the one it's in
+    function toggleTurning(b) {
+        if (turnPair() && turnUses(b)) setFrame(null);
+        else startTurning(b);
+    }
+    // Those buttons' tooltip, for body b
+    const turnTitle = (b) => {
+        const P = turnPair();
+        if (P && turnUses(b)) return 'Stop rotating: back to the centre-of-mass view';
+        const p = turnPartner(b);
+        return p ? `Turn the view with ${theName(b)} and ${theName(p)}, so both stand still` : `${sentenceCase(theName(b))} isn't orbiting anything to rotate with`;
+    };
+
     // "View from": a rotating frame's option is turn:<id of B>
     function pickTurning(value) {
         const m = /^turn:(\d+)$/.exec(value || '');
@@ -4841,19 +4854,25 @@
     }
     const turnLabel = (B, A) => `Rotating with ${theName(B)} and ${theName(A)}`;
 
-    // The rotating frames in "View from" (after the bodies): the one in use, and the chosen body's
+    // The rotating frames in "View from" (after the bodies): every body that orbits a heavier one (a pair
+    // going round each other once, and in a crowd only the heaviest few), the chosen body's, and the one in use
+    const TURN_LIST = 12;
     function turnOptions() {
-        const out = [];
-        const P = turnPair();
-        if (P) out.push([`turn:${P.B.id}`, turnLabel(P.B, P.A)]);
-        const c = turnCandidate();
-        if (c && !(P && c === P.B)) out.push([`turn:${c.id}`, turnLabel(c, turnPartner(c))]);
-        return out;
+        const P = turnPair(), s = bodyById(selectedId), list = [];
+        for (const b of bodies) {
+            const p = turnPartner(b);
+            if (p && !b.minor && b.m <= p.m && !(b.m === p.m && turnPartner(p) === b && p.id < b.id)) list.push(b);
+        }
+        if (list.length > TURN_LIST) { list.sort((x, y) => y.m - x.m); list.length = TURN_LIST; }
+        const c = turnPartner(s);
+        if (c && !list.includes(s) && !(turnPartner(c) === s && list.includes(c))) list.push(s);
+        if (P && !list.includes(P.B)) list.push(P.B);
+        return list.map((b) => [`turn:${b.id}`, turnLabel(b, P && b === P.B ? P.A : turnPartner(b))]);
     }
     // Choosing another body changes what is offered (checked a few times a second while drawing)
     function syncTurnOptions() {
         const now = performance.now();
-        if (now < turn.optionsAt) return;
+        if (now < turn.optionsAt || document.activeElement === ui.frame) return;   // (not under the hand of someone choosing)
         turn.optionsAt = now + 300;
         const sig = turnOptions().map((o) => o.join('=')).join('|');
         if (sig !== turn.options) { turn.options = sig; refreshBodyLists(); }
@@ -4868,6 +4887,8 @@
             const text = P ? 'Rotating with ' : 'Viewed from ';
             if (lead && lead.nodeType === 3 && lead.nodeValue !== text) lead.nodeValue = text;
             if (P) ui.frameChipName.textContent = theName(P.B);   // (short: the list names the pair)
+            ui.frameChip.title = P ? 'Stop rotating: back to the centre-of-mass view' : 'Go back to the centre-of-mass view';
+            if (ui.chipIcon) { ui.chipIcon.classList.toggle('fa-sync-alt', !!P); ui.chipIcon.classList.toggle('fa-crosshairs', !P); }
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
@@ -5886,12 +5907,18 @@
         if (act.hidden) act.hidden = false;
         const top = navRowTop(sel, sel) + NAV_ROW_H - y;
         if (act.navTop !== top) { act.navTop = top; act.style.transform = `translateY(${top}px)`; }
-        const w = `${ui.bodiesTree.clientWidth}px`;
-        if (act.style.width !== w) act.style.width = w;
+        const cw = ui.bodiesTree.clientWidth, w = `${cw}px`;
+        if (act.style.width !== w) { act.style.width = w; act.classList.toggle('is-tight', cw < 300); }
         setAttr(act, 'aria-label', b.name);
-        const view = act.querySelector('[data-act="view"]'), del = act.querySelector('[data-act="delete"]');
-        setAttr(view, 'aria-pressed', frameId === b.id ? 'true' : 'false');
-        view.title = frameId === b.id ? 'Go back to the centre-of-mass view (double-click)' : 'View the motion from it (double-click)';
+        const view = act.querySelector('[data-act="view"]'), del = act.querySelector('[data-act="delete"]'), rot = act.querySelector('[data-act="rotate"]');
+        const fromIt = frameId === b.id && !turn.on;
+        setAttr(view, 'aria-pressed', fromIt ? 'true' : 'false');
+        view.title = fromIt ? 'Go back to the centre-of-mass view (double-click)' : 'View the motion from it (double-click)';
+        const rotating = turnUses(b) && !!turnPair();
+        setAttr(rot, 'aria-pressed', rotating ? 'true' : 'false');
+        rot.title = turnTitle(b);
+        const noPair = !rotating && !turnPartner(b);
+        if (rot.disabled !== noPair) rot.disabled = noPair;
         if (del.disabled !== bodies.length < 2) del.disabled = bodies.length < 2;
     }
 
@@ -6276,8 +6303,11 @@
         if (!b) return;
         if (act === 'zoom') zoomChosen();
         else if (act === 'view') {
-            setFrame(frameId === b.id ? null : b.id);
+            setFrame(frameId === b.id && !turn.on ? null : b.id);
             announce(frameId === b.id ? `Viewing from ${theName(b)}` : 'Viewing from the centre of mass');
+        } else if (act === 'rotate') {
+            toggleTurning(b);
+            announce(turn.on ? `Rotating with ${theName(b)}` : 'Viewing from the centre of mass');
         } else if (act === 'edit') navEdit(btn);
         else if (act === 'delete') deleteChosen();
         navRender(false);
@@ -9882,10 +9912,17 @@
         const typing = document.activeElement === ui.popName;
         if (ui.popDot) ui.popDot.style.background = b.color;
         if (!typing && ui.popName.value !== b.name) ui.popName.value = b.name;
-        const locked = frameId === b.id;
+        const locked = frameId === b.id && !turn.on;
         ui.popLock.setAttribute('aria-pressed', locked ? 'true' : 'false');
         setText(ui.popLockText, locked ? 'Viewing from here' : 'View from here');
         ui.popLock.title = locked ? 'Go back to the centre-of-mass view' : `Lock the view on ${b.name}: everything is shown relative to it`;
+        if (ui.popTurn) {
+            const rotating = turnUses(b) && !!turnPair();
+            ui.popTurn.setAttribute('aria-pressed', rotating ? 'true' : 'false');
+            setText(ui.popTurnText, rotating ? 'Rotating with it' : 'Rotate with it');
+            ui.popTurn.title = turnTitle(b);
+            ui.popTurn.disabled = !rotating && !turnPartner(b);
+        }
         const recent = now - popLastInput < 600;
         if (!recent || force) {
             ui.popMass.value = String(Math.log10(b.m / MEARTH));
@@ -9952,8 +9989,9 @@
         ui.popClose.addEventListener('click', closePopover);
         ui.popLock.addEventListener('click', () => {
             if (!popBody) return;
-            setFrame(frameId === popBody.id ? null : popBody.id);
+            setFrame(frameId === popBody.id && !turn.on ? null : popBody.id);
         });
+        if (ui.popTurn) ui.popTurn.addEventListener('click', () => { if (popBody) toggleTurning(popBody); });
         ui.popCircular.addEventListener('click', () => {
             const b = popBody;
             if (!b || !b.primary) return;
@@ -13640,7 +13678,7 @@
         const on = [[ui.k1, '1st'], [ui.k2, '2nd'], [ui.k3, '3rd']].filter((k) => k[0] && k[0].checked).map((k) => k[1]);
         setText(ui.foldKepler, on.join(', '));
         const opt = ui.frame && ui.frame.options[ui.frame.selectedIndex];
-        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '') : '');
+        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '').replace('Rotating with ', '') : '');
     }
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once

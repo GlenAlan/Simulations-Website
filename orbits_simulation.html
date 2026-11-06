@@ -223,9 +223,9 @@
 											</label>
 										</div>
 										<details class="sim-controls-more orb-fold" id="frameGroup">
-											<summary><span id="frameLabel">View from</span><span class="orb-fold-state" id="foldFrame"></span></summary>
+											<summary><span id="frameLabel">View from or rotate</span><span class="orb-fold-state" id="foldFrame"></span></summary>
 											<div class="sim-control-group">
-												<select id="frameSelect" aria-labelledby="frameLabel" aria-describedby="turnNote" title="Watch the motion from any body, or turn with one as it orbits">
+												<select id="frameSelect" aria-labelledby="frameLabel" aria-describedby="turnNote" title="Watch the motion from any body, or turn the view with one as it orbits">
 													<option value="com" selected>Centre of mass (no body)</option>
 												</select>
 												<p class="orb-note" id="turnNote" aria-live="polite" hidden></p>
@@ -261,8 +261,9 @@
 													<div class="orb-bodies-sizer" id="bodiesSizer" role="none"></div>
 												</div>
 												<div class="orb-bodies-actions" id="bodiesActions" role="group" aria-label="Chosen body" hidden>
-													<button type="button" data-act="zoom" title="Zoom to its orbit (Z)"><span class="icon solid fa-search-plus" aria-hidden="true"></span>Zoom</button>
+													<button type="button" data-act="zoom" aria-label="Zoom to its orbit" title="Zoom to its orbit (Z)"><span class="icon solid fa-search-plus" aria-hidden="true"></span><span class="orb-act-word">Zoom</span></button>
 													<button type="button" data-act="view" aria-pressed="false" title="View the motion from it (double-click)"><span class="icon solid fa-crosshairs" aria-hidden="true"></span>View from</button>
+													<button type="button" data-act="rotate" aria-pressed="false"><span class="icon solid fa-sync-alt" aria-hidden="true"></span>Rotate</button>
 													<button type="button" data-act="edit" aria-haspopup="dialog" title="Its mass, colour, velocity and orbit (Enter)"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Edit</button>
 													<button type="button" data-act="delete" aria-label="Delete" title="Delete this body (Delete)"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
 												</div>
@@ -338,6 +339,7 @@
 												</div>
 												<div class="orb-pop-actions">
 													<button type="button" id="popLock" aria-pressed="false"><span class="icon solid fa-crosshairs" aria-hidden="true"></span><span id="popLockText">View from here</span></button>
+													<button type="button" id="popTurn" aria-pressed="false"><span class="icon solid fa-sync-alt" aria-hidden="true"></span><span id="popTurnText">Rotate with it</span></button>
 													<button type="button" id="popCircular" title="Give it the speed for a circular orbit"><span class="icon fa-circle" aria-hidden="true"></span>Circular</button>
 														<button type="button" id="popZoom" class="orb-pop-zoom" title="Zoom to its orbit (Z)" aria-label="Zoom to its orbit"><span class="icon solid fa-search-plus" aria-hidden="true"></span></button>
 													<button type="button" id="popDelete" class="orb-pop-delete" title="Delete this body" aria-label="Delete this body"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
@@ -605,7 +607,8 @@
 											<ul>
 												<li><strong>Aim a velocity:</strong> drag the tip of a teal arrow (time waits while you do). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go. Shift gives fine control; on a touch screen, hold the tip still for a moment first.</li>
 												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, or a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
-												<li><strong>View from a body:</strong> double-click or double-tap it. <em>Rotating</em> views are in the settings, under <em>View from</em>.</li>
+												<li><strong>View from a body:</strong> double-click or double-tap it.</li>
+												<li><strong>Rotate with a body:</strong> press <em>Rotate with it</em> in its menu. The view turns with the body and whatever it orbits, so both stand still. Press the chip at the top of the canvas to stop. Every body that orbits another is also in the settings, under <em>View from or rotate</em>.</li>
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>
 												<li><strong>Throw a body:</strong> in <em>More options</em> choose <em>Throw it</em>, then flick a body as you let go.</li>
 												<li><strong>Try again:</strong> <span class="icon solid fa-undo"></span> Undo takes back a whole drag or slider sweep, even Restart or a change of scene. <span class="icon solid fa-history"></span> Run again replays from your last change, so you can tweak, watch and try again.</li>
@@ -623,7 +626,7 @@
 												<li>Set the Solar System's start date to your birthday and see where the planets were.</li>
 												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>
 												<li>In "Slingshot", turn on Pull lines as the probe passes Jupiter: Jupiter's pull and the Sun's add up, tip to tail. Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
-												<li>In "Jupiter's Trojans and Hildas", set View from to "Rotating with Jupiter and the Sun": the Trojans swing slowly round L4 and L5, and the Hildas' triangle stands still.</li>
+												<li>In "Jupiter's Trojans and Hildas", open Jupiter's menu and press Rotate with it: the Trojans swing slowly round L4 and L5, and the Hildas' triangle stands still.</li>
 												<li>In "Three stars: chaos", nudge one star a hair: the dance ends differently. Once a star is flung out, run it backwards: rounding errors grow until the stars miss their true past.</li>
 												<li>In the mission "Escape the Sun", burn at the far end of your orbit, then Undo and burn at the closest point: the same push does far more when you're moving fast.</li>
 												<li>Open "Mercury's orbit turns" and speed it up: the card measures the 43&Prime; a century by which relativity turns Mercury's orbit.</li>
@@ -656,7 +659,7 @@
 
 											<h4>Gravity wells and rotating views</h4>
 											<p><strong>Gravity well</strong> (or W) maps each body's well: darker is deeper, and each line joins points at the same depth, like the contour lines of a map of hills. Where the lines crowd together, the slope is steep and the pull is strong.</p>
-											<p>In <strong>View from</strong>, a <strong>rotating</strong> view turns with a body and the body it orbits, so both stand still. Velocity arrows then show motion as seen in that turning view, and the well includes the outward push you feel on a roundabout. For an elliptical orbit the view keeps the pair on one line, so the body slides in and out along it.</p>
+											<p>A <strong>rotating</strong> view (<em>Rotate with it</em>, in a body's menu) turns with a body and the body it orbits, so both stand still. Velocity arrows then show motion as seen in that turning view, and the well includes the outward push you feel on a roundabout. For an elliptical orbit the view keeps the pair on one line, so the body slides in and out along it.</p>
 											<p>The well gains hilltops 60&deg; ahead of and behind the body, and passes on the line through the pair: the five <strong>Lagrange points</strong> (under <em>More options</em>; hover over or tap one to read about it), where a small body can keep pace with the pair. Surprisingly, the hilltops L4 and L5 are the stable ones: a body that starts to roll off is steered round by the turning (the Coriolis effect), which is why Jupiter's Trojan asteroids gather there.</p>
 										</div>
 									</details>
