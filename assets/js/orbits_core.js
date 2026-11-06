@@ -2587,7 +2587,7 @@
     // is little. So mass, momentum and angular momentum are all kept exactly, and the energy lost (which goes
     // to heat: colour and glow) is exactly the kinetic energy they lose. It is kept in the books, under GAS_BOOK.
     // In the scene (a star on a bound orbit round a 1,000 solar mass hole), the gas has a mean eccentricity of 0.25 in
-    // four orbits (9 days), round the circularisation radius a (1 - e^2) = 0.11 AU, half of it fallen in by 10 orbits.
+    // four orbits (9 days), round the circularisation radius a (1 - e^2) = 0.11 AU, half of it fallen in by 8 orbits.
     // Simulations of real gas find a disc in several returns of the stream too, though theirs keeps a good part of its
     // eccentricity for longer (Shiokawa et al. 2015). It is the real rate: nothing here is sped up. It is a cheaper
     // model than real gas, though: no pressure force, and how fast a stream rounds off rests on the cells' size. A
@@ -2616,9 +2616,10 @@
     const GRM = new Float64Array(GAS_NR), GRI = new Float64Array(GAS_NR), GRT = new Float64Array(GAS_NR + 1);
     let GCELL = new Int32Array(0), GRVR = new Float64Array(0), GRD = new Float64Array(0), GRR = new Float64Array(0);
     let gasNoted = false, gasPeak = 0, gasE = 1;
-    // Gas that reaches where an orbit takes less than a trail sample has fallen in, as far as anyone can see: the
-    // viscous time there is under a hundredth of the disc's, and following it, step by step, is no use
-    const gasFall = (mH) => Math.cbrt((G * mH * sampleDt * sampleDt) / (TAU * TAU));
+    // Gas that reaches where an orbit takes under four trail samples (0.019 AU in the scene) has fallen in, as far as
+    // anyone can see: the viscous time there is under a tenth of the disc's, and following it at one step
+    // a sample would only cost the energy book its level
+    const gasFall = (mH) => Math.cbrt((G * mH * 16 * sampleDt * sampleDt) / (TAU * TAU));
     // A body mostly of gas (from Uranus up), tearing round a compact body, where the disc would show: its orbits there
     // must take a good many trail samples. How many pieces it makes (none: the usual few).
     function gasTear(L, H) {
@@ -2726,6 +2727,7 @@
     function gasHost(g, gd, i1) {
         const H = g.h, list = g.pairs, n = list.length, gm = G * H.m;
         gasM = 0; gasEM = 0;
+        if (H.stamp !== mainStamp) return 0;
         if (GCELL.length < n) {
             const c = Math.max(n, 2 * GCELL.length, 256);
             GCELL = new Int32Array(c); GRVR = new Float64Array(c); GRD = new Float64Array(c); GRR = new Float64Array(c);
@@ -2738,7 +2740,7 @@
         for (let i = 0; i < n; i++) {
             const f = list[i].a;
             GCELL[i] = -1;
-            if (!(f.grp < 0)) continue;
+            if (!(f.grp < 0) || f.stamp !== mainStamp) continue;   // (one that has just fallen in is still on the list)
             any = true;
             const rx = f.x - H.x, ry = f.y - H.y, vx = f.vx - H.vx, vy = f.vy - H.vy;
             const r = hyp(rx, ry), ir = Math.floor(Math.log(r / r0) / GAS_H + shR);
