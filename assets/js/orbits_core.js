@@ -7841,24 +7841,56 @@
 
     const named = (l, t, r, b, zones) => zones.some((z) => l < z[2] && r > z[0] && t < z[3] && b > z[1]);
 
-    // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
+    // Does this body have a pointer at the edge?
+    function hasPointer(b) {
+        if (b.grp || (b.minor && !isChosen(b)) || moonUnmarked(b)) return false;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        return !(x > visL - r && x < visR + r && y > -r && y < viewH + r);
+    }
+
+    // Where this frame's pointers are, for the mouse and a tap: a pointer doesn't say whose it is unless it's the chosen
+    // or the heaviest body's, so hovering names it, and a tap or click chooses its body, which names it too.
+    const offMarks = { n: 0, id: [], x: [], y: [] };
+    function offMarkAt(x, y, tol) {
+        let best = null, bestD = tol;
+        for (let i = 0; i < offMarks.n; i++) {
+            const d = hyp(offMarks.x[i] - x, offMarks.y[i] - y);
+            if (d < bestD) { bestD = d; best = offMarks.id[i]; }
+        }
+        return best;
+    }
+    function pickOffMark(d) {
+        const id = offMarkAt(d.x0, d.y0, d.type === 'mouse' ? 10 : 22);
+        if (id === null) return false;
+        if (popBody && popBody.id !== id) closePopover();
+        selectBody(id);
+        return true;
+    }
+
+    // Bodies outside the view: a small pointer at the edge of the canvas, in their direction. Only the
+    // chosen body's and the heaviest of them are named, or the names would ring the view (see offMarks for the rest).
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         const cx = (visL + visR) / 2, cy = viewH / 2;
         const inset = 12;
-        let zones = null;
+        let zones = null, top = null;
+        for (const b of bodies) if (hasPointer(b) && (!top || b.m > top.m)) top = b;
+        offMarks.n = 0;
+        if (!top) return;
         for (const b of bodies) {
-            const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (b.minor && !isChosen(b)) || moonUnmarked(b) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
-            const dx = x - cx, dy = y - cy;
+            if (!hasPointer(b)) continue;
+            const dx = sx(b.dx) - cx, dy = sy(b.dy) - cy;
             const k = Math.min(((visR - visL) / 2 - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
-            // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
+            // (along a side, the name is a line tall; along the top or bottom, as wide as it is. A name shown only
+            // under the mouse keeps no room: the pointer doesn't move for it)
             ctx.font = font(fs);
-            const nw = settings.labels ? nameWidth(b.name, fs) : 0;
-            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : nw / 2 + 6;
+            const say = settings.labels && (b === top || isChosen(b)), hover = b.id === hoverName;
+            const nw = say || hover ? nameWidth(b.name, fs) : 0;
+            const h = Math.abs(ux) > 0.5 || !say ? fs / 2 + 8 : nw / 2 + 6;
             const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
+            offMarks.id[offMarks.n] = b.id; offMarks.x[offMarks.n] = ex; offMarks.y[offMarks.n] = ey; offMarks.n++;
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
             ctx.beginPath();
@@ -7869,18 +7901,20 @@
             ctx.fill();
             ctx.globalAlpha = 1;
             let half = 10;
-            if (settings.labels && clear) {
+            if ((say && clear) || hover) {
                 // (where its name would go: left out if another pointer's is there)
                 const tx = ex - ux * 12, ty = ey - uy * 12;
                 const nl = ux > 0.5 ? tx - nw : ux < -0.5 ? tx : tx - nw / 2, nt = uy > 0.5 ? ty - fs : uy < -0.5 ? ty : ty - fs / 2;
-                if (!named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
+                if (hover || !named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
                     ctx.font = font(fs);
                     ctx.fillStyle = C.subtle;
                     ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
                     ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
                     ctx.fillText(b.name, tx, ty);
-                    half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
-                    zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                    if (say) {
+                        half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                        zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                    }
                 }
             }
             // (the next pointer along this edge keeps clear of this one and its name)
@@ -11653,6 +11687,7 @@
     const NEAR_MOUSE = 24, NEAR_TOUCH = 30;
     const HAND_LAG_S = 0.12;   // by the time a hand has pressed, a moving target has moved on this long
     let hoverAim = null;   // id of the body whose arrow tip the mouse is over
+    let hoverName = null;   // id of the body named because the mouse is over it, or its pointer at the edge
 
     function canvasPoint(e) {
         const r = canvas.getBoundingClientRect();
@@ -12750,6 +12785,8 @@
                 if (popBody && popBody !== b) closePopover();
                 selectBody(b.id);
                 if (dbl) setFrame(frameId === b.id ? null : b.id);
+            } else if (pickOffMark(d)) {
+                lastTap.quick = false;   // (a pointer is chosen, not viewed from)
             } else if (dbl) {
                 closePopover();
                 if (frameId !== null) setFrame(null);
@@ -12761,8 +12798,9 @@
 
     // The cursor shows what a press would do; an arrow tip under the mouse is also drawn highlighted.
     function updateCursor(x, y) {
-        canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim');
+        canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim', 'orb-can-pick');
         hoverAim = null;
+        hoverName = null;
         if (drags.size) {
             const d = [...drags.values()][0];
             canvas.classList.add(d.mode === 'aim' ? 'orb-can-aim' : 'orb-grabbing');
@@ -12772,7 +12810,9 @@
         let tipOf = onHandle(x, y, GRAB_MOUSE);
         if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
         if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
-        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
+        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; return; }
+        hoverName = offMarkAt(x, y, 10);
+        if (hoverName !== null) canvas.classList.add('orb-can-pick');
     }
 
     function onWheel(e) {
@@ -16827,7 +16867,7 @@
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
         canvas.addEventListener('pointerleave', (e) => {
-            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim'); hoverAim = null; }
+            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim', 'orb-can-pick'); hoverAim = null; hoverName = null; }
         });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('wheel', onWheel, { passive: false });
