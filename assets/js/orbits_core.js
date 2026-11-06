@@ -2293,18 +2293,37 @@
             hs = tideHeavy;
         }
         for (const L of bodies) {
-            if (L.grp || L.held || isCompact(L) || L.m < 1e-17) continue;   // not probes: they are held together by their structure
+            if (L.grp || L.held || L.kind === 'neutron' || L.kind === 'blackhole' || L.m < 1e-17) continue;   // not probes: they are held together by their structure
             for (const H of hs) {
                 if (H === L || H.held || H.m < 5 * L.m || H.grp < 0) continue;   // (gas is too thin to tear anything)
+                if (L.kind === 'whitedwarf' && H.kind !== 'neutron' && H.kind !== 'blackhole') continue;   // (only something far denser tears a white dwarf)
                 const dx = L.x - H.x, dy = L.y - H.y;
                 // (going round H it may have passed closer between the ends of the step: going forwards, as nothing
                 // that passed like that stayed whole, running back retraces it)
                 const d = timeDir > 0 && L.kep && L.kep.hosted && L.kep.b === H ? Math.min(Math.hypot(dx, dy), L.kep.closest) : Math.hypot(dx, dy);
                 const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
-                if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
+                if (d < roche && roche > (H.R + L.R) / AU_KM && tideWins(L, H) && disrupt(L, H)) return true;
             }
         }
         return false;
+    }
+
+    // Inside the limit, does the tide have the time to tear it? The limit is for a body that stays there. One on its way
+    // past or into H has only the pass. A body going to strike H's surface hits it whole: from the limit to the surface
+    // takes under two of its own free-fall times, at any mass (so an asteroid or a moon makes a crater, not a stream of
+    // beads). Only a compact H has no surface to reach first. A body passing faster than H's escape speed is torn only if
+    // the pass's impulse, 2 G M R / (b^2 v) on its edge with b no closer than R, tops its own escape speed (Spitzer 1958;
+    // that puts the distance near R (M / m)^(1/3), as in Sridhar & Tremaine 1992, Icarus 95, 86, and Guillochon &
+    // Ramirez-Ruiz 2013, ApJ 767, 25). So a star at a tenth of the speed of light goes by a black hole whole.
+    function tideWins(L, H) {
+        const rx = L.x - H.x, ry = L.y - H.y, vx = L.vx - H.vx, vy = L.vy - H.vy;
+        const gm = G * (L.m + H.m), r = hyp(rx, ry), v2 = vx * vx + vy * vy, h = rx * vy - ry * vx;
+        const beta = 2 * gm / r - v2, p = (h * h) / gm;
+        const closest = p / (1 + Math.sqrt(Math.max(0, 1 - (p * beta) / gm)));
+        if (!isCompact(H) && timeDir * (rx * vx + ry * vy) < 0 && closest < (H.R + L.R) / AU_KM) return false;
+        if (beta >= 0) return true;
+        const R = L.R / AU_KM, b = Math.max(closest, R), kick = (2 * G * H.m * R) / (b * b * Math.sqrt(2 * gm / b - beta));
+        return kick * kick >= (2 * G * L.m) / R;
     }
 
     // How a body breaks: ragged, not a row of equal beads. The pieces' masses, the gaps along the line to
