@@ -12645,7 +12645,7 @@
                 return { text: `To stay from here: brake ${f1(need)} km/s`, ok: x.nu < 20 && need <= x.left };
             }
             default: {
-                const reach = g.type === 'reach' ? g.zone : g.D, p = mission.pred;
+                const reach = goalReach(g), p = mission.pred;
                 if (!x.burns) {
                     const where = `${x.tname} ${Math.round(Math.abs(x.phase))}° ${x.phase >= 0 ? 'ahead' : 'behind'}`;
                     return d.lead ? { text: `${where}, launch at ${Math.round(d.lead)}°`, ok: Math.abs(x.phase - d.lead) < 3 } : { text: where, ok: false };
@@ -12932,7 +12932,7 @@
     // Not when it is there already: the burn comes next.
     function skipTarget(x) {
         if (!x || missionIsOver()) return null;
-        const d = x.d, g = d.goal, p = mission.pred;
+        const d = x.d, g = d.goal;
         let s = null;
         if (g.type === 'orbit') {
             const apo = g.r > 1;
@@ -12945,7 +12945,7 @@
             if (d.lead && x.phase > d.lead) s = { kind: 'window', word: 'launch window', dt: (x.phase - d.lead) * DEG / (x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3))) };
         } else if (onCourse(x) && x.td > goalReach(g)) {
             // (once the tick is earned; until then the burn isn't finished)
-            s = { kind: 'meet', word: g.l4 ? 'L4' : x.tname === 'Station' ? 'the station' : x.tname, dt: p.t - simTime };
+            s = { kind: 'meet', word: g.l4 ? 'L4' : x.tname === 'Station' ? 'the station' : x.tname, dt: mission.pred.t - simTime };
         }
         return s && s.dt > 0 && s.dt < d.limit - simTime ? s : null;
     }
