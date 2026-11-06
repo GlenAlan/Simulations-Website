@@ -2451,6 +2451,7 @@
         const now = full ? pairEnergy(L, H) : 0.5 * mu * ((L.vx - H.vx) * (L.vx - H.vx) + (L.vy - H.vy) * (L.vy - H.vy));
         groupEnergy.set(TIDE_BOOK, (groupEnergy.get(TIDE_BOOK) || 0) + now - was);
         tides.total++;
+        L.track = H.track = null;   // (a new orbit: its period and the way it turns are measured afresh)
         // (said once a scene, for a pass that matters)
         if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
             tides.told = settings.scene;
