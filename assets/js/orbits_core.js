@@ -15434,7 +15434,7 @@
             + '<p class="orb-mc-goal" id="mcGoal"></p><p class="orb-mc-status" id="mcStatus"></p>'
             + '<div class="orb-mc-fuel" id="mcFuel" role="meter" aria-label="Fuel left" aria-valuemin="0"><div class="orb-mc-row"><strong>Fuel</strong><span id="mcFuelNum"></span></div>'
             + '<div class="orb-mc-bar"><div class="orb-mc-fill" id="mcFill"></div><div class="orb-mc-tick" id="mcTick" title="Keep your fuel above this mark for three stars"></div></div></div>'
-            + '<div class="orb-mc-row orb-mc-left-row"><strong>Time</strong><span id="mcLeft"></span><button type="button" class="orb-mc-hints" id="mcHints" aria-pressed="false" title="Show what to do next and where to burn">Hints off</button></div>'
+            + '<div class="orb-mc-row orb-mc-left-row"><span id="mcLeft"></span><button type="button" class="orb-mc-hints" id="mcHints" aria-pressed="false" title="Show what to do next and where to burn">Hints off</button></div>'
             + '<div class="orb-mc-row orb-mc-pad-head"><strong id="mcPadLabel">Engine: hold to fire</strong><button type="button" class="orb-mc-fine" id="mcFine" aria-pressed="false" title="Much smaller burns, to fine-tune (or hold Shift)">Fine</button></div>'
             + `<div class="orb-mc-pad" role="group" aria-labelledby="mcPadLabel">${pad.map(([k, w, i, key]) => `<button type="button" class="orb-mc-burn orb-mc-${k}" data-kind="${k}" title="Burn ${w.toLowerCase()} (${key})">${toolIcon(i)}${w}</button>`).join('')}</div>`
             + `<button type="button" class="orb-mc-skip" id="mcSkip" hidden>${toolIcon('fast-forward')}<span id="mcSkipText"></span></button>`

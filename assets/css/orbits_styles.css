@@ -2184,6 +2184,15 @@ html:not(.dark-mode) .orbits-sim {
     justify-content: flex-start;
 }
 
+/* (one line, whatever it says, so the row never grows and nothing under it moves) */
+#mcLeft {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
 .orb-console .orb-mc-hints {
     margin-left: auto;
 }
@@ -2610,10 +2619,6 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 
     .orb-mc-left-row {
         display: contents;
-    }
-
-    .orb-mc-left-row strong {
-        display: none;
     }
 
     #mcLeft {
