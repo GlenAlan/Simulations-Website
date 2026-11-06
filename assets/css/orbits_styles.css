@@ -4292,3 +4292,16 @@ dialog.orb-help::backdrop {
         }
     }
 }
+
+/* ---------- A switch that belongs to the one above it (shows only while that is on) ---------- */
+.sim-checkbox-group input[type="checkbox"] + label.orb-subswitch {
+    margin-left: 0.55em;
+    padding-left: 1.5em;
+    font-size: 0.9em;
+    border-left: 2px solid var(--color-border);
+    border-radius: 0;
+}
+
+.sim-checkbox-group input[type="checkbox"][hidden] + label.orb-subswitch {
+    display: none;
+}

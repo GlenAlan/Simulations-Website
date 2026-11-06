@@ -7571,9 +7571,10 @@
     // ------------------------------------------------------------------
     // Mutual gravity made visible. Every body pulls on every other: the chosen body's menu has a
     // Gravity tab listing the strongest pulls on it (the info bar's Gravity tooltip names them too);
-    // pull lines split its force arrow into one arrow per body pulling on it, joined tip to tail so
-    // that they add up to the force arrow (vector addition), with a faint dashed line to each of those
-    // bodies; its Hill sphere and Roche limit can be drawn; and a small legend gives the arrows' scales.
+    // pull lines draw one arrow per body pulling on it, each on the way to its puller, with a faint dashed
+    // line to each of those bodies, and can be joined tip to tail so that they add up to the force arrow
+    // (vector addition); its Hill sphere and Roche limit can be drawn; and a small legend gives the
+    // arrows' scales.
     //   Each pull is Newton's F = G m1 m2 / r^2 along the line between the pair (softened between pieces
     //   of one torn-apart body, as in the physics). A pull's share of the net force is its part along
     //   the net force, (F_i . F) / |F|^2: the shares add up to exactly 100%, and one that pulls partly
@@ -7603,7 +7604,7 @@
     const PULL_EVERY_MS = 100;            // the strongest pullers are picked again ten times a second
     const HILL_MAX = 0.1;                 // Hill spheres only for bodies under this fraction of their primary's mass
     const LIMITS_EVERY_MS = 100;
-    Object.assign(settings, { pulls: false, limits: false });
+    Object.assign(settings, { pulls: false, pullSum: false, limits: false });
     const pulls = {
         bid: null, list: null, n: -1, t: -Infinity,   // whose pulls, the bodies array and its length then, and when
         k: 0, rest: 0,                                // how many are named, and how many others there are
@@ -7620,7 +7621,7 @@
     // AU / yr^2), and what chainLink needs (the body's centre, line width, font size, names placed)
     const chainOut = {
         drawn: false, x0: 0, y0: 0, ex: 0, ey: 0, tipX: 0, tipY: 0, k: 0, squeezed: false, links: 0,
-        named: 0, bx: 0, by: 0, w: 1, fs: 11
+        named: 0, bx: 0, by: 0, r: 0, w: 1, fs: 11
     };
     const chainLabels = [{ x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }];
     const lim = {
@@ -7812,8 +7813,9 @@
         ctx.globalAlpha = 1;
     }
 
-    // Each strongest pull as an arrow in its puller's colour, then the others in grey, tip to tail from
-    // the base of the force arrow: they end at its tip. Long enough arrows are named.
+    // Each strongest pull as an arrow in its puller's colour, then the others in grey. Long enough arrows
+    // are named. Apart, each leaves the body towards its puller. Added up (settings.pullSum), they go tip
+    // to tail from the base of the force arrow, and end at its tip.
     function drawPullChain(C, b) {
         chainOut.drawn = false;
         if (bodies.length < 2) return;
@@ -7847,21 +7849,22 @@
         // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
         // drawn at a scale of its own (then dashed and thin)
         const ex = x0 + (tc * b.fx - ts * b.fy) * k, ey = y0 - (ts * b.fx + tc * b.fy) * k;
-        if (squeezed) {
+        if (settings.pullSum && squeezed) {
             ctx.setLineDash([4, 3]);
             arrow(x0, y0, ex, ey, C.force, w);
             ctx.setLineDash([]);
-        } else if (!settings.forces) {
+        } else if (settings.pullSum && !settings.forces) {
             arrow(x0, y0, ex, ey, C.force, wNet);
         }
         const c = chainOut;
         c.x0 = x0; c.y0 = y0; c.ex = x0; c.ey = y0; c.links = 0; c.named = 0;
-        c.bx = x; c.by = y; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
+        c.bx = x; c.by = y; c.r = r; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         ctx.font = font(c.fs);
         for (let i = 0; i < P.k; i++) {
             chainLink(C, (tc * P.cx[i] - ts * P.cy[i]) * k, -(ts * P.cx[i] + tc * P.cy[i]) * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
         }
-        chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
+        // (with no other bodies, what is left over only closes the chain: relativity's part, say)
+        if (settings.pullSum || P.rest) chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
         c.drawn = true; c.tipX = x0 + ux * L; c.tipY = y0 + uy * L; c.k = k; c.squeezed = squeezed;
     }
 
@@ -7870,6 +7873,8 @@
     function chainLink(C, lx, ly, color, label, q) {
         const c = chainOut;
         const len = Math.hypot(lx, ly);
+        // (apart, each starts afresh at the edge of the body)
+        if (!settings.pullSum && len > 0) { c.ex = c.bx + (lx / len) * c.r; c.ey = c.by + (ly / len) * c.r; }
         const px = c.ex, py = c.ey;
         c.ex += lx; c.ey += ly;
         if (len < 2) return;
@@ -8142,6 +8147,7 @@
     // ---- Switching them on and off: the settings, the menu's buttons and G ----
     function syncGravityControls() {
         if (ui.pullsToggle) ui.pullsToggle.checked = settings.pulls;
+        if (ui.pullSumToggle) { ui.pullSumToggle.checked = settings.pullSum; ui.pullSumToggle.hidden = !settings.pulls; }
         if (ui.limitsToggle) ui.limitsToggle.checked = settings.limits;
         if (ui.popPullLines) ui.popPullLines.setAttribute('aria-pressed', settings.pulls ? 'true' : 'false');
         if (ui.popPullLimits) ui.popPullLimits.setAttribute('aria-pressed', settings.limits ? 'true' : 'false');
@@ -8156,7 +8162,19 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
-            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}, joined tip to tail.`;
+            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}${settings.pullSum ? ', joined tip to tail' : ''}.`;
+        }, { ms: 9000, tag: 'pulls' });
+    }
+
+    // Tip to tail, or apart (it shows only while pull lines are on)
+    function setPullSum(on) {
+        settings.pullSum = !!on;
+        syncGravityControls();
+        if (!settings.pullSum) { clearHint('note', 'pulls'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!b) return '<strong>Added up:</strong> choose a body to see its pulls joined tip to tail.';
+            return `<strong>Added up:</strong> the pulls on ${escapeHtml(theName(b))}, tip to tail, make its force arrow.`;
         }, { ms: 9000, tag: 'pulls' });
     }
 
@@ -8185,13 +8203,14 @@
 
     function bindGravity() {
         Object.assign(ui, {
-            pullsToggle: byId('pullsToggle'), limitsToggle: byId('limitsToggle'),
+            pullsToggle: byId('pullsToggle'), pullSumToggle: byId('pullSumToggle'), limitsToggle: byId('limitsToggle'),
             popPullHead: byId('popPullHead'), popPullRows: byId('popPullRows'), popPullNet: byId('popPullNet'),
             popPullNote: byId('popPullNote'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
         });
         TAB_OF.popTabPull = 'pull';
         buildPullRows();
         if (ui.pullsToggle) ui.pullsToggle.addEventListener('change', () => setPullLines(ui.pullsToggle.checked));
+        if (ui.pullSumToggle) ui.pullSumToggle.addEventListener('change', () => setPullSum(ui.pullSumToggle.checked));
         if (ui.limitsToggle) ui.limitsToggle.addEventListener('change', () => setLimits(ui.limitsToggle.checked));
         if (ui.popPullLines) ui.popPullLines.addEventListener('click', () => setPullLines(!settings.pulls));
         if (ui.popPullLimits) ui.popPullLimits.addEventListener('click', () => setLimits(!settings.limits));
@@ -12522,7 +12541,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits, s.pullSum].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -12738,7 +12757,8 @@
             // (sh: what is shown; the last four came later, so an older link reads them as off)
             set: {
                 sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
-                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement,
+                ps: +st.pullSum
             },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
             ro: turnSetup()
@@ -12838,7 +12858,8 @@
             sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true),
                 flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
-            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular'
+            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular',
+            ps: flag(raw.ps, false)
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -12961,7 +12982,7 @@
         check(ui.k1, 'k1', set.k[0]); check(ui.k2, 'k2', set.k[1]); check(ui.k3, 'k3', set.k[2]);
         check(ui.forces, 'forces', set.sh[0]); check(ui.velocities, 'velocities', set.sh[1]); check(ui.labels, 'labels', set.sh[2]);
         // (quietly: the note that the setup opened is what the hint line says)
-        settings.pulls = set.sh[3]; settings.limits = set.sh[6]; lim.bid = null;
+        settings.pulls = set.sh[3]; settings.pullSum = set.ps; settings.limits = set.sh[6]; lim.bid = null;
         syncGravityControls();
         setWell(set.sh[4]);
         setLagrange(set.sh[5]);
@@ -16573,13 +16594,14 @@
             },
             setOverlays(o) {
                 if (o && o.pulls !== undefined) setPullLines(o.pulls);
+                if (o && o.pullSum !== undefined) setPullSum(o.pullSum);
                 if (o && o.limits !== undefined) setLimits(o.limits);
                 return api.overlays();
             },
             // What the overlays and the Gravity tab show now (sizes in km, lengths in CSS px)
             overlays() {
                 const b = bodyById(selectedId);
-                const out = { pulls: settings.pulls, limits: settings.limits, body: b ? b.name : null };
+                const out = { pulls: settings.pulls, pullSum: settings.pullSum, limits: settings.limits, body: b ? b.name : null };
                 if (b && bodies.length > 1) {
                     const P = gatherPulls(b, true);
                     out.net = {

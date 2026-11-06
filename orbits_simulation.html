@@ -209,13 +209,15 @@
 												<input type="checkbox" id="labelsToggle" checked>
 												<label for="labelsToggle">Names</label>
 												<input type="checkbox" id="pullsToggle" aria-describedby="pullsNote">
-												<label for="pullsToggle" title="Split the chosen body's force into one arrow for each body pulling on it (G)"><span class="orb-key orb-key-pulls" aria-hidden="true"></span>Pull lines</label>
+												<label for="pullsToggle" title="One arrow for each body pulling on the chosen body (G)"><span class="orb-key orb-key-pulls" aria-hidden="true"></span>Pull lines</label>
+												<input type="checkbox" id="pullSumToggle" hidden>
+												<label for="pullSumToggle" class="orb-subswitch" title="Join the pulls tip to tail: they end at the tip of the pink force arrow">Add up to the total force</label>
 												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
 												<label for="wellToggle" title="How deep each body's pull reaches, as shading and contour lines (W)">Gravity well</label>
 												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
 												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
-											<p class="orb-note" id="pullsNote" hidden>Pull lines split the chosen body's force into one arrow for each body pulling on it<span class="orb-keys-note"> (G)</span>.</p>
+											<p class="orb-note" id="pullsNote" hidden>Pull lines draw one arrow for each body pulling on the chosen body<span class="orb-keys-note"> (G)</span>.</p>
 											<p class="orb-note" id="wellNote" hidden>Gravity well: how deep each body's pull reaches, as shading and contour lines<span class="orb-keys-note"> (W)</span>.</p>
 											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
@@ -447,7 +449,7 @@
 														<div class="orb-field">
 															<span class="orb-field-label" id="popPullShowLabel">Show</span>
 															<div class="orb-seg" role="group" aria-labelledby="popPullShowLabel">
-																<button type="button" id="popPullLines" aria-pressed="false" title="One arrow for each body's pull, joined tip to tail (G)">Pull lines</button>
+																<button type="button" id="popPullLines" aria-pressed="false" title="One arrow for each body's pull (G)">Pull lines</button>
 																<button type="button" id="popPullLimits" aria-pressed="false" title="How far out its moons can orbit, and how close before tides tear it apart">Hill &amp; Roche</button>
 															</div>
 														</div>
@@ -587,7 +589,7 @@
 											<ul>
 												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun.</li>
 												<li><strong>Teal arrows:</strong> velocities. The key in the bottom corner gives each arrow's scale (on a small screen, while paused or dragging); longer arrows are squeezed to fit.</li>
-												<li><strong>Pull lines</strong> split the chosen body's pink arrow into one arrow for each body pulling on it, joined tip to tail.</li>
+												<li><strong>Pull lines</strong> draw one arrow for each body pulling on the chosen body. Beneath them, <em>Add up to the total force</em> joins the arrows tip to tail, ending at the tip of its pink arrow.</li>
 												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless Realistic physics is on).</li>
 												<li><strong>Cards</strong>, top right, measure what you have switched on. If they would cover too much of the canvas, the lowest shrink, then fold into a "+2 more" line.</li>
 												<li><strong>Flat, in 2D:</strong> everything moves in one plane, as if seen from straight above. Real orbits tilt a few degrees, so in space bodies usually pass above or below one another. The tilt hardly changes an orbit's size, shape or period, and gravity still falls off as 1/<em>r</em><sup>2</sup>. But here nothing can pass over anything else, so close passes and collisions happen more often.</li>
@@ -622,7 +624,7 @@
 												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Download the table and plot <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>: a straight line through the origin.</li>
 												<li>Set the Solar System's start date to your birthday and see where the planets were.</li>
 												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>
-												<li>In "Slingshot", turn on Pull lines as the probe passes Jupiter: Jupiter's pull and the Sun's add up, tip to tail. Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
+												<li>In "Slingshot", turn on Pull lines and <em>Add up to the total force</em> as the probe passes Jupiter: Jupiter's pull and the Sun's add up, tip to tail. Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
 												<li>In "Jupiter's Trojans and Hildas", set View from to "Rotating with Jupiter and the Sun": the Trojans swing slowly round L4 and L5, and the Hildas' triangle stands still.</li>
 												<li>In "Three stars: chaos", nudge one star a hair: the dance ends differently. Once a star is flung out, run it backwards: rounding errors grow until the stars miss their true past.</li>
 												<li>In the mission "Escape the Sun", burn at the far end of your orbit, then Undo and burn at the closest point: the same push does far more when you're moving fast.</li>
