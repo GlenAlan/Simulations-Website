@@ -10305,7 +10305,10 @@
         if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
             setPaused(true);
             setReverse(false, true);
-            pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
+            if (driftedFromStart()) {
+                const again = canRunAgain() ? ' <button type="button" class="orb-hint-btn orb-hint-again">Run again</button>' : '';
+                pastNote(`<strong>Back at time 0, but not where it began:</strong> rounding errors grow in chaos.${again}`, 12000);
+            } else pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
             return;
         }
         const w = past.wall;
@@ -10315,6 +10318,23 @@
             acc = 0;
             pastNote('<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
         }
+    }
+
+    // Rewound to the start of the run: is any body away from where it began, by over 1% of the size of
+    // the system then, or gone? (Chaos does that at a high speed, where each step is far larger.)
+    function driftedFromStart() {
+        const s = hist.rw;
+        if (!s || hist.rwStale || Math.abs(s.t - simTime) > sampleDt) return false;
+        if (s.n !== bodies.length) return true;
+        const num = s.num, at = new Map(bodies.map((b) => [b.id, b]));
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, far = 0;
+        for (let i = 0; i < s.n; i++) {
+            const o = i * SNAP_W, x = num[o + 3], y = num[o + 4], b = at.get(num[o]);
+            if (!b) return true;
+            x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+            far = Math.max(far, Math.hypot(b.x - x, b.y - y));
+        }
+        return far > 0.01 * Math.hypot(x1 - x0, y1 - y0);
     }
 
     // Just before a merge (kind 'merge') or a tidal break-up ('tear'): copy the system, once a step
@@ -11945,6 +11965,8 @@
             zoomChosen();
         } else if (t.closest('.orb-hint-help')) {
             openHelp(false);
+        } else if (t.closest('.orb-hint-again')) {
+            runAgain();
         }
     }
 
