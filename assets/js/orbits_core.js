@@ -2775,12 +2775,13 @@
 
     // The gas: soft glows, added up where it is thick, in colours by how hot it is
     const GAS_COLOURS = ['#ff6a2b', '#ff9a3d', '#ffc964', '#fff0c9', '#d6e6ff'];
+    const GAS_COLOURS_LIGHT = ['#c9713a', '#d9701c', '#e8740a', '#ef5a00', '#d63200'];   // (deeper on a light background, or it hardly shows)
     const GAS_ALPHAS = [0.34, 0.4, 0.46, 0.55, 0.7];
     const gasSprites = [null, null, null, null, null, null, null, null, null, null];
     function gasSprite(k, dark) {
         const j = dark ? k : k + 5;
         if (gasSprites[j]) return gasSprites[j];
-        const color = dark ? GAS_COLOURS[k] : bodyStroke(GAS_COLOURS[k], false), a = GAS_ALPHAS[k];
+        const color = dark ? GAS_COLOURS[k] : GAS_COLOURS_LIGHT[k], a = dark ? GAS_ALPHAS[k] : Math.min(1, 1.3 * GAS_ALPHAS[k]);
         const s = document.createElement('canvas');
         s.width = s.height = 2 * SPRITE_PX;
         const g = s.getContext('2d'), gr = g.createRadialGradient(SPRITE_PX, SPRITE_PX, 0, SPRITE_PX, SPRITE_PX, SPRITE_PX);
