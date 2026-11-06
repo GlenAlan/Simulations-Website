@@ -184,7 +184,7 @@
         },
         ellipse: {
             units: 'au', Tref: 1, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
-            tip: 'With Kepler\'s 2nd law on, the shaded areas stay equal as the planet speeds up.',
+            tip: () => (settings.k2 ? 'The shaded areas stay equal as the planet speeds up.' : 'Turn on <button type="button" class="orb-hint-btn orb-hint-k2" title="Also in Settings, under Kepler\'s laws">Kepler\'s 2nd law</button>: the shaded areas stay equal.'),
             bodies: [{ kind: 'sun' }, { kind: 'earth', name: 'Planet', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }]
         },
         inner: {
@@ -211,7 +211,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.'),
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from">the giant planet</button>: the star circles it.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -310,7 +310,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.'),
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in Settings, under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -13199,6 +13199,13 @@
             openHelp(false);
         } else if (t.closest('.orb-hint-again')) {
             runAgain();
+        } else if (t.closest('.orb-hint-k2')) {
+            if (ui.k2 && !ui.k2.checked) ui.k2.click();
+        } else if (t.closest('.orb-hint-view')) {
+            const b = bodies.find((q) => q.name === 'Giant planet');
+            if (b) setFrame(b.id);
+        } else if (t.closest('.orb-hint-turn')) {
+            startTurning(bodies.find((q) => q.name === 'Jupiter'));
         }
     }
 
@@ -16087,7 +16094,7 @@
         bindCheck(ui.labels, 'labels');
         bindCheck(ui.realistic, 'realistic', () => { forcesDirty = true; pred.key = ''; });
         bindCheck(ui.k1, 'k1');
-        bindCheck(ui.k2, 'k2', () => { k2.bid = null; });
+        bindCheck(ui.k2, 'k2', () => { k2.bid = null; refreshHint(); });   // (a scene's tip that names it follows it)
         bindCheck(ui.k3, 'k3');
         bindCheck(ui.com, 'com');
         bindCheck(ui.preview, 'preview');
