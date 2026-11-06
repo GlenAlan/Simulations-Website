@@ -4387,3 +4387,9 @@ dialog.orb-help::backdrop {
         height: 40px;
     }
 }
+
+/* ---------- Missions: only what a mission can use ----------
+   (the pull on the chosen body can't be changed in a mission: the body's Gravity tab still has it) */
+.orbits-sim.orb-mission-on .orb-force-box {
+    display: none;
+}

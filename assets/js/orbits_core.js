@@ -8004,6 +8004,7 @@
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         const fv = frameVelocity();
         for (const b of bodies) {
+            if (missionHidesTeal(b)) continue;
             if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -11622,7 +11623,7 @@
     // The tip of the chosen body's velocity arrow at (x, y)? (Only when velocities are shown.)
     function onHandle(x, y, tol) {
         const b = bodyById(selectedId);
-        if (!settings.velocities || !b || b.held || bodies.length < 2) return null;
+        if (!settings.velocities || !b || b.held || bodies.length < 2 || missionHidesTeal(b)) return null;
         const h = handlePos(b);
         if (Math.hypot(h.x - x, h.y - y) > tol) return null;
         // the body itself wins inside its disc
@@ -11635,7 +11636,7 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy || missionHidesTeal(b)) continue;
             const tip = velocityTip(b);
             if (tip.len < 14) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
@@ -13385,7 +13386,7 @@
     // ------------------------------------------------------------------
     // Everything but the bodies (s: a snapshot)
     function setupHead(s) {
-        const st = settings;
+        const st = settingsForSetup();
         return {
             v: SETUP_VERSION, sc: s.scene, t: s.t, acc, sel: s.sel, fr: s.frame,
             vw: [s.zoom, s.panX, s.panY],
@@ -13615,6 +13616,7 @@
 
     function applySettings(set) {
         const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        if (mission.home) mission.home.arrows = null;   // (what these set is what leaving a mission now comes back to)
         paceZoom.was = 0;
         setSpeedValue(set.sp);
         check(ui.realistic, 'realistic', set.re);
@@ -14962,6 +14964,7 @@
         gap2: Infinity, gapWas: Infinity,   // the distance to the target squared, this step and the last
         ahead: false,          // the target is short of the launch window (as of the last step)
         home: null,            // what to go back to on leaving (see missionKeepHome)
+        arrowsFor: null,       // the mission whose arrows are set up (see missionArrows)
         burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
         hintShown: '',         // the mission hint last put in the hint line
@@ -15858,6 +15861,7 @@
             syncFrameUi();
             fitBox(def.scene.box, false);
         }
+        missionArrows(def);
         // Every mission starts at the same pace, and the arrow keys are for the engine from now on
         // (not for the scene list, if it was picked there with the mouse)
         missionSpeedRange(true);
@@ -15881,6 +15885,7 @@
         engineStop();
         missionSpeedRange(false);
         if (mission.home) setSpeedValue(mission.home.speed);
+        missionArrowsBack();
         Object.assign(mission, { def: null, status: 'off', pred: null, plan: null, tell: null, aimPaused: false, result: null, home: null });
         hideMissionPanel();
         missionUi(false);
@@ -15901,6 +15906,35 @@
         mission.home = missionByKey(settings.scene) ? { speed: settings.speed } : {
             snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup(), stability: settings.stability, stabAuto: stab.auto
         };
+    }
+
+    // The arrows in a mission show only what the player can change. The pull arrows start off (the switch
+    // in the settings brings them back, for this mission and any retry of it) and only the probe has a teal
+    // arrow. The player's own settings wait in mission.home, and aren't what a link made meanwhile says.
+    function showArrows(forces, velocities) {
+        settings.forces = forces;
+        settings.velocities = velocities;
+        if (ui.forces) ui.forces.checked = forces;
+        if (ui.velocities) ui.velocities.checked = velocities;
+    }
+    function missionArrows(def) {
+        if (mission.arrowsFor === def) return;
+        mission.arrowsFor = def;
+        const h = mission.home;
+        if (h && !h.arrows) h.arrows = { forces: settings.forces, velocities: settings.velocities };
+        showArrows(false, true);
+    }
+    function missionArrowsBack() {
+        const a = mission.home && mission.home.arrows;
+        if (a) showArrows(a.forces, a.velocities);
+        mission.arrowsFor = null;
+    }
+    function missionHidesTeal(b) {
+        return mission.def !== null && b.id !== mission.craftId;
+    }
+    function settingsForSetup() {
+        const a = mission.def && mission.home && mission.home.arrows;
+        return a ? Object.assign({}, settings, a) : settings;
     }
 
     // Back to free play: the system as it was, its speed, its view, its way of time, running or paused.
@@ -15964,6 +15998,7 @@
         if (over) setPaused(true);
         if (was !== def) {
             if (!was) { mission.home = { speed: settings.speed }; missionSpeedRange(true); setSpeedValue(1); }
+            missionArrows(def);
             missionUi(true);
             syncEccentricity(true);
         }
