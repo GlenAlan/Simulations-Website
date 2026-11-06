@@ -2170,6 +2170,7 @@
             left -= m;
             const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = L.id;
+            f.heft = heftOf(n * shape.share[i]);
             f.x = L.x + (ux * s - uy * q) * span; f.y = L.y + (uy * s + ux * q) * span;
             f.vx = L.vx; f.vy = L.vy;
             f.px = f.x; f.py = f.y;
@@ -3405,13 +3406,14 @@
     // A torn-apart body's pieces are small, and so are the light bodies of a swarm
     const MINOR_SIZE = 2;
     const bodySize = (b) => (b.grp ? 3.5 * pieceHeft(b) : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
-    // How big a piece of a torn-apart body looks beside the others, by its mass among them (kept, from the
-    // first time it is drawn)
+    // How big a piece of a torn-apart body looks beside the others, by its mass among them (x: its mass over
+    // their average). Set as it breaks; a piece put back from a copy or a link works it out when it is drawn.
+    const heftOf = (x) => clamp(Math.sqrt(x), 0.55, 1.8);
     function pieceHeft(b) {
         if (!b.heft) {
             let M = 0, n = 0;
             for (const q of bodies) if (q.grp === b.grp) { M += q.m; n++; }
-            b.heft = clamp(Math.sqrt((n * b.m) / M), 0.55, 1.8);
+            b.heft = heftOf((n * b.m) / M);
         }
         return b.heft;
     }
