@@ -7693,6 +7693,27 @@
     // "A moon forming" (scene.progress) marks only Earth, the biggest piece and the chosen body: not every moonlet
     // that has grown a little. (primOrder: heaviest first. See moonProgress for the same two.)
     const moonUnmarked = (b) => !!scene.progress && b !== primOrder[0] && b !== primOrder[1] && !isChosen(b);
+    // A knot, zoomed out: a body whose whole orbit round something heavier fits inside about the width of its name.
+    // Its name is left out, and the heavier body's kept. It goes by the far end of the orbit, not where the body is
+    // now, so that a name doesn't blink as an elliptical orbit swings in and out, or as bodies pass each other; and a
+    // body that's only passing, on no orbit round what it's near, isn't in a knot at all. Once in, it takes a wider
+    // orbit to come out (KNOT_OUT), so that the wobble of a body's orbit in a crowd doesn't blink it either.
+    const KNOT_IN = 0.8, KNOT_OUT = 1;
+    const knotted = new Set();   // (body ids)
+    function inKnot(b, w) {
+        const p = b.primary;
+        let knot = false;
+        if (p && b.bound && p.m > b.m) {
+            const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy, mu = G * (b.m + p.m);
+            const E = 0.5 * (vx * vx + vy * vy) - mu / hyp(rx, ry), h = rx * vy - ry * vx;
+            if (E < 0) {
+                const far = (-mu / (2 * E)) * (1 + Math.sqrt(Math.max(0, 1 + (2 * E * h * h) / (mu * mu))));
+                knot = far * scale < (knotted.has(b.id) ? KNOT_OUT : KNOT_IN) * w;
+            }
+        }
+        if (knot) knotted.add(b.id); else knotted.delete(b.id);
+        return knot;
+    }
     function drawLabels(C) {
         if (!settings.labels) return;
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
@@ -7711,17 +7732,20 @@
         for (const { x, y, r, b } of order) {
             if (x < visL - r || x > visR + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
             const chosen = b.id === selectedId || b === popBody;
-            if (((b.grp || b.minor) && !chosen) || moonUnmarked(b)) continue;
+            if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
+            // (what's left out is named under the mouse, or once chosen. A mission's few bodies keep theirs: one may be the goal)
+            if (b.id !== hoverName && !isChosen(b) && !mission.def && (moonUnmarked(b) || inKnot(b, w))) continue;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
             let best = null, offEdge = null, offOthers = null, first = null;
             for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
                 const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
                 const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
-                // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
+                // (its own disc too: kept inside the canvas, a name can be pushed back onto it. Not a knot's little discs,
+                // which would otherwise leave the star in the middle with no free side, on and off, as they go round it)
                 const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
-                    || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
+                    || discs.some((d) => { if (d.b !== b && knotted.has(d.b.id)) return false; const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
                 const edge = zones.some((z) => box.l < z[2] && box.r > z[0] && box.t < z[3] && box.b > z[1]);
                 const at = { box, ux, uy };
                 if (!hit && !edge) { best = at; break; }
@@ -7886,7 +7910,8 @@
             // (along a side, the name is a line tall; along the top or bottom, as wide as it is. A name shown only
             // under the mouse keeps no room: the pointer doesn't move for it)
             ctx.font = font(fs);
-            const say = settings.labels && (b === top || isChosen(b)), hover = b.id === hoverName;
+            // (a mission has only a few bodies, and the goal may be one of them)
+            const say = settings.labels && (b === top || isChosen(b) || !!mission.def), hover = b.id === hoverName;
             const nw = say || hover ? nameWidth(b.name, fs) : 0;
             const h = Math.abs(ux) > 0.5 || !say ? fs / 2 + 8 : nw / 2 + 6;
             const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
@@ -12808,7 +12833,8 @@
         }
         updateDrawnPositions();
         let tipOf = onHandle(x, y, GRAB_MOUSE);
-        if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
+        const over = tipOf ? null : bodyAt(x, y, 5);
+        if (over) { canvas.classList.add('orb-can-grab'); hoverName = over.id; return; }
         if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
         if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; return; }
         hoverName = offMarkAt(x, y, 10);
