@@ -13627,9 +13627,10 @@
     // (each step) Got there by Play: the moment is short, so the clock stops for it where a skip would, at
     // the launch window and at the closest point of a pass inside the goal. Once: Play goes on from there.
     function missionArrival(c) {
-        const d = mission.def, g = d.goal, R = bodyById(mission.refId);
+        const d = mission.def, g = d.goal;
         if (d.lead) {
-            if (mission.log.length || !R) return;
+            const R = mission.log.length ? null : bodyById(mission.refId);
+            if (!R) return;
             const was = mission.ahead;
             mission.ahead = windowAngle(c, R) > d.lead;
             if (was && !mission.ahead) missionWait();
