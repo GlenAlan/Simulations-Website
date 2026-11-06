@@ -1038,7 +1038,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1135,6 +1135,7 @@
     let scrCap = 0;
     let SX, SY, SVX, SVY, SM, SEPS, SGRP, SAX, SAY, SA0, SBEST, SSECOND, SPART, SPAIR, SDIR, SDPOS;
     let PAX, PAY, NAX, NAY;                  // the 1PN part of the accelerations, and the Newtonian part
+    let HRX, HRY, HPX, HPY;                  // a host's pieces: positions relative to it, momenta (see driftHosted)
     let PNI = new Int32Array(256), PNJ = new Int32Array(256), pnCount = 0, pnList = null, pnN = -1, pnTmin = Infinity;
     function ensureScratch(n) {
         if (n <= scrCap) return;
@@ -1143,6 +1144,7 @@
         SX = f(); SY = f(); SVX = f(); SVY = f(); SM = f(); SEPS = f(); SGRP = f(); SAX = f(); SAY = f(); SA0 = f();
         SBEST = f(); SSECOND = f(); SPART = k(); SPAIR = k(); SDIR = k(); SDPOS = k();
         PAX = f(); PAY = f(); NAX = f(); NAY = f();
+        HRX = f(); HRY = f(); HPX = f(); HPY = f();
         growTreeCache(scrCap);
     }
 
@@ -1172,7 +1174,7 @@
         }
         if (pairs) {
             for (const p of pairs) {
-                if (p.a.stamp === stamp && p.b.stamp === stamp) { SPAIR[p.a.slot] = p.b.slot; SPAIR[p.b.slot] = p.a.slot; }
+                if (p.a.stamp === stamp && p.b.stamp === stamp) { SPAIR[p.a.slot] = p.b.slot; if (!p.a.grp) SPAIR[p.b.slot] = p.a.slot; }
             }
         }
         const pn = settings.realistic;
@@ -1260,10 +1262,12 @@
             let axi = accX[i], ayi = accY[i], b1 = best[i], b2 = second[i], p1 = part[i];
             for (let j = rows ? 0 : i + 1; j < n; j++) {
                 if (rows && (j === i || (inRows[j] && rowOf[j] <= a))) continue;
+                const gj = grp[j], piece = gi !== 0 || gj !== 0;
+                if (piece && gi !== gj && ((gi !== 0 && gj !== 0) || pi === j || SPAIR[j] === i)) continue;   // (other bodies' pieces; a piece and its host)
                 const dx = xs[j] - xi, dy = ys[j] - yi;
                 const r2 = dx * dx + dy * dy;
                 const mj = ms[j], msum = mi + mj;
-                if (gi !== 0 && gi === grp[j]) {
+                if (piece && gi === gj) {
                     // pieces of one torn-apart body: softened
                     const e = 0.5 * (SEPS[i] + SEPS[j]);
                     const s2 = r2 + e * e, s = Math.sqrt(s2), is3 = 1 / (s2 * s);
@@ -1288,11 +1292,11 @@
                 }
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
-                    if (t < tmin && !kep) tmin = t;
+                    if (piece) { if (PIECE_T2 * t < tmin) tmin = PIECE_T2 * t; } else if (t < tmin && !kep) tmin = t;
                     // each body's two shortest pair times, and the partner of the shortest
                     if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = j; } else b2 = t; }
                     if (t < second[j]) { if (t < best[j]) { second[j] = best[j]; best[j] = t; part[j] = i; } else second[j] = t; }
-                    if (pn) {
+                    if (pn && !piece) {
                         const vx = SVX[i] - SVX[j], vy = SVY[i] - SVY[j];
                         if ((G * msum) / (C2 * r) > PN_SKIP || (vx * vx + vy * vy) / C2 > PN_SKIP) { pnPair(i, j); notePN(i, j); }
                     }
@@ -1433,13 +1437,14 @@
                 for (let s = tstart[nd], e = tend[nd]; s < e; s++) {
                     const j = bidx[s];
                     if (j === k) continue;
+                    const gj = sgrp[j], soft = gi !== 0 && gi === gj;
+                    if (gi !== 0 && gj !== 0 && !soft) continue;   // (other bodies' pieces)
                     const ddx = bx[s] - xi, ddy = by[s] - yi;
                     let d2 = ddx * ddx + ddy * ddy;
-                    const soft = gi !== 0 && gi === sgrp[j];
                     if (soft) { const ee = 0.5 * (ei + seps[j]); d2 += ee * ee; } else if (d2 === 0) continue;
                     const id3 = 1 / (d2 * Math.sqrt(d2)), mj = bm[s];
                     ax += G * mj * id3 * ddx; ay += G * mj * id3 * ddy;
-                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : (mi + mj) * id3;
+                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : gi !== 0 || gj !== 0 ? (mi + mj) * id3 / PIECE_T2 : (mi + mj) * id3;
                     if (kk > k1) { k2 = k1; k1 = kk; p1 = soft ? -1 : j; } else if (kk > k2) k2 = kk;
                     count++;
                 }
@@ -1466,7 +1471,11 @@
         }
         SINDIR.fill(0, 0, n);
         for (let a = 0; a < nd; a++) SINDIR[SDIR[a]] = 1;
-        for (let i = 0; i < n; i++) if (SPAIR[i] >= 0 && !SINDIR[i]) { SINDIR[i] = 1; SDIR[nd++] = i; }
+        for (let i = 0; i < n; i++) {
+            if (SPAIR[i] < 0) continue;
+            const q = SGRP[i] !== 0 ? SPAIR[i] : i;   // (of a piece and its host, just the host)
+            if (!SINDIR[q]) { SINDIR[q] = 1; SDIR[nd++] = q; }
+        }
         for (let a = 0; a < nd; a++) SDPOS[SDIR[a]] = a;
         // The light bodies' pulls on each other, from the tree
         let treeWork = 0;
@@ -1526,6 +1535,17 @@
     const KEP_TURN = 0.05;                // step <= KEP_TURN x sqrt(r^3 / GM): about 4 degrees of the pair's turn
     const KEP_UNRESOLVED = 0.25;          // periods under this many trail samples are not followed turn by turn
     const PN_PAIR_MAX = 1e-6;
+    // A piece of a torn-apart body (see "Tidal disruption"), so light that it can't disturb its host much (at
+    // most a HOST_MIN-th of its mass), is followed round it the same way, relativity or not, and many can
+    // share one host (see driftHosted). Then one that swings in close forces nothing on the rest: at most it
+    // keeps the step under HOST_TURN of its time near the host, for the sake of its trail, and never under
+    // HOST_STEPS steps a trail sample. PIECE_STEP: a piece that does set the step, passing some other
+    // body, is let off with that many times fewer steps (it only has to look right).
+    const HOST_MIN = 10;
+    const HOST_TURN = 0.25;
+    const HOST_STEPS = 32;
+    const PIECE_STEP = 4;
+    const PIECE_T2 = PIECE_STEP * PIECE_STEP;   // (the times are kept squared)
     const mainPairs = [];                 // { a, b, touch, fast } for the bodies
     let mainStamp = 0, mainN = 0;
 
@@ -1549,7 +1569,7 @@
         }
     }
 
-    let KX = 0, KY = 0, KVX = 0, KVY = 0, KMIN = 0, KR = 0;
+    let KX = 0, KY = 0, KVX = 0, KVY = 0, KMIN = 0, KR = 0, KTURNS = 0;
     // Kepler's equation in universal variables, r0 G1(s) + eta G2(s) + mu G3(s) - tau (sets KR = r(s), its slope)
     function keplerF(s, r0, eta, mu, beta, tau) {
         stumpff(beta * s * s);
@@ -1563,11 +1583,12 @@
         const eta = rx * vx + ry * vy;
         const beta = 2 * mu / r0 - (vx * vx + vy * vy);   // mu / a (negative for a hyperbola)
         let tau = dt, whole = false, s, lo, hi;
+        KTURNS = 0;
         if (beta > 0) {
             // An ellipse is only advanced by the part of dt left over after whole turns; one turn is
             // s = 2 pi / sqrt(beta), which brackets the answer
             const P = TAU * mu / (beta * Math.sqrt(beta));
-            if (Math.abs(tau) >= P) { tau -= P * Math.trunc(tau / P); whole = true; }
+            if (Math.abs(tau) >= P) { KTURNS = Math.trunc(tau / P); tau -= P * KTURNS; whole = true; }
             const sMax = TAU / Math.sqrt(beta);
             lo = tau >= 0 ? 0 : -sMax; hi = tau >= 0 ? sMax : 0;
             s = tau * beta / mu;
@@ -1627,13 +1648,80 @@
         if (KMIN < (h.R + l.R) / AU_KM) p.touch = true;
     }
 
+    // Move a host and its pieces. The whole group's centre of mass goes in a straight line; each piece goes
+    // round the host exactly; and the pieces' pull on the host is the small term left (Duncan, Levison & Lee
+    // 1998: the "democratic heliocentric" form of the Wisdom-Holman splitting), in which each moves the host,
+    // and so all the others relative to it, by its own momentum / the host's mass, half before and half after.
+    // Momentum is kept exactly and, for one piece, it is the exact two-body motion.
+    // Relativity's main effect on a piece is that its orbit turns forward, by 3 GM / (c^2 p) for each radian it
+    // goes round (6 pi GM / (c^2 a (1 - e^2)) a turn, whatever the step). A body following a Kepler orbit turned
+    // like that keeps its energy and angular momentum, and, turning about the host, commutes with the motion
+    // round it, so all this stays time-reversible. A piece too close to its host to stay in orbit (inside
+    // the innermost stable orbit) falls in as a body would: see plunge.
+    function driftHosted(g, dt) {
+        const H = g.h, list = g.pairs, n = list.length, mH = H.m, real = settings.realistic;
+        let M = mH, X = mH * H.x, Y = mH * H.y, PX = mH * H.vx, PY = mH * H.vy;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a, m = f.m;
+            M += m; X += m * f.x; Y += m * f.y; PX += m * f.vx; PY += m * f.vy;
+        }
+        X /= M; Y /= M;
+        const cvx = PX / M, cvy = PY / M, half = 0.5 * dt / mH;
+        let sx = 0, sy = 0;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a, m = f.m;
+            HRX[i] = f.x - H.x; HRY[i] = f.y - H.y;
+            const px = m * (f.vx - cvx), py = m * (f.vy - cvy);
+            HPX[i] = px; HPY[i] = py;
+            sx += px; sy += py;
+        }
+        let tx = 0, ty = 0;
+        for (let i = 0; i < n; i++) {
+            const p = list[i], f = p.a, m = f.m, im = 1 / m + 1 / mH, gm = G * (mH + m);
+            const rx = HRX[i] + half * (sx - HPX[i]), ry = HRY[i] + half * (sy - HPY[i]);
+            const vx = HPX[i] * im, vy = HPY[i] * im;
+            keplerDrift(rx, ry, vx, vy, gm, dt);
+            let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
+            if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN)) p.touch = true;
+            if (real) {
+                const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
+                let swept = Math.atan2(rx * ky - ry * kx, rx * kx + ry * ky);
+                if (swept * way < 0) swept += way * TAU;
+                const w = (3 * gm * gm / (C2 * h * h)) * (swept + way * TAU * Math.abs(KTURNS));
+                if (h !== 0 && w !== 0) {
+                    const c = Math.cos(w), s = Math.sin(w);
+                    const x1 = c * kx - s * ky, vx1 = c * kvx - s * kvy;
+                    ky = s * kx + c * ky; kvy = s * kvx + c * kvy;
+                    kx = x1; kvx = vx1;
+                }
+            }
+            HRX[i] = kx; HRY[i] = ky;
+            const px = kvx / im, py = kvy / im;
+            HPX[i] = px; HPY[i] = py;
+            tx += px; ty += py;
+        }
+        let mx = 0, my = 0;
+        for (let i = 0; i < n; i++) {
+            const m = list[i].a.m;
+            HRX[i] += half * (tx - HPX[i]); HRY[i] += half * (ty - HPY[i]);
+            mx += m * HRX[i]; my += m * HRY[i];
+        }
+        H.x = X + dt * cvx - mx / M; H.y = Y + dt * cvy - my / M;
+        H.vx = cvx - tx / mH; H.vy = cvy - ty / mH;
+        for (let i = 0; i < n; i++) {
+            const f = list[i].a;
+            f.x = H.x + HRX[i]; f.y = H.y + HRY[i];
+            f.vx = cvx + HPX[i] / f.m; f.vy = cvy + HPY[i] / f.m;
+        }
+    }
+
     // Can a and b be followed as a close pair? (gamma: how weakly the others must disturb them; read
     // from the packed shortest pair times of the last evaluation of the bodies' forces)
     function pairQualifies(a, b, gamma) {
         if (a.stamp !== mainStamp || b.stamp !== mainStamp) return false;
         const i = a.slot, j = b.slot;
         if (SPART[i] !== j || SPART[j] !== i) return false;
-        if (a.held || b.held || (a.grp && a.grp === b.grp) || !(a.m > 0 && b.m > 0)) return false;
+        if (a.held || b.held || a.grp || b.grp || !(a.m > 0 && b.m > 0)) return false;
         if (!(SBEST[i] < gamma * SSECOND[i] && SBEST[j] < gamma * SSECOND[j])) return false;
         if (settings.realistic && G * (a.m + b.m) / (C2 * Math.hypot(b.x - a.x, b.y - a.y)) > PN_PAIR_MAX) return false;
         return true;
@@ -1647,22 +1735,84 @@
         let changed = false;
         for (let k = mainPairs.length - 1; k >= 0; k--) {
             const p = mainPairs[k];
-            if (!pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
+            if (!p.a.grp && !pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
         }
         const n = bodies.length;
         for (let k = 0; k < n; k++) bodies[k].kep = null;
-        for (const p of mainPairs) { p.a.kep = p; p.b.kep = p; }
+        for (const p of mainPairs) { p.a.kep = p; if (!p.a.grp) p.b.kep = p; }
         for (let k = 0; k < n; k++) {
             const j = SPART[k];
             if (j <= k || SPART[j] !== k) continue;
             const a = bodies[k], b = bodies[j];
             if (a.kep || b.kep || !pairQualifies(a, b, KEP_GAMMA)) continue;
-            const p = { a, b, touch: false, fast: false };
-            mainPairs.push(p);
-            a.kep = p; b.kep = p;
+            followPair(a, b, false);
             changed = true;
         }
+        if (choosePieceHosts()) changed = true;
+        if (changed) syncHosts();
         return changed;
+    }
+
+    // Follow a and b as a close pair (a, if a piece of a torn-apart body, round its host b)
+    function followPair(a, b, fast) {
+        const q = { a, b, touch: false, fast };
+        mainPairs.push(q);
+        a.kep = q;
+        if (!a.grp) b.kep = q;
+    }
+
+    // Each piece's host, if it has one: the body whose pull on it is so much the strongest that the others'
+    // tides are small beside it (as for a close pair, with the same hysteresis, among the bodies that aren't
+    // pieces: their own softened pull is gentle, and the steps follow it). Returns true if any changed.
+    const hostList = [];
+    function choosePieceHosts() {
+        let changed = false, pieces = 0;
+        hostList.length = 0;
+        for (const b of bodies) {
+            if (b.grp) { pieces++; continue; }
+            if (!(b.m > 0)) continue;
+            if (hostList.length < HEAVY_MAX) { hostList.push(b); continue; }
+            let lo = 0;
+            for (let k = 1; k < HEAVY_MAX; k++) if (hostList[k].m < hostList[lo].m) lo = k;
+            if (b.m > hostList[lo].m) hostList[lo] = b;
+        }
+        for (let k = mainPairs.length - 1; k >= 0; k--) {
+            // (a piece that has gone, or a host that has)
+            const p = mainPairs[k];
+            if (p.a.grp && (p.a.stamp !== mainStamp || p.b.stamp !== mainStamp)) { mainPairs.splice(k, 1); p.a.kep = null; changed = true; }
+        }
+        if (!pieces) return changed;
+        const nh = hostList.length;
+        for (const f of bodies) {
+            if (!f.grp) continue;
+            const xf = f.x, yf = f.y, mf = f.m;
+            let t1 = Infinity, t2 = Infinity, H = null;
+            for (let k = 0; k < nh; k++) {
+                const h = hostList[k], dx = h.x - xf, dy = h.y - yf, r2 = dx * dx + dy * dy;
+                const t = r2 * Math.sqrt(r2) / (h.m + mf);
+                if (t < t1) { t2 = t1; t1 = t; H = h; } else if (t < t2) t2 = t;
+            }
+            const q = f.kep;
+            const ok = H && !f.held && !H.held && !H.kep && H.m >= HOST_MIN * mf && t1 > 0 && t1 < (q && q.b === H ? 2 * KEP_GAMMA : KEP_GAMMA) * t2;
+            if (q && (!ok || q.b !== H)) { mainPairs.splice(mainPairs.indexOf(q), 1); f.kep = null; changed = true; }
+            if (ok && !f.kep) { followPair(f, H, false); changed = true; }
+        }
+        return changed;
+    }
+
+    // The hosts, each with the close pairs of its pieces (kept while they stay the same)
+    const hostGroups = [];
+    function syncHosts() {
+        for (const g of hostGroups) g.h.hosts = 0;
+        hostGroups.length = 0;
+        for (const p of mainPairs) {
+            if (!p.a.grp) continue;
+            let g = null;
+            if (p.b.hosts) g = hostGroups.find((q) => q.h === p.b);
+            if (!g) { g = { h: p.b, pairs: [] }; hostGroups.push(g); }
+            g.pairs.push(p);
+            p.b.hosts = g.pairs.length;
+        }
     }
 
     function refreshPairs() {
@@ -1693,7 +1843,8 @@
         const vx = b.vx - a.vx, vy = b.vy - a.vy;
         const beta = 2 * gm / r - (vx * vx + vy * vy);
         p.fast = beta > 0 && TAU * gm / (beta * Math.sqrt(beta)) < KEP_UNRESOLVED * sampleDt;
-        return p.fast ? Infinity : KEP_TURN * Math.sqrt(r2 * r / gm);
+        if (p.fast) return Infinity;
+        return a.grp ? Math.max(HOST_TURN * Math.sqrt(r2 * r / gm), sampleDt / HOST_STEPS) : KEP_TURN * Math.sqrt(r2 * r / gm);
     }
 
     // One kick-drift-kick leapfrog step for every body in the list that isn't held (close pairs drift
@@ -1705,9 +1856,12 @@
         for (const b of list) {
             if (b.held) continue;
             b.vx += h * b.ax; b.vy += h * b.ay;
-            if (!(pairs && b.kep)) { b.x += dt * b.vx; b.y += dt * b.vy; }
+            if (!(pairs && (b.kep || b.hosts))) { b.x += dt * b.vx; b.y += dt * b.vy; }
         }
-        if (pairs) for (const p of pairs) driftPair(p, dt);
+        if (pairs) {
+            for (const p of pairs) if (!p.a.grp) driftPair(p, dt);
+            for (const g of hostGroups) driftHosted(g, dt);
+        }
         let tmin = forces();
         for (const b of list) {
             if (b.held) continue;
@@ -1749,7 +1903,8 @@
 
     function touching(a, b) {
         if (a.held || b.held || (a.grp && a.grp === b.grp)) return false;
-        if (a.kep && a.kep === b.kep) return a.kep.touch;
+        if (a.kep && (a.kep === b.kep || a.kep.b === b)) return a.kep.touch;
+        if (b.kep && b.kep.b === a) return b.kep.touch;
         const reach = (a.R + b.R) / AU_KM;
         const x0 = b.px - a.px, y0 = b.py - a.py;
         const x1 = b.x - a.x, y1 = b.y - a.y;
@@ -1817,7 +1972,9 @@
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            mergeBodies(a, b);
+            if (b.grp && b.kep) b.kep.touch = false;
+            // (a piece falling into a black hole: past its innermost stable orbit, before it touches)
+            if (!(settings.realistic && (a.grp || b.grp) && G * (a.m + b.m) > ISCO_C2 * (a.R + b.R) / AU_KM && plunge(a, b))) mergeBodies(a, b);
             merged = true;
         }
         if (merged) computeForces();
@@ -2984,6 +3141,7 @@
         scene = def;
         bodies = [];
         mainPairs.length = 0;
+        syncHosts();
         groupEnergy.clear();
         simTime = 0; acc = 0; sampleCount = 0; nextSampleT = 0;
         sampleDt = scene.Tref / TRAIL_PER_TREF;
@@ -9716,7 +9874,8 @@
         const want = idx >= 0 ? past.sets[idx] : null;
         if (!want) { refreshPairs(); return; }
         const has = (ia, ib) => mainPairs.some((p) => (p.a.id === ia && p.b.id === ib) || (p.a.id === ib && p.b.id === ia));
-        if (want.length === mainPairs.length && want.every(([ia, ib]) => has(ia, ib))) {
+        const inOrder = want.length === mainPairs.length && want.every(([ia, ib], k) => mainPairs[k].a.id === ia && mainPairs[k].b.id === ib);
+        if (inOrder || (want.length === mainPairs.length && want.every(([ia, ib]) => has(ia, ib)))) {
             if (forcesDirty) computeForces();
             return;
         }
@@ -9724,8 +9883,9 @@
         mainPairs.length = 0;
         for (const [ia, ib] of want) {
             const a = bodyById(ia), b = bodyById(ib);
-            if (a && b && !a.kep && !b.kep) { const q = { a, b, touch: false, fast: false }; mainPairs.push(q); a.kep = q; b.kep = q; }
+            if (a && b && !a.kep && (a.grp || !b.kep)) followPair(a, b, false);
         }
+        syncHosts();
         computeForces();   // (a pair's own pull is left out of the kicks)
     }
 
@@ -9810,8 +9970,9 @@
         mainPairs.length = 0;
         for (const [ia, ib, fast] of s.pairs) {
             const a = list.find((q) => q.id === ia), b = list.find((q) => q.id === ib);
-            if (a && b) { const q = { a, b, touch: false, fast: !!fast }; mainPairs.push(q); a.kep = q; b.kep = q; }
+            if (a && b) followPair(a, b, !!fast);
         }
+        syncHosts();
         groupEnergy.clear();
         for (const [id, u] of s.groupE) groupEnergy.set(id, u);
         // The choice of body (and the view) passes back to the one it came from
@@ -10507,8 +10668,10 @@
             for (let j = i + 1; j < bodies.length; j++) {
                 const bj = bodies[j];
                 const rx = bi.x - bj.x, ry = bi.y - bj.y;
-                if (bi.grp && bi.grp === bj.grp) {
+                if (bi.grp && bj.grp) {
                     // pieces of one torn-apart body: the softened potential of their softened pull
+                    // (and pieces of different bodies don't pull on each other)
+                    if (bi.grp !== bj.grp) continue;
                     const e = 0.5 * (softLength(bi) + softLength(bj));
                     pe -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
                     continue;
@@ -10516,7 +10679,7 @@
                 const r = Math.sqrt(rx * rx + ry * ry);
                 if (!(r > 0)) continue;
                 pe -= (G * bi.m * bj.m) / r;
-                if (settings.realistic) {
+                if (settings.realistic && !bi.grp && !bj.grp) {   // (a piece's orbit turns, without these: see driftHosted)
                     const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
                     const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
                     const rd = (rx * vx + ry * vy) / r;
@@ -11816,8 +11979,9 @@
         for (const b of list) b.kep = null;
         for (const [ia, ib, fast] of s.pairs || []) {
             const a = byNewId.get(ia), b = byNewId.get(ib);
-            if (a && b) { const q = { a, b, touch: false, fast: !!fast }; mainPairs.push(q); a.kep = q; b.kep = q; }
+            if (a && b) followPair(a, b, !!fast);
         }
+        syncHosts();
         groupEnergy.clear();
         for (const [id, u] of s.groupE || []) groupEnergy.set(id, u);
         resetRelativity();
