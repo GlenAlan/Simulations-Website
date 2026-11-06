@@ -2977,6 +2977,7 @@
     // Scenes
     // ------------------------------------------------------------------
     function loadScene(key) {
+        restoreSpeed();   // (a zoom's slower time ends with it)
         missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
         setReverse(false, true);   // (a new or restarted scene runs forwards)
@@ -3212,16 +3213,31 @@
         fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], true);
     }
 
+    // The glide: the zoom and the way left to go close in together, counted in px on the screen, so what
+    // it is heading for comes steadily nearer even while the zoom races in. It aims at where a body that
+    // is moving through the view (a.ref) is now, not where it was at the start, for as long as the glide
+    // lasts (a target on the move is never quite caught, so that much is the limit).
+    const GLIDE_FOLLOW_MS = 1500;
     function stepViewAnimation(dtReal) {
         const a = view.anim;
         if (!a) return;
-        const k = 1 - Math.exp(-dtReal / 0.16);
+        if (a.ref && bodies.includes(a.ref)) { a.panX = a.ref.dx - F.x + a.ox; a.panY = a.ref.dy - F.y + a.oy; }
+        const k = 1 - Math.exp(-dtReal / 0.16), zoom0 = view.zoom;
         view.zoom *= Math.pow(a.zoom / view.zoom, k);
-        view.panX += (a.panX - view.panX) * k;
-        view.panY += (a.panY - view.panY) * k;
-        if (Math.abs(Math.log(a.zoom / view.zoom)) < 0.002 && Math.abs(a.panX - view.panX) * scale < 0.3 && Math.abs(a.panY - view.panY) * scale < 0.3) {
-            view.zoom = a.zoom; view.panX = a.panX; view.panY = a.panY; view.anim = null;
-        }
+        const left = (1 - k) * Math.min(1, zoom0 / view.zoom);
+        view.panX = a.panX + (view.panX - a.panX) * left;
+        view.panY = a.panY + (view.panY - a.panY) * left;
+        const done = Math.abs(Math.log(a.zoom / view.zoom)) < 0.002 && Math.abs(a.panX - view.panX) * scale < 0.3 && Math.abs(a.panY - view.panY) * scale < 0.3;
+        if (done) { view.zoom = a.zoom; view.panX = a.panX; view.panY = a.panY; view.anim = null; }
+        else if (a.ref && performance.now() > a.until && Math.abs(Math.log(a.zoom / view.zoom)) < 0.002) view.anim = null;
+    }
+
+    // The glide just begun stays aimed at this body, wherever it goes meanwhile
+    function glideWith(ref) {
+        const a = view.anim;
+        if (!a || !ref) return;
+        a.ref = ref; a.ox = a.panX - (ref.dx - F.x); a.oy = a.panY - (ref.dy - F.y);
+        a.until = performance.now() + GLIDE_FOLLOW_MS;
     }
 
     function zoomAt(px, py, factor) {
@@ -3238,7 +3254,9 @@
         updateDrawnPositions();
         const before = viewOrigin();
         frameId = id !== null && bodyById(id) ? id : null;
+        if (frameId === null) restoreSpeed();   // (a zoom's slower time ends with it)
         freeze = null;
+        view.panned = false;
         leaveTurning();   // (a rotating frame ends: the view glides back square)
         updateDrawnPositions();
         keepScreen(before);
@@ -4672,7 +4690,8 @@
             // (nor when the view turns with its planet, which then stands still)
             if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id && !turnUses(p)) { setFrame(p.id); from = p; }
             fitBox(orbitBox(b, p, el), glide);
-            return { how: 'orbit', around: p, from, with: [] };
+            glideWith(p);
+            return { how: 'orbit', around: p, from, with: [], T: el.T };
         }
         const cx = b.dx - F.x, cy = b.dy - F.y;
         if (crowd.length) {
@@ -4684,12 +4703,14 @@
             }
             const pad = 0.15 * Math.max(x1 - x0, y1 - y0);
             fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], glide);
+            glideWith(b);
             return { how: 'near', around: null, from: null, with: all };
         }
         let near = Infinity;
         for (const q of bodies) if (q !== b) near = Math.min(near, Math.hypot(q.dx - b.dx, q.dy - b.dy));
         const r = isFinite(near) && near > 0 ? 1.25 * near : 0.5 * (scene.box[1] - scene.box[0]);
         fitBox([cx - r, cx + r, cy - r, cy + r], glide);
+        glideWith(b);
         return { how: 'near', around: null, from: null, with: [] };
     }
 
@@ -4709,10 +4730,31 @@
         fitBox([Math.min(o[0], v[0]), Math.max(o[1], v[1]), Math.min(o[2], v[2]), Math.max(o[3], v[3])], glide);
     }
 
+    // Zooming to an orbit that goes by too fast to follow also slows time to suit it (a lap in about
+    // the time a scene's reference period takes) and says so; the old speed comes back on the way out:
+    // zooming out again, back to the centre of mass, or a new scene. Choosing a speed by hand ends all that.
+    const paceZoom = { was: 0, zoom: 0 };
+    function suitSpeed(b, z) {
+        if (mission.def || z.how !== 'orbit' || !(z.T / (settings.speed * rate()) < 1)) return;
+        const v = SPEED_STOPS[nearestStop(z.T / (SECONDS_PER_TREF * rate()))];
+        if (!paceZoom.was) paceZoom.was = settings.speed;
+        paceZoom.zoom = view.anim ? view.anim.zoom : view.zoom;
+        setSpeedValue(v);
+        showHint('note', `<strong>Slowed to ${fmtFactor(v)}×</strong> to suit this orbit: a lap in ${fig2(z.T / (v * rate()))} s.`, { ms: 7000, tag: 'pace' });
+    }
+    function restoreSpeed() {
+        if (!paceZoom.was) return;
+        const v = paceZoom.was;
+        paceZoom.was = 0;
+        setSpeedValue(v);
+        showHint('note', `<strong>Speed back to ${fmtFactor(v)}×.</strong>`, { ms: 4000, tag: 'pace' });
+    }
+
     function zoomChosen() {
         const b = bodyById(selectedId);
         const z = zoomToBody(b);
         if (!z) return null;
+        suitSpeed(b, z);
         const whose = theName(b);
         const others = z.with.length && z.with.length <= 3 ? z.with.map(theName) : null;
         announce(z.how === 'orbit' ? `Zoomed to ${whose}'s orbit round ${theName(z.around)}${z.from ? `, viewed from ${theName(z.from)}` : ''}`
@@ -5142,7 +5184,7 @@
     // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
     function moonNote(b) {
         const p = b && b.primary;
-        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000, tag: 'chosen' });
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { tag: 'chosen' });
     }
 
     // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
@@ -7459,7 +7501,9 @@
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
         // (in a rotating frame the path is worked out as seen turning with the pair: see turnedSeen)
         const ref = turn.on ? null : L || (p && p.m >= b.m ? p : null);
-        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
+        // (with the zoom's rough size: its points are spaced for the zoom, and a path worked out zoomed
+        // out would be a few straight lines zoomed in)
+        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir, Math.round(Math.log2(scale))].join('|');
         const now = performance.now();
         // The one being worked out carries on; a new one starts when something has changed: at once
         // after a reset or an edit, for another body, or while paused; for a dragged body once the last
@@ -7917,6 +7961,7 @@
             if (dir < 0 && s < v * 0.9999) next = s;
         }
         if (next === null) return;
+        paceZoom.was = 0;
         setSpeedValue(next);
         speedFlash = performance.now() + 1500;
     }
@@ -11740,7 +11785,10 @@
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
     let viewLost = false;
     function checkInView() {
-        if (!ui.fit || !viewW || !bodies.length || dragging()) return;
+        // (zoomed well back out from where a slower time was set: the old speed again)
+        if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
+        // (a glide passes through views that show nothing: only where it ends counts)
+        if (!ui.fit || !viewW || !bodies.length || dragging() || view.anim) return;
         const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy); return x > 0 && x < viewW && y > 0 && y < viewH; });
         ui.fit.classList.toggle('is-wanted', out || !!view.panned);   // (moved by hand: the way back stands out too)
         if (out === viewLost) return;
@@ -13880,7 +13928,7 @@
                 showSpeed();
             };
             // (the canvas says what the new speed means, as it does for [ and ])
-            ui.speed.addEventListener('input', () => { upd(); speedFlash = performance.now() + 1500; });
+            ui.speed.addEventListener('input', () => { upd(); paceZoom.was = 0; speedFlash = performance.now() + 1500; });
             upd();
         }
         if (ui.scene) {
