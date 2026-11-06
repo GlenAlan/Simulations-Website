@@ -3491,7 +3491,7 @@
     function sampleWave() {
         if (gw.frozen && gw.a) { gw.frozen = false; gw.waveN = 0; gw.ring = null; }   // (a new pair)
         if (gw.frozen) return;
-        if (!gw.waveDt) gw.waveDt = (2.5 * scene.Tref) / WAVE_N;
+        if (!gw.waveDt) { gw.waveDt = (2.5 * scene.Tref) / WAVE_N; gw.waveT = simTime; }
         if (!gw.a && !gw.ring && !gw.waveN) { gw.waveT = simTime; return; }
         while (gw.waveT + gw.waveDt <= simTime) {
             gw.waveT += gw.waveDt;
