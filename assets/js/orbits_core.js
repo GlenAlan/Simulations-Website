@@ -646,6 +646,16 @@
         get bodies() { return solarSystemBodies(startDate.chosen); }
     };
 
+    // The same real orbits as seen from Earth (see "The sky from a planet"), out to Saturn: the planets anyone can
+    // see without a telescope. It opens 51 days before Mars stops and starts back against the stars, as it really
+    // does on 10 January 2027 (to 1 April, 19 degrees, round its opposition on 19 February). A year takes 12 s at 1x,
+    // so that shows within 2 s, and takes about 3; the trail holds two and a half years, a loop and a bit.
+    SCENES.sky = {
+        units: 'au', Tref: 0.5, subject: 4, trail: 6, dated: true, sky: true, noClock: true, openJd: jdOfDate(2026, 11, 20), box: [-2.8, 2.8, -2.8, 3.2],
+        tip: () => skyTip(),
+        get bodies() { return solarSystemBodies(startDate.chosen).slice(0, 7); }
+    };
+
     // 'YYYY-MM-DD' to a Julian date (00:00 UTC), or NaN; and back
     function parseIsoDate(text) {
         const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text || '').trim());
@@ -4276,6 +4286,7 @@
         restoreSpeed();   // (a zoom's slower time ends with it)
         missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
+        skySceneDate(key);   // (a scene that opens on a date of its own)
         setReverse(false, true);   // (a new or restarted scene runs forwards)
         const def = SCENES[key] || SCENES['sun-earth'];
         settings.scene = SCENES[key] ? key : 'sun-earth';
@@ -4335,6 +4346,7 @@
         recordSample();
         nextSampleT = sampleDt;
         fitBox(def.box, false);
+        skySceneLoaded(def);
         refreshBodyLists();
         updateTrailLabel();
         resetCharts();
@@ -4614,6 +4626,284 @@
         }
         syncTurnUi();
         refreshHint();   // (a scene's tip that names the view follows it)
+    }
+
+    // ------------------------------------------------------------------
+    // The sky from a planet ("Planets seen from Earth")
+    //   Seen from above, every planet goes round the Sun the same way and never turns back. Seen from
+    //   another planet it can: while one overtakes the other, the line of sight between them swings
+    //   backwards against the far-off stars. That is retrograde motion, and the scene shows it three ways:
+    //   the planet's path as seen from Earth (the trail, in the plain view from Earth: a loop each time),
+    //   the line of sight, and a thin strip for the sky itself along the top of the canvas: ecliptic
+    //   longitude 0 to 360 degrees (the world's x axis is longitude 0, see "The Solar System on a date"),
+    //   with the planet's marker on it and the bright stars near the ecliptic where they really are.
+    //   It all comes from the bodies' true positions, so it holds in any view, even a rotating one.
+    //   East is to the right, so a planet normally moves to the right; from the northern hemisphere,
+    //   facing south, the real sky is the mirror image of this.
+    //   Flat: with every orbit in one plane the marker only runs back and forth along a line. In the real
+    //   sky a planet's small tilt out of that plane opens the reversal into a narrow loop or zigzag.
+    //   The scene draws one planet's trail at a time, as several would tangle: the others' trails are kept
+    //   empty (from skyFollow, every frame). Choosing another planet starts its trail.
+    // ------------------------------------------------------------------
+    const SKY_PLANETS = new Set(['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn']);
+    const SKY_BAND = 14;                  // px: the band's height
+    const SKY_WIDE = 680;                 // px: a canvas this wide has room for the strip beside the "Viewed from" chip
+    const SKY_KEEP = 100 / DAYS_PER_YEAR; // how long after a reversal its arc and its numbers stay
+    const SKY_SCAN = 1500;                // trail samples looked back through for a reversal
+    const SKY_DASH = [2, 5];
+    const SKY_CHIP_ROW = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 52 : 44;
+    // Bright stars within about 12 degrees of the ecliptic: longitude, latitude (degrees) and magnitude, worked
+    // out from their usual J2000 right ascensions and declinations (obliquity 23.4393 degrees)
+    const SKY_STARS = [[9.2, 12.6, 2.8], [34, 8.5, 2.6], [37.7, 10, 2], [60, 4.1, 2.9], [69.8, -5.5, 0.9], [82.6, 5.4, 1.7], [99.1, -6.7, 1.9], [110.2, 10.1, 1.6],
+        [113.2, 6.7, 1.1], [149.6, 8.8, 2], [149.8, 0.5, 1.4], [171.6, 12.3, 2.1], [190.1, 2.8, 2.7], [203.8, -2.1, 1], [225.1, 0.3, 2.8], [229.4, 8.5, 2.6],
+        [242.6, -2, 2.3], [249.8, -4.6, 1.1], [275.1, -11.1, 1.9], [282.4, -3.4, 2.1], [323.4, 8.6, 2.9], [323.5, -2.6, 2.8], [333.4, 10.7, 2.9], [338.9, -8.2, 3.3]];
+    const sky = {
+        V: null, T: null,         // who is looking, and at what
+        pick: null,               // the planet last chosen
+        R: 0,                     // how far out the view was last fitted for (AU)
+        kept: 0,                  // the date the Solar System scene goes back to on leaving this one
+        x0: 0, x1: 0, top: 0, bottom: 0, under: 0,   // the strip (bottom 0: none), and where what's on its left goes
+        lon: 0, rate: 0,          // the direction now (degrees) and how fast it changes (degrees a day; below zero: retrograde)
+        scanAt: -1, scanT: 0, scanV: 0,              // the samples and pair the reversal below was found for
+        from: NaN, to: NaN, days: 0, endT: 0, whole: false,  // the reversal: its directions, how long it took, when it ended
+        k0: 0, k1: 0              // ...and its trail samples
+    };
+    const skyLon = (rx, ry) => { const a = Math.atan2(ry, rx) / TO_RAD; return a < 0 ? a + 360 : a; };
+
+    // This scene opens on its own date; the Solar System's goes back as it was on the way out
+    function skySceneDate(key) {
+        const to = SCENES[key] ? SCENES[key].openJd : 0, from = scene ? scene.openJd : 0;
+        if (to && !from) { sky.kept = startDate.chosen; startDate.chosen = to; }
+        else if (from && !to) startDate.chosen = sky.kept || todayJd();
+    }
+
+    // After a scene is loaded: viewed from Earth, with the view fitted to the planet followed
+    function skySceneLoaded(def) {
+        sky.scanAt = -1;
+        sky.pick = null;
+        if (!def.sky) return;
+        leaveTurning();
+        turn.easeAmt = 0;
+        for (const b of bodies) if (b.kind === 'earth') frameId = b.id;
+        skyFollow();
+        skyFit(false);
+    }
+
+    // Once a frame: who is looking at what, where the strip goes, and the other planets' trails kept empty
+    function skyFollow() {
+        sky.V = sky.T = null;
+        sky.bottom = sky.under = 0;
+        if (!scene.sky) return;
+        // (the body viewed from; in a view from no body, Earth)
+        let V = frameId !== null ? bodyById(frameId) : null, T = bodyById(selectedId);
+        if (!V) for (const b of bodies) if (b.kind === 'earth') V = b;
+        if (!V) return;
+        if (T && T !== V && SKY_PLANETS.has(T.kind)) sky.pick = T.id;
+        T = bodyById(sky.pick);
+        if (!T || T === V) {
+            T = null;
+            for (const b of bodies) if (b !== V && SKY_PLANETS.has(b.kind) && (!T || b.kind === (V.kind === 'earth' ? 'mars' : 'earth'))) T = b;
+        }
+        if (!T) return;
+        sky.V = V; sky.T = T;
+        for (const b of bodies) if (b !== T && b !== V && SKY_PLANETS.has(b.kind)) b.trailStart = sampleCount;
+        const rx = T.x - V.x, ry = T.y - V.y, r2 = rx * rx + ry * ry;
+        sky.lon = skyLon(rx, ry);
+        sky.rate = r2 > 0 ? ((rx * (T.vy - V.vy) - ry * (T.vx - V.vx)) / r2) / (TO_RAD * DAYS_PER_YEAR) : 0;
+        if (cleanRender) return;
+        const wide = visR - visL >= SKY_WIDE, lh = Math.round(clamp(Math.min(viewW, viewH) / 44, 10.5, 13) * 1.4);
+        sky.x0 = visL + (wide ? 248 : 8);
+        sky.x1 = visR - 8;
+        sky.top = !wide && frameId !== null ? SKY_CHIP_ROW : 8;
+        sky.bottom = sky.top + 4 + lh + SKY_BAND + 6;
+        sky.under = wide ? 0 : sky.bottom + 6;
+    }
+
+    // The farthest a body gets from what it orbits
+    function skyFar(b) {
+        const el = b.primary && b.bound ? elementsOf(b, b.primary) : null;
+        return el && el.bound ? el.a * (1 + el.e) : 0;
+    }
+    // How far out the view must reach from its origin (AU)
+    function skyReach() {
+        const O = frameId !== null ? bodyById(frameId) : null;
+        return 1.05 * (O ? skyFar(sky.T) + skyFar(O) : Math.max(skyFar(sky.T), skyFar(sky.V)));
+    }
+    // Fit the view to the planet followed, its origin in the middle of what the strip leaves free
+    function skyFit(glide) {
+        if (!sky.T) return;
+        const R = sky.R = skyReach() || 2.8, u = Math.max(0, sky.bottom - 20), k = ((viewH || 500) - 40 - u) / (2 * R);
+        fitBox([-R, R, -R, R + u / k], glide);
+    }
+    // A body was chosen (from selectBody): the view reaches out for a far planet, and back in for a near one
+    function skyPicked() {
+        skyFollow();
+        if (sky.T && Math.abs(skyReach() - sky.R) > 0.05 * sky.R) skyFit(true);
+    }
+    // The tip's buttons: the next planet out (from the farthest, the nearest), and the view from Earth or from above
+    function skyNext() {
+        const list = bodies.filter((b) => b !== sky.V && SKY_PLANETS.has(b.kind));
+        if (list.length) selectBody(list[(list.indexOf(sky.T) + 1) % list.length].id);
+    }
+    function skyView() {
+        const home = bodies.find((b) => b.kind === 'earth');
+        setFrame(home && frameId !== home.id ? home.id : null);
+        skyFollow();
+        skyFit(true);
+    }
+    function skyTip() {
+        skyFollow();
+        const V = sky.V, T = sky.T;
+        if (!V || !T) return '';
+        const view = V.kind === 'earth' && frameId !== null ? '<button type="button" class="orb-hint-btn orb-hint-sky" title="Watch from above as one overtakes the other">From the Sun</button>'
+            : '<button type="button" class="orb-hint-btn orb-hint-sky" title="View from Earth">Back to Earth</button>';
+        const next = '<button type="button" class="orb-hint-btn orb-hint-skynext" title="Follow another planet (or choose one on the canvas)">Next planet</button>';
+        const fast = skyFar(T) < skyFar(V) ? T : V;
+        const t = escapeHtml(sentenceCase(theName(T))), v = escapeHtml(theName(V));
+        const say = !skyFar(V) ? `From ${v}, no planet ever backs up.` : fast === T ? `${t} seems to back up passing ${v}.` : `${t} seems to back up as ${v} passes.`;
+        return `${say} ${view} ${next}`;
+    }
+
+    // The planet's last reversal, from its trail and the viewer's (a sample's direction against the one before).
+    // Worked out from the samples each time they change, so an undo or a Run again can't leave it out of date.
+    function skyScan() {
+        const T = sky.T, V = sky.V;
+        if (sky.scanAt === sampleCount && sky.scanT === T.id && sky.scanV === V.id) return;
+        sky.scanAt = sampleCount; sky.scanT = T.id; sky.scanV = V.id;
+        sky.from = NaN;
+        if (trailDir < 0 || !T.trail || !V.trail) return;   // (run backwards, the marker says all there is to say)
+        const lo = Math.max(trailFirst(T), trailFirst(V), sampleCount - SKY_SCAN);
+        let end = -1, k = sampleCount - 1;
+        if (k <= lo) return;
+        let i = trailIndex(T.trail, k), j = trailIndex(V.trail, k);
+        let x1 = T.trail[i] - V.trail[j], y1 = T.trail[i + 1] - V.trail[j + 1];
+        for (; k > lo; k--) {
+            i = trailIndex(T.trail, k - 1); j = trailIndex(V.trail, k - 1);
+            const x0 = T.trail[i] - V.trail[j], y0 = T.trail[i + 1] - V.trail[j + 1];
+            if (x0 * y1 - y0 * x1 < 0) {
+                if (end < 0) end = k;
+            } else if (end >= 0) break;
+            else if (simTime - sampleTimes[k % TRAIL_CAP] > SKY_KEEP) return;
+            x1 = x0; y1 = y0;
+        }
+        if (end < 0) return;
+        i = trailIndex(T.trail, end); j = trailIndex(V.trail, end);
+        sky.to = skyLon(T.trail[i] - V.trail[j], T.trail[i + 1] - V.trail[j + 1]);
+        sky.from = skyLon(x1, y1);
+        sky.days = (sampleTimes[end % TRAIL_CAP] - sampleTimes[k % TRAIL_CAP]) * DAYS_PER_YEAR;
+        sky.endT = sampleTimes[end % TRAIL_CAP];
+        sky.whole = k > lo;   // (else it began before this planet's trail did)
+        sky.k0 = k; sky.k1 = end;
+    }
+    // How far gone the reversal found is, from 0 (still going on) to 1 (time to forget it); 1 if there is none
+    const skyAge = () => (isNaN(sky.from) ? 1 : sky.rate < 0 ? 0 : Math.max(0, simTime - sky.endT) / SKY_KEEP);
+
+    // The line of sight, under the bodies and on past the planet
+    function drawSkyLine(C) {
+        const V = sky.V, T = sky.T;
+        if (!V || !T || cleanRender) return;
+        const x = sx(V.dx), y = sy(V.dy), dx = sx(T.dx) - x, dy = sy(T.dy) - y, d = hyp(dx, dy);
+        if (!(d > 0)) return;
+        const far = (viewW + viewH + hyp(x, y)) / d;
+        ctx.strokeStyle = sky.rate < 0 ? hexA(C.force, 0.55) : C.faint;
+        ctx.lineWidth = 1;
+        ctx.setLineDash(SKY_DASH);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + dx * far, y + dy * far);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        skyScan();
+        const age = skyAge();
+        if (age >= 1 || turn.on || turn.phi) return;
+        // Where it backed up, on its trail (the same colour as the word on the strip): the loop itself. Not in a
+        // turned view, where a trail takes the pair's angle at each sample, and there's no loop to pick out.
+        const O = frameId !== null ? bodyById(frameId) : null, oT = O ? O.trail : comTrail, capT = T.trail.length >> 1, capO = oT.length >> 1;
+        const live = freeze ? liveFrameOrigin() : F;   // (as drawTrails: the origin has drifted while a body is held)
+        const ox = (live.x - F.x - view.panX) * scale + midX, oy = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        ctx.strokeStyle = hexA(C.force, 0.9 * (1 - age));
+        ctx.lineWidth = clamp(2.4 * sizeScale, 2, 3);
+        ctx.beginPath();
+        for (let k = sky.k0; k <= sky.k1; k++) {
+            const i = 2 * (k % capT), j = 2 * (k % capO);
+            const px = ox + (T.trail[i] - oT[j]) * scale, py = oy - (T.trail[i + 1] - oT[j + 1]) * scale;
+            if (k > sky.k0) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        }
+        ctx.stroke();
+    }
+
+    // The strip: the band of the sky with its stars, the other bodies as dots, the planet followed as an arrowhead
+    // that points the way it is moving, and while it backs up, the word and the stretch of sky it has covered
+    function drawSkyStrip(C, fs) {
+        const T = sky.T, V = sky.V;
+        if (!T || !V || !sky.bottom) return;
+        const x0 = sky.x0, w = sky.x1 - x0, top = sky.top, lh = Math.round(fs * 1.4);
+        roundRect(x0, top, w, sky.bottom - top, 5);
+        ctx.fillStyle = C.card;
+        ctx.fill();
+        ctx.strokeStyle = C.cardLine;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        const bx = x0 + 10, bw = w - 20, by = top + 4 + lh, mid = by + SKY_BAND / 2;
+        const lonX = (lon) => bx + (bw * lon) / 360;
+        ctx.fillStyle = C.dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+        ctx.fillRect(bx, by, bw, SKY_BAND);
+        // The stretch of sky it went back over, fading once it is moving on again
+        skyScan();
+        const retro = sky.rate < 0, age = skyAge();
+        if (age < 1 && Math.abs(sky.from - sky.to) < 90) {
+            ctx.fillStyle = hexA(C.force, 0.45 * (1 - age));
+            const a = lonX(sky.to), b = lonX(sky.from);
+            ctx.fillRect(Math.min(a, b), by, Math.abs(b - a), SKY_BAND);
+        }
+        // The stars, the brightest a little bigger
+        ctx.fillStyle = C.subtle;
+        ctx.beginPath();
+        for (const q of SKY_STARS) {
+            const sx0 = lonX(q[0]), sy0 = mid - (q[1] / 13) * (SKY_BAND / 2 - 1), r = q[2] < 1.5 ? 1.3 : 0.8;
+            ctx.moveTo(sx0 + r, sy0);
+            ctx.arc(sx0, sy0, r, 0, TAU);
+        }
+        ctx.fill();
+        for (const b of bodies) {
+            if (b === T || b === V || b.grp || b.minor) continue;
+            ctx.fillStyle = bodyStroke(b.color, C.dark);
+            ctx.beginPath();
+            ctx.arc(lonX(skyLon(b.x - V.x, b.y - V.y)), mid, b.kind === 'sun' ? 3.5 : 2.2, 0, TAU);
+            ctx.fill();
+        }
+        const mx = lonX(sky.lon), s = retro ? -1 : 1, col = retro ? C.force : bodyStroke(T.color, C.dark);
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(mx + 6 * s, mid);
+        ctx.lineTo(mx - 4 * s, mid - 5.5);
+        ctx.lineTo(mx - 4 * s, mid + 5.5);
+        ctx.closePath();
+        ctx.fill();
+        // The words: the marker's first; the others give way to it where there isn't room
+        const ty = top + 4 + lh / 2 + 0.5;
+        ctx.textBaseline = 'middle';
+        ctx.font = font(fs, retro);
+        const word = retro ? 'Retrograde' : T.name, ww = ctx.measureText(word).width;
+        const wx = clamp(mx - ww / 2, bx, bx + bw - ww);
+        ctx.fillStyle = col;
+        ctx.textAlign = 'left';
+        ctx.fillText(word, wx, ty);
+        ctx.font = font(fs);
+        ctx.fillStyle = C.subtle;
+        const title = `Sky from ${theName(V)}`, tw = ctx.measureText(title).width;
+        let right = bx + bw;
+        if (bx + tw + 8 < wx) ctx.fillText(title, bx, ty);
+        else if (wx + ww + 8 < right - tw) { ctx.textAlign = 'right'; ctx.fillText(title, right, ty); right -= tw + 12; }
+        if (sky.whole && age < 1) {
+            let back = sky.from - (retro ? sky.lon : sky.to);
+            back = Math.round(back < -180 ? back + 360 : back);
+            const note = retro ? `${back}° back so far` : `${back}° back in ${Math.round(sky.days)} days`;
+            if (back > 0 && wx + ww + 8 < right - ctx.measureText(note).width) {
+                ctx.textAlign = 'right';
+                ctx.fillText(note, right, ty);
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -6429,6 +6719,7 @@
         resetOrbitChart();
         syncEccentricity(true);
         clearHint('note', 'chosen');   // (about the last one: its Lagrange point, or a Zoom in that would now zoom elsewhere)
+        if (scene.sky) skyPicked();
         refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
@@ -6754,7 +7045,9 @@
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
         drawPast(C);
+        skyFollow();   // (see "The sky from a planet")
         drawTrails(C);
+        drawSkyLine(C);
         drawMissionMarks(C);
         drawFlybyGhost(C);
         if (settings.k1) drawEllipseLaw(C, subj);
@@ -7488,6 +7781,7 @@
         const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
         let top = 0;
         if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([visL, 0, Math.min(visR, visL + 240), top]); }
+        if (sky.bottom) { out.push([sky.x0, 0, sky.x1, sky.bottom + 4]); top = Math.max(top, sky.under); }
         const t = timeNotice();
         if (t) {
             ctx.font = font(fs, true);
@@ -7703,7 +7997,7 @@
     function countArrows() {
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
-        arrowsBusy = n > ARROWS_ALL_MAX;
+        arrowsBusy = n > ARROWS_ALL_MAX || !!scene.sky;   // (the sky scene: only the planet it follows, or its loops are lost among them)
     }
 
     const gasHeld = new Set();
@@ -8637,13 +8931,14 @@
         edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
+        drawSkyStrip(C, fs);
 
         // Pause / slow-down notice: top left, under the "Viewed from" chip if it is showing
         const t = timeNotice();
         if (t) {
             ctx.font = font(fs, true);
             const w = ctx.measureText(t).width + 18;
-            const x = visL + pad, y = frameId !== null ? pad + 40 : pad;
+            const x = visL + pad, y = Math.max(frameId !== null ? pad + 40 : pad, sky.under);
             roundRect(x, y, w, fs + 10, 4);
             ctx.fillStyle = C.card;
             ctx.fill();
@@ -8674,7 +8969,7 @@
         const one = wb + wr + 20 <= R - L, w = one ? wb + wr + 20 : Math.max(wb, wr) + 20;
         if (w > R - L) { n.canvas = null; refreshHint(); return; }   // (it goes back to being said in the line)
         const lh = Math.round(fs * 1.4), h = (one ? lh : 2 * lh) + 10;
-        const x = clamp((visL + visR - w) / 2, L, R - w), y = pad;
+        const x = clamp((visL + visR - w) / 2, L, R - w), y = sky.bottom ? sky.bottom + 6 : pad;
         roundRect(x, y, w, h, 5);
         ctx.fillStyle = C.card;
         ctx.fill();
@@ -8766,7 +9061,7 @@
     function drawCardStack(C, subj, fs, pad) {
         const small = visR - visL < 560;
         const cfs = small ? clamp(fs - 0.5, 10, 12) : fs;
-        const y0 = frameId !== null && visR - visL < 520 ? 48 : pad;
+        const y0 = sky.bottom ? sky.bottom + 6 : frameId !== null && visR - visL < 520 ? 48 : pad;
         const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
         const now = performance.now();
         const sig = `${visR - visL}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${selectedId}|${C.dark}`;
@@ -12984,7 +13279,9 @@
                 sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
             },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
-            ro: turnSetup()
+            ro: turnSetup(),
+            // (a scene with a start date: that date, so its calendar comes back with it)
+            jd: SCENES[s.scene] && SCENES[s.scene].dated ? s.startJD : undefined
         };
     }
 
@@ -13072,7 +13369,8 @@
             energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
             com: !!sca[4],
-            zoom: fin(vw[0], 0) > 0 ? clamp(vw[0], 1e-7, 1e7) : 0.4, panX: fin(vw[1], 0), panY: fin(vw[2], 0)
+            zoom: fin(vw[0], 0) > 0 ? clamp(vw[0], 1e-7, 1e7) : 0.4, panX: fin(vw[1], 0), panY: fin(vw[2], 0),
+            startJD: fin(d.jd, 0) > 0 ? clamp(d.jd, JD_MIN, JD_MAX) : 0
         };
         const set = {
             sp: fin(raw.sp, 0) > 0 ? clamp(raw.sp, SPEED_STOPS[0], SPEED_STOPS[SPEED_STOPS.length - 1]) : settings.speed,
@@ -13396,6 +13694,10 @@
             if (b) setFrame(b.id);
         } else if (t.closest('.orb-hint-turn')) {
             startTurning(bodies.find((q) => q.name === 'Jupiter'));
+        } else if (t.closest('.orb-hint-sky')) {
+            skyView();
+        } else if (t.closest('.orb-hint-skynext')) {
+            skyNext();
         }
     }
 
@@ -17100,6 +17402,21 @@
         }
     });
     bindPlayControls();
+
+    // The sky strip: who is looking at what, the direction (degrees), how fast it changes (degrees a day), the
+    // last reversal found in the trails and where the strip is drawn
+    Object.assign(window.orbitsSimulation, {
+        skyInfo() {
+            skyFollow();
+            if (!sky.T) return null;
+            skyScan();
+            return {
+                viewer: sky.V.name, target: sky.T.name, lon: sky.lon, rate: sky.rate, retro: sky.rate < 0,
+                from: isNaN(sky.from) ? null : sky.from, to: isNaN(sky.from) ? null : sky.to, days: isNaN(sky.from) ? null : sky.days, whole: sky.whole,
+                strip: sky.bottom ? { x0: sky.x0, x1: sky.x1, top: sky.top, bottom: sky.bottom } : null
+            };
+        }
+    });
 
     // Rotating frame, gravity well and Lagrange points (see "Rotating frame" after syncFrameUi)
     Object.assign(window.orbitsSimulation, {
