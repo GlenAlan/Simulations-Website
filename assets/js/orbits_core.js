@@ -9891,6 +9891,8 @@
     //   forgotten, the run stops there with a note. Bodies that touch while running back still merge.
     //   An edit (or undo, run again, a restart, or switching realistic physics) starts a new history:
     //   what came before it isn't the past of the system as it is now.
+    //   Rewinding stops at the start, paused and ready to run forwards. Pressed there, Reverse runs on
+    //   into the past that would lead to this setup (there is no trail to compare it with).
     //   Hooks: stepSize, afterStep and sampleTrails in advance (the trails sampled either way in time,
     //   see sampleAtTime), noteIrreversible in mergeBodies and disrupt, the clock-based measurements
     //   (periods, Kepler's 2nd law) fed time running forwards, drawPast in renderFrame, and timeDir in

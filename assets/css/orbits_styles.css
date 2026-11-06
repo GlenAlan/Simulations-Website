@@ -1096,12 +1096,6 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     display: none;
 }
 
-/* What the speed means, beside it */
-.sim-controls-content label .orb-speed-note {
-    float: right;
-    margin: 0.15em 0 0;
-}
-
 /* Said only while it's on, as it's a lot to take in */
 .sim-controls-content .sim-control-group:has(#realisticToggle:not(:checked)) .orb-realistic-note {
     display: none;
@@ -1854,10 +1848,10 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     }
 }
 
-/* Desktop: each button says what it does, under its icon. The chosen body shares its row with the
-   readouts. A value that grows takes room from the name: the row never wraps, so the canvas above it
-   never changes size. */
-@media screen and (min-width: 900px) and (min-height: 541px) and (pointer: fine) {
+/* Wide windows: the chosen body shares its row with the readouts. A value that grows takes room from
+   the name: the row never wraps, so the canvas above it never changes size. On a short screen, whose
+   canvas is small, the bar stays wide enough for that all the same. */
+@media screen and (min-width: 1000px) and (min-height: 541px) and (pointer: fine) {
     .orbits-sim .stats-container {
         flex-wrap: nowrap;
     }
@@ -1866,6 +1860,17 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
         flex: 1 1 15em;
     }
 
+    .orbits-sim .simulation-display-container {
+        width: min(100%, max(860px, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 16 / 10)) + 2px + var(--orb-side-w) + var(--orb-side-gap))));
+    }
+
+    body.sim-fullscreen-active .orbits-sim .simulation-display-container {
+        width: 100%;
+    }
+}
+
+/* Desktop: each button says what it does, under its icon. */
+@media screen and (min-width: 900px) and (min-height: 541px) and (pointer: fine) {
     .orbits-sim .sim-info-actions .orb-cap {
         flex-direction: column;
         gap: 4px;
