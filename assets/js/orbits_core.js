@@ -184,7 +184,7 @@
         },
         ellipse: {
             units: 'au', Tref: 1, subject: 1, box: [-1.65, 0.45, -0.9, 0.9],
-            tip: 'With Kepler\'s 2nd law on, the shaded areas stay equal as the planet speeds up.',
+            tip: () => (settings.k2 ? 'The shaded areas stay equal as the planet speeds up.' : 'Turn on <button type="button" class="orb-hint-btn orb-hint-k2" title="Also in Settings, under Kepler\'s laws">Kepler\'s 2nd law</button>: the shaded areas stay equal.'),
             bodies: [{ kind: 'sun' }, { kind: 'earth', name: 'Planet', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }]
         },
         inner: {
@@ -211,7 +211,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.'),
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from">the giant planet</button>: the star circles it.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -325,7 +325,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.'),
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in Settings, under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -10739,10 +10739,34 @@
             ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
             ui.palette.addEventListener('keydown', onPaletteKey);
             ui.palette.addEventListener('scroll', paletteEdges, { passive: true });
-            if (typeof ResizeObserver !== 'undefined') new ResizeObserver(paletteEdges).observe(ui.palette);
-            else window.addEventListener('resize', paletteEdges);
+            if (typeof ResizeObserver !== 'undefined') {
+                new ResizeObserver(paletteEdges).observe(ui.palette);
+                const cut = new ResizeObserver(paletteCut);
+                cut.observe(ui.toolbar || ui.palette);
+                if (ui.hint) cut.observe(ui.hint);   // (a longer hint leaves the chips less room)
+            } else window.addEventListener('resize', paletteEdges);
         }
         paletteEdges();
+    }
+
+    // Beside the canvas, a column too short for all the chips ends at the edge of a row, not halfway
+    // through one. (When its room changes, not while drawing.)
+    function paletteCut() {
+        const p = ui.palette;
+        if (!p) return;
+        p.style.maxHeight = p.style.overflowY = '';
+        const room = p.clientHeight;
+        if (!room || p.scrollHeight <= room + 1) return;
+        const top = p.getBoundingClientRect().top - p.scrollTop;
+        let edge = 0, end = 0;
+        for (const c of p.querySelectorAll('.orb-chip')) {
+            const b = c.getBoundingClientRect().bottom - top;
+            if (b > end) end = b;
+            if (b <= room && b > edge) edge = b;
+        }
+        // (every chip in sight, short of the padding under them: nothing to scroll to)
+        if (end <= room) p.style.overflowY = 'hidden';
+        else if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
     }
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
@@ -13323,6 +13347,13 @@
             openHelp(false);
         } else if (t.closest('.orb-hint-again')) {
             runAgain();
+        } else if (t.closest('.orb-hint-k2')) {
+            if (ui.k2 && !ui.k2.checked) ui.k2.click();
+        } else if (t.closest('.orb-hint-view')) {
+            const b = bodies.find((q) => q.name === 'Giant planet');
+            if (b) setFrame(b.id);
+        } else if (t.closest('.orb-hint-turn')) {
+            startTurning(bodies.find((q) => q.name === 'Jupiter'));
         }
     }
 
@@ -14092,6 +14123,9 @@
     // Nothing done in this scene, yet a body has broken up in it: Undo goes back to the scene's start,
     // rather than out of the scene to the one before it
     const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp);
+    // In a mission with no burn to take back, there is nothing to undo: not the scene before it (Retry or
+    // the mission's cross are the ways out)
+    const noBurnToUndo = () => !!mission.def && !mission.log.length;
 
     function undoStep() {
         flushEdit();
@@ -14105,7 +14139,7 @@
             updateHistoryUi();
             return true;
         }
-        if (!hist.undo.length) return false;
+        if (!hist.undo.length || noBurnToUndo()) return false;
         const st = hist.undo.pop();
         hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
@@ -14167,7 +14201,7 @@
     }
 
     function updateHistoryUi() {
-        const u = tornInScene() ? { label: 'the break-up' } : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
+        const u = tornInScene() ? { label: 'the break-up' } : noBurnToUndo() ? null : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
         historyButton(ui.undoBtn, 'Undo', u, `${KEYS_MOD}Z`);
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
@@ -14276,8 +14310,11 @@
     const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
     const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
     const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
+    const UNFINE_FROM = 1.5 * FINE_FROM;     // and back to full burns, if Fine is on and this share is still to burn (over 10 s of holding): above FINE_FROM, so the hint can't swap to and fro
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
+    const f1Up = (x) => (Math.ceil(x * 10) / 10).toFixed(1);   // (what is still needed: never "0.0" while any is)
+    const f2Up = (x) => (Math.ceil(x * 100) / 100).toFixed(2);
     const auPlaces = (d) => (d < 0.1 ? 3 : 2);
     const auText = (d) => `${d.toFixed(auPlaces(d))} AU`;
     const auTextUp = (d) => { const n = auPlaces(d), k = Math.pow(10, n); return `${(Math.ceil(d * k - 1e-9) / k).toFixed(n)} AU`; };
@@ -14471,25 +14508,28 @@
     // ---- Words ----
     const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter' };
 
+    // A hint asking for a full-sized burn, while Fine is still on: a Fine burn would take a long hold
+    const unFine = (html, big = true) => (mission.fine && big ? `Turn off <strong>Fine</strong>. ${html}` : html);
+
     // Hints for a move between circular orbits (up: outwards). The end of the orbit that moves is the
     // far one going up and the near one going down; the second burn goes there, the same way again.
     function transferHint(x, r, tol, up) {
         const lo = r * (1 - tol), hi = r * (1 + tol);
         const way = up ? 'forwards' : 'backwards', where = up ? 'far point' : 'closest point', btn = up ? 'Forward' : 'Back';
         const reach = up ? x.ra : x.rp;
-        if (!x.burns) return `Hold <strong>${btn}</strong> until your dashed orbit ${up ? 'reaches' : 'dips to'} the ring.`;
+        if (!x.burns) return unFine(`Hold <strong>${btn}</strong> until your dashed orbit ${up ? 'reaches' : 'dips to'} the ring.`);
         if (!x.el.bound) return 'You are escaping the Sun! <strong>Undo</strong>, and try a smaller burn.';
         // (the first burn went the wrong way: the orbit shrank going up, or grew going down)
         if (up ? x.el.a < 0.995 : x.el.a > 1.005) return `That burn ${up ? 'lowered' : 'raised'} your orbit. <strong>Undo</strong>, then burn ${way}.`;
         if (up ? reach < lo : reach > hi) return `Not there yet: hold <strong>${btn}</strong> until your orbit ${up ? 'reaches' : 'dips to'} the ring.`;
         if (up ? reach > hi : reach < lo) return `Too far: your orbit goes past the ring. <strong>Undo</strong>, or burn ${up ? 'backwards' : 'forwards'} at the ${up ? 'closest point' : 'far point'}.`;
         const at = up ? x.nu > 165 : x.nu < 15;
-        return at ? `<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`
+        return at ? unFine(`<strong>Now:</strong> hold <strong>${btn}</strong> to round off your orbit on the ring.`)
             : `Good. <strong>Skip to ${where}</strong>, then burn ${way} again.`;
     }
     // (within 45 degrees of the closest point, 0.35 AU from the Sun, a burn still earns three stars)
     function escapeHint(x) {
-        if (x.nu < 45) return '<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!';
+        if (x.nu < 45) return unFine('<strong>Now:</strong> you are moving fastest. Hold <strong>Forward</strong> to escape!');
         // (at the very start, at the far point, it may just be moving out by a rounding error)
         if (x.out && x.nu < 170) return 'Past the closest point, a burn costs far more. <strong>Retry</strong>, and burn near the Sun.';
         return x.burns ? 'A burn out here adds little energy. <strong>Skip to closest point</strong>, then burn.'
@@ -14498,7 +14538,7 @@
     function captureHint(x) {
         const g = x.d.goal;
         if (x.el.bound && x.ra > g.lim) return 'Jupiter has you, but too widely. Hold <strong>Back</strong> at the closest point to shrink your orbit.';
-        if (x.nu < 20) return '<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.';
+        if (x.nu < 20) return unFine('<strong>Now:</strong> closest point. Hold <strong>Back</strong> until Jupiter keeps you.');
         if (x.out) return 'You are past the closest point and climbing away: braking now costs more.';
         return '<strong>Skip to closest point</strong>, where braking counts most.';
     }
@@ -14581,14 +14621,15 @@
         const btn = q.kms > 0 ? 'Forward' : 'Back', more = Math.abs(q.kms), v = x.el.v;
         const sign = q.kms > 0 ? 1 : -1, ux = sign * x.vx / v, uy = sign * x.vy / v;
         // (the first burn, on a clock that is running: no figure, which would change with every small move)
-        if (first && !paused) return `Hold <strong>${btn}</strong>${first[1]}`;
+        const big = more > UNFINE_FROM * x.d.budget;
+        if (first && !paused) return unFine(`Hold <strong>${btn}</strong>${first[1]}`, big);
         const words = kmsWords(more);
         let h;
         if (first) h = `${first[0]}${first[0] ? 'hold' : 'Hold'} <strong>${btn}</strong> for about ${words} km/s${first[1]}`;
         else if (mission.fine) h = `${more > TAP_FROM * x.d.budget ? 'Hold' : 'Tap'} <strong>${btn}</strong> until you see the ✓.`;
         else if (more > FINE_FROM * x.d.budget) h = `Keep holding <strong>${btn}</strong>: about ${words} km/s to go.`;
         else h = `Nearly. Turn on <strong>Fine</strong>, then hold <strong>${btn}</strong> until you see the ✓.`;
-        return askBurn(btn, ux, uy, more, h);
+        return askBurn(btn, ux, uy, more, unFine(h, big));
     }
     // Is a burn from here worth asking for, or is going back better? (Up to the fuel of two stars; or
     // whatever the fuel so far, if it is a near miss, which a small burn finishes)
@@ -14640,7 +14681,7 @@
     function matchHint(x, what) {
         const m = matchBurn(x), kms = Math.max(0, m.kms), u = Math.hypot(m.ux, m.uy) || 1;
         if (m.cost > x.left) return 'Not enough fuel left to match it. <strong>Undo</strong> or <strong>Retry</strong>.';
-        return askBurn(m.btn, m.ux / u, m.uy / u, kms, `<strong>${mission.aimPaused ? 'Now' : 'Arrived, time waits'}:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`);
+        return askBurn(m.btn, m.ux / u, m.uy / u, kms, unFine(`<strong>${mission.aimPaused ? 'Now' : 'Arrived, time waits'}:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`, kms > UNFINE_FROM * x.d.budget));
     }
     // While the clock runs with nothing pressed, the advice holds still: what the best burn is changes with
     // every small move, so that waits until the clock stops.
@@ -14716,7 +14757,8 @@
         return x;
     }
 
-    // How the goal stands, for the console: { text, ok } (ok: on track)
+    // How the goal stands, for the console: { text, ok }. A tick, on the line (ok) or on a part of it, says
+    // nothing more is needed on that measure: a line that still asks for a burn has none.
     function missionStatus(x) {
         if (mission.status === 'won') return { text: `Complete: ${f1(mission.result.used)} km/s used`, ok: true };
         if (mission.status === 'lost') return { text: LOST_TITLE[mission.reason] || 'Mission over', ok: false };
@@ -14725,18 +14767,20 @@
         switch (g.type) {
             case 'orbit': {
                 if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
-                const up = g.r > 1, reach = up ? x.ra : x.rp;
-                return { text: `${up ? 'Far point' : 'Closest point'} ${f2(reach)} AU, goal ${f2(g.r)}`, ok: Math.abs(reach / g.r - 1) <= g.tol };
+                // (both ends of the orbit, the one the first burn moves first; a tick for an end on the ring)
+                const on = (r) => Math.abs(r / g.r - 1) <= g.tol, end = (r) => `${f2(r)}${on(r) ? ' ✓' : ''}`;
+                const ends = g.r > 1 ? `Far ${end(x.ra)}, near ${end(x.rp)}` : `Near ${end(x.rp)}, far ${end(x.ra)}`;
+                return { text: `${ends} AU, goal ${f2(g.r)}`, ok: on(x.ra) && on(x.rp) };
             }
             case 'escape': {
                 const need = toKms(Math.sqrt(2 * x.el.mu / x.el.r) - x.el.v);
-                return { text: `To escape from here: ${f1(Math.max(need, 0))} km/s`, ok: x.nu < 45 && need <= x.left };
+                return { text: `Burn ${f1Up(Math.max(need, 0))} km/s from here to escape`, ok: false };
             }
             case 'capture': {
                 if (x.el.bound) return { text: `Orbit reaches ${f2(x.ra)} AU, goal ${f2(g.lim)}`, ok: false };
                 if (x.el.r > g.lim) return { text: `${f2(x.el.r)} AU from Jupiter, ring at ${f2(g.lim)}`, ok: false };
                 const need = toKms(x.el.v - Math.sqrt(2 * x.el.mu * g.lim / (x.el.r * (x.el.r + g.lim))));
-                return { text: `To stay from here: brake ${f1(need)} km/s`, ok: x.nu < 20 && need <= x.left };
+                return { text: `Brake ${f1Up(Math.max(need, 0))} km/s from here to stay`, ok: false };
             }
             default: {
                 const reach = goalReach(g), p = mission.pred;
@@ -14745,12 +14789,13 @@
                     return d.lead ? { text: `${where}, launch at ${Math.round(d.lead)}°`, ok: Math.abs(x.phase - d.lead) < 3 } : { text: where, ok: false };
                 }
                 if (g.type === 'meet' && x.td < reach) {
-                    const fits = matchBurn(x).cost <= x.left;
-                    if (!g.l4) return { text: `Inside the ring, ${f2(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: fits };
+                    if (!g.l4) return { text: `Inside the ring, ${f2Up(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: false };
                     const size = Math.abs(x.el.a / g.a - 1) >= g.da;
-                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: fits && parkable(g, x.el.r) };
+                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2Up(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: false };
                 }
-                if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving too fast: ${f1(toKms(p.dv))} km/s, goal under ${f1(toKms(g.arrive))}`, ok: false };
+                // (a burn too small and one too big both arrive too fast, so it says how fast, not which way;
+                // rounded up, so a reading over the goal never looks like the goal)
+                if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving at ${f2Up(toKms(p.dv))} km/s, goal under ${f2(toKms(g.arrive))}`, ok: false };
                 return p ? { text: `Closest to ${x.tname}: ${auTextUp(p.d)}, goal ${auText(goalAim(g))}`, ok: onCourse(x) } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
             }
         }
@@ -14759,11 +14804,13 @@
     function missionHintText() {
         const x = missionContext();
         mission.tell = null;
-        if (!x) return mission.status === 'lost' ? '<strong>Retry</strong>, or undo your last burn.' : '';
+        const orUndo = mission.log.length ? ', or undo your last burn' : '';
+        if (!x) return mission.status === 'lost' ? `<strong>Retry</strong>${orUndo}.` : '';
         if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
-        if (mission.status === 'lost') return '<strong>Retry</strong>, or undo your last burn and fly it differently.';
+        if (mission.status === 'lost') return `<strong>Retry</strong>${orUndo}${orUndo && ' and fly it differently'}.`;
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
-        if (!mission.hints) return paused && mission.status === 'flying' ? 'Paused. Burn, or press <strong>Play</strong> to go on.' : 'Hold an engine button to burn. Stuck? Turn on <strong>Hints</strong>.';
+        // (one line, whatever the clock is doing: a held burn stops it, and the words mustn't flicker)
+        if (!mission.hints) return 'Burn, watch the dashed path, and play on. Stuck? Turn on <strong>Hints</strong>.';
         return x.d.hint(x);
     }
     // (setHint's default during a mission: the mission's own hint)
@@ -15094,12 +15141,12 @@
         return T ? ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(c.y - R.y, c.x - R.x)) / DEG + 360) % 360 : 0;
     }
 
-    // The clock stops, waiting for the burn (a full-sized one: Fine was for tuning the burn before)
+    // The clock stops, waiting for the burn. (Fine stays as the player left it: a hint asking for a
+    // full-sized burn says to turn it off, see unFine.)
     function missionWait() {
         endSkip();
         acc = 0;
         setPaused(true);
-        mission.fine = false;
     }
 
     // (each step) Got there by Play: the moment is short, so the clock stops for it where a skip would, at
@@ -15358,6 +15405,7 @@
         quietFlyby();
         setPaused(true);
         syncEccentricity(true);
+        updateHistoryUi();
         setHint();
     }
 
@@ -15372,6 +15420,7 @@
         missionUi(false);
         if (popBody) updatePopover(true);
         syncEccentricity(true);
+        updateHistoryUi();
         setHint();
     }
 
@@ -15593,7 +15642,7 @@
             + '<p class="orb-mc-goal" id="mcGoal"></p><p class="orb-mc-status" id="mcStatus"></p>'
             + '<div class="orb-mc-fuel" id="mcFuel" role="meter" aria-label="Fuel left" aria-valuemin="0"><div class="orb-mc-row"><strong>Fuel</strong><span id="mcFuelNum"></span></div>'
             + '<div class="orb-mc-bar"><div class="orb-mc-fill" id="mcFill"></div><div class="orb-mc-tick" id="mcTick" title="Keep your fuel above this mark for three stars"></div></div></div>'
-            + '<div class="orb-mc-row orb-mc-left-row"><strong>Time</strong><span id="mcLeft"></span><button type="button" class="orb-mc-hints" id="mcHints" aria-pressed="false" title="Show what to do next and where to burn">Hints off</button></div>'
+            + '<div class="orb-mc-row orb-mc-left-row"><span id="mcLeft"></span><button type="button" class="orb-mc-hints" id="mcHints" aria-pressed="false" title="Show what to do next and where to burn">Hints off</button></div>'
             + '<div class="orb-mc-row orb-mc-pad-head"><strong id="mcPadLabel">Engine: hold to fire</strong><button type="button" class="orb-mc-fine" id="mcFine" aria-pressed="false" title="Much smaller burns, to fine-tune (or hold Shift)">Fine</button></div>'
             + `<div class="orb-mc-pad" role="group" aria-labelledby="mcPadLabel">${pad.map(([k, w, i, key]) => `<button type="button" class="orb-mc-burn orb-mc-${k}" data-kind="${k}" title="Burn ${w.toLowerCase()} (${key})">${toolIcon(i)}${w}</button>`).join('')}</div>`
             + `<button type="button" class="orb-mc-skip" id="mcSkip" hidden>${toolIcon('fast-forward')}<span id="mcSkipText"></span></button>`
@@ -15707,9 +15756,11 @@
         setText(E.title, `${d.n}. ${d.title} ${starText(best ? best.stars : 0)}`);
         setAttr(E.title, 'aria-label', `Mission ${d.n} of ${MISSIONS.length}: ${d.title}${best ? `, best ${best.stars} of 3 stars` : ''}`);
         setText(E.goal, d.goalText);
-        setText(E.status, `${m.ok ? '✓ ' : ''}${m.text}`);
+        // (if it wraps, the goal goes to the next line whole)
+        setText(E.status, `${m.ok ? '✓ ' : ''}${m.text.replace(/goal .*$/, (g) => g.replace(/ /g, '\u00a0'))}`);
         E.status.classList.toggle('is-ok', m.ok);
-        if (m.ok !== mission.okSaid) { mission.okSaid = m.ok; if (m.ok && !over) announce(`On track. ${m.text}`); }
+        const ticked = m.ok || m.text.includes('✓');
+        if (ticked !== mission.okSaid) { mission.okSaid = ticked; if (ticked && !over) announce(`On track. ${m.text}`); }
         // The gauge: a mark where three stars are lost
         const frac = d.budget > 0 ? left / d.budget : 0;
         E.fill.style.width = `${(100 * frac).toFixed(1)}%`;
@@ -16203,7 +16254,7 @@
         bindCheck(ui.labels, 'labels');
         bindCheck(ui.realistic, 'realistic', () => { forcesDirty = true; pred.key = ''; });
         bindCheck(ui.k1, 'k1');
-        bindCheck(ui.k2, 'k2', () => { k2.bid = null; });
+        bindCheck(ui.k2, 'k2', () => { k2.bid = null; refreshHint(); });   // (a scene's tip that names it follows it)
         bindCheck(ui.k3, 'k3');
         bindCheck(ui.com, 'com');
         bindCheck(ui.preview, 'preview');
