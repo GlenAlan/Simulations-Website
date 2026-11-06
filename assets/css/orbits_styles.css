@@ -645,7 +645,7 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 .orb-frame-chip {
     position: absolute;
     top: 8px;
-    left: 8px;
+    left: calc(8px + var(--orb-vis-l, 0px));
     z-index: 6;
     display: inline-flex;
     align-items: center;
