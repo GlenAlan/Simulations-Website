@@ -12169,7 +12169,7 @@
     //   Each mission is a scene of its own (the scene list's "Missions" group, or the Missions button
     //   under it): the bodies, the probe, the body its burns are measured from, a time limit and a
     //   view. It starts at once, paused: the mission console takes the palette's place (the goal in a
-    //   line, how it is going, the fuel, the engine, Start or a skip to the next moment that matters),
+    //   line, how it is going, the fuel, the engine, Play or a skip to the next moment that matters),
     //   and the goal is drawn on the canvas. "How it works" gives the physics idea and the par: the
     //   delta-v of the classic way there, worked out from vis-viva, v^2 = GM (2/r - 1/a), and Kepler's
     //   3rd law.
@@ -12862,7 +12862,7 @@
     // ---- The engine ----
     // Pressed (a button, or an arrow key), it fires a tap at once, and held it goes on firing. The clock
     // waits meanwhile, so a burn happens at one place, and watching the fuel and the new path takes the
-    // time it needs: it runs again on letting go if it was running. (Before Start or a skip it wasn't.)
+    // time it needs: it runs again on letting go if it was running. (Before Play or a skip it wasn't.)
     function engineFire(kind, fine, key) {
         engineStop();
         if (!mission.def) return;
@@ -13194,7 +13194,7 @@
     // (from loadScene: a mission's scene starts the mission, any other ends one)
     function missionSceneLoaded() {
         const def = missionByKey(settings.scene);
-        if (!def) { if (mission.def) { endMission(); setPaused(false); } else hideMissionPanel(); return; }   // (a mission waits at Start)
+        if (!def) { if (mission.def) { endMission(); setPaused(false); } else hideMissionPanel(); return; }   // (a mission waits for Play)
         Object.assign(mission, {
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
@@ -13484,7 +13484,12 @@
             b.addEventListener('click', (e) => { if (!e.detail) { engineFire(kind, mission.fine); engineStop(); } });
         });
         E.fine.addEventListener('click', () => { mission.fine = !mission.fine; updateMissionConsole(); });
-        E.play.addEventListener('click', () => {
+        E.play.addEventListener('click', (e) => {
+            if (mission.status === 'won') {
+                const next = MISSIONS[mission.def.n];
+                if (next) loadMission(next, !e.detail); else showMissionPanel('list', !e.detail);
+                return;
+            }
             if (mission.status === 'ready') startFlying();
             setPaused(!paused);
             updateMissionConsole();
@@ -13549,7 +13554,8 @@
         // (the button the hint names is marked, and the arrow on the probe follows the hint)
         const told = /hold(?:ing)? <strong>(Forward|Back|In|Out)<\/strong>/i.exec(missionHintText() || '');
         const left = Math.max(0, d.budget - mission.used), best = bestOf(d.id);
-        setText(E.title, `${d.n}. ${d.title}${best ? ` ${starText(best.stars)}` : ''}`);
+        // (always three stars, full or empty, so a first win doesn't wrap the title and move everything)
+        setText(E.title, `${d.n}. ${d.title} ${starText(best ? best.stars : 0)}`);
         setAttr(E.title, 'aria-label', `Mission ${d.n} of ${MISSIONS.length}: ${d.title}${best ? `, best ${best.stars} of 3 stars` : ''}`);
         setText(E.goal, d.goalText);
         setText(E.status, `${m.ok ? '✓ ' : ''}${m.text}`);
@@ -13571,10 +13577,14 @@
         E.fine.disabled = over;
         setAttr(E.fine, 'aria-pressed', mission.fine ? 'true' : 'false');
         // The clock's button, and the skip
-        const ready = st === 'ready', running = !paused || !!(mission.firing && mission.aimPaused && !ready);
-        setText(E.playtext, ready ? 'Start' : running ? 'Pause' : 'Play');
-        setAttr(E.play, 'aria-label', ready ? 'Start the clock' : running ? 'Pause' : 'Play');
-        E.play.classList.toggle('is-primary', ready);
+        // (after a win it is the way on, and Retry is the plain button beside it)
+        const ready = st === 'ready', won = st === 'won', running = !paused || !!(mission.firing && mission.aimPaused && !ready);
+        const clockWord = won ? (MISSIONS[d.n] ? 'Next mission' : 'All missions') : running ? 'Pause' : 'Play';
+        setText(E.playtext, clockWord);
+        setAttr(E.play, 'aria-label', clockWord);
+        E.play.classList.toggle('is-primary', ready || won);
+        E.play.classList.toggle('is-next', won);
+        E.playIcon.hidden = won;
         E.playIcon.classList.toggle('fa-play', !running);
         E.playIcon.classList.toggle('fa-pause', running);
         E.play.hidden = over;
@@ -13583,7 +13593,7 @@
         E.skip.disabled = !!mission.skip;
         if (s || mission.skip) setText(E.skiptext, mission.skip ? 'Skipping…' : `Skip to ${s.word}`);
         setText(E.left, over ? `${fmtDuration(simTime)} taken` : `${fmtDuration(Math.max(0, d.limit - simTime))} left`);
-        E.retry.classList.toggle('is-primary', over);
+        E.retry.classList.toggle('is-primary', st === 'lost');
     }
 
     const starsHtml = (n) => `<span class="orb-mission-stars" role="img" aria-label="${n} of 3 stars">${starText(n)}</span>`;

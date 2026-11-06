@@ -837,7 +837,7 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     outline-offset: 1px;
 }
 
-/* (dark text on the accent, as on the missions' Start: white on it is too faint to read, 2.5:1) */
+/* (dark text on the accent, as on the missions' Play: white on it is too faint to read, 2.5:1) */
 .orb-popover button[aria-pressed="true"] {
     color: #16181c !important;
     background-color: var(--color-accent);
@@ -2049,6 +2049,12 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     flex: 1 1 0;
 }
 
+/* (it says "Next mission" after a win) */
+.orb-console .orb-mc-play.is-next {
+    flex-grow: 1.7;
+    white-space: nowrap;
+}
+
 .orb-console .orb-mc-play[hidden],
 .orb-console .orb-mc-skip[hidden] {
     display: none;
@@ -2146,16 +2152,72 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 /* Phones held sideways: the engine and the clock come first, in sight; the rest scrolls below them
    (the hint line is under the canvas here) */
 @media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
-    .orb-mc-head { order: 0; }
-    .orb-mc-fuel { order: 1; }
-    .orb-mc-pad { order: 2; }
-    .orb-console .orb-mc-skip { order: 3; }
-    .orb-mc-time { order: 4; }
-    .orb-mc-goal { order: 5; }
-    .orb-mc-status { order: 6; min-height: 0; }
-    .orb-mc-left-row { order: 7; }
-    .orb-mc-pad-head { order: 8; }
-    .orb-mc-links { order: 9; }
+    .orbits-sim.orb-mission-on .orb-toolbar {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-rows: none;
+        grid-template-areas: none;
+        gap: 4px;
+        overflow-y: auto;
+    }
+
+    body:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .orb-toolbar {
+        contain: none;
+        overflow: visible;
+    }
+
+    .orbits-sim.orb-mission-on .orb-console,
+    .orbits-sim.orb-mission-on .orb-mc-time,
+    .orbits-sim.orb-mission-on .orb-mc-pad-head {
+        display: contents;
+    }
+
+    .orb-mission-on .orb-mc-head,
+    .orb-mission-on .orb-mc-fuel,
+    .orb-mission-on .orb-mc-pad,
+    .orb-mission-on .orb-mc-skip,
+    .orb-mission-on .orb-mc-goal,
+    .orb-mission-on .orb-mc-status,
+    .orb-mission-on .orb-mc-left-row,
+    .orb-mission-on .orb-mc-links {
+        grid-column: 1 / -1;
+        grid-area: auto / 1 / auto / -1;
+    }
+
+    .orb-mission-on .orb-mc-head { order: 0; }
+    .orb-mission-on .orb-mc-fuel { order: 1; }
+    .orb-mission-on .orb-mc-pad { order: 2; }
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-skip { order: 3; grid-area: auto / 1 / auto / -1; }
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-play { order: 4; grid-area: auto / span 2; }
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-retry { order: 4; grid-area: auto / span 2; }
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-fine { order: 5; grid-area: auto / span 2; height: 34px; }
+    .orbits-sim.orb-mission-on .orb-history { order: 6; grid-area: auto / span 3; }
+    .orbits-sim.orb-mission-on .orb-toolbar .orb-history-btn { flex: 1 1 0%; width: auto; }
+    .orbits-sim.orb-mission-on .orb-toolbar .orb-fit { order: 6; grid-area: auto / span 3; }
+    .orb-mission-on .orb-mc-goal { order: 7; }
+    .orb-mission-on .orb-mc-status { order: 8; }
+    .orb-mission-on .orb-mc-left-row { order: 9; }
+    .orb-mission-on .orb-mc-links { order: 10; }
+
+    .orb-mc-pad-head strong {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+
+    /* (when it's over, the engine's Fine has gone: the way on takes its place) */
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-fine:disabled {
+        display: none;
+    }
+
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-play.is-next {
+        grid-area: auto / span 4;
+    }
+
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-retry.is-primary {
+        grid-area: auto / 1 / auto / -1;
+    }
 
     .orb-console .orb-mc-burn,
     .orb-console .orb-mc-play,
