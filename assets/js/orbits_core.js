@@ -1154,6 +1154,7 @@
     }
 
     let gravStamp = 0;
+    let anyPieces = false;   // (a torn-apart body's among them: only then do the pair sums look for pieces)
     let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
     let heavyMax = HEAVY_MAX;
     const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
@@ -1166,11 +1167,13 @@
         const stamp = ++gravStamp;
         const useTree = forceMode === 'tree' || (forceMode === 'auto' && n > DIRECT_MAX);
         const xs = SX, ys = SY, vxs = SVX, vys = SVY, ms = SM, grp = SGRP, eps = SEPS, a0 = SA0, pair = SPAIR;
+        anyPieces = false;
         for (let k = 0; k < n; k++) {
             const b = list[k];
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
             grp[k] = g;
+            if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
             a0[k] = useTree && (b.ax || b.ay) ? Math.sqrt(b.ax * b.ax + b.ay * b.ay) : 0;
@@ -1259,7 +1262,7 @@
     function pairRows(rows, nRows, n, pn) {
         // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
         const xs = SX, ys = SY, ms = SM, grp = SGRP, accX = SAX, accY = SAY, best = SBEST, second = SSECOND, part = SPART;
-        const inRows = SINDIR, rowOf = SDPOS;
+        const inRows = SINDIR, rowOf = SDPOS, some = anyPieces;
         let tmin = Infinity;
         for (let a = 0; a < nRows; a++) {
             const i = rows ? rows[a] : a;
@@ -1267,8 +1270,12 @@
             let axi = accX[i], ayi = accY[i], b1 = best[i], b2 = second[i], p1 = part[i];
             for (let j = rows ? 0 : i + 1; j < n; j++) {
                 if (rows && (j === i || (inRows[j] && rowOf[j] <= a))) continue;
-                const gj = grp[j], piece = gi !== 0 || gj !== 0;
-                if (piece && gi !== gj && ((gi !== 0 && gj !== 0) || pi === j || SPAIR[j] === i)) continue;   // (other bodies' pieces; a piece and its host)
+                let gj = 0, piece = false;
+                if (some) {
+                    gj = grp[j];
+                    piece = gi !== 0 || gj !== 0;
+                    if (piece && gi !== gj && ((gi !== 0 && gj !== 0) || pi === j || SPAIR[j] === i)) continue;   // (other bodies' pieces; a piece and its host)
+                }
                 const dx = xs[j] - xi, dy = ys[j] - yi;
                 const r2 = dx * dx + dy * dy;
                 const mj = ms[j], msum = mi + mj;
