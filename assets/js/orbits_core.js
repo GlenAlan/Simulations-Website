@@ -295,7 +295,7 @@
         // at full strength: its orbit shrinks and rounds off over six passes, then the tide lets go. (It starts on a
         // long orbit for that: the closest distance stays about the same, and each pass takes about the same energy.)
         tidalgiant: {
-            units: 'au', Tref: 0.9, subject: 1, trail: 4, realistic: true, box: [-1.5, 1.55, -0.85, 0.85],
+            units: 'au', Tref: 0.9, noClock: true, subject: 1, trail: 4, realistic: true, box: [-1.5, 1.55, -0.85, 0.85],
             tip: 'Close passes shrink the orbit, until it no longer comes close enough for tides.',
             bodies: [
                 { kind: 'sun' },
@@ -308,7 +308,7 @@
         // orbits of its own, all through the one point. (A planet is a very small target, so B's start is tuned with the
         // integrator itself, to hit near the middle: a quarter of the way from the centre to the edge.)
         collide: {
-            units: 'au', Tref: 1, subject: 1, trail: 4, realistic: true, box: [-1.8, 2.9, -1.5, 1.5],
+            units: 'au', Tref: 1, noClock: true, subject: 1, trail: 4, realistic: true, box: [-1.8, 2.9, -1.5, 1.5],
             tip: 'Two planets on crossing orbits. Watch what the crash throws out.',
             bodies: [
                 { kind: 'sun' },
@@ -3765,8 +3765,8 @@
         const title = (t) => [t, true, C.kepler];
         const pl = precessionLines(subj, compact, title, C);
         const wl = waveLines(subj, compact, title, C);
-        // (a flyby's card says what the moment is about: the clock would only stack under it)
-        const cl = flybyLines(true) ? null : clockLines(subj, compact, title);
+        // (a flyby's card says what the moment is about: the clock would only stack under it. Nor in a scene that's about something else: noClock)
+        const cl = flybyLines(true) || scene.noClock ? null : clockLines(subj, compact, title);
         if (!pl && !wl && !cl) return y;
         const lines = (pl || []).concat(cl || [], wl ? wl.lines : []);
         const lh = Math.round(fs * 1.4);
@@ -8642,7 +8642,7 @@
         const wr = ctx.measureText(rest).width;
         const L = visL + pad + Math.max(frameId !== null ? 240 : 0, notice ? notice + 8 : 0), R = Math.min(visR, cards.left) - pad;
         const one = wb + wr + 20 <= R - L, w = one ? wb + wr + 20 : Math.max(wb, wr) + 20;
-        if (w > R - L) return;
+        if (w > R - L) { n.canvas = null; refreshHint(); return; }   // (it goes back to being said in the line)
         const lh = Math.round(fs * 1.4), h = (one ? lh : 2 * lh) + 10;
         const x = clamp((visL + visR - w) / 2, L, R - w), y = pad;
         roundRect(x, y, w, h, 5);
@@ -11017,8 +11017,12 @@
     // Write the line from the top layer that has something to say
     function refreshHint() {
         if (!ui.hint || hintPressed) return;
+        // (an event note drawn on the canvas isn't said twice on screen: here it is for screen readers alone)
+        const onCanvas = hints.note && hints.note.canvas && !mission.def;
+        const said = onCanvas ? `<span class="orb-sr-only">${hintHtml(hints.note)}</span>` : '';
         const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
-            || hintHtml(hints.note) || hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint();
+            || (onCanvas ? '' : hintHtml(hints.note))
+            || said + (hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint());
         if (h === hintKey) return;
         hintKey = h;
         ui.hint.innerHTML = h;
