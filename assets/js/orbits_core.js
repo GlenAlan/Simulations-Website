@@ -292,13 +292,14 @@
             ]
         },
         // A red giant so close at each pass that the tide costs its orbit real energy (Press and Teukolsky 1977),
-        // at full strength: its orbit shrinks and rounds off over a few passes, then the tide lets go.
+        // at full strength: its orbit shrinks and rounds off over six passes, then the tide lets go. (It starts on a
+        // long orbit for that: the closest distance stays about the same, and each pass takes about the same energy.)
         tidalgiant: {
-            units: 'au', Tref: 0.67, subject: 1, trail: 4, realistic: true, box: [-1.7, 0.7, -0.9, 0.9],
+            units: 'au', Tref: 0.9, subject: 1, trail: 4, realistic: true, box: [-1.5, 1.55, -0.85, 0.85],
             tip: 'Close passes shrink the orbit, until it no longer comes close enough for tides.',
             bodies: [
                 { kind: 'sun' },
-                { kind: 'redgiant', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }
+                { kind: 'redgiant', orbit: { around: 0, a: 1.5, e: 0.73, w: 0, nu: 180 } }
             ]
         },
         // The Sun, Jupiter and 500 of the asteroids its gravity herds. 150 Trojans gather round each of the
