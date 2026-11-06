@@ -1975,16 +1975,33 @@
 
     function checkMerges() {
         if (!settings.merge) return false;
-        let merged = false;
+        let merged = hostGroups.length > 0 && piecesFallIn();
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            if (b.grp && b.kep) b.kep.touch = false;
-            // (a piece falling into a black hole: past its innermost stable orbit, before it touches)
-            if (!(settings.realistic && (a.grp || b.grp) && G * (a.m + b.m) > ISCO_C2 * (a.R + b.R) / AU_KM && plunge(a, b))) mergeBodies(a, b);
+            mergeBodies(a, b);
             merged = true;
         }
         if (merged) computeForces();
+        return merged;
+    }
+
+    // Pieces that touched their hosts in the last step (hundreds at a time, when a swarm falls into a black
+    // hole). Inside the innermost stable orbit, before it touches, a piece just falls in, as in plunge: what it
+    // takes with it is kept in the books, so the total stays level.
+    function piecesFallIn() {
+        let merged = false;
+        listsWait = true;
+        for (const p of mainPairs) {
+            if (!p.touch || !p.a.grp) continue;
+            p.touch = false;
+            const f = p.a, H = p.b, fell = settings.realistic && G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM;
+            const before = fell ? energyOf([f, H]) : 0;
+            mergeBodies(f, H);
+            if (fell) groupEnergy.set('fallen', (groupEnergy.get('fallen') || 0) + energyOf([H]) - before);
+            merged = true;
+        }
+        listsWait = false;
         return merged;
     }
 
@@ -4297,7 +4314,9 @@
     // ------------------------------------------------------------------
     // Body lists in the UI (frame selector), after bodies are added, removed or renamed
     // ------------------------------------------------------------------
+    let listsWait = false;   // (many bodies are going at once: advance refreshes the lists after them)
     function refreshBodyLists() {
+        if (listsWait) return;
         if (frameId !== null && !bodyById(frameId)) frameId = null;
         if (selectedId !== null && !bodyById(selectedId)) selectedId = defaultSubject();
         if (ui.frame) {
