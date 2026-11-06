@@ -26,6 +26,8 @@
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
  *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest, and
  *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest.
+ *   It also shows relativity without changing any path: starlight bent round a black hole ("Bent starlight"),
+ *   and how slow the chosen body's clock runs (the relativity card).
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
  *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
  *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
