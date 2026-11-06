@@ -8068,6 +8068,7 @@
     function timeHeld() {
         if (mission.def) return false;
         if (paletteDrag && paletteDrag.moved && paletteDrag.over) return true;
+        if (!drags.size) return false;
         for (const d of drags.values()) if (d.mode === 'aim') return true;
         return false;
     }
@@ -9397,7 +9398,7 @@
     }
 
     // The body that one of radius R km at (x, y) would touch, and so merge with
-    function touching(x, y, R) {
+    function dropTouches(x, y, R) {
         if (!settings.merge) return null;
         for (const q of bodies) if (Math.hypot(q.x - x, q.y - y) < (q.R + R) / AU_KM) return q;
         return null;
@@ -9410,7 +9411,7 @@
         let h = settings.placement === 'circular' ? '<strong>Drop it in space</strong>, or on a planet to make it a moon.' : '<strong>Drop it in space.</strong>';
         if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
         else if (d.over) {
-            const w = unturnPoint(wx(d.cx), wy(d.cy)), hit = touching(w.x, w.y, k.R);
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), hit = dropTouches(w.x, w.y, k.R);
             const p = settings.placement === 'circular' ? placementPrimary(w.x, w.y, k.m, null) : null;
             if (hit) h = `<strong>Drop it here</strong> and it merges with ${escapeHtml(theName(hit))}.`;
             else if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
@@ -11434,6 +11435,7 @@
 
     function applySettings(set) {
         const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        paceZoom.was = 0;
         setSpeedValue(set.sp);
         check(ui.realistic, 'realistic', set.re);
         check(ui.merge, 'merge', set.me);
@@ -12156,6 +12158,7 @@
         k2.bid = null;
         resetFlyby();
         flashes.length = 0;
+        clearHint('note', 'chosen');   // (a "Zoom in" for a moon that may no longer be there)
         pred.key = '';
         eccDrag = null;
         forcesDirty = true;

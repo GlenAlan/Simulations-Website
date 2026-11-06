@@ -1781,6 +1781,11 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     }
 }
 
+.sim-info-actions #reverseBtn[aria-pressed="true"]:focus-visible {
+    outline-color: var(--color-text);
+    outline-offset: 1px;
+}
+
 #pauseBtn.is-back .fa-play {
     transform: scaleX(-1);
 }
