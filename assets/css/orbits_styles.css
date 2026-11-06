@@ -4387,3 +4387,15 @@ dialog.orb-help::backdrop {
         height: 40px;
     }
 }
+
+/* ---------- The bar: only what has something to say ----------
+   A box with no value goes (see settleReadouts). One that loses its value mid-run keeps its place, blank,
+   so nothing moves. The same for a graph with nothing to draw: the other takes the row. */
+.orbits-sim .stats-container > .stats-box[hidden],
+#charts-container .chart-box[hidden] {
+    display: none;
+}
+
+.orbits-sim .stats-container > .stats-box.is-blank {
+    visibility: hidden;
+}

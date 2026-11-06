@@ -3976,6 +3976,11 @@
         ctx.stroke();
     }
 
+    // In the two scenes about them, or a pair of your own that loses a real share of its energy to them.
+    // (Elsewhere they are nothing on the graph: 3e-13 of its height for the star and black hole.)
+    const WAVE_SCENES = new Set(['blackhole', 'inspiral']);
+    const wavesMatter = (E) => WAVE_SCENES.has(settings.scene) || 100 * Math.abs(gw.radiated) > Math.abs(E.total);
+
     // Energy chart: the energy carried off by gravitational waves, and the total with it (which stays
     // level), shown while the graph's span holds any (dashed, so they don't rely on colour)
     function chartWaves(ce, E, k) {
@@ -3986,7 +3991,7 @@
             const labels = ce.options.plugins.legend.labels;
             labels.filter = (item, data) => !(ce.$waves.includes(data.datasets[item.datasetIndex]) && data.datasets[item.datasetIndex].hidden);
         }
-        const n = ce.data.labels.length, on = gw.radiated !== 0;
+        const n = ce.data.labels.length, on = gw.radiated !== 0 && wavesMatter(E);
         let show = on;
         for (const d of ce.$waves) {
             while (d.data.length < n - 1) d.data.unshift(null);
@@ -9752,6 +9757,7 @@
         setText(ui.statTimeUnit, tm.u);
         updateTimeControls();
         updateOrbitReadouts();
+        settleReadouts();
         const b = bodyById(selectedId);
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
@@ -9781,7 +9787,7 @@
             dist = Math.hypot(b.x - c.x, b.y - c.y);
             speed = Math.hypot(vx - c.vx, vy - c.vy);
             force = Math.hypot(b.fx, b.fy);
-            setText(ui.subjectAround, 'around the centre of mass');
+            setText(ui.subjectAround, p ? 'around the centre of mass' : 'the heaviest body');
         } else if (pr) {
             // Being moved or aimed: the orbit it would have if let go now, as the hint and preview show
             dist = pr.el.r;
@@ -9883,6 +9889,62 @@
         setTitle(statBox(ui.statDist), `Distance from ${where}`);
         setTitle(statBox(ui.statSpeed), `Speed relative to ${where}`);
         setTitle(statBox(ui.statForce), pullsTitle(b, pull));   // (and every pull's share: see pullsTitle)
+    }
+
+    // ------------------------------------------------------------------
+    // Boxes with nothing to say leave the bar: a body on its own, or the heaviest, which orbits nothing,
+    // shows only the time, and a body with no one orbit has no period. A new scene or a new choice sets
+    // the bar afresh, as a moment when it may as well move. After that a value that goes only blanks its
+    // box, so nothing moves, and one that comes has to last first (a star in the figure of eight has a
+    // period for moments at a time): half the scene's reference period, and at least a second and a half.
+    // So the bar moves at most once for each choice, and the page is written only when something changes.
+    // (What leaves is still in the body's menu: the speed on its Velocity tab, the net force on Gravity.)
+    // ------------------------------------------------------------------
+    const BAR_SETTLE_MS = 1500;
+    const barBox = (...els) => ({ els, state: 'on', since: -1, t: 0 });
+    const barBoxes = {
+        key: '',
+        orbit: barBox(statBox(ui.statDist), statBox(ui.statSpeed), statBox(ui.statForce)),
+        period: barBox(ui.statPeriodBox),
+        ecc: barBox(statBox(ui.statEcc))
+    };
+
+    function settleBox(g, has, fresh, now) {
+        if (!has) g.since = -1;
+        else if (g.since < 0) { g.since = now; g.t = simTime; }
+        let state = g.state;
+        if (fresh) state = has ? 'on' : 'off';
+        else if (!has) { if (state === 'on') state = 'blank'; }
+        else if (state !== 'on' && now - g.since > BAR_SETTLE_MS && (paused || Math.abs(simTime - g.t) > 0.5 * scene.Tref)) state = 'on';
+        if (state === g.state) return;
+        g.state = state;
+        for (const el of g.els) {
+            if (!el) continue;
+            el.hidden = state === 'off';
+            el.classList.toggle('is-blank', state === 'blank');
+        }
+    }
+
+    function settleReadouts() {
+        const b = bodyById(selectedId), alone = bodies.length < 2;
+        const key = `${settings.scene}|${hist.epoch}|${selectedId}|${alone}`;
+        const fresh = key !== barBoxes.key, now = performance.now();
+        barBoxes.key = key;
+        const orbits = !!(b && b.primary) && !alone;
+        settleBox(barBoxes.orbit, orbits, fresh, now);
+        settleBox(barBoxes.period, !!ui.statPeriod && ui.statPeriod.textContent !== '–', fresh, now);
+        settleBox(barBoxes.ecc, !!ui.statEcc && ui.statEcc.textContent !== '–', fresh, now);
+        setTitle(ui.subjectAround, b && !orbits && !alone ? 'It orbits nothing, and only wobbles round the centre of mass. Choose another body for its orbit' : '');
+        if (chartsVisible()) syncOrbitChart();
+    }
+
+    // The distance and speed graph goes when it would be empty, and the energy graph takes the row: a body
+    // that orbits nothing has none to draw. (While the graph's span holds any of it, it stays.)
+    function syncOrbitChart() {
+        if (!charts) return;
+        const box = charts.orbit.canvas.closest('.chart-box'), b = bodyById(selectedId);
+        const has = !!(b && b.primary) || charts.orbit.data.datasets[0].data.some((v) => v !== null);
+        if (box && box.hidden === has) box.hidden = !has;
     }
 
     // ------------------------------------------------------------------
@@ -12854,6 +12916,7 @@
         ch.data.datasets[0].label = b ? `${b.name}: distance` : 'Distance';
         ch.data.datasets[1].label = b ? `${b.name}: speed` : 'Speed';
         ch.update('none');
+        syncOrbitChart();
     }
 
     // Kinetic, potential and total energy. With realistic physics the first post-Newtonian terms of
