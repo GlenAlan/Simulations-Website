@@ -302,6 +302,20 @@
                 { kind: 'redgiant', orbit: { around: 0, a: 1.5, e: 0.73, w: 0, nu: 180 } }
             ]
         },
+        // An Earth on Earth's orbit, and a planet of Venus's mass falling in from 2.7 AU on an ellipse that crosses it.
+        // They meet half a year in, at 30 km/s: three times what it takes to throw off debris (Leinhardt and Stewart
+        // 2012, see collisionOutcome). Most of the Earth is left, and what comes off goes round the Sun on orbits of its
+        // own, all through the one point. (A planet is a very small target: B's start is aimed to 5 figures, tuned
+        // with the integrator itself, to hit a quarter of the way in from the edge.)
+        collide: {
+            units: 'au', Tref: 1, subject: 1, trail: 4, realistic: true, box: [-1.8, 2.9, -1.5, 1.5],
+            tip: 'Two planets on crossing orbits. Watch what the crash throws out.',
+            bodies: [
+                { kind: 'sun' },
+                { kind: 'earth', name: 'Planet A', orbit: { around: 0, a: 1, e: 0, nu: -122.70422048691768 } },
+                { kind: 'venus', name: 'Planet B', orbit: { around: 0, a: 1.6, e: 0.7, w: 162.53544218527608, nu: -162.14515729927349 } }
+            ]
+        },
         // The Sun, Jupiter and 500 of the asteroids its gravity herds. 150 Trojans gather round each of the
         // points 60 degrees ahead of and behind Jupiter on its orbit (L4 and L5), swinging slowly about them.
         // 200 Hildas are in the 3:2 resonance (three orbits for every two of Jupiter's), on orbits lined up so
