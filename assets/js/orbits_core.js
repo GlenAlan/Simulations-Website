@@ -1183,7 +1183,7 @@
             const b = list[k];
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g;
+            grp[k] = g && b.minor ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -1277,6 +1277,8 @@
         // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
         const xs = SX, ys = SY, ms = SM, grp = SGRP, accX = SAX, accY = SAY, best = SBEST, second = SSECOND, part = SPART;
         const inRows = SINDIR, rowOf = SDPOS, some = anyPieces, hosted = anyHosted;
+        // (a pair whose lighter body can't disturb anyone needn't ask for less than this)
+        const q = sampleDt / (HOST_STEPS * (n > DIRECT_MAX ? ETA_SWARM : ETA)), tLight = q * q;
         let tmin = Infinity;
         for (let a = 0; a < nRows; a++) {
             const i = rows ? rows[a] : a;
@@ -1320,7 +1322,9 @@
                 }
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
-                    if (piece) { if (PIECE_T2 * t < tmin) tmin = PIECE_T2 * t; } else if (t < tmin && !kep) tmin = t;
+                    if (piece) {
+                        if (PIECE_T2 * t < tmin) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, PIECE_T2 * tLight) : PIECE_T2 * t;
+                    } else if (t < tmin && !kep) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, tLight) : t;
                     // each body's two shortest pair times, and the partner of the shortest
                     if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = j; } else b2 = t; }
                     if (t < second[j]) { if (t < best[j]) { second[j] = best[j]; best[j] = t; part[j] = i; } else second[j] = t; }
@@ -1514,6 +1518,9 @@
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         for (let i = 0; i < n; i++) {
             if (SINDIR[i]) continue;
+            // (dots going round a host, far too light to matter to each other: the tree need not hold them)
+            const h = SPAIR[i];
+            if (h >= 0 && SM[i] < LIGHT * SM[h]) { CAX[i] = 0; CAY[i] = 0; CB1[i] = 0; CB2[i] = 0; CP1[i] = -1; continue; }
             BIDX[nl++] = i;
             const x = SX[i], y = SY[i];
             if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
