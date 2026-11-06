@@ -4521,3 +4521,8 @@ html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
         height: 40px;
     }
 }
+
+/* An off-screen pointer under the mouse: a click chooses its body */
+#simulationCanvas.orb-can-pick {
+    cursor: pointer;
+}

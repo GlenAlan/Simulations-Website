@@ -292,7 +292,7 @@
         // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
-            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, relCard: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
             tip: 'Relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
@@ -424,7 +424,7 @@
         // about 532" a century more, as in "Inner planets": what Newton could explain; the 43" left over
         // was explained by Einstein in 1915.)
         mercury: {
-            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
+            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, relCard: true, box: [-0.52, 0.52, -0.52, 0.52],
             tip: 'This orbit turns 43″ a century: too small to see, so the card measures it.',
             bodies: [
                 { kind: 'sun' },
@@ -450,7 +450,7 @@
             const w = Math.sqrt((x * gm) / (r * r * r));
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
-                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
+                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, relCard: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
                 tip: () => (settings.realistic ? 'Gravitational waves drain the orbit until the black holes merge.' : 'Just Newton: no waves, so these black holes orbit for ever.'),
                 offNote: 'no waves, so they orbit for ever. Drawn larger than life.',
                 bodies: [
@@ -4353,8 +4353,8 @@
             : `${fmtTurn(perOrbit)}${unit ? (compact ? ' a turn' : ' each time round') : ''}`);
         const lines = [];
         if (!done) {
-            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, false)}`]]];
-            return [[title('The orbit turns (precession)')], [['Measured: after a full orbit']], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
+            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, true)}`]]];
+            return [[title('The orbit turns (precession)')], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
         }
         const einstein = say(r.einstein, r.others ? r.rateE : r.einstein / r.T, false);
         const measured = say(r.perOrbit, r.rate, true);
@@ -4479,13 +4479,37 @@
         return [[title(`${who} runs slow`)], [[`Loses ${lost}${clock.swings ? ' on average' : ''}`]]];
     }
 
+    // Is the turning of the orbit and the clock worth a card? Where relativity is the point: a scene about it (relCard),
+    // or a clock losing over a minute a year. Not a scene that's about something else (noClock). The small effects
+    // everywhere else, Earth's 0.47 s a year, are in the body's Gravity tab (relativityNote). Waves are rare enough to be
+    // an event wherever they come.
+    const CLOCK_LOUD = 60 / YEAR_S;       // fraction: a minute a year
+    function relativityOnCard(b) {
+        if (!b || scene.noClock) return false;
+        if (scene.relCard || (clock.id === b.id && clock.loss >= CLOCK_LOUD)) return true;
+        // (a black hole has no clock to go by: what an orbit like its own would cost one, 3GM/(2ac^2))
+        if (b.kind !== 'blackhole' || !orbitingBody(b)) return false;
+        const el = elementsOf(b, b.primary);
+        return el.bound && (1.5 * G * (b.m + b.primary.m)) / (C2 * el.a) >= CLOCK_LOUD;
+    }
+
+    // The Gravity tab's line on relativity, while it is on: the clock and the turning, card or no card
+    function relativityNote(b, C) {
+        if (!ui.popPullRel) return;
+        const plain = (t) => [t];
+        const lines = !settings.realistic ? [] : (clockLines(b, true, plain) || []).concat(precessionLines(b, true, plain, C) || []);
+        ui.popPullRel.hidden = !lines.length;
+        if (lines.length) setText(ui.popPullRel, `Relativity: ${lines.map((line) => line.map((seg) => seg[0]).join('')).join('. ')}.`);
+    }
+
     function drawRelativityCard(C, subj, y, fs, compact) {
         if (!settings.realistic || cleanRender) return y;
         const title = (t) => [t, true, C.kepler];
-        const pl = precessionLines(subj, compact, title, C);
+        const on = relativityOnCard(subj);
+        const pl = on ? precessionLines(subj, compact, title, C) : null;
         const wl = waveLines(subj, compact, title, C);
-        // (a flyby's card says what the moment is about: the clock would only stack under it. Nor in a scene that's about something else: noClock)
-        const cl = flybyLines(true) || scene.noClock ? null : clockLines(subj, compact, title);
+        // (a flyby's card says what the moment is about: the clock would only stack under it. A scene about relativity keeps to its subject)
+        const cl = on && !scene.relCard && !flybyLines(true) ? clockLines(subj, compact, title) : null;
         if (!pl && !wl && !cl) return y;
         const lines = (pl || []).concat(cl || [], wl ? wl.lines : []);
         const lh = Math.round(fs * 1.4);
@@ -8166,6 +8190,10 @@
     // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
     const minorGroups = new Map(), pieceGroups = new Map(), gasGroups = new Map();
+    // A swarm's dots make a pattern that hundreds of trails would smear, so theirs wait until someone asks: the Trails
+    // slider set longer than the scene's own. (It lives in the slider, so share links, undo and autosave keep it. A
+    // chosen dot has its trail either way, and the planets among the dots theirs.)
+    const swarmTrails = () => !scene.swarm || settings.trailIndex > scene.trail;
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
@@ -8224,7 +8252,7 @@
         trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
         // (gas: short and faint, a sign of how it moves. Its glow is the thing to see)
         trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
-        if (!low) {
+        if (!low && swarmTrails()) {
             ctx.lineJoin = 'miter';
             trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
         }
@@ -8589,6 +8617,30 @@
     // and trail) unless that would cover another name or body; then the next free side round. A name
     // with no free side is left out (the chosen body's never is). Pieces of a torn-apart body aren't
     // named unless chosen.
+    // "A moon forming" (scene.progress) marks only Earth, the biggest piece and the chosen body: not every moonlet
+    // that has grown a little. (primOrder: heaviest first. See moonProgress for the same two.)
+    const moonUnmarked = (b) => !!scene.progress && b !== primOrder[0] && b !== primOrder[1] && !isChosen(b);
+    // A knot, zoomed out: a body whose whole orbit round something heavier fits inside about the width of its name.
+    // Its name is left out, and the heavier body's kept. It goes by the far end of the orbit, not where the body is
+    // now, so that a name doesn't blink as an elliptical orbit swings in and out, or as bodies pass each other; and a
+    // body that's only passing, on no orbit round what it's near, isn't in a knot at all. Once in, it takes a wider
+    // orbit to come out (KNOT_OUT), so that the wobble of a body's orbit in a crowd doesn't blink it either.
+    const KNOT_IN = 0.8, KNOT_OUT = 1;
+    const knotted = new Set();   // (body ids)
+    function inKnot(b, w) {
+        const p = b.primary;
+        let knot = false;
+        if (p && b.bound && p.m > b.m) {
+            const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy, mu = G * (b.m + p.m);
+            const E = 0.5 * (vx * vx + vy * vy) - mu / hyp(rx, ry), h = rx * vy - ry * vx;
+            if (E < 0) {
+                const far = (-mu / (2 * E)) * (1 + Math.sqrt(Math.max(0, 1 + (2 * E * h * h) / (mu * mu))));
+                knot = far * scale < (knotted.has(b.id) ? KNOT_OUT : KNOT_IN) * w;
+            }
+        }
+        if (knot) knotted.add(b.id); else knotted.delete(b.id);
+        return knot;
+    }
     function drawLabels(C) {
         if (!settings.labels) return;
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
@@ -8609,15 +8661,18 @@
             const chosen = b.id === selectedId || b === popBody;
             if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
+            // (what's left out is named under the mouse, or once chosen. A mission's few bodies keep theirs: one may be the goal)
+            if (b.id !== hoverName && !isChosen(b) && !mission.def && (moonUnmarked(b) || inKnot(b, w))) continue;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
             let best = null, offEdge = null, offOthers = null, first = null;
             for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
                 const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
                 const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
-                // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
+                // (its own disc too: kept inside the canvas, a name can be pushed back onto it. Not a knot's little discs,
+                // which would otherwise leave the star in the middle with no free side, on and off, as they go round it)
                 const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
-                    || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
+                    || discs.some((d) => { if (d.b !== b && knotted.has(d.b.id)) return false; const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
                 const edge = zones.some((z) => box.l < z[2] && box.r > z[0] && box.t < z[3] && box.b > z[1]);
                 const at = { box, ux, uy };
                 if (!hit && !edge) { best = at; break; }
@@ -8737,24 +8792,57 @@
 
     const named = (l, t, r, b, zones) => zones.some((z) => l < z[2] && r > z[0] && t < z[3] && b > z[1]);
 
-    // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
+    // Does this body have a pointer at the edge?
+    function hasPointer(b) {
+        if (b.grp || (b.minor && !isChosen(b)) || moonUnmarked(b)) return false;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        return !(x > visL - r && x < visR + r && y > -r && y < viewH + r);
+    }
+
+    // Where this frame's pointers are, for the mouse and a tap: a pointer doesn't say whose it is unless it's the chosen
+    // or the heaviest body's, so hovering names it, and a tap or click chooses its body, which names it too.
+    const offMarks = { n: 0, id: [], x: [], y: [] };
+    function offMarkAt(x, y, tol) {
+        let best = null, bestD = tol;
+        for (let i = 0; i < offMarks.n; i++) {
+            const d = hyp(offMarks.x[i] - x, offMarks.y[i] - y);
+            if (d < bestD) { bestD = d; best = offMarks.id[i]; }
+        }
+        return best;
+    }
+    function pickOffMark(d) {
+        const id = offMarkAt(d.x0, d.y0, d.type === 'mouse' ? 10 : 22);
+        if (id === null) return false;
+        if (popBody && popBody.id !== id) closePopover();
+        selectBody(id);
+        return true;
+    }
+
+    // Bodies outside the view: a small pointer at the edge of the canvas, in their direction. Only the
+    // chosen body's and the heaviest of them are named, or the names would ring the view (see offMarks for the rest).
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         const cx = (visL + visR) / 2, cy = viewH / 2;
         const inset = 12;
-        let zones = null;
+        let zones = null, top = null;
+        for (const b of bodies) if (hasPointer(b) && (!top || b.m > top.m)) top = b;
+        offMarks.n = 0;
+        if (!top) return;
         for (const b of bodies) {
-            const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (b.minor && !isChosen(b)) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
-            const dx = x - cx, dy = y - cy;
+            if (!hasPointer(b)) continue;
+            const dx = sx(b.dx) - cx, dy = sy(b.dy) - cy;
             const k = Math.min(((visR - visL) / 2 - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
-            // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
+            // (along a side, the name is a line tall; along the top or bottom, as wide as it is. A name shown only
+            // under the mouse keeps no room: the pointer doesn't move for it)
             ctx.font = font(fs);
-            const nw = settings.labels ? nameWidth(b.name, fs) : 0;
-            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : nw / 2 + 6;
+            // (a mission has only a few bodies, and the goal may be one of them)
+            const say = settings.labels && (b === top || isChosen(b) || !!mission.def), hover = b.id === hoverName;
+            const nw = say || hover ? nameWidth(b.name, fs) : 0;
+            const h = Math.abs(ux) > 0.5 || !say ? fs / 2 + 8 : nw / 2 + 6;
             const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
+            offMarks.id[offMarks.n] = b.id; offMarks.x[offMarks.n] = ex; offMarks.y[offMarks.n] = ey; offMarks.n++;
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
             ctx.beginPath();
@@ -8765,18 +8853,20 @@
             ctx.fill();
             ctx.globalAlpha = 1;
             let half = 10;
-            if (settings.labels && clear) {
+            if ((say && clear) || hover) {
                 // (where its name would go: left out if another pointer's is there)
                 const tx = ex - ux * 12, ty = ey - uy * 12;
                 const nl = ux > 0.5 ? tx - nw : ux < -0.5 ? tx : tx - nw / 2, nt = uy > 0.5 ? ty - fs : uy < -0.5 ? ty : ty - fs / 2;
-                if (!named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
+                if (hover || !named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
                     ctx.font = font(fs);
                     ctx.fillStyle = C.subtle;
                     ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
                     ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
                     ctx.fillText(b.name, tx, ty);
-                    half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
-                    zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                    if (say) {
+                        half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                        zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                    }
                 }
             }
             // (the next pointer along this edge keeps clear of this one and its name)
@@ -9002,7 +9092,7 @@
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
         sizeArrows(n);
-        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0 || !!scene.sky;   // (the sky scene: only the planet it follows, or its loops are lost among them)
+        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0 || !!scene.sky || !!scene.progress;   // (the sky scene: only the planet it follows, or its loops are lost among them. A moon forming: the chosen body only)
     }
 
     const gasHeld = new Set();
@@ -9325,6 +9415,7 @@
             if (against) note = `A minus share pulls against the others. ${note}`;
         }
         setText(ui.popPullNote, note);
+        relativityNote(b, colours());
     }
 
     // ---- Pull lines ----
@@ -9768,7 +9859,7 @@
         Object.assign(ui, {
             pullsToggle: byId('pullsToggle'), pullSumToggle: byId('pullSumToggle'), limitsToggle: byId('limitsToggle'),
             popPullHead: byId('popPullHead'), popPullRows: byId('popPullRows'), popPullNet: byId('popPullNet'),
-            popPullNote: byId('popPullNote'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
+            popPullNote: byId('popPullNote'), popPullRel: byId('popPullRel'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
         });
         TAB_OF.popTabPull = 'pull';
         buildPullRows();
@@ -9878,6 +9969,22 @@
         fillTextInside(text, q.x + px * gap * s, q.y + py * gap * s + 4 * s);
     }
 
+    // Which sectors carry their area: the fastest and the slowest, the two that look least alike but measure the same,
+    // which is the point of the law (the card has the rest). Speed is the length of orbit swept. On a nearly round orbit
+    // all look alike: then two opposite ones, by number, which stay put from one orbit to the next.
+    const k2Marks = { fast: null, slow: null, round: false };
+    function markSectors() {
+        let hi = 0, lo = Infinity;
+        k2Marks.fast = k2Marks.slow = null;
+        for (const s of k2.sectors) {
+            const n = s.pts.length, L = hyp(s.pts[n - 2] - s.pts[0], s.pts[n - 1] - s.pts[1]);
+            if (L > hi) { hi = L; k2Marks.fast = s; }
+            if (L < lo) { lo = L; k2Marks.slow = s; }
+        }
+        k2Marks.round = lo > 0.9 * hi;
+    }
+    const sectorMarked = (s) => (k2Marks.round ? s.n % (K2_SECTORS / 2) === 0 : s === k2Marks.fast || s === k2Marks.slow);
+
     function drawSectors(C, b) {
         if (!b || k2.bid !== b.id) return;
         const p = bodyById(k2.pid);
@@ -9885,6 +9992,7 @@
         const cx = sx(p.dx), cy = sy(p.dy);
         const fs = clamp(Math.min(viewW, viewH) / 48, 10, 12);
         const list = k2.sectors.concat(k2.cur ? [k2.cur] : []);
+        markSectors();
         list.forEach((s) => {
             const n = s.pts.length / 2;
             if (n < 2) return;
@@ -9903,8 +10011,8 @@
             ctx.moveTo(cx, cy);
             ctx.lineTo(cx + pts[0] * scale, cy - pts[1] * scale);
             ctx.stroke();
-            // Area label inside finished sectors that are big enough on screen
-            if (!live && k2.bound && !cleanRender) {
+            // Area label inside the marked finished sectors, if big enough on screen
+            if (!live && k2.bound && !cleanRender && sectorMarked(s)) {
                 const m = Math.floor(n / 2);
                 const mx = pts[2 * m] * scale, my = -pts[2 * m + 1] * scale;
                 const rpx = Math.hypot(mx, my);
@@ -12759,6 +12867,7 @@
     const NEAR_MOUSE = 24, NEAR_TOUCH = 30;
     const HAND_LAG_S = 0.12;   // by the time a hand has pressed, a moving target has moved on this long
     let hoverAim = null;   // id of the body whose arrow tip the mouse is over
+    let hoverName = null;   // id of the body named because the mouse is over it, or its pointer at the edge
 
     function canvasPoint(e) {
         const r = canvas.getBoundingClientRect();
@@ -13863,6 +13972,8 @@
                 if (popBody && popBody !== b) closePopover();
                 selectBody(b.id);
                 if (dbl) setFrame(frameId === b.id ? null : b.id);
+            } else if (pickOffMark(d)) {
+                lastTap.quick = false;   // (a pointer is chosen, not viewed from)
             } else if (dbl) {
                 closePopover();
                 if (frameId !== null) setFrame(null);
@@ -13874,8 +13985,9 @@
 
     // The cursor shows what a press would do; an arrow tip under the mouse is also drawn highlighted.
     function updateCursor(x, y) {
-        canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim');
+        canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim', 'orb-can-pick');
         hoverAim = null;
+        hoverName = null;
         if (drags.size) {
             const d = [...drags.values()][0];
             canvas.classList.add(d.mode === 'aim' ? 'orb-can-aim' : 'orb-grabbing');
@@ -13883,9 +13995,12 @@
         }
         updateDrawnPositions();
         let tipOf = onHandle(x, y, GRAB_MOUSE);
-        if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
+        const over = tipOf ? null : bodyAt(x, y, 5);
+        if (over) { canvas.classList.add('orb-can-grab'); hoverName = over.id; return; }
         if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
-        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
+        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; return; }
+        hoverName = offMarkAt(x, y, 10);
+        if (hoverName !== null) canvas.classList.add('orb-can-pick');
     }
 
     function onWheel(e) {
@@ -18186,6 +18301,7 @@
     function updateTrailLabel() {
         const n = TRAIL_STEPS[settings.trailIndex];
         setText(ui.trailVal, n === 0 ? 'off' : fmtDuration(n * scene.Tref));
+        if (ui.trail) ui.trail.title = scene.swarm ? 'Longer adds a trail to every dot' : '';   // (see swarmTrails)
     }
 
     // Running, a body is drawn up to a step on from the physics (lag); paused, exactly at it. So that pressing Pause
@@ -18296,7 +18412,7 @@
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
         canvas.addEventListener('pointerleave', (e) => {
-            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim'); hoverAim = null; }
+            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim', 'orb-can-pick'); hoverAim = null; hoverName = null; }
         });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('wheel', onWheel, { passive: false });
