@@ -28,8 +28,7 @@
  *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest. Just
  *   outside that limit, a star or gas giant stays whole, but each close pass takes energy out of the orbit, and it
  *   is drawn stretched by the tide (see "Tides on a body that stays whole").
- *   It also shows relativity without changing any path: starlight bent round a black hole ("Bent starlight"),
- *   and how slow the chosen body's clock runs (the relativity card).
+ *   It also shows how slow the chosen body's clock runs (the relativity card), which changes no path.
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
  *   so they spiral in. Two black holes then plunge until their horizons meet; anything else that is compact falls
  *   in at the innermost stable orbit. A card measures how far the
@@ -83,6 +82,7 @@
         showCharts: byId('showCharts'), chartsContainer: byId('charts-container'),
         fps: byId('fpsDisplay'),
         pop: byId('bodyPopover'), popDot: byId('popDot'), popName: byId('popName'), popClose: byId('popClose'),
+        popHead: byId('popHead'), popGrip: byId('popGrip'),
         popLock: byId('popLock'), popLockText: byId('popLockText'), popCircular: byId('popCircular'), popDelete: byId('popDelete'),
         popMass: byId('popMass'), popMassVal: byId('popMassVal'),
         popSpeed: byId('popSpeed'), popSpeedVal: byId('popSpeedVal'), popSpeedNote: byId('popSpeedNote'),
@@ -155,8 +155,9 @@
         { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
-    // Values the mass and radius sliders snap to
-    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15];
+    // Values the mass and radius sliders snap to. The two heaviest: Sagittarius A* (GRAVITY Collaboration
+    // 2022, A&A 657, L12) and M87* (Event Horizon Telescope 2019, ApJL 875, L6).
+    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15, 4.3e6, 6.5e9];
     const RADIUS_SNAPS = [12, 1737, 3390, 6371, 8700, 69911, 210000, 696000, 4.6e6, 3.0e7];
 
     // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same numbers from the same seed)
@@ -2980,6 +2981,18 @@
         if (b.kind === 'blackhole') b.R = horizonKm(b.m);
     }
 
+    // Anything inside its own event horizon is a black hole, whatever it was. (Only the mass slider gets
+    // there, so this is called from nowhere else: no scene or merger comes through it.)
+    function collapseIfInsideHorizon(b) {
+        if (b.kind === 'blackhole' || b.R > horizonKm(b.m)) return;
+        b.kind = 'blackhole';
+        b.color = KINDS.blackhole.color;
+        b.R = horizonKm(b.m);
+        flashes.push({ x: b.x, y: b.y, t: performance.now(), color: '#ffffff', r0: drawRadius(b) });
+        refreshBodyLists();
+        showHint('note', `<strong>${escapeHtml(capital(theName(b)))} is now a black hole:</strong> it fits inside its own event horizon.`, { ms: 8000, tag: 'horizon' });
+    }
+
     // ------------------------------------------------------------------
     // Tides on a body that stays whole (realistic physics). A close pass raises waves in a star or gas giant, and
     // the energy they take comes out of the orbit. For a parabolic pass (Press & Teukolsky 1977, ApJ 213, 183):
@@ -4656,10 +4669,23 @@
         // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
         if (bodies.length === 1) {
             const b = bodies[0], w = 0.5 * (scene.box[1] - scene.box[0]), h = 0.5 * (scene.box[3] - scene.box[2]);
-            fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
+            fitBox(withHorizons([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h]), true);
             return;
         }
-        fitBox(paddedBox(sceneBox(true)), true);
+        fitBox(paddedBox(withHorizons(sceneBox(true))), true);
+    }
+
+    // The box q (relative to the frame origin), grown to hold the horizon of any black hole wider than it.
+    // (A very heavy one can be: then "Fit view" must show its edge, not just more of its inside.)
+    function withHorizons(q) {
+        const size = Math.max(q[1] - q[0], q[3] - q[2]);
+        for (const b of bodies) {
+            if (b.kind !== 'blackhole' || b.R / AU_KM <= size) continue;
+            const R = b.R / AU_KM, x = b.dx - F.x, y = b.dy - F.y;
+            q[0] = Math.min(q[0], x - R); q[1] = Math.max(q[1], x + R);
+            q[2] = Math.min(q[2], y - R); q[3] = Math.max(q[3], y + R);
+        }
+        return q;
     }
 
     const paddedBox = (q) => {
@@ -7183,7 +7209,6 @@
         computeDrawRadii();
         placeCloseUp();
         drawGravityWell(C);   // (underneath everything: see "Gravity well")
-        drawLensedStars(C);   // (see "Bent starlight")
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
         drawPast(C);
@@ -7525,206 +7550,6 @@
         ctx.fill();
     }
 
-    // ---- Bent starlight round a black hole (realistic physics) ----
-    // The canvas looks straight down on a flat system, so the bodies in it are not behind a black hole
-    // along the line of sight, and their pictures aren't bent. What a black hole does bend is the light of
-    // stars far behind the plane. Each star here goes where the point-lens equation puts it. A star in
-    // direction beta from the hole has two images, on the line through the hole, at
-    //   theta = (beta +- sqrt(beta^2 + 4 thetaE^2)) / 2      with thetaE^2 = 4GM/c^2 / D
-    // for stars far behind the hole, seen from distance D (Einstein 1936; Refsdal 1964). In the plane of the
-    // canvas, where lengths are angles times D, the Einstein radius is E = sqrt(4GM/c^2 D): the one number
-    // not given by the scene is D, as nothing says where the viewer is. It is chosen once, so that the ring
-    // of the heaviest hole is about a tenth of the canvas across as it first shows, and said on the canvas:
-    // the strength of the bending is real for a viewer that far away. (A real telescope, light years away,
-    // sees a ring far wider than this canvas and far too small on its sky to make out.) Every point of the
-    // edge of a star's disc is sent through the equation, so its images are the true shapes, and painted
-    // evenly: lensing keeps a star's surface brightness, so an image is brighter as a whole by just the
-    // magnification, in its area. A star right behind the hole becomes the ring itself. The dots' own size
-    // is a symbol, as real stars would be far smaller, and their rings thinner and brighter.
-    // The stars are fixed in the world, so what counts is how the hole moves against them: its own orbit,
-    // and a slow drift of at most 30 km/s, about what stars near each other have, slower if that would be
-    // too fast to follow at the scene's rate. The first star is put to pass right behind the hole in the
-    // first few seconds. The sky is a tile repeated, so there are always the same few stars near a hole, and
-    // they fade out where the bending gets small. It is a picture and nothing else: no physics reads it.
-    // Two holes well apart each bend the stars nearest them. With their rings overlapping, the light is
-    // bent by both at once, which this equation can't say, so they show no stars: nor does a hole whose
-    // ring is too close to it for weak bending (the equation is 15% out at 10 horizon radii and 30% at 5).
-    const LENS_N = 30, LENS_TILE = 7, LENS_K = 64, LENS_HOLES = 3;
-    const LENS_FILL = 0.1;                // the ring's radius over the shorter side of the canvas, when D is chosen
-    const LENS_KMS = 30;                  // km/s: the fastest drift of the stars past the hole
-    const LENS_CROSS_S = 10;              // s: and the shortest time to cross the ring at 1x
-    const LENS_PASS_S = 7;                // s: when the first star passes behind the hole, at 1x
-    const LENS_MIN_E = 8;                 // Einstein radius in horizon radii: closer in, light isn't weakly bent (no ring drawn)
-    const LENS_SHADOW = 1.5 * Math.sqrt(3);   // horizon radii: light aimed closer than this falls in
-    const lens = { D: 0, E0: 0, ox: 0, oy: 0, t0: 0, vx: 0, vy: 0, scene: null, n: 0, drawn: false, note: '' };
-    const LENS_U = new Float64Array(2 * LENS_N), LENS_R = new Float64Array(LENS_N);
-    const LENS_COS = new Float64Array(LENS_K), LENS_SIN = new Float64Array(LENS_K);
-    const LH = { x: new Float64Array(LENS_HOLES), y: new Float64Array(LENS_HOLES), X: new Float64Array(LENS_HOLES), Y: new Float64Array(LENS_HOLES), m: new Float64Array(LENS_HOLES), a: new Float64Array(LENS_HOLES), E: new Float64Array(LENS_HOLES), b: new Array(LENS_HOLES).fill(null) };
-    for (let i = 0; i < LENS_N; i++) {
-        // (evenly scattered, with no clumps or gaps: the R2 sequence)
-        const f = (x) => x - Math.floor(x);
-        LENS_U[2 * i] = f(0.5 + i * 0.7548776662) - 0.5;
-        LENS_U[2 * i + 1] = f(0.5 + i * 0.5698402910) - 0.5;
-        LENS_R[i] = 1.05 + 1.05 * f(i * 0.6180339887);
-    }
-    for (let k = 0; k < LENS_K; k++) { LENS_COS[k] = Math.cos((TAU * k) / LENS_K); LENS_SIN[k] = Math.sin((TAU * k) / LENS_K); }
-
-    // The viewer's distance, the stars' start and their drift: once a scene has a hole to show
-    function chooseLens(m, x, y) {
-        const rs = (2 * G * m) / C2;
-        const want = (LENS_FILL * Math.min(visR - visL, viewH)) / scale;
-        lens.D = +Math.max((want * want) / (2 * rs), 0.5 * LENS_MIN_E * LENS_MIN_E * rs).toPrecision(2);
-        lens.E0 = Math.sqrt(2 * rs * lens.D);
-        const v = Math.min(LENS_KMS / AUYR_KMS, (2 * lens.E0) / (LENS_CROSS_S * rate()));
-        lens.vx = v * 0.9563; lens.vy = v * 0.2924;   // (17 degrees off the x axis, so each pass differs from the last)
-        lens.ox = x; lens.oy = y; lens.t0 = simTime; lens.scene = scene;
-        // The first star, and it the largest: a pass almost dead behind the hole
-        const L = LENS_TILE * lens.E0, tp = LENS_PASS_S * rate();
-        LENS_U[0] = (-lens.vx * tp - 0.012 * lens.E0 * 0.2924) / L;
-        LENS_U[1] = (-lens.vy * tp + 0.012 * lens.E0 * 0.9563) / L;
-        LENS_R[0] = 2.4;
-        const au = lens.D, ly = au / C_LIGHT;   // (a light year is C_LIGHT AU)
-        lens.note = `Bent starlight, as seen from ${au < 0.1 ? `${fig2(au * AU_KM)} km` : ly < 0.1 ? `${fig2(au)} AU` : `${fig2(ly)} light years`} away`;
-    }
-
-    // The holes to draw this frame, into LH (heaviest first; where they are in the world, unturned):
-    // how many. Each has its alpha, for how far it is off the canvas, how small its ring looks and how fast
-    // the stars rush past it on screen.
-    function lensHoles() {
-        let n = 0;
-        for (const b of bodies) {
-            if (b.kind !== 'blackhole' || (n === LENS_HOLES && b.m <= LH.m[n - 1])) continue;
-            let i = n < LENS_HOLES ? n++ : n - 1;
-            while (i > 0 && LH.m[i - 1] < b.m) { LH.m[i] = LH.m[i - 1]; LH.b[i] = LH.b[i - 1]; i--; }
-            LH.m[i] = b.m; LH.b[i] = b;
-        }
-        if (!n) { lens.D = 0; return 0; }
-        const c = turn.c, sn = turn.s;
-        for (let i = 0; i < n; i++) {
-            const b = LH.b[i], x = b.dx - F.x, y = b.dy - F.y;
-            LH.x[i] = F.x + c * x + sn * y;
-            LH.y[i] = F.y - sn * x + c * y;
-            LH.X[i] = sx(b.dx);
-            LH.Y[i] = sy(b.dy);
-        }
-        if (!lens.D || lens.scene !== scene) {
-            if (view.anim) return 0;   // (the view is still settling)
-            chooseLens(LH.m[0], LH.x[0], LH.y[0]);
-        }
-        for (let i = 0; i < n; i++) LH.E[i] = Math.sqrt(((4 * G * LH.m[i]) / C2) * lens.D);
-        for (let i = 0; i < n; i++) {
-            const b = LH.b[i], X = LH.X[i], Y = LH.Y[i];
-            const off = Math.max(visL - X, X - visR, -Y, Y - viewH, 0);
-            const Epx = LH.E[i] * scale;
-            const short = Math.min(visR - visL, viewH);
-            let a = clamp(1 - off / 40, 0, 1) * clamp((Epx - 14) / 14, 0, 1) * clamp((0.7 * short - Epx) / (0.25 * short), 0, 1);
-            if (LH.E[i] < LENS_MIN_E * ((2 * G * LH.m[i]) / C2)) a = 0;
-            for (let j = 0; j < n; j++) {
-                if (j !== i) a *= clamp((hyp(LH.x[i] - LH.x[j], LH.y[i] - LH.y[j]) / (LH.E[i] + LH.E[j]) - 1.5) / 0.5, 0, 1);
-            }
-            if (!paused && a > 0) {
-                let v = hyp(b.vx - lens.vx, b.vy - lens.vy) * scale;
-                if (turn.on) v += Math.abs(turn.omega) * 3 * Epx;
-                a *= clamp(2 - (v * settings.speed * rate()) / 500, 0, 1);
-            }
-            LH.a[i] = a;
-        }
-        return n;
-    }
-
-    // Drawn from the frame, under everything but the gravity well
-    function drawLensedStars(C) {
-        lens.drawn = false;
-        if (!settings.realistic || cleanRender) return;
-        const n = lensHoles();
-        if (!n) return;
-        let E = 0;
-        for (let i = 0; i < n; i++) E = Math.max(E, LH.E[i]);
-        const L = LENS_TILE * Math.max(lens.E0, E / 1.5), half = L / 2;
-        const t = simTime + lag - lens.t0, ax = lens.ox + lens.vx * t, ay = lens.oy + lens.vy * t;
-        const base = C.dark ? 0.8 : 0.6;
-        ctx.fillStyle = C.dark ? '#dde7ff' : '#3f4c68';
-        for (let h = 0; h < n; h++) {
-            if (!(LH.a[h] > 0.01)) continue;
-            const hx = LH.x[h], hy = LH.y[h], Eh = LH.E[h];
-            for (let i = 0; i < LENS_N; i++) {
-                let rx = ax + LENS_U[2 * i] * L - hx, ry = ay + LENS_U[2 * i + 1] * L - hy;
-                rx -= L * Math.round(rx / L);
-                ry -= L * Math.round(ry / L);
-                const beta = hyp(rx, ry);
-                if (beta >= half) continue;
-                let a = LH.a[h] * Math.min(1, (half - beta) / (0.4 * half));
-                // (each star is bent by the hole it is nearest, in rings; midway it fades, so it never jumps)
-                for (let o = 0; o < n; o++) {
-                    if (o === h) continue;
-                    let qx = ax + LENS_U[2 * i] * L - LH.x[o], qy = ay + LENS_U[2 * i + 1] * L - LH.y[o];
-                    qx -= L * Math.round(qx / L);
-                    qy -= L * Math.round(qy / L);
-                    a *= clamp((hyp(qx, qy) / LH.E[o] - beta / Eh) / 0.7, 0, 1);
-                }
-                if (a < 0.02) continue;
-                ctx.globalAlpha = a * base;
-                lensedStar(rx * scale, ry * scale, LENS_R[i], Eh * scale, h);
-                lens.drawn = true;
-            }
-        }
-        ctx.globalAlpha = 1;
-    }
-
-    // One star's images: its centre at (bx, by) px from hole h, in the world's directions, radius rho px
-    function lensedStar(bx, by, rho, E, h) {
-        const c = turn.c, sn = turn.s, X = LH.X[h], Y = LH.Y[h];
-        const beta = hyp(bx, by), root = Math.sqrt(beta * beta + 4 * E * E);
-        const out = (beta + root) / 2, inn = (root - beta) / 2;   // the two images' distances from the hole
-        const shadow = (LENS_SHADOW * ((2 * G * LH.m[h]) / C2)) * scale;
-        ctx.beginPath();
-        // Hardly bent: a dot, its centre moved out
-        const stretch = beta > 0 ? out / beta : Infinity;
-        if ((stretch - 1) * rho < 0.4) {
-            const px = X + (c * bx - sn * by) * stretch, py = Y - (sn * bx + c * by) * stretch;
-            if (px < -5 || px > viewW + 5 || py < -5 || py > viewH + 5) return;
-            ctx.arc(px, py, rho, 0, TAU);
-        } else {
-            lensedOutline(X, Y, bx, by, rho, E, 1, stretch < 3 ? 4 : stretch < 10 ? 2 : 1);
-        }
-        // The second image, inside the ring and across from the star: small and faint unless the star is
-        // close behind, and lost if its light came too close to the hole
-        const s2 = beta > 0 ? inn / beta : Infinity;
-        if (inn >= shadow && s2 * rho >= 0.35) lensedOutline(X, Y, bx, by, rho, E, -1, s2 < 3 ? 4 : s2 < 10 ? 2 : 1);
-        ctx.fill('evenodd');
-    }
-
-    // The edge of a star's disc sent through the lens equation, on the outer side (sign 1) or inner (-1):
-    // every step-th point. The points are spaced by their direction as seen from the hole, so no two
-    // neighbours are far apart in direction. (Spaced round the star, the two either side of the hole, when
-    // the star's edge passes close by, go to opposite sides of the ring: a straight edge right across it,
-    // and half the ring filled in.)
-    function lensedOutline(X, Y, bx, by, rho, E, sign, step) {
-        const c = turn.c, sn = turn.s, E4 = 4 * E * E, beta = hyp(bx, by);
-        const ux = beta > 0 ? bx / beta : 1, uy = beta > 0 ? by / beta : 0;
-        for (let k = 0; k < LENS_K; k += step) {
-            // The point's direction from the hole, against the star's (cosine ca, sine sa), and its distance q.
-            // With the hole outside the star, directions reach only so far to either side and each comes
-            // twice, so k stands for the angle at the point between the hole and the star's centre.
-            let ca, sa, q;
-            if (beta > rho) {
-                sa = (rho / beta) * LENS_SIN[k];
-                ca = Math.sqrt(1 - sa * sa);
-                q = beta * ca + rho * LENS_COS[k];
-            } else {
-                sa = LENS_SIN[k];
-                ca = LENS_COS[k];
-                const h = beta * sa;
-                q = beta * ca + Math.sqrt(rho * rho - h * h);
-            }
-            const r = (q + sign * Math.sqrt(q * q + E4)) / 2;
-            const ix = r * (ux * ca - uy * sa), iy = r * (uy * ca + ux * sa);
-            const px = X + c * ix - sn * iy, py = Y - sn * ix - c * iy;
-            if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-    }
-
     const pieceColour = (color, C) => (C.dark ? color : bodyStroke(bodyStroke(color, false), false));
 
     function drawBody(b, x, y, r, C) {
@@ -7814,11 +7639,21 @@
                 ctx.lineWidth = 1.2;
                 ctx.setLineDash([3, 3]);
                 ctx.beginPath();
-                ctx.arc(x, y, r + 5, 0, TAU);
+                arcInView(x, y, r + 5);
                 ctx.stroke();
                 ctx.setLineDash([]);
             }
         }
+    }
+
+    // A circle added to the path. One far wider than the canvas is just the stretch in view: dashed all
+    // the way round, a very heavy black hole's took a quarter of a second a frame.
+    function arcInView(x, y, R) {
+        const cx = viewW / 2, cy = viewH / 2, h = hyp(cx, cy), d = hyp(x - cx, y - cy);
+        if (R < 2 * h) { ctx.arc(x, y, R, 0, TAU); return; }
+        if (d + h < R || R + h < d) return;   // (the canvas is all inside it, or all outside)
+        const a = Math.atan2(cy - y, cx - x), w = Math.acos(clamp((R * R + d * d - h * h) / (2 * R * d), -1, 1));
+        ctx.arc(x, y, R, a - w, a + w);
     }
 
     // Names go on top of the arrows and trails, with a halo in the background colour so lines
@@ -8239,9 +8074,10 @@
     // ------------------------------------------------------------------
     // Mutual gravity made visible. Every body pulls on every other: the chosen body's menu has a
     // Gravity tab listing the strongest pulls on it (the info bar's Gravity tooltip names them too);
-    // pull lines split its force arrow into one arrow per body pulling on it, joined tip to tail so
-    // that they add up to the force arrow (vector addition), with a faint dashed line to each of those
-    // bodies; its Hill sphere and Roche limit can be drawn; and a small legend gives the arrows' scales.
+    // pull lines draw one arrow per body pulling on it, each on the way to its puller, with a faint dashed
+    // line to each of those bodies, and can be joined tip to tail so that they add up to the force arrow
+    // (vector addition); its Hill sphere and Roche limit can be drawn; and a small legend gives the
+    // arrows' scales.
     //   Each pull is Newton's F = G m1 m2 / r^2 along the line between the pair (softened between pieces
     //   of one torn-apart body, as in the physics). A pull's share of the net force is its part along
     //   the net force, (F_i . F) / |F|^2: the shares add up to exactly 100%, and one that pulls partly
@@ -8271,7 +8107,7 @@
     const PULL_EVERY_MS = 100;            // the strongest pullers are picked again ten times a second
     const HILL_MAX = 0.1;                 // Hill spheres only for bodies under this fraction of their primary's mass
     const LIMITS_EVERY_MS = 100;
-    Object.assign(settings, { pulls: false, limits: false });
+    Object.assign(settings, { pulls: false, pullSum: false, limits: false });
     const pulls = {
         bid: null, list: null, n: -1, t: -Infinity,   // whose pulls, the bodies array and its length then, and when
         k: 0, rest: 0,                                // how many are named, and how many others there are
@@ -8288,7 +8124,7 @@
     // AU / yr^2), and what chainLink needs (the body's centre, line width, font size, names placed)
     const chainOut = {
         drawn: false, x0: 0, y0: 0, ex: 0, ey: 0, tipX: 0, tipY: 0, k: 0, squeezed: false, links: 0,
-        named: 0, bx: 0, by: 0, w: 1, fs: 11
+        named: 0, bx: 0, by: 0, r: 0, w: 1, fs: 11
     };
     const chainLabels = [{ x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }];
     const lim = {
@@ -8480,8 +8316,9 @@
         ctx.globalAlpha = 1;
     }
 
-    // Each strongest pull as an arrow in its puller's colour, then the others in grey, tip to tail from
-    // the base of the force arrow: they end at its tip. Long enough arrows are named.
+    // Each strongest pull as an arrow in its puller's colour, then the others in grey. Long enough arrows
+    // are named. Apart, each leaves the body towards its puller. Added up (settings.pullSum), they go tip
+    // to tail from the base of the force arrow, and end at its tip.
     function drawPullChain(C, b) {
         chainOut.drawn = false;
         if (bodies.length < 2) return;
@@ -8515,21 +8352,22 @@
         // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
         // drawn at a scale of its own (then dashed and thin)
         const ex = x0 + (tc * b.fx - ts * b.fy) * k, ey = y0 - (ts * b.fx + tc * b.fy) * k;
-        if (squeezed) {
+        if (settings.pullSum && squeezed) {
             ctx.setLineDash([4, 3]);
             arrow(x0, y0, ex, ey, C.force, w);
             ctx.setLineDash([]);
-        } else if (!settings.forces) {
+        } else if (settings.pullSum && !settings.forces) {
             arrow(x0, y0, ex, ey, C.force, wNet);
         }
         const c = chainOut;
         c.x0 = x0; c.y0 = y0; c.ex = x0; c.ey = y0; c.links = 0; c.named = 0;
-        c.bx = x; c.by = y; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
+        c.bx = x; c.by = y; c.r = r; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         ctx.font = font(c.fs);
         for (let i = 0; i < P.k; i++) {
             chainLink(C, (tc * P.cx[i] - ts * P.cy[i]) * k, -(ts * P.cx[i] + tc * P.cy[i]) * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
         }
-        chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
+        // (with no other bodies, what is left over only closes the chain: relativity's part, say)
+        if (settings.pullSum || P.rest) chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
         c.drawn = true; c.tipX = x0 + ux * L; c.tipY = y0 + uy * L; c.k = k; c.squeezed = squeezed;
     }
 
@@ -8538,6 +8376,8 @@
     function chainLink(C, lx, ly, color, label, q) {
         const c = chainOut;
         const len = Math.hypot(lx, ly);
+        // (apart, each starts afresh at the edge of the body)
+        if (!settings.pullSum && len > 0) { c.ex = c.bx + (lx / len) * c.r; c.ey = c.by + (ly / len) * c.r; }
         const px = c.ex, py = c.ey;
         c.ex += lx; c.ey += ly;
         if (len < 2) return;
@@ -8810,6 +8650,7 @@
     // ---- Switching them on and off: the settings, the menu's buttons and G ----
     function syncGravityControls() {
         if (ui.pullsToggle) ui.pullsToggle.checked = settings.pulls;
+        if (ui.pullSumToggle) { ui.pullSumToggle.checked = settings.pullSum; ui.pullSumToggle.hidden = !settings.pulls; }
         if (ui.limitsToggle) ui.limitsToggle.checked = settings.limits;
         if (ui.popPullLines) ui.popPullLines.setAttribute('aria-pressed', settings.pulls ? 'true' : 'false');
         if (ui.popPullLimits) ui.popPullLimits.setAttribute('aria-pressed', settings.limits ? 'true' : 'false');
@@ -8824,7 +8665,19 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
-            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}, joined tip to tail.`;
+            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}${settings.pullSum ? ', joined tip to tail' : ''}.`;
+        }, { ms: 9000, tag: 'pulls' });
+    }
+
+    // Tip to tail, or apart (it shows only while pull lines are on)
+    function setPullSum(on) {
+        settings.pullSum = !!on;
+        syncGravityControls();
+        if (!settings.pullSum) { clearHint('note', 'pulls'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!b) return '<strong>Added up:</strong> choose a body to see its pulls joined tip to tail.';
+            return `<strong>Added up:</strong> the pulls on ${escapeHtml(theName(b))}, tip to tail, make its force arrow.`;
         }, { ms: 9000, tag: 'pulls' });
     }
 
@@ -8853,13 +8706,14 @@
 
     function bindGravity() {
         Object.assign(ui, {
-            pullsToggle: byId('pullsToggle'), limitsToggle: byId('limitsToggle'),
+            pullsToggle: byId('pullsToggle'), pullSumToggle: byId('pullSumToggle'), limitsToggle: byId('limitsToggle'),
             popPullHead: byId('popPullHead'), popPullRows: byId('popPullRows'), popPullNet: byId('popPullNet'),
             popPullNote: byId('popPullNote'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
         });
         TAB_OF.popTabPull = 'pull';
         buildPullRows();
         if (ui.pullsToggle) ui.pullsToggle.addEventListener('change', () => setPullLines(ui.pullsToggle.checked));
+        if (ui.pullSumToggle) ui.pullSumToggle.addEventListener('change', () => setPullSum(ui.pullSumToggle.checked));
         if (ui.limitsToggle) ui.limitsToggle.addEventListener('change', () => setLimits(ui.limitsToggle.checked));
         if (ui.popPullLines) ui.popPullLines.addEventListener('click', () => setPullLines(!settings.pulls));
         if (ui.popPullLimits) ui.popPullLimits.addEventListener('click', () => setLimits(!settings.limits));
@@ -9061,11 +8915,8 @@
             Object.assign(sizeNote, { scene, realistic: settings.realistic, until: now + SIZE_NOTE_MS });
         }
         edges.noteLeft = Infinity;
-        const lensNote = lens.drawn ? lens.note : '';
-        if (now < sizeNote.until || lensNote) {
-            let note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
-            // (bent starlight stays said while it shows; "Sizes to scale" beside it if there is room)
-            if (lensNote) note = now < sizeNote.until && ctx.measureText(`${note}. ${lensNote}`).width < visR - edges.scaleRight - 20 ? `${note}. ${lensNote}` : lensNote;
+        if (now < sizeNote.until) {
+            const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
             ctx.textAlign = 'right';
             ctx.fillText(note, visR - pad - 2, y0 + 2);
             edges.noteLeft = visR - pad - 2 - ctx.measureText(note).width;
@@ -10311,6 +10162,7 @@
             }
             return;
         }
+        if (popMoved.on) { placePopover(popMoved.x, popMoved.y); return; }
         const wrap = ui.pop.parentElement;
         const wr = wrap.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
         const ox = cr.left - wr.left, oy = cr.top - wr.top;
@@ -10333,6 +10185,63 @@
         ui.pop.style.top = `${Math.round(oy + top)}px`;
     }
 
+    // ---- Moving the menu out of the way ----
+    // Dragged by its title row (not its name or the close button), or its grip and the arrow keys. It then
+    // stays where it was put, for other bodies too, until the page is reloaded: positionPopover no longer
+    // sets it beside a body, and only keeps it on the page. (x, y: in its parent's coordinates, so it scrolls
+    // with the canvas as it always has.) As a sheet, on a phone, it fills the width or height of the screen,
+    // so it has nowhere useful to go, and doesn't move.
+    const popMoved = { on: false, x: 0, y: 0 };
+
+    function popFloats() {
+        return !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side');
+    }
+
+    function placePopover(x, y) {
+        const wr = ui.pop.parentElement.getBoundingClientRect(), gap = 6;
+        const minX = gap - wr.left, minY = gap - wr.top;
+        const maxX = document.documentElement.clientWidth - gap - ui.pop.offsetWidth - wr.left;
+        const maxY = window.innerHeight - gap - ui.pop.offsetHeight - wr.top;
+        ui.pop.style.left = `${Math.round(clamp(x, minX, Math.max(minX, maxX)))}px`;
+        ui.pop.style.top = `${Math.round(clamp(y, minY, Math.max(minY, maxY)))}px`;
+    }
+
+    function movePopover(x, y) {
+        placePopover(x, y);
+        popMoved.on = true;
+        popMoved.x = ui.pop.offsetLeft;
+        popMoved.y = ui.pop.offsetTop;
+    }
+
+    function bindPopoverMove() {
+        if (!ui.popHead) return;
+        let d = null;
+        ui.popHead.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || !popFloats() || e.target.closest('input, .orb-pop-close')) return;
+            e.preventDefault();
+            ui.popHead.setPointerCapture(e.pointerId);
+            d = { id: e.pointerId, x0: e.clientX, y0: e.clientY, left: ui.pop.offsetLeft, top: ui.pop.offsetTop, moved: false };
+        });
+        ui.popHead.addEventListener('pointermove', (e) => {
+            if (!d || e.pointerId !== d.id) return;
+            const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+            if (!d.moved && Math.hypot(dx, dy) < 3) return;   // (a press that wobbles isn't a move)
+            d.moved = true;
+            ui.pop.classList.add('is-moving');
+            movePopover(d.left + dx, d.top + dy);
+        });
+        const end = () => { d = null; ui.pop.classList.remove('is-moving'); };
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => ui.popHead.addEventListener(t, end));
+        // (takesArrows keeps these from pushing the body)
+        ui.popGrip.addEventListener('keydown', (e) => {
+            const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0, dy = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+            if (!(dx || dy) || !popFloats()) return;
+            e.preventDefault();
+            const step = e.shiftKey ? 4 : 24;
+            movePopover(ui.pop.offsetLeft + dx * step, ui.pop.offsetTop + dy * step);
+        });
+    }
+
     function speedRelative(b) {
         const p = b.primary && !(b.primary.primary === b && b.m > b.primary.m) ? b.primary : null;
         if (p) return { p, vx: b.vx - p.vx, vy: b.vy - p.vy };
@@ -10349,6 +10258,8 @@
         const typing = document.activeElement === ui.popName;
         if (ui.popDot) ui.popDot.style.background = b.color;
         if (!typing && ui.popName.value !== b.name) ui.popName.value = b.name;
+        const nameSize = Math.max(4, ui.popName.value.length + 1);   // (the rest of the title row is for dragging)
+        if (ui.popName.size !== nameSize) ui.popName.size = nameSize;
         const locked = frameId === b.id && !turn.on;
         ui.popLock.setAttribute('aria-pressed', locked ? 'true' : 'false');
         setText(ui.popLockText, locked ? 'Viewing from here' : 'View from here');
@@ -10455,17 +10366,18 @@
             el.addEventListener('keydown', () => { keyed = true; });
             el.addEventListener('pointerdown', () => { keyed = false; });
         }
-        const snapLog = (v, snaps) => {
+        const snapLog = (v, snaps, near = 0.04) => {
             if (keyed) return v;
-            for (const s of snaps) if (Math.abs(v - Math.log10(s)) < 0.04) return Math.log10(s);
+            for (const s of snaps) if (Math.abs(v - Math.log10(s)) < near) return Math.log10(s);
             return v;
         };
         ui.popMass.addEventListener('input', () => {
             const b = popBody;
             if (!b) return;
             popLastInput = performance.now();
-            const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH));
-            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); }));
+            // (30 powers of ten across about 270 px: a pixel is a ninth of one, so a narrower snap could be missed)
+            const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH), 0.065);
+            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); collapseIfInsideHorizon(b); }));
             resetTracking(b);
             computeForces();
             computePrimaries();
@@ -10507,6 +10419,7 @@
         // Keep clicks and drags in the popover away from the canvas handlers and the page
         ['pointerdown', 'dblclick', 'wheel'].forEach((t) => ui.pop.addEventListener(t, (e) => e.stopPropagation()));
         bindEditor();
+        bindPopoverMove();
     }
 
     // ------------------------------------------------------------------
@@ -10936,6 +10849,7 @@
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
         if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
+            if (popMoved.on) { placePopover(popMoved.x, popMoved.y); return; }
             const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
             const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
             const fits = ph <= cr.height - 12;
@@ -10983,7 +10897,7 @@
         if (!t || !t.tagName) return false;
         if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
         if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
-        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette'));
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette, .orb-pop-grip'));
     }
 
     function onEditorKey(e) {
@@ -13205,7 +13119,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits, s.pullSum].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -13480,7 +13394,8 @@
             // (sh: what is shown; the last four came later, so an older link reads them as off)
             set: {
                 sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
-                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement,
+                ps: +st.pullSum
             },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
             ro: turnSetup(),
@@ -13583,7 +13498,8 @@
             sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true),
                 flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
-            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular'
+            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular',
+            ps: flag(raw.ps, false)
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -13706,7 +13622,7 @@
         check(ui.k1, 'k1', set.k[0]); check(ui.k2, 'k2', set.k[1]); check(ui.k3, 'k3', set.k[2]);
         check(ui.forces, 'forces', set.sh[0]); check(ui.velocities, 'velocities', set.sh[1]); check(ui.labels, 'labels', set.sh[2]);
         // (quietly: the note that the setup opened is what the hint line says)
-        settings.pulls = set.sh[3]; settings.limits = set.sh[6]; lim.bid = null;
+        settings.pulls = set.sh[3]; settings.pullSum = set.ps; settings.limits = set.sh[6]; lim.bid = null;
         syncGravityControls();
         setWell(set.sh[4]);
         setLagrange(set.sh[5]);
@@ -17098,13 +17014,12 @@
         fit: fitAll,
         fitBox(box) { fitBox(box, false); },
         setCleanRender(v) { cleanRender = !!v; },
-        // What the relativity card and the bent starlight are showing, for tests
+        // What the relativity card is showing, for tests
         clockInfo() {
             updateClock();
             const b = bodyById(clock.id);
             return b ? { name: b.name, x: clock.x, loss: clock.loss, lostPerYear: clockLost(clock.loss) } : null;
         },
-        lensInfo: () => ({ drawn: lens.drawn, D: lens.D, E0: lens.E0, note: lens.note, Epx: lens.E0 * scale }),
         setRealistic(v) { if (ui.realistic) ui.realistic.checked = !!v; settings.realistic = !!v; forcesDirty = true; },
         flyby() { return Object.assign({}, flyby, { pts: flyby.pts.length / 2 }); },
         // The path predicted for a body if it were launched now with world velocity (vx, vy): points
@@ -17326,13 +17241,14 @@
             },
             setOverlays(o) {
                 if (o && o.pulls !== undefined) setPullLines(o.pulls);
+                if (o && o.pullSum !== undefined) setPullSum(o.pullSum);
                 if (o && o.limits !== undefined) setLimits(o.limits);
                 return api.overlays();
             },
             // What the overlays and the Gravity tab show now (sizes in km, lengths in CSS px)
             overlays() {
                 const b = bodyById(selectedId);
-                const out = { pulls: settings.pulls, limits: settings.limits, body: b ? b.name : null };
+                const out = { pulls: settings.pulls, pullSum: settings.pullSum, limits: settings.limits, body: b ? b.name : null };
                 if (b && bodies.length > 1) {
                     const P = gatherPulls(b, true);
                     out.net = {

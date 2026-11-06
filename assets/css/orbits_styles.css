@@ -4322,3 +4322,68 @@ dialog.orb-help::backdrop {
 .orb-bodies-actions.is-tight .orb-act-word {
     display: none;
 }
+
+/* ---------- A switch that belongs to the one above it (shows only while that is on) ---------- */
+.sim-checkbox-group input[type="checkbox"] + label.orb-subswitch {
+    margin-left: 0.55em;
+    padding-left: 1.5em;
+    font-size: 0.9em;
+    border-left: 2px solid var(--color-border);
+    border-radius: 0;
+}
+
+.sim-checkbox-group input[type="checkbox"][hidden] + label.orb-subswitch {
+    display: none;
+}
+
+/* ---------- The body's menu: moved by its title row (see "Moving the menu" in orbits_core.js) ---------- */
+.orb-popover .orb-pop-grip {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    margin-left: auto;
+    padding: 0;
+    color: var(--color-text);
+    background: transparent;
+    box-shadow: none;
+    opacity: 0.55;
+    cursor: inherit;
+    touch-action: none;
+}
+
+.orb-popover:not(.is-sheet):not(.is-side) .orb-pop-head {
+    cursor: grab;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.orb-popover:not(.is-sheet):not(.is-side) input.orb-pop-name {
+    flex: 0 1 auto;
+    width: auto;
+    cursor: text;
+}
+
+.orb-popover.is-moving,
+.orb-popover.is-moving .orb-pop-head {
+    cursor: grabbing;
+}
+
+/* As a sheet it stays put, so nothing says it moves */
+.orb-popover.is-sheet .orb-pop-grip,
+.orb-popover.is-side .orb-pop-grip {
+    display: none;
+}
+
+@media (hover: hover) {
+    .orb-popover .orb-pop-grip:hover {
+        opacity: 1;
+    }
+}
+
+@media (pointer: coarse) {
+    .orb-popover .orb-pop-grip {
+        width: 40px;
+        height: 40px;
+    }
+}
