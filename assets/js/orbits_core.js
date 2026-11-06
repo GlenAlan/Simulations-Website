@@ -44,6 +44,7 @@
  *   drawn positions (dx, dy) are turned about the frame's origin, so they are NOT world positions; a
  *   screen point goes back to the world through unturnPoint (see "Rotating frame" after syncFrameUi).
  *   The gravity well (the potential as a contour map) and the Lagrange points are drawn there too.
+ *   "Planets seen from Earth" adds a strip of the sky as seen from a planet (see "The sky from a planet").
  *
  * Each body's "primary" is the body it orbits: the most local heavier body that it is bound to and is
  *   inside the Hill sphere of (the Moon orbits Earth even though the Sun pulls it harder). Readouts, the
@@ -4755,7 +4756,7 @@
         skyFollow();
         const V = sky.V, T = sky.T;
         if (!V || !T) return '';
-        const view = V.kind === 'earth' && frameId !== null ? '<button type="button" class="orb-hint-btn orb-hint-sky" title="Watch from above as one overtakes the other">From the Sun</button>'
+        const view = V.kind === 'earth' && frameId !== null ? '<button type="button" class="orb-hint-btn orb-hint-sky" title="Watch from above the orbits as one overtakes the other">See from above</button>'
             : '<button type="button" class="orb-hint-btn orb-hint-sky" title="View from Earth">Back to Earth</button>';
         const next = '<button type="button" class="orb-hint-btn orb-hint-skynext" title="Follow another planet (or choose one on the canvas)">Next planet</button>';
         const fast = skyFar(T) < skyFar(V) ? T : V;
