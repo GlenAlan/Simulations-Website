@@ -14120,6 +14120,7 @@
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
     const f1Up = (x) => (Math.ceil(x * 10) / 10).toFixed(1);   // (what is still needed: never "0.0" while any is)
+    const f2Up = (x) => (Math.ceil(x * 100) / 100).toFixed(2);
     const auPlaces = (d) => (d < 0.1 ? 3 : 2);
     const auText = (d) => `${d.toFixed(auPlaces(d))} AU`;
     const auTextUp = (d) => { const n = auPlaces(d), k = Math.pow(10, n); return `${(Math.ceil(d * k - 1e-9) / k).toFixed(n)} AU`; };
@@ -14590,11 +14591,13 @@
                     return d.lead ? { text: `${where}, launch at ${Math.round(d.lead)}°`, ok: Math.abs(x.phase - d.lead) < 3 } : { text: where, ok: false };
                 }
                 if (g.type === 'meet' && x.td < reach) {
-                    if (!g.l4) return { text: `Inside the ring, ${f2(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: false };
+                    if (!g.l4) return { text: `Inside the ring, ${f2Up(toKms(x.tdv))} km/s apart, goal ${f2(toKms(g.V))}`, ok: false };
                     const size = Math.abs(x.el.a / g.a - 1) >= g.da;
-                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: false };
+                    return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2Up(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: false };
                 }
-                if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving too fast: ${f1(toKms(p.dv))} km/s, goal under ${f1(toKms(g.arrive))}`, ok: false };
+                // (a burn too small and one too big both arrive too fast, so it says how fast, not which way;
+                // rounded up, so a reading over the goal never looks like the goal)
+                if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving at ${f2Up(toKms(p.dv))} km/s, goal under ${f2(toKms(g.arrive))}`, ok: false };
                 return p ? { text: `Closest to ${x.tname}: ${auTextUp(p.d)}, goal ${auText(goalAim(g))}`, ok: onCourse(x) } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
             }
         }
