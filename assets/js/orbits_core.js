@@ -306,7 +306,7 @@
         // changes how close it comes, by up to 6% (still well inside the limit), the way its orbit points and, by 1%,
         // its mass, which sets how it breaks (tearPattern).
         tde: {
-            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.62, 0.3, -0.3, 0.3],
+            units: 'au', time: 'd', Tref: 0.006, noClock: true, subject: 1, trail: 4, realistic: true, box: [-0.62, 0.3, -0.3, 0.3],
             tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
             vary: { 1: { e: 0.01, w: 12, m: 0.01 } },
             bodies: [
