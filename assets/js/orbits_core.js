@@ -15274,11 +15274,11 @@
     function missionHintText() {
         const x = missionContext();
         mission.tell = null;
-        // (hints off, it says nothing: the switch is by the clock, and a failure's card has a hint of its own)
-        if (!mission.hints) return '';
+        // (hints off, it says nothing: the switch is by the clock, and a failure's card has a hint of its own.
+        // A win's card says it all.)
+        if (!mission.hints || mission.status === 'won') return '';
         const orUndo = mission.log.length ? ', or undo your last burn' : '';
         if (!x) return mission.status === 'lost' ? `<strong>Retry</strong>${orUndo}.` : '';
-        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
         if (mission.status === 'lost') return `<strong>Retry</strong>${orUndo}${orUndo && ' and fly it differently'}.`;
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
         return x.d.hint(x);
@@ -16291,7 +16291,8 @@
         E.playIcon.hidden = won;
         E.playIcon.classList.toggle('fa-play', !running);
         E.playIcon.classList.toggle('fa-pause', running);
-        E.play.hidden = st === 'lost';
+        // (the way on after a win is the card's while the card is up, this one's when it has been closed)
+        E.play.hidden = st === 'lost' || (won && (mission.panel === 'result' || !mission.resultShown));
         const s = over ? null : skipTarget(x);
         E.skip.hidden = !s && !mission.skip;
         E.skip.disabled = !!mission.skip;
@@ -16396,6 +16397,7 @@
         // (if the focus was in it, it goes back to the page rather than to nowhere)
         const had = P.contains(document.activeElement);
         P.hidden = true;
+        updateMissionConsole();
         if (had && byUser) document.activeElement.blur();
         if (byUser) resumeAfterAim();
     }

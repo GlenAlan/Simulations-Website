@@ -4393,3 +4393,16 @@ dialog.orb-help::backdrop {
 .orbits-sim.orb-mission-on .orb-force-box {
     display: none;
 }
+
+/* (while a won mission's card is up, Next is on the card: Retry has the row to itself) */
+@media not all and (orientation: landscape) and (min-width: 640px) {
+    .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
+        grid-column: 1 / span 2;
+    }
+}
+
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
+        grid-area: auto / 1 / auto / -1;
+    }
+}
