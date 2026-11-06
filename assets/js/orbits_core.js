@@ -1048,7 +1048,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1143,8 +1143,9 @@
     const PN_SKIP = 1e-9;
     const SOFT_STEP = 32;
     const SOFT_T2 = SOFT_STEP * SOFT_STEP;   // (the times are kept squared)
-    // A piece's softening length (AU): the radius of the body it came from, cbrt(FRAGMENTS) times its own
-    const softLength = (b) => (b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
+    // A piece's softening length (AU): about the size of the body it came from, more for a heavier piece.
+    // (Pieces of unequal mass have paths that cross: at half this, close passes leave the energy book worse.)
+    const softLength = (b) => (2 * b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
     let scrCap = 0;
     let SX, SY, SVX, SVY, SM, SEPS, SGRP, SAX, SAY, SA0, SBEST, SSECOND, SPART, SPAIR, SDIR, SDPOS;
     let PAX, PAY, NAX, NAY;                  // the 1PN part of the accelerations, and the Newtonian part
@@ -2122,6 +2123,35 @@
         return false;
     }
 
+    // How a body breaks: ragged, not a row of equal beads. The pieces' masses, the gaps along the line to
+    // the heavy body and how far they sit off it all vary, in a pattern taken from the two bodies, their
+    // masses, size and name (never from the clock or Math.random, so Run again and a shared link break it
+    // the same way, bit for bit).
+    // Measured from their centre of mass, so all moving as one they keep the whole body's centre of mass,
+    // momentum and angular momentum. Returns each piece's share of the mass and place (in units of the radius).
+    function tearPattern(L, H, n) {
+        const bits = new Uint32Array(new Float64Array([L.m, L.R, H.m]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        for (let k = 0; k < L.name.length; k++) h = Math.imul(h ^ L.name.charCodeAt(k), 16777619);
+        const rnd = seeded(((h >>> 0) % 2147483646) + 1);
+        rnd(); rnd();   // (the first numbers from a small seed are much alike)
+        const share = [], along = [], off = [];
+        let W = 0, s = 0;
+        for (let i = 0; i < n; i++) {
+            share.push(Math.exp(0.8 * (2 * rnd() - 1)));
+            if (i) s += 0.35 + rnd();
+            along.push(s);
+            off.push(rnd() - 0.5);
+            W += share[i];
+        }
+        const stretch = 2 / s;
+        let A = 0, O = 0;
+        for (let i = 0; i < n; i++) { share[i] /= W; A += share[i] * along[i] * stretch; O += share[i] * off[i]; }
+        for (let i = 0; i < n; i++) { along[i] = along[i] * stretch - A; off[i] -= O; }
+        return { share, along, off };
+    }
+
     function disrupt(L, H) {
         const n = Math.min(L.minor ? MINOR_FRAGMENTS : FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
@@ -2131,11 +2161,15 @@
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
         const span = L.R / AU_KM;
         const parts = [], name = uniqueName('Fragment');
+        const shape = tearPattern(L, H, n);
+        let left = L.m;
         for (let i = 0; i < n; i++) {
-            const s = -1 + (2 * i) / (n - 1);
-            const f = newBody({ name, kind: L.kind, m: L.m / n, R: L.R / Math.cbrt(n), color: L.color });
+            const s = shape.along[i], q = shape.off[i];
+            const m = i < n - 1 ? L.m * shape.share[i] : left;   // (the last takes what rounding left: the mass adds up exactly)
+            left -= m;
+            const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = L.id;
-            f.x = L.x + ux * s * span; f.y = L.y + uy * s * span;
+            f.x = L.x + (ux * s - uy * q) * span; f.y = L.y + (uy * s + ux * q) * span;
             f.vx = L.vx; f.vy = L.vy;
             f.px = f.x; f.py = f.y;
             parts.push(f);
@@ -3369,7 +3403,17 @@
     }
     // A torn-apart body's pieces are small, and so are the light bodies of a swarm
     const MINOR_SIZE = 2;
-    const bodySize = (b) => (b.grp ? 3.5 : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
+    const bodySize = (b) => (b.grp ? 3.5 * pieceHeft(b) : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
+    // How big a piece of a torn-apart body looks beside the others, by its mass among them (kept, from the
+    // first time it is drawn)
+    function pieceHeft(b) {
+        if (!b.heft) {
+            let M = 0, n = 0;
+            for (const q of bodies) if (q.grp === b.grp) { M += q.m; n++; }
+            b.heft = clamp(Math.sqrt((n * b.m) / M), 0.55, 1.8);
+        }
+        return b.heft;
+    }
 
     // Drawn radii for this frame. A moon close to its planet on screen shrinks both discs (down to
     // 3 px) so they never overlap; zoomed in far enough, bodies are drawn at their true size.
@@ -3390,7 +3434,7 @@
             p.rmax = Math.min(p.rmax, 0.45 * d);
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
-        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : 3, b.rmax, (b.R / AU_KM) * scale);
+        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : b.grp ? 1.8 : 3, b.rmax, (b.R / AU_KM) * scale);
     }
 
     // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
@@ -5713,7 +5757,7 @@
         ctx.lineWidth = Math.max(1, 0.6 * lw);
         ctx.lineCap = 'butt';
         ctx.lineJoin = 'bevel';
-        trailGroups(pieceGroups, PIECE_CHUNKS, 0.08, 0.72, tr, first, oFirst, C);
+        trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
         if (!low) {
             ctx.lineJoin = 'miter';
             trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
@@ -5724,10 +5768,12 @@
     }
 
     // Groups of trails: a path per colour for each of chunks shades, from alpha a0 + a1 / chunks to a0 + a1
+    // (the pieces' old ends don't all stop at one moment: each gives up its own share, for a tapering end)
     function trailGroups(groups, chunks, a0, a1, tr, first, oFirst, C) {
+        const pieces = groups === pieceGroups;
         for (const [color, g] of groups) {
             if (!g.length) continue;
-            ctx.strokeStyle = bodyStroke(color, C.dark);
+            ctx.strokeStyle = pieces ? pieceColour(color, C) : bodyStroke(color, C.dark);
             for (let c = 0; c < chunks; c++) {
                 const f = (c + 1) / chunks;
                 ctx.globalAlpha = a0 + a1 * f;
@@ -5735,6 +5781,7 @@
                 for (const b of g) {
                     let k0 = Math.max(trailFirst(b), first, oFirst);
                     k0 = Math.max(k0, sampleCount - Math.ceil((sampleCount - k0) * perf.quality));
+                    if (pieces) k0 += Math.floor(0.45 * ((b.id * 0.618034) % 1) * (sampleCount - k0));
                     const count = sampleCount - k0;
                     if (count < 1) continue;
                     const chunk = Math.max(1, Math.ceil(count / chunks));
@@ -5960,12 +6007,15 @@
         ctx.fill();
     }
 
+    const pieceColour = (color, C) => (C.dark ? color : bodyStroke(bodyStroke(color, false), false));
+
     function drawBody(b, x, y, r, C) {
         const look = lookOf(b);
         if (b.grp) {
-            // A piece of a torn-apart body: a glowing clump
-            glow(x, y, 0, Math.max(r * 2.4, 5), b.color, C.dark ? 0.55 : 0.6);
-            disc(x, y, Math.max(r * 0.8, 0.9), b.color, 0.5, C);
+            // A piece of a torn-apart body: a glowing clump (deeper on a light background, or it hardly shows)
+            const z = pieceHeft(b);
+            glow(x, y, 0, Math.max(r * 2.4, 5 * z), C.dark ? b.color : bodyStroke(b.color, false), C.dark ? 0.55 : 0.6);
+            disc(x, y, Math.max(r * 0.8, 1.1 * z), pieceColour(b.color, C), 0.5, C);
             return;
         }
         if (look === 'blackhole') { drawBlackHole(x, y, r, b, C); return; }
