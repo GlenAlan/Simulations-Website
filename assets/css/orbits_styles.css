@@ -4209,7 +4209,7 @@ dialog.orb-help::backdrop {
         container: orb-tools / size;
     }
 
-    @container orb-tools (max-height: 604px) {
+    @container orb-tools (max-height: 655px) {
         .orb-palette {
             --orb-chip-h: 34px;
             gap: 5px;
@@ -4238,7 +4238,7 @@ dialog.orb-help::backdrop {
         }
     }
 
-    @container orb-tools (max-height: 562px) {
+    @container orb-tools (max-height: 595px) {
         .orb-palette {
             --orb-chip-h: 31px;
             gap: 4px;
@@ -4272,7 +4272,7 @@ dialog.orb-help::backdrop {
         }
     }
 
-    @container orb-tools (max-height: 492px) {
+    @container orb-tools (max-height: 524px) {
         .orb-palette {
             --orb-chip-h: 28px;
             gap: 3px;
@@ -4291,6 +4291,140 @@ dialog.orb-help::backdrop {
             max-height: 10px;
         }
     }
+
+    /* Tighter still: each chip's disc beside its name */
+    @container orb-tools (max-height: 485px) {
+        .orb-palette {
+            --orb-chip-h: 24px;
+        }
+
+        .orb-palette::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .orb-toolbar .orb-chip {
+            flex-direction: row;
+            justify-content: flex-start;
+            gap: 3px;
+            padding: 0 1px 0 3px;
+        }
+
+        .orb-toolbar .orb-chip-disc {
+            max-width: 9px;
+            max-height: 9px;
+        }
+
+        .orb-chip-name {
+            font-size: min(0.74em, 10.5px);
+        }
+
+        .orb-hint {
+            font-size: 0.84em;
+            line-height: 1.25;
+        }
+
+        .orb-toolbar .orb-history-btn,
+        .orb-toolbar .orb-fit {
+            height: 28px;
+        }
+    }
+
+    /* (with Settings docked on a small screen: the column's heading can go, for another row) */
+    @container orb-tools (max-height: 400px) {
+        .orb-toolbar-label {
+            display: none;
+        }
+    }
+}
+
+/* A column too short for all its chips says so (see paletteCut) */
+@media (orientation: landscape) and (min-width: 640px) {
+    .orb-toolbar.has-more {
+        grid-template-rows: auto minmax(0, auto) auto auto auto;
+        grid-template-areas: "label label" "palette palette" "more more" "history fit" "hint hint";
+    }
+}
+
+.orb-toolbar .orb-palette-more {
+    grid-area: more;
+    flex: 0 0 auto;
+    height: 18px;
+    margin-top: -4px;
+    font-size: 0.72em;
+    opacity: 0.85;
+}
+
+.orbits-sim.orb-mission-on .orb-toolbar .orb-palette-more {
+    display: none;
+}
+
+.orb-toolbar .orb-palette-more[hidden] {
+    display: none;
+}
+
+.orb-toolbar .orb-palette-more.is-back .icon {
+    display: inline-block;
+    transform: rotate(180deg);
+}
+
+@media (pointer: coarse) {
+    .orb-toolbar .orb-palette-more {
+        height: 30px;
+    }
+}
+
+/* (the longest name of all the chips) */
+.orb-chip[data-kind="sgra"] .orb-chip-name {
+    letter-spacing: -0.05em;
+}
+
+/* ---------- Discs and rings ---------- */
+.orb-pop-disc {
+    margin-top: 8px;
+}
+
+.orb-pop-disc button {
+    width: 100%;
+}
+
+.orb-pop-disc [hidden] {
+    display: none !important;
+}
+
+@media (pointer: coarse) {
+    .orb-pop-disc button {
+        height: 40px;
+    }
+}
+
+.orb-pop-disc .orb-pop-note {
+    margin: 4px 0 0;
+}
+
+.orb-pop-disc .orb-pop-fields + button {
+    margin-top: 6px;
+}
+
+/* (Saturn's chip: a tipped ring round its disc) */
+.orb-chip-disc.is-ringed {
+    position: relative;
+}
+
+.orb-chip-disc.is-ringed::after {
+    content: '';
+    position: absolute;
+    left: -45%;
+    right: -45%;
+    top: 26%;
+    bottom: 26%;
+    box-sizing: border-box;
+    border: 2px solid rgba(233, 220, 188, 0.85);
+    border-radius: 50%;
+    transform: rotate(-20deg);
+}
+
+html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
+    border-color: rgba(120, 100, 60, 0.85);
 }
 
 /* "Rotate with it" joins the body menu's row: the two views on one line, the rest on the next */

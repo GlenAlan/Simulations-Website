@@ -127,7 +127,8 @@
 
     // Sample bodies for the palette (and the scenes). Masses and radii are real (radii in km); the drawn
     // size is compressed unless realistic physics is on. The star remnants are drawn by their kind (a
-    // black hole stays a black hole whatever its mass). info: the palette chip's tooltip.
+    // black hole stays a black hole whatever its mass). info: the palette chip's tooltip; as: the kind of body it makes.
+    // (Sagittarius A*: 4.3 million suns, GRAVITY Collaboration 2022. ring: a piece of a disc, see "Discs and rings".)
     const KINDS = {
         sun: { name: 'Sun', m: 1, R: 696000, color: '#ffd166', info: 'our star' },
         dwarf: { name: 'Red dwarf', m: 0.3, R: 210000, color: '#ff8a5c', info: 'the most common kind of star' },
@@ -137,6 +138,7 @@
         whitedwarf: { name: 'White dwarf', m: 0.6, R: 8700, color: '#e9f0ff', info: 'the Earth-sized core left by a star like the Sun' },
         neutron: { name: 'Neutron star', m: 1.4, R: 12, color: '#a9d4ff', info: 'a city-sized core left by a supernova' },
         blackhole: { name: 'Black hole', m: 10, R: horizonKm(10), color: '#ffab5e', info: 'nothing that crosses its event horizon gets out' },
+        sgra: { name: 'Sagittarius A*', chip: 'Supermassive', as: 'blackhole', m: 4.3e6, R: horizonKm(4.3e6), color: '#ffab5e', info: 'the black hole at the centre of our galaxy' },
         jupiter: { name: 'Jupiter', m: MJUP, R: 69911, color: '#e0b48a', info: 'the largest planet' },
         earth: { name: 'Earth', m: MEARTH, R: 6371, color: '#7ecaf6', info: 'our planet' },
         mars: { name: 'Mars', m: 0.10745 * MEARTH, R: 3390, color: '#e8825e', info: 'a small rocky planet' },
@@ -146,14 +148,16 @@
         custom: { name: 'Planet', m: MEARTH, R: 6371, color: '#ae85ca' },
         mercury: { name: 'Mercury', m: 0.0553 * MEARTH, R: 2440, color: '#b5aca3' },
         venus: { name: 'Venus', m: 0.815 * MEARTH, R: 6052, color: '#f0d9a0' },
-        probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
+        probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' },
+        ring: { name: 'Ring piece', m: 1e-14, R: 20, color: '#d2c09a' }
     };
     const PALETTE = [
         { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
-        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
-        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
+        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole', 'sgra'] },
+        { label: 'Planets and moons', kinds: ['jupiter', 'saturn', 'neptune', 'earth', 'mars', 'moon'] },
         { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
     ];
+    const RING_SHADES = ['#e9dcbc', '#d2c09a', '#b7a581'];   // (dusty ice: a disc's pieces, in three shades)
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
     // Values the mass and radius sliders snap to. The two heaviest: Sagittarius A* (GRAVITY Collaboration
     // 2022, A&A 657, L12) and M87* (Event Horizon Telescope 2019, ApJL 875, L6).
@@ -171,6 +175,9 @@
         for (let k = 0; k < 30; k++) E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
         return 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2), Math.sqrt(1 - e) * Math.cos(E / 2));
     }
+
+    const RINGS_MOON = 2.29e-5;           // the moon of "Saturn's rings", over Saturn's mass (see the scene)
+    const GOLDEN = 0.6180339887;          // (multiples of it fall evenly from 0 to 1: a disc's pieces cover its width with no chance gaps)
 
     // ------------------------------------------------------------------
     // Scenes. Bodies are given directly or by orbit elements around an earlier body
@@ -388,6 +395,30 @@
                 return list;
             }
         },
+        // Saturn's rings, as real pieces: 500 of them, from the inner edge of the C ring to the outer edge of the A ring
+        // (74,500 to 136,800 km), the pieces standing for the rings' 1.54e19 kg between them (Iess et al. 2019, Science
+        // 364). A moon among them, about where the Cassini Division is, clears its neighbourhood. The moon is the one
+        // thing here that isn't real: it has Pluto's mass and size (1.3e22 kg, 1,188 km), 350 times Mimas's mass. The moons
+        // that really clear gaps are far lighter: Pan's Encke Gap is 325 km wide, under a pixel here, and takes years. (And the
+        // Cassini Division itself is kept open by Mimas, from outside the rings, by a resonance.)
+        //   Each piece going by gets a kick, the closer the harder, and passes again a synodic period later, (2/3)(a / da)
+        // orbits: from a few moon's Hill radii out (chaos within 1.3 mu^(2/7) a, Wisdom 1980: 7,300 km) they are scattered away
+        // within tens of orbits. Those on nearly its own orbit (within about 3,000 km) are left: they go round with it, on horseshoe
+        // orbits, as Saturn's Janus and Epimetheus do. So it opens two gaps, one each side, with a ringlet between them.
+        rings: (function () {
+            const rnd = seeded(23), n = 500, M = 1 / 3497.9018, mass = (1.54e19 / MSUN_KG) / n;   // (M: Saturn's, as in its kind, below)
+            const R = Math.cbrt((3 * mass * MSUN_KG) / (4 * Math.PI * 920)) / 1000;   // km, at the density of ice
+            const list = [{ kind: 'saturn' }, { kind: 'moon', name: 'Moon', m: RINGS_MOON * M, R: 1188, orbit: { around: 0, a: 119000 / AU_KM, e: 0, nu: 30 } }];
+            for (let i = 0; i < n; i++) {
+                list.push({ kind: 'ring', name: `Ring piece ${i + 1}`, m: mass, R, color: RING_SHADES[i % 3],
+                    orbit: { around: 0, a: (74500 + 62300 * ((i * GOLDEN) % 1)) / AU_KM, e: 0, nu: 360 * rnd() } });
+            }
+            return {
+                units: 'km', Tref: 2 / DAYS_PER_YEAR, subject: 1, trail: 1, box: [-150000, 150000, -150000, 150000].map((v) => v / AU_KM),
+                tip: 'A moon as heavy as Pluto clears gaps either side. Real shepherds are far lighter.',
+                bodies: list
+            };
+        })(),
         // The Sun and Mercury alone, with realistic physics: relativity turns Mercury's orbit forward by
         // 6 pi GM/(c^2 a (1 - e^2)) = 0.1035" each time round, 43" a century. (The other planets turn it by
         // about 532" a century more, as in "Inner planets": what Newton could explain; the 43" left over
@@ -462,7 +493,7 @@
     const COLOUR_STEPS = 40;              // colours per factor of ten in mass (6% apart in mass, 3% in temperature)
     const DEEPEN = 1.3;
     const SUN_TINT_COOL = 0.35, SUN_TINT_HOT = 0.3;   // how far the Sun's yellow reaches (in ln T)
-    const KEEPS_LOOK = { redgiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, custom: 1 };
+    const KEEPS_LOOK = { redgiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, sgra: 1, custom: 1 };
     const KIND_COLOUR = {};               // each kind's colour as first defined: the scenes were designed with these
     for (const k of Object.keys(KINDS)) KIND_COLOUR[k] = KINDS[k].color;
     const starColourCache = new Map();
@@ -1113,7 +1144,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, hostMass: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0, heat: 0, hot: 0,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, hostMass: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0, heat: 0, hot: 0, ringN: 0, ringR: 0,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1232,6 +1263,7 @@
     let anyHosted = false;   // (a whole body is going round a host: see "Close pairs")
     let gasRows = -1, gasList = null;   // (with gas among them, the bodies that aren't: see gravityDirect)
     let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
+    const discHosts = [];     // the bodies with discs (see "Discs and rings")
     let heavyMax = HEAVY_MAX;
     const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
 
@@ -1251,7 +1283,7 @@
             if (b.grp < 0 && gasRows < 0) gasRows = 0;
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g && (b.minor || g < 0) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
+            grp[k] = g && (b.minor || g < 0 || b.kind === 'ring') ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -1359,7 +1391,7 @@
     function pairRows(rows, nRows, n, pn) {
         // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
         const xs = SX, ys = SY, ms = SM, grp = SGRP, accX = SAX, accY = SAY, best = SBEST, second = SSECOND, part = SPART;
-        const inRows = SINDIR, rowOf = SDPOS, some = anyPieces, hosted = anyHosted;
+        const inRows = SINDIR, rowOf = SDPOS, some = anyPieces, hosted = anyHosted, discs = discHosts.length > 0;
         // (a pair whose lighter body can't disturb anyone needn't ask for less than this)
         const q = sampleDt / (HOST_STEPS * (n > DIRECT_MAX ? ETA_SWARM : ETA)), tLight = q * q;
         let tmin = Infinity;
@@ -1406,7 +1438,8 @@
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
                     if (piece) {
-                        if (PIECE_T2 * t < tmin) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, PIECE_T2 * tLight) : PIECE_T2 * t;
+                        // (with discs about, a piece's own host doesn't set the step: it follows that orbit exactly, and a disc would hold all else back)
+                        if (PIECE_T2 * t < tmin && !(discs && (pi === j || SPAIR[j] === i))) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, PIECE_T2 * tLight) : PIECE_T2 * t;
                     } else if (t < tmin && !kep) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, tLight) : t;
                     // each body's two shortest pair times, and the partner of the shortest
                     if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = j; } else b2 = t; }
@@ -1610,7 +1643,9 @@
         }
         tCount = 0;
         let kmax = 0;
-        if (nl > 0) {
+        // (one body alone has nothing in the tree to feel: its own cell, a rounding error from it, mustn't count as something else)
+        if (nl === 1) { const k = BIDX[0]; CAX[k] = 0; CAY[k] = 0; CB1[k] = 0; CB2[k] = 0; CP1[k] = -1; }
+        if (nl > 1) {
             const half = 0.5 * Math.max(x1 - x0, y1 - y0) * (1 + 1e-9) + 1e-300;
             buildCell(0, nl, 0.5 * (x0 + x1), 0.5 * (y0 + y1), half, 0);
             for (let s = 0; s < nl; s++) { const k = BIDX[s]; BX[s] = SX[k]; BY[s] = SY[k]; BM[s] = SM[k]; }
@@ -1668,6 +1703,7 @@
     // followed closely, so it tears where it should. Two compact bodies close enough to radiate (or any two
     // for which radiation matters soon: HOST_GW) stay on the ordinary steps, and a host can't go round anything.
     const HOST_MIN = 10;
+    const RING_STEPS = 4;                 // steps a trail sample are enough for a piece of a disc (it has no trail, and the drawing follows its orbit)
     const HOST_TURN = 0.25;
     const HOST_STEPS = 32;
     const PIECE_STEP = 4;
@@ -1859,7 +1895,7 @@
         if (a.stamp !== mainStamp || b.stamp !== mainStamp) return false;
         const i = a.slot, j = b.slot;
         if (SPART[i] !== j || SPART[j] !== i) return false;
-        if (a.held || b.held || a.grp || b.grp || !(a.m > 0 && b.m > 0)) return false;
+        if (a.held || b.held || a.grp || b.grp || a.ringN || b.ringN || !(a.m > 0 && b.m > 0)) return false;
         if (!(SBEST[i] < gamma * SSECOND[i] && SBEST[j] < gamma * SSECOND[j])) return false;
         if (settings.realistic && G * (a.m + b.m) / (C2 * Math.hypot(b.x - a.x, b.y - a.y)) > PN_PAIR_MAX) return false;
         return true;
@@ -1907,7 +1943,7 @@
     // others' tides must be small beside its pull (gamma, as for a close pair), unless f is so light (LIGHT) that it
     // can't disturb anyone: its own path through them is all that is at stake, and that fares better this way.
     function hostFor(f, gamma, t0) {
-        if (f.held || f.grp || !(f.m > 0)) return null;
+        if (f.held || f.grp || f.ringN || !(f.m > 0)) return null;
         const nh = hostList.length, xf = f.x, yf = f.y, mf = f.m;
         let t1 = Infinity, t2 = Infinity, H = null;
         for (let k = 0; k < nh; k++) {
@@ -1922,7 +1958,7 @@
         }
         if (!H || H.held || H.m < HOST_MIN * mf || (H.kep && H.kep.hosted)) return null;
         const fine = hostShared(mf, H.m, f.kep && f.kep.b === H ? H.hostMass - mf : H.hostMass);
-        if (!(t1 > 0 && t1 < G * t0 / (fine ? HOST_FINE * HOST_FINE : 1))) return null;
+        if (!(t1 > 0 && (H.ringN || t1 < G * t0 / (fine ? HOST_FINE * HOST_FINE : 1)))) return null;   // (a disc's host: all that goes round it does so this way)
         if (mf >= LIGHT * H.m && !(t1 < gamma * t2)) return null;
         if (!settings.realistic) return H;
         // Radiation left out of the drift must not matter: Peters' time for the orbit to close, if they are close enough to have it
@@ -1948,7 +1984,8 @@
     function chooseHosted() {
         const n = bodies.length;
         const q = sampleDt / (HOST_STEPS * (n > DIRECT_MAX ? ETA_SWARM : ETA)), t0 = q * q;
-        let found = false;
+        const discs = discHosts.length > 0;
+        let found = discs;
         for (let k = 0; k < n && !found; k++) found = SBEST[k] < t0 && bodies[k].stamp === mainStamp;
         let any = found;
         for (let k = 0; k < mainPairs.length && !any; k++) any = mainPairs[k].hosted && !mainPairs[k].a.grp;
@@ -1966,7 +2003,7 @@
             changed = true;
         }
         for (let k = 0; k < n; k++) {
-            if (!(SBEST[k] < t0)) continue;
+            if (!(SBEST[k] < t0) && !discs) continue;
             const f = bodies[k];
             if (f.kep) continue;
             const H = hostFor(f, KEP_GAMMA, t0);
@@ -2090,6 +2127,7 @@
             if (r2 * r < ROCHE_NEAR * R * R * R * b.m / a.m) return own;
         }
         if (a.grp < 0) return Math.max(own, sampleDt / GAS_STEPS);
+        if (a.kind === 'ring') return Math.max(own, sampleDt / RING_STEPS);
         return Math.max(own, sampleDt / (!a.grp && hostShared(a.m, b.m, b.hostMass - a.m) ? HOST_FINE * HOST_STEPS : HOST_STEPS));
     }
 
@@ -2258,7 +2296,7 @@
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
-        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 ? 8 : 30 });
+        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 || small.kind === 'ring' ? 8 : 30 });
         big.vx = M > 0 ? (a.m * a.vx + b.m * b.vx) / M : big.vx;
         big.vy = M > 0 ? (a.m * a.vy + b.m * b.vy) / M : big.vy;
         big.x = fx; big.y = fy;
@@ -2267,6 +2305,7 @@
         // are held up by pressure, not by being big); anything else keeps its density.
         if (!isCompact(big)) big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);
         big.track = null;
+        if (small.kind === 'ring') { const H = bodyById(small.grp); if (H && H.ringN) H.ringN--; }   // (at once, not at the next count: what goes round H depends on it)
         removeBody(small, big);
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
@@ -4096,14 +4135,14 @@
         primOrder.length = 0;
         for (const b of bodies) primOrder.push(b);
         const order = primOrder.sort((a, b) => b.m - a.m || a.id - b.id);
-        let gasN = 0;
-        for (let k = 0; k < order.length; k++) if (order[k].grp < 0) gasN++;
-        const crowded = order.length - gasN > SWARM_N || !!scene.swarm;   // (gas doesn't crowd a scene)
+        let gasN = 0, rings = 0;
+        for (let k = 0; k < order.length; k++) { if (order[k].grp < 0) gasN++; else if (order[k].kind === 'ring') rings++; }
+        const crowded = order.length - gasN - rings > SWARM_N || !!scene.swarm;   // (gas doesn't crowd a scene, nor does a disc)
         const typical = crowded ? 30 * order[order.length >> 1].m : 0, notable = crowded ? 1e-3 * order[0].m : 0;
         for (let i = 0; i < order.length; i++) {
             const b = order[i];
             b.primary = null; b.bound = false; b.hill = Infinity;
-            b.minor = b.grp < 0 || (crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable)));
+            b.minor = b.grp < 0 || b.kind === 'ring' || (crowded && (i >= NAMED_MAX || (b.m < typical && b.m < notable)));
         }
         for (let i = 1; i < order.length; i++) {
             const b = order[i];
@@ -4140,6 +4179,7 @@
                 if (c.primary === top && c.bound && c.m >= 0.1 * top.m) { top.primary = c; top.bound = true; break; }
             }
         }
+        if (rings || discHosts.length) countDiscs(rings);
     }
 
     function heaviest() {
@@ -4388,6 +4428,7 @@
         comTrail[2 * k] = lone ? 0 : c.x; comTrail[2 * k + 1] = lone ? 0 : c.y;
         sampleTimes[k] = simTime;
         for (const b of bodies) {
+            if (b.kind === 'ring') continue;   // (a disc's pieces are drawn with a length of their orbits: see drawDiscs)
             let T = b.trail;
             if (!T) T = b.trail = new Float64Array(2 * (b.minor ? SWARM_TRAIL : b.grp ? PIECE_TRAIL : TRAIL_CAP));
             const i = 2 * (sampleCount % (T.length >> 1));
@@ -4466,6 +4507,7 @@
             });
             if (s.orbit) {
                 placeOnOrbit(b, bodies[s.orbit.around], s.orbit);
+                if (s.kind === 'ring') b.grp = bodies[s.orbit.around].id;   // (see "Discs and rings")
             } else {
                 b.x = s.at ? s.at[0] : 0; b.y = s.at ? s.at[1] : 0;
                 b.vx = s.v ? s.v[0] : 0; b.vy = s.v ? s.v[1] : 0;
@@ -4592,6 +4634,7 @@
                 b.dfx = b.fx + JX * t; b.dfy = b.fy + JY * t;
             }
         }
+        if (lag && discHosts.length) discsDrawn();
         F = freeze ? frozenOrigin(simTime + lag) : liveFrameOrigin();
         turnDrawnPositions();   // (a rotating frame turns them about F: see "Rotating frame")
         // A held body stays exactly where it is held in the view
@@ -4640,7 +4683,7 @@
     // Star remnants are far too small for that: a black hole is drawn the size of a planet (a little
     // larger as it grows), a white dwarf or neutron star as a bright spark.
     function symbolicSize(kind, m, Rkm) {
-        if (kind === 'blackhole') return clamp(13 * Math.pow(m / 10, 1 / 6), 9, 19);
+        if (kind === 'blackhole' || kind === 'sgra') return clamp(13 * Math.pow(m / 10, 1 / 6), 9, 19);
         if (kind === 'neutron') return 4.5;
         if (kind === 'whitedwarf') return 5.5;
         return symbolicRadius(Rkm);
@@ -4659,6 +4702,7 @@
     // their average). Set as it breaks; a piece put back from a copy or a link works it out when it is drawn.
     const heftOf = (x) => clamp(Math.sqrt(x), 0.55, 1.8);
     function pieceHeft(b) {
+        if (b.kind === 'ring') b.heft = RING_HEFT;
         if (!b.heft) {
             let M = 0, n = 0;
             for (const q of bodies) if (q.grp === b.grp) { M += q.m; n++; }
@@ -6980,6 +7024,7 @@
         updateDrawnPositions();
         const before = viewOrigin();
         const wasFrame = frameId === b.id;
+        if (b.ringN) dropDisc(b);
         removeBody(b, null);
         if (selectedId === null) selectedId = defaultSubject();
         if (wasFrame) frameId = null;
@@ -6998,7 +7043,9 @@
         updateDrawnPositions();
         const before = viewOrigin();
         const burn = missionBegin();   // (missions: only the probe's burns are let through, and they use fuel)
+        const held = discsBefore();   // (a disc goes where its host goes)
         fn();
+        discsAfter(held);
         missionEnd(burn);
         forcesDirty = true;
         updateDrawnPositions();
@@ -7021,7 +7068,7 @@
         if (bodies.length >= MAX_BODIES || missionRefuse('add')) return null;
         noteEdit();   // (edit history: an undo step, taken before the new body's colour is chosen)
         const k = KINDS[kind] || KINDS.custom;
-        const b = newBody({ name: uniqueName(k.name), kind, m: k.m, R: k.R, color: kind === 'custom' ? nextCustomColour() : k.color });
+        const b = newBody({ name: uniqueName(k.name), kind: k.as || kind, m: k.m, R: k.R, color: kind === 'custom' ? nextCustomColour() : k.color });
         let added = null;
         keepView(() => {
             b.x = x; b.y = y;
@@ -7038,14 +7085,310 @@
         refreshBodyLists();
         selectBody(b.id);
         clearHint('note');   // (whatever it said before this)
+        // (Sagittarius A*, with something close enough to go round it faster than the trails are sampled: that makes a pretty pattern, which isn't its orbit)
+        if (added && k.as) {
+            let near = Infinity;
+            for (const q of bodies) if (q !== b) near = Math.min(near, hyp(q.x - b.x, q.y - b.y));
+            if (TAU * Math.sqrt((near * near * near) / (G * b.m)) < sampleDt) showHint('tip', '<strong>4.3 million Suns:</strong> orbits here are too fast to draw. Any pattern is just sampling.');
+        }
         return added;
     }
 
     let customCount = 0;
+    const peekCustomColour = () => ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
     function nextCustomColour() {
-        const c = ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
+        const c = peekCustomColour();
         customCount++;
         return c;
+    }
+
+    // ------------------------------------------------------------------
+    // Discs and rings. "Add a disc" (the Body tab of a body's menu) puts real pieces round a body, each on an orbit of its
+    // own: bodies of the kind 'ring', each counted as a piece of its host (grp). So what is there for the pieces of a
+    // torn-apart body does the work. A piece goes round its host on an exact Kepler drift (driftHosted), which costs one
+    // solved orbit a step however tight the orbit, and feels everything big through the kicks. It is too light to move
+    // anything (LIGHT), so it stays out of the tree, doesn't pull on or touch the other pieces, and a moon or its host can
+    // still sweep it up. Tides don't tear it: rings live inside the Roche limit, which is why they aren't moons.
+    //   The host keeps out of close pairs and from going round anything itself (pairQualifies, hostFor), or its disc
+    // would have no host; and whatever else goes round it does so the same way (hostFor), since on its own steps the
+    // rest would be held to them. Moved or pushed by hand, the disc goes with it, or it would be left behind.
+    //   How wide? A planet's disc is rings, from 1.28 of its radius (Saturn's C ring) to the Roche limit for ice,
+    // d = 2.44 (3 M / 4 pi rho)^(1/3): 129,000 km for Saturn, whose main rings end at 136,800 km; within that, moonlets would
+    // gather into moons. A star's or a dead star's is a belt, as ours is (2.1 to 3.3 AU, scaled by the cube root of its
+    // mass, the size of a Hill sphere), or if something is in the way, a disc inside what orbits nearest. No disc goes
+    // past 0.49 of the Hill radius, where a prograde moon can stay (Domingos, Winter & Yokoyama 2006, MNRAS 373, 1227),
+    // or 0.3 of the way to a heavy partner (Holman & Wiegert 1999, AJ 117, 621).
+    // ------------------------------------------------------------------
+    const DISC_N = 300, DISC_N_MIN = 50, DISC_N_MAX = 500;
+    const DISC_RHO = 920;                 // kg/m^3: ice
+    const DISC_MASS = 2.7e-8;             // the disc's mass over its host's: Saturn's rings (1.54e19 kg, Iess et al. 2019) over Saturn
+    const RING_HEFT = 0.34;               // (a piece's size as a piece: about 1 px)
+    let ringCount = 0;
+
+    // Which bodies have discs, how many pieces, and how far out they typically reach (from computePrimaries)
+    function countDiscs(rings) {
+        for (const h of discHosts) { h.ringN = 0; h.ringR = 0; }
+        discHosts.length = 0;
+        ringCount = rings;
+        if (!rings) return;
+        let H = null;
+        for (const b of bodies) {
+            if (b.kind !== 'ring') continue;
+            if (!H || H.id !== b.grp) H = bodyById(b.grp);
+            if (!H) continue;
+            if (!H.ringN) discHosts.push(H);
+            H.ringN++;
+            H.ringR += hyp(b.x - H.x, b.y - H.y);
+        }
+        for (const h of discHosts) h.ringR *= 1.33 / h.ringN;   // (the outer edge of an even disc, from its mean)
+    }
+
+    // A piece goes round in a circle, near enough, so between steps it is drawn turning, not flying off along a
+    // straight line (its steps can be as long as its orbit, in a scene with far slower things in it)
+    function discsDrawn() {
+        const dt = lag;
+        for (const b of bodies) {
+            if (b.kind !== 'ring' || b.held || !b.kep || !b.kep.hosted) continue;
+            const H = b.kep.b, rx = b.x - H.x, ry = b.y - H.y, vx = b.vx - H.vx, vy = b.vy - H.vy;
+            const r2 = rx * rx + ry * ry, w = ((rx * vy - ry * vx) / r2) * dt, c = Math.cos(w), s = Math.sin(w);
+            b.dx = H.dx + c * rx - s * ry; b.dy = H.dy + s * rx + c * ry;
+        }
+    }
+
+    // How wide a disc round H can be: { rIn, out (the usual outer edge), max } in AU, or null if there is no room
+    function discSpan(H) {
+        const R = H.R / AU_KM, stable = isFinite(H.hill) ? 0.49 * H.hill : Infinity;
+        const roche = (ROCHE * Math.cbrt((3 * H.m * MSUN_KG) / (4 * Math.PI * DISC_RHO))) / AU_M;
+        let rIn, out;
+        if (!isStar(H) && !isCompact(H)) {
+            out = Math.min(roche, stable);
+            rIn = Math.max(1.28 * R, 0.55 * out);
+        } else {
+            const c = Math.cbrt(H.m);
+            rIn = 2.1 * c; out = 3.3 * c;
+            let near = Infinity, heavy = false;
+            for (const q of bodies) {
+                if (q === H || q.grp) continue;
+                const d = hyp(q.x - H.x, q.y - H.y);
+                if (d < near) { near = d; heavy = q.m > 0.05 * H.m; }
+            }
+            if (near < 1.3 * out) { out = (heavy ? 0.3 : 0.7) * near; rIn = 0.5 * out; }
+            out = Math.min(out, stable);
+            rIn = Math.max(Math.min(rIn, 0.64 * out), 2 * R, H.kind === 'blackhole' ? 3.5 * R : 0);   // (a black hole: outside the innermost stable orbit, three horizons out)
+        }
+        if (!(out > 1.2 * rIn)) return null;
+        return { rIn, out, max: Math.max(out, Math.min(stable, 3 * out)) };
+    }
+
+    // The disc round H, as it is now: { n, out }
+    function discOf(H) {
+        let n = 0, out = 0;
+        for (const q of bodies) {
+            if (q.kind !== 'ring' || q.grp !== H.id) continue;
+            n++;
+            const r = hyp(q.x - H.x, q.y - H.y);
+            if (r > out) out = r;
+        }
+        return { n, out };
+    }
+
+    function dropDisc(H) {
+        listsWait = true;
+        for (let k = bodies.length - 1; k >= 0; k--) { const q = bodies[k]; if (q.kind === 'ring' && q.grp === H.id) removeBody(q, H); }
+        listsWait = false;
+    }
+
+    // Give H a disc of n pieces (or a new one in place of the one it has), out to rOut. Its pieces start on
+    // circles, from numbers made from the body's id and what was asked for, never the clock: then the state is saved as
+    // any other is, so Run again, undo and links all have it.
+    function addDisc(H, n, rOut) {
+        if (!H || H.grp || H.m < 1e-17 || missionRefuse('add')) return false;
+        const span = discSpan(H);
+        if (!span) { showHint('note', `<strong>No room:</strong> ${escapeHtml(theName(H))} has no space for a disc here.`, { ms: 5000 }); return false; }
+        const N = Math.min(n || DISC_N, DISC_N_MAX, MAX_BODIES - bodies.length + H.ringN);
+        if (N < DISC_N_MIN) { showHint('note', '<strong>Too many bodies</strong> for a disc as well.', { ms: 5000 }); return false; }
+        const first = !H.ringN, out = rOut || span.out;
+        // (each stands for many: its size, at the density of ice, is kept far smaller than the gap to its host, as round a black hole it wouldn't be)
+        const mass = (DISC_MASS * H.m) / N, R = Math.min(Math.cbrt((3 * mass * MSUN_KG) / (4 * Math.PI * DISC_RHO)) / 1000, 0.002 * span.rIn * AU_KM);
+        const rnd = seeded(1 + (((H.id * 7919 + N * 31) >>> 0) + Math.round(1e3 * (out / span.out))) % 2147483600);
+        rnd(); rnd();   // (the first numbers from a small seed are much alike)
+        keepView(() => {
+            dropDisc(H);
+            const s = orbitSense(H, null), base = H.name.slice(0, 26);
+            for (let i = 0; i < N; i++) {
+                const r = span.rIn + (out - span.rIn) * ((i * GOLDEN) % 1), a = TAU * rnd(), v = Math.sqrt((G * (H.m + mass)) / r);
+                const q = newBody({ name: `${base} disc ${i + 1}`, kind: 'ring', m: mass, R, color: RING_SHADES[i % 3] });
+                q.x = H.x + r * Math.cos(a); q.y = H.y + r * Math.sin(a);
+                q.vx = H.vx - s * v * Math.sin(a); q.vy = H.vy + s * v * Math.cos(a);
+                q.grp = H.id; q.minor = true;
+                bodies.push(q);
+            }
+            computePrimaries();
+            computeForces();
+        });
+        refreshBodyLists();
+        if (first) showDisc(H, out);
+        return true;
+    }
+
+    function removeDisc(H) {
+        if (!H || !H.ringN) return false;
+        keepView(() => { dropDisc(H); computePrimaries(); computeForces(); });
+        refreshBodyLists();
+        return true;
+    }
+
+    // A new disc too small to see, or too big, gets a glide of the view to fit it; on something moving through the
+    // view, seen from it; and if it goes round too fast to follow, time slows to suit it (see suitSpeed)
+    function showDisc(H, out) {
+        updateDrawnPositions();
+        const x = sx(H.dx), y = sy(H.dy), r = out * scale;
+        if (r >= 60 && x - r > visL && x + r < visR && y - r > 0 && y + r < viewH) return;
+        if (H.primary && H.primary !== H && H.m < H.primary.m && frameId !== H.id && !turnUses(H)) setFrame(H.id);
+        const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        const cx = H.dx - F.x, cy = H.dy - F.y, w = 1.12 * out;
+        fitBox([cx - w, cx + w, cy - w, cy + w], glide);
+        glideWith(H);
+        suitSpeed(H, { how: 'orbit', T: TAU * Math.sqrt((out * out * out) / (G * H.m)) });
+    }
+
+    // A disc goes where its host goes, moved or pushed by hand: what the edit did to the host, it does to the pieces too
+    function discsBefore() {
+        return discHosts.length ? discHosts.map((h) => [h, h.x, h.y, h.vx, h.vy]) : null;
+    }
+    function discsAfter(list) {
+        if (!list) return;
+        for (const [H, x, y, vx, vy] of list) {
+            const dx = H.x - x, dy = H.y - y, dvx = H.vx - vx, dvy = H.vy - vy;
+            if (!dx && !dy && !dvx && !dvy) continue;
+            for (const q of bodies) if (q.kind === 'ring' && q.grp === H.id) { q.x += dx; q.y += dy; q.px = q.x; q.py = q.y; q.vx += dvx; q.vy += dvy; }
+        }
+    }
+    // While its host is held the disc is held with it, keeping its shape
+    function discHold(H, on) {
+        if (!H.ringN) return;
+        const h = H.held;
+        for (const q of bodies) {
+            if (q.kind !== 'ring' || q.grp !== H.id) continue;
+            if (!on) { q.held = null; continue; }
+            // (from where it really is, so that it goes on round the same orbit when let go; turned as the view is)
+            const t = turnVec(q.x - H.x, q.y - H.y), rx = t.x, ry = t.y;
+            q.held = { get offX() { return h.offX + rx; }, get offY() { return h.offY + ry; } };
+        }
+    }
+
+    // A planet's drawn ring. A disc's real pieces are drawn where they are, but on the usual scale, at which a planet
+    // is drawn far bigger than it is, those would be under its disc. So a body whose disc can't be seen, and Saturn
+    // whether it has one or not, has a ring drawn round it in the proportions of Saturn's (1.3 to 2.3 of its radius),
+    // tipped as we see them. That one is only a picture, as the size of the body it goes round is.
+    const ringMarked = (b, r) => r >= 2.5 && (b.ringN ? b.ringR * scale < 1.7 * r : b.kind === 'saturn');
+    function drawRingMark(x, y, r, C, behind) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-0.38);
+        ctx.scale(1, 0.34);
+        ctx.lineCap = 'butt';
+        ctx.strokeStyle = C.dark ? RING_SHADES[0] : bodyStroke(RING_SHADES[1], false);
+        const a0 = behind ? Math.PI : 0, alpha = ctx.globalAlpha;
+        ctx.globalAlpha = alpha * 0.85;
+        ctx.lineWidth = 0.5 * r;
+        ctx.beginPath();
+        ctx.arc(0, 0, 1.58 * r, a0, a0 + Math.PI);
+        ctx.stroke();
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.lineWidth = 0.34 * r;
+        ctx.beginPath();
+        ctx.arc(0, 0, 2.13 * r, a0, a0 + Math.PI);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // A disc's pieces: each with a length of its orbit behind it, soft and wide, then thin and bright over that. A few
+    // hundred dots would read as a scatter; drawn like this they read as what they are, and where there are none there
+    // is a gap. Each length is as long as gives the disc about this much cover, whatever the zoom.
+    const DISC_COVER = 0.55;
+    const ringGroups = new Map();
+    function discPath(g, lw, far) {
+        ctx.beginPath();
+        for (const b of g) {
+            const H = b.primary, x = sx(b.dx), y = sy(b.dy);
+            if (!H || !b.bound) { ctx.moveTo(x + 1.2, y); ctx.arc(x, y, 1.2, 0, TAU); continue; }
+            const cx = sx(H.dx), cy = sy(H.dy), rx = x - cx, ry = y - cy, r = hyp(rx, ry);
+            if (r < 1) continue;
+            // (its path behind it: on the canvas, angles run clockwise)
+            const way = (b.x - H.x) * (b.vy - H.vy) - (b.y - H.y) * (b.vx - H.vx) > 0 ? 1 : -1;
+            const span = far * clamp((TAU * DISC_COVER * 0.5 * H.ringR * scale) / (Math.max(H.ringN, 50) * lw), 0.15, 1.4) * way;
+            const a = Math.atan2(ry, rx);
+            ctx.moveTo(x, y);
+            ctx.arc(cx, cy, r, a, a + span, way < 0);
+        }
+        ctx.stroke();
+    }
+    function drawDiscs(C) {
+        if (!ringCount) return;
+        for (const g of ringGroups.values()) g.length = 0;
+        for (const b of bodies) {
+            if (b.kind !== 'ring' || isChosen(b)) continue;
+            let g = ringGroups.get(b.color);
+            if (!g) { g = []; ringGroups.set(b.color, g); }
+            g.push(b);
+        }
+        const lw = clamp(1.25 * sizeScale, 1, 1.4);
+        ctx.lineCap = 'butt';
+        for (const [color, g] of ringGroups) {
+            if (!g.length) continue;
+            ctx.strokeStyle = C.dark ? color : bodyStroke(color, false);
+            ctx.globalAlpha = C.dark ? 0.2 : 0.22;
+            ctx.lineWidth = 3 * lw;
+            discPath(g, lw, 2.2);
+            ctx.globalAlpha = C.dark ? 0.62 : 0.75;
+            ctx.lineWidth = lw;
+            discPath(g, lw, 1);
+        }
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'round';
+    }
+
+    // The Body tab's disc controls. Nothing shows but the button until there is a disc.
+    function bindDisc() {
+        Object.assign(ui, {
+            popDisc: byId('popDisc'), popDiscAdd: byId('popDiscAdd'), popDiscSet: byId('popDiscSet'), popDiscNote: byId('popDiscNote'),
+            popDiscN: byId('popDiscN'), popDiscNVal: byId('popDiscNVal'), popDiscW: byId('popDiscW'), popDiscWVal: byId('popDiscWVal'), popDiscOff: byId('popDiscOff')
+        });
+        if (!ui.popDisc) return;
+        ui.popDiscAdd.addEventListener('click', () => { if (popBody && addDisc(popBody)) updatePopover(true); });
+        ui.popDiscOff.addEventListener('click', () => { if (popBody && removeDisc(popBody)) updatePopover(true); });
+        const stamp = () => { discInput = performance.now(); };
+        ui.popDiscN.addEventListener('input', () => { stamp(); setText(ui.popDiscNVal, ui.popDiscN.value); });
+        ui.popDiscW.addEventListener('input', () => { stamp(); if (popBody) setText(ui.popDiscWVal, distText(discReach(popBody))); });
+        const rebuild = () => { if (popBody) { addDisc(popBody, +ui.popDiscN.value, discReach(popBody)); discInput = 0; updatePopover(true); } };
+        ui.popDiscN.addEventListener('change', rebuild);
+        ui.popDiscW.addEventListener('change', rebuild);
+    }
+    let discInput = 0;
+
+    // The outer edge the slider says (0 to 1000: evenly in the logarithm, from just past the inner edge to the most it can be)
+    function discReach(H) {
+        const s = discSpan(H);
+        return s ? 1.25 * s.rIn * Math.pow(s.max / (1.25 * s.rIn), +ui.popDiscW.value / 1000) : 0;
+    }
+
+    function syncDisc(b) {
+        if (!ui.popDisc) return;
+        const can = !mission.def && !b.grp && b.m >= 1e-17;
+        ui.popDisc.hidden = !can;
+        if (!can) return;
+        const on = b.ringN > 0;
+        ui.popDiscAdd.hidden = on;
+        ui.popDiscSet.hidden = !on;
+        // (a drawn ring says what it is, where someone will wonder)
+        ui.popDiscNote.hidden = on || b.kind !== 'saturn';
+        if (!on || performance.now() - discInput < 800) return;
+        const d = discOf(b), s = discSpan(b);
+        ui.popDiscN.value = String(d.n);
+        setText(ui.popDiscNVal, String(d.n));
+        if (s) ui.popDiscW.value = String(Math.round((1000 * Math.log(d.out / (1.25 * s.rIn))) / Math.log(s.max / (1.25 * s.rIn))));
+        setText(ui.popDiscWVal, distText(d.out));
     }
 
     // The note under "Bodies you drop or move" says what the chosen option does (see launch)
@@ -7640,7 +7983,10 @@
         }
         if (look === 'star') glow(x, y, r * 0.6, r * 2.6, b.color, C.dark ? 0.45 : 0.35);
         else if (look === 'browndwarf' && r > 2) glow(x, y, r * 0.8, r * 1.8, b.color, 0.2);   // a dull infrared glow
+        const ringed = ringMarked(b, r);
+        if (ringed) drawRingMark(x, y, r, C, true);
         disc(x, y, Math.max(r, 0.9), b.color, look === 'star' ? 0.55 : 0.35, C);
+        if (ringed) drawRingMark(x, y, r, C, false);
     }
 
     // The minor bodies of a crowded scene: plain dots, one path per colour
@@ -7648,7 +7994,7 @@
     function drawMinorBodies(C) {
         for (const g of dotGroups.values()) g.length = 0;
         for (const b of bodies) {
-            if (!b.minor || b.grp < 0 || isChosen(b)) continue;
+            if (!b.minor || b.grp < 0 || b.kind === 'ring' || isChosen(b)) continue;
             const x = sx(b.dx), y = sy(b.dy);
             if (x < -10 || x > viewW + 10 || y < -10 || y > viewH + 10) continue;
             let g = dotGroups.get(b.color);
@@ -7670,6 +8016,7 @@
 
     function drawBodies(C) {
         const real = settings.realistic && !cleanRender;
+        drawDiscs(C);
         drawMinorBodies(C);
         drawGas(C);
         for (const b of bodies) {
@@ -9909,16 +10256,72 @@
         ctx.stroke();
     }
 
+    // Would a body of mass m, added now, be one of a swarm's dots? (as computePrimaries has it)
+    function ghostMinor(m) {
+        let others = 0, at = 0;
+        for (const q of bodies) { if (!(q.grp < 0) && q.kind !== 'ring') others++; }
+        if (others + 1 <= SWARM_N && !scene.swarm) return false;
+        const order = primOrder, n = order.length;
+        while (at < n && order[at].m >= m) at++;
+        const mid = (n + 1) >> 1, median = mid < at ? order[mid].m : mid === at ? m : order[mid - 1].m;
+        return at >= NAMED_MAX || (m < 30 * median && m < 1e-3 * Math.max(m, n ? order[0].m : 0));
+    }
+
+    // The radius a body dropped at canvas point (x, y) will be drawn with: computeDrawRadii's, for a body not there yet.
+    // With realistic physics its true size, however big, and a marker ring if that is too small to see (see the
+    // marker in the caller). Otherwise its usual drawn size, kept off what it will orbit if that is close.
+    function ghostRadius(b, x, y) {
+        const trueR = (b.R / AU_KM) * scale, minor = ghostMinor(b.m);
+        if (settings.realistic) return minor ? Math.max(trueR, 1.2) : trueR;
+        let rmax = (minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R)) * sizeScale;
+        if (!minor && settings.placement === 'circular') {
+            const w = unturnPoint(wx(x), wy(y));
+            const host = dropHost, p = host || placementPrimary(w.x, w.y, b.m, null);
+            if (p && p.m > b.m) {
+                const at = host ? moonSpot(host, w.x, w.y, bodies.filter((q) => q.primary === host && q.bound).length) : w;
+                rmax = Math.min(rmax, 0.3 * Math.hypot(at.x - p.x, at.y - p.y) * scale);
+            }
+        }
+        return Math.max(minor ? 1.2 : 3, rmax, trueR);
+    }
+    const GHOST_BIG = 0.3;                // over this much of the view across, in radius
+
     // A body being dragged from the palette, drawn where it would land.
     function drawPaletteGhost() {
         drawDropHost(colours());
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
-        const x = paletteDrag.cx, y = paletteDrag.cy;
-        const r = Math.max(symbolicSize(paletteDrag.kind, k.m, k.R) * sizeScale, 4);
-        ctx.globalAlpha = 0.85;
-        drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
-        ctx.globalAlpha = 1;
+        const x = paletteDrag.cx, y = paletteDrag.cy, C = colours();
+        // (just as it will be when it lands: what is drawn takes the sizes computeDrawRadii will give it)
+        const b = { kind: k.as || paletteDrag.kind, m: k.m, R: k.R, grp: null, color: paletteDrag.kind === 'custom' ? peekCustomColour() : k.color };
+        const r = ghostRadius(b, x, y), minor = ghostMinor(k.m);
+        if (r > GHOST_BIG * Math.min(visR - visL, viewH)) {
+            // (filling much of the view, a blaze of light would hide what it is being placed among: its edge will do)
+            ctx.fillStyle = hexA(b.color, 0.1);
+            ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+            disc(x, y, 3, b.color, 0, C);   // (where it is, should its edge be out of sight)
+        } else {
+            ctx.globalAlpha = 0.85;
+            if (minor) disc(x, y, r, b.color, 0, C);
+            else if (settings.realistic) {
+                // (as in drawBodies)
+                if (isStar(b) && r < 4) glow(x, y, 0, 5, b.color, C.dark ? 0.6 : 0.5);
+                drawBody(b, x, y, r, C);
+                if (r < MARKER_R) {
+                    ctx.strokeStyle = C.dark ? hexA(b.color, 0.6) : bodyStroke(b.color, false);
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.arc(x, y, MARKER_R, 0, TAU);
+                    ctx.stroke();
+                }
+            } else drawBody(b, x, y, r, C);
+            ctx.globalAlpha = 1;
+        }
         if (settings.placement === 'circular' && settings.preview && !dropHost) {
             const X = wx(x), Y = wy(y);
             const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
@@ -10513,6 +10916,7 @@
             info += `<br><strong>Surface escape speed:</strong> ${f.v} ${f.u}${lightFraction(vs)}`;
         }
         if (ui.popInfo.innerHTML !== info) ui.popInfo.innerHTML = info;
+        syncDisc(b);
         updateEditor(force);
     }
 
@@ -10529,6 +10933,7 @@
 
     function bindPopover() {
         if (!ui.pop) return;
+        bindDisc();
         buildSwatches();
         ui.popClose.addEventListener('click', closePopover);
         ui.popLock.addEventListener('click', () => {
@@ -11321,6 +11726,16 @@
         paletteRove(ui.palette.querySelector('.orb-chip'));
         if (!ui.palette.dataset.keys) {
             ui.palette.dataset.keys = '1';
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'orb-palette-more';
+            more.hidden = true;
+            more.title = 'More bodies below';
+            more.setAttribute('aria-label', more.title);
+            more.innerHTML = '<span class="icon solid fa-chevron-down" aria-hidden="true"></span>';
+            more.addEventListener('click', morePalette);
+            ui.palette.after(more);
+            ui.paletteMore = more;
             ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
             ui.palette.addEventListener('keydown', onPaletteKey);
             ui.palette.addEventListener('scroll', paletteEdges, { passive: true });
@@ -11337,21 +11752,37 @@
     // Beside the canvas, a column too short for all the chips ends at the edge of a row, not halfway
     // through one. (When its room changes, not while drawing.)
     function paletteCut() {
-        const p = ui.palette;
+        const p = ui.palette, more = ui.paletteMore;
         if (!p) return;
         p.style.maxHeight = p.style.overflowY = '';
-        const room = p.clientHeight;
+        if (more) { more.hidden = true; more.parentElement.classList.remove('has-more'); }
+        let room = p.clientHeight;
         if (!room || p.scrollHeight <= room + 1) return;
-        const top = p.getBoundingClientRect().top - p.scrollTop;
+        const top = p.getBoundingClientRect().top - p.scrollTop, chips = p.querySelectorAll('.orb-chip');
         let edge = 0, end = 0;
-        for (const c of p.querySelectorAll('.orb-chip')) {
+        for (const c of chips) end = Math.max(end, c.getBoundingClientRect().bottom - top);
+        // (every chip in sight, short of the padding under them: nothing to scroll to)
+        if (end <= room) { p.style.overflowY = 'hidden'; return; }
+        // More than there is room for: a button says so, which takes a little of the room (a shadow behind the chips can't say
+        // it). (Not on a phone held sideways, whose one column of slim chips is plainly a list.)
+        if (more && window.matchMedia && window.matchMedia('(min-height: 541px)').matches) {
+            more.hidden = false;
+            more.parentElement.classList.add('has-more');
+            room = p.clientHeight;
+        }
+        for (const c of chips) {
             const b = c.getBoundingClientRect().bottom - top;
-            if (b > end) end = b;
             if (b <= room && b > edge) edge = b;
         }
-        // (every chip in sight, short of the padding under them: nothing to scroll to)
-        if (end <= room) p.style.overflowY = 'hidden';
-        else if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
+        if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
+        paletteEdges();
+    }
+
+    // Under a column cut short: on to the chips below, and from the end back to the top
+    function morePalette() {
+        const p = ui.palette, atEnd = p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+        const behavior = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+        p.scrollBy({ top: atEnd ? -p.scrollHeight : 0.8 * p.clientHeight, behavior });
     }
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
@@ -11362,6 +11793,15 @@
         const max = p.scrollWidth - p.clientWidth;
         p.classList.toggle('at-start', p.scrollLeft <= 2);
         p.classList.toggle('at-end', p.scrollLeft >= max - 2);
+        const more = ui.paletteMore;
+        if (more && !more.hidden) {
+            const atEnd = p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+            if (more.classList.contains('is-back') !== atEnd) {
+                more.classList.toggle('is-back', atEnd);
+                more.title = atEnd ? 'Back to the first bodies' : 'More bodies below';
+                more.setAttribute('aria-label', more.title);
+            }
+        }
     }
 
     // The keyboard: the palette is one stop of the Tab key (as in a toolbar), not fifteen. The arrow
@@ -11402,25 +11842,27 @@
         btn.type = 'button';
         btn.className = 'orb-chip';
         btn.dataset.kind = kind;
-        const label = kind === 'custom' ? 'Custom' : k.name;
+        const label = kind === 'custom' ? 'Custom' : k.chip || k.name;
+        const look = k.as || kind;
         btn.dataset.title = kind === 'custom' ? 'Your own body: drop it, then set its mass, speed and colour'
             : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drop it on a planet, or click for a moon of the chosen planet`
                 : `${k.name}, ${k.info} (${fmtMass(k.m)})`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
-        const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
+        const proper = ['sun', 'earth', 'jupiter', 'saturn', 'neptune', 'sgra', 'mars', 'moon'].includes(kind);
         btn.setAttribute('aria-label', kind === 'custom' ? 'Add a custom body' : proper ? `Add ${k.name}` : `Add ${/^[aeiou]/.test(common) ? 'an' : 'a'} ${common}`);
         const disc = document.createElement('span');
         disc.className = 'orb-chip-disc' + (kind === 'custom' ? ' is-custom' : '');
-        const d = kind === 'custom' ? 18 : Math.round(clamp(6 + symbolicSize(kind, k.m, k.R) * 0.6, 9, 22));
+        const d = kind === 'custom' ? 18 : Math.round(clamp(6 + symbolicSize(look, k.m, k.R) * 0.6, 9, 22));
         disc.style.width = `${d}px`;
         disc.style.height = `${d}px`;
-        if (kind === 'blackhole') {
+        if (look === 'blackhole') {
             disc.classList.add('is-hole');
             disc.style.background = `radial-gradient(circle, #000 0 54%, #fff3e2 60%, ${k.color} 66%, ${hexA(k.color, 0)} 74%)`;
             disc.style.boxShadow = `0 0 7px ${hexA(k.color, 0.55)}`;
         } else if (kind !== 'custom') {
             disc.style.background = `radial-gradient(circle at 35% 35%, ${mix(k.color, '#ffffff', 0.4)}, ${k.color})`;
+            if (kind === 'saturn') disc.classList.add('is-ringed');
             if (k.m >= STAR_MASS || COMPACT[kind]) disc.style.boxShadow = `0 0 ${kind === 'neutron' ? 9 : 8}px ${hexA(k.color, kind === 'neutron' ? 0.9 : 0.55)}`;
         }
         const name = document.createElement('span');
@@ -11809,6 +12251,7 @@
     function bodyAt(x, y, tol) {
         let best = null, bestD = Infinity;
         for (const b of bodies) {
+            if (b.kind === 'ring' && !isChosen(b)) continue;   // (a press on a disc isn't for one of its pieces)
             const d = Math.hypot(sx(b.dx) - x, sy(b.dy) - y) - drawRadius(b);
             if (d < tol && d < bestD) { bestD = d; best = b; }
         }
@@ -12039,6 +12482,7 @@
         const p0 = placementPrimary(b.x, b.y, b.m, b);
         d.sense = p0 ? { pid: p0.id, s: senseAround(b, p0) } : null;
         b.held = { offX: b.dx - F.x, offY: b.dy - F.y };
+        discHold(b, true);
         d.frameV = frameVelocity(b.x, b.y);
         applyHolds();
         updateDrawnPositions();
@@ -12049,6 +12493,7 @@
         if (!b) return;
         updateDrawnPositions();
         const burn = missionBegin();
+        const held = discsBefore();
         if (apply) {
             if (d.mode === 'aim' && b.aim) {
                 if (b.aim.snap) snapAim(b);   // exact, even if the body it orbits has moved on since
@@ -12064,6 +12509,8 @@
         }
         b.aim = null;
         b.held = null;
+        discHold(b, false);
+        discsAfter(held);
         missionEnd(burn);   // (missions: an aimed arrow is a burn)
         if (d.mode === 'move' && d.moved) clearTrail(b);
         if ((frameId === b.id || turnUses(b)) && d.moved) clearAllTrails();
@@ -12089,7 +12536,7 @@
     }
 
     function endAllDrags() {
-        for (const d of drags.values()) if (d.body && d.body.held) { d.body.held = null; d.body.aim = null; }
+        for (const d of drags.values()) if (d.body && d.body.held) { d.body.held = null; d.body.aim = null; discHold(d.body, false); }
         drags.clear();
         pinch = null;
         freeze = null;
@@ -13064,7 +13511,7 @@
         if (bi.grp && bj.grp) {
             // pieces of one torn-apart body: the softened potential of their softened pull
             // (and pieces of different bodies don't pull on each other)
-            if (bi.grp !== bj.grp || bi.grp < 0) return;   // (nor do pieces of gas: see "Gas round a compact body")
+            if (bi.grp !== bj.grp || bi.grp < 0 || bi.kind === 'ring') return;   // (nor do pieces of gas: see "Gas round a compact body"; nor a disc's)
             const e = 0.5 * (softLength(bi) + softLength(bj));
             sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
             return;
@@ -13664,11 +14111,12 @@
         for (let i = 0; i < n; i++) if (num[i * SNAP_W + 7]) pieces.add(num[i * SNAP_W]);
         for (const q of Array.isArray(d.pr) ? d.pr : []) {
             if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0])) continue;
-            // (many pieces of a torn-apart body can share a host)
-            if (!pieces.has(q[0]) && paired.has(q[1])) continue;
+            // (many pieces of a torn-apart body can share a host, and so can whole bodies going round it)
+            const many = pieces.has(q[0]) || q[3];
+            if (!many && paired.has(q[1])) continue;
             paired.add(q[0]);
-            if (!pieces.has(q[0])) paired.add(q[1]);
-            pairs.push([q[0], q[1], q[2] ? 1 : 0]);
+            if (!many) paired.add(q[1]);
+            pairs.push([q[0], q[1], q[2] ? 1 : 0, q[3] ? 1 : 0]);
         }
         const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
         const vw = Array.isArray(d.vw) ? d.vw : [], sca = Array.isArray(d.sca) ? d.sca : [];
@@ -14718,12 +15166,16 @@
             const key = changeOf(s, i, b);
             if (key && (!main || b.id === selectedId)) main = { b, i, key };
         }
+        if (added.length && added[0].kind === 'ring') return { key: 'add', target: added[0].id, label: 'add a disc' };
         if (added.length) {
             return { key: 'add', target: added[0].id, label: added.length > 1 ? `add ${added.length} bodies` : `add ${added[0].name}` };
         }
         if (kept < s.n) {
             const ids = new Set(bodies.map((b) => b.id)), gone = [];
             for (let i = 0; i < s.n; i++) if (!ids.has(s.num[i * SNAP_W])) gone.push(i);
+            const whole = gone.filter((i) => s.kinds[i] !== 'ring');   // (a disc goes with its host)
+            if (!whole.length) return { key: 'delete', target: s.num[gone[0] * SNAP_W], label: 'remove a disc' };
+            if (whole.length === 1) return { key: 'delete', target: s.num[whole[0] * SNAP_W], label: `delete ${s.names[whole[0]]}` };
             return { key: 'delete', target: s.num[gone[0] * SNAP_W], label: gone.length > 1 ? `delete ${gone.length} bodies` : `delete ${s.names[gone[0]]}` };
         }
         if (!main) return null;
@@ -14787,7 +15239,7 @@
 
     // Nothing done in this scene, yet a body has broken up in it: Undo goes back to the scene's start,
     // rather than out of the scene to the one before it
-    const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp);
+    const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp && b.kind !== 'ring');
     // In a mission with no burn to take back, there is nothing to undo: not the scene before it (Retry or
     // the mission's cross are the ways out)
     const noBurnToUndo = () => !!mission.def && !mission.log.length;
@@ -17367,6 +17819,15 @@
             }
         });
     })();
+
+    // Discs (for testing): give a body one, take it away, what it has
+    Object.assign(window.orbitsSimulation, {
+        addDisc(name, n, out) { return addDisc(bodies.find((q) => q.name === name), n, out); },
+        removeDisc(name) { return removeDisc(bodies.find((q) => q.name === name)); },
+        disc(name) { const b = bodies.find((q) => q.name === name); return b ? Object.assign(discOf(b), { span: discSpan(b) }) : null; },
+        ghostSize(kind, x, y) { const k = KINDS[kind]; return ghostRadius({ kind: k.as || kind, m: k.m, R: k.R, grp: null }, x, y); },
+        rings() { return bodies.filter((q) => q.kind === 'ring').map((q) => { const H = bodyById(q.grp); return H ? { r: hyp(q.x - H.x, q.y - H.y), el: elementsOf(q, H) } : null; }); }
+    });
 
     // Edit history (undo, redo, run again): each returns whether it did anything
     Object.assign(window.orbitsSimulation, {
