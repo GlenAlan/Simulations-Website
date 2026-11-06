@@ -333,9 +333,10 @@
 												<span class="icon solid fa-crosshairs" aria-hidden="true"></span><span>Viewed from <strong id="frameChipName">Earth</strong></span><span class="icon solid fa-times orb-frame-chip-x" aria-hidden="true"></span>
 											</button>
 											<div class="orb-popover" id="bodyPopover" role="dialog" aria-labelledby="popName" hidden>
-												<div class="orb-pop-head">
+												<div class="orb-pop-head" id="popHead">
 													<span class="orb-pop-dot" id="popDot" aria-hidden="true"></span>
 													<input type="text" id="popName" class="orb-pop-name" maxlength="18" aria-label="Name" spellcheck="false" autocomplete="off">
+													<button type="button" class="orb-pop-grip" id="popGrip" aria-label="Move this menu with the arrow keys" title="Drag to move it out of the way"><span class="icon solid fa-grip-lines" aria-hidden="true"></span></button>
 													<button type="button" class="orb-pop-close" id="popClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
 												</div>
 												<div class="orb-pop-actions">
@@ -606,7 +607,7 @@
 											<h4>How to use it</h4>
 											<ul>
 												<li><strong>Aim a velocity:</strong> drag the tip of a teal arrow (time waits while you do). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go. Shift gives fine control; on a touch screen, hold the tip still for a moment first.</li>
-												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, or a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
+												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. Drag its title to move it out of the way. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, or a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
 												<li><strong>View from a body:</strong> double-click or double-tap it. <em>Rotating</em> views are in the settings, under <em>View from</em>.</li>
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>
 												<li><strong>Throw a body:</strong> in <em>More options</em> choose <em>Throw it</em>, then flick a body as you let go.</li>

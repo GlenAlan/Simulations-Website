@@ -80,6 +80,7 @@
         showCharts: byId('showCharts'), chartsContainer: byId('charts-container'),
         fps: byId('fpsDisplay'),
         pop: byId('bodyPopover'), popDot: byId('popDot'), popName: byId('popName'), popClose: byId('popClose'),
+        popHead: byId('popHead'), popGrip: byId('popGrip'),
         popLock: byId('popLock'), popLockText: byId('popLockText'), popCircular: byId('popCircular'), popDelete: byId('popDelete'),
         popMass: byId('popMass'), popMassVal: byId('popMassVal'),
         popSpeed: byId('popSpeed'), popSpeedVal: byId('popSpeedVal'), popSpeedNote: byId('popSpeedNote'),
@@ -9694,6 +9695,7 @@
             }
             return;
         }
+        if (popMoved.on) { placePopover(popMoved.x, popMoved.y); return; }
         const wrap = ui.pop.parentElement;
         const wr = wrap.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
         const ox = cr.left - wr.left, oy = cr.top - wr.top;
@@ -9716,6 +9718,63 @@
         ui.pop.style.top = `${Math.round(oy + top)}px`;
     }
 
+    // ---- Moving the menu out of the way ----
+    // Dragged by its title row (not its name or the close button), or its grip and the arrow keys. It then
+    // stays where it was put, for other bodies too, until the page is reloaded: positionPopover no longer
+    // sets it beside a body, and only keeps it on the page. (x, y: in its parent's coordinates, so it scrolls
+    // with the canvas as it always has.) As a sheet, on a phone, it fills the width or height of the screen,
+    // so it has nowhere useful to go, and doesn't move.
+    const popMoved = { on: false, x: 0, y: 0 };
+
+    function popFloats() {
+        return !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side');
+    }
+
+    function placePopover(x, y) {
+        const wr = ui.pop.parentElement.getBoundingClientRect(), gap = 6;
+        const minX = gap - wr.left, minY = gap - wr.top;
+        const maxX = document.documentElement.clientWidth - gap - ui.pop.offsetWidth - wr.left;
+        const maxY = window.innerHeight - gap - ui.pop.offsetHeight - wr.top;
+        ui.pop.style.left = `${Math.round(clamp(x, minX, Math.max(minX, maxX)))}px`;
+        ui.pop.style.top = `${Math.round(clamp(y, minY, Math.max(minY, maxY)))}px`;
+    }
+
+    function movePopover(x, y) {
+        placePopover(x, y);
+        popMoved.on = true;
+        popMoved.x = ui.pop.offsetLeft;
+        popMoved.y = ui.pop.offsetTop;
+    }
+
+    function bindPopoverMove() {
+        if (!ui.popHead) return;
+        let d = null;
+        ui.popHead.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || !popFloats() || e.target.closest('input, .orb-pop-close')) return;
+            e.preventDefault();
+            ui.popHead.setPointerCapture(e.pointerId);
+            d = { id: e.pointerId, x0: e.clientX, y0: e.clientY, left: ui.pop.offsetLeft, top: ui.pop.offsetTop, moved: false };
+        });
+        ui.popHead.addEventListener('pointermove', (e) => {
+            if (!d || e.pointerId !== d.id) return;
+            const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+            if (!d.moved && Math.hypot(dx, dy) < 3) return;   // (a press that wobbles isn't a move)
+            d.moved = true;
+            ui.pop.classList.add('is-moving');
+            movePopover(d.left + dx, d.top + dy);
+        });
+        const end = () => { d = null; ui.pop.classList.remove('is-moving'); };
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => ui.popHead.addEventListener(t, end));
+        // (takesArrows keeps these from pushing the body)
+        ui.popGrip.addEventListener('keydown', (e) => {
+            const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0, dy = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+            if (!(dx || dy) || !popFloats()) return;
+            e.preventDefault();
+            const step = e.shiftKey ? 4 : 24;
+            movePopover(ui.pop.offsetLeft + dx * step, ui.pop.offsetTop + dy * step);
+        });
+    }
+
     function speedRelative(b) {
         const p = b.primary && !(b.primary.primary === b && b.m > b.primary.m) ? b.primary : null;
         if (p) return { p, vx: b.vx - p.vx, vy: b.vy - p.vy };
@@ -9732,6 +9791,8 @@
         const typing = document.activeElement === ui.popName;
         if (ui.popDot) ui.popDot.style.background = b.color;
         if (!typing && ui.popName.value !== b.name) ui.popName.value = b.name;
+        const nameSize = Math.max(4, ui.popName.value.length + 1);   // (the rest of the title row is for dragging)
+        if (ui.popName.size !== nameSize) ui.popName.size = nameSize;
         const locked = frameId === b.id;
         ui.popLock.setAttribute('aria-pressed', locked ? 'true' : 'false');
         setText(ui.popLockText, locked ? 'Viewing from here' : 'View from here');
@@ -9883,6 +9944,7 @@
         // Keep clicks and drags in the popover away from the canvas handlers and the page
         ['pointerdown', 'dblclick', 'wheel'].forEach((t) => ui.pop.addEventListener(t, (e) => e.stopPropagation()));
         bindEditor();
+        bindPopoverMove();
     }
 
     // ------------------------------------------------------------------
@@ -10312,6 +10374,7 @@
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
         if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
+            if (popMoved.on) { placePopover(popMoved.x, popMoved.y); return; }
             const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
             const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
             const fits = ph <= cr.height - 12;
@@ -10359,7 +10422,7 @@
         if (!t || !t.tagName) return false;
         if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
         if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
-        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette'));
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette, .orb-pop-grip'));
     }
 
     function onEditorKey(e) {
