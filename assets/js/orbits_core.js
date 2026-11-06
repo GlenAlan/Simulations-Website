@@ -9310,6 +9310,20 @@
         return { P, rows };
     }
 
+    // The rows worth a line: those measured and, of those yet to go once round, the one due next (the
+    // time left goes with a^1.5). Neptune takes 16 minutes at 1×, so the rest are only counted. (Up to
+    // two waiting are both listed: the second takes no more room than a line that would count it.)
+    function kepler3Listed(rows) {
+        let next = null, soonest = Infinity, waiting = 0;
+        for (const r of rows) {
+            if (r.measured) continue;
+            waiting++;
+            const left = (1 - r.progress) * Math.pow(r.aEst, 1.5);
+            if (left < soonest) { soonest = left; next = r; }
+        }
+        return waiting < 3 ? rows : rows.filter((r) => r.measured || r === next);
+    }
+
     // A table: one row per orbiting body, the same T^2/a^3 for all of them, and Newton's value.
     function drawKepler3Card(C, subj, y, fs, compact) {
         const { P, rows } = kepler3Rows(subj);
@@ -9322,9 +9336,10 @@
         const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
         // Up to 10 rows (5 compact); past that, the last row says how many more there are
-        const most = compact ? 5 : 10, shown = rows.length > most ? most - 1 : rows.length;
-        const more = rows.length - shown;
-        const cells = rows.slice(0, shown).map((r) => {
+        const most = compact ? 5 : 10, list = kepler3Listed(rows);
+        const listed = list.length + (list.length < rows.length ? 1 : 0) > most ? list.slice(0, most - 1) : list;
+        const more = rows.length - listed.length;
+        const cells = listed.map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
             const Tv = r.T * tf;
@@ -9333,7 +9348,7 @@
             const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
-        if (more > 0) cells.push({ name: `+${more} more`, body: null, cols: ['', '', ''] });
+        if (more > 0) cells.push({ name: `+${more} ${rows.every((r) => !r.measured || listed.includes(r)) ? 'still going round' : 'more'}`, body: null });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
@@ -9347,14 +9362,15 @@
         ctx.font = font(fs, true);
         head.forEach((t, i) => { colW[i] = Math.max(colW[i], ctx.measureText(t).width); });
         ctx.font = font(fs);
-        let measW = 0;
+        let measW = 0, moreW = 0;
         for (const c of cells) {
+            if (!c.body) { moreW = ctx.measureText(c.name).width + dot; continue; }   // (it runs across the columns)
             colW[0] = Math.max(colW[0], ctx.measureText(c.name).width + dot);
             if (c.cols) c.cols.forEach((t, i) => { colW[i + 1] = Math.max(colW[i + 1], ctx.measureText(t).width); });
             else measW = Math.max(measW, ctx.measureText(c.measuring).width);
         }
         const numW = Math.max(colW[1] + gap + colW[2] + gap + colW[3], measW);
-        const tableW = rows.length ? colW[0] + gap + numW : 0;
+        const tableW = rows.length ? Math.max(colW[0] + gap + numW, moreW) : 0;
         ctx.font = font(fs, true);
         let w = ctx.measureText(title).width;
         ctx.font = font(fs);
@@ -9394,7 +9410,7 @@
                     ctx.textAlign = 'right';
                     let nx = numX;
                     for (let i = 1; i < 4; i++) { nx += colW[i]; ctx.fillText(c.cols[i - 1], nx, ly); nx += gap; }
-                } else {
+                } else if (c.measuring) {
                     ctx.fillStyle = C.subtle;
                     ctx.fillText(c.measuring, numX, ly);
                 }
