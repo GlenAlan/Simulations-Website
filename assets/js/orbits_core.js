@@ -11918,7 +11918,8 @@
         // (zoomed well back out from where a slower time was set: the old speed again)
         if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
         // (a glide passes through views that show nothing: only where it ends counts)
-        if (!ui.fit || !viewW || !bodies.length || dragging() || view.anim) return;
+        if (!ui.fit || !viewW || !bodies.length || dragging()) return;
+        if (view.anim) { if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned); return; }
         const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
         const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > -r && x < viewW + r && y > -r && y < viewH + r; });
         ui.fit.classList.toggle('is-wanted', out || !!inside || !!view.panned);   // (moved by hand: the way back stands out too)
