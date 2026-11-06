@@ -12967,6 +12967,9 @@
         firing: null,          // the engine while it is held: { kind, fine, key, timer }
         fine: false,           // the Fine switch
         skip: null,            // a skip going on: { kind, t, late, out, speed }
+        arrived: false,        // the clock has stopped for this pass of the target, or a burn has been made in it
+        gap2: Infinity, gapWas: Infinity,   // the distance to the target squared, this step and the last
+        ahead: false,          // the target is short of the launch window (as of the last step)
         home: null,            // what to go back to on leaving (see missionKeepHome)
         burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
@@ -13085,6 +13088,8 @@
     function planHint(x, q, first) {
         const btn = q.kms > 0 ? 'Forward' : 'Back', more = Math.abs(q.kms), v = x.el.v;
         const sign = q.kms > 0 ? 1 : -1, ux = sign * x.vx / v, uy = sign * x.vy / v;
+        // (the first burn, on a clock that is running: no figure, which would change with every small move)
+        if (first && !paused) return `Hold <strong>${btn}</strong>${first[1]}`;
         const words = kmsWords(more);
         let h;
         if (first) h = `${first[0]}${first[0] ? 'hold' : 'Hold'} <strong>${btn}</strong> for about ${words} km/s${first[1]}`;
@@ -13099,11 +13104,14 @@
     function marsHint(x) {
         if (onCourse(x)) return `On course for Mars! <strong>Skip to Mars</strong>${mission.skip ? '' : ', or press play and watch'}.`;
         if (!x.burns) {
-            if (x.phase > x.d.lead + 3) return '<strong>Skip to launch window</strong>, when Mars reaches the marked spot.';
+            // (running, the clock will stop at the window; run on past it, it is gone)
+            if (x.phase > x.d.lead + (paused ? 3 : 0)) return '<strong>Skip to launch window</strong>, when Mars reaches the marked spot.';
+            if (!paused) return 'You missed the launch window. <strong>Retry</strong>, or pause to see if a burn still works.';
             const q = burnPlan(x);
-            if (x.phase > x.d.lead - 3) return planHint(x, q || { kms: x.d.aim }, ['<strong>Now:</strong> ', '.']);
+            if (x.phase > x.d.lead - 3) return planHint(x, q || { kms: x.d.aim }, ['<strong>Launch window, time waits:</strong> ', '.']);
             return q ? planHint(x, q, ['You missed the launch window. <strong>Retry</strong>, or ', '.']) : 'You missed the launch window. <strong>Retry</strong>.';
         }
+        if (!paused) return offPathHint('Mars');
         const q = burnPlan(x);
         return planWorthIt(x, q) ? planHint(x, q) : 'This path misses Mars. <strong>Undo</strong>, then burn at the launch window.';
     }
@@ -13138,24 +13146,30 @@
     function matchHint(x, what) {
         const m = matchBurn(x), kms = Math.max(0, m.kms), u = Math.hypot(m.ux, m.uy) || 1;
         if (m.cost > x.left) return 'Not enough fuel left to match it. <strong>Undo</strong> or <strong>Retry</strong>.';
-        return askBurn(m.btn, m.ux / u, m.uy / u, kms, `<strong>Now:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`);
+        return askBurn(m.btn, m.ux / u, m.uy / u, kms, `<strong>${mission.aimPaused ? 'Now' : 'Arrived, time waits'}:</strong> hold <strong>${m.btn}</strong>, about ${kmsWords(kms)} km/s, ${what(m)}.`);
     }
+    // While the clock runs with nothing pressed, the advice holds still: what the best burn is changes with
+    // every small move, so that waits until the clock stops.
+    const offPathHint = (what) => `This path misses ${what}. <strong>Pause</strong> for what to do next.`;
+    const passHint = (what) => (mission.arrived ? `Passing ${what}. <strong>Pause</strong> to burn here.` : 'Arriving. Time will wait for your burn.');
 
     function stationHint(x) {
         const g = x.d.goal;
-        if (x.td < g.D) return matchHint(x, () => 'to match the station\'s speed');
+        if (x.td < g.D) return paused ? matchHint(x, () => 'to match the station\'s speed') : passHint('the station');
         if (onCourse(x)) return 'On course. <strong>Skip to the station</strong>, then match its speed.';
         if (!x.burns) {
             const q = burnPlan(x);
             return q ? planHint(x, q, ['', ': a smaller orbit is a quicker lap.']) : 'Too late to catch it from here. <strong>Retry</strong>.';
         }
         if (x.el.a > 1.005) return 'A bigger orbit is slower, so you are falling behind. <strong>Undo</strong>, and slow down instead.';
+        if (!paused) return offPathHint('the station');
         const q = burnPlan(x);
         return planWorthIt(x, q) ? planHint(x, q) : 'This path misses the station. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
     }
     function l4Hint(x) {
         const g = x.d.goal;
         if (x.td < g.D) {
+            if (!paused) return passHint('L4');
             if (!parkable(g, x.el.r)) return 'Too far from Jupiter\'s orbit to settle here. <strong>Undo</strong> or <strong>Retry</strong>.';
             return matchHint(x, (m) => (m.first ? 'until your orbit matches Jupiter\'s' : 'to round off your orbit'));
         }
@@ -13164,6 +13178,7 @@
             const q = burnPlan(x);
             return q ? planHint(x, q, ['', ': a bigger orbit drifts you back to L4.']) : 'Too late to reach L4 from here. <strong>Retry</strong>.';
         }
+        if (!paused) return offPathHint('L4');
         const q = burnPlan(x);
         return planWorthIt(x, q) ? planHint(x, q) : 'This path misses L4. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
     }
@@ -13367,8 +13382,9 @@
         mission.used = Math.min(d.budget, mission.used + dv * f);
         mission.log.push(simTime, dv * f);
         mission.predDirty = true;
+        mission.arrived = true;
         noteBurn(dv * f);
-        endSkip(false);
+        endSkip();
         if (mission.status === 'ready') startFlying();
         // Show the new path (the editor's preview of the chosen body)
         if (selectedId !== c.id) selectBody(c.id);
@@ -13455,7 +13471,7 @@
         if (missionIsOver()) { missionNote('The mission is over: <strong>Retry</strong>, or undo your last burn.'); return; }
         const c = missionCraft();
         if (!c || c.held) return;
-        endSkip(false);
+        endSkip();
         if (!paused) { setPaused(true); mission.aimPaused = true; }
         const tank = mission.def.budget / AUYR_KMS, size = fine ? ENGINE_FINE : 1;
         const f = { kind, key: key || '', timer: 0 };
@@ -13549,12 +13565,11 @@
         updateMissionConsole();
     }
 
-    function endSkip(stop) {
+    function endSkip() {
         const k = mission.skip;
         if (!k) return;
         mission.skip = null;
         setSpeedValue(k.speed);
-        if (stop) { acc = 0; setPaused(true); }
     }
 
     // (each step of a skip) Has it got there?
@@ -13567,12 +13582,39 @@
             k.out = out;
             return k.kind === 'apo' ? was && !out : !was && out;
         }
-        if (k.kind === 'window') {
-            const T = bodyById(mission.targetId);
-            if (!T) return true;
-            return ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(ry, rx)) / DEG + 360) % 360 <= mission.def.lead;
-        }
+        if (k.kind === 'window') return windowAngle(c, R) <= mission.def.lead;
         return false;
+    }
+
+    // How far ahead round the orbit the target is, degrees (0 to 360)
+    function windowAngle(c, R) {
+        const T = bodyById(mission.targetId);
+        return T ? ((Math.atan2(T.y - R.y, T.x - R.x) - Math.atan2(c.y - R.y, c.x - R.x)) / DEG + 360) % 360 : 0;
+    }
+
+    // The clock stops, waiting for the burn
+    function missionWait() {
+        endSkip();
+        acc = 0;
+        setPaused(true);
+    }
+
+    // (each step) Got there by Play: the moment is short, so the clock stops for it where a skip would, at
+    // the launch window and at the closest point of a pass inside the goal. Once: Play goes on from there.
+    function missionArrival(c) {
+        const d = mission.def, g = d.goal, R = bodyById(mission.refId);
+        if (d.lead) {
+            if (mission.log.length || !R) return;
+            const was = mission.ahead;
+            mission.ahead = windowAngle(c, R) > d.lead;
+            if (was && !mission.ahead) missionWait();
+        } else if (g.type === 'meet') {
+            // (a path can dip twice in the ring, seen from L4: on, if a closer point is still to come)
+            const was = mission.gapWas, p = mission.pred;
+            mission.gapWas = mission.gap2;
+            if (mission.gap2 >= g.D * g.D) mission.arrived = false;
+            else if (!mission.arrived && mission.gap2 > was && !(p && p.t > simTime && p.d * p.d < mission.gap2)) { mission.arrived = true; missionWait(); }
+        }
     }
 
     // ---- Goals ----
@@ -13604,9 +13646,10 @@
         if (d.limit && simTime > d.limit) { missionOver('lost', 'time'); return; }
         if (mission.skip && skipArrived(c)) {
             const meet = mission.skip.kind === 'meet';
-            endSkip(true);
-            if (meet) skipReport();
+            missionWait();
+            if (meet) { mission.arrived = true; skipReport(); }
         }
+        missionArrival(c);
     }
 
     // (a skip to the target has stopped) It says so if that was short of the goal, which only a change of
@@ -13622,6 +13665,7 @@
         if (!R || !T) return false;
         const t = targetNow(R, T, g.l4);
         const dx = c.x - R.x - t.x, dy = c.y - R.y - t.y, d2 = dx * dx + dy * dy;
+        mission.gap2 = d2;
         if (g.type === 'reach') return d2 < g.zone * g.zone;
         if (d2 >= g.D * g.D) return false;
         if (g.l4) return l4Orbit(c, R);
@@ -13685,7 +13729,7 @@
             mission.result = { t: simTime };
         }
         mission.resultShown = false;
-        endSkip(false);
+        endSkip();
         if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
         mission.aimPaused = false;
         acc = 0;
@@ -13784,10 +13828,11 @@
         Object.assign(mission, {
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
-            nearId: null, pred: null, predDirty: true, plan: null, tell: null, aimPaused: false, burst: 0
+            nearId: null, pred: null, predDirty: true, plan: null, tell: null, aimPaused: false, burst: 0,
+            arrived: false, gapWas: Infinity, ahead: false
         });
         clearTimeout(mission.burstTimer);
-        endSkip(false);
+        endSkip();
         engineStop();
         if (def.lock !== undefined) {
             // (the view follows the body it is about, and the box is round it)
@@ -13812,7 +13857,7 @@
 
     function endMission() {
         clearTimeout(mission.burstTimer);
-        endSkip(false);
+        endSkip();
         engineStop();
         if (mission.home) setSpeedValue(mission.home.speed);
         Object.assign(mission, { def: null, status: 'off', pred: null, plan: null, tell: null, aimPaused: false, result: null, home: null });
@@ -13885,11 +13930,12 @@
         Object.assign(mission, {
             def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(), status: m.status,
             reason: over ? m.reason : '', crashedInto: over ? m.crashedInto : '', result: over ? m.result : null,
-            resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0
+            resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0,
+            arrived: true, gapWas: Infinity, ahead: false   // (back in the ring by undo: no second stop for it)
         });
         clearTimeout(mission.burstTimer);
         mission.burst = 0;
-        endSkip(false);
+        endSkip();
         if (mission.firing) { clearTimeout(mission.firing.timer); mission.firing = null; }
         hideMissionPanel();
         quietFlyby();
@@ -14236,7 +14282,7 @@
     function showMissionPanel(kind, focus) {
         const d = mission.def, P = ui.missionPanel;
         if (!P || (kind !== 'list' && !d)) return;
-        endSkip(false);
+        endSkip();
         const w = panelWords[kind](d);
         mission.panel = kind;
         if (d && mission.status === 'flying' && !paused && kind !== 'result') { setPaused(true); mission.aimPaused = true; }
@@ -14306,7 +14352,7 @@
         if (c && c.held && !paused) { setPaused(true); mission.aimPaused = true; }
         if (mission.status === 'flying' || mission.status === 'ready') refreshPrediction(false);
         // (the clock stopped some other way during a skip: that ends it)
-        if (mission.skip && paused) endSkip(false);
+        if (mission.skip && paused) endSkip();
         if (missionIsOver() && !mission.resultShown) showResult();
         quietFlyby();
         // (the probe's path, as it stands, is always on show while flying)
