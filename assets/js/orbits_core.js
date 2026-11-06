@@ -3242,11 +3242,22 @@
 
     function zoomAt(px, py, factor) {
         const x = wx(px), y = wy(py);
+        const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
         view.zoom = clamp(view.zoom * factor, 1e-7, 1e7);
         view.anim = null;
         updateScale();
         view.panX = x - F.x - (px - viewW / 2) / scale;
         view.panY = y - F.y + (py - viewH / 2) / scale;
+        if (factor > 1 && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in: see insideOf)
+    }
+
+    // The body whose true disc covers the whole canvas, if any: the view is inside it, with nothing to see
+    function insideOf() {
+        for (const b of bodies) {
+            const x = sx(b.dx), y = sy(b.dy);
+            if (Math.hypot(Math.max(x, viewW - x), Math.max(y, viewH - y)) < (b.R / AU_KM) * scale) return b;
+        }
+        return null;
     }
 
     // Change the frame without the view jumping, then glide to the new centre.
@@ -5082,6 +5093,7 @@
         if (wasFrame) frameId = null;
         updateDrawnPositions();
         keepScreen(before);
+        shiftComTrail(before);
         computePrimaries();
         refreshBodyLists();
         syncEccentricity(true);
@@ -5098,7 +5110,16 @@
         missionEnd(burn);
         forcesDirty = true;
         updateDrawnPositions();
-        if (!freeze) keepScreen(before);   // (also keeps a rotating frame's angle: see keepScreen)
+        if (!freeze) { keepScreen(before); shiftComTrail(before); }   // (also keeps a rotating frame's angle: see keepScreen)
+    }
+
+    // The trails are drawn relative to where the centre of mass was at each sample. A change that makes it
+    // jump (a heavy body added, say) would leave a long straight line in every trail where that happened,
+    // so the record of where it was goes with it: the trails stay where they are on the screen.
+    function shiftComTrail(before) {
+        const dx = F.x - before.x, dy = F.y - before.y;
+        if (frameId !== null || turn.on || (!dx && !dy)) return;
+        for (let i = 0; i < TRAIL_CAP; i++) { comTrail[2 * i] += dx; comTrail[2 * i + 1] += dy; }
     }
 
     // ------------------------------------------------------------------
@@ -5788,7 +5809,7 @@
         if (closeUp) placed.push({ l: closeUp.x - closeUp.R, r: closeUp.x + closeUp.R, t: closeUp.y - closeUp.R - 18, b: closeUp.y + closeUp.R });
         const order = discs.slice().sort((p, q) => (q.b.id === selectedId) - (p.b.id === selectedId) || q.b.m - p.b.m);
         for (const { x, y, r, b } of order) {
-            if (x < -60 || x > viewW + 60 || y < -60 || y > viewH + 60) continue;
+            if (x < -r || x > viewW + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
             const chosen = b.id === selectedId || b === popBody;
             if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
@@ -5917,6 +5938,8 @@
         return w;
     }
 
+    const named = (l, t, r, b, zones) => zones.some((z) => l < z[2] && r > z[0] && t < z[3] && b > z[1]);
+
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
@@ -5946,12 +5969,18 @@
             ctx.globalAlpha = 1;
             let half = 10;
             if (settings.labels && clear) {
-                ctx.font = font(fs);
-                ctx.fillStyle = C.subtle;
-                ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
-                ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
-                ctx.fillText(b.name, ex - ux * 12, ey - uy * 12);
-                half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                // (where its name would go: left out if another pointer's is there)
+                const tx = ex - ux * 12, ty = ey - uy * 12;
+                const nl = ux > 0.5 ? tx - nw : ux < -0.5 ? tx : tx - nw / 2, nt = uy > 0.5 ? ty - fs : uy < -0.5 ? ty : ty - fs / 2;
+                if (!named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
+                    ctx.font = font(fs);
+                    ctx.fillStyle = C.subtle;
+                    ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
+                    ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
+                    ctx.fillText(b.name, tx, ty);
+                    half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                    zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                }
             }
             // (the next pointer along this edge keeps clear of this one and its name)
             zones.push([ex - half - 4, ey - fs - 14, ex + half + 4, ey + fs + 14]);
@@ -6068,14 +6097,24 @@
         ctx.textAlign = al;
     }
 
+    // Above this many named bodies only the chosen body's arrows are drawn: the rest would swamp the view
+    const ARROWS_ALL_MAX = 8;
+    let arrowsBusy = false;
+    function countArrows() {
+        let n = 0;
+        for (const b of bodies) if (!b.grp && !b.minor) n++;
+        arrowsBusy = n > ARROWS_ALL_MAX;
+    }
+
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        countArrows();
         // (a torn-apart body's pieces only get arrows when one is chosen)
         if (settings.forces) {
             for (const b of bodies) {
                 const Fm = Math.hypot(b.fx, b.fy);
-                if (!(Fm > 0) || ((b.grp || b.minor) && b !== subj)) continue;
+                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -6090,7 +6129,7 @@
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         const fv = frameVelocity();
         for (const b of bodies) {
-            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor) && b !== subj)) continue;
+            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
@@ -9478,7 +9517,7 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
             const tip = velocityTip(b);
             if (tip.len < 14) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
@@ -9510,7 +9549,7 @@
         const fv = frameVelocity();
         let best = null, bestD = Infinity;
         for (const b of bodies) {
-            if (b.held || ((b.grp || b.minor) && b.id !== selectedId)) continue;
+            if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId)) continue;
             const t = velocityTip(b, fv);
             if (t.len < 14) continue;
             const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
@@ -9541,7 +9580,7 @@
         if (!settings.forces) return null;
         for (const b of bodies) {
             const Fm = Math.hypot(b.fx, b.fy);
-            if (!(Fm > 0) || b.grp || b.minor) continue;
+            if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId)) continue;
             const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
             const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;
             if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
@@ -10406,12 +10445,14 @@
                 const [a, b] = pts;
                 const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
                 const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+                const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
                 view.zoom = clamp(pinch.zoom0 * dist / pinch.d0, 1e-7, 1e7);
                 view.anim = null;
                 updateScale();
                 // keep the world point that was under the fingers' midpoint under it
                 view.panX = pinch.wx - F.x - (mx - viewW / 2) / scale;
                 view.panY = pinch.wy - F.y + (my - viewH / 2) / scale;
+                if (view.zoom > was.zoom && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in)
             }
             return;
         }
@@ -11783,17 +11824,20 @@
     }
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
-    let viewLost = false;
+    let viewLost = null;
     function checkInView() {
         // (zoomed well back out from where a slower time was set: the old speed again)
         if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
         // (a glide passes through views that show nothing: only where it ends counts)
         if (!ui.fit || !viewW || !bodies.length || dragging() || view.anim) return;
-        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy); return x > 0 && x < viewW && y > 0 && y < viewH; });
-        ui.fit.classList.toggle('is-wanted', out || !!view.panned);   // (moved by hand: the way back stands out too)
-        if (out === viewLost) return;
-        viewLost = out;
-        if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
+        const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > -r && x < viewW + r && y > -r && y < viewH + r; });
+        ui.fit.classList.toggle('is-wanted', out || !!inside || !!view.panned);   // (moved by hand: the way back stands out too)
+        const lost = inside ? inside.id : out ? -1 : null;
+        if (lost === viewLost) return;
+        viewLost = lost;
+        if (inside) showHint('note', `<strong>You are inside ${escapeHtml(theName(inside))}.</strong> Fit view brings it back.`, { tag: 'lost', ms: 6000 });
+        else if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
         else clearHint('note', 'lost');
     }
 
