@@ -2233,7 +2233,7 @@
         if (!n || n.L.minor) return;
         clearHint('tip');
         if (n.chosen && bodies.includes(n.H)) selectBody(n.H.id);
-        if (!settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(n.L)))} was torn apart</strong> by the tides of ${escapeHtml(theName(n.H))}.`, { ms: 7000 });
+        if (!settings.stability) eventNote(`${sentenceCase(theName(n.L))} was torn apart`, ` by the tides of ${theName(n.H)}.`, 7000);
     }
 
     // ------------------------------------------------------------------
@@ -2562,7 +2562,7 @@
         forcesDirty = true;
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
-        const them = escapeHtml(theName(big)), it = escapeHtml(sentenceCase(theName(small)));
+        const them = theName(big), it = sentenceCase(theName(small));
         // (LS12's "super-catastrophic": nothing much is left of either. So what is left is one more piece, and the choice
         // of body, if it was this, goes back to the scene's own: a fragment's readouts would only confuse)
         const shattered = !graze && big.m < 0.1 * M;
@@ -2580,7 +2580,9 @@
         if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
         else if (!settings.stability) {
             clearHint('tip');
-            showHint('note', shattered ? `<strong>${it} and ${them} shattered</strong> each other.` : graze ? `<strong>${it} clipped ${them}</strong> and flew on${parts.length ? ', shedding debris' : ''}.` : `<strong>${it} crashed into ${them}</strong> and threw out debris.`, { ms: 7000 });
+            if (shattered) eventNote(`${it} and ${them} shattered`, ' each other.', 7000);
+            else if (graze) eventNote(`${it} clipped ${them}`, ` and flew on${parts.length ? ', shedding debris' : ''}.`, 7000);
+            else eventNote(`${it} crashed into ${them}`, ' and threw out debris.', 7000);
         }
         return true;
     }
@@ -2735,7 +2737,7 @@
         gasE = M > 0 ? E / M : 1;
         if (M > 0 && gasE < 0.45 && !gasNoted && timeDir > 0) {
             gasNoted = true;
-            if (!settings.stability && !scene.progress) showHint('note', '<strong>The gas has settled into a disc.</strong> It glows as it spirals in.', { ms: 7000 });
+            if (!settings.stability && !scene.progress) eventNote('The gas has settled into a disc.', ' It glows as it spirals in.', 7000);
         }
     }
 
@@ -3046,7 +3048,7 @@
         // (said once a scene, for a pass that matters)
         if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
             tides.told = settings.scene;
-            if (!settings.stability && !scene.progress && !mission.def) showHint('note', '<strong>Tides took energy from this orbit.</strong> Each close pass shrinks it a little more.', { ms: 7000 });
+            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', ' Each close pass shrinks it a little more.', 7000);
         }
         return true;
     }
@@ -8544,6 +8546,41 @@
 
         drawCardStack(C, subj, fs, pad);
         drawArrowLegend(C);
+        drawEventNote(C, fs, pad, t);
+    }
+
+    // A note about what just happened, at the top of the canvas (see eventNote): in the middle, or as near as
+    // it can be with the pause notice or the view chip to its left and the cards to its right. Where one line
+    // doesn't fit it takes two, and where two don't, it stays in the hint line alone.
+    function drawEventNote(C, fs, pad, notice) {
+        const n = hints.note;
+        if (!n || !n.canvas || mission.def) return;
+        const bold = n.canvas[0], rest = n.canvas[1];
+        ctx.font = font(fs, true);
+        const wb = ctx.measureText(bold).width;
+        if (notice) notice = ctx.measureText(notice).width + 18;
+        ctx.font = font(fs);
+        const wr = ctx.measureText(rest).width;
+        const L = visL + pad + Math.max(frameId !== null ? 240 : 0, notice ? notice + 8 : 0), R = Math.min(visR, cards.left) - pad;
+        const one = wb + wr + 20 <= R - L, w = one ? wb + wr + 20 : Math.max(wb, wr) + 20;
+        if (w > R - L) return;
+        const lh = Math.round(fs * 1.4), h = (one ? lh : 2 * lh) + 10;
+        const x = clamp((visL + visR - w) / 2, L, R - w), y = pad;
+        roundRect(x, y, w, h, 5);
+        ctx.fillStyle = C.card;
+        ctx.fill();
+        ctx.strokeStyle = C.cardLine;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = C.text;
+        ctx.font = font(fs, true);
+        ctx.fillText(bold, x + 10, y + 5 + lh / 2);
+        ctx.font = font(fs);
+        // (the words after a line break lose the space they start with)
+        if (one) ctx.fillText(rest, x + 10 + wb, y + 5 + lh / 2);
+        else ctx.fillText(rest.trimStart(), x + 10, y + 5 + 1.5 * lh);
     }
 
     // ---- The cards down the top-right corner ----
@@ -10820,10 +10857,20 @@
     function showHint(layer, html, opts) {
         const o = opts || {};
         clearTimeout(hintTimers[layer]);
-        const h = html ? { html, tag: o.tag || '' } : null;
+        const h = html ? { html, tag: o.tag || '', canvas: o.canvas || null } : null;
         hints[layer] = h;
         if (h && o.ms) hintTimers[layer] = setTimeout(() => { if (hints[layer] === h) { hints[layer] = null; refreshHint(); } }, o.ms);
         refreshHint();
+    }
+
+    // Something that just happened out there on the canvas: a star torn apart, gas settling. Said in the
+    // line like any note. If the line is off to the side of the canvas, where the eye isn't, it shows on the
+    // canvas too, for as long as the note lasts (see drawEventNote). Text drawn on a canvas isn't read out,
+    // so screen readers still hear it once, from the line.
+    function eventNote(bold, rest, ms) {
+        const hint = ui.hint ? ui.hint.getBoundingClientRect() : null;
+        const aside = !hint || !hint.width || hint.right <= canvas.getBoundingClientRect().left + 1;
+        showHint('note', `<strong>${escapeHtml(bold)}</strong>${escapeHtml(rest)}`, { ms, canvas: aside ? [bold, rest] : null });
     }
 
     // Take a layer down (only if it still holds that tag, when one is given)
