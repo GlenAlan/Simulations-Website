@@ -2132,7 +2132,7 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 
     .orb-mc-head { grid-area: head; }
     .orb-mc-goal { grid-area: goal; }
-    .orb-mc-status { grid-area: status; min-height: 0; }
+    .orb-mc-status { grid-area: status; }
     .orb-mc-fuel { grid-area: fuel; }
     .orb-mc-left-row { grid-area: left; }
     .orb-mc-pad-head { grid-area: padhead; }
@@ -2149,8 +2149,9 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     }
 }
 
-/* Phones held sideways: the engine and the clock come first, in sight; the rest scrolls below them
-   (the hint line is under the canvas here) */
+/* Phones held sideways: the engine, the clock and Undo come first, in sight; the goal, how it is going
+   and the links follow, and the column grows to hold them, with the page scrolling (the hint line is
+   under the canvas here). The console's parts join the toolbar's grid, so Undo can go among them. */
 @media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
     .orbits-sim.orb-mission-on .orb-toolbar {
         grid-template-columns: repeat(6, minmax(0, 1fr));
