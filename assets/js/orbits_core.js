@@ -1217,7 +1217,7 @@
             if (b.grp < 0 && gasRows < 0) gasRows = 0;
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g && (b.minor || g < 0) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
+            grp[k] = g && (b.minor || g < 0 || g % 1) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, gas is held up by its pressure, and for debris see throwDebris: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -2607,7 +2607,9 @@
     // Throw debris of mass Md from body c, left with radius Rc0 (the two together have this mass). c is what is left, and
     // the debris and c keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as
     // DEBRIS_TURN allows. v8: its speed to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in
-    // tearPattern, so Run again and a shared link break them the same way; grp: the debris' group.
+    // tearPattern, so Run again and a shared link break them the same way; grp: the debris' group, half a number, as
+    // debris doesn't pull on itself: what its gravity would gather again is already in what is left (LS12's largest
+    // remnant is that), and a clump of it would hold back the steps of the whole system.
     // fan: where they leave from (angle at), the lobes' middle (axis), their angle either side of it (lobe) and width
     // (spread: from pi they go all round), how much more goes the way of way (bias), and how many pieces (n). With vMin
     // their speeds are those of a plume, from vMin up to vTop. The radius they start at is from, if given.
@@ -2623,7 +2625,7 @@
         const Rc = c.R / AU_KM, lead = 0.6 * sampleDt / HOST_STEPS, round = fan.spread >= Math.PI, a0 = TAU * rnd();
         let bx = 0, by = 0, bvx = 0, bvy = 0, bm = 0;
         const pace = new Array(n);
-        let S = 0, down = 0, sum = 0;
+        let S = 0, down = 0, sum = 0, inWay = 0, inOther = 0;
         for (let i = 0; i < n; i++) {
             pace[i] = Math.pow((n * masses[i]) / Md, -1 / 6) * (0.75 + 0.5 * rnd());
             S += masses[i] * pace[i] * pace[i];
@@ -2639,7 +2641,9 @@
             const toWay = sum === 0 || down < 0.5 * (1 + fan.bias) * (sum + m);
             if (toWay) down += m;
             sum += m;
-            const ang = round ? a0 + 2.39996 * i + 0.3 * rnd() : fan.axis + (toWay ? fan.way : -fan.way) * fan.lobe + fan.spread * (2 * rnd() - 1);
+            // (spaced along the lobe by the golden ratio, however many there are: none on top of another)
+            const u = (0.618034 * (toWay ? inWay++ : inOther++) + 0.13 * rnd() + 0.2) % 1;
+            const ang = round ? a0 + 2.39996 * i + 0.3 * rnd() : fan.axis + (toWay ? fan.way : -fan.way) * fan.lobe + fan.spread * (2 * u - 1);
             // It starts between where they hit and where it is heading, and just clear of c
             const at = round ? ang : fan.at + 0.5 * Math.atan2(Math.sin(ang - fan.at), Math.cos(ang - fan.at));
             const d0 = fan.from ? fan.from * (0.9 + 0.3 * rnd()) : (Rc + Rf) * (1.05 + 0.15 * rnd());
@@ -2719,7 +2723,7 @@
         for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
         const seed = ((h >>> 0) % 2147483646) + 1;
         const v1 = big.R * big.R * big.R / m1, v2 = small.R * small.R * small.R / m2;
-        const grp = nextId++;
+        const grp = nextId++ + 0.5;
         impactFlash(big, small, hit.nx, hit.ny);
         const way = hit.h < 0 ? -1 : 1, at = Math.atan2(hit.ny, hit.nx);
         let parts = [];
@@ -2871,7 +2875,7 @@
     function tornOnto(c, s) {
         noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
         noteCollision(c, s);   // (the stability timer)
-        const before = systemEnergy().total, M = c.m + s.m, Md = 0.9 * s.m, grp = nextId++;
+        const before = systemEnergy().total, M = c.m + s.m, Md = 0.9 * s.m, grp = nextId++ + 0.5;
         const X = (c.m * c.x + s.m * s.x) / M, Y = (c.m * c.y + s.m * s.y) / M;
         const VX = (c.m * c.vx + s.m * s.vx) / M, VY = (c.m * c.vy + s.m * s.vy) / M;
         const bits = new Uint32Array(new Float64Array([c.m, s.m, s.R]).buffer);
@@ -3047,7 +3051,7 @@
     function envelopeOff(H, f, core) {
         noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
         noteCollision(H, f);   // (the stability timer)
-        const before = systemEnergy().total, grp = nextId++, m0 = H.m, M0 = m0 + f.m;
+        const before = systemEnergy().total, grp = nextId++ + 0.5, m0 = H.m, M0 = m0 + f.m;
         const it = sentenceCase(theName(f)), them = theName(H);
         const rvx = f.vx - H.vx, rvy = f.vy - H.vy, Rg = H.R / AU_KM;
         const bits = new Uint32Array(new Float64Array([m0, H.R, f.m, f.R]).buffer);
@@ -3088,7 +3092,7 @@
         overLimit = null;
         if (!bodies.includes(b) || b.grp || bodies.length + 12 > MAX_BODIES) return;
         noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
-        const before = systemEnergy().total, M = b.m, grp = nextId++, name = sentenceCase(theName(b));
+        const before = systemEnergy().total, M = b.m, grp = nextId++ + 0.5, name = sentenceCase(theName(b));
         const bits = new Uint32Array(new Float64Array([M, b.R, b.x]).buffer);
         let h = 2166136261;
         for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
@@ -8352,7 +8356,7 @@
         const r2 = dx * dx + dy * dy;
         let s2 = r2;
         if (b.grp && q.grp) {
-            if (b.grp !== q.grp) { pp.x = 0; pp.y = 0; return 0; }
+            if (b.grp !== q.grp || b.grp % 1) { pp.x = 0; pp.y = 0; return 0; }
             const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
         }
         if (!(s2 > 0)) { pp.x = 0; pp.y = 0; return 0; }
@@ -12990,7 +12994,7 @@
         if (bi.grp && bj.grp) {
             // pieces of one torn-apart body: the softened potential of their softened pull
             // (and pieces of different bodies don't pull on each other)
-            if (bi.grp !== bj.grp || bi.grp < 0) return;   // (nor do pieces of gas: see "Gas round a compact body")
+            if (bi.grp !== bj.grp || bi.grp < 0 || bi.grp % 1) return;   // (nor do pieces of gas: see "Gas round a compact body"; nor debris: see throwDebris)
             const e = 0.5 * (softLength(bi) + softLength(bj));
             sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
             return;
