@@ -264,8 +264,8 @@
         // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
-            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
-            tip: 'With Realistic physics on, relativity swings this orbit round into a rosette.',
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            tip: 'Relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
                 { kind: 'neutron', orbit: { around: 0, a: 1500 / AU_KM, e: 0.5, w: 0, nu: 180 } }
@@ -276,8 +276,8 @@
         // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
         // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
         tde: {
-            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, box: [-0.64, 0.11, -0.23, 0.23],
-            tip: 'With Realistic physics on, the black hole\'s tides tear this star apart.',
+            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.64, 0.11, -0.23, 0.23],
+            tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -320,8 +320,7 @@
         // pull on each other, stir each other up, collide and stick; the biggest grow fastest. (In this flat
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
-            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact collide and stick: watch a moon build up.',
+            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 0, forceBody: 1, vref: 0.75, trail: 1, swarm: true, progress: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -341,7 +340,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Speed it up: with Realistic physics on, this orbit turns 43″ a century.',
+            tip: 'Speed it up: this orbit turns 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -367,7 +366,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'With Realistic physics on, gravitational waves drain the orbit until the black holes merge.',
+                tip: 'Gravitational waves drain the orbit until the black holes merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -969,6 +968,8 @@
         if (au < 1000) return { v: au.toFixed(1), u: 'AU' };
         return { v: fmtSci(au, 2), u: 'AU' };
     }
+    // A whole number with its thousands marked, or from a billion up as ×10ⁿ, so it stays short
+    const fmtWhole = (x) => (Math.abs(x) < 1e9 ? Math.round(x).toLocaleString('en-US') : fmtSci(x, 2));
     // Scenes count time in years, days (scene.time 'd', or scene.units 'km') or seconds (scene.time 's':
     // orbits round a black hole)
     const timeUnit = () => scene.time || (scene.units === 'km' ? 'd' : 'yr');
@@ -978,32 +979,35 @@
         const a = Math.abs;
         if (timeInSeconds()) {
             const s = yr * YEAR_S;
-            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : Math.round(s).toLocaleString('en-US'), u: 's' };
+            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : fmtWhole(s), u: 's' };
         }
         if (timeUnit() === 'd') {
             const d = yr * DAYS_PER_YEAR;
-            return { v: a(d) < 1000 ? d.toFixed(1) : Math.round(d).toLocaleString('en-US'), u: 'days' };
+            return { v: a(d) < 1000 ? d.toFixed(1) : fmtWhole(d), u: 'days' };
         }
-        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : Math.round(yr).toLocaleString('en-US'), u: 'yr' };
+        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : fmtWhole(yr), u: 'yr' };
     }
     // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
         if (timeInSeconds() || yr * YEAR_S < 600) {
             const s = yr * YEAR_S;
             if (s < 1) return `${precise ? s.toFixed(3) : +s.toFixed(3)} s`;
+            if (s >= 1e9) return `${fmtWhole(s)} s`;
             return `${precise ? s.toFixed(s < 100 ? 2 : 0) : +s.toFixed(s < 10 ? 2 : 0)} s`;
         }
         if (timeUnit() === 'd' || yr < 0.1) {
             const d = yr * DAYS_PER_YEAR;
+            if (d >= 1e9) return `${fmtWhole(d)} days`;
             if (precise) return `${d < 100 ? d.toFixed(1) : Math.round(d)} days`;
+            if (d < 0.1) return `${+(d * 24).toFixed(1)} h`;   // (not "0.0 days")
             return `${d < 10 ? d.toFixed(1) : Math.round(d)} ${d < 1.5 && d >= 0.5 ? 'day' : 'days'}`;
         }
-        if (precise) return `${yr < 100 ? yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
-        return `${yr < 10 ? +yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
+        if (precise) return `${yr < 100 ? yr.toFixed(2) : fmtWhole(yr)} yr`;
+        return `${yr < 10 ? +yr.toFixed(2) : fmtWhole(yr)} yr`;
     }
     function fmtSpeedKms(kms) {
         if (kms < 0.1) return { v: (kms * 1000).toFixed(kms < 0.01 ? 2 : 1), u: 'm/s' };
-        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : Math.round(kms).toLocaleString('en-US'), u: 'km/s' };
+        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : fmtWhole(kms), u: 'km/s' };
     }
     // " (0.24c)" for speeds of at least 1% of the speed of light
     function lightFraction(kms) {
@@ -1850,7 +1854,20 @@
         // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
         // timer says so itself)
         if (!small.minor && !small.grp && timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }   // (running backwards: not the usual crash)
-        else if (!small.minor && !small.grp && !settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+    }
+
+    // Said as a merger is (not for a swarm's bodies, which go by the hundred; the stability timer says so
+    // itself). The scene's tip has done its job. If it was the chosen body, the choice goes to what tore
+    // it apart, not to a piece: one fragment means nothing, and its readouts would only confuse.
+    let tornNews = null;
+    function announceTear() {
+        const n = tornNews;
+        tornNews = null;
+        if (!n || n.L.minor) return;
+        clearHint('tip');
+        if (n.chosen && bodies.includes(n.H)) selectBody(n.H.id);
+        if (!settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(n.L)))} was torn apart</strong> by the tides of ${escapeHtml(theName(n.H))}.`, { ms: 7000 });
     }
 
     // ------------------------------------------------------------------
@@ -2344,7 +2361,15 @@
     // puts the switch back (unless it was changed by hand meanwhile), so "Three stars: chaos" isn't
     // quietly run with Einstein's corrections after a visit to Mercury
     let realisticByScene = false;
-    if (ui.realistic) ui.realistic.addEventListener('change', () => { realisticByScene = false; });
+    if (ui.realistic) {
+        ui.realistic.addEventListener('change', () => {
+            // (switched back on in such a scene, it is the scene's again, and goes when the scene does)
+            const needed = !!(scene && scene.realistic);
+            realisticByScene = needed && ui.realistic.checked;
+            if (needed && !ui.realistic.checked) showHint('note', '<strong>Realistic physics off:</strong> just Newton, so a plain ellipse.', { ms: 6000 });
+            else if (needed) clearHint('note');
+        });
+    }
     function setRealisticSwitch(on) {
         settings.realistic = on;
         if (ui.realistic) ui.realistic.checked = on;
@@ -2397,7 +2422,8 @@
     }
 
     function precessionLines(b, compact, title, C) {
-        if (!orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
+        // (a piece of a torn-apart body has no orbit of its own to turn)
+        if (b.grp || !orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
         const p = b.primary, el = elementsOf(b, p);
         if (!el || !el.bound) return null;
         const r = precessionOf(b);
@@ -2577,7 +2603,7 @@
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
-            if (checkTides()) { refreshBodyLists(); }
+            if (checkTides()) { refreshBodyLists(); announceTear(); }
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
@@ -5045,15 +5071,15 @@
         });
         // A press on the canvas gives it the keyboard (so Enter, N and Z act on it next), unless you are
         // working in the body's menu (leaving one of its fields would apply what is half typed)
-        // (A finger's press shows no ring: the browser counts the focus given here as visible, and on a
-        // phone a pink ring round the canvas after every tap only clutters it. A key brings it back.)
-        canvas.addEventListener('pointerdown', (e) => {
-            canvas.classList.toggle('orb-touch-focus', (e.pointerType || 'mouse') !== 'mouse');
+        // (A press shows no ring: the browser counts the focus given here as visible, and a pink ring
+        // round the canvas after every click only clutters it. Tab brings it back.)
+        canvas.addEventListener('pointerdown', () => {
+            canvas.classList.add('orb-press-focus');
             const a = document.activeElement;
             if (a === canvas || (ui.pop && ui.pop.contains(a))) return;
             canvas.focus({ preventScroll: true });
         });
-        document.addEventListener('keydown', () => canvas.classList.remove('orb-touch-focus'), true);
+        document.addEventListener('keydown', (e) => { if (e.key === 'Tab') canvas.classList.remove('orb-press-focus'); }, true);
         // A body chosen on the canvas shows in the list straight away (after the canvas's own handler)
         canvas.addEventListener('pointerup', () => setTimeout(() => { if (nav.visible && selectedId !== nav.shownSel) navReveal(); }, 0));
         setInterval(navTick, NAV_TICK_MS);
@@ -7821,6 +7847,7 @@
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
             setText(ui.statDist, '–'); setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
+            setText(ui.statDistUnit, ''); setStatUnit(ui.statSpeed, ''); setStatUnit(ui.statForce, '');
             return;
         }
         if (ui.subjectDot) ui.subjectDot.style.background = b.color;
@@ -7829,9 +7856,11 @@
         const top = !p || (p.primary === b && b.m > p.m);
         let dist, speed, force;
         if (bodies.length < 2) {
+            // (no units for what isn't there)
             setText(ui.subjectAround, 'on its own');
-            setText(ui.statDist, '–'); setText(ui.statDistUnit, 'AU');
+            setText(ui.statDist, '–'); setText(ui.statDistUnit, '');
             setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
+            setStatUnit(ui.statSpeed, ''); setStatUnit(ui.statForce, '');
             return;
         }
         const pr = b.held && !top ? predictLaunch(b) : null;
@@ -7861,11 +7890,16 @@
         setText(ui.statDistUnit, d.u);
         const s = fmtSpeedKms(speed * AUYR_KMS);
         setText(ui.statSpeed, s.v);
-        if (ui.statSpeed && ui.statSpeed.nextSibling) {
-            const t = ` ${s.u}`;
-            if (ui.statSpeed.nextSibling.textContent !== t) ui.statSpeed.nextSibling.textContent = t;
-        }
+        setStatUnit(ui.statSpeed, s.u);
         setText(ui.statForce, force > 0 ? fmtSci(forceToNewtons(force), 2) : '0');
+        setStatUnit(ui.statForce, 'N');
+    }
+
+    // The unit after a readout's value (the text that follows it)
+    function setStatUnit(el, u) {
+        if (!el || !el.nextSibling) return;
+        const t = u ? ` ${u}` : ' ';
+        if (el.nextSibling.textContent !== t) el.nextSibling.textContent = t;
     }
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
@@ -7902,9 +7936,14 @@
             pull = top ? 'Total gravitational pull of all the other bodies on it' : `Gravitational pull of ${theName(p)} on it: F = Gm₁m₂/r²`;
             const el = pr ? pr.el : p ? elementsOf(b, p) : null;
             const bound = el && el.bound && (pr || b.bound);
-            if (el) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
+            // (pulled about by others as hard as by what it orbits, as in the three-star scenes: no one
+            // orbit, so no period to give, and the number would jump about with its partner)
+            const tossed = !pr && !top && p && !mission.def && bodies.length <= SWARM_N && disturbers(b, p).length > 0;
+            if (el && !tossed) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
             if (top && !p) {
                 tip = 'The heaviest body orbits nothing: it only wobbles round the centre of mass';
+            } else if (tossed) {
+                tip = `Other bodies pull on it about as hard as ${theName(p)}: it has no one orbit, so no period`;
             } else if (!bound) {
                 value = 'escaping';
                 tip = `Not bound to ${theName(p)}: it is going fast enough to escape, so it has no period`;
@@ -8645,8 +8684,8 @@
     function fieldText(x) {
         const ax = Math.abs(x);
         if (ax === 0) return '0';
-        if (ax >= 9999.5 && ax < 1e15) return Math.round(x).toLocaleString('en-US');
-        if (ax < 1e-3 || ax >= 1e15) return x.toExponential(3);
+        if (ax >= 9999.5 && ax < 1e9) return Math.round(x).toLocaleString('en-US');
+        if (ax < 1e-3 || ax >= 1e9) return x.toExponential(3);
         return x.toPrecision(4);
     }
 
@@ -8660,30 +8699,36 @@
         return f === undefined ? NaN : parseFloat(m[1]) * f;
     }
 
+    const MAX_SPEED = 0.99 * C_LIGHT;
     const FIELDS = {
         speed: {
             input: ui.popSpeedIn, unitEl: ui.popSpeedUnit, units: SPEED_UNITS, ok: (v) => v >= 0,
+            why: 'Speed needs a number, 0 or more.', max: MAX_SPEED, over: 'Kept below the speed of light.',
             apply: (b, v) => { const s = velocityParts(b); setVelocity(b, v, s.angle, s.sense); },
             step: (b, dir, k) => nudge(b, dir > 0 ? 'faster' : 'slower', k)
         },
         angle: {
             input: ui.popAngleIn, units: ANGLE_UNITS, ok: (v) => isFinite(v),
+            why: 'Direction needs a number of degrees.',
             apply: (b, v) => { const s = velocityParts(b); setVelocity(b, s.v, s.screen ? v : clamp(v, -Math.PI / 2, Math.PI / 2), s.sense); },
             // (10, 1 or 0.1 degrees)
             step: (b, dir, k) => FIELDS.angle.apply(b, velocityParts(b).angle + dir * k * 100 * DEG)
         },
         period: {
             input: ui.popPeriodIn, unitEl: ui.popPeriodUnit, units: TIME_UNITS, ok: (v) => v > 0,
+            why: 'Period needs a number above 0.', max: 1e9, over: 'Kept to a billion years.',
             apply: (b, v) => setPeriod(b, v),
             step: (b, dir, k) => { const o = orbitOf(b); if (o && o.el.bound) setPeriod(b, o.T * (1 + dir * k)); }
         },
         peri: {
             input: ui.popPeriIn, unitEl: ui.popPeriUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            why: 'Distance needs a number above 0.', max: 1e6, over: 'Kept to a million AU.',
             apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, v, Math.max(v, o.ra)); },
             step: (b, dir, k) => { const o = orbitOf(b); if (o) FIELDS.peri.apply(b, o.rp * (1 + dir * k)); }
         },
         apo: {
             input: ui.popApoIn, unitEl: ui.popApoUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            why: 'Distance needs a number above 0.', max: 1e6, over: 'Kept to a million AU.',
             apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, Math.min(v, o.rp), v); },
             step: (b, dir, k) => { const o = orbitOf(b); if (o && isFinite(o.ra)) FIELDS.apo.apply(b, o.ra * (1 + dir * k)); }
         }
@@ -8704,23 +8749,32 @@
         if (input.value !== t) input.value = t;
     }
 
-    // Apply what was typed in a field, if it changed. Something that can't be read is marked (and, when
-    // the field is left, put back).
-    function commitField(name, keepBad) {
+    // Apply what was typed in a field, if it changed. Something that can't be used is put back, saying
+    // why; something too big is cut down to size.
+    function commitField(name) {
         const F = FIELDS[name], input = F.input, b = popBody;
         if (!b || !input || input.value.trim() === (edit.shown[name] || '')) return;
-        const v = parseField(input.value, F.units, edit.units[name]);
+        let v = parseField(input.value, F.units, edit.units[name]);
         if (!(isFinite(v) && F.ok(v))) {
-            if (keepBad) { input.setAttribute('aria-invalid', 'true'); return; }
             input.value = edit.shown[name] || '';
-            input.removeAttribute('aria-invalid');
+            fieldSay(F.why);
             return;
         }
-        input.removeAttribute('aria-invalid');
+        if (F.max !== undefined && v > F.max) { v = F.max; fieldSay(F.over); }
         edit.forceField = name;
         F.apply(b, v);
         updateEditor(true);
         edit.forceField = null;
+    }
+
+    // A word under the menu's fields for a few seconds, when an entry was refused or cut down to size
+    function fieldSay(text) {
+        const el = byId('popFieldWhy');
+        if (!el) return;
+        el.textContent = text;
+        el.hidden = false;
+        clearTimeout(edit.whyTimer);
+        edit.whyTimer = setTimeout(() => { el.hidden = true; el.textContent = ''; }, 5000);
     }
 
     // A stepper (or the up and down keys in a field)
@@ -8864,7 +8918,6 @@
             const name = t && t.classList && t.classList.contains('orb-spin-input') ? Object.keys(FIELDS).find((n) => FIELDS[n].input === t) : null;
             if (name && t.value.trim() !== (edit.shown[name] || '')) {
                 t.value = edit.shown[name] || '';
-                t.removeAttribute('aria-invalid');
                 e.stopImmediatePropagation();
                 e.preventDefault();
             }
@@ -8999,17 +9052,16 @@
         for (const name of Object.keys(FIELDS)) {
             const input = FIELDS[name].input;
             if (!input) continue;
-            input.addEventListener('blur', () => commitField(name, false));
+            input.addEventListener('blur', () => commitField(name));
             input.addEventListener('focus', () => input.select());
-            input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    commitField(name, true);
+                    commitField(name);
                     if (coarse()) input.blur(); else input.select();
                 } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                     e.preventDefault();
-                    commitField(name, true);
+                    commitField(name);
                     stepField(name, e.key === 'ArrowUp' ? 1 : -1, e);
                 }
             });
@@ -9018,7 +9070,7 @@
             const name = spin.dataset.field;
             spin.querySelectorAll('.orb-spin-btn').forEach((btn) => {
                 const dir = parseFloat(btn.dataset.dir);
-                holdRepeat(btn, (e) => { commitField(name, false); stepField(name, dir, e); });
+                holdRepeat(btn, (e) => { commitField(name); stepField(name, dir, e); });
             });
         });
         // Way round
@@ -9305,11 +9357,20 @@
         return h;
     }
 
+    // "A moon forming": how far it has got, in place of the usual help
+    function moonProgress() {
+        const top = heaviest();
+        let big = 0, n = 0;
+        for (const b of bodies) if (b !== top) { n++; if (b.m > big) big = b.m; }
+        const pct = (100 * big) / KINDS.moon.m;
+        return `Moonlets collide and stick. Biggest: <strong>${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</strong> of the Moon, <strong>${n}</strong> pieces left.`;
+    }
+
     // Write the line from the top layer that has something to say
     function refreshHint() {
         if (!ui.hint) return;
         const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
-            || hintHtml(hints.note) || hintHtml(hints.tip) || carryOnHint() || usualHint();
+            || hintHtml(hints.note) || hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint();
         if (h === hintKey) return;
         hintKey = h;
         ui.hint.innerHTML = h;
@@ -9328,15 +9389,24 @@
         else refreshHint();
     }
 
+    // The body that one of radius R km at (x, y) would touch, and so merge with
+    function touching(x, y, R) {
+        if (!settings.merge) return null;
+        for (const q of bodies) if (Math.hypot(q.x - x, q.y - y) < (q.R + R) / AU_KM) return q;
+        return null;
+    }
+
     // A drag from the palette: what a drop just here would do
     function dropHint(d) {
         const k = KINDS[d.kind] || KINDS.custom;
         dropHost = d.over ? moonHost(d.cx, d.cy, k.m, k.R, null) : null;
         let h = settings.placement === 'circular' ? '<strong>Drop it in space</strong>, or on a planet to make it a moon.' : '<strong>Drop it in space.</strong>';
         if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
-        else if (d.over && settings.placement === 'circular') {
-            const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
-            if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
+        else if (d.over) {
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), hit = touching(w.x, w.y, k.R);
+            const p = settings.placement === 'circular' ? placementPrimary(w.x, w.y, k.m, null) : null;
+            if (hit) h = `<strong>Drop it here</strong> and it merges with ${escapeHtml(theName(hit))}.`;
+            else if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
         }
         showHint('drag', settings.placement === 'throw' ? `${h} <strong>Flick</strong> it as you let go to throw it.` : h);
     }
@@ -10640,16 +10710,21 @@
 
     function chartsVisible() { return !!(charts && ui.chartsContainer && ui.chartsContainer.style.display !== 'none'); }
 
+    let chartsFrom = null;   // where the page was when the graphs opened
     function setChartsVisible(visible) {
         if (!ui.chartsContainer) return;
         ui.chartsContainer.style.display = visible ? 'block' : 'none';
         document.body.classList.toggle('charts-visible', visible);
         if (visible && !charts) charts = makeCharts();
         if (visible) resetCharts();
-        // (they open under the info bar, below the fold on most screens)
-        if (visible && !document.body.classList.contains('sim-fullscreen-active')) {
-            const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: glide ? 'smooth' : 'auto' });
+        // (they open under the info bar, below the fold on most screens; closed, the page goes back)
+        if (document.body.classList.contains('sim-fullscreen-active')) return;
+        if (visible) {
+            chartsFrom = window.scrollY;
+            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
+        } else if (chartsFrom !== null) {
+            window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
+            chartsFrom = null;
         }
     }
 
@@ -10874,6 +10949,7 @@
     function flashNote(el, text) {
         if (!el) return;
         el.textContent = text;
+        revealInPanel(el);
         clearTimeout(share.noteTimers.get(el));
         share.noteTimers.set(el, setTimeout(() => { el.textContent = el.dataset.text || ''; }, NOTE_MS));
     }
@@ -11637,6 +11713,7 @@
     }
 
     function noteTornApart(L, H) {
+        tornNews = { L, H, chosen: selectedId === L.id };
         if (!settings.stability) return;
         stabilityRestart(performance.now());
         if (!stab.ended) endStability('torn', L, H, simTime);
@@ -11843,6 +11920,7 @@
 
     function shareTick() {
         const now = performance.now();
+        if (scene.progress) refreshHint();
         syncSceneList();
         syncFolds();
         checkInView();
@@ -11857,7 +11935,46 @@
         if (token) { setPaused(true); openSetup(token, true); } else offerAutosave();
     }
 
+    // Scroll the settings just enough to show what has just opened or appeared in them (the page itself stays)
+    function revealInPanel(el) {
+        const sc = el.closest ? el.closest('.sim-controls-content') : null;
+        if (!sc) return;
+        requestAnimationFrame(() => {
+            const r = el.getBoundingClientRect(), s = sc.getBoundingClientRect();
+            let d = 0;
+            if (r.bottom > s.bottom - 8) d = Math.min(r.bottom - s.bottom + 8, r.top - s.top - 8);
+            else if (r.top < s.top + 8) d = r.top - s.top - 8;
+            if (Math.abs(d) > 1) sc.scrollBy({ top: d, behavior: quickMotion() });
+        });
+    }
+
+    const quickMotion = () => (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+
+    // About opens with its heading at the top of the screen; closed again, the page goes back to where
+    // it was, as it does for the graphs (see setChartsVisible)
+    function bindPageFolds() {
+        const about = document.querySelector('details.description-area');
+        for (const d of document.querySelectorAll('.sim-controls-content details')) {
+            d.addEventListener('toggle', () => { if (d.open) revealInPanel(d); });
+        }
+        if (!about) return;
+        let from = null;
+        const sum = about.querySelector('summary');
+        about.addEventListener('toggle', () => {
+            if (about.open) {
+                from = window.scrollY;
+                const top = about.getBoundingClientRect().top;
+                if (top > 0.3 * window.innerHeight || top < 0) window.scrollBy({ top: top - 8, behavior: quickMotion() });
+            } else if (from !== null) {
+                window.scrollTo({ top: from, behavior: quickMotion() });
+                from = null;
+                if (sum) sum.blur();
+            }
+        });
+    }
+
     function bindShare() {
+        bindPageFolds();
         Object.assign(ui, {
             foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
             shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),

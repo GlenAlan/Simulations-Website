@@ -136,7 +136,7 @@ html:not(.dark-mode) .orbits-sim {
 }
 
 html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
-    outline: 1px solid rgba(0, 0, 0, 0.22);
+    outline: 1px solid rgba(0, 0, 0, 0.55);
 }
 
 .orb-chip-disc.is-custom {
@@ -193,7 +193,7 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     padding: 0 0.15em;
     font-size: 0.95em;
     line-height: 1.35;
-    opacity: 0.85;
+    opacity: 0.9;
     /* two fixed lines, so a longer hint never changes the toolbar's height */
     height: 2.7em;
     overflow: hidden;
@@ -266,6 +266,10 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     content: " Less \25B4";
     font-weight: 700;
     color: var(--color-accent);
+}
+
+html:not(.dark-mode) .orb-hint {
+    opacity: 1;
 }
 
 /* (the accent pink is too pale for text on the light theme's grey) */
@@ -1412,6 +1416,17 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     margin-top: 8px !important;
 }
 
+/* Why an entry was refused or cut down */
+.orb-pop-why {
+    margin: 6px 0 0;
+    font-weight: 700;
+    opacity: 1;
+}
+
+.orb-pop-why[hidden] {
+    display: none;
+}
+
 .orb-pop-step {
     padding-top: 7px;
     margin-top: 8px;
@@ -1828,8 +1843,13 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     }
 }
 
-/* Desktop: each button says what it does, under its icon. */
+/* Desktop: each button says what it does, under its icon. A value that grows takes room from the
+   chosen body's name: the row never wraps, so the canvas above it never changes size. */
 @media screen and (min-width: 900px) and (min-height: 541px) and (pointer: fine) {
+    .orbits-sim .stats-container {
+        flex-wrap: nowrap;
+    }
+
     .orbits-sim .sim-info-actions .orb-cap {
         flex-direction: column;
         gap: 4px;
@@ -2767,11 +2787,11 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     align-items: center;
     justify-content: center;
     gap: 0.5em;
-    flex: 1 1 0;
+    flex: 1 1 auto;
     min-width: 0;
     height: 34px;
     margin: 0;
-    padding: 0 0.6em;
+    padding: 0 0.8em;
     font-size: 0.85em;
     font-weight: 400;
     line-height: 1;
@@ -2878,8 +2898,8 @@ html:not(.dark-mode) .orbits-sim .sim-chips input[type="checkbox"]:not(:checked)
     outline-offset: -3px;
 }
 
-/* (not after a finger's press: see bindNavigation in orbits_core.js) */
-#simulationCanvas.orb-touch-focus:focus-visible {
+/* (not after a press: see bindNavigation in orbits_core.js) */
+#simulationCanvas.orb-press-focus:focus-visible {
     outline: none;
 }
 
