@@ -11366,6 +11366,7 @@
             chipThrow = null;
             if (b && host) moonNote(b);
             if (b && d.kind === 'custom') openPopover(b);
+            if (b) noteLearnt('d');
         }
         dropHost = null;
         clearHint('drag');
@@ -11443,17 +11444,27 @@
 
     const hintHtml = (h) => (h ? (typeof h.html === 'function' ? h.html() : h.html) : '');
 
+    // What the usual help has taught, remembered in this browser: d, a body dragged; a, an arrow aimed. Once
+    // done it isn't said again, and with both done only its buttons are left (Help has every gesture).
+    const LEARNT_KEY = 'orbitsHintLearnt';
+    let learnt = storeGet(LEARNT_KEY) || '';
+    function noteLearnt(what) {
+        if (learnt.includes(what)) return;
+        learnt += what;
+        storeSet(LEARNT_KEY, learnt);
+        refreshHint();
+    }
+
     function usualHint() {
-        const v = settings.velocities;
-        let h;
-        if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
-                : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
-        } else {
-            h = `<strong>Drag</strong> a body into space.${v ? ' Drag a <strong>teal tip</strong> to aim.' : ''} <span class="orb-hint-links"><button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
+        const v = settings.velocities, tap = coarse(), dragged = learnt.includes('d');
+        let h = dragged ? '' : '<strong>Drag</strong> a body into space. ';
+        if (!learnt.includes('a')) {
+            if (tap) h += `<strong>Tap</strong> ${dragged ? 'a body' : 'one'} to ${v ? 'aim or ' : ''}Edit it. `;
+            else if (v) h += 'Drag a <strong>teal tip</strong> to aim. ';
         }
-        h += ` <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>${coarse() ? '' : '</span>'}`;
-        return h;
+        // (on a touch screen Help waits for the room: it is in the settings too)
+        const help = tap && h ? '' : '<button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button> ';
+        return `${h}<span class="orb-hint-links">${help}<button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button></span>`;
     }
 
     // "A moon forming": how far it has got, in place of the usual help
@@ -11931,6 +11942,7 @@
         b.aim = null;
         b.held = null;
         missionEnd(burn);   // (missions: an aimed arrow is a burn)
+        if (apply && d.moved) noteLearnt(d.mode === 'aim' ? 'a' : 'd');
         if (d.mode === 'move' && d.moved) clearTrail(b);
         if ((frameId === b.id || turnUses(b)) && d.moved) clearAllTrails();
         forcesDirty = true;
