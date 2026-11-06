@@ -1579,7 +1579,9 @@
         return r0 * g1 + eta * g2 + mu * s * s * s * SC3 - tau;
     }
 
-    function keplerDrift(rx, ry, vx, vy, mu, dt) {
+    // near: a short step, for which the universal variable's own series is a closer start (and fewer turns of the
+    // solver below)
+    function keplerDrift(rx, ry, vx, vy, mu, dt, near) {
         const r0 = Math.hypot(rx, ry);
         const eta = rx * vx + ry * vy;
         const beta = 2 * mu / r0 - (vx * vx + vy * vy);   // mu / a (negative for a hyperbola)
@@ -1603,6 +1605,7 @@
             lo = tau >= 0 ? 0 : s; hi = tau >= 0 ? s : 0;
             if (tau >= 0) { while (!(keplerF(hi, r0, eta, mu, beta, tau) >= 0)) { lo = hi; hi = 2 * hi + 1e-300; } } else { while (!(keplerF(lo, r0, eta, mu, beta, tau) <= 0)) { hi = lo; lo = 2 * lo - 1e-300; } }
         }
+        if (near) s = (dt / r0) * (1 - 0.5 * dt * eta / (r0 * r0));
         if (!(s >= lo && s <= hi)) s = 0.5 * (lo + hi);
         // Kepler's equation rises steadily with s (its slope is the distance r > 0): Laguerre-Conway
         // steps (which converge from rough starts in a few steps), falling back on bisection
@@ -1681,7 +1684,8 @@
             const p = list[i], f = p.a, m = f.m, im = 1 / m + 1 / mH, gm = G * (mH + m);
             const rx = HRX[i] + half * (sx - HPX[i]), ry = HRY[i] + half * (sy - HPY[i]);
             const vx = HPX[i] * im, vy = HPY[i] * im;
-            keplerDrift(rx, ry, vx, vy, gm, dt);
+            const r2 = rx * rx + ry * ry;
+            keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
             let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
             if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN)) p.touch = true;
             if (real) {
