@@ -187,17 +187,17 @@
 										<button type="button" class="orb-keys-btn" id="keysHelpBtn" aria-haspopup="dialog" title="Keys and gestures (?)"><span class="orb-keys-q" aria-hidden="true">?</span>Help</button>
 									</div>
 									<div class="sim-controls-content">
+										<div class="sim-control-group orb-date" id="startDateRow" hidden>
+											<label for="startDateInput">Start date</label>
+											<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
+											<p class="orb-note" id="startDateNote">1800 to 2050.</p>
+										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label">Other ways to start</p>
-											<div class="orb-date" id="startDateRow" hidden>
-												<label for="startDateInput">Start date</label>
-												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
-												<p class="orb-note" id="startDateNote">1800 to 2050.</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
+												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
-											<div class="orb-scene-row" id="sceneButtons" role="group" aria-label="Other ways to start">
-												<button type="button" id="randomSystemBtn" aria-describedby="missionsNote" title="A new star with planets each time: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
-											</div>
-											<p class="orb-note" id="missionsNote" hidden>Missions: fly a probe to a goal on a fuel budget. Random system: a new star with planets; how long will they last?</p>
+											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Show</p>
@@ -214,12 +214,9 @@
 												<label for="pullSumToggle" class="orb-subswitch" title="Join the pulls tip to tail: they end at the tip of the pink force arrow">Add up to the total force</label>
 												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
 												<label for="wellToggle" title="How deep each body's pull reaches, as shading and contour lines (W)">Gravity well</label>
-												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
-												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
 											<p class="orb-note" id="pullsNote" hidden>Pull lines draw one arrow for each body pulling on the chosen body<span class="orb-keys-note"> (G)</span>.</p>
 											<p class="orb-note" id="wellNote" hidden>Gravity well: how deep each body's pull reaches, as shading and contour lines<span class="orb-keys-note"> (W)</span>.</p>
-											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
@@ -541,29 +538,39 @@
 												<div class="orb-scene-pick">
 													<label for="sceneSelect">Scene</label>
 													<select id="sceneSelect" title="Choose what to watch">
-													<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
-													<option value="ellipse">Elliptical orbit</option>
-													<option value="inner">Inner planets</option>
-													<option value="solar">The Solar System on a date</option>
-													<option value="sky">Planets seen from Earth</option>
-													<option value="comet">Comet and Earth</option>
-													<option value="earth-moon">Earth &amp; Moon</option>
-													<option value="moon">Planet with a moon</option>
-													<option value="binary">Binary stars</option>
-													<option value="figure8">Three stars: figure of eight</option>
-													<option value="pythagorean">Three stars: chaos</option>
-													<option value="slingshot">Slingshot (gravity assist)</option>
-													<option value="blackhole">Neutron star and black hole</option>
-													<option value="tde">Star and black hole</option>
-													<option value="collide">Two planets collide</option>
-													<option value="tidalgiant">Giant star squeezed by tides</option>
-													<option value="mercury">Mercury's orbit turns</option>
-													<option value="inspiral">Black holes spiral together</option>
-													<option value="trojans">Jupiter's Trojans and Hildas</option>
-													<option value="moondisc">A moon forming</option>
-													<option value="rings">Saturn's rings and a moon</option>
-													<option value="random">Random system</option>
-													<option value="empty">A lone star (build your own)</option>
+													<optgroup label="Planets and moons">
+														<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
+														<option value="ellipse">Elliptical orbit</option>
+														<option value="inner">Inner planets</option>
+														<option value="solar">The Solar System on a date</option>
+														<option value="sky">Planets seen from Earth</option>
+														<option value="comet">Comet and Earth</option>
+														<option value="earth-moon">Earth &amp; Moon</option>
+														<option value="moon">Planet with a moon</option>
+														<option value="moondisc">A moon forming</option>
+														<option value="rings">Saturn's rings and a moon</option>
+														<option value="trojans">Jupiter's Trojans and Hildas</option>
+													</optgroup>
+													<optgroup label="Stars">
+														<option value="binary">Binary stars</option>
+														<option value="figure8">Three stars: figure of eight</option>
+														<option value="pythagorean">Three stars: chaos</option>
+														<option value="tidalgiant">Giant star squeezed by tides</option>
+													</optgroup>
+													<optgroup label="Black holes and relativity">
+														<option value="mercury">Mercury's orbit turns</option>
+														<option value="blackhole">Neutron star and black hole</option>
+														<option value="tde">Star and black hole</option>
+														<option value="inspiral">Black holes spiral together</option>
+													</optgroup>
+													<optgroup label="Flights and crashes">
+														<option value="slingshot">Slingshot (gravity assist)</option>
+														<option value="collide">Two planets collide</option>
+													</optgroup>
+													<optgroup label="New systems">
+														<option value="empty">A lone star (build your own)</option>
+														<option value="random">Random system</option>
+													</optgroup>
 												</select>
 												</div>
 												<button type="button" id="reverseBtn" class="sim-icon-button orb-cap orb-reverse" data-cap="Reverse" aria-label="Run time backwards" title="Run time backwards (B)" aria-pressed="false">
@@ -580,16 +587,16 @@
 													<span class="orb-speed-cap">Speed <span id="speedVal" class="sim-value">1</span>&times;</span>
 													<span class="orb-sr-only" id="speedNote">1 yr every 6 s</span>
 												</label>
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
-													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
-													<span class="icon solid fa-chart-bar"></span>
-												</label>
-												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
+												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap is-idle" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
 													<span class="icon solid fa-history"></span>
 												</button>
 												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button orb-cap" data-cap="Restart" aria-label="Restart the scene" title="Restart the scene from its original setup">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
 											</div>
 										</div>
 									</div>
@@ -654,10 +661,10 @@
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>
 												<li><strong>Throw a body:</strong> in <em>More options</em> choose <em>Throw it</em>, then flick a body as you let go.</li>
 												<li><strong>Try again:</strong> <span class="icon solid fa-undo"></span> Undo takes back a whole drag or slider sweep, even Restart or a change of scene. <span class="icon solid fa-history"></span> Run again replays from your last change, so you can tweak, watch and try again.</li>
-												<li><strong>Random systems:</strong> <span class="icon solid fa-dice"></span> Random system, in the settings, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years?</li>
+												<li><strong>Random systems:</strong> Random system, in the scene list, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years? <em>New system</em>, in the hint by the canvas, makes another.</li>
 												<li><strong>Save and share:</strong> <span class="icon solid fa-link"></span> Copy a link, at the end of the settings, copies a link that opens this exact setup, paused. Your work is also saved in this browser: next time, "Carry on where you left off" appears for a while.</li>
 												<li><strong>Download data (CSV):</strong> in <em>More options</em> or under the graphs, for Kepler's 3rd law, the graphs or every body.</li>
-												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step, the scene and the speed, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-history"></span> run again, <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
+												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step (while paused), the scene and the speed, <span class="icon solid fa-history"></span> run again (once you have changed something), <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
 											</ul>
 
 											<h4>Things to try</h4>
@@ -697,7 +704,7 @@
 											<p>It comes out as in the real sky: Mars backs up about 10 to 20&deg; over 60 to 80 days, every 780 days, Jupiter 10&deg; over 4 months every 399 days and Mercury about 13&deg; over 3 weeks every 116 days. In this flat simulation a planet only runs back and forth along the strip. The real orbits' small tilts open that into a narrow loop or zigzag in the sky.</p>
 
 											<h4>Missions</h4>
-											<p>Eleven missions, easy to hard. Press <span class="icon solid fa-rocket"></span> Missions, in the hint by the canvas or in the settings, or M, or pick one at the end of the scene list.</p>
+											<p>Eleven missions, easy to hard. Press Missions, in the hint by the canvas, or M, or pick one at the end of the scene list.</p>
 											<p>Each gives your probe a goal, such as reaching Mars or swinging round the Moon and home, and a fuel budget: the change of speed (&Delta;<em>v</em>) its engine can give. Only burns can change anything. Hold Forward, Back, In or Out, or the arrow keys, to burn: the clock waits while you do. Skip jumps to the next moment that matters. Every burn uses fuel, and Undo gives it back. Turn on Hints for what to do next and where to burn.</p>
 											<p>Par, the &Delta;<em>v</em> of the classic route, comes from <em>v</em><sup>2</sup> = <em>GM</em>(2/<em>r</em> &minus; 1/<em>a</em>). The closer you get to it, the more stars you earn.</p>
 

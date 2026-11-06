@@ -1513,7 +1513,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
 /* ---------- Undo, redo and "run again" ----------
    Undo and redo sit beside "Fit view": icons at the end of the hint's row under the canvas, two
-   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart. */
+   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart, once it
+   has something to do. */
 .orb-history {
     display: flex;
     gap: 6px;
@@ -1534,11 +1535,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
 .orb-history-text {
     display: none;
-}
-
-/* A greyed-out button still shows where it is */
-.sim-info-actions .orb-rewind:disabled {
-    opacity: 0.35;
 }
 
 /* Narrow screens: the buttons leave the hint less width, so it gets a third line (or a line and a
@@ -1721,7 +1717,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 }
 
 /* The rest of the buttons keep to the row's far end, with the clock between them and the scene */
-.orbits-sim .sim-info-actions > .sim-show-charts-label {
+.orbits-sim .sim-info-actions > .orb-rewind,
+.orbits-sim.orb-mission-on .sim-info-actions > .sim-show-charts-label {
     margin-left: auto;
 }
 
@@ -2118,7 +2115,7 @@ html.dark-mode .orb-date-input {
 /* ---------- Missions ----------
    Only while a mission is loaded: the console in the palette's place (the goal, how it is going, the
    fuel, the engine and the clock), and a card over the canvas for the outcome, the list of missions and
-   "How it works". In the settings, under the scene list, a button into the missions. */
+   "How it works". */
 .orbits-sim.orb-mission-on .orb-palette,
 .orbits-sim.orb-mission-on .orb-toolbar-label {
     display: none;
@@ -2908,99 +2905,6 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     }
 }
 
-/* The settings' way into the missions */
-.sim-controls-content .orb-mission-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5em;
-    width: 100%;
-    height: 34px;
-    margin: 0.5em 0 0;
-    padding: 0 0.8em;
-    font-size: 0.85em;
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: 0;
-    text-transform: none;
-    background-color: var(--color-bg);
-    box-shadow: inset 0 0 0 1px var(--color-border);
-}
-
-.sim-controls-content .orb-mission-btn .icon {
-    color: var(--color-accent);
-}
-
-.sim-controls-content .orb-mission-btn + .orb-note {
-    margin-top: 0.3em;
-}
-
-@media (hover: hover) {
-    .sim-controls-content .orb-mission-btn:hover {
-        box-shadow: inset 0 0 0 1px var(--color-accent);
-    }
-}
-
-@media (pointer: coarse) {
-    .sim-controls-content .orb-mission-btn {
-        height: 40px;
-    }
-}
-
-/* Under the scene list, two other ways to start, side by side: the missions and a random system */
-.sim-controls-content .orb-scene-row {
-    display: flex;
-    gap: 6px;
-    margin: 0.5em 0 0;
-}
-
-.sim-controls-content .orb-scene-row .orb-mission-btn,
-.sim-controls-content .orb-scene-row #randomSystemBtn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5em;
-    flex: 1 1 auto;
-    width: auto;
-    min-width: 0;
-    height: 34px;
-    margin: 0;
-    padding: 0 0.8em;
-    font-size: 0.85em;
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: 0;
-    text-transform: none;
-    white-space: nowrap;
-    background-color: var(--color-bg);
-    box-shadow: inset 0 0 0 1px var(--color-border);
-}
-
-.sim-controls-content .orb-scene-row .icon {
-    color: var(--color-accent);
-}
-
-.sim-controls-content .orb-scene-row button:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 1px;
-}
-
-.sim-controls-content .orb-scene-row + .orb-note {
-    margin-top: 0.3em;
-}
-
-@media (hover: hover) {
-    .sim-controls-content .orb-scene-row button:hover {
-        box-shadow: inset 0 0 0 1px var(--color-accent);
-    }
-}
-
-@media (pointer: coarse) {
-    .sim-controls-content .orb-scene-row .orb-mission-btn,
-    .sim-controls-content .orb-scene-row #randomSystemBtn {
-        height: 42px;
-    }
-}
 
 /* ---------- Finding your way: the "Bodies" list, zoom to an orbit, the keyboard, the help ----------
    The list is a collapsed group in the settings (like "More options"); its rows are placed by the
@@ -4597,4 +4501,63 @@ html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
     body.sim-fullscreen-active #charts-container .orb-k3-box {
         display: none;
     }
+}
+
+/* ---------- The bar: only what has something to say ----------
+   A box with no value goes (see settleReadouts). One that loses its value mid-run keeps its place, blank,
+   so nothing moves. The same for a graph with nothing to draw: the other takes the row. */
+.orbits-sim .stats-container > .stats-box[hidden],
+#charts-container .chart-box[hidden] {
+    display: none;
+}
+
+.orbits-sim .stats-container > .stats-box.is-blank {
+    visibility: hidden;
+}
+
+/* ---------- A random system's hint ----------
+   Under the canvas, on a narrow screen, the line grows if it must, to keep its New system button in sight. */
+@media (orientation: portrait), (max-width: 639px) {
+    .orb-hint:has(.orb-hint-newsys) {
+        display: block;
+        height: auto;
+        min-height: 4.5em;
+        -webkit-line-clamp: unset;
+        line-clamp: unset;
+    }
+}
+
+/* ---------- The top of the settings ----------
+   The start date, in a dated scene, and then Realistic physics: it changes the physics, not what is shown. */
+.sim-controls-content > .orb-date[hidden] + .sim-control-group {
+    padding-top: 0;
+    border-top: 0;
+}
+
+/* ---------- Bar buttons with nothing to do yet ----------
+   Step while paused, Run again once there is a change to go back to. Hidden, each keeps its place, at the
+   clock's end or the other buttons' start, so no press of Pause or Run again moves anything under the
+   pointer, and on a phone the row's two gaps are one, between the clock and the rest. */
+#pauseBtn[aria-pressed="false"] + #stepBtn,
+.sim-info-actions .orb-rewind.is-idle {
+    visibility: hidden;
+}
+
+/* (a mission's grid of buttons has no Pause to keep still: it closes up) */
+@media screen and (max-width: 700px), (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on #pauseBtn[aria-pressed="false"] + #stepBtn {
+        display: none;
+    }
+}
+
+/* ---------- The scene list: headings, in bold, over plain names ---------- */
+.sim-info-actions .orb-scene-pick optgroup {
+    font-style: normal;
+    font-weight: 700;
+    color: var(--color-text);
+    background: var(--color-bg-alt);
+}
+
+.sim-info-actions .orb-scene-pick option {
+    font-weight: 400;
 }

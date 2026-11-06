@@ -224,7 +224,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from">the giant planet</button>: the star circles it.'),
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from or rotate">the giant planet</button>: the star circles it.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -351,7 +351,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in its menu, and in Settings under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in its menu, and in Settings under View from or rotate">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -3669,7 +3669,7 @@
         // (said once a scene, for a pass that matters)
         if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
             tides.told = settings.scene;
-            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', ' Close passes shrink it, until it no longer comes close enough.', 7000);
+            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', '', 7000);
         }
         return true;
     }
@@ -4557,6 +4557,11 @@
         ctx.stroke();
     }
 
+    // In the two scenes about them, or a pair of your own that loses a real share of its energy to them.
+    // (Elsewhere they are nothing on the graph: 3e-13 of its height for the star and black hole.)
+    const WAVE_SCENES = new Set(['blackhole', 'inspiral']);
+    const wavesMatter = (E) => WAVE_SCENES.has(settings.scene) || 100 * Math.abs(gw.radiated) > Math.abs(E.total);
+
     // Energy chart: the energy carried off by gravitational waves, and the total with it (which stays
     // level), shown while the graph's span holds any (dashed, so they don't rely on colour)
     function chartWaves(ce, E, k) {
@@ -4567,7 +4572,7 @@
             const labels = ce.options.plugins.legend.labels;
             labels.filter = (item, data) => !(ce.$waves.includes(data.datasets[item.datasetIndex]) && data.datasets[item.datasetIndex].hidden);
         }
-        const n = ce.data.labels.length, on = gw.radiated !== 0;
+        const n = ce.data.labels.length, on = gw.radiated !== 0 && wavesMatter(E);
         let show = on;
         for (const d of ce.$waves) {
             while (d.data.length < n - 1) d.data.unshift(null);
@@ -10992,6 +10997,7 @@
         setText(ui.statTimeUnit, tm.u);
         updateTimeControls();
         updateOrbitReadouts();
+        settleReadouts();
         const b = bodyById(selectedId);
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
@@ -11021,7 +11027,7 @@
             dist = Math.hypot(b.x - c.x, b.y - c.y);
             speed = Math.hypot(vx - c.vx, vy - c.vy);
             force = Math.hypot(b.fx, b.fy);
-            setText(ui.subjectAround, 'around the centre of mass');
+            setText(ui.subjectAround, p ? 'around the centre of mass' : 'the heaviest body');
         } else if (pr) {
             // Being moved or aimed: the orbit it would have if let go now, as the hint and preview show
             dist = pr.el.r;
@@ -11123,6 +11129,62 @@
         setTitle(statBox(ui.statDist), `Distance from ${where}`);
         setTitle(statBox(ui.statSpeed), `Speed relative to ${where}`);
         setTitle(statBox(ui.statForce), pullsTitle(b, pull));   // (and every pull's share: see pullsTitle)
+    }
+
+    // ------------------------------------------------------------------
+    // Boxes with nothing to say leave the bar: a body on its own, or the heaviest, which orbits nothing,
+    // shows only the time, and a body with no one orbit has no period. A new scene or a new choice sets
+    // the bar afresh, as a moment when it may as well move. After that a value that goes only blanks its
+    // box, so nothing moves, and one that comes has to last first (a star in the figure of eight has a
+    // period for moments at a time): half the scene's reference period, and at least a second and a half.
+    // So the bar moves at most once for each choice, and the page is written only when something changes.
+    // (What leaves is still in the body's menu: the speed on its Velocity tab, the net force on Gravity.)
+    // ------------------------------------------------------------------
+    const BAR_SETTLE_MS = 1500;
+    const barBox = (...els) => ({ els, state: 'on', since: -1, t: 0 });
+    const barBoxes = {
+        key: '',
+        orbit: barBox(statBox(ui.statDist), statBox(ui.statSpeed), statBox(ui.statForce)),
+        period: barBox(ui.statPeriodBox),
+        ecc: barBox(statBox(ui.statEcc))
+    };
+
+    function settleBox(g, has, fresh, now) {
+        if (!has) g.since = -1;
+        else if (g.since < 0) { g.since = now; g.t = simTime; }
+        let state = g.state;
+        if (fresh) state = has ? 'on' : 'off';
+        else if (!has) { if (state === 'on') state = 'blank'; }
+        else if (state !== 'on' && now - g.since > BAR_SETTLE_MS && (paused || Math.abs(simTime - g.t) > 0.5 * scene.Tref)) state = 'on';
+        if (state === g.state) return;
+        g.state = state;
+        for (const el of g.els) {
+            if (!el) continue;
+            el.hidden = state === 'off';
+            el.classList.toggle('is-blank', state === 'blank');
+        }
+    }
+
+    function settleReadouts() {
+        const b = bodyById(selectedId), alone = bodies.length < 2;
+        const key = `${settings.scene}|${hist.epoch}|${selectedId}|${alone}`;
+        const fresh = key !== barBoxes.key, now = performance.now();
+        barBoxes.key = key;
+        const orbits = !!(b && b.primary) && !alone;
+        settleBox(barBoxes.orbit, orbits, fresh, now);
+        settleBox(barBoxes.period, !!ui.statPeriod && ui.statPeriod.textContent !== '–', fresh, now);
+        settleBox(barBoxes.ecc, !!ui.statEcc && ui.statEcc.textContent !== '–', fresh, now);
+        setTitle(ui.subjectAround, b && !orbits && !alone ? 'It orbits nothing, and only wobbles round the centre of mass. Choose another body for its orbit' : '');
+        if (chartsVisible()) syncOrbitChart();
+    }
+
+    // The distance and speed graph goes when it would be empty, and the energy graph takes the row: a body
+    // that orbits nothing has none to draw. (While the graph's span holds any of it, it stays.)
+    function syncOrbitChart() {
+        if (!charts) return;
+        const box = charts.orbit.canvas.closest('.chart-box'), b = bodyById(selectedId);
+        const has = !!(b && b.primary) || charts.orbit.data.datasets[0].data.some((v) => v !== null);
+        if (box && box.hidden === has) box.hidden = !has;
     }
 
     // ------------------------------------------------------------------
@@ -12583,6 +12645,7 @@
             chipThrow = null;
             if (b && host) moonNote(b);
             if (b && d.kind === 'custom') openPopover(b);
+            if (b) noteLearnt('d');
         }
         dropHost = null;
         clearHint('drag');
@@ -12660,17 +12723,31 @@
 
     const hintHtml = (h) => (h ? (typeof h.html === 'function' ? h.html() : h.html) : '');
 
+    // What the usual help has taught, remembered in this browser: d, a body dragged; a, an arrow aimed. Once
+    // done it isn't said again, and with both done only its buttons are left (Help has every gesture).
+    const LEARNT_KEY = 'orbitsHintLearnt';
+    let learnt = storeGet(LEARNT_KEY) || '';
+    function noteLearnt(what) {
+        if (learnt.includes(what)) return;
+        learnt += what;
+        storeSet(LEARNT_KEY, learnt);
+        refreshHint();
+    }
+
     function usualHint() {
-        const v = settings.velocities;
-        let h;
-        if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
-                : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
-        } else {
-            h = `<strong>Drag</strong> a body into space.${v ? ' Drag a <strong>teal tip</strong> to aim.' : ''} <span class="orb-hint-links"><button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
+        const v = settings.velocities, tap = coarse(), dragged = learnt.includes('d');
+        let h = dragged ? '' : '<strong>Drag</strong> a body into space. ';
+        if (!learnt.includes('a')) {
+            if (tap) h += `<strong>Tap</strong> ${dragged ? 'a body' : 'one'} to ${v ? 'aim or ' : ''}Edit it. `;
+            else if (v) h += 'Drag a <strong>teal tip</strong> to aim. ';
         }
-        h += ` <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>${coarse() ? '' : '</span>'}`;
-        return h;
+        // (on a touch screen Help waits for the room: it is in the settings too)
+        const help = tap && h ? '' : '<button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button> ';
+        const random = isRandomKey(settings.scene);
+        if (random) h += `${NEW_SYSTEM_BTN} `;
+        // (and there, Missions too: it is at the end of the scene list)
+        if (random && tap && !help) return h;
+        return `${h}<span class="orb-hint-links">${help}<button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button></span>`;
     }
 
     // "A moon forming": how far it has got, in place of the usual help
@@ -13154,6 +13231,7 @@
         discHold(b, false);
         discsAfter(held);
         missionEnd(burn);   // (missions: an aimed arrow is a burn)
+        if (apply && d.moved) noteLearnt(d.mode === 'aim' ? 'a' : 'd');
         if (d.mode === 'move' && d.moved) clearTrail(b);
         if ((frameId === b.id || turnUses(b)) && d.moved) clearAllTrails();
         forcesDirty = true;
@@ -14147,6 +14225,7 @@
         ch.data.datasets[0].label = b ? `${b.name}: distance` : 'Distance';
         ch.data.datasets[1].label = b ? `${b.name}: speed` : 'Speed';
         ch.update('none');
+        syncOrbitChart();
     }
 
     // Kinetic, potential and total energy. With realistic physics the first post-Newtonian terms of
@@ -14656,6 +14735,8 @@
     // Random systems
     // ------------------------------------------------------------------
     const isRandomKey = (key) => typeof key === 'string' && /^random-[1-9]\d{0,9}$/.test(key);
+    // The hint line's way to another random system, as the scene list can't pick the one it is on
+    const NEW_SYSTEM_BTN = '<button type="button" class="orb-hint-btn orb-hint-newsys" title="A new star with planets: how long will they last?">New system</button>';
     function randomSeed(key) {
         if (!isRandomKey(key)) return 0;
         const n = +key.slice(7);
@@ -14770,13 +14851,10 @@
             const c = totals(list), far = (b) => Math.hypot(b.x - c.x, b.y - c.y);
             half = 1.15 * Math.max(far(list[0]) + half / 1.15, far(list[list.length - 1]));
         }
-        const extra = [];
-        if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
-        if (companion) extra.push('a second star');
-        const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
+        const desc = `${star.what} with ${planets.length} planets`;   // (any moons or second star are there to see)
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
-            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years?`,
+            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? ${NEW_SYSTEM_BTN}`,
             bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
         };
     }
@@ -14869,6 +14947,7 @@
             chance.exact = ui.deterministic.checked;
             storeSet(CHANCE_KEY, chance.exact ? '1' : '');
             syncRestartTitle();
+            updateHistoryUi();   // (Run again shows from the start only while Restart would start it differently)
         });
     }
 
@@ -15334,6 +15413,11 @@
             if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
         } else if (t.closest('.orb-carry-x')) {
             endOffer();
+        } else if (t.closest('.orb-hint-newsys')) {
+            loadRandomSystem(newRandomSeed());
+            // (from the keyboard, the focus stays on the button, for another)
+            const again = e.detail ? null : ui.hint.querySelector('.orb-hint-newsys');
+            if (again) again.focus({ preventScroll: true });
         } else if (t.closest('.orb-hint-zoom')) {
             clearHint('note');
             zoomChosen();
@@ -15510,10 +15594,11 @@
         let note;
         if (performance.now() - stab.restartedAt < 4000) note = 'Restarted: you changed the system';
         else if (!stab.counts) note = 'A best needs three bodies or more';
+        else if (seed && hints.tip) note = null;   // (a random system's tip is asking just that)
         else if (!(before.yr > 0)) note = compact ? `Goal: ${fmtYears(STAB_GOAL)}` : `Can you build one that lasts ${fmtYears(STAB_GOAL)}?`;
         else if (stab.best.yr > before.yr) note = `A new best (was ${fmtYears(before.yr)})${goal}`;
         else note = `Your best: ${fmtYears(before.yr)}${!compact && before.label ? ` (${before.label})` : ''}${goal}`;
-        lines.push([[note, false, C.subtle]]);
+        if (note) lines.push([[note, false, C.subtle]]);
         return lines;
     }
 
@@ -15728,13 +15813,12 @@
         bindPageFolds();
         Object.assign(ui, {
             foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
-            shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
+            shareBtn: byId('shareLinkBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
         for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
         const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.shareBtn, copyShareLink);
-        onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
         document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
         onClick(ui.chartCsvBtn, () => downloadCsv('graphs', ui.chartCsvNote));
         if (ui.stability) {
@@ -16210,7 +16294,14 @@
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
             const t = `Run again from ${hist.rwFromStart ? 'the start' : 'your last change'}`;
-            ui.rewindBtn.disabled = !canRunAgain();
+            // (just pressed, with the first step still to come, it stays as it is: it would only blink)
+            const can = canRunAgain() || (hist.rwFresh && !paused);
+            // It shows once it has something to do. From the start of a scene it is only Restart, which R
+            // still does, unless Restart would start it differently (see "A touch of chance").
+            const idle = !can || (hist.rwFromStart && !(scene && scene.vary && !chance.exact));
+            if (idle) barFocusFrom(ui.rewindBtn);
+            ui.rewindBtn.classList.toggle('is-idle', idle);
+            ui.rewindBtn.disabled = !can;
             ui.rewindBtn.title = `${t} (R)`;
             ui.rewindBtn.setAttribute('aria-label', t);
         }
@@ -16273,8 +16364,8 @@
 
     // ------------------------------------------------------------------
     // Missions: goals a student meets by firing a probe's engine within a fuel (delta-v) budget.
-    //   Each mission is a scene of its own (the scene list's "Missions" group, or the Missions button
-    //   under it): the bodies, the probe, the body its burns are measured from, a time limit and a
+    //   Each mission is a scene of its own (the scene list's "Missions" group, or the hint line's
+    //   Missions button): the bodies, the probe, the body its burns are measured from, a time limit and a
     //   view. It starts at once, paused: the mission console takes the palette's place (the goal in a
     //   line, how it is going, the fuel, the engine, Play or a skip to the next moment that matters),
     //   and the goal is drawn on the canvas. "How it works" gives the physics idea and the par: the
@@ -17870,8 +17961,8 @@
         setText(ui.eccNote, `In a mission, orbits change only by burns of ${mission.def.own || 'your probe'}'s engine.`);
     }
 
-    // ---- The console, the card over the canvas, the Missions button, the scene list ----
-    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, missionsBtn: null, mc: null });
+    // ---- The console, the card over the canvas, the hint's Missions button, the scene list ----
+    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, mc: null });
     const toolIcon = (name) => `<span class="icon solid fa-${name}" aria-hidden="true"></span>`;
 
     function buildMissionUi() {
@@ -17900,29 +17991,8 @@
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
         if (ui.toolbar) buildMissionConsole();
-        // In the settings, under the scene list: a button into the missions (beside "Random system"),
-        // and the line saying what they are
+        // The missions' group, at the end of the scene list
         if (ui.scene) {
-            const group = ui.scene.closest('.sim-control-group') || ui.scene.parentElement;
-            const row = byId('sceneButtons');
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'orb-mission-btn';
-            btn.id = 'missionsBtn';
-            btn.setAttribute('aria-describedby', 'missionsNote');
-            btn.title = `${MISSIONS.length} missions, easy to hard (M)`;
-            btn.innerHTML = `${toolIcon('rocket')}Missions`;
-            let note = byId('missionsNote');
-            if (!note) {
-                note = document.createElement('p');
-                note.className = 'orb-note';
-                note.id = 'missionsNote';
-                note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
-                group.append(note);
-            }
-            if (row) row.prepend(btn); else group.insertBefore(btn, note);
-            ui.missionsBtn = btn;
-            btn.addEventListener('click', openMissions);
             const og = document.createElement('optgroup');
             og.label = 'Missions';
             for (const m of MISSIONS) {
@@ -18033,7 +18103,7 @@
         if (panel && toggle && panel.classList.contains('panel-open') && (any || document.body.classList.contains('sim-panel-sheet'))) toggle.click();
     }
 
-    // The Missions button (and M): straight into the first mission the first time, afterwards the list.
+    // The hint's Missions button (and M): straight into the first mission the first time, afterwards the list.
     // (From the keyboard, a key press or a button's click with no pointer, the focus goes along.)
     function openMissions(e) {
         closeSettingsSheet(true);
@@ -18583,9 +18653,17 @@
         updateDrawnPositions();
     }
 
+    // A bar button about to go hands the keyboard's focus on, or it would be lost: to Pause, or a mission's Play
+    function barFocusFrom(btn) {
+        if (!btn || document.activeElement !== btn) return;
+        const heir = mission.def && ui.mc ? ui.mc.play : ui.pause;
+        if (heir) heir.focus({ preventScroll: true });
+    }
+
     function setPaused(p) {
         paused = !!p;
         if (!ui.pause) return;
+        if (!paused) barFocusFrom(ui.step);   // (it shows while paused: see the styles)
         ui.pause.setAttribute('aria-pressed', paused ? 'true' : 'false');
         ui.pause.setAttribute('aria-label', paused ? 'Play' : 'Pause');
         ui.pause.title = paused ? 'Play (Space)' : 'Pause (Space)';
