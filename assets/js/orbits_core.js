@@ -2319,7 +2319,7 @@
         bodies.push(...parts);
         removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
         groupEnergy.set(L.id, energyOf(parts) - before);
-        if (gas) gasNoted = false;
+        if (gas) { gasNoted = false; gasPeak = 0; }
         computeForces();
         return true;
     }
@@ -2399,9 +2399,12 @@
             const left = Math.min(m2, lr2 * (mi + m2));
             const Mg = m2 - left;
             // They part at a little over touching, having lost the share of their relative motion's energy that met
-            const sep = 1.02 * reach;
-            const V2p = V2 * (1 - al), vt = h / sep;
-            if (!(V2p > (2.04 * gm) / sep) || vt * vt > V2p) return null;   // (too slow to part after all)
+            const part = 1.02 * reach, V2c = V2 * (1 - al);
+            if (!(V2c > (2 * gm) / part)) return null;   // (too slow to part after all)
+            // (placed where one step's backward leg can't take them back to touching: see throwDebris)
+            const sep = part + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt(V2c);
+            const V2p = V2c - 2 * gm * (1 / part - 1 / sep), vt = h / sep;
+            if (vt * vt > V2p) return null;
             return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p };
         }
         if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return null;
@@ -2527,15 +2530,25 @@
         forcesDirty = true;
         collapseIfTooHeavy(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
+        const them = escapeHtml(theName(big)), it = escapeHtml(sentenceCase(theName(small)));
+        // (LS12's "super-catastrophic": nothing much is left of either. So what is left is one more piece, and the choice
+        // of body, if it was this, goes back to the scene's own: a fragment's readouts would only confuse)
+        const shattered = !graze && big.m < 0.1 * M;
+        if (shattered) {
+            big.grp = grp;
+            big.name = parts[0].name;
+            big.heft = heftOf((parts.length * big.m) / Md);
+            big.trailStart = sampleCount;
+            if (selectedId === big.id) selectedId = defaultSubject();
+        }
         groupEnergy.set(grp, systemEnergy().total - before);
         computeForces();
         refreshBodyLists();
         updateHistoryUi();   // (Undo now takes it back: see tornInScene)
-        const them = escapeHtml(theName(big)), it = escapeHtml(sentenceCase(theName(small)));
         if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
         else if (!settings.stability) {
             clearHint('tip');
-            showHint('note', graze ? `<strong>${it} clipped ${them}</strong> and flew on${parts.length ? ', shedding debris' : ''}.` : `<strong>${it} crashed into ${them}</strong> and threw out debris.`, { ms: 7000 });
+            showHint('note', shattered ? `<strong>${it} and ${them} shattered</strong> each other.` : graze ? `<strong>${it} clipped ${them}</strong> and flew on${parts.length ? ', shedding debris' : ''}.` : `<strong>${it} crashed into ${them}</strong> and threw out debris.`, { ms: 7000 });
         }
         return true;
     }
@@ -2553,17 +2566,19 @@
     //    the speed of sound in H / c_s = 1 / Omega. So streams that meet share their motion. The mean angular
     //    momentum is kept exactly. A ring in circular orbits is left as it is, as it should be: this is not a viscosity.
     // 2. Between neighbouring rings of cells, the viscous torque of an alpha disc (Shakura & Sunyaev 1973), at the
-    //    real strength: nu = alpha (H/r)^2 r^2 Omega, with alpha = GAS_ALPHA (simulations of magnetic turbulence
-    //    find 0.01 to 0.03), G = 3 pi nu Sigma r^2 Omega = (3/2) alpha (H/r)^2 (GM/r) M_ring / GAS_H, carries angular
+    //    real strength: nu = alpha (H/r)^2 r^2 Omega, with alpha = GAS_ALPHA (simulations of magnetic turbulence find
+    //    about 0.02; observed discs suggest 0.1 to 0.4: King, Pringle & Livio 2007), G = 3 pi nu Sigma r^2 Omega = (3/2) alpha (H/r)^2 (GM/r) M_ring / GAS_H, carries angular
     //    momentum out, so that most of the gas falls in, as what is left spreads. (Limited to GAS_LIM of what the lighter ring
     //    has, per go. That only matters in the innermost rings, far smaller than can be seen.)
     // The pieces' velocity changes don't change their places; the host takes up what they lose of their momentum, which
     // is little. So mass, momentum and angular momentum are all kept exactly, and the energy lost (which goes
     // to heat: colour and glow) is exactly the kinetic energy they lose. It is kept in the books, under GAS_BOOK.
-    // From a star on a bound orbit round a 1,000 solar mass hole, that makes a disc at the circularisation radius
-    // a (1 - e^2), 0.11 AU in the scene, in 5 to 10 orbits (about 2 weeks), as such simulations find (several
-    // returns of the stream). It is the real rate: nothing here is sped up. A cheaper model than real gas, though: no
-    // pressure force, and the stream's own width is set by the cells.
+    // In the scene (a star on a bound orbit round a 1,000 solar mass hole), the gas has a mean eccentricity of 0.25 in
+    // four orbits (9 days), round the circularisation radius a (1 - e^2) = 0.11 AU, half of it fallen in by 10 orbits.
+    // Simulations of real gas find a disc in several returns of the stream too, though theirs stays rounder only
+    // slowly (Shiokawa et al. 2015). It is the real rate: nothing here is sped up. It is a cheaper model than real
+    // gas, though: no pressure force, and how fast a stream rounds off rests on the cells' size. A narrow ring
+    // spreads at about 0.4 of the variance 6 nu t (the narrow ring's cells are coarse), from this code.
     // It can't run backwards by itself, so the state is logged just before each go (GAS_LOG numbers, kept only once
     // there is gas: at 120 pieces about 57 orbits' worth), and put back when running back reaches that moment. Past the
     // oldest, the run stops with a note, as for a merger. (Positions too: velocities alone, put back on positions a
@@ -2576,6 +2591,7 @@
     const GAS_ALPHA = 0.02;
     const GAS_LIM = 0.02;
     const GAS_SAMPLES = 4;
+    const GAS_TRAIL = 75;                 // trail samples drawn
     const GAS_STEPS = 4;                  // steps a trail sample are enough for pieces of gas
     const GAS_NT = 12;                    // (2 pi H^-1)
     const GAS_NR = 36;
@@ -2662,6 +2678,7 @@
                     // (it glows as it did: the heat it lost in this go)
                     const dvx = b.vx - vx, dvy = b.vy - vy;
                     b.heat += 0.25 * ((0.5 * (dvx * dvx + dvy * dvy)) / gd - b.heat);
+                    if (b.kep) { const rx = x - b.kep.b.x, ry = y - b.kep.b.y; b.hot = (b.heat * b.m) / (rx * rx + ry * ry); }
                 }
                 b.vx = vx; b.vy = vy;
             }
@@ -2702,6 +2719,7 @@
             any = true;
             const rx = f.x - H.x, ry = f.y - H.y, vx = f.vx - H.vx, vy = f.vy - H.vy;
             const r = hyp(rx, ry), ir = Math.floor(Math.log(r / r0) / GAS_H + shR);
+            if (!(r > 0)) continue;
             const vr = (rx * vx + ry * vy) / r, l = rx * vy - ry * vx, d = l - Math.sqrt(gm * r);
             GRVR[i] = vr; GRD[i] = d; GRR[i] = r;
             const ex = (l * l) / (gm * r) - 1, ey = (vr * l) / gm;
@@ -2756,11 +2774,23 @@
     }
 
     // The gas: soft glows, added up where it is thick, in colours by how hot it is
-    const GAS_COLOURS = ['#ff7d3a', '#ffa94d', '#ffd27a', '#fff0c9', '#e3edff'];
-    const GAS_ALPHAS = [0.28, 0.32, 0.38, 0.45, 0.55];
+    const GAS_COLOURS = ['#ff6a2b', '#ff9a3d', '#ffc964', '#fff0c9', '#d6e6ff'];
+    const GAS_ALPHAS = [0.34, 0.4, 0.46, 0.55, 0.7];
+    const gasSprites = [null, null, null, null, null, null, null, null, null, null];
+    function gasSprite(k, dark) {
+        const j = dark ? k : k + 5;
+        if (gasSprites[j]) return gasSprites[j];
+        const color = dark ? GAS_COLOURS[k] : bodyStroke(GAS_COLOURS[k], false), a = GAS_ALPHAS[k];
+        const s = document.createElement('canvas');
+        s.width = s.height = 2 * SPRITE_PX;
+        const g = s.getContext('2d'), gr = g.createRadialGradient(SPRITE_PX, SPRITE_PX, 0, SPRITE_PX, SPRITE_PX, SPRITE_PX);
+        gr.addColorStop(0, hexA(color, a));
+        gr.addColorStop(1, hexA(color, 0));
+        g.fillStyle = gr;
+        g.fillRect(0, 0, s.width, s.height);
+        return (gasSprites[j] = s);
+    }
     function drawGas(C) {
-        const on = settings.realistic || bodies.length;
-        if (!on) return;
         let first = true;
         const peak = gasPeak > 0 ? Math.sqrt(Math.sqrt(gasPeak)) : 1;
         for (const b of bodies) {
@@ -2770,9 +2800,8 @@
             if (first) { first = false; if (C.dark) ctx.globalCompositeOperation = 'lighter'; }
             const t = b.hot > 0 ? Math.sqrt(Math.sqrt(b.hot)) / peak : 0;
             const k = t > 0.8 ? 4 : t > 0.6 ? 3 : t > 0.4 ? 2 : t > 0.2 ? 1 : 0;
-            const r = 4 + 1.5 * k;
-            const c = C.dark ? GAS_COLOURS[k] : bodyStroke(GAS_COLOURS[k], false);
-            glow(x, y, 0, r * pieceHeft(b), c, GAS_ALPHAS[k]);
+            const r = (5 + 2.5 * k) * pieceHeft(b);
+            ctx.drawImage(gasSprite(k, C.dark), x - r, y - r, 2 * r, 2 * r);
         }
         if (!first) ctx.globalCompositeOperation = 'source-over';
     }
@@ -3758,7 +3787,7 @@
         if (flyby.done) return;
         for (const q of bodies) {
             const s = q.primary;
-            if (q === b || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
+            if (q === b || q.grp || !s || q === b.primary || s === b || !(q.hill < Infinity)) continue;
             if (q.m < 10 * b.m || q.m > 0.1 * s.m) continue;   // a light body passing a planet
             const dx = b.x - q.x, dy = b.y - q.y, r = hyp(dx, dy);
             if (r >= q.hill) continue;
@@ -6303,7 +6332,7 @@
     // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
     // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
-    const minorGroups = new Map(), pieceGroups = new Map();
+    const minorGroups = new Map(), pieceGroups = new Map(), gasGroups = new Map();
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
@@ -6322,10 +6351,11 @@
         const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
         for (const g of minorGroups.values()) g.length = 0;
         for (const g of pieceGroups.values()) g.length = 0;
+        for (const g of gasGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
             if ((b.minor || b.grp) && !isChosen(b)) {
-                const groups = b.minor ? minorGroups : pieceGroups;
+                const groups = b.grp < 0 ? gasGroups : b.minor ? minorGroups : pieceGroups;
                 let g = groups.get(b.color);
                 if (!g) { g = []; groups.set(b.color, g); }
                 g.push(b);
@@ -6359,6 +6389,8 @@
         ctx.lineCap = 'butt';
         ctx.lineJoin = 'bevel';
         trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
+        // (gas: short and faint, a sign of how it moves. Its glow is the thing to see)
+        trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
         if (!low) {
             ctx.lineJoin = 'miter';
             trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
