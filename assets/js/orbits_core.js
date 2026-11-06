@@ -6860,15 +6860,16 @@
     // only their new ends have changed: a sample stays at one place on the screen until the view moves
     // (in a view from a body too, as each is drawn from where that body was then). So while the view holds
     // still they are kept drawn on a few canvases the size of the view, a block of samples on each. Each
-    // frame only the new stretches go on, and the canvases are laid over the frame, fainter the older the
-    // block's newest sample. Fading by how they are laid leaves nothing behind (fading a canvas in place, in
-    // 8 bits, leaves a smear that never goes), and a canvas is wiped when its block has left the trail.
-    // Until a body has come a little way its newest stretch is drawn on the frame itself. They are all
-    // drawn afresh from the samples when the view or the trails change, and as trailGroups draws them, on
-    // the frame, while the view is on the move, for a few bodies or short trails, in a turned view (where the
-    // samples are on the move too), while a backward run takes samples away, or if time is running so
-    // fast that the trails are all new each frame.
-    const LAYER_TILES = 4;
+    // frame only the new stretches go on, and the canvases are laid over the frame, fainter the older what
+    // is on them. Fading by how they are laid leaves nothing behind (fading a canvas in place, in 8 bits,
+    // leaves a smear that never goes), and a canvas is wiped when its block has left the trail. Each body
+    // starts its blocks at a sample of its own, so a block's end shows as no edge across a dense band of
+    // trails. Until a body has come a little way its newest stretch is drawn on the frame itself.
+    // They are all drawn afresh from the samples when the view or the trails change, and as trailGroups
+    // draws them, on the frame, while the view is on the move, for a few bodies or short trails, in a
+    // turned view (where the samples are on the move too), while a backward run takes samples away, or if
+    // time is running so fast that the trails are all new each frame.
+    const LAYER_TILES = 4, LAYER_SPANS = 3;   // canvases, and blocks in a whole trail (the other is the one just starting)
     const LAYER_MIN = 40000;              // bodies x samples of trail: with fewer, laying the canvases over costs more than it saves
     const LAYER_ALPHA = 0.56;             // the newest block (as the newest shade of trailGroups)
     const LAYER_PEN_PX = 6, LAYER_PEN_SAMPLES = 16;   // a body's new stretch goes on the canvases when this long
@@ -6881,6 +6882,7 @@
     // (their picture can go while the page is out of sight, and with the graphics context)
     const layerLost = () => { swarmLayer.built = false; };
     document.addEventListener('visibilitychange', layerLost);
+    const layerOffset = (b, span) => Math.floor(((b.id * 0.618034) % 1) * span);
 
     function layerSameView(tr, C, lw) {
         const q = swarmLayer, w = canvas.width, h = canvas.height;
@@ -6919,12 +6921,12 @@
             c.addEventListener('contextrestored', layerLost);
             q.tiles.push({ c, g, block: -1 });
         }
-        q.T = T; q.span = Math.ceil(T / (N - 1)); q.sig = sig; q.wait = LAYER_WAIT; q.k = sampleCount; q.built = true; q.stale = false; q.builds++;
+        q.T = T; q.span = Math.ceil(T / LAYER_SPANS); q.sig = sig; q.wait = LAYER_WAIT; q.k = sampleCount; q.built = true; q.stale = false; q.builds++;
         for (const t of q.tiles) { layerClear(t, lw); t.block = -1; }
-        const last = Math.floor((sampleCount - 1) / q.span), reach = Math.max(1, count * perf.quality);
+        const last = Math.floor((sampleCount - 1) / q.span) + 1, reach = Math.max(1, Math.min(count, T) * perf.quality);
         q.reach = Infinity;
         for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
-            if (blk < last && sampleCount - (blk + 1) * q.span >= reach) { q.reach = reach; continue; }   // (only what will show: see layerCompose)
+            if (sampleCount - blk * q.span >= reach) { q.reach = reach; continue; }   // (only what will show: see layerCompose)
             const t = q.tiles[blk % N];
             t.block = blk;
             tr.g = t.g;
@@ -6933,7 +6935,7 @@
                 t.g.strokeStyle = bodyStroke(color, C.dark);
                 t.g.beginPath();
                 for (const b of g) {
-                    const ks = Math.max(blk * q.span, trailFirst(b), oFirst), ke = Math.min(sampleCount, (blk + 1) * q.span + 1);
+                    const off = layerOffset(b, q.span), ks = Math.max(blk * q.span - off, trailFirst(b), oFirst), ke = Math.min(sampleCount, (blk + 1) * q.span - off + 1);
                     if (ks >= ke - 1) continue;
                     tr.T = b.trail;
                     tr.stride = 1;
@@ -6951,14 +6953,14 @@
     function layerAdd(tr, C, oFirst, lw) {
         const q = swarmLayer, now = sampleCount - 1;
         if (q.k === sampleCount) return;
-        const m = Math.floor(now / q.span), t = q.tiles[m % LAYER_TILES];
-        if (t.block !== m) { layerClear(t, lw); t.block = m; }
+        const m = Math.floor(now / q.span), t0 = q.tiles[m % LAYER_TILES], t1 = q.tiles[(m + 1) % LAYER_TILES];
+        if (t0.block !== m) { layerClear(t0, lw); t0.block = m; }
+        if (t1.block !== m + 1) { layerClear(t1, lw); t1.block = m + 1; }
         q.k = sampleCount;
-        const G = t.g;
         tr.capO = tr.oT.length >> 1;
         for (const [color, g] of minorGroups) {
             if (!g.length) continue;
-            let begun = false;
+            let begun0 = false, begun1 = false;
             for (const b of g) {
                 const p = Math.max(b.layerPen, trailFirst(b), oFirst);
                 if (p >= now) continue;
@@ -6971,24 +6973,30 @@
                 if (Math.abs(bx - ax) + Math.abs(by - ay) < LAYER_PEN_PX && now - p < LAYER_PEN_SAMPLES) continue;
                 b.layerPen = now;
                 if (outcode(ax, ay) & outcode(bx, by)) continue;
-                if (!begun) { G.strokeStyle = bodyStroke(color, C.dark); G.beginPath(); begun = true; }
+                const later = Math.floor((now + layerOffset(b, q.span)) / q.span) > m, G = later ? t1.g : t0.g;
+                if (later ? !begun1 : !begun0) {
+                    G.strokeStyle = bodyStroke(color, C.dark);
+                    G.beginPath();
+                    if (later) begun1 = true; else begun0 = true;
+                }
                 G.moveTo(ax, ay);
                 for (let k = p + 1; k < now; k++) { trailAt(tr, k); G.lineTo(TP[0], TP[1]); }
                 G.lineTo(bx, by);
             }
-            if (begun) G.stroke();
+            if (begun0) t0.g.stroke();
+            if (begun1) t1.g.stroke();
         }
     }
 
     function layerCompose(tr, C, oFirst, count) {
-        const q = swarmLayer, N = LAYER_TILES, span = q.span, last = Math.floor((sampleCount - 1) / span), reach = Math.max(1, count * perf.quality);
+        const q = swarmLayer, N = LAYER_TILES, span = q.span, last = Math.floor((sampleCount - 1) / span) + 1, reach = Math.max(1, Math.min(count, q.T) * perf.quality);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
             const t = q.tiles[blk % N];
             if (t.block !== blk) continue;
-            const u = blk === last ? 0 : (sampleCount - (blk + 1) * span) / reach;
+            const u = Math.max(0, sampleCount - blk * span) / reach;   // (how old what's on it is, on average over the bodies)
             if (u >= 1) continue;
-            ctx.globalAlpha = Math.min(LAYER_ALPHA, 0.64 - 0.45 * u) * Math.min(1, 4 * (1 - u));   // (as bright overall as trailGroups's shades, and out of sight by the end)
+            ctx.globalAlpha = Math.min(LAYER_ALPHA, 0.74 - 0.45 * u) * Math.min(1, (1 - u) / 0.15);   // (as bright overall as trailGroups's shades, and gone by the end)
             ctx.drawImage(t.c, 0, 0);
         }
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
