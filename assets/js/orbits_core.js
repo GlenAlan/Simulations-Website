@@ -8254,6 +8254,7 @@
             if (dir < 0 && s < v * 0.9999) next = s;
         }
         if (next === null) return;
+        if (mission.def && next > MISSION_SPEED_MAX) { missionNote(`<strong>Up to ${MISSION_SPEED_MAX}×</strong> in a mission. <strong>Skip</strong> is the quick way.`); return; }
         paceZoom.was = 0;
         setSpeedValue(next);
         speedFlash = performance.now() + 1500;
@@ -12788,6 +12789,7 @@
     const ENGINE_TAP = 0.015, ENGINE_HOLD = 0.12, ENGINE_FINE = 0.1;
     const ENGINE_WAIT_MS = 220, ENGINE_EVERY_MS = 50;
     const SKIP_S = 1.5;                      // a skip to the next moment that matters takes about this long to watch
+    const MISSION_SPEED_MAX = 2;             // the fastest the clock runs by choice: much faster and time runs out before you can fly (a skip goes faster)
     const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
     const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
     const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
@@ -13572,6 +13574,13 @@
         updateMissionConsole();
     }
 
+    // The speed slider's reach, in a mission or out of one
+    function missionSpeedRange(on) {
+        if (!ui.speed) return;
+        ui.speed.max = String(on ? nearestStop(MISSION_SPEED_MAX) : SPEED_STOPS.length - 1);
+        ui.speed.title = on ? `Up to ${MISSION_SPEED_MAX}× in a mission. Skip is the quick way.` : '';
+    }
+
     function endSkip() {
         const k = mission.skip;
         if (!k) return;
@@ -13851,6 +13860,7 @@
         }
         // Every mission starts at the same pace, and the arrow keys are for the engine from now on
         // (not for the scene list, if it was picked there with the mouse)
+        missionSpeedRange(true);
         setSpeedValue(1);
         mission.fine = false;
         edit.engaged = true;
@@ -13868,6 +13878,7 @@
         clearTimeout(mission.burstTimer);
         endSkip();
         engineStop();
+        missionSpeedRange(false);
         if (mission.home) setSpeedValue(mission.home.speed);
         Object.assign(mission, { def: null, status: 'off', pred: null, plan: null, tell: null, aimPaused: false, result: null, home: null });
         hideMissionPanel();
@@ -13950,7 +13961,7 @@
         quietFlyby();
         if (over) setPaused(true);
         if (was !== def) {
-            if (!was) { mission.home = { speed: settings.speed }; setSpeedValue(1); }
+            if (!was) { mission.home = { speed: settings.speed }; missionSpeedRange(true); setSpeedValue(1); }
             missionUi(true);
             syncEccentricity(true);
         }
