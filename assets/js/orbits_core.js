@@ -2888,7 +2888,7 @@
     // before that step is retraced. The energy goes into the books (groupEnergy, as heat in the bodies), so the total
     // stays level. Steady tidal friction (Goldreich & Soter 1966) is left out: far too slow to see, and there is no spin.
     // ------------------------------------------------------------------
-    const TIDE_BOOK = -3;                 // (among the body ids of groupEnergy)
+    const TIDE_BOOK = -4;                 // (among the body ids of groupEnergy)
     const TIDE_ETA_MAX = 10;              // the fits stop here, and by then nothing would show
     const TIDE_E_MIN = 0.5;
     const TIDE_REACH = 2700;              // (TIDE_ETA_MAX x 3^1.5)^2: an impulse is at most 3 closest distances out
