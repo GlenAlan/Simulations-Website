@@ -1,0 +1,96 @@
+/* =====================================================================
+   Celestial Spectroscopy. Loaded after main.css and simulation_styles.css.
+   Each track adds rules inside its own section below, so branches merge without conflicts.
+   Use the site's tokens (--color-bg-alt, --color-text, --color-border, --color-accent, --sim-radius...),
+   so the panels follow the site's light and dark themes. The sky itself is always dark.
+   ===================================================================== */
+
+/* ---------- Foundation: the sky fills the column; the drawer is wider than a settings panel ---------- */
+.spectro-sim {
+    --sim-panel-width: clamp(340px, 32vw, 520px);
+}
+
+.spectro-sim .sim-canvas {
+    cursor: grab;
+}
+
+.spectro-sim .sim-canvas:active {
+    cursor: grabbing;
+}
+
+#spectroOverlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none; /* Drags reach the canvas; controls turn pointer events back on */
+    z-index: 5;
+}
+
+#spectroOverlay > * {
+    pointer-events: auto;
+}
+
+#spectroLive {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* The drawer holds tall content, so its body scrolls */
+#spectroDrawerBody {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.75em 1em 1em;
+}
+
+.spectro-tab-panel[hidden],
+.spectro-page[hidden] {
+    display: none;
+}
+
+/* === SHELL: top bars, band switcher, Layers, Help, Settings, context bar, legend === */
+
+/* === end SHELL === */
+
+
+/* === DRAWER: tab bar and Overview === */
+
+/* === end DRAWER === */
+
+
+/* === GOTO: the search box and its dropdown === */
+
+/* === end GOTO === */
+
+
+/* === SPECTRUM: the Spectrum tab === */
+
+/* === end SPECTRUM === */
+
+
+/* === TOOLS: Wien, Doppler, line zoom, time series, photometer, subtract star === */
+
+/* === end TOOLS === */
+
+
+/* === HR: the H-R and Hubble tabs === */
+
+/* === end HR === */
+
+
+/* === SYSTEM: the System tab and the system view's controls === */
+
+/* === end SYSTEM === */
+
+
+/* === PLAYBACK: the shared play, pause and speed control === */
+
+/* === end PLAYBACK === */
+
+
+/* === OVERLAYS: labels and markers over the sky === */
+
+/* === end OVERLAYS === */

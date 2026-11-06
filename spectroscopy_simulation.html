@@ -1,0 +1,236 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Celestial Spectroscopy Simulation | Star Spectra, Wien's Law &amp; H-R Diagram | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Interactive night sky for spectroscopy: pick stars, galaxies and planets, read their light from radio to gamma rays, and use spectra, Wien's law and the H-R diagram to work out what they are." />
+		<meta name="keywords" content="spectroscopy, stellar spectra, absorption lines, emission lines, Wien's law, black body radiation, H-R diagram, Hubble's law, redshift, Doppler shift, spectral classification, exoplanets, habitable zone, NSW physics, physics simulation, interactive physics" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/spectroscopy_simulation.html" />
+		<meta property="og:title" content="Celestial Spectroscopy Simulation | Simulations.Science" />
+		<meta property="og:description" content="Stand under a night sky and read the light of stars, galaxies and planets to work out what they are." />
+		<meta property="og:image" content="https://simulations.science/images/spectroscopy.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/spectroscopy_simulation.html" />
+		<meta name="twitter:title" content="Celestial Spectroscopy Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="Stand under a night sky and read the light of stars, galaxies and planets to work out what they are." />
+		<meta name="twitter:image" content="https://simulations.science/images/spectroscopy.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/spectroscopy_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Celestial Spectroscopy Simulation",
+			"description": "An interactive night sky: pick out stars, galaxies, nebulae and planets, compare their spectra with reference spectra, and use Wien's law, Doppler shifts, the H-R diagram and Hubble's law to work out what they are, how hot they are, what they are made of and how they are moving.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/spectroscopy_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/spectroscopy.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "spectroscopy, stellar spectra, Wien's law, H-R diagram, Hubble's law, redshift, exoplanets, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Celestial Spectroscopy Simulation",
+					"item": "https://simulations.science/spectroscopy_simulation.html"
+				}
+			]
+		}
+		</script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<script type="importmap">
+		{ "imports": { "three": "./assets/js/vendor/three/three.module.min.js" } }
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/spectroscopy_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li itemprop="name"><a href="index.html" itemprop="url">Home</a></li>
+							<li itemprop="name"><a href="convection_simulation.html" itemprop="url">Convection</a></li>
+							<li itemprop="name"><a href="conduction_simulation.html" itemprop="url">Conduction</a></li>
+							<li itemprop="name"><a href="radiation_simulation.html" itemprop="url">Radiation</a></li>
+							<li itemprop="name"><a href="buoyancy_simulation.html" itemprop="url">Buoyancy</a></li>
+							<li itemprop="name"><a href="pressure_simulation.html" itemprop="url">Pressure</a></li>
+							<li itemprop="name"><a href="maxwell_demon_simulation.html" itemprop="url">Maxwell's Demon</a></li>
+							<li itemprop="name"><a href="nuclear_decay_simulation.html" itemprop="url">Nuclear Decay</a></li>
+							<li itemprop="name"><a href="relativity_simulation.html" itemprop="url">Special Relativity</a></li>
+							<li itemprop="name"><a href="orbits_simulation.html" itemprop="url">Orbits &amp; Gravity</a></li>
+							<li itemprop="name"><a href="spectroscopy_simulation.html" itemprop="url">Celestial Spectroscopy</a></li>
+							<li itemprop="name"><a href="sitemap.html" itemprop="url">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Celestial Spectroscopy</h1>
+
+							<div class="simulation-area-wrapper spectro-sim">
+								<!-- The one drawer: the selected object's tabs, or a page such as Settings or Help. Docked on the
+								     right on wide screens, a bottom sheet on narrow ones (simulation_ui.js picks). See ui/drawer.js. -->
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Settings</h3>
+									</div>
+									<div id="spectroDrawerTabs" class="spectro-tabs" role="tablist" aria-label="Object details" hidden></div>
+									<div id="spectroDrawerBody" class="sim-controls-content"></div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/9; --aspect-ratio-portrait: 3/4;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="img" tabindex="0" aria-label="A night sky full of stars, galaxies and nebulae. Drag to look around, scroll to zoom, and select an object to study its light."></canvas>
+												<!-- Controls over the sky: thin bars at the edges, never over the centre -->
+												<div id="spectroOverlay">
+													<div id="spectroTopLeft"></div>
+													<div id="spectroBandBar"></div>
+													<div id="spectroTopRight"></div>
+													<div id="spectroContextBar"></div>
+													<div id="spectroLegend"></div>
+												</div>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<!-- About: filled in by the content track -->
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>Stand under a night sky, pick out an object and read its light to work out what it is.</p>
+										</div>
+									</details>
+								</div>
+							</div>
+							<div id="spectroLive" aria-live="polite" aria-atomic="true"></div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script type="module" src="assets/js/spectroscopy/main.js"></script> <!-- Simulation specific logic -->
+	</body>
+</html>
