@@ -6493,7 +6493,7 @@
 
     let customCount = 0;
     function nextCustomColour() {
-        const c = ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
+        const c = peekCustomColour();
         customCount++;
         return c;
     }
@@ -6543,6 +6543,7 @@
         if (h && h.sense) return h.sense.pid === p.id ? h.sense.s : orbitSense(p, b);
         return senseAround(b, p);
     }
+    const peekCustomColour = () => ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
 
     // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
     function moonNote(b) {
@@ -9402,11 +9403,37 @@
         drawDropHost(colours());
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
-        const x = paletteDrag.cx, y = paletteDrag.cy;
-        const r = Math.max(symbolicSize(paletteDrag.kind, k.m, k.R) * sizeScale, 4);
-        ctx.globalAlpha = 0.85;
-        drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
-        ctx.globalAlpha = 1;
+        const x = paletteDrag.cx, y = paletteDrag.cy, C = colours();
+        // (just as it will be when it lands: what is drawn takes the sizes computeDrawRadii will give it)
+        const b = { kind: k.as || paletteDrag.kind, m: k.m, R: k.R, grp: null, color: paletteDrag.kind === 'custom' ? peekCustomColour() : k.color };
+        const r = ghostRadius(b, x, y), minor = ghostMinor(k.m);
+        if (r > GHOST_BIG * Math.min(visR - visL, viewH)) {
+            // (filling much of the view, a blaze of light would hide what it is being placed among: its edge will do)
+            ctx.fillStyle = hexA(b.color, 0.1);
+            ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+            disc(x, y, 3, b.color, 0, C);   // (where it is, should its edge be out of sight)
+        } else {
+            ctx.globalAlpha = 0.85;
+            if (minor) disc(x, y, r, b.color, 0, C);
+            else if (settings.realistic) {
+                // (as in drawBodies)
+                if (isStar(b) && r < 4) glow(x, y, 0, 5, b.color, C.dark ? 0.6 : 0.5);
+                drawBody(b, x, y, r, C);
+                if (r < MARKER_R) {
+                    ctx.strokeStyle = C.dark ? hexA(b.color, 0.6) : bodyStroke(b.color, false);
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.arc(x, y, MARKER_R, 0, TAU);
+                    ctx.stroke();
+                }
+            } else drawBody(b, x, y, r, C);
+            ctx.globalAlpha = 1;
+        }
         if (settings.placement === 'circular' && settings.preview && !dropHost) {
             const X = wx(x), Y = wy(y);
             const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
@@ -9741,6 +9768,36 @@
     // ------------------------------------------------------------------
     let popBody = null;
     let popSpeedMax = 1;
+    // Would a body of mass m, added now, be one of a swarm's dots? (as computePrimaries has it)
+    function ghostMinor(m) {
+        let others = 0, at = 0;
+        for (const q of bodies) { if (!(q.grp < 0) && q.kind !== 'ring') others++; }
+        if (others + 1 <= SWARM_N && !scene.swarm) return false;
+        const order = primOrder, n = order.length;
+        while (at < n && order[at].m >= m) at++;
+        const mid = (n + 1) >> 1, median = mid < at ? order[mid].m : mid === at ? m : order[mid - 1].m;
+        return at >= NAMED_MAX || (m < 30 * median && m < 1e-3 * Math.max(m, n ? order[0].m : 0));
+    }
+
+    // The radius a body dropped at canvas point (x, y) will be drawn with: computeDrawRadii's, for a body not there yet.
+    // With realistic physics its true size, however big, and a marker ring if that is too small to see (see the
+    // marker in the caller). Otherwise its usual drawn size, kept off what it will orbit if that is close.
+    function ghostRadius(b, x, y) {
+        const trueR = (b.R / AU_KM) * scale, minor = ghostMinor(b.m);
+        if (settings.realistic) return minor ? Math.max(trueR, 1.2) : trueR;
+        let rmax = (minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R)) * sizeScale;
+        if (!minor && settings.placement === 'circular') {
+            const w = unturnPoint(wx(x), wy(y));
+            const host = dropHost, p = host || placementPrimary(w.x, w.y, b.m, null);
+            if (p && p.m > b.m) {
+                const at = host ? moonSpot(host, w.x, w.y, bodies.filter((q) => q.primary === host && q.bound).length) : w;
+                rmax = Math.min(rmax, 0.3 * Math.hypot(at.x - p.x, at.y - p.y) * scale);
+            }
+        }
+        return Math.max(minor ? 1.2 : 3, rmax, trueR);
+    }
+    const GHOST_BIG = 0.3;                // over this much of the view across, in radius
+
     let popLastInput = 0;
     let popNextUpdate = 0;
 
