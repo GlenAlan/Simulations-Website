@@ -13587,7 +13587,7 @@
         E.playIcon.hidden = won;
         E.playIcon.classList.toggle('fa-play', !running);
         E.playIcon.classList.toggle('fa-pause', running);
-        E.play.hidden = over;
+        E.play.hidden = st === 'lost';
         const s = over ? null : skipTarget(x);
         E.skip.hidden = !s && !mission.skip;
         E.skip.disabled = !!mission.skip;
