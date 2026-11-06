@@ -5331,6 +5331,7 @@
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
         drawGravityOver(C, subj);
+        drawMissionOver(C);
         drawLabels(C);
         drawOffscreen(C);
         drawFlashes();
@@ -5737,7 +5738,7 @@
         ctx.font = font(fs);
         ctx.lineWidth = 3;
         ctx.strokeStyle = hexA(C.bg, 0.8);
-        const placed = [];
+        const placed = mission.def ? mission.labelBoxes.slice() : [];   // (a mission's marks are named first)
         const discs = [];
         for (const b of bodies) if (!b.minor || isChosen(b)) discs.push({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b), b });
         // the flyby close-up and its caption
@@ -12375,6 +12376,7 @@
         pred: null, predDirty: true,   // the coming closest approach to the target
         plan: null,            // the burn that would put that approach inside the goal (see burnPlan)
         tell: null,            // the burn the hint asks for, for the arrow on the probe: { ux, uy, kms }
+        labels: [], labelBoxes: [],    // the marks' names to draw this frame, and where they went
         aimPaused: false,      // the clock was stopped for a moment (aiming, firing, reading a card)
         firing: null,          // the engine while it is held: { kind, fine, key, timer }
         fine: false,           // the Fine switch
@@ -13706,19 +13708,16 @@
     // ---- Drawing ----
     // Under the bodies: the goal ring (with the band the orbit must stay in), the target's ring, L4 and
     // its zone, where the next burn goes (the far or closest point, the launch window) and where the
-    // probe and the target will be at their coming closest approach.
+    // probe and the target will be at their coming closest approach. Their names are noted for
+    // drawMissionOver, which puts them on top.
     function drawMissionMarks(C) {
         const d = mission.def;
         if (!d || cleanRender) return;
         const R = bodyById(mission.refId);
         if (!R) return;
         const g = d.goal, col = C.velocity, cx = sx(R.dx), cy = sy(R.dy);
-        const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
+        const labels = mission.labels = [];
         ctx.save();
-        const zones = edgeKeepOut();
-        ctx.font = font(fs);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
         const ring = (x, y, r, label) => {
             ctx.strokeStyle = hexA(col, C.dark ? 0.6 : 0.75);
             ctx.lineWidth = 1.2;
@@ -13727,21 +13726,8 @@
             ctx.arc(x, y, r, 0, TAU);
             ctx.stroke();
             ctx.setLineDash([]);
-            if (!label || r <= 14) return;
-            // Under the ring, or over it, or just inside it: wherever it is on the canvas and clear of the
-            // cards, the arrow key and the scale bar (a ring that fills a phone's canvas reaches them)
-            const w = ctx.measureText(label).width;
-            const spots = [[x, y + r + 3], [x, y - r - 3 - fs], [x, y + r - 4 - fs], [x, y - r + 4],
-                [x - r + 9 + w / 2, y - fs / 2], [x + r - 9 - w / 2, y - fs / 2]];
-            let at = null;
-            for (const [cx0, ty] of spots) {
-                if (ty < 2 || ty + fs > viewH - 2) continue;
-                const lx = clamp(cx0, w / 2 + 4, viewW - w / 2 - 4), l = lx - w / 2, rr = lx + w / 2;
-                const clear = !zones.some((z) => l < z[2] && rr > z[0] && ty < z[3] && ty + fs > z[1]);
-                if (at === null || clear) at = [lx, ty];
-                if (clear) break;
-            }
-            if (at) { ctx.fillStyle = C.subtle; ctx.fillText(label, at[0], at[1]); }
+            // (a ring that fills a phone's canvas has its name just inside it, if under or over it won't do)
+            if (label && r > 14) labels.push({ text: label, spots: (w, fs) => [[x, y + r + 5], [x, y - r - 5 - fs], [x, y + r - 6 - fs], [x, y - r + 6], [x - r + 11 + w / 2, y - fs / 2], [x + r - 11 - w / 2, y - fs / 2]] });
         };
         if (g.type === 'orbit') {
             ctx.fillStyle = hexA(col, C.dark ? 0.08 : 0.1);
@@ -13764,10 +13750,7 @@
             ctx.beginPath();
             ctx.moveTo(lx - 5, ly); ctx.lineTo(lx + 5, ly); ctx.moveTo(lx, ly - 5); ctx.lineTo(lx, ly + 5);
             ctx.stroke();
-            ctx.fillStyle = C.label;
-            ctx.textBaseline = 'bottom';
-            ctx.fillText('L4', lx, ly - Math.max(7, g.D * scale) - 2);
-            ctx.textBaseline = 'top';
+            labels.push(markName('L4', lx, ly, Math.max(7, g.D * scale) + 1, true));
         } else if (T) {
             // The ring to get inside, round the target; and Mars's path, to fly out to
             ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), null);
@@ -13795,8 +13778,7 @@
             ctx.arc(spot[0], spot[1], 6, 0, TAU);
             ctx.fill();
             ctx.stroke();
-            ctx.fillStyle = C.label;
-            ctx.fillText(label, clamp(spot[0], 60, viewW - 60), spot[1] + 9);
+            labels.push(markName(label, spot[0], spot[1], 9));
         }
         const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
         // (the places predicted are world offsets from R at that time: turned as the view will be turned
@@ -13823,8 +13805,64 @@
             ctx.beginPath(); ctx.arc(tx, ty, 6, 0, TAU); ctx.stroke();
             ctx.fillStyle = bodyStroke(c.color, C.dark);
             ctx.beginPath(); ctx.arc(kx, ky, 2.5, 0, TAU); ctx.fill();
-            ctx.fillStyle = C.subtle;
-            ctx.fillText(`${g.l4 ? 'L4' : T.name} in ${fmtDuration(p.t - simTime)}`, tx, ty + 9);
+            labels.push(markName(`${g.l4 ? 'L4' : T.name} in ${fmtDuration(p.t - simTime)}`, tx, ty, 9));
+        }
+        ctx.restore();
+    }
+
+    // A mark's name: the spots to try round a mark of radius r at (x, y), under it first (or over it)
+    function markName(text, x, y, r, over) {
+        return {
+            text,
+            spots: (w, fs) => {
+                const under = [x, y + r + 3], above = [x, y - r - 3 - fs];
+                return [over ? above : under, over ? under : above, [x + r + 5 + w / 2, y - fs / 2], [x - r - 5 - w / 2, y - fs / 2]];
+            }
+        };
+    }
+
+    // Over the bodies and arrows: the burn the hint asks for, as an arrow on the probe; and the names of
+    // the marks, each on a backing of the canvas's colour so the lines under it don't strike it through,
+    // in the first spot clear of the canvas's edges, the bodies and each other. (drawLabels, next, keeps
+    // the bodies' names clear of them too.)
+    function drawMissionOver(C) {
+        mission.labelBoxes = [];
+        if (!mission.def || cleanRender) return;
+        const labels = mission.labels, t = mission.tell, c = missionCraft();
+        ctx.save();
+        if (t && c && !missionIsOver()) {
+            const a = turn.on ? turnAngleIn(0) : 0, ux = Math.cos(a) * t.ux - Math.sin(a) * t.uy, uy = -(Math.sin(a) * t.ux + Math.cos(a) * t.uy), n = Math.hypot(ux, uy) || 1;
+            const x0 = sx(c.dx) + ux / n * (drawRadius(c) + 3), y0 = sy(c.dy) + uy / n * (drawRadius(c) + 3);
+            const L = clamp(40 + 30 * t.kms, 40, 90) * sizeScale, x1 = x0 + ux / n * L, y1 = y0 + uy / n * L;
+            arrow(x0, y0, x1, y1, C.burn, 3);
+            mission.labelBoxes.push({ l: Math.min(x0, x1) - 3, r: Math.max(x0, x1) + 3, t: Math.min(y0, y1) - 3, b: Math.max(y0, y1) + 3 });   // (names keep off it)
+            labels.push(markName(`burn ${kmsWords(t.kms)} km/s`, x1, y1, 5, uy < 0));
+        }
+        const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12), pad = 3;
+        const zones = edgeKeepOut(), boxes = mission.labelBoxes;
+        const discs = bodies.map((b) => ({ x: sx(b.dx), y: sy(b.dy), r: drawRadius(b) }));
+        ctx.font = font(fs);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (const q of labels) {
+            const w = ctx.measureText(q.text).width;
+            let at = null;
+            for (const [cx0, ty] of q.spots(w, fs)) {
+                if (ty < 2 || ty + fs > viewH - 2) continue;
+                const lx = clamp(cx0, w / 2 + 4, viewW - w / 2 - 4), l = lx - w / 2 - pad, r = lx + w / 2 + pad, b = ty + fs + 1;
+                const clear = !zones.some((z) => l < z[2] && r > z[0] && ty < z[3] && b > z[1])
+                    && !boxes.some((z) => l < z.r && r > z.l && ty < z.b && b > z.t)
+                    && !discs.some((d) => d.x + d.r > l && d.x - d.r < r && d.y + d.r > ty && d.y - d.r < b);
+                if (at === null || clear) at = { l, r, t: ty, b, lx };
+                if (clear) break;
+            }
+            if (!at) continue;
+            boxes.push(at);
+            ctx.fillStyle = hexA(C.bg, 0.86);
+            roundRect(at.l, at.t - 1, at.r - at.l, at.b - at.t + 1, 3);
+            ctx.fill();
+            ctx.fillStyle = C.text;
+            ctx.fillText(q.text, at.lx, at.t);
         }
         ctx.restore();
     }
