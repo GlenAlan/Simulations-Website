@@ -10823,15 +10823,21 @@
             if (b > end) end = b;
             if (b <= room && b > edge) edge = b;
         }
-        // (every chip in sight, short of the padding under them: nothing to scroll to)
-        if (end <= room) p.style.overflowY = 'hidden';
-        else if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
+        if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
+        paletteEdges();
+    }
+
+    // Under a column cut short: on to the chips below, and from the end back to the top
+    function morePalette() {
+        const p = ui.palette, atEnd = p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+        const behavior = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+        p.scrollBy({ top: atEnd ? -p.scrollHeight : 0.8 * p.clientHeight, behavior });
     }
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
     // fades at an end only while there are more chips beyond it
     function paletteEdges() {
-        const p = ui.palette;
+        const p = ui.palette, more = ui.paletteMore;
         if (!p) return;
         const max = p.scrollWidth - p.clientWidth;
         p.classList.toggle('at-start', p.scrollLeft <= 2);
@@ -11141,6 +11147,16 @@
                 ['role', 'tabindex', 'aria-expanded', 'title'].forEach((a) => ui.hint.removeAttribute(a));
             }
         });
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'orb-palette-more';
+            more.hidden = true;
+            more.title = 'More bodies below';
+            more.setAttribute('aria-label', more.title);
+            more.innerHTML = '<span class="icon solid fa-chevron-down" aria-hidden="true"></span>';
+            more.addEventListener('click', morePalette);
+            ui.palette.after(more);
+            ui.paletteMore = more;
     }
 
     // Opened, the line spills over what is below it rather than pushing it down (so the canvas keeps
@@ -11192,6 +11208,15 @@
         }
         hintClampCheck();
     }
+        const more = ui.paletteMore;
+        if (more && !more.hidden) {
+            const atEnd = p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+            if (more.classList.contains('is-back') !== atEnd) {
+                more.classList.toggle('is-back', atEnd);
+                more.title = atEnd ? 'Back to the first bodies' : 'More bodies below';
+                more.setAttribute('aria-label', more.title);
+            }
+        }
 
     // Turning a phone mid-session. Held sideways, the simulation fills the screen once the page's
     // header has scrolled away (the layout fits it to the screen's height without the header); upright,
