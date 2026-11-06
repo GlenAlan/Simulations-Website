@@ -2342,9 +2342,9 @@
     //   dE = (G M^2 / R) (m / M)^2 [(R / rp)^6 T2(eta) + (R / rp)^8 T3(eta)],  eta = sqrt(M / (M + m)) (rp / R)^(3/2)
     // for a body M, R raised by a partner m passing at rp. T2 and T3 are the fifth-order fits of Portegies Zwart &
     // Meinen 1993 (A&A 280, 174) to Lee & Ostriker 1986, for polytropes of index 3 (stars with radiative envelopes)
-    // and 1.5 (convective stars, red giants' envelopes, gas giants). (Checked: they match Lai 1997, ApJ 490, 847,
-    // table 1, and give his capture distance of two Suns, 2.4 R at 10 km/s.)
-    // It falls by about 300 times between 1.05 and 1.5 times the Roche limit, so it is only seen near that limit.
+    // and 1.5 (convective stars, red giants' envelopes, gas giants). (Checked: they match the fits in Lai 1997, ApJ
+    // 490, 847, table 1, and give his capture distance for a Sun and a 1.4 solar mass point: 2.42 R at 10 km/s.)
+    // It falls by 70 to 1,400 times between 1.05 and 1.5 times the Roche limit, so it is only seen near that limit.
     // Rock and ice aren't fluids, and a compact body isn't torn by checkTides either: neither is raised here.
     //
     // Each pass is one impulse, so the exact Kepler drift of close pairs stays exact whatever the step. It is
@@ -2357,7 +2357,7 @@
     // A wave keeps its energy for far longer than an orbit, and the next pass adds to it or takes from it depending
     // on its phase. Once each pass shifts that phase by over a radian (Mardling 1995, ApJ 450, 722) the phases are
     // random and each pass takes dE on average, which is what is done. In a tighter orbit the phases are regular, the
-    // loss is set by how fast the waves damp (thousands of years or more, not seen here), and it stops. The first pass
+    // loss is set by how fast the waves damp (taken as far longer than these orbits), and it stops. The first pass
     // of a fly-by has no waves to meet, so it always takes dE, which can capture it.
     //
     // Going forwards the impulses are logged, and running back puts the velocities and the books back exactly
