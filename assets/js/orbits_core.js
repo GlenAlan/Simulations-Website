@@ -285,7 +285,7 @@
         // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
-            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, relCard: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
             tip: 'Relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
@@ -393,7 +393,7 @@
         // about 532" a century more, as in "Inner planets": what Newton could explain; the 43" left over
         // was explained by Einstein in 1915.)
         mercury: {
-            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
+            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, relCard: true, box: [-0.52, 0.52, -0.52, 0.52],
             tip: 'This orbit turns 43″ a century: too small to see, so the card measures it.',
             bodies: [
                 { kind: 'sun' },
@@ -419,7 +419,7 @@
             const w = Math.sqrt((x * gm) / (r * r * r));
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
-                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
+                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, relCard: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
                 tip: () => (settings.realistic ? 'Gravitational waves drain the orbit until the black holes merge.' : 'Just Newton: no waves, so these black holes orbit for ever.'),
                 offNote: 'no waves, so they orbit for ever. Drawn larger than life.',
                 bodies: [
@@ -3796,8 +3796,8 @@
             : `${fmtTurn(perOrbit)}${unit ? (compact ? ' a turn' : ' each time round') : ''}`);
         const lines = [];
         if (!done) {
-            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, false)}`]]];
-            return [[title('The orbit turns (precession)')], [['Measured: after a full orbit']], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
+            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, true)}`]]];
+            return [[title('The orbit turns (precession)')], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
         }
         const einstein = say(r.einstein, r.others ? r.rateE : r.einstein / r.T, false);
         const measured = say(r.perOrbit, r.rate, true);
@@ -3922,13 +3922,37 @@
         return [[title(`${who} runs slow`)], [[`Loses ${lost}${clock.swings ? ' on average' : ''}`]]];
     }
 
+    // Is the turning of the orbit and the clock worth a card? Where relativity is the point: a scene about it (relCard),
+    // or a clock losing over a minute a year. Not a scene that's about something else (noClock). The small effects
+    // everywhere else, Earth's 0.47 s a year, are in the body's Gravity tab (relativityNote). Waves are rare enough to be
+    // an event wherever they come.
+    const CLOCK_LOUD = 60 / YEAR_S;       // fraction: a minute a year
+    function relativityOnCard(b) {
+        if (!b || scene.noClock) return false;
+        if (scene.relCard || (clock.id === b.id && clock.loss >= CLOCK_LOUD)) return true;
+        // (a black hole has no clock to go by: what an orbit like its own would cost one, 3GM/(2ac^2))
+        if (b.kind !== 'blackhole' || !orbitingBody(b)) return false;
+        const el = elementsOf(b, b.primary);
+        return el.bound && (1.5 * G * (b.m + b.primary.m)) / (C2 * el.a) >= CLOCK_LOUD;
+    }
+
+    // The Gravity tab's line on relativity, while it is on: the clock and the turning, card or no card
+    function relativityNote(b, C) {
+        if (!ui.popPullRel) return;
+        const plain = (t) => [t];
+        const lines = !settings.realistic ? [] : (clockLines(b, true, plain) || []).concat(precessionLines(b, true, plain, C) || []);
+        ui.popPullRel.hidden = !lines.length;
+        if (lines.length) setText(ui.popPullRel, `Relativity: ${lines.map((line) => line.map((seg) => seg[0]).join('')).join('. ')}.`);
+    }
+
     function drawRelativityCard(C, subj, y, fs, compact) {
         if (!settings.realistic || cleanRender) return y;
         const title = (t) => [t, true, C.kepler];
-        const pl = precessionLines(subj, compact, title, C);
+        const on = relativityOnCard(subj);
+        const pl = on ? precessionLines(subj, compact, title, C) : null;
         const wl = waveLines(subj, compact, title, C);
-        // (a flyby's card says what the moment is about: the clock would only stack under it. Nor in a scene that's about something else: noClock)
-        const cl = flybyLines(true) || scene.noClock ? null : clockLines(subj, compact, title);
+        // (a flyby's card says what the moment is about: the clock would only stack under it. A scene about relativity keeps to its subject)
+        const cl = on && !scene.relCard && !flybyLines(true) ? clockLines(subj, compact, title) : null;
         if (!pl && !wl && !cl) return y;
         const lines = (pl || []).concat(cl || [], wl ? wl.lines : []);
         const lh = Math.round(fs * 1.4);
@@ -8284,6 +8308,7 @@
             if (against) note = `A minus share pulls against the others. ${note}`;
         }
         setText(ui.popPullNote, note);
+        relativityNote(b, colours());
     }
 
     // ---- Pull lines ----
@@ -8708,7 +8733,7 @@
         Object.assign(ui, {
             pullsToggle: byId('pullsToggle'), pullSumToggle: byId('pullSumToggle'), limitsToggle: byId('limitsToggle'),
             popPullHead: byId('popPullHead'), popPullRows: byId('popPullRows'), popPullNet: byId('popPullNet'),
-            popPullNote: byId('popPullNote'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
+            popPullNote: byId('popPullNote'), popPullRel: byId('popPullRel'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
         });
         TAB_OF.popTabPull = 'pull';
         buildPullRows();
