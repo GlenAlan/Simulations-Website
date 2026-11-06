@@ -7153,13 +7153,30 @@
     }
 
     // The edge of a star's disc sent through the lens equation, on the outer side (sign 1) or inner (-1):
-    // every step-th point
+    // every step-th point. The points are spaced by their direction as seen from the hole, so no two
+    // neighbours are far apart in direction. (Spaced round the star, the two either side of the hole, when
+    // the star's edge passes close by, go to opposite sides of the ring: a straight edge right across it,
+    // and half the ring filled in.)
     function lensedOutline(X, Y, bx, by, rho, E, sign, step) {
-        const c = turn.c, sn = turn.s, E4 = 4 * E * E;
+        const c = turn.c, sn = turn.s, E4 = 4 * E * E, beta = hyp(bx, by);
+        const ux = beta > 0 ? bx / beta : 1, uy = beta > 0 ? by / beta : 0;
         for (let k = 0; k < LENS_K; k += step) {
-            const qx = bx + rho * LENS_COS[k], qy = by + rho * LENS_SIN[k];
-            const q = Math.max(hyp(qx, qy), 1e-6), f = (q + sign * Math.sqrt(q * q + E4)) / (2 * q);
-            const ix = qx * f, iy = qy * f;
+            // The point's direction from the hole, against the star's (cosine ca, sine sa), and its distance q.
+            // With the hole outside the star, directions reach only so far to either side and each comes
+            // twice, so k stands for the angle at the point between the hole and the star's centre.
+            let ca, sa, q;
+            if (beta > rho) {
+                sa = (rho / beta) * LENS_SIN[k];
+                ca = Math.sqrt(1 - sa * sa);
+                q = beta * ca + rho * LENS_COS[k];
+            } else {
+                sa = LENS_SIN[k];
+                ca = LENS_COS[k];
+                const h = beta * sa;
+                q = beta * ca + Math.sqrt(rho * rho - h * h);
+            }
+            const r = (q + sign * Math.sqrt(q * q + E4)) / 2;
+            const ix = r * (ux * ca - uy * sa), iy = r * (uy * ca + ux * sa);
             const px = X + c * ix - sn * iy, py = Y - sn * ix - c * iy;
             if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         }
