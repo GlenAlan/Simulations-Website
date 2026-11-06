@@ -1438,14 +1438,17 @@
                 for (let s = tstart[nd], e = tend[nd]; s < e; s++) {
                     const j = bidx[s];
                     if (j === k) continue;
-                    const gj = sgrp[j], soft = gi !== 0 && gi === gj;
-                    if (gi !== 0 && gj !== 0 && !soft) continue;   // (other bodies' pieces)
+                    let soft = false;
+                    if (gi !== 0 && sgrp[j] !== 0) {
+                        if (sgrp[j] !== gi) continue;   // (other bodies' pieces)
+                        soft = true;
+                    }
                     const ddx = bx[s] - xi, ddy = by[s] - yi;
                     let d2 = ddx * ddx + ddy * ddy;
                     if (soft) { const ee = 0.5 * (ei + seps[j]); d2 += ee * ee; } else if (d2 === 0) continue;
                     const id3 = 1 / (d2 * Math.sqrt(d2)), mj = bm[s];
                     ax += G * mj * id3 * ddx; ay += G * mj * id3 * ddy;
-                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : gi !== 0 || gj !== 0 ? (mi + mj) * id3 / PIECE_T2 : (mi + mj) * id3;
+                    const kk = soft ? (mi + mj) * id3 / SOFT_T2 : gi !== 0 ? (mi + mj) * id3 / PIECE_T2 : (mi + mj) * id3;
                     if (kk > k1) { k2 = k1; k1 = kk; p1 = soft ? -1 : j; } else if (kk > k2) k2 = kk;
                     count++;
                 }
@@ -1743,7 +1746,8 @@
             if (!p.a.grp && !pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
         }
         const n = bodies.length;
-        for (let k = 0; k < n; k++) bodies[k].kep = null;
+        let pieces = false;
+        for (let k = 0; k < n; k++) { const b = bodies[k]; b.kep = null; if (b.grp) pieces = true; }
         for (const p of mainPairs) { p.a.kep = p; if (!p.a.grp) p.b.kep = p; }
         for (let k = 0; k < n; k++) {
             const j = SPART[k];
@@ -1753,8 +1757,8 @@
             followPair(a, b, false);
             changed = true;
         }
-        if (choosePieceHosts()) changed = true;
-        if (changed) syncHosts();
+        if ((pieces || hostGroups.length) && choosePieceHosts()) changed = true;
+        if (changed && (pieces || hostGroups.length)) syncHosts();
         return changed;
     }
 
@@ -1771,11 +1775,10 @@
     // pieces: their own softened pull is gentle, and the steps follow it). Returns true if any changed.
     const hostList = [];
     function choosePieceHosts() {
-        let changed = false, pieces = 0;
+        let changed = false;
         hostList.length = 0;
         for (const b of bodies) {
-            if (b.grp) { pieces++; continue; }
-            if (!(b.m > 0)) continue;
+            if (b.grp || !(b.m > 0)) continue;
             if (hostList.length < HEAVY_MAX) { hostList.push(b); continue; }
             let lo = 0;
             for (let k = 1; k < HEAVY_MAX; k++) if (hostList[k].m < hostList[lo].m) lo = k;
@@ -1786,7 +1789,6 @@
             const p = mainPairs[k];
             if (p.a.grp && (p.a.stamp !== mainStamp || p.b.stamp !== mainStamp)) { mainPairs.splice(k, 1); p.a.kep = null; changed = true; }
         }
-        if (!pieces) return changed;
         const nh = hostList.length;
         for (const f of bodies) {
             if (!f.grp) continue;
@@ -2031,6 +2033,7 @@
     // ------------------------------------------------------------------
     const ROCHE = 2.44;
     const FRAGMENTS = 9;
+    const MINOR_FRAGMENTS = 3;            // ...or of a light body of a crowded scene (a dot among many, all but unseen)
     const tideHeavy = [];
     // What the books gain at the break-up, which a whole body (a point) didn't have in them: mostly the
     // pieces' pull on each other (the binding energy that held it together), and the extra tidal energy of
@@ -2066,17 +2069,17 @@
     }
 
     function disrupt(L, H) {
-        const n = Math.min(FRAGMENTS, MAX_BODIES - bodies.length + 1);
+        const n = Math.min(L.minor ? MINOR_FRAGMENTS : FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
         noteIrreversible('tear');   // (running backwards: a copy of the system from just before)
         noteTornApart(L, H);       // (the stability timer)
         const d = Math.hypot(L.x - H.x, L.y - H.y);
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
         const span = L.R / AU_KM;
-        const parts = [];
+        const parts = [], name = uniqueName('Fragment');
         for (let i = 0; i < n; i++) {
             const s = -1 + (2 * i) / (n - 1);
-            const f = newBody({ name: uniqueName('Fragment'), kind: L.kind, m: L.m / n, R: L.R / Math.cbrt(n), color: L.color });
+            const f = newBody({ name, kind: L.kind, m: L.m / n, R: L.R / Math.cbrt(n), color: L.color });
             f.grp = L.id;
             f.x = L.x + ux * s * span; f.y = L.y + uy * s * span;
             f.vx = L.vx; f.vy = L.vy;
@@ -2084,11 +2087,10 @@
             parts.push(f);
         }
         flashes.push({ x: L.x, y: L.y, t: performance.now(), color: L.color, r0: drawRadius(L) });
-        const before = systemEnergy().total;
+        const before = energyOf([L]);
         bodies.push(...parts);
         removeBody(L, parts[(n - 1) >> 1]);   // the view and the readouts pass to the middle piece
-        groupEnergy.set(L.id, 0);
-        groupEnergy.set(L.id, systemEnergy().total - before);
+        groupEnergy.set(L.id, energyOf(parts) - before);
         computeForces();
         return true;
     }
@@ -10664,39 +10666,53 @@
     // stays level round a black hole, where the Newtonian energy alone swings by tens of per cent each
     // orbit (to within the size of the next, 2PN, terms: about 2% for the neutron star at 0.24c). A compact,
     // close pair also has the 2PN terms in its motion, and so in its energy (energy2PN).
+    let sumKE = 0, sumPE = 0;
+    function addPairEnergy(bi, bj) {
+        const rx = bi.x - bj.x, ry = bi.y - bj.y;
+        if (bi.grp && bj.grp) {
+            // pieces of one torn-apart body: the softened potential of their softened pull
+            // (and pieces of different bodies don't pull on each other)
+            if (bi.grp !== bj.grp) return;
+            const e = 0.5 * (softLength(bi) + softLength(bj));
+            sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
+            return;
+        }
+        const r = Math.sqrt(rx * rx + ry * ry);
+        if (!(r > 0)) return;
+        sumPE -= (G * bi.m * bj.m) / r;
+        if (settings.realistic && !bi.grp && !bj.grp) {   // (a piece's orbit turns, without these: see driftHosted)
+            const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
+            const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
+            const rd = (rx * vx + ry * vy) / r;
+            sumKE += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
+            sumPE += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
+            // (and the 2PN terms for a compact, close pair, which has them in its motion too)
+            if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); sumKE += mu * e2.k; sumPE += mu * e2.p; }
+        }
+    }
+
     function systemEnergy() {
         const c = totals(bodies);
-        let ke = 0, pe = 0;
-        for (const b of bodies) ke += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
+        sumKE = 0; sumPE = 0;
+        for (const b of bodies) sumKE += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
         for (let i = 0; i < bodies.length; i++) {
             const bi = bodies[i];
-            for (let j = i + 1; j < bodies.length; j++) {
-                const bj = bodies[j];
-                const rx = bi.x - bj.x, ry = bi.y - bj.y;
-                if (bi.grp && bj.grp) {
-                    // pieces of one torn-apart body: the softened potential of their softened pull
-                    // (and pieces of different bodies don't pull on each other)
-                    if (bi.grp !== bj.grp) continue;
-                    const e = 0.5 * (softLength(bi) + softLength(bj));
-                    pe -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
-                    continue;
-                }
-                const r = Math.sqrt(rx * rx + ry * ry);
-                if (!(r > 0)) continue;
-                pe -= (G * bi.m * bj.m) / r;
-                if (settings.realistic && !bi.grp && !bj.grp) {   // (a piece's orbit turns, without these: see driftHosted)
-                    const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
-                    const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
-                    const rd = (rx * vx + ry * vy) / r;
-                    ke += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
-                    pe += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
-                    // (and the 2PN terms for a compact, close pair, which has them in its motion too)
-                    if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); ke += mu * e2.k; pe += mu * e2.p; }
-                }
-            }
+            for (let j = i + 1; j < bodies.length; j++) addPairEnergy(bi, bodies[j]);
         }
-        for (const u of groupEnergy.values()) pe -= u;
-        return { ke, pe, total: ke + pe };
+        for (const u of groupEnergy.values()) sumPE -= u;
+        return { ke: sumKE, pe: sumPE, total: sumKE + sumPE };
+    }
+
+    // The part of that energy that a few of the bodies have: their motion, and every pair they are in
+    function energyOf(list) {
+        const c = totals(bodies);
+        sumKE = 0; sumPE = 0;
+        for (const b of list) {
+            sumKE += 0.5 * b.m * ((b.vx - c.vx) ** 2 + (b.vy - c.vy) ** 2);
+            for (const q of bodies) if (!list.includes(q)) addPairEnergy(b, q);
+        }
+        for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) addPairEnergy(list[i], list[j]);
+        return sumKE + sumPE;
     }
 
     function angularMomentum() {
