@@ -460,7 +460,8 @@
             };
         })(),
         empty: {
-            units: 'au', Tref: 1, subject: 0, vref: TAU, box: [-1.5, 1.5, -1.5, 1.5],
+            // (its star feels no pull as it opens, so its force arrows are set by Earth's pull from the Sun, as its velocities by Earth's speed)
+            units: 'au', Tref: 1, subject: 0, vref: TAU, fref: G * MEARTH, box: [-1.5, 1.5, -1.5, 1.5],
             bodies: [{ kind: 'sun' }]
         }
     };
@@ -5044,7 +5045,7 @@
         // read as medium-length arrows
         const subj = bodies[def.forceBody !== undefined ? def.forceBody : def.subject] || null;
         const fs = subj ? Math.hypot(subj.fx, subj.fy) : 0;
-        forceRef = fs > 0 ? fs : 1;
+        forceRef = fs > 0 ? fs : def.fref || 1;
         const vs = bodies[def.subject];
         const el = vs && orbitingBody(vs) ? elementsOf(vs, vs.primary) : null;
         vRef = def.vref || (el ? (el.bound ? Math.sqrt(el.mu / el.a) : el.v) : TAU);
@@ -11146,7 +11147,7 @@
     function bindTimeControls() {
         if (ui.step) {
             ui.step.addEventListener('click', () => {
-                if (paused) stepForward(); else setPaused(true);
+                if (paused) stepForward(); else pressPause(true);
             });
         }
         window.addEventListener('keydown', (e) => {
@@ -11160,7 +11161,7 @@
                 stepSpeed(e.key === ']' ? 1 : -1);
                 e.preventDefault();
             } else if (e.key === '.') {
-                if (paused) stepForward(); else setPaused(true);
+                if (paused) stepForward(); else pressPause(true);
                 e.preventDefault();
             }
         });
@@ -14645,7 +14646,7 @@
             customCount: Number.isInteger(d.cc) && d.cc >= 0 ? d.cc : 0,
             scene: key, sel: idOf(d.sel), frame: idOf(d.fr), pairs, groupE,
             turn: Array.isArray(d.ro) && idOf(d.ro[0]) !== null && idOf(d.fr) !== null && d.ro[0] !== d.fr ? { a: d.ro[0], up: fin(d.ro[1], 0) } : null,
-            forceRef: fin(sca[0], 0) > 0 ? sca[0] : 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,
+            forceRef: fin(sca[0], 0) > 0 && !(def.fref && sca[0] === 1) ? sca[0] : def.fref || 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,   // (an older link from a scene with fref says 1: no arrow would show)
             energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
             com: !!sca[4],
@@ -17322,7 +17323,7 @@
                 return;
             }
             if (mission.status === 'ready') startFlying();
-            setPaused(!paused);
+            pressPause(!paused);
             updateMissionConsole();
         });
         E.skip.addEventListener('click', startSkip);
@@ -17865,6 +17866,32 @@
         setText(ui.trailVal, n === 0 ? 'off' : fmtDuration(n * scene.Tref));
     }
 
+    // Running, a body is drawn up to a step on from the physics (lag); paused, exactly at it. So that pressing Pause
+    // or Play doesn't make everything jump by that much, the drawn moment glides there, for drawing only. Anything else
+    // pressed, or asked of the simulation, means the real place at once (settleLag), so Step, drags and clicks start
+    // from it. Pauses that nobody pressed (a rewind reaching the start, a mission's) don't glide.
+    const PAUSE_EASE_MS = 180;
+    const lagEase = { d: 0, t: 0 };   // how far the drawn moment was from where it should be (years), and when
+    const lagWanted = () => (paused ? 0 : timeDir * clamp(acc, 0, nextDt));   // (drawn a moment back if time runs backwards)
+    function pressPause(p) {
+        setPaused(p);
+        lagEase.d = lag - lagWanted();
+        lagEase.t = performance.now();
+    }
+    function easedLag() {
+        const want = lagWanted(), E = lagEase;
+        if (!E.d) return want;
+        const u = (performance.now() - E.t) / PAUSE_EASE_MS;
+        if (u >= 1) { E.d = 0; return want; }
+        return want + E.d * (1 - u) * (1 - u);
+    }
+    function settleLag() {
+        if (!lagEase.d) return;
+        lagEase.d = 0;
+        lag = lagWanted();
+        updateDrawnPositions();
+    }
+
     function setPaused(p) {
         paused = !!p;
         if (!ui.pause) return;
@@ -17878,6 +17905,8 @@
     let focusByPointer = false;
 
     function bindControls() {
+        // (first, so that a press is settled before anything that listens for it looks for a body or starts to glide)
+        for (const t of ['pointerdown', 'keydown', 'click', 'input', 'change']) window.addEventListener(t, settleLag, { capture: true, passive: true });
         const bindCheck = (el, key, after) => {
             if (!el) return;
             el.checked = settings[key];
@@ -17933,7 +17962,7 @@
             syncPlacementNote();
         }
         if (ui.fit) ui.fit.addEventListener('click', fitAll);
-        if (ui.pause) ui.pause.addEventListener('click', () => setPaused(!paused));
+        if (ui.pause) ui.pause.addEventListener('click', () => pressPause(!paused));
         if (ui.reset) ui.reset.addEventListener('click', () => window.orbitsSimulation.reset(true));
         if (ui.showCharts) {
             ui.showCharts.addEventListener('change', () => setChartsVisible(ui.showCharts.checked));
@@ -17972,7 +18001,7 @@
             const presses = (t.tagName === 'INPUT' && t.type !== 'range') || ['SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName);
             if (types || (presses && !focusByPointer)) return;
             if (presses) t.blur();
-            setPaused(!paused);
+            pressPause(!paused);
             e.preventDefault();
         }, true);
         // (how the focus last moved: within a moment of a press or a click, it was the pointer's doing)
@@ -18021,7 +18050,7 @@
     function resting(now) {
         if (!paused || now < wakeUntil || now >= restNext) return false;
         if (pred.job || (pred.shown && now - pred.shown.t < PATH_BLEND_MS)) return false;
-        return !drags.size && !paletteDrag && !view.anim && view.shift === view.shiftTo && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+        return !drags.size && !paletteDrag && !view.anim && view.shift === view.shiftTo && !flashes.length && !well.next && !forcesDirty && !turnEase() && !lagEase.d && now >= speedFlash && !mission.def;
     }
     function bindRest() {
         for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
@@ -18030,7 +18059,7 @@
         const api = window.orbitsSimulation;
         for (const k of Object.keys(api)) {
             const fn = api[k];
-            if (typeof fn === 'function') api[k] = function (...args) { wake(); return fn.apply(this, args); };
+            if (typeof fn === 'function') api[k] = function (...args) { wake(); settleLag(); return fn.apply(this, args); };
         }
         if (typeof IntersectionObserver !== 'undefined') {
             new IntersectionObserver((es) => { canvasInView = es[es.length - 1].isIntersecting; }).observe(canvas);
@@ -18067,7 +18096,7 @@
             if (forcesDirty) computeForces();
         }
         const t1 = performance.now();
-        lag = paused ? 0 : timeDir * clamp(acc, 0, nextDt);   // (drawn a moment back if time runs backwards)
+        lag = easedLag();
         if (bodies.length <= SWARM_N || ts >= primNext) { computePrimaries(); primNext = ts + 100; }
         stepViewAnimation(dtReal);
         updateScale();
