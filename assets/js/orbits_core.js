@@ -2427,11 +2427,12 @@
     // Head on at the escape speed that gives 0.3 q / (1 + q)^2 of the mass, as Glebbeek et al. 2013 find (7.5% for equals).
     // Debris goes from where they hit. Its speeds are past the escape speed from what is left, with a third of the energy
     // to spare (a round figure: LS12's fragments go at about that speed), up to half the impact's speed, smaller pieces
-    // faster, as m^(-1/6) (Nakamura & Fujiwara 1991, Icarus 92, 132), in pieces whose masses follow LS12's size distribution (number larger than D going
-    // as D^-2.85). No piece outweighs what is left, unless there are too few pieces to carry the mass that way (12: each
-    // then stands for a cloud of smaller ones). Directions are a hollow cone, two lobes in this flat world, at 45 degrees
-    // to the surface for a small impactor (Melosh 1989), tipped downrange by half the impact's obliquity, with the
-    // downrange lobe the heavier (Gault & Wedekind 1978), opening out to a sheet at right angles to a head-on pair of equals.
+    // faster, as m^(-1/6) (Nakamura & Fujiwara 1991, Icarus 92, 132), in pieces whose masses follow LS12's size
+    // distribution (number larger than D going as D^-2.85). No piece outweighs what is left, unless there are too few
+    // pieces to carry the mass that way (12: each then stands for a cloud of smaller ones). Directions are a hollow cone,
+    // two lobes in this flat world, at 45 degrees to the surface for a small impactor (Melosh 1989), tipped downrange by
+    // half the impact's obliquity, with the downrange lobe the heavier (Gault & Wedekind 1978), opening out to a sheet at
+    // right angles to a head-on pair of equals. These directions are a sketch of what the simulations show, not a fit.
     // Mass and momentum are kept exactly, so what is left recoils from its debris. Angular momentum is kept by turning
     // the debris round what is left, as far as a speed limit lets that go: the rest would be the spin of what is left,
     // as in a merger, where all of it goes that way. (The bodies have no spin here.) What the books gain or lose (the
@@ -2849,9 +2850,9 @@
     // the Bondi-Hoyle radius r = 2 G M / V^2 (Hoyle & Lyttleton 1939). Fast enough, that is little: both go on, the
     // relative speed cut by what the tube's mass takes, with a Coulomb factor of 3. Slower than that it is caught. A
     // body far lighter is torn by the tide as ever. A star up to SINKS times the dead star's mass is torn up on it,
-    // and the dead star keeps only about a tenth: the heat of what falls in blows the rest away (Kremer et al. 2019, ApJ
-    // 881, 75; 2022, ApJ 933, 203). Where its orbits would show, that is a disc of gas (see "Gas round a compact body"). A
-    // star any heavier closes over it.
+    // and the dead star keeps only about a tenth (a round figure): the heat of what falls in blows the rest away (Kremer
+    // et al. 2019, ApJ 881, 75; 2022, ApJ 933, 203). Where its orbits would show, that is a disc of gas (see "Gas round a
+    // compact body"). A star any heavier closes over it. (SINKS is a judgement, not a published limit.)
     function deadStarHit(a, b) {
         const c = (DEAD_RANK[a.kind] || 0) >= (DEAD_RANK[b.kind] || 0) ? a : b, s = c === a ? b : a;
         if (isCompact(s) && s.kind !== 'whitedwarf') return false;   // (neutron stars and black holes: see collapseIfTooHeavy and plunge)
@@ -13513,8 +13514,8 @@
             if (Number.isInteger(id) && id > 0 && id <= 1e9 && !ids.has(id)) { ids.add(id); num[o] = id; maxId = Math.max(maxId, id); } else renumber.push(o);
             for (let k = 0; k < 6; k++) num[o + 1 + k] = vals[k];
             const grp = r.length > 10 ? r[10] : 0;
-            num[o + 7] = Number.isInteger(grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas)
-            maxGrp = Math.max(maxGrp, Math.abs(num[o + 7]));
+            num[o + 7] = Number.isInteger(2 * grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas; half a number: debris)
+            maxGrp = Math.max(maxGrp, Math.ceil(Math.abs(num[o + 7])));
             names[i] = typeof r[1] === 'string' && r[1].trim() ? r[1].trim().slice(0, 40) : KINDS[kind].name;
             kinds[i] = kind;
             colors[i] = typeof r[3] === 'string' && /^#[0-9a-f]{6}$/i.test(r[3]) ? r[3] : (KINDS[kind].color || KINDS.custom.color);
@@ -13536,7 +13537,7 @@
             if (!pieces.has(q[0])) paired.add(q[1]);
             pairs.push([q[0], q[1], q[2] ? 1 : 0]);
         }
-        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
+        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(2 * q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
         const vw = Array.isArray(d.vw) ? d.vw : [], sca = Array.isArray(d.sca) ? d.sca : [];
         const raw = d.set && typeof d.set === 'object' ? d.set : {};
         const flag = (v, dflt) => (v === 0 || v === 1 || typeof v === 'boolean' ? !!v : dflt);
