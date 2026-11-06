@@ -14520,7 +14520,7 @@
                 goal: { type: 'sling', far: 0.5, spare: 0.1 },
                 goalText: 'Pass just behind Jupiter to leave the Sun for good.',
                 idea: `Your fuel can't leave the Sun: that takes ${f1(fDirect)} km/s from here. But Jupiter is moving. Pass just behind it and its pull drags you along, so you leave faster than you came. The two Voyager probes left the Solar System this way.`,
-                parText: 'the burn that moves your pass to just behind Jupiter. Pass in front of it and you lose speed instead.',
+                parText: 'the burn that moves your pass to just behind Jupiter. Pass in front of it and you lose speed instead. Use Fine for the last of it.',
                 teach: 'That was a gravity assist: Jupiter lost a tiny bit of speed and you gained it.',
                 predict: () => slingPredict(0),
                 check: slingCheck, status: slingStatus, skip: slingSkip, coast: () => slingOn(mission.pred), hint: slingHint,
@@ -14813,6 +14813,7 @@
     // ---- Missions with goals of their own ----
     // Each has check (every step: the goal, which ends the mission itself and says so), status, skip, coast
     // (with the tank empty, does the path still get there?) and hint; those that look ahead have predict.
+    //
     // The smallest burn along the motion, either way, that works(km/s) says does the job, as burnPlan does
     // for a pass of a target: { kms, speed }, or null if the fuel can't pay for one. Checked at a few burns,
     // more closely near the textbook one, then narrowed down, so what a hint asks for has been flown ahead.
@@ -14852,7 +14853,7 @@
         return -1;
     }
 
-    // Turn the asteroid: it must stay out of the ring until it has gone past, which it has once the gap
+    // Nudge the asteroid: it must stay out of the ring until it has gone past, which it has once the gap
     // grows near the time it would have hit
     function deflectCheck(c) {
         const g = mission.def.goal, T = bodyById(mission.targetId);
@@ -16201,8 +16202,6 @@
         P.classList.toggle('is-list', kind === 'list');
         P.hidden = false;
         P.scrollTop = 0;
-        const row = kind === 'list' && P.scrollHeight > P.clientHeight ? P.querySelector('[aria-current="true"], .is-next') : null;
-        if (row) P.scrollTop = row.offsetTop - 0.4 * P.clientHeight;
         if (focus) focusMissionPanel();
     }
 
