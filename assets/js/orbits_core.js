@@ -9623,6 +9623,7 @@
     let lastPointerType = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
     const coarse = () => lastPointerType !== 'mouse';
     let hintKey = '';
+    let hintPressed = false;   // a press on one of the line's own buttons: it stays as it is until that is over
 
     // One message at a time, by priority. Each layer holds { html, tag }; html may be a function, read
     // again whenever the line is refreshed, so a note that names the chosen body follows the choice.
@@ -9680,7 +9681,7 @@
 
     // Write the line from the top layer that has something to say
     function refreshHint() {
-        if (!ui.hint) return;
+        if (!ui.hint || hintPressed) return;
         const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
             || hintHtml(hints.note) || hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint();
         if (h === hintKey) return;
@@ -14875,8 +14876,14 @@
             lastPointerType = e.pointerType || 'mouse';
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            if (t && t.closest && t.closest('#orbHint button')) hintPressed = true;
             refreshHint();
         }, true);
+        // (over with the click, or a moment after a press that became none: the click comes just after the release)
+        const hintLetGo = () => { if (hintPressed) { hintPressed = false; refreshHint(); } };
+        window.addEventListener('pointerup', () => setTimeout(hintLetGo, 250), true);
+        window.addEventListener('pointercancel', hintLetGo, true);
+        window.addEventListener('click', () => { hintPressed = false; setTimeout(refreshHint, 0); }, true);
         bindHint();
         bindTurn();
     }
