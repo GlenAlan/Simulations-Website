@@ -158,7 +158,7 @@
     const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15];
     const RADIUS_SNAPS = [12, 1737, 3390, 6371, 8700, 69911, 210000, 696000, 4.6e6, 3.0e7];
 
-    // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same scene every time)
+    // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same numbers from the same seed)
     function seeded(seed) {
         let s = seed;
         return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
@@ -176,7 +176,10 @@
     // Every scene starts with the centre of mass at rest at the origin. Tref: the scene's reference
     // period (6 s on screen at 1x); vref: the speed drawn as a medium arrow (default: the subject's
     // average orbital speed); tip: a line for the hint bar when the scene opens; swarm: its light bodies
-    // are drawn as a swarm (dots, no names) however few are left.
+    // are drawn as a swarm (dots, no names) however few are left; vary: the start changes a little each time
+    // (see "A touch of chance"): for a body, by its place in the list, how far each field of its entry may
+    // go either way (orbit: a, e, w, nu in their own units; at and v, each component; m and R, as a fraction),
+    // or a function from a seed to the whole list of bodies; rolls: the only seeds to use (else any).
     // ------------------------------------------------------------------
     const SCENES = {
         'sun-earth': {
@@ -247,9 +250,16 @@
         // their real sizes, never touch). They fall together, swing through close encounters, and after
         // about 60 time units (9,500 years) the 4 and 5 leave as a tight binary and the 3 is flung out
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
+        // That is the exact start. A roll moves each star by up to 0.01 AU, about its own radius in a triangle 500 AU
+        // across, which is enough to change who is thrown out and when. rolls: of 300 tried, half had one star out within
+        // 20,000 years and a binary left, and these are the first 24 of them; in 29%, two stars touched and merged first.
+        // (Tried with realistic physics off. With it on, close passes cost energy, and stars often collide, exact start included.)
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
             tip: 'Three stars start at rest. Who gets thrown out? Then press Reverse.',
+            vary: { 0: { at: 0.01 }, 1: { at: 0.01 }, 2: { at: 0.01 } },
+            rolls: [931881178, 1881322046, 508018130, 1724848045, 51502358, 1519719012, 315046732, 1289095965, 122236591, 1344905852, 896632190, 207424203,
+                1889654510, 1144945885, 43675643, 1787382926, 1621423335, 1771043348, 856947885, 901348321, 966114771, 1238003908, 1659197999, 1779204498],
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -283,10 +293,13 @@
         // A Sun-like star on an elliptical orbit round a 1,000-solar-mass black hole, coming within 9 million
         // km of it every 2.2 days: half its own Roche limit. With realistic physics the black hole's tides
         // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
-        // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
+        // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.) A roll
+        // changes how close it comes, by up to 6% (still well inside the limit), the way its orbit points and, by 1%,
+        // its mass, which sets how it breaks (tearPattern).
         tde: {
             units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.62, 0.3, -0.3, 0.3],
             tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
+            vary: { 1: { e: 0.01, w: 12, m: 0.01 } },
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -307,10 +320,13 @@
         // They meet half a year in, at 30 km/s, about three times their escape speed, which throws off debris (Leinhardt
         // and Stewart 2012, see collisionOutcome). Most of the Earth is left, and what comes off goes round the Sun on
         // orbits of its own, all through the one point. (A planet is a very small target, so B's start is tuned with the
-        // integrator itself, to hit near the middle: a quarter of the way from the centre to the edge.)
+        // integrator itself, to hit near the middle: a quarter of the way from the centre to the edge.) A roll moves B's
+        // start by up to 0.0003 degrees, which is too small to see and still hits every time (at 0.0005 about one in ten
+        // misses), but it changes how squarely they meet; and its mass by 1%, which changes how the debris goes (throwDebris).
         collide: {
             units: 'au', Tref: 1, noClock: true, subject: 1, trail: 4, realistic: true, box: [-1.8, 2.9, -1.5, 1.5],
             tip: 'Two planets on crossing orbits. Watch what the crash throws out.',
+            vary: { 2: { nu: 0.0003, m: 0.01 } },
             bodies: [
                 { kind: 'sun' },
                 { kind: 'earth', name: 'Planet A', orbit: { around: 0, a: 1, e: 0, nu: -122.70422048691768 } },
@@ -355,8 +371,10 @@
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
             units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 0, forceBody: 1, vref: 0.75, trail: 1, swarm: true, progress: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            bodies: (function () {
-                const rnd = seeded(5);
+            get bodies() { return this.vary(5); },
+            // (each time a new draw of the same disc)
+            vary(seed) {
+                const rnd = seeded(seed);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
                 const R = Math.cbrt((3 * mass * MSUN_KG) / (4 * Math.PI * 3300)) / 1000;   // km, at the Moon's density
                 const list = [{ kind: 'earth' }];
@@ -366,7 +384,7 @@
                         orbit: { around: 0, a, e: 0.02 * rnd(), w: 360 * rnd(), nu: 360 * rnd() } });
                 }
                 return list;
-            })()
+            }
         },
         // The Sun and Mercury alone, with realistic physics: relativity turns Mercury's orbit forward by
         // 6 pi GM/(c^2 a (1 - e^2)) = 0.1035" each time round, 43" a century. (The other planets turn it by
@@ -4283,7 +4301,8 @@
     // ------------------------------------------------------------------
     // Scenes
     // ------------------------------------------------------------------
-    function loadScene(key) {
+    // seed: a marked scene's roll (see "A touch of chance"); without one, the scene's exact start
+    function loadScene(key, seed) {
         restoreSpeed();   // (a zoom's slower time ends with it)
         missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
@@ -4303,7 +4322,7 @@
         flashes.length = 0;
         closePopover();
         endAllDrags();
-        for (const s of def.bodies) {
+        for (const s of seed && def.vary ? variedBodies(def, seed) : def.bodies) {
             const k = KINDS[s.kind] || KINDS.custom;
             const b = newBody({
                 name: s.name || k.name, kind: s.kind,
@@ -4360,6 +4379,7 @@
         showHint('tip', def.tip || null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
         stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
+        syncRestartTitle();
     }
 
     // ------------------------------------------------------------------
@@ -13264,6 +13284,65 @@
     }
 
     // ------------------------------------------------------------------
+    // A touch of chance. A scene marked with vary starts a little differently each time it is opened from
+    // the scene list or restarted, where a slightly different start gives an ending worth watching again.
+    // Math.random picks the seed and does nothing else; the seed alone decides the start, and the start
+    // alone decides what follows. Undo steps, "run again", the autosave and links all keep the bodies
+    // themselves, so each brings back that very start, and an older link opens as it always did. Anything
+    // else that loads a scene gets its one exact start: missions, the test API, and with Deterministic
+    // on (in More options, remembered in this browser) the scene list and Restart too.
+    // ------------------------------------------------------------------
+    const CHANCE_KEY = 'orbitsDeterministic';
+    const chance = { exact: storeGet(CHANCE_KEY) === '1', last: 0 };
+    Object.assign(ui, { deterministic: byId('deterministicToggle') });
+    if (ui.deterministic) {
+        ui.deterministic.checked = chance.exact;
+        ui.deterministic.addEventListener('change', () => {
+            chance.exact = ui.deterministic.checked;
+            storeSet(CHANCE_KEY, chance.exact ? '1' : '');
+            syncRestartTitle();
+        });
+    }
+
+    // A marked scene's entries, moved within their spreads
+    function variedBodies(def, seed) {
+        if (typeof def.vary === 'function') return def.vary(seed);
+        const rnd = seeded(seed);
+        rnd(); rnd();   // (the first numbers from a small seed are much alike)
+        const shift = (half) => half * (2 * rnd() - 1);
+        return def.bodies.map((s, i) => {
+            const spread = def.vary[i], c = Object.assign({}, s);
+            if (!spread) return c;
+            if (s.orbit) c.orbit = Object.assign({}, s.orbit);
+            for (const f of Object.keys(spread)) {
+                if (f === 'at' || f === 'v') c[f] = (s[f] || [0, 0]).map((x) => x + shift(spread[f]));
+                else if (f === 'm' || f === 'R') c[f] = (s[f] !== undefined ? s[f] : KINDS[s.kind][f]) * (1 + shift(spread[f]));
+                else c.orbit[f] = (s.orbit[f] || 0) + shift(spread[f]);
+            }
+            return c;
+        });
+    }
+
+    // The person's own ways into a scene, the scene list and Restart: a marked scene gets a new roll
+    function openScene(key) {
+        const def = SCENES[key];
+        let seed = 0;
+        if (def && def.vary && !chance.exact) {
+            do {
+                seed = def.rolls ? def.rolls[Math.floor(Math.random() * def.rolls.length)] : 1 + Math.floor(Math.random() * SEED_MAX);
+            } while (seed === chance.last);
+            chance.last = seed;
+            hist.cleanLoad = false;   // (so it is an undo step: noteSceneLoad makes none for a scene restarted untouched)
+        }
+        loadScene(key, seed);
+    }
+
+    // (Restart's tooltip says what it will do, and where to change that)
+    function syncRestartTitle() {
+        setTitle(ui.reset, scene.vary && !chance.exact ? 'Restart with a slightly different start. Deterministic, in More options, keeps it the same' : 'Restart the scene from its original setup');
+    }
+
+    // ------------------------------------------------------------------
     // Setups as JSON, and as links
     // ------------------------------------------------------------------
     // Everything but the bodies (s: a snapshot)
@@ -14195,6 +14274,7 @@
         // The trails are still good if no time has passed since the snapshot (an edit undone while paused)
         const keepTrails = sameScene && !jump && s.epoch === hist.epoch && s.samples === sampleCount;
         if (!sameScene) sceneFromSnapshot(s);
+        else { forceRef = s.forceRef; vRef = s.vRef; energyExp = s.energyExp; }   // (each roll of a scene has its own)
         restoreStartDate(s);
         const old = new Map(bodies.map((b) => [b.id, b]));
         const list = [];
@@ -14285,6 +14365,7 @@
         if (ui.trail) ui.trail.value = String(s.trail);
         settings.com = s.com;
         if (ui.com) ui.com.checked = s.com;
+        syncRestartTitle();
     }
 
     // Time has jumped: the trail samples start again from now, as when a scene is loaded (the samples'
@@ -16615,7 +16696,7 @@
         }
         if (ui.scene) {
             ui.scene.value = settings.scene;
-            ui.scene.addEventListener('change', () => loadScene(ui.scene.value));
+            ui.scene.addEventListener('change', () => openScene(ui.scene.value));
         }
         if (ui.ecc) {
             ui.ecc.addEventListener('input', () => {
@@ -16645,7 +16726,7 @@
         }
         if (ui.fit) ui.fit.addEventListener('click', fitAll);
         if (ui.pause) ui.pause.addEventListener('click', () => setPaused(!paused));
-        if (ui.reset) ui.reset.addEventListener('click', () => window.orbitsSimulation.reset());
+        if (ui.reset) ui.reset.addEventListener('click', () => window.orbitsSimulation.reset(true));
         if (ui.showCharts) {
             ui.showCharts.addEventListener('change', () => setChartsVisible(ui.showCharts.checked));
             setChartsVisible(ui.showCharts.checked);
@@ -16839,8 +16920,9 @@
     }
 
     window.orbitsSimulation = {
-        reset() { loadScene(settings.scene); if (!mission.def) setPaused(false); },
-        loadScene(key) { if (ui.scene) ui.scene.value = key; loadScene(key); },
+        // (roll: as the Restart button does. Otherwise the scene's exact start, or a given seed's: see "A touch of chance")
+        reset(roll) { if (roll) openScene(settings.scene); else loadScene(settings.scene); if (!mission.def) setPaused(false); },
+        loadScene(key, seed) { if (ui.scene) ui.scene.value = key; loadScene(key, seed); },
         scenes: () => Object.keys(SCENES),
         getState() {
             const E = systemEnergy();
