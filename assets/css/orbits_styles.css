@@ -4387,3 +4387,19 @@ dialog.orb-help::backdrop {
         height: 40px;
     }
 }
+
+/* ---------- The help on a screen no finger can touch: no gestures ----------
+   They are no use there, and they made the help scroll. (any-pointer, so a laptop with a touch screen,
+   whose main pointer is its mouse, keeps them; a browser that can't tell keeps them too.) */
+@media not all and (any-pointer: coarse) {
+    .orb-help-touch {
+        display: none;
+    }
+}
+
+/* (and in a shorter window, slimmer rows, so the keys alone fit in it too) */
+@media (max-height: 760px) {
+    .orb-help dl > div {
+        padding: 3px 0;
+    }
+}
