@@ -7267,6 +7267,10 @@
     // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
     const minorGroups = new Map(), pieceGroups = new Map(), gasGroups = new Map();
+    // A swarm's dots make a pattern that hundreds of trails would smear, so theirs wait until someone asks: the Trails
+    // slider set longer than the scene's own. (It lives in the slider, so share links, undo and autosave keep it. A
+    // chosen dot has its trail either way, and the planets among the dots theirs.)
+    const swarmTrails = () => !scene.swarm || settings.trailIndex > scene.trail;
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
@@ -7325,7 +7329,7 @@
         trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
         // (gas: short and faint, a sign of how it moves. Its glow is the thing to see)
         trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
-        if (!low) {
+        if (!low && swarmTrails()) {
             ctx.lineJoin = 'miter';
             trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
         }
@@ -7686,6 +7690,9 @@
     // and trail) unless that would cover another name or body; then the next free side round. A name
     // with no free side is left out (the chosen body's never is). Pieces of a torn-apart body aren't
     // named unless chosen.
+    // "A moon forming" (scene.progress) marks only Earth, the biggest piece and the chosen body: not every moonlet
+    // that has grown a little. (primOrder: heaviest first. See moonProgress for the same two.)
+    const moonUnmarked = (b) => !!scene.progress && b !== primOrder[0] && b !== primOrder[1] && !isChosen(b);
     function drawLabels(C) {
         if (!settings.labels) return;
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
@@ -7704,7 +7711,7 @@
         for (const { x, y, r, b } of order) {
             if (x < visL - r || x > visR + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
             const chosen = b.id === selectedId || b === popBody;
-            if ((b.grp || b.minor) && !chosen) continue;
+            if (((b.grp || b.minor) && !chosen) || moonUnmarked(b)) continue;
             const w = ctx.measureText(b.name).width;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
@@ -7842,7 +7849,7 @@
         let zones = null;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (b.minor && !isChosen(b)) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
+            if (b.grp || (b.minor && !isChosen(b)) || moonUnmarked(b) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
             const k = Math.min(((visR - visL) / 2 - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
@@ -7998,7 +8005,7 @@
     function countArrows() {
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
-        arrowsBusy = n > ARROWS_ALL_MAX || !!scene.sky;   // (the sky scene: only the planet it follows, or its loops are lost among them)
+        arrowsBusy = n > ARROWS_ALL_MAX || !!scene.sky || !!scene.progress;   // (the sky scene: only the planet it follows, or its loops are lost among them. A moon forming: the chosen body only)
     }
 
     const gasHeld = new Set();
@@ -16737,6 +16744,7 @@
     function updateTrailLabel() {
         const n = TRAIL_STEPS[settings.trailIndex];
         setText(ui.trailVal, n === 0 ? 'off' : fmtDuration(n * scene.Tref));
+        if (ui.trail) ui.trail.title = scene.swarm ? 'Longer adds a trail to every dot' : '';   // (see swarmTrails)
     }
 
     function setPaused(p) {
