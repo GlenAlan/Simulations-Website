@@ -1050,7 +1050,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, hostMass: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1166,6 +1166,7 @@
 
     let gravStamp = 0;
     let anyPieces = false;   // (a torn-apart body's among them: only then do the pair sums look for pieces)
+    let anyHosted = false;   // (a whole body is going round a host: see "Close pairs")
     let forceMode = 'auto';   // 'direct' or 'tree' forces one method (for the accuracy test)
     let heavyMax = HEAVY_MAX;
     const work = { pairs: 0, tree: 0 };   // interactions in the last evaluation (for the perf readout)
@@ -1179,11 +1180,12 @@
         const useTree = forceMode === 'tree' || (forceMode === 'auto' && n > DIRECT_MAX);
         const xs = SX, ys = SY, vxs = SVX, vys = SVY, ms = SM, grp = SGRP, eps = SEPS, a0 = SA0, pair = SPAIR;
         anyPieces = false;
+        anyHosted = false;
         for (let k = 0; k < n; k++) {
             const b = list[k];
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g;
+            grp[k] = g && b.minor ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -1193,7 +1195,10 @@
         }
         if (pairs) {
             for (const p of pairs) {
-                if (p.a.stamp === stamp && p.b.stamp === stamp) { SPAIR[p.a.slot] = p.b.slot; if (!p.a.grp) SPAIR[p.b.slot] = p.a.slot; }
+                if (p.a.stamp === stamp && p.b.stamp === stamp) {
+                    SPAIR[p.a.slot] = p.b.slot;
+                    if (!p.hosted) SPAIR[p.b.slot] = p.a.slot; else if (!p.a.grp) anyHosted = true;
+                }
             }
         }
         const pn = settings.realistic;
@@ -1273,7 +1278,9 @@
     function pairRows(rows, nRows, n, pn) {
         // (local names for the arrays: a browser reads those much faster in a loop than outer variables)
         const xs = SX, ys = SY, ms = SM, grp = SGRP, accX = SAX, accY = SAY, best = SBEST, second = SSECOND, part = SPART;
-        const inRows = SINDIR, rowOf = SDPOS, some = anyPieces;
+        const inRows = SINDIR, rowOf = SDPOS, some = anyPieces, hosted = anyHosted;
+        // (a pair whose lighter body can't disturb anyone needn't ask for less than this)
+        const q = sampleDt / (HOST_STEPS * (n > DIRECT_MAX ? ETA_SWARM : ETA)), tLight = q * q;
         let tmin = Infinity;
         for (let a = 0; a < nRows; a++) {
             const i = rows ? rows[a] : a;
@@ -1307,7 +1314,9 @@
                 if (r2 === 0) continue;
                 const r = Math.sqrt(r2);
                 const ir3 = 1 / (r2 * r);
-                const kep = pi === j;
+                let kep = pi === j, turns = false;
+                // (a whole body and its host: only the body's own entry names its partner)
+                if (hosted && kep !== (SPAIR[j] === i)) { kep = true; turns = true; }
                 if (!kep) {
                     const si = G * mj * ir3, sj = G * mi * ir3;
                     axi += si * dx; ayi += si * dy;
@@ -1315,11 +1324,13 @@
                 }
                 if (msum > 0) {
                     const t = r2 * r / (G * msum);
-                    if (piece) { if (PIECE_T2 * t < tmin) tmin = PIECE_T2 * t; } else if (t < tmin && !kep) tmin = t;
+                    if (piece) {
+                        if (PIECE_T2 * t < tmin) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, PIECE_T2 * tLight) : PIECE_T2 * t;
+                    } else if (t < tmin && !kep) tmin = t < tLight && (mi < LIGHT * mj || mj < LIGHT * mi) ? Math.min(tmin, tLight) : t;
                     // each body's two shortest pair times, and the partner of the shortest
                     if (t < b2) { if (t < b1) { b2 = b1; b1 = t; p1 = j; } else b2 = t; }
                     if (t < second[j]) { if (t < best[j]) { second[j] = best[j]; best[j] = t; part[j] = i; } else second[j] = t; }
-                    if (pn && !piece) {
+                    if (pn && !piece && !turns) {
                         const vx = SVX[i] - SVX[j], vy = SVY[i] - SVY[j];
                         if ((G * msum) / (C2 * r) > PN_SKIP || (vx * vx + vy * vy) / C2 > PN_SKIP) { pnPair(i, j); notePN(i, j); }
                     }
@@ -1499,7 +1510,7 @@
         for (let a = 0; a < nd; a++) SINDIR[SDIR[a]] = 1;
         for (let i = 0; i < n; i++) {
             if (SPAIR[i] < 0) continue;
-            const q = SGRP[i] !== 0 ? SPAIR[i] : i;   // (of a piece and its host, just the host)
+            const q = SPAIR[SPAIR[i]] !== i ? SPAIR[i] : i;   // (of a piece or whole body and its host, just the host)
             if (!SINDIR[q]) { SINDIR[q] = 1; SDIR[nd++] = q; }
         }
         for (let a = 0; a < nd; a++) SDPOS[SDIR[a]] = a;
@@ -1509,6 +1520,9 @@
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         for (let i = 0; i < n; i++) {
             if (SINDIR[i]) continue;
+            // (dots going round a host, far too light to matter to each other: the tree need not hold them)
+            const h = SPAIR[i];
+            if (h >= 0 && SM[i] < LIGHT * SM[h]) { CAX[i] = 0; CAY[i] = 0; CB1[i] = 0; CB2[i] = 0; CP1[i] = -1; continue; }
             BIDX[nl++] = i;
             const x = SX[i], y = SY[i];
             if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
@@ -1567,12 +1581,23 @@
     // the step under HOST_TURN of its time near the host (for its trail, and for the others' small pull on
     // it through the host), but to no more than HOST_STEPS steps a trail sample. PIECE_STEP: a piece that
     // does set the step, passing some other body, is let off with that many times fewer steps.
+    // A light whole body goes the same way, but only where it would otherwise hold everything back: when the
+    // step it asks for is finer than HOST_STEPS steps a trail sample (twice that to stop: see chooseHosted). No
+    // scene whose orbits take a good many trail samples ever gets there. A body near its Roche limit is
+    // followed closely, so it tears where it should. Two compact bodies close enough to radiate (or any two
+    // for which radiation matters soon: HOST_GW) stay on the ordinary steps, and a host can't go round anything.
     const HOST_MIN = 10;
     const HOST_TURN = 0.25;
     const HOST_STEPS = 32;
     const PIECE_STEP = 4;
     const PIECE_T2 = PIECE_STEP * PIECE_STEP;   // (the times are kept squared)
-    const mainPairs = [];                 // { a, b, touch, fast } for the bodies
+    const HOST_HEAVY = 1e-5;              // heavier than this beside their host, a body and those going round with it shift each other...
+    const HOST_FINE = 32;                 // ...(the term the drift splits off), so it has this many times more steps a trail sample: the energy stays as level
+    const hostShared = (m, mH, others) => m >= HOST_HEAVY * mH && others >= HOST_HEAVY * mH;
+    const HOST_GW = 1e6;                  // radiation may take this many trail samples or more to close the orbit
+    const LIGHT = 1e-9;                   // the lighter of a pair by this much: it moves the other not at all, and has nothing else to answer for
+    const ROCHE_NEAR = 392;               // (3 ROCHE)^3: inside three times its Roche limit a whole body is followed closely
+    const mainPairs = [];                 // { a, b, touch, fast, hosted, closest } for the bodies (hosted: a goes round b, see driftHosted)
     let mainStamp = 0, mainN = 0;
 
     // Universal-variable Kepler drift (Danby's G-functions): exact for ellipses, parabolas and hyperbolas,
@@ -1713,6 +1738,7 @@
             keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
             let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
             if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN)) p.touch = true;
+            if (KMIN < p.closest) p.closest = KMIN;
             if (real) {
                 const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
                 let swept = Math.atan2(rx * ky - ry * kx, rx * kx + ry * ky);
@@ -1765,39 +1791,66 @@
         let changed = false;
         for (let k = mainPairs.length - 1; k >= 0; k--) {
             const p = mainPairs[k];
-            if (!p.a.grp && !pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
+            if (!p.hosted && !pairQualifies(p.a, p.b, 2 * KEP_GAMMA)) { mainPairs.splice(k, 1); changed = true; }
         }
         const n = bodies.length;
         let pieces = false;
         for (let k = 0; k < n; k++) { const b = bodies[k]; b.kep = null; if (b.grp) pieces = true; }
-        for (const p of mainPairs) { p.a.kep = p; if (!p.a.grp) p.b.kep = p; }
+        for (const p of mainPairs) { p.a.kep = p; if (!p.hosted) p.b.kep = p; }
         for (let k = 0; k < n; k++) {
             const j = SPART[k];
             if (j <= k || SPART[j] !== k) continue;
             const a = bodies[k], b = bodies[j];
-            if (a.kep || b.kep || !pairQualifies(a, b, KEP_GAMMA)) continue;
+            if (a.kep || b.kep || a.hosts || b.hosts || !pairQualifies(a, b, KEP_GAMMA)) continue;
             followPair(a, b, false);
             changed = true;
         }
+        const hostedChanged = chooseHosted();
+        if (hostedChanged) changed = true;
         if ((pieces || hostGroups.length) && choosePieceHosts()) changed = true;
-        if (changed && (pieces || hostGroups.length)) syncHosts();
+        if (changed && (pieces || hostGroups.length || hostedChanged)) syncHosts();
         return changed;
     }
 
-    // Follow a and b as a close pair (a, if a piece of a torn-apart body, round its host b)
-    function followPair(a, b, fast) {
-        const q = { a, b, touch: false, fast };
+    // Follow a and b as a close pair (a, a piece of a torn-apart body or a light whole body, round its host b)
+    function followPair(a, b, fast, hosted) {
+        const q = { a, b, touch: false, fast, hosted: !!(hosted || a.grp), closest: Infinity };
         mainPairs.push(q);
         a.kep = q;
-        if (!a.grp) b.kep = q;
+        if (!q.hosted) b.kep = q;
     }
 
-    // Each piece's host, if it has one: the body whose pull on it is so much the strongest that the others'
-    // tides are small beside it (as for a close pair, with the same hysteresis, among the bodies that aren't
-    // pieces: their own softened pull is gentle, and the steps follow it). Returns true if any changed.
-    const hostList = [];
-    function choosePieceHosts() {
-        let changed = false;
+    // The body light whole body f would go round (null if none): of the heaviest few, the one it is going round
+    // fastest, if that holds things back (pair time squared under t0) and it is the heavier by HOST_MIN. The
+    // others' tides must be small beside its pull (gamma, as for a close pair), unless f is so light (LIGHT) that it
+    // can't disturb anyone: its own path through them is all that is at stake, and that fares better this way.
+    function hostFor(f, gamma, t0) {
+        if (f.held || f.grp || !(f.m > 0)) return null;
+        const nh = hostList.length, xf = f.x, yf = f.y, mf = f.m;
+        let t1 = Infinity, t2 = Infinity, H = null;
+        for (let k = 0; k < nh; k++) {
+            const h = hostList[k];
+            if (h === f) continue;
+            const dx = h.x - xf, dy = h.y - yf, d3 = (dx * dx + dy * dy) * Math.sqrt(dx * dx + dy * dy);
+            const t = d3 / (h.m + mf);
+            if (t < t1) {
+                if (H) t2 = Math.min(t2, t1 * (H.m + mf) / H.m);
+                t1 = t; H = h;
+            } else t2 = Math.min(t2, d3 / h.m);
+        }
+        if (!H || H.held || H.m < HOST_MIN * mf || (H.kep && H.kep.hosted)) return null;
+        const fine = hostShared(mf, H.m, f.kep && f.kep.b === H ? H.hostMass - mf : H.hostMass);
+        if (!(t1 > 0 && t1 < G * t0 / (fine ? HOST_FINE * HOST_FINE : 1))) return null;
+        if (mf >= LIGHT * H.m && !(t1 < gamma * t2)) return null;
+        if (!settings.realistic) return H;
+        // Radiation left out of the drift must not matter: Peters' time for the orbit to close, if they are close enough to have it
+        const r = Math.cbrt(t1 * (H.m + mf)), gm = G * (mf + H.m);
+        if (!(gm > RR_MIN_C2 * r)) return H;
+        return !(isCompact(f) && isCompact(H)) && (5 / 256) * C5 * r * r * r * r / (G * G * gm * mf * H.m) > HOST_GW * sampleDt ? H : null;
+    }
+
+    // Fill hostList: the heaviest few whole bodies
+    function heaviestFew() {
         hostList.length = 0;
         for (const b of bodies) {
             if (b.grp || !(b.m > 0)) continue;
@@ -1806,6 +1859,77 @@
             for (let k = 1; k < HEAVY_MAX; k++) if (hostList[k].m < hostList[lo].m) lo = k;
             if (b.m > hostList[lo].m) hostList[lo] = b;
         }
+    }
+
+    // Light whole bodies going round hosts: those that have stopped holding things back (or whose host is now to go
+    // round something heavier, as a host can't go round anything itself), then the new ones. Returns true if any changed.
+    function chooseHosted() {
+        const n = bodies.length;
+        const q = sampleDt / (HOST_STEPS * (n > DIRECT_MAX ? ETA_SWARM : ETA)), t0 = q * q;
+        let found = false;
+        for (let k = 0; k < n && !found; k++) found = SBEST[k] < t0 && bodies[k].stamp === mainStamp;
+        let any = found;
+        for (let k = 0; k < mainPairs.length && !any; k++) any = mainPairs[k].hosted && !mainPairs[k].a.grp;
+        if (!any) return false;
+        heaviestFew();
+        let changed = false, lastH = null, lastFree = false;
+        for (let k = mainPairs.length - 1; k >= 0; k--) {
+            const p = mainPairs[k];
+            if (!p.hosted || p.a.grp) continue;
+            if (p.b !== lastH) { lastH = p.b; lastFree = !hostFor(lastH, KEP_GAMMA, t0); }
+            if (lastFree && p.a.stamp === mainStamp && p.b.stamp === mainStamp && hostFor(p.a, 2 * KEP_GAMMA, 4 * t0) === p.b) continue;
+            mainPairs.splice(k, 1);
+            p.a.kep = null;
+            bookHosted(p, false);
+            changed = true;
+        }
+        for (let k = 0; k < n; k++) {
+            if (!(SBEST[k] < t0)) continue;
+            const f = bodies[k];
+            if (f.kep) continue;
+            const H = hostFor(f, KEP_GAMMA, t0);
+            if (!H || hostFor(H, KEP_GAMMA, t0)) continue;
+            if (H.kep && !freeHost(H)) continue;
+            hostBody(f, H);
+            changed = true;
+        }
+        return changed;
+    }
+
+    // H is in an ordinary close pair: with a partner light enough, that becomes the first of its hosted bodies
+    function freeHost(H) {
+        const o = H.kep, x = o.a === H ? o.b : o.a;
+        if (H.m < HOST_MIN * x.m || x.hosts) return false;
+        mainPairs.splice(mainPairs.indexOf(o), 1);
+        H.kep = x.kep = null;
+        hostBody(x, H);
+        return true;
+    }
+
+    function hostBody(f, H) {
+        followPair(f, H, false, true);
+        H.hosts++; H.hostMass += f.m;   // (until syncHosts counts them)
+        bookHosted(f.kep, true);
+    }
+
+    // A whole body going round a host keeps its Kepler energy as its orbit turns (see driftHosted), so that pair's
+    // relativistic terms leave the books as it starts, and come back as it stops: the total doesn't jump.
+    const HOSTED_BOOK = -2;   // (among the body ids of groupEnergy)
+    function bookHosted(p, on) {
+        const i = p.a, j = p.b;
+        if (!settings.realistic || i.stamp !== mainStamp || j.stamp !== mainStamp) return;
+        const M = i.m + j.m, rx = i.x - j.x, ry = i.y - j.y, vx = i.vx - j.vx, vy = i.vy - j.vy;
+        const pn = pairEnergy(i, j) - (0.5 * (i.m * j.m / M) * (vx * vx + vy * vy) - G * i.m * j.m / Math.hypot(rx, ry));
+        groupEnergy.set(HOSTED_BOOK, (groupEnergy.get(HOSTED_BOOK) || 0) + (on ? -pn : pn));
+    }
+
+    // Each piece's host, if it has one: the body whose pull on it is so much the strongest that the others'
+    // tides are small beside it (as for a close pair, with the same hysteresis, among the bodies that aren't
+    // pieces: their own softened pull is gentle, and the steps follow it). Returns true if any changed.
+    const hostList = [];
+    function choosePieceHosts() {
+        let changed = false;
+        heaviestFew();
         for (let k = mainPairs.length - 1; k >= 0; k--) {
             // (a piece that has gone, or a host that has)
             const p = mainPairs[k];
@@ -1832,15 +1956,16 @@
     // The hosts, each with the close pairs of its pieces (kept while they stay the same)
     const hostGroups = [];
     function syncHosts() {
-        for (const g of hostGroups) g.h.hosts = 0;
+        for (const g of hostGroups) { g.h.hosts = 0; g.h.hostMass = 0; }
         hostGroups.length = 0;
         for (const p of mainPairs) {
-            if (!p.a.grp) continue;
+            if (!p.hosted) continue;
             let g = null;
             if (p.b.hosts) g = hostGroups.find((q) => q.h === p.b);
             if (!g) { g = { h: p.b, pairs: [] }; hostGroups.push(g); }
             g.pairs.push(p);
             p.b.hosts = g.pairs.length;
+            p.b.hostMass += p.a.m;
         }
     }
 
@@ -1873,7 +1998,13 @@
         const beta = 2 * gm / r - (vx * vx + vy * vy);
         p.fast = beta > 0 && TAU * gm / (beta * Math.sqrt(beta)) < KEP_UNRESOLVED * sampleDt;
         if (p.fast) return Infinity;
-        return a.grp ? Math.max(HOST_TURN * Math.sqrt(r2 * r / gm), sampleDt / HOST_STEPS) : KEP_TURN * Math.sqrt(r2 * r / gm);
+        if (!p.hosted) return KEP_TURN * Math.sqrt(r2 * r / gm);
+        const own = HOST_TURN * Math.sqrt(r2 * r / gm);
+        if (settings.realistic && !a.grp && !isCompact(a) && a.m >= LIGHT * b.m) {
+            const R = a.R / AU_KM;
+            if (r2 * r < ROCHE_NEAR * R * R * R * b.m / a.m) return own;
+        }
+        return Math.max(own, sampleDt / (!a.grp && hostShared(a.m, b.m, b.hostMass - a.m) ? HOST_FINE * HOST_STEPS : HOST_STEPS));
     }
 
     // One kick-drift-kick leapfrog step for every body in the list that isn't held (close pairs drift
@@ -1888,7 +2019,7 @@
             if (!(pairs && (b.kep || b.hosts))) { b.x += dt * b.vx; b.y += dt * b.vy; }
         }
         if (pairs) {
-            for (const p of pairs) if (!p.a.grp) driftPair(p, dt);
+            for (const p of pairs) if (!p.hosted) driftPair(p, dt);
             for (const g of hostGroups) driftHosted(g, dt);
         }
         let tmin = forces();
@@ -1916,7 +2047,7 @@
 
     function step(dt) {
         for (const b of bodies) { b.px = b.x; b.py = b.y; }
-        for (const p of mainPairs) p.touch = false;
+        for (const p of mainPairs) { p.touch = false; p.closest = Infinity; }
         yoshida(bodies, dt, computeForces, mainPairs);
     }
 
@@ -2017,7 +2148,7 @@
         let merged = false;
         listsWait = true;
         for (const p of mainPairs) {
-            if (!p.touch || !p.a.grp) continue;
+            if (!p.touch || !p.hosted) continue;
             p.touch = false;
             const f = p.a, H = p.b, fell = settings.realistic && G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM;
             const before = fell ? energyOf([f, H]) : 0;
@@ -2118,7 +2249,9 @@
             for (const H of hs) {
                 if (H === L || H.held || H.m < 5 * L.m) continue;
                 const dx = L.x - H.x, dy = L.y - H.y;
-                const d = Math.hypot(dx, dy);
+                // (going round H it may have passed closer between the ends of the step: going forwards, as nothing
+                // that passed like that stayed whole, running back retraces it)
+                const d = timeDir > 0 && L.kep && L.kep.hosted && L.kep.b === H ? Math.min(Math.hypot(dx, dy), L.kep.closest) : Math.hypot(dx, dy);
                 const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
                 if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
             }
@@ -2841,7 +2974,12 @@
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
-            if (checkTides()) { refreshBodyLists(); announceTear(); }
+            if (checkTides()) {
+                // (every one that passed its limit in this step: a body going round its host may not be near it by the next)
+                while (checkTides());
+                refreshBodyLists();
+                announceTear();
+            }
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
@@ -10273,17 +10411,21 @@
     function usePairs(idx) {
         const want = idx >= 0 ? past.sets[idx] : null;
         if (!want) { refreshPairs(); return; }
-        const has = (ia, ib) => mainPairs.some((p) => (p.a.id === ia && p.b.id === ib) || (p.a.id === ib && p.b.id === ia));
-        const inOrder = want.length === mainPairs.length && want.every(([ia, ib], k) => mainPairs[k].a.id === ia && mainPairs[k].b.id === ib);
-        if (inOrder || (want.length === mainPairs.length && want.every(([ia, ib]) => has(ia, ib)))) {
+        const has = (ia, ib, h) => mainPairs.some((p) => p.hosted === !!h && ((p.a.id === ia && p.b.id === ib) || (p.a.id === ib && p.b.id === ia)));
+        const inOrder = want.length === mainPairs.length && want.every(([ia, ib, h], k) => mainPairs[k].a.id === ia && mainPairs[k].b.id === ib && mainPairs[k].hosted === !!h);
+        if (inOrder || (want.length === mainPairs.length && want.every(([ia, ib, h]) => has(ia, ib, h)))) {
             if (forcesDirty) computeForces();
             return;
         }
+        for (const p of mainPairs) if (p.hosted && !p.a.grp) bookHosted(p, false);
         for (const b of bodies) b.kep = null;
         mainPairs.length = 0;
-        for (const [ia, ib] of want) {
+        for (const [ia, ib, h] of want) {
             const a = bodyById(ia), b = bodyById(ib);
-            if (a && b && !a.kep && (a.grp || !b.kep)) followPair(a, b, false);
+            if (a && b && !a.kep && (h || !b.kep)) {
+                followPair(a, b, false, !!h);
+                if (h && !a.grp) bookHosted(a.kep, true);
+            }
         }
         syncHosts();
         computeForces();   // (a pair's own pull is left out of the kicks)
@@ -10299,7 +10441,7 @@
         if (!mainPairs.length) return (past.set = 0);
         if (past.sets.length >= PAIR_SETS || past.rows >= PAIR_ROWS) return (past.set = -1);
         past.rows += mainPairs.length;
-        past.sets.push(mainPairs.map((p) => [p.a.id, p.b.id]));
+        past.sets.push(mainPairs.map((p) => [p.a.id, p.b.id, p.hosted ? 1 : 0]));
         return (past.set = past.sets.length - 1);
     }
 
@@ -10398,9 +10540,9 @@
         }
         bodies = list;
         mainPairs.length = 0;
-        for (const [ia, ib, fast] of s.pairs) {
+        for (const [ia, ib, fast, hosted] of s.pairs) {
             const a = list.find((q) => q.id === ia), b = list.find((q) => q.id === ib);
-            if (a && b) followPair(a, b, !!fast);
+            if (a && b) followPair(a, b, !!fast, !!hosted);
         }
         syncHosts();
         groupEnergy.clear();
@@ -11133,7 +11275,8 @@
         const r = Math.sqrt(rx * rx + ry * ry);
         if (!(r > 0)) return;
         sumPE -= (G * bi.m * bj.m) / r;
-        if (settings.realistic && !bi.grp && !bj.grp) {   // (a piece's orbit turns, without these: see driftHosted)
+        // (a piece's orbit turns, without these, as does a whole body's going round its host: see driftHosted)
+        if (settings.realistic && !bi.grp && !bj.grp && !(bi.kep && bi.kep.hosted && bi.kep.b === bj) && !(bj.kep && bj.kep.hosted && bj.kep.b === bi)) {
             const M = bi.m + bj.m, mu = (bi.m * bj.m) / M, eta = mu / M, gm = G * M;
             const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
             const rd = (rx * vx + ry * vy) / r;
@@ -12460,7 +12603,7 @@
             // The close pairs being followed by the two-body drift (they end with some hysteresis, so
             // running again needs the same ones to repeat exactly), and the binding energy booked for
             // bodies torn apart by tides
-            pairs: mainPairs.map((q) => [q.a.id, q.b.id, q.fast ? 1 : 0]), groupE: Array.from(groupEnergy),
+            pairs: mainPairs.map((q) => [q.a.id, q.b.id, q.fast ? 1 : 0, q.hosted ? 1 : 0]), groupE: Array.from(groupEnergy),
             gwE: gw.radiated, gwP: gw.power,   // (energy carried off by gravitational waves so far, and the rate)
             // The scene's own scales and settings: put back only when a change of scene is undone
             forceRef, vRef, energyExp, trail: settings.trailIndex, com: settings.com,
@@ -12514,9 +12657,9 @@
         const byNewId = new Map(list.map((b) => [b.id, b]));
         mainPairs.length = 0;
         for (const b of list) b.kep = null;
-        for (const [ia, ib, fast] of s.pairs || []) {
+        for (const [ia, ib, fast, hosted] of s.pairs || []) {
             const a = byNewId.get(ia), b = byNewId.get(ib);
-            if (a && b) followPair(a, b, !!fast);
+            if (a && b) followPair(a, b, !!fast, !!hosted);
         }
         syncHosts();
         groupEnergy.clear();
@@ -14985,7 +15128,8 @@
     // rest) and smoothed. The physics gets what is left of 80% of the time between frames (as measured,
     // so a 120 Hz screen gets half as much per frame) after the other two, between 3 and PHYSICS_MS ms;
     // if drawing alone takes too long, the trails are drawn more coarsely first
-    // (quality below 1), before the simulation itself has to slow down. Readouts, primaries in a crowded
+    // (quality below 1), before the simulation itself has to slow down. Where frames have been coming late
+    // (see physicsBudget), the painting after the frame's script counts as well. Readouts, primaries in a crowded
     // scene and the graphs are updated about ten times a second rather than every frame.
     // While paused with nothing going on, the picture can't change: frames rest, with one in full four
     // times a second in case something else has changed it. Anything the visitor does (or a call of the
@@ -15016,8 +15160,25 @@
 
     let fpsFrames = 0, fpsTime = 0;
     let eccNext = 0, readoutNext = 0, primNext = 0;
-    const perf = { physics: 0, render: 0, other: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
+    const perf = { physics: 0, render: 0, other: 0, paint: 0, frame: 0, interval: 16.7, steps: 0, ratio: 1, quality: 1, req: 0, got: 0, win: 0 };
     const smooth = (old, v) => old + 0.1 * (v - old);
+
+    // The physics' share of a frame. On a weak device the browser's painting of the canvas after the frame's
+    // script can take as long as the script, and then 80% of the time between frames is too much to hand out:
+    // frames miss the screen's refresh. So once LATE_SHARE of them are over LATE_MS apart, and for LATE_HOLD_MS
+    // after (as this cures them), the paint is timed, by a message posted at the end of the frame, which arrives
+    // once that is done, and 95% of the time less the paint is the limit if that is less. (If that would leave next
+    // to nothing, the drawing alone makes them late, and giving up the physics wouldn't help.) Elsewhere nothing
+    // is timed, nothing changes, and the physics has all it had.
+    const LATE_MS = 25, LATE_SHARE = 0.15, LATE_HOLD_MS = 5000;
+    const paintClock = new MessageChannel();
+    let lateShare = 0, lateUntil = 0, paintFrom = 0;
+    paintClock.port1.onmessage = () => { perf.paint = smooth(perf.paint, performance.now() - paintFrom); };
+    function physicsBudget(ts) {
+        const t = Math.min(perf.interval, 20);
+        const busy = perf.render + perf.other, room = 0.95 * t - perf.paint - busy;
+        return clamp(ts < lateUntil && room >= 1 ? Math.min(0.8 * t - busy, room) : 0.8 * t - busy, 3, PHYSICS_MS);
+    }
 
     function frame(ts) {
         requestAnimationFrame(frame);
@@ -15035,7 +15196,7 @@
         if (!paused && dtReal > 0 && !timeHeld()) {
             const want = dtReal * settings.speed * rate();
             const before = timeDir * simTime + acc;
-            steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));
+            steps = advance(want, 0, physicsBudget(ts));
             applyHolds();
             perf.req += want;
             perf.got += timeDir * simTime + acc - before;
@@ -15076,6 +15237,10 @@
         const lateFrames = perf.interval > 24 && perf.frame < 0.75 * perf.interval;
         if ((perf.render > 7 || lateFrames) && perf.quality > 0.2) perf.quality = Math.max(0.2, perf.quality * 0.95);
         else if (perf.render < 4 && perf.interval < 19 && perf.quality < 1) perf.quality = Math.min(1, perf.quality * 1.02);
+
+        if (dtReal > 0) lateShare += 0.02 * ((1000 * dtReal > LATE_MS ? 1 : 0) - lateShare);   // (over about a second: a late frame here and there is nothing)
+        if (lateShare > LATE_SHARE) lateUntil = ts + LATE_HOLD_MS;
+        if (ts < lateUntil) { paintFrom = performance.now(); paintClock.port2.postMessage(0); }
 
         if (ui.fps) {
             fpsFrames++;
@@ -15326,7 +15491,7 @@
     // Many bodies and close pairs: what the integrator is doing (for testing)
     Object.assign(window.orbitsSimulation, {
         // The close pairs followed by the exact two-body drift
-        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast })),
+        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast, hosted: p.hosted })),
         step: () => ({ dt: nextDt, bodies: bodies.length, direct: bodies.length <= DIRECT_MAX, work: Object.assign({}, work) }),
         // Milliseconds per force evaluation of the bodies as they are now, by each method
         timeForces(reps) {
@@ -15347,7 +15512,7 @@
         // Smoothed per-frame milliseconds (physics, drawing, the rest), steps per frame, the simulated
         // time achieved over the time asked for, and the drawing quality (1 = full)
         perf: () => ({
-            physics: perf.physics, render: perf.render, other: perf.other, frame: perf.frame,
+            physics: perf.physics, render: perf.render, other: perf.other, paint: perf.paint, frame: perf.frame,
             steps: perf.steps, speedRatio: perf.ratio, quality: perf.quality, bodies: bodies.length, slowedDown
         })
     });
