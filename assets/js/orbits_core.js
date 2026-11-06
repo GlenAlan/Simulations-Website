@@ -303,10 +303,10 @@
             ]
         },
         // An Earth on Earth's orbit, and a planet of Venus's mass falling in from 2.7 AU on an ellipse that crosses it.
-        // They meet half a year in, at 30 km/s: three times what it takes to throw off debris (Leinhardt and Stewart
-        // 2012, see collisionOutcome). Most of the Earth is left, and what comes off goes round the Sun on orbits of its
-        // own, all through the one point. (A planet is a very small target: B's start is aimed to 5 figures, tuned
-        // with the integrator itself, to hit a quarter of the way in from the edge.)
+        // They meet half a year in, at 30 km/s, about three times their escape speed, which throws off debris (Leinhardt
+        // and Stewart 2012, see collisionOutcome). Most of the Earth is left, and what comes off goes round the Sun on
+        // orbits of its own, all through the one point. (A planet is a very small target, so B's start is tuned with the
+        // integrator itself, to hit near the middle: a quarter of the way from the centre to the edge.)
         collide: {
             units: 'au', Tref: 1, subject: 1, trail: 4, realistic: true, box: [-1.8, 2.9, -1.5, 1.5],
             tip: 'Two planets on crossing orbits. Watch what the crash throws out.',
