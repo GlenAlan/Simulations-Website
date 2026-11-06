@@ -3723,10 +3723,11 @@
         while (!maxSteps || steps < maxSteps) {
             const dt = stepSize();   // (the close pairs and the next step; running back, the logged ones)
             if (!(dt > 0) || acc < dt) break;
-            // (stop if the next step, at the average cost so far, would overrun the budget)
+            // (stop if the next step, at the average cost so far, would overrun the budget by more than the
+            // time now left of it: steps come whole, and rounding down can leave most of a step's time idle every frame)
             if (!maxSteps && steps % every === 0 && steps > 0) {
                 const used = performance.now() - t0;
-                if (used + used / steps > budget) { timedOut = true; break; }
+                if (used + 0.5 * used / steps > budget) { timedOut = true; break; }
             }
             if (past.replay && timeDir < 0) tideBack(past.head - 1);
             step(timeDir * dt);
