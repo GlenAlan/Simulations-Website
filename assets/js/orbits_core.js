@@ -2737,7 +2737,7 @@
         gasE = M > 0 ? E / M : 1;
         if (M > 0 && gasE < 0.45 && !gasNoted && timeDir > 0) {
             gasNoted = true;
-            if (!settings.stability && !scene.progress) eventNote('The gas has settled into a disc.', ' It glows as it spirals in.', 7000);
+            if (!settings.stability && !scene.progress) eventNote('The gas has settled into a disc.', ' Some falls in, and the rest spreads out.', 7000);
         }
     }
 
