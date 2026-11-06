@@ -1827,10 +1827,12 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
         flex: 1 1 15em;
     }
 
-    /* (Settings docked beside the bar can leave it too narrow for one row. The canvas's size doesn't
-       depend on the bar's height, so here the readouts may wrap.) */
-    body.sim-panel-active.sim-panel-side .orbits-sim .stats-container {
-        flex-wrap: wrap;
+    /* (Settings docked beside the bar can leave it too narrow for one row: only in a window held upright,
+       as the bar has its own layout in a narrow one held sideways, at the end of this file.) */
+    @media (max-width: 1279px) {
+        body.sim-panel-active.sim-panel-side .orbits-sim .stats-container {
+            flex-wrap: wrap;
+        }
     }
 
     /* (and in a narrower window the scene takes a row of its own, above the buttons) */
@@ -4493,5 +4495,120 @@ dialog.orb-help::backdrop {
 @media (pointer: coarse) {
     .orb-pop-more > summary {
         min-height: 42px;
+    }
+}
+
+/* ---------- Settings docked in a narrower window ----------
+   The width is then what limits the canvas, so the readouts' rows under it did nothing but squeeze the
+   palette and leave the screen half used. The readouts go (shutting Settings brings them back, and the
+   body's menu and the Bodies list say much of it). The scene, the body's Edit and the speed share a row, the
+   buttons have the next, and the palette's column runs the height of the canvas and the bar. The canvas may
+   be taller than 16:10, up to about square, so all three columns end level at the foot of the screen: the
+   view goes by its 16:10 part (--orb-view-wide: viewSide in orbits_core.js). */
+@media (orientation: landscape) and (min-width: 1000px) and (max-width: 1279px) and (min-height: 541px) {
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .simulation-display-container {
+        grid-template-rows: auto auto;
+        grid-template-areas: "tools canvas" "tools info";
+        width: 100%;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-canvas-wrapper {
+        max-width: none;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        --orb-view-wide: 1;
+        max-width: none;
+        height: min(var(--sim-canvas-max-h), 0.95 * (100vw - 2 * var(--sim-page-gutter) - var(--sim-panel-width) - 1em - var(--orb-side-w) - var(--orb-side-gap)));
+        aspect-ratio: auto;
+    }
+
+    /* (eight buttons, each three of these wide, under the scene, the body and the speed) */
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-bar {
+        display: grid;
+        grid-template-columns: repeat(24, minmax(0, 1fr));
+        gap: 4px 2px;
+        padding: 4px;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .stats-container,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-action-buttons-overlay {
+        display: contents;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .stats-container > .stats-box,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .orb-subject-around {
+        display: none;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .orb-scene-pick {
+        grid-area: 1 / 1 / auto / span 12;
+        margin: 0;
+        min-width: 0;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .stats-container > .orb-subject {
+        grid-area: 1 / 13 / auto / span 7;
+        justify-content: center;
+        max-width: none;
+        padding: 0 2px;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .orb-subject-name {
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .orb-speed {
+        grid-area: 1 / 20 / auto / span 5;
+        margin: 0 4px;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-icon-button,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-reset-button,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-show-charts-label,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-fullscreen-toggle,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-panel-toggle-button {
+        grid-row: 2;
+        grid-column: span 3;
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* (a mission has only four of them) */
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-icon-button,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-show-charts-label,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-fullscreen-toggle,
+    body.sim-panel-active.sim-panel-side:not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-panel-toggle-button {
+        grid-column: span 6;
+    }
+}
+
+/* ---------- A column still too short for the chips, with a mouse ----------
+   (paletteCut in orbits_core.js sets these only if it helps, so more chips will simply bring them on sooner.)
+   Each chip's disc goes beside its name, on one line; then "Add a body", which the headings and the hint say
+   well enough. */
+@media (pointer: fine) and (orientation: landscape) and (min-width: 640px) and (min-height: 541px) {
+    .orb-toolbar.is-slim .orb-palette {
+        --orb-chip-h: 24px;
+    }
+
+    .orb-toolbar.is-slim .orb-chip {
+        flex-direction: row;
+        gap: 3px;
+        padding: 0 2px;
+    }
+
+    .orb-toolbar.is-slim .orb-chip-disc {
+        flex: 0 0 auto;
+        max-width: 10px;
+        max-height: 10px;
+    }
+
+    .orb-toolbar.is-slimmer .orb-toolbar-label {
+        display: none;
     }
 }

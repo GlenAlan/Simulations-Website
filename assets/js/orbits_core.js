@@ -968,7 +968,7 @@
     const sampleTimes = new Float64Array(TRAIL_CAP);
 
     // View: px per AU = zoom * min(canvas width, height), so the scene scales with the canvas
-    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0 };
+    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0, wide: false };
     let viewW = 0, viewH = 0, dpr = 1;
     // What can be seen of the canvas (its px): all of it, but for the Settings drawer over one side;
     // and where the middle of the view goes on it (see syncDrawer)
@@ -4581,8 +4581,15 @@
     const wx = (px) => F.x + view.panX + (px - midX) / scale;
     const wy = (py) => F.y + view.panY - (py - viewH / 2) / scale;
 
+    // The side of the canvas the view's scale goes by. Where the page lets the canvas grow taller than 16:10 to
+    // fill the screen (--orb-view-wide, in orbits_styles.css), it goes by the 16:10 part: a scene keeps the size
+    // it would have had, with more room round it, and comes back just as it was when the canvas does.
+    function viewSide() {
+        return Math.max(1, view.wide ? Math.min(viewW / 1.6, viewH) : Math.min(viewW, viewH));
+    }
+
     function updateScale() {
-        const m = Math.max(1, Math.min(viewW, viewH));
+        const m = viewSide();
         scale = view.zoom * m;
         sizeScale = clamp(m / 560, 0.62, 1.1);
         midX = viewW / 2 + view.shift;
@@ -4648,9 +4655,9 @@
     // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
     // (at no more than the zoom most, if given).
     function fitBox(box, animate, most) {
-        const m = Math.max(1, Math.min(viewW, viewH));
+        const m = viewSide();
         const w = Math.max(box[1] - box[0], 1e-9), h = Math.max(box[3] - box[2], 1e-9);
-        const W = visR - visL || 800, H = viewH || 500;
+        const W = visR - visL || 800, H = view.wide ? m : viewH || 500;
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
         const target = { zoom: Math.min(pxPerAu / m, most || Infinity), panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
@@ -11154,6 +11161,11 @@
         const p = ui.palette;
         if (!p) return;
         p.style.maxHeight = p.style.overflowY = '';
+        // (with a mouse, as a last resort, chips one line tall, then no "Add a body": see orbits_styles.css)
+        const box = ui.toolbar || p, chips = p.querySelectorAll('.orb-chip');
+        const over = () => chips.length && chips[chips.length - 1].getBoundingClientRect().bottom - p.getBoundingClientRect().top + p.scrollTop > p.clientHeight;
+        box.classList.remove('is-slim', 'is-slimmer');
+        for (const q of ['is-slim', 'is-slimmer']) if (over()) box.classList.add(q);
         const room = p.clientHeight;
         if (!room || p.scrollHeight <= room + 1) return;
         const top = p.getBoundingClientRect().top - p.scrollTop;
@@ -16610,6 +16622,7 @@
         if (w === viewW && h === viewH && newDpr === dpr) { syncDrawer(rect); return; }
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        view.wide = getComputedStyle(canvas).getPropertyValue('--orb-view-wide').trim() === '1';
         syncDrawer(rect);
         if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
