@@ -2345,7 +2345,7 @@
         const d = Math.hypot(L.x - H.x, L.y - H.y);
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
         const span = L.R / AU_KM;
-        const parts = [], name = uniqueName('Fragment');
+        const parts = [], name = uniqueName(gas ? 'Gas' : 'Fragment');
         const shape = tearPattern(L, H, n);
         let left = L.m;
         for (let i = 0; i < n; i++) {
@@ -5818,7 +5818,7 @@
                 if (m.primary !== p || !m.bound) same = false;
             }
             setBg(el.navDot, ms[0].color);
-            // ("Trojan 1…300"; just "Fragment" for the pieces of a torn-apart body, which share one name)
+            // ("Trojan 1…300"; just "Gas" or "Fragment" for the pieces of a torn-apart body, which share one name)
             const span = r.lo < r.hi;
             name = span ? `${r.base} ${r.lo}…${r.hi}` : r.base;
             around = same && p ? `around ${theName(p)}` : '';
