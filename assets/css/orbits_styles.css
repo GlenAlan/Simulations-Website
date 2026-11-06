@@ -2130,7 +2130,8 @@ html.dark-mode .orb-date-input {
     display: none;
 }
 
-/* (in a mission, Retry is the one do-over) */
+/* (in a mission, Retry is the one do-over, and the console has its own Play) */
+.orbits-sim.orb-mission-on #pauseBtn,
 .orbits-sim.orb-mission-on #rewindBtn,
 .orbits-sim.orb-mission-on #resetSimulationBtn {
     display: none;
