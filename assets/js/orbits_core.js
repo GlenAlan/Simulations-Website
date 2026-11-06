@@ -252,6 +252,7 @@
         // That is the exact start. A roll moves each star by up to 0.01 AU, about its own radius in a triangle 500 AU
         // across, which is enough to change who is thrown out and when. rolls: of 300 tried, half had one star out within
         // 20,000 years and a binary left, and these are the first 24 of them; in 29%, two stars touched and merged first.
+        // (Tried with realistic physics off. With it on, close passes cost energy, and stars often collide, exact start included.)
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
             tip: 'Three stars start at rest. Who gets thrown out? Then press Reverse.',
