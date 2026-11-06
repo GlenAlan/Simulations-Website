@@ -10305,6 +10305,8 @@
         if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
             setPaused(true);
             setReverse(false, true);
+            // (off, and looking it, though the pointer that pressed it may still be on it)
+            if (ui.reverse && ui.reverse.matches(':hover')) ui.reverse.classList.add('is-rested');
             if (driftedFromStart()) {
                 const again = canRunAgain() ? ' <button type="button" class="orb-hint-btn orb-hint-again">Run again</button>' : '';
                 pastNote(`<strong>Back at time 0, but not where it began:</strong> rounding errors grow in chaos.${again}`, 12000);
@@ -10596,7 +10598,10 @@
 
     function syncReverseUi() {
         const back = timeDir < 0;
-        if (ui.reverse) ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+        if (ui.reverse) {
+            ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+            if (back) ui.reverse.classList.remove('is-rested');
+        }
         if (ui.pause) ui.pause.classList.toggle('is-back', back);   // (its Play points the way time will run)
         if (ui.step) {
             const label = back ? 'Step back' : 'Step forward';
@@ -10620,7 +10625,10 @@
     // body is let go
     function bindPlayControls() {
         window.addEventListener('pointerup', onThrowUp, true);
-        if (ui.reverse) ui.reverse.addEventListener('click', pressReverse);
+        if (ui.reverse) {
+            ui.reverse.addEventListener('click', pressReverse);
+            ui.reverse.addEventListener('pointerleave', () => ui.reverse.classList.remove('is-rested'));
+        }
         window.addEventListener('keydown', (e) => {
             if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
             if (e.key !== 'b' && e.key !== 'B') return;

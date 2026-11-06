@@ -1776,6 +1776,14 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
     outline-offset: 1px;
 }
 
+/* Stopped by itself at the start, with the pointer still on it: it looks off, not lit by the hover */
+@media (hover: hover) {
+    .sim-info-actions #reverseBtn.is-rested:hover {
+        color: var(--color-text) !important;
+        background-color: transparent;
+    }
+}
+
 #pauseBtn.is-back .fa-play {
     transform: scaleX(-1);
 }
