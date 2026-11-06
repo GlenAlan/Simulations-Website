@@ -5543,8 +5543,8 @@
     // in the older, fainter part, and if drawing is running slow: perf.quality; see traceTrail), and
     // stretches off the canvas aren't drawn. A trail with more than TRAIL_POINTS samples (fast swings add
     // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
-    const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, TRAIL_POINTS = 1500;
-    const minorGroups = new Map();
+    const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
+    const minorGroups = new Map(), pieceGroups = new Map();
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) return;
@@ -5562,11 +5562,13 @@
         const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
         const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
         for (const g of minorGroups.values()) g.length = 0;
+        for (const g of pieceGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
             if ((b.minor || b.grp) && !isChosen(b)) {
-                let g = minorGroups.get(b.color);
-                if (!g) { g = []; minorGroups.set(b.color, g); }
+                const groups = b.minor ? minorGroups : pieceGroups;
+                let g = groups.get(b.color);
+                if (!g) { g = []; groups.set(b.color, g); }
                 g.push(b);
                 continue;
             }
@@ -5592,24 +5594,36 @@
         }
         // The swarm: one path per colour for each of a few shades, in thinner lines with plain ends and
         // corners (round ones take far longer to paint); when drawing runs slow, only their newest part
+        // (and only for the pieces of a torn-apart body, as bright as other trails, if slower still)
         const low = perf.quality < 0.3;
         ctx.lineWidth = Math.max(1, 0.6 * lw);
         ctx.lineCap = 'butt';
-        ctx.lineJoin = 'miter';
-        for (const [color, g] of minorGroups) {
+        ctx.lineJoin = 'bevel';
+        trailGroups(pieceGroups, PIECE_CHUNKS, 0.08, 0.72, tr, first, oFirst, C);
+        if (!low) {
+            ctx.lineJoin = 'miter';
+            trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
+        }
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+    }
+
+    // Groups of trails: a path per colour for each of chunks shades, from alpha a0 + a1 / chunks to a0 + a1
+    function trailGroups(groups, chunks, a0, a1, tr, first, oFirst, C) {
+        for (const [color, g] of groups) {
             if (!g.length) continue;
             ctx.strokeStyle = bodyStroke(color, C.dark);
-            for (let c = 0; c < MINOR_CHUNKS; c++) {
-                const f = (c + 1) / MINOR_CHUNKS;
-                ctx.globalAlpha = 0.06 + 0.5 * f;
+            for (let c = 0; c < chunks; c++) {
+                const f = (c + 1) / chunks;
+                ctx.globalAlpha = a0 + a1 * f;
                 ctx.beginPath();
                 for (const b of g) {
-                    if (low && b.minor) continue;
                     let k0 = Math.max(trailFirst(b), first, oFirst);
                     k0 = Math.max(k0, sampleCount - Math.ceil((sampleCount - k0) * perf.quality));
                     const count = sampleCount - k0;
                     if (count < 1) continue;
-                    const chunk = Math.max(1, Math.ceil(count / MINOR_CHUNKS));
+                    const chunk = Math.max(1, Math.ceil(count / chunks));
                     const ks = k0 + c * chunk;
                     if (ks >= sampleCount) continue;
                     const ke = Math.min(sampleCount, ks + chunk + 1);
@@ -5621,9 +5635,6 @@
                 ctx.stroke();
             }
         }
-        ctx.globalAlpha = 1;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
     }
 
     // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT) to the current path,
