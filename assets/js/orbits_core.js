@@ -8843,6 +8843,22 @@
         fillTextInside(text, q.x + px * gap * s, q.y + py * gap * s + 4 * s);
     }
 
+    // Which sectors carry their area: the fastest and the slowest, the two that look least alike but measure the same,
+    // which is the point of the law (the card has the rest). Speed is the length of orbit swept. On a nearly round orbit
+    // all look alike: then two opposite ones, by number, which stay put from one orbit to the next.
+    const k2Marks = { fast: null, slow: null, round: false };
+    function markSectors() {
+        let hi = 0, lo = Infinity;
+        k2Marks.fast = k2Marks.slow = null;
+        for (const s of k2.sectors) {
+            const n = s.pts.length, L = hyp(s.pts[n - 2] - s.pts[0], s.pts[n - 1] - s.pts[1]);
+            if (L > hi) { hi = L; k2Marks.fast = s; }
+            if (L < lo) { lo = L; k2Marks.slow = s; }
+        }
+        k2Marks.round = lo > 0.9 * hi;
+    }
+    const sectorMarked = (s) => (k2Marks.round ? s.n % (K2_SECTORS / 2) === 0 : s === k2Marks.fast || s === k2Marks.slow);
+
     function drawSectors(C, b) {
         if (!b || k2.bid !== b.id) return;
         const p = bodyById(k2.pid);
@@ -8850,6 +8866,7 @@
         const cx = sx(p.dx), cy = sy(p.dy);
         const fs = clamp(Math.min(viewW, viewH) / 48, 10, 12);
         const list = k2.sectors.concat(k2.cur ? [k2.cur] : []);
+        markSectors();
         list.forEach((s) => {
             const n = s.pts.length / 2;
             if (n < 2) return;
@@ -8868,8 +8885,8 @@
             ctx.moveTo(cx, cy);
             ctx.lineTo(cx + pts[0] * scale, cy - pts[1] * scale);
             ctx.stroke();
-            // Area label inside finished sectors that are big enough on screen
-            if (!live && k2.bound && !cleanRender) {
+            // Area label inside the marked finished sectors, if big enough on screen
+            if (!live && k2.bound && !cleanRender && sectorMarked(s)) {
                 const m = Math.floor(n / 2);
                 const mx = pts[2 * m] * scale, my = -pts[2 * m + 1] * scale;
                 const rpx = Math.hypot(mx, my);
