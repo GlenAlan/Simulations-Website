@@ -2001,10 +2001,13 @@
         if (choosePairs()) computeForces();
     }
 
-    // Accelerations of the bodies, net forces for the arrows, and the next adaptive step.
+    // Accelerations of the bodies, net forces for the arrows, and the next adaptive step. (Within a step, only
+    // the last evaluation's arrows and next step get used: midStep counts the ones before it.)
+    let midStep = 0;
     function computeForces(velOnly) {
         const tmin = gravity(bodies, mainPairs, velOnly);
         mainStamp = gravStamp; mainN = bodies.length;
+        if (midStep > 0) { midStep--; forcesDirty = false; return; }
         const n = bodies.length;
         for (let k = 0; k < n; k++) { const b = bodies[k]; b.fx = b.m * b.ax; b.fy = b.m * b.ay; }
         let dt = (n > DIRECT_MAX ? ETA_SWARM : ETA) * Math.sqrt(tmin);
@@ -2077,6 +2080,7 @@
     function step(dt) {
         for (const b of bodies) { b.px = b.x; b.py = b.y; b.pvx = b.vx; b.pvy = b.vy; }
         for (const p of mainPairs) { p.touch = false; p.closest = Infinity; }
+        midStep = settings.realistic ? 5 : 2;
         yoshida(bodies, dt, computeForces, mainPairs);
     }
 
@@ -3782,10 +3786,11 @@
         while (!maxSteps || steps < maxSteps) {
             const dt = stepSize();   // (the close pairs and the next step; running back, the logged ones)
             if (!(dt > 0) || acc < dt) break;
-            // (stop if the next step, at the average cost so far, would overrun the budget)
+            // (stop if the next step, at the average cost so far, would overrun the budget by more than the
+            // time now left of it: steps come whole, and rounding down can leave most of a step's time idle every frame)
             if (!maxSteps && steps % every === 0 && steps > 0) {
                 const used = performance.now() - t0;
-                if (used + used / steps > budget) { timedOut = true; break; }
+                if (used + 0.5 * used / steps > budget) { timedOut = true; break; }
             }
             if (past.replay && timeDir < 0) tideBack(past.head - 1);
             step(timeDir * dt);
