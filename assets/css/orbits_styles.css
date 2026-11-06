@@ -645,7 +645,7 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 .orb-frame-chip {
     position: absolute;
     top: 8px;
-    left: 8px;
+    left: calc(8px + var(--orb-vis-l, 0px));
     z-index: 6;
     display: inline-flex;
     align-items: center;
@@ -1774,6 +1774,14 @@ body.sim-fullscreen-active.sim-panel-side .orbits-sim .sim-controls-panel {
 .sim-info-actions #reverseBtn[aria-pressed="true"]:focus-visible {
     outline-color: var(--color-text);
     outline-offset: 1px;
+}
+
+/* Stopped by itself at the start, with the pointer still on it: it looks off, not lit by the hover */
+@media (hover: hover) {
+    .sim-info-actions #reverseBtn.is-rested:hover {
+        color: var(--color-text) !important;
+        background-color: transparent;
+    }
 }
 
 #pauseBtn.is-back .fa-play {

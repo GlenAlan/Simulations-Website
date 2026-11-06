@@ -205,7 +205,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.',
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from the giant planet: the star circles it, as the Sun seems to circle Earth.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -294,7 +294,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.',
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : 'Jupiter herds 500 asteroids. In View from, choose Rotating with Jupiter: the patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -905,8 +905,12 @@
     const sampleTimes = new Float64Array(TRAIL_CAP);
 
     // View: px per AU = zoom * min(canvas width, height), so the scene scales with the canvas
-    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null };
+    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0 };
     let viewW = 0, viewH = 0, dpr = 1;
+    // What can be seen of the canvas (its px): all of it, but for the Settings drawer over one side;
+    // and where the middle of the view goes on it (see syncDrawer)
+    let visL = 0, visR = 0, midX = 0;
+    const drawer = { open: false, moved: false, back: null, box: null };
     let scale = 1;            // px per AU (this frame)
     let sizeScale = 1;        // drawn body sizes and arrows scale a little with the canvas
     let lag = 0;              // years: bodies are drawn extrapolated by the leftover time
@@ -1044,7 +1048,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1139,8 +1143,9 @@
     const PN_SKIP = 1e-9;
     const SOFT_STEP = 32;
     const SOFT_T2 = SOFT_STEP * SOFT_STEP;   // (the times are kept squared)
-    // A piece's softening length (AU): the radius of the body it came from, cbrt(FRAGMENTS) times its own
-    const softLength = (b) => (b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
+    // A piece's softening length (AU): about the size of the body it came from, more for a heavier piece.
+    // (Pieces of unequal mass have paths that cross: at half this, close passes leave the energy book worse.)
+    const softLength = (b) => (2 * b.R * Math.cbrt(FRAGMENTS)) / AU_KM;
     let scrCap = 0;
     let SX, SY, SVX, SVY, SM, SEPS, SGRP, SAX, SAY, SA0, SBEST, SSECOND, SPART, SPAIR, SDIR, SDPOS;
     let PAX, PAY, NAX, NAY;                  // the 1PN part of the accelerations, and the Newtonian part
@@ -2058,6 +2063,7 @@
     function announceTear() {
         const n = tornNews;
         tornNews = null;
+        updateHistoryUi();   // (Undo now takes the break-up back: see tornInScene)
         if (!n || n.L.minor) return;
         clearHint('tip');
         if (n.chosen && bodies.includes(n.H)) selectBody(n.H.id);
@@ -2118,6 +2124,35 @@
         return false;
     }
 
+    // How a body breaks: ragged, not a row of equal beads. The pieces' masses, the gaps along the line to
+    // the heavy body and how far they sit off it all vary, in a pattern taken from the two bodies, their
+    // masses, size and name (never from the clock or Math.random, so Run again and a shared link break it
+    // the same way, bit for bit).
+    // Measured from their centre of mass, so all moving as one they keep the whole body's centre of mass,
+    // momentum and angular momentum. Returns each piece's share of the mass and place (in units of the radius).
+    function tearPattern(L, H, n) {
+        const bits = new Uint32Array(new Float64Array([L.m, L.R, H.m]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        for (let k = 0; k < L.name.length; k++) h = Math.imul(h ^ L.name.charCodeAt(k), 16777619);
+        const rnd = seeded(((h >>> 0) % 2147483646) + 1);
+        rnd(); rnd();   // (the first numbers from a small seed are much alike)
+        const share = [], along = [], off = [];
+        let W = 0, s = 0;
+        for (let i = 0; i < n; i++) {
+            share.push(Math.exp(0.8 * (2 * rnd() - 1)));
+            if (i) s += 0.35 + rnd();
+            along.push(s);
+            off.push(rnd() - 0.5);
+            W += share[i];
+        }
+        const stretch = 2 / s;
+        let A = 0, O = 0;
+        for (let i = 0; i < n; i++) { share[i] /= W; A += share[i] * along[i] * stretch; O += share[i] * off[i]; }
+        for (let i = 0; i < n; i++) { along[i] = along[i] * stretch - A; off[i] -= O; }
+        return { share, along, off };
+    }
+
     function disrupt(L, H) {
         const n = Math.min(L.minor ? MINOR_FRAGMENTS : FRAGMENTS, MAX_BODIES - bodies.length + 1);
         if (n < 3) return false;   // no room for the pieces: it stays whole
@@ -2127,11 +2162,16 @@
         const ux = (L.x - H.x) / d, uy = (L.y - H.y) / d;
         const span = L.R / AU_KM;
         const parts = [], name = uniqueName('Fragment');
+        const shape = tearPattern(L, H, n);
+        let left = L.m;
         for (let i = 0; i < n; i++) {
-            const s = -1 + (2 * i) / (n - 1);
-            const f = newBody({ name, kind: L.kind, m: L.m / n, R: L.R / Math.cbrt(n), color: L.color });
+            const s = shape.along[i], q = shape.off[i];
+            const m = i < n - 1 ? L.m * shape.share[i] : left;   // (the last takes what rounding left: the mass adds up exactly)
+            left -= m;
+            const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = L.id;
-            f.x = L.x + ux * s * span; f.y = L.y + uy * s * span;
+            f.heft = heftOf(n * shape.share[i]);
+            f.x = L.x + (ux * s - uy * q) * span; f.y = L.y + (uy * s + ux * q) * span;
             f.vx = L.vx; f.vy = L.vy;
             f.px = f.x; f.py = f.y;
             parts.push(f);
@@ -2711,7 +2751,7 @@
         const sketchH = wl && wl.wave ? (compact ? 18 : 30) : 0;
         const w = Math.max(...lines.map(widthOf), sketchH ? (compact ? 120 : 170) : 0) + 20;
         const h = lines.length * lh + 10 + (sketchH ? sketchH + 6 : 0);
-        const x = viewW - 8 - w;
+        const x = visR - 8 - w;
         cardBox(C, x, y, w, h);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -3332,15 +3372,16 @@
         return { x: freeze.x + freeze.vx * dt, y: freeze.y + freeze.vy * dt, phi: freeze.phi };
     }
 
-    const sx = (x) => viewW / 2 + (x - F.x - view.panX) * scale;
+    const sx = (x) => midX + (x - F.x - view.panX) * scale;
     const sy = (y) => viewH / 2 - (y - F.y - view.panY) * scale;
-    const wx = (px) => F.x + view.panX + (px - viewW / 2) / scale;
+    const wx = (px) => F.x + view.panX + (px - midX) / scale;
     const wy = (py) => F.y + view.panY - (py - viewH / 2) / scale;
 
     function updateScale() {
         const m = Math.max(1, Math.min(viewW, viewH));
         scale = view.zoom * m;
         sizeScale = clamp(m / 560, 0.62, 1.1);
+        midX = viewW / 2 + view.shift;
     }
 
     // Drawn radius (CSS px) from the real radius: compressed, so a star is about twice a giant
@@ -3364,7 +3405,18 @@
     }
     // A torn-apart body's pieces are small, and so are the light bodies of a swarm
     const MINOR_SIZE = 2;
-    const bodySize = (b) => (b.grp ? 3.5 : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
+    const bodySize = (b) => (b.grp ? 3.5 * pieceHeft(b) : b.minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R));
+    // How big a piece of a torn-apart body looks beside the others, by its mass among them (x: its mass over
+    // their average). Set as it breaks; a piece put back from a copy or a link works it out when it is drawn.
+    const heftOf = (x) => clamp(Math.sqrt(x), 0.55, 1.8);
+    function pieceHeft(b) {
+        if (!b.heft) {
+            let M = 0, n = 0;
+            for (const q of bodies) if (q.grp === b.grp) { M += q.m; n++; }
+            b.heft = heftOf((n * b.m) / M);
+        }
+        return b.heft;
+    }
 
     // Drawn radii for this frame. A moon close to its planet on screen shrinks both discs (down to
     // 3 px) so they never overlap; zoomed in far enough, bodies are drawn at their true size.
@@ -3385,18 +3437,20 @@
             p.rmax = Math.min(p.rmax, 0.45 * d);
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
-        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : 3, b.rmax, (b.R / AU_KM) * scale);
+        for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : b.grp ? 1.8 : 3, b.rmax, (b.R / AU_KM) * scale);
     }
 
-    // Change the view so a world box (relative to the frame origin) fits the canvas.
-    function fitBox(box, animate) {
+    // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
+    // (at no more than the zoom most, if given).
+    function fitBox(box, animate, most) {
         const m = Math.max(1, Math.min(viewW, viewH));
         const w = Math.max(box[1] - box[0], 1e-9), h = Math.max(box[3] - box[2], 1e-9);
-        const W = viewW || 800, H = viewH || 500;
+        const W = visR - visL || 800, H = viewH || 500;
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
-        const target = { zoom: pxPerAu / m, panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
+        const target = { zoom: Math.min(pxPerAu / m, most || Infinity), panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
         view.panned = false;
+        drawerCamera(box);
         if (animate) view.anim = target;
         else { view.zoom = target.zoom; view.panX = target.panX; view.panY = target.panY; view.anim = null; }
     }
@@ -3413,11 +3467,21 @@
             fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
             return;
         }
+        fitBox(paddedBox(sceneBox(true)), true);
+    }
+
+    const paddedBox = (q) => {
+        const pad = 0.08 * Math.max(q[1] - q[0], q[3] - q[2], 1e-6);
+        return [q[0] - pad, q[1] + pad, q[2] - pad, q[3] + pad];
+    };
+
+    // The box round every body, and with orbits, the whole orbit of each bound one (relative to the frame origin)
+    function sceneBox(orbits) {
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         const add = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
         for (const b of bodies) {
             add(b.dx - F.x, b.dy - F.y);
-            if (b.bound && b.primary && b.primary.primary !== b) {
+            if (orbits && b.bound && b.primary && b.primary.primary !== b) {
                 const el = turnedElements(elementsOf(b, b.primary));
                 if (el && el.bound) {
                     const fp = b.primary.m / (b.m + b.primary.m);
@@ -3432,8 +3496,7 @@
                 }
             }
         }
-        const pad = 0.08 * Math.max(x1 - x0, y1 - y0, 1e-6);
-        fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], true);
+        return [x0, x1, y0, y1];
     }
 
     // The glide: the zoom and the way left to go close in together, counted in px on the screen, so what
@@ -3442,6 +3505,10 @@
     // lasts (a target on the move is never quite caught, so that much is the limit).
     const GLIDE_FOLLOW_MS = 1500;
     function stepViewAnimation(dtReal) {
+        if (view.shift !== view.shiftTo) {
+            view.shift = view.shiftTo + (view.shift - view.shiftTo) * Math.exp(-dtReal / 0.16);
+            if (Math.abs(view.shift - view.shiftTo) < 0.3) view.shift = view.shiftTo;
+        }
         const a = view.anim;
         if (!a) return;
         if (a.ref && bodies.includes(a.ref)) { a.panX = a.ref.dx - F.x + a.ox; a.panY = a.ref.dy - F.y + a.oy; }
@@ -3468,8 +3535,9 @@
         const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
         view.zoom = clamp(view.zoom * factor, 1e-7, 1e7);
         view.anim = null;
+        drawer.moved = true;
         updateScale();
-        view.panX = x - F.x - (px - viewW / 2) / scale;
+        view.panX = x - F.x - (px - midX) / scale;
         view.panY = y - F.y + (py - viewH / 2) / scale;
         if (factor > 1 && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in: see insideOf)
     }
@@ -3507,6 +3575,7 @@
             if (L && ui.frameChipName) ui.frameChipName.textContent = L.name;
         }
         syncTurnUi();
+        refreshHint();   // (a scene's tip that names the view follows it)
     }
 
     // ------------------------------------------------------------------
@@ -4142,7 +4211,7 @@
             return s;
         };
         // Grid point (i, j) is at screen point (i cell - margin, j cell - margin)
-        const x0 = F.x + view.panX + (-margin - viewW / 2) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
+        const x0 = F.x + view.panX + (-margin - midX) / scale, y0 = F.y + view.panY + (margin + viewH / 2) / scale;
         const step = cell / scale;
         if (!well.U || well.U.length !== gw * gh) well.U = new Float32Array(gw * gh);
         const U = well.U;
@@ -4212,7 +4281,7 @@
         }
         well.next = {
             lines, strong: crit.length ? strong : null, omega: P ? turn.omega : 0,
-            view: { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, margin, cell, gw, gh, off: Math.ceil(margin * dpr) },
+            view: { fx: F.x, fy: F.y, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, mid: midX, margin, cell, gw, gh, off: Math.ceil(margin * dpr) },
             pos: src.map((b) => ({ b, x: sx(b.dx), y: sy(b.dy) }))
         };
         well.t = performance.now();
@@ -4258,7 +4327,7 @@
         const k = scale / v.scale;
         return {
             k,
-            tx: viewW / 2 - (k * v.w) / 2 + scale * (v.fx + v.panX - F.x - view.panX),
+            tx: midX - k * v.mid + scale * (v.fx + v.panX - F.x - view.panX),
             ty: viewH / 2 - (k * v.h) / 2 - scale * (v.fy + v.panY - F.y - view.panY)
         };
     }
@@ -4959,7 +5028,7 @@
         if (!el || !el.bound || !viewW || !viewH || !(el.a * (1 + el.e) < 1e5 * Math.max(el.r, 1e-12))) return;
         updateDrawnPositions();
         const o = orbitBox(b, p, el);   // (relative to the frame origin, with a margin)
-        const xa = wx(0) - F.x, xb = wx(viewW) - F.x, ya = wy(0) - F.y, yb = wy(viewH) - F.y;
+        const xa = wx(visL) - F.x, xb = wx(visR) - F.x, ya = wy(0) - F.y, yb = wy(viewH) - F.y;
         const v = [Math.min(xa, xb), Math.max(xa, xb), Math.min(ya, yb), Math.max(ya, yb)];
         if (o[0] >= v[0] && o[1] <= v[1] && o[2] >= v[2] && o[3] <= v[3]) return;
         const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -4990,6 +5059,7 @@
         const b = bodyById(selectedId);
         const z = zoomToBody(b);
         if (!z) return null;
+        drawerCamera(null);
         suitSpeed(b, z);
         const whose = theName(b);
         const others = z.with.length && z.with.length <= 3 ? z.with.map(theName) : null;
@@ -5453,13 +5523,13 @@
         if (kind === 'moon') { const b = autoMoon(kind); if (b) return b; }
         const top = heaviest();
         const k = KINDS[kind] || KINDS.custom;
-        const half = Math.min(viewW, viewH) / (2 * scale);
-        let cx = wx(viewW / 2), cy = wy(viewH / 2), R = 0.6 * half;
+        const half = Math.min(visR - visL, viewH) / (2 * scale);
+        let cx = wx(midX), cy = wy(viewH / 2), R = 0.6 * half;
         if (top && top.m >= k.m) {
             const tx = sx(top.dx), ty = sy(top.dy);
-            if (tx > 0 && tx < viewW && ty > 0 && ty < viewH) {
+            if (tx > visL && tx < visR && ty > 0 && ty < viewH) {
                 cx = top.dx; cy = top.dy;
-                const spaceX = Math.min(tx, viewW - tx), spaceY = Math.min(ty, viewH - ty);
+                const spaceX = Math.min(tx - visL, visR - tx), spaceY = Math.min(ty, viewH - ty);
                 // (zoomed in close it may land out of view, rather than inside the body and merge with it)
                 R = Math.max(0.7 * Math.min(spaceX, spaceY) / scale, 4 * (top.R + k.R) / AU_KM);
             }
@@ -5645,7 +5715,7 @@
         if (L && !L.trail) return;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
         const live = freeze ? liveFrameOrigin() : F;
-        const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        const offX = (live.x - F.x - view.panX) * scale + midX, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const lw = clamp(1.6 * sizeScale, 1.2, 2);
         // (a turned view: each sample turned by the angle at its own time, from the turning pair's own
         // samples; see turnedTrails)
@@ -5691,7 +5761,7 @@
         ctx.lineWidth = Math.max(1, 0.6 * lw);
         ctx.lineCap = 'butt';
         ctx.lineJoin = 'bevel';
-        trailGroups(pieceGroups, PIECE_CHUNKS, 0.08, 0.72, tr, first, oFirst, C);
+        trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
         if (!low) {
             ctx.lineJoin = 'miter';
             trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
@@ -5702,10 +5772,12 @@
     }
 
     // Groups of trails: a path per colour for each of chunks shades, from alpha a0 + a1 / chunks to a0 + a1
+    // (the pieces' old ends don't all stop at one moment: each gives up its own share, for a tapering end)
     function trailGroups(groups, chunks, a0, a1, tr, first, oFirst, C) {
+        const pieces = groups === pieceGroups;
         for (const [color, g] of groups) {
             if (!g.length) continue;
-            ctx.strokeStyle = bodyStroke(color, C.dark);
+            ctx.strokeStyle = pieces ? pieceColour(color, C) : bodyStroke(color, C.dark);
             for (let c = 0; c < chunks; c++) {
                 const f = (c + 1) / chunks;
                 ctx.globalAlpha = a0 + a1 * f;
@@ -5713,6 +5785,7 @@
                 for (const b of g) {
                     let k0 = Math.max(trailFirst(b), first, oFirst);
                     k0 = Math.max(k0, sampleCount - Math.ceil((sampleCount - k0) * perf.quality));
+                    if (pieces) k0 += Math.floor(0.45 * ((b.id * 0.618034) % 1) * (sampleCount - k0));
                     const count = sampleCount - k0;
                     if (count < 1) continue;
                     const chunk = Math.max(1, Math.ceil(count / chunks));
@@ -5938,12 +6011,15 @@
         ctx.fill();
     }
 
+    const pieceColour = (color, C) => (C.dark ? color : bodyStroke(bodyStroke(color, false), false));
+
     function drawBody(b, x, y, r, C) {
         const look = lookOf(b);
         if (b.grp) {
-            // A piece of a torn-apart body: a glowing clump
-            glow(x, y, 0, Math.max(r * 2.4, 5), b.color, C.dark ? 0.55 : 0.6);
-            disc(x, y, Math.max(r * 0.8, 0.9), b.color, 0.5, C);
+            // A piece of a torn-apart body: a glowing clump (deeper on a light background, or it hardly shows)
+            const z = pieceHeft(b);
+            glow(x, y, 0, Math.max(r * 2.4, 5 * z), C.dark ? b.color : bodyStroke(b.color, false), C.dark ? 0.55 : 0.6);
+            disc(x, y, Math.max(r * 0.8, 1.1 * z), pieceColour(b.color, C), 0.5, C);
             return;
         }
         if (look === 'blackhole') { drawBlackHole(x, y, r, b, C); return; }
@@ -6047,7 +6123,7 @@
         if (closeUp) placed.push({ l: closeUp.x - closeUp.R, r: closeUp.x + closeUp.R, t: closeUp.y - closeUp.R - 18, b: closeUp.y + closeUp.R });
         const order = discs.slice().sort((p, q) => (q.b.id === selectedId) - (p.b.id === selectedId) || q.b.m - p.b.m);
         for (const { x, y, r, b } of order) {
-            if (x < -r || x > viewW + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
+            if (x < visL - r || x > visR + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
             const chosen = b.id === selectedId || b === popBody;
             if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
@@ -6088,7 +6164,7 @@
             for (const strict of [true, false]) {
                 for (const [dx, dy] of spots) {
                     const box = { l: c.x + dx, t: c.y + dy, r: c.x + dx + w, b: c.y + dy + h };
-                    if (box.l < 4 || box.r > viewW - 4 || box.t < 4 || box.b > viewH - 4) continue;
+                    if (box.l < visL + 4 || box.r > visR - 4 || box.t < 4 || box.b > viewH - 4) continue;
                     if (placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)) continue;
                     if (strict && discs.some((d) => d.x + d.r > box.l && d.x - d.r < box.r && d.y + d.r > box.t && d.y - d.r < box.b)) continue;
                     at = box;
@@ -6107,14 +6183,14 @@
     function drawnCentreOfMass() {
         let M = 0, X = 0, Y = 0;
         for (const b of bodies) { M += b.m; X += b.m * b.dx; Y += b.m * b.dy; }
-        return M > 0 ? { x: sx(X / M), y: sy(Y / M) } : { x: viewW / 2, y: viewH / 2 };
+        return M > 0 ? { x: sx(X / M), y: sy(Y / M) } : { x: midX, y: viewH / 2 };
     }
 
     // The box of a name anchored at (x, y) on the side (ux, uy) of its body, kept inside the canvas
     function labelBox(x, y, ux, uy, w, fs) {
         let l = ux > 0.38 ? x : ux < -0.38 ? x - w : x - w / 2;
         let t = uy > 0.38 ? y : uy < -0.38 ? y - fs : y - fs / 2;
-        l = clamp(l, 4, Math.max(4, viewW - 4 - w));
+        l = clamp(l, visL + 4, Math.max(visL + 4, visR - 4 - w));
         t = clamp(t, 2, viewH - fs - 4);
         return { l, t, r: l + w, b: t + fs };
     }
@@ -6126,16 +6202,16 @@
     function edgeKeepOut() {
         const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
         let top = 0;
-        if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([0, 0, Math.min(viewW, 240), top]); }
+        if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([visL, 0, Math.min(visR, visL + 240), top]); }
         const t = timeNotice();
         if (t) {
             ctx.font = font(fs, true);
-            out.push([0, top, 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
+            out.push([visL, top, visL + 8 + ctx.measureText(t).width + 18 + 6, top + 8 + fs + 10 + 6]);
         }
-        if (cards.bottom > 0 && cards.left < viewW) out.push([cards.left - 6, 0, viewW, cards.bottom + 4]);
+        if (cards.bottom > 0 && cards.left < visR) out.push([cards.left - 6, 0, visR, cards.bottom + 4]);
         const strip = Math.min(edges.strip, viewH - fs - 18);
-        out.push([0, strip, Math.min(viewW, edges.scaleRight + 6), viewH]);
-        if (edges.noteLeft < viewW) out.push([edges.noteLeft - 6, strip, viewW, viewH]);
+        out.push([visL, strip, Math.min(visR, edges.scaleRight + 6), viewH]);
+        if (edges.noteLeft < visR) out.push([edges.noteLeft - 6, strip, visR, viewH]);
         if (legend.shown) out.push([legend.x - 4, legend.top - 4, legend.x + legend.w + 8, viewH]);
         return out;
     }
@@ -6144,7 +6220,7 @@
     // edge (where its name goes), are clear of every rectangle. Returns [x, y, clear]: on a small
     // canvas a stretch of edge may have no room left, and then the pointer goes without its name.
     function clearOfEdges(ex, ey, zones, inset, h) {
-        const onSide = ex <= inset + 0.5 || ex >= viewW - inset - 0.5;
+        const onSide = ex <= visL + inset + 0.5 || ex >= visR - inset - 0.5;
         const x0 = ex, y0 = ey;
         for (let pass = 0; pass < 7; pass++) {
             const z = onSide ? zones.find((r) => ex >= r[0] && ex <= r[2] && ey + h > r[1] && ey - h < r[3])
@@ -6157,7 +6233,7 @@
                 ey = (up >= inset && (ey - up <= down - ey || down > viewH - inset)) ? up : Math.min(down, viewH - inset);
             } else {
                 const lt = z[0] - h - 2, rt = z[2] + h + 2;
-                ex = (lt >= inset && (ex - lt <= rt - ex || rt > viewW - inset)) ? lt : Math.min(rt, viewW - inset);
+                ex = (lt >= visL + inset && (ex - lt <= rt - ex || rt > visR - inset)) ? lt : Math.min(rt, visR - inset);
             }
         }
         return [x0, y0, false];
@@ -6181,14 +6257,14 @@
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
-        const cx = viewW / 2, cy = viewH / 2;
+        const cx = (visL + visR) / 2, cy = viewH / 2;
         const inset = 12;
         let zones = null;
         for (const b of bodies) {
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (b.minor && !isChosen(b)) || (x > -r && x < viewW + r && y > -r && y < viewH + r)) continue;
+            if (b.grp || (b.minor && !isChosen(b)) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
             const dx = x - cx, dy = y - cy;
-            const k = Math.min((cx - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
+            const k = Math.min(((visR - visL) / 2 - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
             // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
@@ -6266,14 +6342,15 @@
     // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
     // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
     // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
-    // ARROW_PX long; arrows over three times that are squeezed.
+    // ARROW_PX long; arrows over twice that are squeezed, to at most two and a half times (a body swung
+    // up to many times the scene's speeds shouldn't have an arrow across the whole view).
     const ARROW_PX = 60;
     let vRef = TAU;   // AU/yr (Earth's orbital speed until a scene sets it)
     const arrowUnit = () => ARROW_PX * sizeScale;
     const pxPerSpeed = () => arrowUnit() / vRef;
     function arrowLength(v) {
         const L = v * pxPerSpeed(), L0 = arrowUnit();
-        return L <= 3 * L0 ? L : 3 * L0 + L0 * (1 - Math.exp(-(L - 3 * L0) / L0));
+        return L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0)));
     }
 
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
@@ -6327,7 +6404,7 @@
         const w = ctx.measureText(text).width;
         const al = ctx.textAlign;
         let left = al === 'right' ? x - w : al === 'center' ? x - w / 2 : x;
-        left = clamp(left, 4, Math.max(4, viewW - 4 - w));
+        left = clamp(left, visL + 4, Math.max(visL + 4, visR - 4 - w));
         const ty = clamp(y, 10, viewH - 8);
         ctx.textAlign = 'left';
         if (halo) ctx.strokeText(text, left, ty);
@@ -6834,15 +6911,15 @@
         let x = cx, top = NaN;
         for (const s of below ? [1, -1] : [-1, 1]) {
             const t = s < 0 ? cy - R - 4 - fs : cy + R + 4;
-            if (cx >= 0 && cx <= viewW && t >= 4 && t + fs <= viewH - 30) { top = t; break; }
+            if (cx >= visL && cx <= visR && t >= 4 && t + fs <= viewH - 30) { top = t; break; }
         }
         if (isNaN(top)) {
-            const dx = viewW / 2 - cx, dy = viewH / 2 - cy, d = Math.hypot(dx, dy);
+            const dx = midX - cx, dy = viewH / 2 - cy, d = Math.hypot(dx, dy);
             if (!(d > 0)) return;
             x = cx + (dx / d) * R; top = cy + (dy / d) * R + 4;
-            if (x < 0 || x > viewW || top < 4 || top + fs > viewH - 30) return;
+            if (x < visL || x > visR || top < 4 || top + fs > viewH - 30) return;
         }
-        x = clamp(x, 4 + w / 2, Math.max(4 + w / 2, viewW - 4 - w / 2));
+        x = clamp(x, visL + 4 + w / 2, Math.max(visL + 4 + w / 2, visR - 4 - w / 2));
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.strokeStyle = hexA(C.bg, 0.85);
@@ -6962,8 +7039,8 @@
         const bottom = viewH - 12 - fs - (tight ? 6 : 10);
         const top = bottom - rows * lh;
         // (the flyby close-up may have taken the bottom-left corner: then the bottom right, above the note)
-        legend.right = !!(closeUp && closeUp.x < viewW / 2 && closeUp.y > viewH / 2);
-        const left = legend.right ? viewW - 12 - w : 12;
+        legend.right = !!(closeUp && closeUp.x < midX && closeUp.y > viewH / 2);
+        const left = legend.right ? visR - 12 - w : visL + 12;
         // Fade while a body (not a swarm's dot) is under it: checked ten times a second
         if (now - legend.t > 100) {
             legend.t = now;
@@ -7147,7 +7224,7 @@
     // A label beyond a point along (ux, uy); if the canvas edge is in the way, on the inside instead.
     function labelOutward(text, q, ux, uy, gap) {
         const w = ctx.measureText(text).width;
-        const room = ux > 0.3 ? viewW - (q.x + gap) : ux < -0.3 ? q.x - gap : Infinity;
+        const room = ux > 0.3 ? visR - (q.x + gap) : ux < -0.3 ? q.x - gap - visL : Infinity;
         if (room < w + 4) { ux = -ux; uy = -uy; }
         ctx.textAlign = ux > 0.3 ? 'left' : ux < -0.3 ? 'right' : 'center';
         const x = q.x + ux * gap, y = q.y + uy * gap + (Math.abs(ux) <= 0.3 ? (uy > 0 ? 6 : -6) : 0);
@@ -7241,7 +7318,7 @@
         const km = scene.units === 'km' || target < 0.01;
         const nice = km ? niceNumber(target * AU_KM) / AU_KM : niceNumber(target);
         const len = nice * scale;
-        const x0 = pad + 4, y0 = viewH - pad - 4;
+        const x0 = visL + pad + 4, y0 = viewH - pad - 4;
         ctx.strokeStyle = C.subtle;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -7261,8 +7338,8 @@
         if (now < sizeNote.until) {
             const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
             ctx.textAlign = 'right';
-            ctx.fillText(note, viewW - pad - 2, y0 + 2);
-            edges.noteLeft = viewW - pad - 2 - ctx.measureText(note).width;
+            ctx.fillText(note, visR - pad - 2, y0 + 2);
+            edges.noteLeft = visR - pad - 2 - ctx.measureText(note).width;
         }
         edges.strip = y0 - fs - 4;
 
@@ -7273,7 +7350,7 @@
         if (t) {
             ctx.font = font(fs, true);
             const w = ctx.measureText(t).width + 18;
-            const x = pad, y = frameId !== null ? pad + 40 : pad;
+            const x = visL + pad, y = frameId !== null ? pad + 40 : pad;
             roundRect(x, y, w, fs + 10, 4);
             ctx.fillStyle = C.card;
             ctx.fill();
@@ -7359,12 +7436,12 @@
     }
 
     function drawCardStack(C, subj, fs, pad) {
-        const small = viewW < 560;
+        const small = visR - visL < 560;
         const cfs = small ? clamp(fs - 0.5, 10, 12) : fs;
-        const y0 = frameId !== null && viewW < 520 ? 48 : pad;
+        const y0 = frameId !== null && visR - visL < 520 ? 48 : pad;
         const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
         const now = performance.now();
-        const sig = `${viewW}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${selectedId}|${C.dark}`;
+        const sig = `${visR - visL}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${selectedId}|${C.dark}`;
         // (worked out again when what is switched on changes, and twice a second while the stack is
         // over its cap or has had to give way; a stack that fits as it is costs nothing more)
         const squeezed = cards.folded.length > 0 || (!small && CARD_ORDER.some((id) => cards.compact[id]));
@@ -7422,7 +7499,7 @@
         if (cleanRender || !b || flyby.bid !== b.id || !(flyby.active || flyby.done) || flyby.pts.length < 4 || !bodyById(flyby.pid)) return;
         const R = clamp(Math.min(viewW, viewH) * 0.15, 44, 80);
         const top = (frameId !== null ? 48 : 8) + (timeNotice() ? 32 : 0) + 18 + R;
-        const corners = [[viewW - 10 - R, viewH - 30 - R], [10 + R, viewH - 34 - R], [10 + R, top]];
+        const corners = [[visR - 10 - R, viewH - 30 - R], [visL + 10 + R, viewH - 34 - R], [visL + 10 + R, top]];
         const crowd = (c) => bodies.reduce((n, o) => n + Math.max(0, R + 60 - Math.hypot(sx(o.dx) - c[0], sy(o.dy) - c[1])), 0);
         let best = corners[0], least = crowd(best);
         for (const c of corners.slice(1)) { const n = crowd(c); if (n < least - 1) { least = n; best = c; } }
@@ -7520,7 +7597,7 @@
         const widthOf = (line) => line.reduce((s, seg) => { ctx.font = font(fs, seg[1]); return s + ctx.measureText(seg[0]).width; }, 0);
         const w = Math.max(...lines.map(widthOf)) + 20;
         const h = lines.length * lh + 10;
-        const x = viewW - 8 - w;
+        const x = visR - 8 - w;
         cardBox(C, x, y, w, h);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -7668,7 +7745,7 @@
         w = Math.max(w, ctx.measureText(note).width, tableW) + 20;
         const nLines = 1 + (rows.length ? 1 + cells.length : 0) + 1;
         const h = nLines * lh + 10;
-        const x = viewW - 8 - w;
+        const x = visR - 8 - w;
         cardBox(C, x, y, w, h);
         ctx.textBaseline = 'middle';
         let ly = y + 5 + lh / 2;
@@ -8468,7 +8545,8 @@
         const pw = ui.pop.offsetWidth, ph = ui.pop.offsetHeight;
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
         // Room in canvas coordinates: within the canvas when it fits, otherwise anywhere on screen
-        const minX = 6 - cr.left, maxX = window.innerWidth - cr.left - 6;
+        // (and clear of the settings, if they are open over the canvas)
+        const minX = visL > 0 ? visL + 6 : 6 - cr.left, maxX = visR < viewW ? visR - 6 : window.innerWidth - cr.left - 6;
         const fits = ph <= cr.height - 12;
         const minY = fits ? 6 : 6 - cr.top, maxY = fits ? cr.height - 6 : window.innerHeight - cr.top - 6;
         let left = x + r + 18;
@@ -9529,12 +9607,25 @@
         clearHint('drag');
     }
 
+    // Escape, with a body on its way from the palette: it goes back, and time carries on. The press that
+    // is still down lets go of nothing (its click, whenever it comes, adds nothing either).
+    function escapeChipDrag() {
+        const d = paletteDrag;
+        if (!d || !d.moved) return false;
+        d.btn.dataset.dragged = '1';
+        d.btn.addEventListener('lostpointercapture', () => setTimeout(() => { d.btn.dataset.dragged = ''; }, 400), { once: true });
+        onChipCancel({ pointerId: d.id });
+        showHint('note', '<strong>Cancelled:</strong> nothing added.', { ms: 3000 });
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // Hint line under the palette
     // ------------------------------------------------------------------
     let lastPointerType = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
     const coarse = () => lastPointerType !== 'mouse';
     let hintKey = '';
+    let hintPressed = false;   // a press on one of the line's own buttons: it stays as it is until that is over
 
     // One message at a time, by priority. Each layer holds { html, tag }; html may be a function, read
     // again whenever the line is refreshed, so a note that names the chosen body follows the choice.
@@ -9592,7 +9683,7 @@
 
     // Write the line from the top layer that has something to say
     function refreshHint() {
-        if (!ui.hint) return;
+        if (!ui.hint || hintPressed) return;
         const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
             || hintHtml(hints.note) || hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint();
         if (h === hintKey) return;
@@ -10231,7 +10322,12 @@
         if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
             setPaused(true);
             setReverse(false, true);
-            pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
+            // (off, and looking it, though the pointer that pressed it may still be on it)
+            if (ui.reverse && ui.reverse.matches(':hover')) ui.reverse.classList.add('is-rested');
+            if (driftedFromStart()) {
+                const again = canRunAgain() ? ' <button type="button" class="orb-hint-btn orb-hint-again">Run again</button>' : '';
+                pastNote(`<strong>Back at time 0, but not where it began:</strong> rounding errors grow in chaos.${again}`, 12000);
+            } else pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
             return;
         }
         const w = past.wall;
@@ -10241,6 +10337,23 @@
             acc = 0;
             pastNote('<strong>Stopped:</strong> two bodies merged here, too long ago to take them apart.', 8000);
         }
+    }
+
+    // Rewound to the start of the run: is any body away from where it began, by over 1% of the size of
+    // the system then, or gone? (Chaos does that at a high speed, where each step is far larger.)
+    function driftedFromStart() {
+        const s = hist.rw;
+        if (!s || hist.rwStale || Math.abs(s.t - simTime) > sampleDt) return false;
+        if (s.n !== bodies.length) return true;
+        const num = s.num, at = new Map(bodies.map((b) => [b.id, b]));
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, far = 0;
+        for (let i = 0; i < s.n; i++) {
+            const o = i * SNAP_W, x = num[o + 3], y = num[o + 4], b = at.get(num[o]);
+            if (!b) return true;
+            x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+            far = Math.max(far, Math.hypot(b.x - x, b.y - y));
+        }
+        return far > 0.01 * Math.hypot(x1 - x0, y1 - y0);
     }
 
     // Just before a merge (kind 'merge') or a tidal break-up ('tear'): copy the system, once a step
@@ -10316,6 +10429,7 @@
         const note = ev.kind === 'tear' ? `<strong>${name} is whole again.</strong> A break-up can't run backwards by itself.`
             : `<strong>${back.length > 1 ? `${back.length} bodies are` : `${name} is`} back.</strong> A merger can't run backwards by itself.`;
         pastNote(note, 6000);
+        updateHistoryUi();
     }
 
     // The trails after a step, either way in time. The kept samples always run one way (trailDir).
@@ -10400,7 +10514,7 @@
         if (tq && tq.ox !== undefined) { ox = tq.ox; oy = tq.oy; }
         const rc = tq ? tq.c : 1, rs = tq ? tq.s : 0;
         const live = freeze ? liveFrameOrigin() : F;
-        const offX = (live.x - F.x - view.panX) * scale + viewW / 2, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        const offX = (live.x - F.x - view.panX) * scale + midX, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const where = (b) => {
             const T = b.trail, i0 = trailIndex(T, k), i1 = trailIndex(T, k + 1);
             const rx = T[i0] + f * (T[i1] - T[i0]) - ox, ry = T[i0 + 1] + f * (T[i1 + 1] - T[i0 + 1]) - oy;
@@ -10502,7 +10616,10 @@
 
     function syncReverseUi() {
         const back = timeDir < 0;
-        if (ui.reverse) ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+        if (ui.reverse) {
+            ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+            if (back) ui.reverse.classList.remove('is-rested');
+        }
         if (ui.pause) ui.pause.classList.toggle('is-back', back);   // (its Play points the way time will run)
         if (ui.step) {
             const label = back ? 'Step back' : 'Step forward';
@@ -10526,7 +10643,10 @@
     // body is let go
     function bindPlayControls() {
         window.addEventListener('pointerup', onThrowUp, true);
-        if (ui.reverse) ui.reverse.addEventListener('click', pressReverse);
+        if (ui.reverse) {
+            ui.reverse.addEventListener('click', pressReverse);
+            ui.reverse.addEventListener('pointerleave', () => ui.reverse.classList.remove('is-rested'));
+        }
         window.addEventListener('keydown', (e) => {
             if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
             if (e.key !== 'b' && e.key !== 'B') return;
@@ -10751,9 +10871,10 @@
                 const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
                 view.zoom = clamp(pinch.zoom0 * dist / pinch.d0, 1e-7, 1e7);
                 view.anim = null;
+                drawer.moved = true;
                 updateScale();
                 // keep the world point that was under the fingers' midpoint under it
-                view.panX = pinch.wx - F.x - (mx - viewW / 2) / scale;
+                view.panX = pinch.wx - F.x - (mx - midX) / scale;
                 view.panY = pinch.wy - F.y + (my - viewH / 2) / scale;
                 if (view.zoom > was.zoom && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in)
             }
@@ -10765,6 +10886,7 @@
             view.panY += dy / scale;
             view.anim = null;
             view.panned = true;
+            drawer.moved = true;
             return;
         }
         if (d.mode === 'press' && far && missionRefuse('move', d.body)) d.mode = 'pan';
@@ -11869,6 +11991,8 @@
             zoomChosen();
         } else if (t.closest('.orb-hint-help')) {
             openHelp(false);
+        } else if (t.closest('.orb-hint-again')) {
+            runAgain();
         }
     }
 
@@ -12161,9 +12285,14 @@
         if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
         // (a glide passes through views that show nothing: only where it ends counts)
         if (!ui.fit || !viewW || !bodies.length || dragging()) return;
-        if (view.anim) { if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned); return; }
         const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
-        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > -r && x < viewW + r && y > -r && y < viewH + r; });
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > visL - r && x < visR + r && y > -r && y < viewH + r; });
+        if (view.anim) {
+            if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned);
+            // (a glide that has brought bodies back: the note goes as soon as they show)
+            else if (!inside && !out) { viewLost = null; clearHint('note', 'lost'); }
+            return;
+        }
         ui.fit.classList.toggle('is-wanted', out || !!inside || !!view.panned);   // (moved by hand: the way back stands out too)
         const lost = inside ? inside.id : out ? -1 : null;
         if (lost === viewLost) return;
@@ -12622,9 +12751,23 @@
         while (hist.undo.length > 1 && size(hist.undo) + size(hist.redo) > HISTORY_BODIES) hist.undo.shift();
     }
 
+    // Nothing done in this scene, yet a body has broken up in it: Undo goes back to the scene's start,
+    // rather than out of the scene to the one before it
+    const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp);
+
     function undoStep() {
         flushEdit();
-        if (dragging() || !hist.undo.length) return false;
+        if (dragging()) return false;
+        if (tornInScene()) {
+            restoreSnapshot(hist.rw, 'rewind');
+            setReverse(false, true);
+            hist.rwFresh = true;
+            hist.open = null;
+            historyNote('<strong>Undone:</strong> the break-up. Back at the start of the scene.');
+            updateHistoryUi();
+            return true;
+        }
+        if (!hist.undo.length) return false;
         const st = hist.undo.pop();
         hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
@@ -12683,7 +12826,7 @@
     }
 
     function updateHistoryUi() {
-        const u = hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
+        const u = tornInScene() ? { label: 'the break-up' } : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
         historyButton(ui.undoBtn, 'Undo', u, `${KEYS_MOD}Z`);
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
@@ -14511,9 +14654,10 @@
         const w = Math.max(1, Math.round(rect.width));
         const h = Math.max(1, Math.round(rect.height));
         const newDpr = Math.min(2, window.devicePixelRatio || 1);
-        if (w === viewW && h === viewH && newDpr === dpr) return;
+        if (w === viewW && h === viewH && newDpr === dpr) { syncDrawer(rect); return; }
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        syncDrawer(rect);
         if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
@@ -14526,6 +14670,76 @@
         updateDrawnPositions();
         render();
         if (popBody) positionPopover(popBody);
+    }
+
+    // ---- The Settings drawer ----
+    // Beside the canvas, Settings is a drawer over one side of it, which moves no control. While it is
+    // open the rest of the canvas is the frame: the cards, the corner text and the body's menu keep to
+    // that (visL, visR), and the middle of the view eases to its middle (view.shift, in px, so it holds at
+    // any zoom); a scene that would be cut off there is eased to fit. As it shuts all that eases back, but
+    // a view panned or zoomed meanwhile stays where it is on the screen. Worked out only when the layout
+    // changes: the page sends a resize as the panel opens and shuts.
+    function syncDrawer(cr) {
+        const panel = byId('simulationControlsPanel');
+        let l = 0, r = viewW;
+        if (panel && panel.offsetParent && panel.classList.contains('panel-open') && document.body.classList.contains('sim-panel-side')) {
+            // (by its place in the layout: as it opens it is still sliding in)
+            const o = panel.offsetParent, a = o.getBoundingClientRect().left + o.clientLeft + panel.offsetLeft - cr.left, b = a + panel.offsetWidth;
+            if (a + b > viewW) r = clamp(Math.round(a), 0, viewW); else l = clamp(Math.round(b), 0, viewW);
+        }
+        if (l === visL && r === visR) return;
+        const was = drawer.open;
+        visL = l; visR = r;
+        drawer.open = l > 0 || r < viewW;
+        view.shiftTo = (l + r - viewW) / 2;
+        if (ui.simWrap) ui.simWrap.style.setProperty('--orb-vis-l', `${l}px`);
+        const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        if (drawer.open && !was) drawerOpened(glide); else if (was && !drawer.open) drawerShut(glide);
+        if (!glide) view.shift = view.shiftTo;
+        if (popBody) positionPopover(popBody);
+    }
+
+    // A fit (box) or another move by a command, while the drawer is open: nothing to put back as it shuts but that
+    function drawerCamera(box) {
+        if (!drawer.open) return;
+        Object.assign(drawer, { moved: false, back: null, box });
+    }
+
+    function drawerOpened(glide) {
+        drawerCamera(null);
+        if (view.panned || mission.def || !bodies.length) return;
+        updateDrawnPositions();
+        const to = view.anim || view, k = to.zoom * Math.max(1, Math.min(viewW, viewH));
+        const inside = (q, mid, a, b) => mid + (q[0] - to.panX) * k >= a && mid + (q[1] - to.panX) * k <= b;
+        // (the scene with its orbits; if the view was already closer in than those, its bodies)
+        for (const orbits of [true, false]) {
+            const q = sceneBox(orbits);
+            const y0 = viewH / 2 - (q[3] - to.panY) * k, y1 = viewH / 2 - (q[2] - to.panY) * k;
+            if (!inside(q, viewW / 2, 0, viewW) || y0 < 0 || y1 > viewH) continue;
+            if (inside(q, (visL + visR) / 2, visL + 6, visR - 6)) return;
+            const back = { zoom: to.zoom, panX: to.panX, panY: to.panY, scene };
+            fitBox(paddedBox(q), glide, to.zoom);
+            Object.assign(drawer, { back, box: null });
+            return;
+        }
+    }
+
+    function drawerShut(glide) {
+        const { moved, back, box } = drawer;
+        Object.assign(drawer, { moved: false, back: null, box: null });
+        if (moved) {
+            if (view.anim) return;
+            updateScale();
+            view.panX -= view.shift / scale;
+            view.shift = 0;
+            view.panned = true;
+            updateScale();
+        } else if (back && back.scene === scene) {
+            const to = { zoom: back.zoom, panX: back.panX, panY: back.panY };
+            if (glide) view.anim = to; else { Object.assign(view, to); view.anim = null; }
+        } else if (box) {
+            fitBox(box, glide);
+        }
     }
 
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resizeCanvas).observe(canvas);
@@ -14627,6 +14841,11 @@
         // Escape closes the popover first (before the shared handler closes settings or fullscreen);
         // Space pauses.
         window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && escapeChipDrag()) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                return;
+            }
             if (e.key === 'Escape' && popBody) {
                 closePopover();
                 e.stopImmediatePropagation();
@@ -14659,8 +14878,14 @@
             lastPointerType = e.pointerType || 'mouse';
             const t = e.target;
             if (t && t.closest && (t === canvas || t.closest('.orb-palette'))) hints.tip = null;
+            if (t && t.closest && t.closest('#orbHint button')) hintPressed = true;
             refreshHint();
         }, true);
+        // (over with the click, or a moment after a press that became none: the click comes just after the release)
+        const hintLetGo = () => { if (hintPressed) { hintPressed = false; refreshHint(); } };
+        window.addEventListener('pointerup', () => setTimeout(hintLetGo, 250), true);
+        window.addEventListener('pointercancel', hintLetGo, true);
+        window.addEventListener('click', () => { hintPressed = false; setTimeout(refreshHint, 0); }, true);
         bindHint();
         bindTurn();
     }
@@ -14683,7 +14908,7 @@
     function resting(now) {
         if (!paused || now < wakeUntil || now >= restNext) return false;
         if (pred.job || (pred.shown && now - pred.shown.t < PATH_BLEND_MS)) return false;
-        return !drags.size && !paletteDrag && !view.anim && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+        return !drags.size && !paletteDrag && !view.anim && view.shift === view.shiftTo && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
     }
     function bindRest() {
         for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
@@ -14801,7 +15026,7 @@
                 selected: selectedId !== null && bodyById(selectedId) ? bodyById(selectedId).name : null,
                 frame: frameId !== null && bodyById(frameId) ? bodyById(frameId).name : 'com',
                 popover: popBody ? popBody.name : null,
-                view: { zoom: view.zoom, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH },
+                view: { zoom: view.zoom, panX: view.panX, panY: view.panY, scale, w: viewW, h: viewH, shift: view.shift, visL, visR },
                 energy: E, angularMomentum: angularMomentum(), momentum: totals(bodies),
                 bodies: bodies.map(bodyInfo), settings: Object.assign({}, settings), slowedDown
             };
