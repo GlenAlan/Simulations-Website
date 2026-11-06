@@ -245,6 +245,12 @@ html:not(.dark-mode) .orb-chip-disc:not(.is-custom) {
     overflow: visible;
 }
 
+/* "Help" and "Missions" stay together on a line */
+.orb-hint-links {
+    display: inline-block;
+    white-space: nowrap;
+}
+
 /* (spilling over what is below it: on top, on the toolbar's own background) */
 .orb-hint.is-spilling {
     z-index: 30;

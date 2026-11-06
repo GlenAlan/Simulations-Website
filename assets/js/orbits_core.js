@@ -3172,6 +3172,7 @@
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
         const target = { zoom: pxPerAu / m, panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
+        view.panned = false;
         if (animate) view.anim = target;
         else { view.zoom = target.zoom; view.panX = target.panX; view.panY = target.panY; view.anim = null; }
     }
@@ -6055,6 +6056,14 @@
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
             if (tip.len > 2.5) {
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+                // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
+                if (b === subj && !b.aim && !cleanRender && settings.velocities) {
+                    ctx.strokeStyle = hot ? hotColour : C.velocity;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(tip.x, tip.y, 6.5 * sizeScale, 0, TAU);
+                    ctx.stroke();
+                }
             } else if (hot && !b.aim) {
                 const h = handlePos(b), hl = Math.hypot(h.x - x, h.y - y) || 1;
                 ctx.globalAlpha = 0.6;
@@ -7924,11 +7933,20 @@
         const dReal = (now - pace.t) / 1000, dSim = sim - pace.sim;
         const want = settings.speed * rate() * dReal;
         // Start again after a pause, a new scene, a jump back in time or a long gap (a hidden tab)
-        const fresh = paused || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
+        const fresh = paused || timeHeld() || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
         pace.t = now; pace.sim = sim; pace.scene = scene;
         if (fresh) { pace.ratio = 1; pace.behind = false; return; }
         pace.ratio += (Math.min(dSim / want, 1.5) - pace.ratio) * (1 - Math.exp(-dReal / 0.35));
         pace.behind = pace.ratio < (pace.behind ? 0.95 : 0.9);
+    }
+
+    // Moving targets are hard to hit, so time waits while a body from the palette is over the canvas and
+    // from the moment an arrow's tip is pressed until it is let go (not in a mission, whose clock is its own)
+    function timeHeld() {
+        if (mission.def) return false;
+        if (paletteDrag && paletteDrag.moved && paletteDrag.over) return true;
+        for (const d of drags.values()) if (d.mode === 'aim') return true;
+        return false;
     }
 
     // The note in the canvas's top-left corner: paused, the new speed just after a key changed it, or
@@ -7938,6 +7956,7 @@
         if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
         if (paused && mission.def) return null;   // (its console says so, and the clock stops for each burn)
         if (paused) return back ? 'Paused · running backwards' : 'Paused';
+        if (timeHeld()) return 'Time waits for you';
         if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
         return back || null;
     }
@@ -8329,7 +8348,7 @@
         units: {},           // field -> the unit it is shown in, { label, f } (f: internal units per shown unit)
         forceField: null,    // a field to rewrite even though it has focus (just applied or stepped)
         usual: { bid: null, t: 0, sense: 0 },
-        engaged: false,      // the arrow keys act on the chosen body (the simulation was last pressed or focused)
+        engaged: null,       // the arrow keys act on the chosen body: the simulation was last pressed or focused (null: nothing has been yet)
         downAt: new Map(),   // pointerId -> when it went down (for fine aiming on touch screens)
         previewUntil: 0,     // after a push from the keyboard with the menu closed, show the path until then
         preview: null,       // the path last worked out for the preview
@@ -8769,7 +8788,8 @@
         }
         const kind = ARROW_PUSH[e.key];
         if (!kind || e.ctrlKey || e.metaKey || takesArrows(t)) return;
-        if (!popBody && !edit.engaged && !document.body.classList.contains('sim-fullscreen-active')) return;
+        // (on a page just opened they work too, as Space and B do, while the simulation is in sight)
+        if (!popBody && !edit.engaged && !(edit.engaged === null && canvasInView) && !document.body.classList.contains('sim-fullscreen-active')) return;
         if (missionKey(e, kind)) return;
         const b = popBody || (selectedId !== null ? bodyById(selectedId) : null);
         if (!b || b.held || bodies.length < 2) return;
@@ -9195,9 +9215,9 @@
             h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
                 : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
         } else {
-            h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
+            h = `<strong>Drag</strong> a body into space.${v ? ' Drag a <strong>teal tip</strong> to aim.' : ''} <span class="orb-hint-links"><button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
-        h += ' <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>';
+        h += ` <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>${coarse() ? '' : '</span>'}`;
         return h;
     }
 
@@ -9376,8 +9396,11 @@
     let lastTap = { t: 0, x: 0, y: 0, id: null, quick: false };
     const TAP_MS = 250;        // a press longer than this isn't a tap (for double-clicks and double-taps)
     let longPressTimer = 0;
-    // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
-    const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
+    // An arrow's tip is grabbed within this many px of it (the arrow is the handle: only the chosen body's
+    // tip has a small ring), and failing anything closer, the arrow from a little farther off (see nearArrow)
+    const GRAB_MOUSE = 14, GRAB_TOUCH = 24;
+    const NEAR_MOUSE = 24, NEAR_TOUCH = 30;
+    const HAND_LAG_S = 0.12;   // by the time a hand has pressed, a moving target has moved on this long
     let hoverAim = null;   // id of the body whose arrow tip the mouse is over
 
     function canvasPoint(e) {
@@ -9419,6 +9442,68 @@
         return best;
     }
 
+    // How far from segment (x0, y0)-(x1, y1) a point is
+    function distToSegment(x, y, x0, y0, x1, y1) {
+        const ex = x1 - x0, ey = y1 - y0, ee = ex * ex + ey * ey;
+        const s = ee > 0 ? clamp(((x - x0) * ex + (y - y0) * ey) / ee, 0, 1) : 0;
+        return Math.hypot(x - x0 - s * ex, y - y0 - s * ey);
+    }
+
+    // Where a body was on the screen a hand's reaction ago, as an offset in px (at most 60: much faster
+    // than that nobody is aiming at it). Nothing while time stands still.
+    function handLag(vx, vy) {
+        if (paused || timeHeld()) return { x: 0, y: 0 };
+        const k = -timeDir * settings.speed * rate() * HAND_LAG_S * scale;
+        const ox = vx * k, oy = -vy * k, n = Math.hypot(ox, oy);
+        return n > 60 ? { x: (ox * 60) / n, y: (oy * 60) / n } : { x: ox, y: oy };
+    }
+
+    // The velocity arrow a press at (x, y) means, if it isn't right on a tip or a body: the nearest whose
+    // shaft is under it, or whose tip is close to it now or was a moment ago
+    function nearArrow(x, y, shaft, tip) {
+        if (!settings.velocities || bodies.length < 2 || mission.def) return null;
+        const fv = frameVelocity();
+        let best = null, bestD = Infinity;
+        for (const b of bodies) {
+            if (b.held || ((b.grp || b.minor) && b.id !== selectedId)) continue;
+            const t = velocityTip(b, fv);
+            if (t.len < 14) continue;
+            const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
+            const lag = handLag(t.vx, t.vy);
+            const ds = distToSegment(x, y, bx + ((t.x - bx) / n) * r, by + ((t.y - by) / n) * r, t.x, t.y);
+            const dt = distToSegment(x, y, t.x, t.y, t.x + lag.x, t.y + lag.y);
+            const d = Math.min(ds, dt);
+            if ((ds <= shaft || dt <= tip) && d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
+    // A named body close to a press at (x, y), now or a moment ago
+    function bodyNear(x, y, tol) {
+        const fv = frameVelocity();
+        let best = null, bestD = tol;
+        for (const b of bodies) {
+            if (b.minor || b.grp || mission.def) continue;
+            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.vx - fv.x, y: b.vy - fv.y }, lag = handLag(v.x, v.y);
+            const d = distToSegment(x, y, bx, by, bx + lag.x, by + lag.y) - drawRadius(b);
+            if (d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
+    // The pink arrow under a press at (x, y)? They show a pull, and can't be dragged
+    function onForceArrow(x, y, tol) {
+        if (!settings.forces) return null;
+        for (const b of bodies) {
+            const Fm = Math.hypot(b.fx, b.fy);
+            if (!(Fm > 0) || b.grp || b.minor) continue;
+            const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
+            const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;
+            if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------
     // Aiming a velocity. The arrow tip follows the pointer (at the arrows' zoom-free scale, so a pixel
     // is the same speed at any zoom); Shift makes it ten times finer. Near the exact circular or escape
@@ -9453,7 +9538,7 @@
         const base = ref ? { x: ref.vx, y: ref.vy } : fv;
         b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
         turnAim(b.aim);   // (a turned view: aimed as drawn, see aimedVelocity)
-        // Keep the grabbed point on the arrow. A body at rest has no arrow: it is grabbed just off the
+        // Keep the grabbed point on the arrow (wherever on it, or near it, the press was). A body at rest has no arrow: it is grabbed just off the
         // edge of its disc, and the arrow grows from there as soon as the pointer moves.
         let tip = velocityTip(b);
         if (tip.len < 1) {
@@ -10217,7 +10302,11 @@
         // (by touch a Lagrange point's marker wins over a swarm's unnamed dots: the tap reads its note)
         if (b && touch && b.minor && !isChosen(b) && lagrangeShown.length && lagrangeAt(pt.x, pt.y, LAGRANGE_TAP) && !namedBodyAt(pt.x, pt.y, tol)) b = null;
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
+        // (not quite on anything: what the press was probably meant for, rather than moving the view)
+        if (!handleBody && !b && !right) handleBody = nearArrow(pt.x, pt.y, touch ? 12 : 7, touch ? NEAR_TOUCH : NEAR_MOUSE);
+        if (!handleBody && !b) b = bodyNear(pt.x, pt.y, touch ? 18 : 12);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
+        const forceOnly = !handleBody && !b && !right && !mission.def && onForceArrow(pt.x, pt.y, touch ? 10 : 6);
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
         if (handleBody) {
             d.mode = 'aim';
@@ -10241,6 +10330,10 @@
                     }, 520);
                 }
             }
+        } else if (forceOnly) {
+            // (a press on a pink arrow, which looks as if it could be dragged, says what it is)
+            d.mode = 'done';
+            showHint('note', '<strong>Pink arrows</strong> show gravity\'s pull. Drag a <strong>teal tip</strong> to aim.', { ms: 5000 });
         } else {
             d.mode = 'pending';
         }
@@ -10282,6 +10375,7 @@
             view.panX -= dx / scale;
             view.panY += dy / scale;
             view.anim = null;
+            view.panned = true;
             return;
         }
         if (d.mode === 'press' && far && missionRefuse('move', d.body)) d.mode = 'pan';
@@ -10325,6 +10419,10 @@
             endHold(d, !cancelled && (d.mode === 'move' || d.moved));
             return;
         }
+        if (d.mode === 'pan' && !view.panTold && !mission.def && Math.hypot(d.x - d.x0, d.y - d.y0) > 30) {
+            view.panTold = true;
+            showHint('note', '<strong>You moved the view.</strong> Fit view puts it back.', { ms: 5000 });
+        }
         if (cancelled || d.mode === 'done') return;
         if (d.button === 2) {
             // Right-click on empty space just closes the menu
@@ -10366,7 +10464,7 @@
         updateDrawnPositions();
         let tipOf = onHandle(x, y, GRAB_MOUSE);
         if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
-        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1);
+        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
         if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
     }
 
@@ -11640,11 +11738,13 @@
     }
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
+    let viewLost = false;
     function checkInView() {
         if (!ui.fit || !viewW || !bodies.length || dragging()) return;
         const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy); return x > 0 && x < viewW && y > 0 && y < viewH; });
-        if (out === ui.fit.classList.contains('is-wanted')) return;
-        ui.fit.classList.toggle('is-wanted', out);
+        ui.fit.classList.toggle('is-wanted', out || !!view.panned);   // (moved by hand: the way back stands out too)
+        if (out === viewLost) return;
+        viewLost = out;
         if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
         else clearHint('note', 'lost');
     }
@@ -13924,7 +14024,7 @@
         updateScale();
         applyHolds();
         let steps = 0;
-        if (!paused && dtReal > 0) {
+        if (!paused && dtReal > 0 && !timeHeld()) {
             const want = dtReal * settings.speed * rate();
             const before = timeDir * simTime + acc;
             steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));
