@@ -152,8 +152,9 @@
         { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
-    // Values the mass and radius sliders snap to
-    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15];
+    // Values the mass and radius sliders snap to. The two heaviest: Sagittarius A* (GRAVITY Collaboration
+    // 2022, A&A 657, L12) and M87* (Event Horizon Telescope 2019, ApJL 875, L6).
+    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15, 4.3e6, 6.5e9];
     const RADIUS_SNAPS = [12, 1737, 3390, 6371, 8700, 69911, 210000, 696000, 4.6e6, 3.0e7];
 
     // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same scene every time)
@@ -2943,6 +2944,18 @@
         if (b.kind === 'blackhole') b.R = horizonKm(b.m);
     }
 
+    // Anything inside its own event horizon is a black hole, whatever it was. (Only the mass slider gets
+    // there, so this is called from nowhere else: no scene or merger comes through it.)
+    function collapseIfInsideHorizon(b) {
+        if (b.kind === 'blackhole' || b.R > horizonKm(b.m)) return;
+        b.kind = 'blackhole';
+        b.color = KINDS.blackhole.color;
+        b.R = horizonKm(b.m);
+        flashes.push({ x: b.x, y: b.y, t: performance.now(), color: '#ffffff', r0: drawRadius(b) });
+        refreshBodyLists();
+        showHint('note', `<strong>${escapeHtml(capital(theName(b)))} is now a black hole:</strong> it fits inside its own event horizon.`, { ms: 8000, tag: 'horizon' });
+    }
+
     // ------------------------------------------------------------------
     // Tides on a body that stays whole (realistic physics). A close pass raises waves in a star or gas giant, and
     // the energy they take comes out of the orbit. For a parabolic pass (Press & Teukolsky 1977, ApJ 213, 183):
@@ -4501,10 +4514,23 @@
         // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
         if (bodies.length === 1) {
             const b = bodies[0], w = 0.5 * (scene.box[1] - scene.box[0]), h = 0.5 * (scene.box[3] - scene.box[2]);
-            fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
+            fitBox(withHorizons([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h]), true);
             return;
         }
-        fitBox(paddedBox(sceneBox(true)), true);
+        fitBox(paddedBox(withHorizons(sceneBox(true))), true);
+    }
+
+    // The box q (relative to the frame origin), grown to hold the horizon of any black hole wider than it.
+    // (A very heavy one can be: then "Fit view" must show its edge, not just more of its inside.)
+    function withHorizons(q) {
+        const size = Math.max(q[1] - q[0], q[3] - q[2]);
+        for (const b of bodies) {
+            if (b.kind !== 'blackhole' || b.R / AU_KM <= size) continue;
+            const R = b.R / AU_KM, x = b.dx - F.x, y = b.dy - F.y;
+            q[0] = Math.min(q[0], x - R); q[1] = Math.max(q[1], x + R);
+            q[2] = Math.min(q[2], y - R); q[3] = Math.max(q[3], y + R);
+        }
+        return q;
     }
 
     const paddedBox = (q) => {
@@ -7147,11 +7173,21 @@
                 ctx.lineWidth = 1.2;
                 ctx.setLineDash([3, 3]);
                 ctx.beginPath();
-                ctx.arc(x, y, r + 5, 0, TAU);
+                arcInView(x, y, r + 5);
                 ctx.stroke();
                 ctx.setLineDash([]);
             }
         }
+    }
+
+    // A circle added to the path. One far wider than the canvas is just the stretch in view: dashed all
+    // the way round, a very heavy black hole's took a quarter of a second a frame.
+    function arcInView(x, y, R) {
+        const cx = viewW / 2, cy = viewH / 2, h = hyp(cx, cy), d = hyp(x - cx, y - cy);
+        if (R < 2 * h) { ctx.arc(x, y, R, 0, TAU); return; }
+        if (d + h < R || R + h < d) return;   // (the canvas is all inside it, or all outside)
+        const a = Math.atan2(cy - y, cx - x), w = Math.acos(clamp((R * R + d * d - h * h) / (2 * R * d), -1, 1));
+        ctx.arc(x, y, R, a - w, a + w);
     }
 
     // Names go on top of the arrows and trails, with a halo in the background colour so lines
@@ -9794,17 +9830,18 @@
             el.addEventListener('keydown', () => { keyed = true; });
             el.addEventListener('pointerdown', () => { keyed = false; });
         }
-        const snapLog = (v, snaps) => {
+        const snapLog = (v, snaps, near = 0.04) => {
             if (keyed) return v;
-            for (const s of snaps) if (Math.abs(v - Math.log10(s)) < 0.04) return Math.log10(s);
+            for (const s of snaps) if (Math.abs(v - Math.log10(s)) < near) return Math.log10(s);
             return v;
         };
         ui.popMass.addEventListener('input', () => {
             const b = popBody;
             if (!b) return;
             popLastInput = performance.now();
-            const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH));
-            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); }));
+            // (30 powers of ten across about 270 px: a pixel is a ninth of one, so a narrower snap could be missed)
+            const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH), 0.065);
+            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); collapseIfInsideHorizon(b); }));
             resetTracking(b);
             computeForces();
             computePrimaries();
