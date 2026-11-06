@@ -13936,6 +13936,9 @@
     // Nothing done in this scene, yet a body has broken up in it: Undo goes back to the scene's start,
     // rather than out of the scene to the one before it
     const tornInScene = () => hist.cleanLoad && hist.rwFromStart && !mission.def && canRunAgain() && bodies.some((b) => b.grp);
+    // In a mission with no burn to take back, there is nothing to undo: not the scene before it (Retry or
+    // the mission's cross are the ways out)
+    const noBurnToUndo = () => !!mission.def && !mission.log.length;
 
     function undoStep() {
         flushEdit();
@@ -13949,7 +13952,7 @@
             updateHistoryUi();
             return true;
         }
-        if (!hist.undo.length) return false;
+        if (!hist.undo.length || noBurnToUndo()) return false;
         const st = hist.undo.pop();
         hist.redo.push({ snap: snapshot(), label: st.label, target: st.target, key: st.key, at: 0 });
         restoreSnapshot(st.snap, 'undo');
@@ -14008,7 +14011,7 @@
     }
 
     function updateHistoryUi() {
-        const u = tornInScene() ? { label: 'the break-up' } : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
+        const u = tornInScene() ? { label: 'the break-up' } : noBurnToUndo() ? null : hist.undo[hist.undo.length - 1], r = hist.redo[hist.redo.length - 1];
         historyButton(ui.undoBtn, 'Undo', u, `${KEYS_MOD}Z`);
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
@@ -14611,9 +14614,10 @@
     function missionHintText() {
         const x = missionContext();
         mission.tell = null;
-        if (!x) return mission.status === 'lost' ? '<strong>Retry</strong>, or undo your last burn.' : '';
+        const orUndo = mission.log.length ? ', or undo your last burn' : '';
+        if (!x) return mission.status === 'lost' ? `<strong>Retry</strong>${orUndo}.` : '';
         if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
-        if (mission.status === 'lost') return '<strong>Retry</strong>, or undo your last burn and fly it differently.';
+        if (mission.status === 'lost') return `<strong>Retry</strong>${orUndo}${orUndo && ' and fly it differently'}.`;
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
         // (one line, whatever the clock is doing: a held burn stops it, and the words mustn't flicker)
         if (!mission.hints) return 'Burn, watch the dashed path, and play on. Stuck? Turn on <strong>Hints</strong>.';
@@ -15211,6 +15215,7 @@
         quietFlyby();
         setPaused(true);
         syncEccentricity(true);
+        updateHistoryUi();
         setHint();
     }
 
@@ -15225,6 +15230,7 @@
         missionUi(false);
         if (popBody) updatePopover(true);
         syncEccentricity(true);
+        updateHistoryUi();
         setHint();
     }
 
