@@ -2001,10 +2001,13 @@
         if (choosePairs()) computeForces();
     }
 
-    // Accelerations of the bodies, net forces for the arrows, and the next adaptive step.
+    // Accelerations of the bodies, net forces for the arrows, and the next adaptive step. (Within a step, only
+    // the last evaluation's arrows and next step get used: midStep counts the ones before it.)
+    let midStep = 0;
     function computeForces(velOnly) {
         const tmin = gravity(bodies, mainPairs, velOnly);
         mainStamp = gravStamp; mainN = bodies.length;
+        if (midStep > 0) { midStep--; forcesDirty = false; return; }
         const n = bodies.length;
         for (let k = 0; k < n; k++) { const b = bodies[k]; b.fx = b.m * b.ax; b.fy = b.m * b.ay; }
         let dt = (n > DIRECT_MAX ? ETA_SWARM : ETA) * Math.sqrt(tmin);
@@ -2077,6 +2080,7 @@
     function step(dt) {
         for (const b of bodies) { b.px = b.x; b.py = b.y; b.pvx = b.vx; b.pvy = b.vy; }
         for (const p of mainPairs) { p.touch = false; p.closest = Infinity; }
+        midStep = settings.realistic ? 5 : 2;
         yoshida(bodies, dt, computeForces, mainPairs);
     }
 
