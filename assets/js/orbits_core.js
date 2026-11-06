@@ -6338,14 +6338,15 @@
     // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
     // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
     // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
-    // ARROW_PX long; arrows over three times that are squeezed.
+    // ARROW_PX long; arrows over twice that are squeezed, to at most two and a half times (a body swung
+    // up to many times the scene's speeds shouldn't have an arrow across the whole view).
     const ARROW_PX = 60;
     let vRef = TAU;   // AU/yr (Earth's orbital speed until a scene sets it)
     const arrowUnit = () => ARROW_PX * sizeScale;
     const pxPerSpeed = () => arrowUnit() / vRef;
     function arrowLength(v) {
         const L = v * pxPerSpeed(), L0 = arrowUnit();
-        return L <= 3 * L0 ? L : 3 * L0 + L0 * (1 - Math.exp(-(L - 3 * L0) / L0));
+        return L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0)));
     }
 
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
