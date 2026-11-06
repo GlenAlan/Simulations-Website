@@ -12793,7 +12793,9 @@
     const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
-    const auText = (d) => `${d < 0.1 ? d.toFixed(3) : d.toFixed(2)} AU`;
+    const auPlaces = (d) => (d < 0.1 ? 3 : 2);
+    const auText = (d) => `${d.toFixed(auPlaces(d))} AU`;
+    const auTextUp = (d) => { const n = auPlaces(d), k = Math.pow(10, n); return `${(Math.ceil(d * k - 1e-9) / k).toFixed(n)} AU`; };
     const starText = (n) => '★★★☆☆☆'.slice(3 - n, 6 - n);
 
     // The two burns of a Hohmann transfer between circular orbits of radii r1 and r2 round the Sun
@@ -13017,11 +13019,14 @@
     // The goal's reach, and whether the coming pass keeps the tick's promise: a skip stops inside the
     // goal, with the fuel to do what is left there.
     const goalReach = (g) => (g.type === 'reach' ? g.zone : g.D);
+    // (what the tick asks for, the goal the status line gives: a little inside the goal, at the figures it
+    // shows. Its reading of the pass is rounded up, so a reading no higher than this is a tick, and only that.)
+    const goalAim = (g) => { const k = Math.pow(10, auPlaces(goalReach(g))); return Math.floor(PROMISE * goalReach(g) * k) / k; };
     // (L4: how far from the size of Jupiter's orbit a nearly round orbit can still be)
     const parkable = (g, r) => Math.abs(r / g.a - 1) < 0.7 * g.da + 0.9 * g.eMax;
     function passWorks(x, p) {
         const g = x.d.goal;
-        if (!p || !(p.d < PROMISE * goalReach(g))) return false;
+        if (!p || !(p.d < goalAim(g))) return false;
         if (g.type === 'reach') return true;
         if (g.l4 && !parkable(g, Math.hypot(p.cx, p.cy))) return false;
         if (g.arrive && p.dv > g.arrive) return false;
@@ -13068,7 +13073,7 @@
                 if (fa < fb) { hi = b; b = a; fb = fa; a = lo + r * (hi - lo); fa = score(a); } else { lo = a; a = b; fa = fb; b = hi - r * (hi - lo); fb = score(b); }
             }
             const kms = fa < fb ? a : b;
-            if (Math.min(fa, fb) < PROMISE * goalReach(g)) { found = kms; break; }
+            if (Math.min(fa, fb) < goalAim(g)) { found = kms; break; }
         }
         mission.plan = { t: simTime, at: now, vx: x.vx, vy: x.vy, none: found === null, speed: v + (found || 0) / AUYR_KMS, kms: found };
         return found === null ? null : mission.plan;
@@ -13098,8 +13103,10 @@
         else h = `Nearly. Turn on <strong>Fine</strong>, then hold <strong>${btn}</strong> until you see the ✓.`;
         return askBurn(btn, ux, uy, more, h);
     }
-    // Is a burn from here worth asking for, or is going back better? (Up to the fuel of two stars)
-    const planWorthIt = (x, q) => !!q && mission.used + Math.abs(q.kms) <= STARS_AT[1] * x.d.par;
+    // Is a burn from here worth asking for, or is going back better? (Up to the fuel of two stars; or
+    // whatever the fuel so far, if it is a near miss, which a small burn finishes)
+    const planWorthIt = (x, q) => !!q && (mission.used + Math.abs(q.kms) <= STARS_AT[1] * x.d.par
+        || (!!mission.pred && mission.pred.d < 3 * goalReach(x.d.goal) && Math.abs(q.kms) <= FINE_FROM * x.d.budget));
 
     function marsHint(x) {
         if (onCourse(x)) return `On course for Mars! <strong>Skip to Mars</strong>${mission.skip ? '' : ', or press play and watch'}.`;
@@ -13257,7 +13264,7 @@
                     return { text: `Inside the ring. ${size ? `Orbit ${f2(x.el.a)} AU, goal ${f2(g.a)}` : `Roundness e ${f2(x.el.e)}, goal under ${f2(g.eMax)}`}`, ok: fits && parkable(g, x.el.r) };
                 }
                 if (g.arrive && p && p.d < reach && p.dv > g.arrive) return { text: `Arriving too fast: ${f1(toKms(p.dv))} km/s, goal under ${f1(toKms(g.arrive))}`, ok: false };
-                return p ? { text: `Closest to ${x.tname}: ${auText(p.d)}, goal ${auText(reach)}`, ok: onCourse(x) } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
+                return p ? { text: `Closest to ${x.tname}: ${auTextUp(p.d)}, goal ${auText(goalAim(g))}`, ok: onCourse(x) } : { text: `${x.tname} ${auText(x.td)} away`, ok: false };
             }
         }
     }
