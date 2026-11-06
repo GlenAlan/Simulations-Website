@@ -113,6 +113,7 @@
     const TRAIL_PER_TREF = 300;           // trail samples per reference period
     const TRAIL_CAP = 6144;               // samples kept per body (20 reference periods)
     const SWARM_TRAIL = 256;              // samples kept for a minor body of a crowded scene (memory stays small)
+    const PIECE_TRAIL = 1024;             // ...and for a piece of a torn-apart body
     const TRAIL_STEPS = [0, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20]; // trail lengths in reference periods
     const K2_SECTORS = 12;                // Kepler's 2nd law: sectors per orbit
     const STAR_MASS = 0.07;               // M_sun: heavier bodies are drawn as stars
@@ -2927,7 +2928,7 @@
     function trackPeriods(t) {
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || !b.bound || b.held || p.held || (b.minor && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
+            if (!p || !b.bound || b.held || p.held || ((b.minor || b.grp) && b.id !== selectedId) || (b.kep && b.kep.fast)) { b.track = null; continue; }
             const rx = b.x - p.x, ry = b.y - p.y;
             const r = hyp(rx, ry);
             const phi = Math.atan2(ry, rx);
@@ -3085,7 +3086,7 @@
         sampleTimes[k] = simTime;
         for (const b of bodies) {
             let T = b.trail;
-            if (!T) T = b.trail = new Float64Array(2 * (b.minor ? SWARM_TRAIL : TRAIL_CAP));
+            if (!T) T = b.trail = new Float64Array(2 * (b.minor ? SWARM_TRAIL : b.grp ? PIECE_TRAIL : TRAIL_CAP));
             const i = 2 * (sampleCount % (T.length >> 1));
             T[i] = b.x;
             T[i + 1] = b.y;
@@ -3104,7 +3105,7 @@
         const k = sampleCount - 1;
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || b.minor || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
+            if (!p || b.minor || (b.grp && b.id !== selectedId) || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
             const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
             const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
@@ -5530,7 +5531,7 @@
         for (const g of minorGroups.values()) g.length = 0;
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
-            if (b.minor && !isChosen(b)) {
+            if ((b.minor || b.grp) && !isChosen(b)) {
                 let g = minorGroups.get(b.color);
                 if (!g) { g = []; minorGroups.set(b.color, g); }
                 g.push(b);
