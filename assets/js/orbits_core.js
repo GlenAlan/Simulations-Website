@@ -3112,7 +3112,7 @@
         // (said once a scene, for a pass that matters)
         if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
             tides.told = settings.scene;
-            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', ' Close passes shrink it, until it no longer comes close enough.', 7000);
+            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', '', 7000);
         }
         return true;
     }
@@ -14051,10 +14051,11 @@
         let note;
         if (performance.now() - stab.restartedAt < 4000) note = 'Restarted: you changed the system';
         else if (!stab.counts) note = 'A best needs three bodies or more';
+        else if (seed && hints.tip) note = null;   // (a random system's tip is asking just that)
         else if (!(before.yr > 0)) note = compact ? `Goal: ${fmtYears(STAB_GOAL)}` : `Can you build one that lasts ${fmtYears(STAB_GOAL)}?`;
         else if (stab.best.yr > before.yr) note = `A new best (was ${fmtYears(before.yr)})${goal}`;
         else note = `Your best: ${fmtYears(before.yr)}${!compact && before.label ? ` (${before.label})` : ''}${goal}`;
-        lines.push([[note, false, C.subtle]]);
+        if (note) lines.push([[note, false, C.subtle]]);
         return lines;
     }
 
