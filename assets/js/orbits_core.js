@@ -1048,7 +1048,7 @@
             track: null,                  // period measurement (Kepler's 3rd law)
             // Set later on, but named here so every body has the same shape: the integrator's loops run
             // far faster over one shape than over many (with too many, each number written is boxed anew)
-            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
+            hx: 0, hy: 0, slot: -1, stamp: -1, kep: null, hosts: 0, hostMass: 0, minor: false, rmax: 0, rd: 0, rh: 0, aim: null, ghost: null, heft: 0,
             navStamp: 0, navName: null, navBase: '', navNum: 0, navD: 0, navT: 0, navDepth: 0
         };
     }
@@ -1589,6 +1589,9 @@
     const HOST_STEPS = 32;
     const PIECE_STEP = 4;
     const PIECE_T2 = PIECE_STEP * PIECE_STEP;   // (the times are kept squared)
+    const HOST_HEAVY = 1e-5;              // heavier than this beside their host, a body and those going round with it shift each other...
+    const HOST_FINE = 32;                 // ...(the term the drift splits off), so it has this many times more steps a trail sample: the energy stays as level
+    const hostShared = (m, mH, others) => m >= HOST_HEAVY * mH && others >= HOST_HEAVY * mH;
     const HOST_GW = 1e6;                  // radiation may take this many trail samples or more to close the orbit
     const LIGHT = 1e-9;                   // the lighter of a pair by this much: it moves the other not at all, and has nothing else to answer for
     const ROCHE_NEAR = 378;               // (3 ROCHE)^3: inside three times its Roche limit a whole body is followed closely
@@ -1833,7 +1836,9 @@
                 t1 = t; H = h;
             } else t2 = Math.min(t2, d3 / h.m);
         }
-        if (!H || H.held || H.m < HOST_MIN * mf || (H.kep && H.kep.hosted) || !(t1 > 0 && t1 < G * t0)) return null;
+        if (!H || H.held || H.m < HOST_MIN * mf || (H.kep && H.kep.hosted)) return null;
+        const fine = hostShared(mf, H.m, f.kep && f.kep.b === H ? H.hostMass - mf : H.hostMass);
+        if (!(t1 > 0 && t1 < G * t0 / (fine ? HOST_FINE * HOST_FINE : 1))) return null;
         if (mf >= LIGHT * H.m && !(t1 < gamma * t2)) return null;
         if (!settings.realistic) return H;
         // Radiation left out of the drift must not matter: Peters' time for the orbit to close, if they are close enough to have it
@@ -1901,7 +1906,7 @@
 
     function hostBody(f, H) {
         followPair(f, H, false, true);
-        H.hosts++;   // (until syncHosts counts them)
+        H.hosts++; H.hostMass += f.m;   // (until syncHosts counts them)
         bookHosted(f.kep, true);
     }
 
@@ -1949,7 +1954,7 @@
     // The hosts, each with the close pairs of its pieces (kept while they stay the same)
     const hostGroups = [];
     function syncHosts() {
-        for (const g of hostGroups) g.h.hosts = 0;
+        for (const g of hostGroups) { g.h.hosts = 0; g.h.hostMass = 0; }
         hostGroups.length = 0;
         for (const p of mainPairs) {
             if (!p.hosted) continue;
@@ -1958,6 +1963,7 @@
             if (!g) { g = { h: p.b, pairs: [] }; hostGroups.push(g); }
             g.pairs.push(p);
             p.b.hosts = g.pairs.length;
+            p.b.hostMass += p.a.m;
         }
     }
 
@@ -1996,7 +2002,7 @@
             const R = a.R / AU_KM;
             if (r2 * r < ROCHE_NEAR * R * R * R * b.m / a.m) return own;
         }
-        return Math.max(own, sampleDt / HOST_STEPS);
+        return Math.max(own, sampleDt / (!a.grp && hostShared(a.m, b.m, b.hostMass - a.m) ? HOST_FINE * HOST_STEPS : HOST_STEPS));
     }
 
     // One kick-drift-kick leapfrog step for every body in the list that isn't held (close pairs drift
