@@ -7844,6 +7844,7 @@
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        let drewF = false, drewV = false;
         countArrows();
         // (a torn-apart body's pieces only get arrows when one is chosen. What gas goes round gets none: the gas's
         // pull on it, unevenly spread, only swings a long arrow about and draws the eye from the gas)
@@ -7852,13 +7853,14 @@
             for (const b of bodies) if (b.grp < 0 && b.primary) gasHeld.add(b.primary);
             for (const b of bodies) {
                 const Fm = Math.hypot(b.dfx, b.dfy);
-                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj) || gasHeld.has(b) || !b.arrowF) continue;
+                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj) || gasHeld.has(b)) continue;
                 const L = forceLength(Fm * 1);
-                if (L < 3) continue;
+                if (L < 3 || !b.arrowF) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
                 const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;   // (turned with the view)
                 ctx.globalAlpha = (b === subj ? 1 : arrowBack) * b.arrowF;
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
+                drewF = true;
             }
             ctx.globalAlpha = 1;
         }
@@ -7869,16 +7871,17 @@
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         const fv = drawnFrameVelocity();
         for (const b of bodies) {
-            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj) || (!b.arrowV && !b.aim)) continue;
+            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
             const len = Math.hypot(dx, dy);
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
-            if (tip.len > 2.5) {
+            if (tip.len > 2.5 && (b.arrowV || b.aim)) {
                 ctx.globalAlpha = hot ? 1 : (b === subj ? 1 : arrowBack) * b.arrowV;
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
                 ctx.globalAlpha = 1;
+                drewV = true;
                 // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
                 if (b === subj && !b.aim && !cleanRender && settings.velocities) {
                     ctx.strokeStyle = hot ? hotColour : C.velocity;
@@ -7896,6 +7899,7 @@
             }
             if (b.aim && b.aim.burn) drawBurn(C, b, w);
         }
+        noteArrowsDrawn(drewF, drewV);
     }
 
     // A burn being aimed in a mission (see beginAim): an arrow from where the velocity arrow's tip was
@@ -8437,17 +8441,33 @@
     // stops for each burn, so not there) or dragging
     const KEY_MS = 8000;
     const keyWake = { scene: null, v: false, f: false, k: 1, until: 0 };
+    // Its rows are for the arrows there are (a lone star has none, a body coasting alone no force arrow). One gone
+    // for a moment doesn't count, or a row would flicker; when none are left it fades as it stands.
+    const KEY_HOLD_MS = 1000;
+    const keyDrawn = { v: false, f: false, tv: -Infinity, tf: -Infinity };
+    function noteArrowsDrawn(f, v) {
+        const now = performance.now();
+        keyDrawn.f = f; keyDrawn.v = v;
+        if (f) keyDrawn.tf = now;
+        if (v) keyDrawn.tv = now;
+    }
     function drawArrowLegend(C) {
         legend.shown = false;
-        const showV = settings.velocities, showF = settings.forces;
-        if (cleanRender || !bodies.length || !(showV || showF)) return;
-        const now = performance.now();
+        if (cleanRender || !bodies.length || !(settings.velocities || settings.forces)) return;
+        const now = performance.now(), same = keyWake.scene === scene;
+        // (a new scene's arrows are its own: the last one's don't count for the moment)
+        if (!same) { keyDrawn.tv = keyDrawn.v ? now : -Infinity; keyDrawn.tf = keyDrawn.f ? now : -Infinity; }
+        const drawnV = settings.velocities && now - keyDrawn.tv < KEY_HOLD_MS;
+        const drawnF = settings.forces && now - keyDrawn.tf < KEY_HOLD_MS;
+        const none = !drawnV && !drawnF;
+        const showV = none ? settings.velocities && keyWake.v : drawnV, showF = none ? settings.forces && keyWake.f : drawnF;
+        if (none && (!same || !(showV || showF))) { Object.assign(keyWake, { scene, v: false, f: false }); legend.alpha = 0; return; }
         if (keyWake.scene !== scene || (showV && !keyWake.v) || (showF && !keyWake.f)) keyWake.until = now + KEY_MS;
         Object.assign(keyWake, { scene, v: showV, f: showF });
         if (Math.abs(arrowK - keyWake.k) > 0.05 * keyWake.k) { keyWake.k = arrowK; keyWake.until = now + KEY_MS; }
         const tight = viewW < 560 || viewH < 320;
-        const away = now >= keyWake.until && !drags.size && !(paused && !mission.def);
-        if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
+        const away = none || (now >= keyWake.until && !drags.size && !(paused && !mission.def));
+        if (away && legend.alpha < 0.02) { legend.alpha = 0; if (none) keyWake.v = keyWake.f = false; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
         // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths (scaled with
@@ -11422,9 +11442,9 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy || !b.arrowV) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
             const tip = velocityTip(b);
-            if (tip.len < 14) continue;
+            if (tip.len < 14 || !b.arrowV) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
             if (dd < bestD) { bestD = dd; best = b; }
         }
@@ -11454,9 +11474,9 @@
         const fv = drawnFrameVelocity();
         let best = null, bestD = Infinity;
         for (const b of bodies) {
-            if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId) || !b.arrowV) continue;
+            if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId)) continue;
             const t = velocityTip(b, fv);
-            if (t.len < 14) continue;
+            if (t.len < 14 || !b.arrowV) continue;
             const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
             const lag = handLag(t.vx, t.vy);
             const ds = distToSegment(x, y, bx + ((t.x - bx) / n) * r, by + ((t.y - by) / n) * r, t.x, t.y);
@@ -11485,10 +11505,10 @@
         if (!settings.forces) return null;
         for (const b of bodies) {
             const Fm = Math.hypot(b.dfx, b.dfy);
-            if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId) || !b.arrowF) continue;
+            if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId)) continue;
             const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
             const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;
-            if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
+            if (L >= 3 && b.arrowF && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
         }
         return null;
     }
