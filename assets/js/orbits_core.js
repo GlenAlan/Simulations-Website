@@ -25,7 +25,9 @@
  *   found), adds the first post-Newtonian correction of general relativity to each pair (orbits close to a
  *   neutron star or black hole precess) and tears apart a star, planet or moon that strays inside the
  *   Roche limit of a much denser body; its pieces pull on each other (softened) as well as on the rest, and
- *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest.
+ *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest. Just
+ *   outside that limit, a star or gas giant stays whole, but each close pass takes energy out of the orbit, and it
+ *   is drawn stretched by the tide (see "Tides on a body that stays whole").
  *   It also shows relativity without changing any path: starlight bent round a black hole ("Bent starlight"),
  *   and how slow the chosen body's clock runs (the relativity card).
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
@@ -287,6 +289,16 @@
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
+            ]
+        },
+        // A red giant so close at each pass that the tide costs its orbit real energy (Press and Teukolsky 1977),
+        // at full strength: its orbit shrinks and rounds off over a few passes, then the tide lets go.
+        tidalgiant: {
+            units: 'au', Tref: 0.67, subject: 1, trail: 4, realistic: true, box: [-1.7, 0.7, -0.9, 0.9],
+            tip: 'Close passes let tides take energy from the orbit, until it rounds off.',
+            bodies: [
+                { kind: 'sun' },
+                { kind: 'redgiant', orbit: { around: 0, a: 1, e: 0.6, w: 0, nu: 180 } }
             ]
         },
         // The Sun, Jupiter and 500 of the asteroids its gravity herds. 150 Trojans gather round each of the
@@ -1702,6 +1714,7 @@
         h.x = cx - fl * KX; h.y = cy - fl * KY; h.vx = cvx - fl * KVX; h.vy = cvy - fl * KVY;
         l.x = h.x + KX; l.y = h.y + KY; l.vx = h.vx + KVX; l.vy = h.vy + KVY;
         if (KMIN < (h.R + l.R) / AU_KM) p.touch = true;
+        if (KMIN < p.closest) p.closest = KMIN;
     }
 
     // Move a host and its pieces. The whole group's centre of mass goes in a straight line; each piece goes
@@ -2333,6 +2346,191 @@
             refreshBodyLists();
         }
         if (b.kind === 'blackhole') b.R = horizonKm(b.m);
+    }
+
+    // ------------------------------------------------------------------
+    // Tides on a body that stays whole (realistic physics). A close pass raises waves in a star or gas giant, and
+    // the energy they take comes out of the orbit. For a parabolic pass (Press & Teukolsky 1977, ApJ 213, 183):
+    //   dE = (G M^2 / R) (m / M)^2 [(R / rp)^6 T2(eta) + (R / rp)^8 T3(eta)],  eta = sqrt(M / (M + m)) (rp / R)^(3/2)
+    // for a body M, R raised by a partner m passing at rp. T2 and T3 are the fifth-order fits of Portegies Zwart &
+    // Meinen 1993 (A&A 280, 174) to Lee & Ostriker 1986, for polytropes of index 3 (stars with radiative envelopes)
+    // and 1.5 (convective stars, red giants' envelopes, gas giants). (Checked: they match the fits in Lai 1997, ApJ
+    // 490, 847, table 1, and give his capture distance for a Sun and a 1.4 solar mass point: 2.42 R at 10 km/s.)
+    // It falls by 70 to 1,400 times between 1.05 and 1.5 times the Roche limit, so it is only seen near that limit.
+    // Rock and ice aren't fluids, and a compact body isn't torn by checkTides either: neither is raised here.
+    //
+    // Each pass is one impulse, so the exact Kepler drift of close pairs stays exact whatever the step. It is
+    // taken along the line between the two (as the orbit crosses r = p going out, near where a radial kick moves the
+    // closest point least), so momentum and angular momentum are exactly kept and only the energy changes: the orbit
+    // keeps p = a (1 - e^2) and rounds off, shrinking towards a size of about p. (The star's spin takes very little
+    // angular momentum, and it has no spin here.)
+    //
+    // Limits: the formula is for near-parabolic orbits (Lai: fine to e of about 0.7), so below TIDE_E_MIN it stops.
+    // A wave keeps its energy for far longer than an orbit, and the next pass adds to it or takes from it depending
+    // on its phase. Once each pass shifts that phase by over a radian (Mardling 1995, ApJ 450, 722) the phases are
+    // random and each pass takes dE on average, which is what is done. In a tighter orbit the phases are regular, the
+    // loss is set by how fast the waves damp (taken as far longer than these orbits), and it stops. The first pass
+    // of a fly-by has no waves to meet, so it always takes dE, which can capture it.
+    //
+    // Going forwards the impulses are logged, and running back puts the velocities and the books back exactly
+    // before that step is retraced. The energy goes into the books (groupEnergy, as heat in the bodies), so the total
+    // stays level. Steady tidal friction (Goldreich & Soter 1966) is left out: far too slow to see, and there is no spin.
+    // ------------------------------------------------------------------
+    const TIDE_BOOK = -3;                 // (among the body ids of groupEnergy)
+    const TIDE_ETA_MAX = 10;              // the fits stop here, and by then nothing would show
+    const TIDE_E_MIN = 0.5;
+    const TIDE_REACH = 2700;              // (TIDE_ETA_MAX x 3^1.5)^2: an impulse is at most 3 closest distances out
+    const TIDE_SMALL = 1e-6;              // a fly-by losing less than this of its energy is left alone
+    const TIDE_LOG = 1 << 13, TIDE_ROW = 5;
+    const TIDE_FITS = {
+        3: { T2: [4.124, -16.48, 21.55, -13.37, 0.877, -1.124], T3: [-3.600, -0.492, 12.85, -14.34, 2.653, -1.703], w: 1, k2: 0.029 },
+        1.5: { T2: [-5.550, 9.446, -12.42, 1.277, 1.678, -0.397], T3: [-46.43, 80.10, -57.40, 12.37, 1.574, -0.909], w: 1.456, k2: 0.286 }
+    };
+    const tides = { log: null, n: 0, low: 0, key: null, total: 0, told: null, angle: 0, long: 0, short: 0 };
+
+    // The polytropic index of a body that tides raise waves in (0: not a fluid, or compact)
+    function tideIndex(b) {
+        if (isCompact(b)) return 0;
+        if (b.kind === 'jupiter' || b.kind === 'browndwarf' || b.kind === 'redgiant') return 1.5;
+        return b.m >= STAR_MASS ? (b.m < 0.35 ? 1.5 : 3) : 0;
+    }
+
+    function tideFit(c, x) {
+        return Math.pow(10, c[5] + x * (c[4] + x * (c[3] + x * (c[2] + x * (c[1] + x * c[0])))));
+    }
+
+    // After each step going forwards: the bodies whose orbits have just come out past a close pass. The packed pair
+    // times say cheaply which are near anything (eta^2 is the pair's time squared x G M / R^3), and a close pair's
+    // own record says how near it came between the ends of the step.
+    function tidalPasses(dt) {
+        if (gravStamp !== mainStamp || bodies.length !== mainN) return;
+        const n = bodies.length, best = SBEST, part = SPART;
+        let any = false;
+        for (let k = 0; k < n; k++) {
+            const j = part[k], b = bodies[k], R = b.R / AU_KM;
+            if (j < 0 || best[k] * G * b.m > TIDE_REACH * R * R * R || b.kep) continue;
+            const c = bodies[j];
+            if (!(c.kep && c.kep.b === b) && tidePass(b, c, Infinity, dt)) any = true;
+        }
+        for (const p of mainPairs) {
+            const a = p.a, b = p.b, d = p.closest;
+            if (a.grp || d === Infinity) continue;
+            const d3 = d * d * d / (a.m + b.m), Ra = a.R / AU_KM, Rb = b.R / AU_KM;
+            if (d3 * a.m < TIDE_REACH * Ra * Ra * Ra && tidePass(a, b, d, dt)) any = true;
+            if (d3 * b.m < TIDE_REACH * Rb * Rb * Rb && tidePass(b, a, d, dt)) any = true;
+        }
+        if (any) computeForces();
+    }
+
+    // The waves raised in L by H (closest: how near they came in this step, if a close pair). True if the orbit changed.
+    function tidePass(L, H, closest, dt) {
+        const index = tideIndex(L);
+        if (!index || L.grp || H.grp || L.held || H.held || !(H.m > 0)) return false;
+        const rx = L.x - H.x, ry = L.y - H.y, vx = L.vx - H.vx, vy = L.vy - H.vy, rv = rx * vx + ry * vy;
+        if (!(rv > 0)) return false;
+        const M = L.m + H.m, gm = G * M, mu = L.m * H.m / M;
+        const r = hyp(rx, ry), h = rx * vy - ry * vx, p = h * h / gm, beta = 2 * gm / r - (vx * vx + vy * vy);
+        const e = Math.sqrt(Math.max(0, 1 - p * beta / gm));
+        if (e < TIDE_E_MIN) return false;
+        const rp = p / (1 + e), R = L.R / AU_KM, q = rp / R, eta = Math.sqrt((L.m / M) * q * q * q);
+        if (eta > TIDE_ETA_MAX) return false;
+        const at = Math.min(p, 3 * rp);
+        if (r < at) return false;
+        if (hyp(L.px - H.px, L.py - H.py) >= at) {
+            // It began the step out here: it has only made the pass if it began going in. (A step's backward part can
+            // also dip a close pair back inside.)
+            if (closest >= at) return false;
+            keplerDrift(rx, ry, vx, vy, gm, -dt, false);
+            if (KX * KVX + KY * KVY >= 0) return false;
+        }
+        const P = beta > 0 ? TAU * gm / (beta * Math.sqrt(beta)) : Infinity;
+        if (Math.abs(dt) >= P) return false;   // (too tight to follow turn by turn: its phases are regular by far)
+        const fit = TIDE_FITS[index], x = Math.log10(Math.max(eta, 1)), q2 = 1 / (q * q), mr = H.m / L.m;
+        const dE = (G * L.m * L.m / R) * mr * mr * q2 * q2 * q2 * (tideFit(fit.T2, x) + q2 * tideFit(fit.T3, x));
+        if (beta > 0) {
+            // The phase of the waves moves on by (3/2) w P dE / |E| in the time between one pass and the next
+            if (1.5 * fit.w * Math.sqrt(G * L.m / (R * R * R)) * P * dE / (0.5 * mu * beta) < 1) return false;
+        } else if (dE < TIDE_SMALL * mu * gm / p) return false;
+        const rd = rv / r, left = rd * rd - 2 * dE / mu;
+        tideNote(L, H, left > 0 ? 2 * dE / mu : rd * rd);
+        const dv = (left > 0 ? Math.sqrt(left) : 0) - rd;
+        // (the books count what systemEnergy does: a pair with its relativistic terms unless it is hosted)
+        const full = !(L.kep && L.kep.hosted && L.kep.b === H) && !(H.kep && H.kep.hosted && H.kep.b === L);
+        const was = full ? pairEnergy(L, H) : 0.5 * mu * (vx * vx + vy * vy);
+        const ux = dv * rx / r, uy = dv * ry / r, fL = H.m / M, fH = L.m / M;
+        L.vx += fL * ux; L.vy += fL * uy;
+        H.vx -= fH * ux; H.vy -= fH * uy;
+        const now = full ? pairEnergy(L, H) : 0.5 * mu * ((L.vx - H.vx) * (L.vx - H.vx) + (L.vy - H.vy) * (L.vy - H.vy));
+        groupEnergy.set(TIDE_BOOK, (groupEnergy.get(TIDE_BOOK) || 0) + now - was);
+        tides.total++;
+        L.track = H.track = null;   // (a new orbit: its period and the way it turns are measured afresh)
+        // (said once a scene, for a pass that matters)
+        if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
+            tides.told = settings.scene;
+            if (!settings.stability && !scene.progress && !mission.def) showHint('note', '<strong>Tides took energy from this orbit.</strong> Each close pass shrinks it a little more.', { ms: 7000 });
+        }
+        return true;
+    }
+
+    // Log an impulse about to be given (take: what it takes off the square of their speed apart)
+    function tideNote(L, H, take) {
+        if (tides.key !== past.key) { tides.key = past.key; tides.n = tides.low = tides.total = 0; }
+        if (!tides.log) tides.log = new Float64Array(TIDE_LOG * TIDE_ROW);
+        const o = (tides.n & (TIDE_LOG - 1)) * TIDE_ROW, g = tides.log;
+        g[o] = past.head; g[o + 1] = L.id; g[o + 2] = H.id; g[o + 3] = take;
+        g[o + 4] = groupEnergy.get(TIDE_BOOK) || 0;
+        tides.n++;
+        if (tides.n - tides.low > TIDE_LOG) tides.low = tides.n - TIDE_LOG;
+    }
+
+    // Running back, about to retrace logged step k: take back the impulses at its end. Each gives back just the energy
+    // it took, from the velocities the run back has reached: put back as logged, a rounding error's worth of mismatch
+    // between velocity and place would change the energy, and that grows a thousand times an orbit. (A merger's copy
+    // has already taken back any of a later step: they are just dropped.)
+    function tideBack(k) {
+        if (tides.n === tides.low) return;
+        if (tides.key !== past.key) { tides.n = tides.low = 0; return; }
+        const g = tides.log;
+        let any = false;
+        while (tides.n > tides.low) {
+            const o = ((tides.n - 1) & (TIDE_LOG - 1)) * TIDE_ROW;
+            if (g[o] < k) break;
+            tides.n--;
+            if (g[o] > k) continue;
+            const L = bodyById(g[o + 1]), H = bodyById(g[o + 2]);
+            if (!L || !H) continue;
+            const rx = L.x - H.x, ry = L.y - H.y, r = hyp(rx, ry), M = L.m + H.m;
+            const rd = (rx * (L.vx - H.vx) + ry * (L.vy - H.vy)) / r, dv = Math.sqrt(rd * rd + g[o + 3]) - Math.abs(rd);
+            L.vx += (H.m / M) * dv * rx / r; L.vy += (H.m / M) * dv * ry / r;
+            H.vx -= (L.m / M) * dv * rx / r; H.vy -= (L.m / M) * dv * ry / r;
+            if (g[o + 4]) groupEnergy.set(TIDE_BOOK, g[o + 4]); else groupEnergy.delete(TIDE_BOOK);
+            tides.total--;
+            any = true;
+        }
+        if (any) computeForces();
+    }
+
+    // How a star or gas giant is drawn pulled out towards what pulls on it hardest, at its true shape: the equilibrium
+    // tide, a height h2 (m / M) (R / d)^3 R P2(cos angle) with h2 = 1 + k2 (Murray & Dermott 1999, section 4.3; k2 from the
+    // apsidal constants of Brooker & Olle 1955). Sets tides.angle, long and short; false if under half a pixel.
+    function tideStretch(b, x, y, rd) {
+        if (rd < 2 || b.grp) return false;
+        const index = tideIndex(b);
+        if (!index) return false;
+        const R = b.R / AU_KM;
+        let best = 0, c = null;
+        for (const o of bodies) {
+            if (o === b || o.grp) continue;
+            const ex = o.dx - b.dx, ey = o.dy - b.dy, d2 = ex * ex + ey * ey;
+            const f = d2 > 0 ? o.m / (d2 * Math.sqrt(d2)) : 0;
+            if (f > best) { best = f; c = o; }
+        }
+        if (!c) return false;
+        const z = Math.min(0.2, (1 + TIDE_FITS[index].k2) * (best / b.m) * R * R * R);   // (beyond that, the linear theory has stopped holding)
+        if (1.5 * z * rd < 0.5) return false;
+        tides.angle = Math.atan2(sy(c.dy) - y, sx(c.dx) - x);
+        tides.long = 1 + z; tides.short = 1 - 0.5 * z;
+        return true;
     }
 
     // ------------------------------------------------------------------
@@ -3014,6 +3212,7 @@
                 const used = performance.now() - t0;
                 if (used + used / steps > budget) { timedOut = true; break; }
             }
+            if (past.replay && timeDir < 0) tideBack(past.head - 1);
             step(timeDir * dt);
             simTime += timeDir * dt;
             acc -= dt;
@@ -3025,6 +3224,7 @@
                 refreshBodyLists();
                 announceTear();
             }
+            if (settings.realistic && timeDir > 0 && !past.replay) tidalPasses(dt);
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
@@ -6447,7 +6647,12 @@
                 // True size, so stars shine as small points of light; a ring marks anything too small to see
                 const rd = b.rd;
                 if (isStar(b) && rd < 4) glow(x, y, 0, 5, b.color, C.dark ? 0.6 : 0.5);
-                drawBody(b, x, y, rd, C);
+                if (tideStretch(b, x, y, rd)) {
+                    ctx.save();
+                    ctx.translate(x, y); ctx.rotate(tides.angle); ctx.scale(tides.long, tides.short);
+                    drawBody(b, 0, 0, rd, C);
+                    ctx.restore();
+                } else drawBody(b, x, y, rd, C);
                 if (rd < MARKER_R && real && !b.grp) {
                     ctx.strokeStyle = C.dark ? hexA(b.color, 0.6) : bodyStroke(b.color, false);
                     ctx.lineWidth = 1.2;
@@ -15881,6 +16086,7 @@
                 waveSamples: gw.waveN, frozen: gw.frozen, waves: gwOn
             };
         },
+        tides() { const on = tides.key === past.key; return { passes: on ? tides.total : 0, energy: -(groupEnergy.get(TIDE_BOOK) || 0), logged: on ? tides.n - tides.low : 0 }; },
         // Turn the radiation reaction off or on (for tests: realistic physics always has it)
         setWaves(v) { gwOn = !!v; forcesDirty = true; }
     });
@@ -16016,6 +16222,7 @@
             for (let i = 0; i < 1000 && past.count > 0 && past.head > head0; i++) {
                 const dt = stepSize();
                 if (!past.replay) break;
+                tideBack(past.head - 1);
                 step(-dt); simTime -= dt; afterStep(dt);
             }
             // (without the log, or past its oldest step: steps chosen afresh, the last one short)
