@@ -6913,7 +6913,7 @@
     }
 
     // All of the kept trails, from their samples, a block on each canvas (as trailGroups draws them)
-    function layerBuild(tr, C, T, count, oFirst, lw, sig) {
+    function layerBuild(tr, C, T, oFirst, lw, sig) {
         const q = swarmLayer, N = LAYER_TILES;
         while (q.tiles.length < N) {
             const c = document.createElement('canvas'), g = c.getContext('2d');
@@ -6923,7 +6923,7 @@
         }
         q.T = T; q.span = Math.ceil(T / LAYER_SPANS); q.sig = sig; q.wait = LAYER_WAIT; q.k = sampleCount; q.built = true; q.stale = false; q.builds++;
         for (const t of q.tiles) { layerClear(t, lw); t.block = -1; }
-        const last = Math.floor((sampleCount - 1) / q.span) + 1, reach = Math.max(1, Math.min(count, T) * perf.quality);
+        const last = Math.floor((sampleCount - 1) / q.span) + 1, reach = Math.max(1, T * perf.quality);
         q.reach = Infinity;
         for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
             if (sampleCount - blk * q.span >= reach) { q.reach = reach; continue; }   // (only what will show: see layerCompose)
@@ -6988,8 +6988,8 @@
         }
     }
 
-    function layerCompose(tr, C, oFirst, count) {
-        const q = swarmLayer, N = LAYER_TILES, span = q.span, last = Math.floor((sampleCount - 1) / span) + 1, reach = Math.max(1, Math.min(count, q.T) * perf.quality);
+    function layerCompose(tr, C, oFirst) {
+        const q = swarmLayer, N = LAYER_TILES, span = q.span, last = Math.floor((sampleCount - 1) / span) + 1, reach = Math.max(1, q.T * perf.quality);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
             const t = q.tiles[blk % N];
@@ -7044,15 +7044,15 @@
         if (count < 1) return false;
         if (q.built && (T > 1.25 * q.T || 1.5 * T < q.T || sampleCount < q.k)) q.built = false;
         if (q.built && sampleCount - q.k >= q.span) { q.built = false; q.wait = LAYER_WAIT; }
-        if (count * perf.quality > 1.5 * q.reach) q.stale = true;   // (drawing is quicker now: they reach further back than was drawn)
+        if (q.T * perf.quality > 1.5 * q.reach) q.stale = true;   // (drawing is quicker now: they reach further back than was drawn)
         if (!q.built && q.wait > 0) { q.wait--; return false; }
         if (!q.built || ((sig !== q.sig || q.stale) && (paused || q.wait <= 0))) {
-            if (!layerBuild(tr, C, T, count, oFirst, lw, sig)) { q.off = true; return false; }
+            if (!layerBuild(tr, C, T, oFirst, lw, sig)) { q.off = true; return false; }
         } else {
             layerAdd(tr, C, oFirst, lw);
             q.wait--;
         }
-        layerCompose(tr, C, oFirst, count);
+        layerCompose(tr, C, oFirst);
         return true;
     }
 
