@@ -143,8 +143,10 @@
         probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
     const PALETTE = [
-        ['sun', 'earth', 'moon', 'jupiter', 'comet', 'blackhole'],
-        ['dwarf', 'redgiant', 'bluegiant', 'browndwarf', 'whitedwarf', 'neutron', 'mars', 'asteroid', 'custom']   // ("More bodies")
+        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
+        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
+        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
+        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
     // Values the mass and radius sliders snap to
@@ -9410,32 +9412,26 @@
     let paletteDrag = null;
     let ghostEl = null;
 
-    // In the column beside the canvas the usual kinds show, and the rest wait behind "More bodies"
-    // (open again next time if it was left open); on narrow screens, and on a phone held sideways, all
-    // the chips flow on in one set.
-    const PALETTE_STORE = 'orbitsPaletteMore';
+    // The chips come in groups (stars, dead stars, planets, small bodies): headed groups in the column
+    // beside the canvas, one flowing set of chips under it on narrow screens.
     function buildPalette() {
         if (!ui.palette) return;
         ui.palette.textContent = '';
-        PALETTE.forEach((kinds, i) => {
+        for (const group of PALETTE) {
+            const box = document.createElement('div');
+            box.className = 'orb-group';
+            box.setAttribute('role', 'group');
+            const head = document.createElement('p');
+            head.className = 'orb-group-label';
+            head.id = `orbGroup${group.label.replace(/\W/g, '')}`;
+            head.textContent = group.label;
+            box.setAttribute('aria-labelledby', head.id);
             const chips = document.createElement('div');
             chips.className = 'orb-group-chips';
-            for (const kind of kinds) chips.appendChild(paletteChip(kind));
-            ui.palette.appendChild(chips);
-            if (i) return;
-            const more = document.createElement('button');
-            more.type = 'button';
-            more.className = 'orb-palette-more';
-            more.textContent = 'More bodies';
-            const show = (on) => { ui.palette.classList.toggle('is-open', on); more.setAttribute('aria-expanded', on ? 'true' : 'false'); };
-            more.addEventListener('click', () => {
-                const on = !ui.palette.classList.contains('is-open');
-                show(on);
-                storeSet(PALETTE_STORE, on ? '1' : '');
-            });
-            show(storeGet(PALETTE_STORE) === '1');
-            ui.palette.appendChild(more);
-        });
+            for (const kind of group.kinds) chips.appendChild(paletteChip(kind));
+            box.append(head, chips);
+            ui.palette.appendChild(box);
+        }
         paletteRove(ui.palette.querySelector('.orb-chip'));
         if (!ui.palette.dataset.keys) {
             ui.palette.dataset.keys = '1';
@@ -13129,6 +13125,7 @@
         burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
         hintShown: '',         // the mission hint last put in the hint line
+        hints: false,          // the player asked for hints: what to do next, the burn's arrow and its mark
         panel: null,           // what the card over the canvas shows: 'how', 'list' or 'result' (null: hidden)
         okSaid: false, sceneKeyAt: -1e9, keyed: false,
         menuLocked: false
@@ -13429,6 +13426,7 @@
         if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
         if (mission.status === 'lost') return '<strong>Retry</strong>, or undo your last burn and fly it differently.';
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
+        if (!mission.hints) return paused && mission.status === 'flying' ? 'Paused. Burn, or press <strong>Play</strong> to go on.' : 'Hold an engine button to burn. Stuck? Turn on <strong>Hints</strong>.';
         return x.d.hint(x);
     }
     // (setHint's default during a mission: the mission's own hint)
@@ -14258,7 +14256,7 @@
             + '<p class="orb-mc-goal" id="mcGoal"></p><p class="orb-mc-status" id="mcStatus"></p>'
             + '<div class="orb-mc-fuel" id="mcFuel" role="meter" aria-label="Fuel left" aria-valuemin="0"><div class="orb-mc-row"><strong>Fuel</strong><span id="mcFuelNum"></span></div>'
             + '<div class="orb-mc-bar"><div class="orb-mc-fill" id="mcFill"></div><div class="orb-mc-tick" id="mcTick" title="Keep your fuel above this mark for three stars"></div></div></div>'
-            + '<div class="orb-mc-row orb-mc-left-row"><strong>Time</strong><span id="mcLeft"></span></div>'
+            + '<div class="orb-mc-row orb-mc-left-row"><strong>Time</strong><span id="mcLeft"></span><button type="button" class="orb-mc-hints" id="mcHints" aria-pressed="false" title="Show what to do next and where to burn">Hints off</button></div>'
             + '<div class="orb-mc-row orb-mc-pad-head"><strong id="mcPadLabel">Engine: hold to fire</strong><button type="button" class="orb-mc-fine" id="mcFine" aria-pressed="false" title="Much smaller burns, to fine-tune (or hold Shift)">Fine</button></div>'
             + `<div class="orb-mc-pad" role="group" aria-labelledby="mcPadLabel">${pad.map(([k, w, i, key]) => `<button type="button" class="orb-mc-burn orb-mc-${k}" data-kind="${k}" title="Burn ${w.toLowerCase()} (${key})">${toolIcon(i)}${w}</button>`).join('')}</div>`
             + `<button type="button" class="orb-mc-skip" id="mcSkip" hidden>${toolIcon('fast-forward')}<span id="mcSkipText"></span></button>`
@@ -14267,7 +14265,7 @@
             + '<div class="orb-mc-links"><button type="button" id="mcHow">How it works</button><button type="button" id="mcList">All missions</button></div>';
         ui.toolbar.prepend(C);
         const E = { box: C };
-        ['Title', 'Goal', 'Status', 'Fuel', 'FuelNum', 'Fill', 'Tick', 'Fine', 'Play', 'PlayText', 'Skip', 'SkipText', 'Left', 'Retry', 'How', 'List', 'Leave'].forEach((n) => { E[n.toLowerCase()] = byId(`mc${n}`); });
+        ['Title', 'Goal', 'Status', 'Fuel', 'FuelNum', 'Fill', 'Tick', 'Fine', 'Hints', 'Play', 'PlayText', 'Skip', 'SkipText', 'Left', 'Retry', 'How', 'List', 'Leave'].forEach((n) => { E[n.toLowerCase()] = byId(`mc${n}`); });
         E.head = C.querySelector('.orb-mc-head');
         E.playIcon = E.play.querySelector('.icon');
         E.burns = Array.from(C.querySelectorAll('.orb-mc-burn'));
@@ -14289,6 +14287,14 @@
             b.addEventListener('click', (e) => { if (!e.detail) { engineFire(kind, mission.fine); engineStop(); } });
         });
         E.fine.addEventListener('click', () => { mission.fine = !mission.fine; updateMissionConsole(); });
+        // (off until asked for, and remembered from then on)
+        mission.hints = storeGet('orbitsMissionHints') === '1';
+        E.hints.addEventListener('click', () => {
+            mission.hints = !mission.hints;
+            storeSet('orbitsMissionHints', mission.hints ? '1' : '');
+            updateMissionConsole();
+            refreshHint();
+        });
         E.play.addEventListener('click', (e) => {
             if (mission.status === 'won') {
                 const next = MISSIONS[mission.def.n];
@@ -14382,6 +14388,8 @@
         }
         E.fine.disabled = over;
         setAttr(E.fine, 'aria-pressed', mission.fine ? 'true' : 'false');
+        setAttr(E.hints, 'aria-pressed', mission.hints ? 'true' : 'false');
+        setText(E.hints, mission.hints ? 'Hints on' : 'Hints off');
         // The clock's button, and the skip
         // (after a win it is the way on, and Retry is the plain button beside it)
         const ready = st === 'ready', won = st === 'won', running = !paused || !!(mission.firing && mission.aimPaused && !ready);
@@ -14588,7 +14596,7 @@
         }
         const p = mission.pred, c = bodyById(mission.craftId);
         // Where the next burn goes: a world offset from R, turned as the view is turned
-        const x = c && !missionIsOver() ? missionContext() : null, next = skipTarget(x);
+        const x = c && mission.hints && !missionIsOver() ? missionContext() : null, next = skipTarget(x);
         if (next && next.kind !== 'meet') {
             const ang = turn.on ? turnAngleIn(0) : 0;
             const at = (wx, wy) => [cx + (Math.cos(ang) * wx - Math.sin(ang) * wy) * scale, cy - (Math.sin(ang) * wx + Math.cos(ang) * wy) * scale];
@@ -14754,7 +14762,8 @@
     }
 
     // ---- The Settings drawer ----
-    // Beside the canvas, Settings is a drawer over one side of it, which moves no control. While it is
+    // Settings docks beside the canvas, which shrinks to make room. On a phone held sideways there is no
+    // room for that, so it is a drawer over one side of the canvas. While it is
     // open the rest of the canvas is the frame: the cards, the corner text and the body's menu keep to
     // that (visL, visR), and the middle of the view eases to its middle (view.shift, in px, so it holds at
     // any zoom); a scene that would be cut off there is eased to fit. As it shuts all that eases back, but
