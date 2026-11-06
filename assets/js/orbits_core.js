@@ -240,7 +240,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? Then try Run backwards.',
+            tip: 'Three stars start at rest. Who gets thrown out? Then press Reverse.',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -1849,7 +1849,8 @@
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
         // timer says so itself)
-        if (!small.minor && !small.grp && !settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        if (!small.minor && !small.grp && timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }   // (running backwards: not the usual crash)
+        else if (!small.minor && !small.grp && !settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
     }
 
     // ------------------------------------------------------------------
@@ -9657,6 +9658,7 @@
     const EVENT_MAX = 200;                // merges and break-ups remembered...
     const EVENT_BODIES = 20000;           // ...and at most this many bodies in their copies
     const RETRACE_NEAR = 1e-3;            // back at a merger's moment: within this fraction of its step
+    const MERGE_BACK_NOTE = '<strong>A merge can\'t be rewound.</strong> Undo brings them back.';   // (bodies that touch while running back)
     const past = {
         key: null,                        // the edit history's state when this history began (pastKey)
         from: 0,                          // trail samples from this number on were taken during it
@@ -9666,7 +9668,7 @@
         dropped: false,                   // the sample after the newest kept one was dropped (still readable)
         ghosted: false, drift: false, gap: 0, noted: false, noteTimer: 0   // (gap: the widest, px)
     };
-    Object.assign(ui, { reverse: byId('reverseToggle') });
+    Object.assign(ui, { reverse: byId('reverseBtn') });
 
     // The edit history's state: it changes with every edit, undo, run again, restart or new scene (the
     // "run again" copy is retaken, or the trail samples start again), and while a body is dragged
@@ -9754,6 +9756,13 @@
         } else if (past.events.length) {
             const ev = past.events[past.events.length - 1];
             if (ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) undoEvent(ev);
+        }
+        // (rewound to the start: it stops there, ready to run forwards, as a tape does)
+        if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
+            setPaused(true);
+            setReverse(false, true);
+            pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
+            return;
         }
         const w = past.wall;
         if (w && w.dir === -timeDir && w.dir * (simTime - w.t) <= 0) {
@@ -9901,6 +9910,7 @@
         if (trailDir === timeDir || !past.dropped || k < Math.max(trailFloor, past.from) || cleanRender) return;
         const kt = k % TRAIL_CAP, kt1 = (k + 1) % TRAIL_CAP;
         const t0 = sampleTimes[kt], t1 = sampleTimes[kt1];
+        if (timeDir * (simTime + lag - t0) > 0) return;   // (back before the oldest sample: there is no true past to compare with)
         const f = t1 !== t0 ? clamp((simTime + lag - t0) / (t1 - t0), 0, 1) : 0;
         // Relative to where the frame's origin was then, as the trails are drawn
         const L = frameId !== null ? bodyById(frameId) : null;
@@ -9965,7 +9975,9 @@
         }
         if (past.drift && !past.noted) {
             past.noted = true;
-            pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
+            // (bodies that merged on the way back left the true past for good: rounding has nothing to do with it)
+            if (past.events.some((e) => e.dir === timeDir)) pastNote(MERGE_BACK_NOTE, 8000);
+            else pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
         }
     }
 
@@ -10011,14 +10023,15 @@
             pred.key = '';
             edit.previewDirty = true;
             past.noted = false;
-            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
+            if (!quiet) pastNote(!on ? '<strong>Running forwards</strong> again.' : simTime > 0 ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Before the start:</strong> the past that would lead to this setup.', 5000);
         }
         syncReverseUi();
     }
 
     function syncReverseUi() {
         const back = timeDir < 0;
-        if (ui.reverse && ui.reverse.checked !== back) ui.reverse.checked = back;
+        if (ui.reverse) ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+        if (ui.pause) ui.pause.classList.toggle('is-back', back);   // (its Play points the way time will run)
         if (ui.step) {
             const label = back ? 'Step back' : 'Step forward';
             if (ui.step.getAttribute('aria-label') !== label) {
@@ -10030,15 +10043,22 @@
         }
     }
 
-    // The settings' "Run backwards" box, and B (not while typing, nor with Ctrl, Cmd or Alt); and the
-    // moment a thrown body is let go
+    // A press of Reverse, or B. Turning it on sets time going, as nobody presses it to see nothing happen.
+    function pressReverse() {
+        const on = timeDir > 0;
+        setReverse(on);
+        if (on && timeDir < 0 && paused) setPaused(false);
+    }
+
+    // The Reverse button, and B (not while typing, nor with Ctrl, Cmd or Alt); and the moment a thrown
+    // body is let go
     function bindPlayControls() {
         window.addEventListener('pointerup', onThrowUp, true);
-        if (ui.reverse) ui.reverse.addEventListener('change', () => setReverse(ui.reverse.checked));
+        if (ui.reverse) ui.reverse.addEventListener('click', pressReverse);
         window.addEventListener('keydown', (e) => {
             if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
             if (e.key !== 'b' && e.key !== 'B') return;
-            if (!e.repeat) setReverse(timeDir > 0);
+            if (!e.repeat) pressReverse();
             e.preventDefault();
         });
         syncReverseUi();
@@ -13701,6 +13721,7 @@
         if (w === viewW && h === viewH && newDpr === dpr) return;
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
         if ((first || view.pendingBox) && scene) {
@@ -13758,7 +13779,8 @@
                 settings.speed = SPEED_STOPS[clamp(parseInt(ui.speed.value, 10) || 0, 0, SPEED_STOPS.length - 1)];
                 showSpeed();
             };
-            ui.speed.addEventListener('input', upd);
+            // (the canvas says what the new speed means, as it does for [ and ])
+            ui.speed.addEventListener('input', () => { upd(); speedFlash = performance.now() + 1500; });
             upd();
         }
         if (ui.scene) {
