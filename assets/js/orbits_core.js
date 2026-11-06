@@ -399,7 +399,8 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Gravitational waves drain the orbit until the black holes merge.',
+                tip: () => (settings.realistic ? 'Gravitational waves drain the orbit until the black holes merge.' : 'Just Newton: no waves, so these black holes orbit for ever.'),
+                offNote: 'no waves, so they orbit for ever. Drawn larger than life.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -3533,7 +3534,7 @@
             // (switched back on in such a scene, it is the scene's again, and goes when the scene does)
             const needed = !!(scene && scene.realistic);
             realisticByScene = needed && ui.realistic.checked;
-            if (needed && !ui.realistic.checked) showHint('note', '<strong>Realistic physics off:</strong> just Newton, so a plain ellipse.', { ms: 6000 });
+            if (needed && !ui.realistic.checked) showHint('note', `<strong>Realistic physics off:</strong> ${scene.offNote || 'just Newton, so a plain ellipse.'}`, { ms: 6000 });
             else if (needed) clearHint('note');
         });
     }
@@ -4436,6 +4437,7 @@
         return symbolicRadius(Rkm);
     }
     const MARKER_R = 7;   // px: the ring that marks a body drawn at its true (tiny) size
+    const HOLE_LARGER = 1.5;   // with realistic physics off, a black hole zoomed in on still looks larger than life
 
     // The radius that arrows, names and clicks keep clear of (the disc, or the marker ring around it)
     function drawRadius(b) {
@@ -4467,7 +4469,7 @@
             }
             return;
         }
-        for (const b of bodies) b.rmax = bodySize(b) * sizeScale;
+        for (const b of bodies) b.rmax = b.kind === 'blackhole' ? Math.max(bodySize(b) * sizeScale, HOLE_LARGER * (b.R / AU_KM) * scale) : bodySize(b) * sizeScale;
         for (const b of bodies) {
             const p = b.primary;
             if (!p || !b.bound || b.m >= p.m || b.minor) continue;
