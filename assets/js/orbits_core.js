@@ -11410,7 +11410,8 @@
         // (an event note drawn on the canvas isn't said twice on screen: here it is for screen readers alone)
         const onCanvas = hints.note && hints.note.canvas && !mission.def;
         const said = onCanvas ? `<span class="orb-sr-only">${hintHtml(hints.note)}</span>` : '';
-        const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
+        // (a mission's line is its own: a drag's feedback, its notes, and its hints if they are on, or nothing)
+        const h = mission.def ? hintHtml(hints.drag) || hintHtml(hints.missionNote) || missionHint() || '' : hintHtml(hints.drag)
             || (onCanvas ? '' : hintHtml(hints.note))
             || said + (hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint());
         if (h === hintKey) return;
@@ -15273,13 +15274,13 @@
     function missionHintText() {
         const x = missionContext();
         mission.tell = null;
+        // (hints off, it says nothing: the switch is by the clock, and a failure's card has a hint of its own)
+        if (!mission.hints) return '';
         const orUndo = mission.log.length ? ', or undo your last burn' : '';
         if (!x) return mission.status === 'lost' ? `<strong>Retry</strong>${orUndo}.` : '';
         if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
         if (mission.status === 'lost') return `<strong>Retry</strong>${orUndo}${orUndo && ' and fly it differently'}.`;
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
-        // (one line, whatever the clock is doing: a held burn stops it, and the words mustn't flicker)
-        if (!mission.hints) return 'Burn, watch the dashed path, and play on. Stuck? Turn on <strong>Hints</strong>.';
         return x.d.hint(x);
     }
     // (setHint's default during a mission: the mission's own hint)
