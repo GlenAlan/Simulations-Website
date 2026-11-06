@@ -12205,6 +12205,7 @@
     const SKIP_S = 1.5;                      // a skip to the next moment that matters takes about this long to watch
     const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
     const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
+    const TAP_FROM = 0.007;                  // and to single taps: letting go late would go right through a narrow goal
     const toKms = (v) => v * AUYR_KMS;
     const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
     const auText = (d) => `${d < 0.1 ? d.toFixed(3) : d.toFixed(2)} AU`;
@@ -12502,7 +12503,7 @@
         const words = kmsWords(more);
         let h;
         if (first) h = `${first[0]}${first[0] ? 'hold' : 'Hold'} <strong>${btn}</strong> for about ${words} km/s${first[1]}`;
-        else if (mission.fine) h = `Hold <strong>${btn}</strong> until you see the ✓.`;
+        else if (mission.fine) h = `${more > TAP_FROM * x.d.budget ? 'Hold' : 'Tap'} <strong>${btn}</strong> until you see the ✓.`;
         else if (more > FINE_FROM * x.d.budget) h = `Keep holding <strong>${btn}</strong>: about ${words} km/s to go.`;
         else h = `Nearly. Turn on <strong>Fine</strong>, then hold <strong>${btn}</strong> until you see the ✓.`;
         return askBurn(btn, ux, uy, more, h);
@@ -13552,7 +13553,7 @@
         if (!d || !E) return;
         const x = missionContext(), m = missionStatus(x), st = mission.status, over = missionIsOver();
         // (the button the hint names is marked, and the arrow on the probe follows the hint)
-        const told = /hold(?:ing)? <strong>(Forward|Back|In|Out)<\/strong>/i.exec(missionHintText() || '');
+        const told = /(?:hold|holding|tap) <strong>(Forward|Back|In|Out)<\/strong>/i.exec(missionHintText() || '');
         const left = Math.max(0, d.budget - mission.used), best = bestOf(d.id);
         // (always three stars, full or empty, so a first win doesn't wrap the title and move everything)
         setText(E.title, `${d.n}. ${d.title} ${starText(best ? best.stars : 0)}`);

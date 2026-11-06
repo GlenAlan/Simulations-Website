@@ -2040,6 +2040,11 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 .orb-mc-out { grid-area: o; }
 .orb-mc-slower { grid-area: b; }
 
+/* (the button the hint names) */
+.orb-console .orb-mc-burn.is-told:not(:disabled) {
+    box-shadow: inset 0 0 0 2px var(--color-text);
+}
+
 .orb-console .orb-mc-burn.is-firing:not(:disabled) {
     box-shadow: inset 0 0 0 2px var(--color-accent);
     background-color: var(--color-bg-button-active-overlay);
