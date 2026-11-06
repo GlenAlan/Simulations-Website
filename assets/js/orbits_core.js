@@ -240,7 +240,7 @@
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
-            tip: 'Three stars start at rest. Who gets thrown out? Then try Run backwards.',
+            tip: 'Three stars start at rest. Who gets thrown out? Then press Reverse.',
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -264,8 +264,8 @@
         // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
-            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
-            tip: 'With Realistic physics on, relativity swings this orbit round into a rosette.',
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            tip: 'Relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
                 { kind: 'neutron', orbit: { around: 0, a: 1500 / AU_KM, e: 0.5, w: 0, nu: 180 } }
@@ -276,8 +276,8 @@
         // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
         // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
         tde: {
-            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, box: [-0.64, 0.11, -0.23, 0.23],
-            tip: 'With Realistic physics on, the black hole\'s tides tear this star apart.',
+            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.64, 0.11, -0.23, 0.23],
+            tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -320,8 +320,7 @@
         // pull on each other, stir each other up, collide and stick; the biggest grow fastest. (In this flat
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
-            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 1, trail: 1, swarm: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            tip: 'Moonlets left by a giant impact collide and stick: watch a moon build up.',
+            units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 0, forceBody: 1, vref: 0.75, trail: 1, swarm: true, progress: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
             bodies: (function () {
                 const rnd = seeded(5);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
@@ -341,7 +340,7 @@
         // was explained by Einstein in 1915.)
         mercury: {
             units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
-            tip: 'Speed it up: with Realistic physics on, this orbit turns 43″ a century.',
+            tip: 'Speed it up: this orbit turns 43″ a century.',
             bodies: [
                 { kind: 'sun' },
                 { kind: 'mercury', orbit: { around: 0, a: 0.387098, e: 0.205630, w: 77.46, nu: 0 } }
@@ -367,7 +366,7 @@
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
                 units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'With Realistic physics on, gravitational waves drain the orbit until the black holes merge.',
+                tip: 'Gravitational waves drain the orbit until the black holes merge.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -969,6 +968,8 @@
         if (au < 1000) return { v: au.toFixed(1), u: 'AU' };
         return { v: fmtSci(au, 2), u: 'AU' };
     }
+    // A whole number with its thousands marked, or from a billion up as ×10ⁿ, so it stays short
+    const fmtWhole = (x) => (Math.abs(x) < 1e9 ? Math.round(x).toLocaleString('en-US') : fmtSci(x, 2));
     // Scenes count time in years, days (scene.time 'd', or scene.units 'km') or seconds (scene.time 's':
     // orbits round a black hole)
     const timeUnit = () => scene.time || (scene.units === 'km' ? 'd' : 'yr');
@@ -978,32 +979,35 @@
         const a = Math.abs;
         if (timeInSeconds()) {
             const s = yr * YEAR_S;
-            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : Math.round(s).toLocaleString('en-US'), u: 's' };
+            return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : fmtWhole(s), u: 's' };
         }
         if (timeUnit() === 'd') {
             const d = yr * DAYS_PER_YEAR;
-            return { v: a(d) < 1000 ? d.toFixed(1) : Math.round(d).toLocaleString('en-US'), u: 'days' };
+            return { v: a(d) < 1000 ? d.toFixed(1) : fmtWhole(d), u: 'days' };
         }
-        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : Math.round(yr).toLocaleString('en-US'), u: 'yr' };
+        return { v: a(yr) < 100 ? yr.toFixed(2) : a(yr) < 1000 ? yr.toFixed(1) : fmtWhole(yr), u: 'yr' };
     }
     // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
         if (timeInSeconds() || yr * YEAR_S < 600) {
             const s = yr * YEAR_S;
             if (s < 1) return `${precise ? s.toFixed(3) : +s.toFixed(3)} s`;
+            if (s >= 1e9) return `${fmtWhole(s)} s`;
             return `${precise ? s.toFixed(s < 100 ? 2 : 0) : +s.toFixed(s < 10 ? 2 : 0)} s`;
         }
         if (timeUnit() === 'd' || yr < 0.1) {
             const d = yr * DAYS_PER_YEAR;
+            if (d >= 1e9) return `${fmtWhole(d)} days`;
             if (precise) return `${d < 100 ? d.toFixed(1) : Math.round(d)} days`;
+            if (d < 0.1) return `${+(d * 24).toFixed(1)} h`;   // (not "0.0 days")
             return `${d < 10 ? d.toFixed(1) : Math.round(d)} ${d < 1.5 && d >= 0.5 ? 'day' : 'days'}`;
         }
-        if (precise) return `${yr < 100 ? yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
-        return `${yr < 10 ? +yr.toFixed(2) : Math.round(yr).toLocaleString('en-US')} yr`;
+        if (precise) return `${yr < 100 ? yr.toFixed(2) : fmtWhole(yr)} yr`;
+        return `${yr < 10 ? +yr.toFixed(2) : fmtWhole(yr)} yr`;
     }
     function fmtSpeedKms(kms) {
         if (kms < 0.1) return { v: (kms * 1000).toFixed(kms < 0.01 ? 2 : 1), u: 'm/s' };
-        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : Math.round(kms).toLocaleString('en-US'), u: 'km/s' };
+        return { v: kms < 10 ? kms.toFixed(2) : kms < 1000 ? kms.toFixed(1) : fmtWhole(kms), u: 'km/s' };
     }
     // " (0.24c)" for speeds of at least 1% of the speed of light
     function lightFraction(kms) {
@@ -1849,7 +1853,21 @@
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
         // timer says so itself)
-        if (!small.minor && !small.grp && !settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        if (!small.minor && !small.grp && timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }   // (running backwards: not the usual crash)
+        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+    }
+
+    // Said as a merger is (not for a swarm's bodies, which go by the hundred; the stability timer says so
+    // itself). The scene's tip has done its job. If it was the chosen body, the choice goes to what tore
+    // it apart, not to a piece: one fragment means nothing, and its readouts would only confuse.
+    let tornNews = null;
+    function announceTear() {
+        const n = tornNews;
+        tornNews = null;
+        if (!n || n.L.minor) return;
+        clearHint('tip');
+        if (n.chosen && bodies.includes(n.H)) selectBody(n.H.id);
+        if (!settings.stability) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(n.L)))} was torn apart</strong> by the tides of ${escapeHtml(theName(n.H))}.`, { ms: 7000 });
     }
 
     // ------------------------------------------------------------------
@@ -2343,7 +2361,15 @@
     // puts the switch back (unless it was changed by hand meanwhile), so "Three stars: chaos" isn't
     // quietly run with Einstein's corrections after a visit to Mercury
     let realisticByScene = false;
-    if (ui.realistic) ui.realistic.addEventListener('change', () => { realisticByScene = false; });
+    if (ui.realistic) {
+        ui.realistic.addEventListener('change', () => {
+            // (switched back on in such a scene, it is the scene's again, and goes when the scene does)
+            const needed = !!(scene && scene.realistic);
+            realisticByScene = needed && ui.realistic.checked;
+            if (needed && !ui.realistic.checked) showHint('note', '<strong>Realistic physics off:</strong> just Newton, so a plain ellipse.', { ms: 6000 });
+            else if (needed) clearHint('note');
+        });
+    }
     function setRealisticSwitch(on) {
         settings.realistic = on;
         if (ui.realistic) ui.realistic.checked = on;
@@ -2396,7 +2422,8 @@
     }
 
     function precessionLines(b, compact, title, C) {
-        if (!orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
+        // (a piece of a torn-apart body has no orbit of its own to turn)
+        if (b.grp || !orbitingBody(b) || !b.bound || (b.kep && b.kep.fast)) return null;
         const p = b.primary, el = elementsOf(b, p);
         if (!el || !el.bound) return null;
         const r = precessionOf(b);
@@ -2576,7 +2603,7 @@
             acc -= dt;
             steps++;
             if (checkMerges()) { refreshBodyLists(); }
-            if (checkTides()) { refreshBodyLists(); }
+            if (checkTides()) { refreshBodyLists(); announceTear(); }
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
             trackPeriods(timeDir * simTime);
@@ -2976,6 +3003,7 @@
     // Scenes
     // ------------------------------------------------------------------
     function loadScene(key) {
+        restoreSpeed();   // (a zoom's slower time ends with it)
         missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
         setReverse(false, true);   // (a new or restarted scene runs forwards)
@@ -3171,6 +3199,7 @@
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
         const target = { zoom: pxPerAu / m, panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
+        view.panned = false;
         if (animate) view.anim = target;
         else { view.zoom = target.zoom; view.panX = target.panX; view.panY = target.panY; view.anim = null; }
     }
@@ -3210,25 +3239,51 @@
         fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], true);
     }
 
+    // The glide: the zoom and the way left to go close in together, counted in px on the screen, so what
+    // it is heading for comes steadily nearer even while the zoom races in. It aims at where a body that
+    // is moving through the view (a.ref) is now, not where it was at the start, for as long as the glide
+    // lasts (a target on the move is never quite caught, so that much is the limit).
+    const GLIDE_FOLLOW_MS = 1500;
     function stepViewAnimation(dtReal) {
         const a = view.anim;
         if (!a) return;
-        const k = 1 - Math.exp(-dtReal / 0.16);
+        if (a.ref && bodies.includes(a.ref)) { a.panX = a.ref.dx - F.x + a.ox; a.panY = a.ref.dy - F.y + a.oy; }
+        const k = 1 - Math.exp(-dtReal / 0.16), zoom0 = view.zoom;
         view.zoom *= Math.pow(a.zoom / view.zoom, k);
-        view.panX += (a.panX - view.panX) * k;
-        view.panY += (a.panY - view.panY) * k;
-        if (Math.abs(Math.log(a.zoom / view.zoom)) < 0.002 && Math.abs(a.panX - view.panX) * scale < 0.3 && Math.abs(a.panY - view.panY) * scale < 0.3) {
-            view.zoom = a.zoom; view.panX = a.panX; view.panY = a.panY; view.anim = null;
-        }
+        const left = (1 - k) * Math.min(1, zoom0 / view.zoom);
+        view.panX = a.panX + (view.panX - a.panX) * left;
+        view.panY = a.panY + (view.panY - a.panY) * left;
+        const done = Math.abs(Math.log(a.zoom / view.zoom)) < 0.002 && Math.abs(a.panX - view.panX) * scale < 0.3 && Math.abs(a.panY - view.panY) * scale < 0.3;
+        if (done) { view.zoom = a.zoom; view.panX = a.panX; view.panY = a.panY; view.anim = null; }
+        else if (a.ref && performance.now() > a.until && Math.abs(Math.log(a.zoom / view.zoom)) < 0.002) view.anim = null;
+    }
+
+    // The glide just begun stays aimed at this body, wherever it goes meanwhile
+    function glideWith(ref) {
+        const a = view.anim;
+        if (!a || !ref) return;
+        a.ref = ref; a.ox = a.panX - (ref.dx - F.x); a.oy = a.panY - (ref.dy - F.y);
+        a.until = performance.now() + GLIDE_FOLLOW_MS;
     }
 
     function zoomAt(px, py, factor) {
         const x = wx(px), y = wy(py);
+        const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
         view.zoom = clamp(view.zoom * factor, 1e-7, 1e7);
         view.anim = null;
         updateScale();
         view.panX = x - F.x - (px - viewW / 2) / scale;
         view.panY = y - F.y + (py - viewH / 2) / scale;
+        if (factor > 1 && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in: see insideOf)
+    }
+
+    // The body whose true disc covers the whole canvas, if any: the view is inside it, with nothing to see
+    function insideOf() {
+        for (const b of bodies) {
+            const x = sx(b.dx), y = sy(b.dy);
+            if (Math.hypot(Math.max(x, viewW - x), Math.max(y, viewH - y)) < (b.R / AU_KM) * scale) return b;
+        }
+        return null;
     }
 
     // Change the frame without the view jumping, then glide to the new centre.
@@ -3236,7 +3291,9 @@
         updateDrawnPositions();
         const before = viewOrigin();
         frameId = id !== null && bodyById(id) ? id : null;
+        if (frameId === null) restoreSpeed();   // (a zoom's slower time ends with it)
         freeze = null;
+        view.panned = false;
         leaveTurning();   // (a rotating frame ends: the view glides back square)
         updateDrawnPositions();
         keepScreen(before);
@@ -4670,7 +4727,8 @@
             // (nor when the view turns with its planet, which then stands still)
             if (isSatellite(p) && p.primary !== b && frameId !== p.id && frameId !== b.id && !turnUses(p)) { setFrame(p.id); from = p; }
             fitBox(orbitBox(b, p, el), glide);
-            return { how: 'orbit', around: p, from, with: [] };
+            glideWith(p);
+            return { how: 'orbit', around: p, from, with: [], T: el.T };
         }
         const cx = b.dx - F.x, cy = b.dy - F.y;
         if (crowd.length) {
@@ -4682,12 +4740,14 @@
             }
             const pad = 0.15 * Math.max(x1 - x0, y1 - y0);
             fitBox([x0 - pad, x1 + pad, y0 - pad, y1 + pad], glide);
+            glideWith(b);
             return { how: 'near', around: null, from: null, with: all };
         }
         let near = Infinity;
         for (const q of bodies) if (q !== b) near = Math.min(near, Math.hypot(q.dx - b.dx, q.dy - b.dy));
         const r = isFinite(near) && near > 0 ? 1.25 * near : 0.5 * (scene.box[1] - scene.box[0]);
         fitBox([cx - r, cx + r, cy - r, cy + r], glide);
+        glideWith(b);
         return { how: 'near', around: null, from: null, with: [] };
     }
 
@@ -4707,10 +4767,31 @@
         fitBox([Math.min(o[0], v[0]), Math.max(o[1], v[1]), Math.min(o[2], v[2]), Math.max(o[3], v[3])], glide);
     }
 
+    // Zooming to an orbit that goes by too fast to follow also slows time to suit it (a lap in about
+    // the time a scene's reference period takes) and says so; the old speed comes back on the way out:
+    // zooming out again, back to the centre of mass, or a new scene. Choosing a speed by hand ends all that.
+    const paceZoom = { was: 0, zoom: 0 };
+    function suitSpeed(b, z) {
+        if (mission.def || z.how !== 'orbit' || !(z.T / (settings.speed * rate()) < 1)) return;
+        const v = SPEED_STOPS[nearestStop(z.T / (SECONDS_PER_TREF * rate()))];
+        if (!paceZoom.was) paceZoom.was = settings.speed;
+        paceZoom.zoom = view.anim ? view.anim.zoom : view.zoom;
+        setSpeedValue(v);
+        showHint('note', `<strong>Slowed to ${fmtFactor(v)}×</strong> to suit this orbit: a lap in ${fig2(z.T / (v * rate()))} s.`, { ms: 7000, tag: 'pace' });
+    }
+    function restoreSpeed() {
+        if (!paceZoom.was) return;
+        const v = paceZoom.was;
+        paceZoom.was = 0;
+        setSpeedValue(v);
+        showHint('note', `<strong>Speed back to ${fmtFactor(v)}×.</strong>`, { ms: 4000, tag: 'pace' });
+    }
+
     function zoomChosen() {
         const b = bodyById(selectedId);
         const z = zoomToBody(b);
         if (!z) return null;
+        suitSpeed(b, z);
         const whose = theName(b);
         const others = z.with.length && z.with.length <= 3 ? z.with.map(theName) : null;
         announce(z.how === 'orbit' ? `Zoomed to ${whose}'s orbit round ${theName(z.around)}${z.from ? `, viewed from ${theName(z.from)}` : ''}`
@@ -4990,15 +5071,15 @@
         });
         // A press on the canvas gives it the keyboard (so Enter, N and Z act on it next), unless you are
         // working in the body's menu (leaving one of its fields would apply what is half typed)
-        // (A finger's press shows no ring: the browser counts the focus given here as visible, and on a
-        // phone a pink ring round the canvas after every tap only clutters it. A key brings it back.)
-        canvas.addEventListener('pointerdown', (e) => {
-            canvas.classList.toggle('orb-touch-focus', (e.pointerType || 'mouse') !== 'mouse');
+        // (A press shows no ring: the browser counts the focus given here as visible, and a pink ring
+        // round the canvas after every click only clutters it. Tab brings it back.)
+        canvas.addEventListener('pointerdown', () => {
+            canvas.classList.add('orb-press-focus');
             const a = document.activeElement;
             if (a === canvas || (ui.pop && ui.pop.contains(a))) return;
             canvas.focus({ preventScroll: true });
         });
-        document.addEventListener('keydown', () => canvas.classList.remove('orb-touch-focus'), true);
+        document.addEventListener('keydown', (e) => { if (e.key === 'Tab') canvas.classList.remove('orb-press-focus'); }, true);
         // A body chosen on the canvas shows in the list straight away (after the canvas's own handler)
         canvas.addEventListener('pointerup', () => setTimeout(() => { if (nav.visible && selectedId !== nav.shownSel) navReveal(); }, 0));
         setInterval(navTick, NAV_TICK_MS);
@@ -5038,6 +5119,7 @@
         if (wasFrame) frameId = null;
         updateDrawnPositions();
         keepScreen(before);
+        shiftComTrail(before);
         computePrimaries();
         refreshBodyLists();
         syncEccentricity(true);
@@ -5054,7 +5136,16 @@
         missionEnd(burn);
         forcesDirty = true;
         updateDrawnPositions();
-        if (!freeze) keepScreen(before);   // (also keeps a rotating frame's angle: see keepScreen)
+        if (!freeze) { keepScreen(before); shiftComTrail(before); }   // (also keeps a rotating frame's angle: see keepScreen)
+    }
+
+    // The trails are drawn relative to where the centre of mass was at each sample. A change that makes it
+    // jump (a heavy body added, say) would leave a long straight line in every trail where that happened,
+    // so the record of where it was goes with it: the trails stay where they are on the screen.
+    function shiftComTrail(before) {
+        const dx = F.x - before.x, dy = F.y - before.y;
+        if (frameId !== null || turn.on || (!dx && !dy)) return;
+        for (let i = 0; i < TRAIL_CAP; i++) { comTrail[2 * i] += dx; comTrail[2 * i + 1] += dy; }
     }
 
     // ------------------------------------------------------------------
@@ -5140,7 +5231,7 @@
     // "Moon now orbits Earth", with a way to see it (at most zooms its orbit is too small to see)
     function moonNote(b) {
         const p = b && b.primary;
-        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { ms: 9000, tag: 'chosen' });
+        if (p && b.bound && !mission.def) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(b)))}</strong> now orbits ${escapeHtml(theName(p))}. <button type="button" class="orb-hint-btn orb-hint-zoom">Zoom in</button>`, { tag: 'chosen' });
     }
 
     // A tap on the Moon chip: a moon for the chosen body if it can have one, else for the heaviest that can
@@ -5744,7 +5835,7 @@
         if (closeUp) placed.push({ l: closeUp.x - closeUp.R, r: closeUp.x + closeUp.R, t: closeUp.y - closeUp.R - 18, b: closeUp.y + closeUp.R });
         const order = discs.slice().sort((p, q) => (q.b.id === selectedId) - (p.b.id === selectedId) || q.b.m - p.b.m);
         for (const { x, y, r, b } of order) {
-            if (x < -60 || x > viewW + 60 || y < -60 || y > viewH + 60) continue;
+            if (x < -r || x > viewW + r || y < -r || y > viewH + r) continue;   // (it has a pointer at the edge instead)
             const chosen = b.id === selectedId || b === popBody;
             if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
@@ -5873,6 +5964,8 @@
         return w;
     }
 
+    const named = (l, t, r, b, zones) => zones.some((z) => l < z[2] && r > z[0] && t < z[3] && b > z[1]);
+
     // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
@@ -5902,12 +5995,18 @@
             ctx.globalAlpha = 1;
             let half = 10;
             if (settings.labels && clear) {
-                ctx.font = font(fs);
-                ctx.fillStyle = C.subtle;
-                ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
-                ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
-                ctx.fillText(b.name, ex - ux * 12, ey - uy * 12);
-                half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                // (where its name would go: left out if another pointer's is there)
+                const tx = ex - ux * 12, ty = ey - uy * 12;
+                const nl = ux > 0.5 ? tx - nw : ux < -0.5 ? tx : tx - nw / 2, nt = uy > 0.5 ? ty - fs : uy < -0.5 ? ty : ty - fs / 2;
+                if (!named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
+                    ctx.font = font(fs);
+                    ctx.fillStyle = C.subtle;
+                    ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
+                    ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
+                    ctx.fillText(b.name, tx, ty);
+                    half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                    zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                }
             }
             // (the next pointer along this edge keeps clear of this one and its name)
             zones.push([ex - half - 4, ey - fs - 14, ex + half + 4, ey + fs + 14]);
@@ -6024,14 +6123,24 @@
         ctx.textAlign = al;
     }
 
+    // Above this many named bodies only the chosen body's arrows are drawn: the rest would swamp the view
+    const ARROWS_ALL_MAX = 8;
+    let arrowsBusy = false;
+    function countArrows() {
+        let n = 0;
+        for (const b of bodies) if (!b.grp && !b.minor) n++;
+        arrowsBusy = n > ARROWS_ALL_MAX;
+    }
+
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        countArrows();
         // (a torn-apart body's pieces only get arrows when one is chosen)
         if (settings.forces) {
             for (const b of bodies) {
                 const Fm = Math.hypot(b.fx, b.fy);
-                if (!(Fm > 0) || ((b.grp || b.minor) && b !== subj)) continue;
+                if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
                 const L = forceLength(Fm * 1);
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -6046,7 +6155,7 @@
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         const fv = frameVelocity();
         for (const b of bodies) {
-            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor) && b !== subj)) continue;
+            if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
@@ -6054,6 +6163,14 @@
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
             if (tip.len > 2.5) {
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+                // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
+                if (b === subj && !b.aim && !cleanRender && settings.velocities) {
+                    ctx.strokeStyle = hot ? hotColour : C.velocity;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(tip.x, tip.y, 6.5 * sizeScale, 0, TAU);
+                    ctx.stroke();
+                }
             } else if (hot && !b.aim) {
                 const h = handlePos(b), hl = Math.hypot(h.x - x, h.y - y) || 1;
                 ctx.globalAlpha = 0.6;
@@ -7449,7 +7566,9 @@
         const L = frameId !== null && frameId !== b.id ? bodyById(frameId) : null;
         // (in a rotating frame the path is worked out as seen turning with the pair: see turnedSeen)
         const ref = turn.on ? null : L || (p && p.m >= b.m ? p : null);
-        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir].join('|');
+        // (with the zoom's rough size: its points are spaced for the zoom, and a path worked out zoomed
+        // out would be a few straight lines zoomed in)
+        const key = [b.id, b.x, b.y, rel.v[0], rel.v[1], ref ? ref.id : turn.on ? 't' : 'c', settings.realistic, settings.merge, bodies.length, timeDir, Math.round(Math.log2(scale))].join('|');
         const now = performance.now();
         // The one being worked out carries on; a new one starts when something has changed: at once
         // after a reset or an edit, for another body, or while paused; for a dragged body once the last
@@ -7728,6 +7847,7 @@
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
             setText(ui.statDist, '–'); setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
+            setText(ui.statDistUnit, ''); setStatUnit(ui.statSpeed, ''); setStatUnit(ui.statForce, '');
             return;
         }
         if (ui.subjectDot) ui.subjectDot.style.background = b.color;
@@ -7736,9 +7856,11 @@
         const top = !p || (p.primary === b && b.m > p.m);
         let dist, speed, force;
         if (bodies.length < 2) {
+            // (no units for what isn't there)
             setText(ui.subjectAround, 'on its own');
-            setText(ui.statDist, '–'); setText(ui.statDistUnit, 'AU');
+            setText(ui.statDist, '–'); setText(ui.statDistUnit, '');
             setText(ui.statSpeed, '–'); setText(ui.statForce, '–');
+            setStatUnit(ui.statSpeed, ''); setStatUnit(ui.statForce, '');
             return;
         }
         const pr = b.held && !top ? predictLaunch(b) : null;
@@ -7768,11 +7890,16 @@
         setText(ui.statDistUnit, d.u);
         const s = fmtSpeedKms(speed * AUYR_KMS);
         setText(ui.statSpeed, s.v);
-        if (ui.statSpeed && ui.statSpeed.nextSibling) {
-            const t = ` ${s.u}`;
-            if (ui.statSpeed.nextSibling.textContent !== t) ui.statSpeed.nextSibling.textContent = t;
-        }
+        setStatUnit(ui.statSpeed, s.u);
         setText(ui.statForce, force > 0 ? fmtSci(forceToNewtons(force), 2) : '0');
+        setStatUnit(ui.statForce, 'N');
+    }
+
+    // The unit after a readout's value (the text that follows it)
+    function setStatUnit(el, u) {
+        if (!el || !el.nextSibling) return;
+        const t = u ? ` ${u}` : ' ';
+        if (el.nextSibling.textContent !== t) el.nextSibling.textContent = t;
     }
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
@@ -7809,9 +7936,14 @@
             pull = top ? 'Total gravitational pull of all the other bodies on it' : `Gravitational pull of ${theName(p)} on it: F = Gm₁m₂/r²`;
             const el = pr ? pr.el : p ? elementsOf(b, p) : null;
             const bound = el && el.bound && (pr || b.bound);
-            if (el) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
+            // (pulled about by others as hard as by what it orbits, as in the three-star scenes: no one
+            // orbit, so no period to give, and the number would jump about with its partner)
+            const tossed = !pr && !top && p && !mission.def && bodies.length <= SWARM_N && disturbers(b, p).length > 0;
+            if (el && !tossed) ecc = el.e < 9.995 ? el.e.toFixed(2) : '>10';
             if (top && !p) {
                 tip = 'The heaviest body orbits nothing: it only wobbles round the centre of mass';
+            } else if (tossed) {
+                tip = `Other bodies pull on it about as hard as ${theName(p)}: it has no one orbit, so no period`;
             } else if (!bound) {
                 value = 'escaping';
                 tip = `Not bound to ${theName(p)}: it is going fast enough to escape, so it has no period`;
@@ -7907,6 +8039,7 @@
             if (dir < 0 && s < v * 0.9999) next = s;
         }
         if (next === null) return;
+        paceZoom.was = 0;
         setSpeedValue(next);
         speedFlash = performance.now() + 1500;
     }
@@ -7923,11 +8056,21 @@
         const dReal = (now - pace.t) / 1000, dSim = sim - pace.sim;
         const want = settings.speed * rate() * dReal;
         // Start again after a pause, a new scene, a jump back in time or a long gap (a hidden tab)
-        const fresh = paused || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
+        const fresh = paused || timeHeld() || pace.scene !== scene || !(dReal > 0) || dReal > 1 || dSim < 0 || !(want > 0);
         pace.t = now; pace.sim = sim; pace.scene = scene;
         if (fresh) { pace.ratio = 1; pace.behind = false; return; }
         pace.ratio += (Math.min(dSim / want, 1.5) - pace.ratio) * (1 - Math.exp(-dReal / 0.35));
         pace.behind = pace.ratio < (pace.behind ? 0.95 : 0.9);
+    }
+
+    // Moving targets are hard to hit, so time waits while a body from the palette is over the canvas and
+    // from the moment an arrow's tip is pressed until it is let go (not in a mission, whose clock is its own)
+    function timeHeld() {
+        if (mission.def) return false;
+        if (paletteDrag && paletteDrag.moved && paletteDrag.over) return true;
+        if (!drags.size) return false;
+        for (const d of drags.values()) if (d.mode === 'aim') return true;
+        return false;
     }
 
     // The note in the canvas's top-left corner: paused, the new speed just after a key changed it, or
@@ -7937,6 +8080,7 @@
         if (performance.now() < speedFlash) return `${paused ? 'Paused · ' : back ? `${back} · ` : ''}${fmtFactor(settings.speed)}×: ${speedCaption(settings.speed)}`;
         if (paused && mission.def) return null;   // (its console says so, and the clock stops for each burn)
         if (paused) return back ? 'Paused · running backwards' : 'Paused';
+        if (timeHeld()) return 'Time waits for you';
         if (pace.behind) return `${bodies.length > SWARM_N ? 'Many bodies' : 'Slowed down'}: running ${back ? 'backwards ' : ''}at ${fmtFactor(pace.ratio * settings.speed)}×`;
         return back || null;
     }
@@ -8074,7 +8218,7 @@
             ui.pop.style.top = '';
             const cr = canvas.getBoundingClientRect(), x = cr.left + sx(b.dx), w = ui.pop.offsetWidth;
             if (opening || !was) {
-                // (with the settings open beside the canvas the palette has stepped aside: then over them)
+                // (with the settings open over the palette: on the other side from them, if it can)
                 const bc = document.body.classList, settingsOpen = bc.contains('sim-panel-active') && bc.contains('sim-panel-side');
                 const rightOk = x < window.innerWidth - w - 16, leftOk = x > w + 16;
                 ui.pop.classList.toggle('on-left', settingsOpen ? !rightOk && leftOk : leftOk || (!rightOk && x > window.innerWidth / 2));
@@ -8328,7 +8472,7 @@
         units: {},           // field -> the unit it is shown in, { label, f } (f: internal units per shown unit)
         forceField: null,    // a field to rewrite even though it has focus (just applied or stepped)
         usual: { bid: null, t: 0, sense: 0 },
-        engaged: false,      // the arrow keys act on the chosen body (the simulation was last pressed or focused)
+        engaged: null,       // the arrow keys act on the chosen body: the simulation was last pressed or focused (null: nothing has been yet)
         downAt: new Map(),   // pointerId -> when it went down (for fine aiming on touch screens)
         previewUntil: 0,     // after a push from the keyboard with the menu closed, show the path until then
         preview: null,       // the path last worked out for the preview
@@ -8541,8 +8685,8 @@
     function fieldText(x) {
         const ax = Math.abs(x);
         if (ax === 0) return '0';
-        if (ax >= 9999.5 && ax < 1e15) return Math.round(x).toLocaleString('en-US');
-        if (ax < 1e-3 || ax >= 1e15) return x.toExponential(3);
+        if (ax >= 9999.5 && ax < 1e9) return Math.round(x).toLocaleString('en-US');
+        if (ax < 1e-3 || ax >= 1e9) return x.toExponential(3);
         return x.toPrecision(4);
     }
 
@@ -8556,30 +8700,36 @@
         return f === undefined ? NaN : parseFloat(m[1]) * f;
     }
 
+    const MAX_SPEED = 0.99 * C_LIGHT;
     const FIELDS = {
         speed: {
             input: ui.popSpeedIn, unitEl: ui.popSpeedUnit, units: SPEED_UNITS, ok: (v) => v >= 0,
+            why: 'Speed needs a number, 0 or more.', max: MAX_SPEED, over: 'Kept below the speed of light.',
             apply: (b, v) => { const s = velocityParts(b); setVelocity(b, v, s.angle, s.sense); },
             step: (b, dir, k) => nudge(b, dir > 0 ? 'faster' : 'slower', k)
         },
         angle: {
             input: ui.popAngleIn, units: ANGLE_UNITS, ok: (v) => isFinite(v),
+            why: 'Direction needs a number of degrees.',
             apply: (b, v) => { const s = velocityParts(b); setVelocity(b, s.v, s.screen ? v : clamp(v, -Math.PI / 2, Math.PI / 2), s.sense); },
             // (10, 1 or 0.1 degrees)
             step: (b, dir, k) => FIELDS.angle.apply(b, velocityParts(b).angle + dir * k * 100 * DEG)
         },
         period: {
             input: ui.popPeriodIn, unitEl: ui.popPeriodUnit, units: TIME_UNITS, ok: (v) => v > 0,
+            why: 'Period needs a number above 0.', max: 1e9, over: 'Kept to a billion years.',
             apply: (b, v) => setPeriod(b, v),
             step: (b, dir, k) => { const o = orbitOf(b); if (o && o.el.bound) setPeriod(b, o.T * (1 + dir * k)); }
         },
         peri: {
             input: ui.popPeriIn, unitEl: ui.popPeriUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            why: 'Distance needs a number above 0.', max: 1e6, over: 'Kept to a million AU.',
             apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, v, Math.max(v, o.ra)); },
             step: (b, dir, k) => { const o = orbitOf(b); if (o) FIELDS.peri.apply(b, o.rp * (1 + dir * k)); }
         },
         apo: {
             input: ui.popApoIn, unitEl: ui.popApoUnit, units: DIST_UNITS, ok: (v) => v > 0,
+            why: 'Distance needs a number above 0.', max: 1e6, over: 'Kept to a million AU.',
             apply: (b, v) => { const o = orbitOf(b); if (o) setApsides(b, Math.min(v, o.rp), v); },
             step: (b, dir, k) => { const o = orbitOf(b); if (o && isFinite(o.ra)) FIELDS.apo.apply(b, o.ra * (1 + dir * k)); }
         }
@@ -8600,23 +8750,32 @@
         if (input.value !== t) input.value = t;
     }
 
-    // Apply what was typed in a field, if it changed. Something that can't be read is marked (and, when
-    // the field is left, put back).
-    function commitField(name, keepBad) {
+    // Apply what was typed in a field, if it changed. Something that can't be used is put back, saying
+    // why; something too big is cut down to size.
+    function commitField(name) {
         const F = FIELDS[name], input = F.input, b = popBody;
         if (!b || !input || input.value.trim() === (edit.shown[name] || '')) return;
-        const v = parseField(input.value, F.units, edit.units[name]);
+        let v = parseField(input.value, F.units, edit.units[name]);
         if (!(isFinite(v) && F.ok(v))) {
-            if (keepBad) { input.setAttribute('aria-invalid', 'true'); return; }
             input.value = edit.shown[name] || '';
-            input.removeAttribute('aria-invalid');
+            fieldSay(F.why);
             return;
         }
-        input.removeAttribute('aria-invalid');
+        if (F.max !== undefined && v > F.max) { v = F.max; fieldSay(F.over); }
         edit.forceField = name;
         F.apply(b, v);
         updateEditor(true);
         edit.forceField = null;
+    }
+
+    // A word under the menu's fields for a few seconds, when an entry was refused or cut down to size
+    function fieldSay(text) {
+        const el = byId('popFieldWhy');
+        if (!el) return;
+        el.textContent = text;
+        el.hidden = false;
+        clearTimeout(edit.whyTimer);
+        edit.whyTimer = setTimeout(() => { el.hidden = true; el.textContent = ''; }, 5000);
     }
 
     // A stepper (or the up and down keys in a field)
@@ -8760,7 +8919,6 @@
             const name = t && t.classList && t.classList.contains('orb-spin-input') ? Object.keys(FIELDS).find((n) => FIELDS[n].input === t) : null;
             if (name && t.value.trim() !== (edit.shown[name] || '')) {
                 t.value = edit.shown[name] || '';
-                t.removeAttribute('aria-invalid');
                 e.stopImmediatePropagation();
                 e.preventDefault();
             }
@@ -8768,7 +8926,8 @@
         }
         const kind = ARROW_PUSH[e.key];
         if (!kind || e.ctrlKey || e.metaKey || takesArrows(t)) return;
-        if (!popBody && !edit.engaged && !document.body.classList.contains('sim-fullscreen-active')) return;
+        // (on a page just opened they work too, as Space and B do, while the simulation is in sight)
+        if (!popBody && !edit.engaged && !(edit.engaged === null && canvasInView) && !document.body.classList.contains('sim-fullscreen-active')) return;
         if (missionKey(e, kind)) return;
         const b = popBody || (selectedId !== null ? bodyById(selectedId) : null);
         if (!b || b.held || bodies.length < 2) return;
@@ -8894,17 +9053,16 @@
         for (const name of Object.keys(FIELDS)) {
             const input = FIELDS[name].input;
             if (!input) continue;
-            input.addEventListener('blur', () => commitField(name, false));
+            input.addEventListener('blur', () => commitField(name));
             input.addEventListener('focus', () => input.select());
-            input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    commitField(name, true);
+                    commitField(name);
                     if (coarse()) input.blur(); else input.select();
                 } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                     e.preventDefault();
-                    commitField(name, true);
+                    commitField(name);
                     stepField(name, e.key === 'ArrowUp' ? 1 : -1, e);
                 }
             });
@@ -8913,7 +9071,7 @@
             const name = spin.dataset.field;
             spin.querySelectorAll('.orb-spin-btn').forEach((btn) => {
                 const dir = parseFloat(btn.dataset.dir);
-                holdRepeat(btn, (e) => { commitField(name, false); stepField(name, dir, e); });
+                holdRepeat(btn, (e) => { commitField(name); stepField(name, dir, e); });
             });
         });
         // Way round
@@ -8996,7 +9154,6 @@
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
     // fades at an end only while there are more chips beyond it
-    const paletteScrolls = () => !!ui.palette && ui.palette.scrollWidth > ui.palette.clientWidth + 2;
     function paletteEdges() {
         const p = ui.palette;
         if (!p) return;
@@ -9080,6 +9237,14 @@
         return btn;
     }
 
+    // Is this touch's move from where it began heading for the canvas (the chip beside it, or below it)?
+    function towardsCanvas(d, e) {
+        const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+        const c = canvas.getBoundingClientRect();
+        if (d.y0 < c.bottom && d.y0 > c.top) return Math.abs(dx) > Math.abs(dy) && dx * (c.left + c.width / 2 - d.x0) > 0;
+        return Math.abs(dy) >= Math.abs(dx) && dy * (c.top + c.height / 2 - d.y0) > 0;
+    }
+
     function onChipDown(e, btn) {
         if (btn.disabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
         paletteDrag = { kind: btn.dataset.kind, btn, id: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, over: false, cx: 0, cy: 0 };
@@ -9091,9 +9256,9 @@
         const d = paletteDrag;
         if (!d || e.pointerId !== d.id) return;
         if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 6) {
-            // (in a row of chips that scrolls sideways, a sideways swipe by touch scrolls it: only a drag
-            // up or down carries the body out)
-            if (e.pointerType !== 'mouse' && paletteScrolls() && Math.abs(e.clientX - d.x0) > Math.abs(e.clientY - d.y0)) return;
+            // (by touch, only a move towards the canvas carries the body out: any other is a swipe, for
+            // the chips or the page to scroll by, as they do by themselves: see touch-action in the styles)
+            if (e.pointerType !== 'mouse' && !towardsCanvas(d, e)) return;
             d.moved = true;
             d.btn.classList.add('is-dragging');
             if (!ghostEl) {
@@ -9194,17 +9359,26 @@
             h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
                 : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
         } else {
-            h = `<strong>Drag</strong> a body into space.${v ? ' Drag an <strong>arrow tip</strong> to aim.' : ''} <button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
+            h = `<strong>Drag</strong> a body into space.${v ? ' Drag a <strong>teal tip</strong> to aim.' : ''} <span class="orb-hint-links"><button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
         }
-        h += ' <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>';
+        h += ` <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>${coarse() ? '' : '</span>'}`;
         return h;
+    }
+
+    // "A moon forming": how far it has got, in place of the usual help
+    function moonProgress() {
+        const top = heaviest();
+        let big = 0, n = 0;
+        for (const b of bodies) if (b !== top) { n++; if (b.m > big) big = b.m; }
+        const pct = (100 * big) / KINDS.moon.m;
+        return `Moonlets collide and stick. Biggest: <strong>${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</strong> of the Moon, <strong>${n}</strong> pieces left.`;
     }
 
     // Write the line from the top layer that has something to say
     function refreshHint() {
         if (!ui.hint) return;
         const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
-            || hintHtml(hints.note) || hintHtml(hints.tip) || carryOnHint() || usualHint();
+            || hintHtml(hints.note) || hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint();
         if (h === hintKey) return;
         hintKey = h;
         ui.hint.innerHTML = h;
@@ -9223,15 +9397,24 @@
         else refreshHint();
     }
 
+    // The body that one of radius R km at (x, y) would touch, and so merge with
+    function dropTouches(x, y, R) {
+        if (!settings.merge) return null;
+        for (const q of bodies) if (Math.hypot(q.x - x, q.y - y) < (q.R + R) / AU_KM) return q;
+        return null;
+    }
+
     // A drag from the palette: what a drop just here would do
     function dropHint(d) {
         const k = KINDS[d.kind] || KINDS.custom;
         dropHost = d.over ? moonHost(d.cx, d.cy, k.m, k.R, null) : null;
         let h = settings.placement === 'circular' ? '<strong>Drop it in space</strong>, or on a planet to make it a moon.' : '<strong>Drop it in space.</strong>';
         if (dropHost) h = `<strong>Drop it on ${escapeHtml(theName(dropHost))}</strong> to make it a moon.`;
-        else if (d.over && settings.placement === 'circular') {
-            const w = unturnPoint(wx(d.cx), wy(d.cy)), p = placementPrimary(w.x, w.y, k.m, null);
-            if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
+        else if (d.over) {
+            const w = unturnPoint(wx(d.cx), wy(d.cy)), hit = dropTouches(w.x, w.y, k.R);
+            const p = settings.placement === 'circular' ? placementPrimary(w.x, w.y, k.m, null) : null;
+            if (hit) h = `<strong>Drop it here</strong> and it merges with ${escapeHtml(theName(hit))}.`;
+            else if (p) h = `<strong>Drop it here</strong> to orbit ${escapeHtml(theName(p))}.`;
         }
         showHint('drag', settings.placement === 'throw' ? `${h} <strong>Flick</strong> it as you let go to throw it.` : h);
     }
@@ -9307,8 +9490,9 @@
     // to where it fits, rather than leaving the header in view and the info column cut off below.
     function bindTurn() {
         const dc = canvas.closest('.simulation-display-container');
-        // (held sideways as the page opens: the simulation fills the screen straight away, under the header)
-        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) }); }, { once: true });
+        // (held sideways as the page opens: the simulation fills the screen straight away, under the header,
+        // with the small margin that opening the settings would otherwise scroll the page to make)
+        if (sideways && sideways.matches && dc && !window.scrollY) window.addEventListener('load', () => { if (!window.scrollY) window.scrollTo({ top: Math.round(dc.getBoundingClientRect().top) - 8 }); }, { once: true });
         if (!sideways || !dc || typeof IntersectionObserver === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return;
         let inView = false;
         new IntersectionObserver((es) => { inView = es[es.length - 1].isIntersecting; }, { threshold: 0.3 }).observe(dc);
@@ -9318,7 +9502,7 @@
             // (with the body's menu open, as the menu places the page when it opens)
             requestAnimationFrame(() => requestAnimationFrame(() => {
                 if (popBody && !ui.pop.hidden) { positionPopover(popBody, true); return; }
-                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY : 0;
+                const top = sideways.matches ? dc.getBoundingClientRect().top + window.scrollY - 8 : 0;
                 window.scrollTo({ top: Math.max(0, Math.round(top)) });
             }));
         };
@@ -9375,8 +9559,11 @@
     let lastTap = { t: 0, x: 0, y: 0, id: null, quick: false };
     const TAP_MS = 250;        // a press longer than this isn't a tap (for double-clicks and double-taps)
     let longPressTimer = 0;
-    // An arrow's tip is grabbed within this many px of it (nothing is drawn there: the arrow is the handle)
-    const GRAB_MOUSE = 11, GRAB_TOUCH = 20;
+    // An arrow's tip is grabbed within this many px of it (the arrow is the handle: only the chosen body's
+    // tip has a small ring), and failing anything closer, the arrow from a little farther off (see nearArrow)
+    const GRAB_MOUSE = 14, GRAB_TOUCH = 24;
+    const NEAR_MOUSE = 24, NEAR_TOUCH = 30;
+    const HAND_LAG_S = 0.12;   // by the time a hand has pressed, a moving target has moved on this long
     let hoverAim = null;   // id of the body whose arrow tip the mouse is over
 
     function canvasPoint(e) {
@@ -9409,13 +9596,75 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
             const tip = velocityTip(b);
             if (tip.len < 14) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
             if (dd < bestD) { bestD = dd; best = b; }
         }
         return best;
+    }
+
+    // How far from segment (x0, y0)-(x1, y1) a point is
+    function distToSegment(x, y, x0, y0, x1, y1) {
+        const ex = x1 - x0, ey = y1 - y0, ee = ex * ex + ey * ey;
+        const s = ee > 0 ? clamp(((x - x0) * ex + (y - y0) * ey) / ee, 0, 1) : 0;
+        return Math.hypot(x - x0 - s * ex, y - y0 - s * ey);
+    }
+
+    // Where a body was on the screen a hand's reaction ago, as an offset in px (at most 60: much faster
+    // than that nobody is aiming at it). Nothing while time stands still.
+    function handLag(vx, vy) {
+        if (paused || timeHeld()) return { x: 0, y: 0 };
+        const k = -timeDir * settings.speed * rate() * HAND_LAG_S * scale;
+        const ox = vx * k, oy = -vy * k, n = Math.hypot(ox, oy);
+        return n > 60 ? { x: (ox * 60) / n, y: (oy * 60) / n } : { x: ox, y: oy };
+    }
+
+    // The velocity arrow a press at (x, y) means, if it isn't right on a tip or a body: the nearest whose
+    // shaft is under it, or whose tip is close to it now or was a moment ago
+    function nearArrow(x, y, shaft, tip) {
+        if (!settings.velocities || bodies.length < 2 || mission.def) return null;
+        const fv = frameVelocity();
+        let best = null, bestD = Infinity;
+        for (const b of bodies) {
+            if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId)) continue;
+            const t = velocityTip(b, fv);
+            if (t.len < 14) continue;
+            const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
+            const lag = handLag(t.vx, t.vy);
+            const ds = distToSegment(x, y, bx + ((t.x - bx) / n) * r, by + ((t.y - by) / n) * r, t.x, t.y);
+            const dt = distToSegment(x, y, t.x, t.y, t.x + lag.x, t.y + lag.y);
+            const d = Math.min(ds, dt);
+            if ((ds <= shaft || dt <= tip) && d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
+    // A named body close to a press at (x, y), now or a moment ago
+    function bodyNear(x, y, tol) {
+        const fv = frameVelocity();
+        let best = null, bestD = tol;
+        for (const b of bodies) {
+            if (b.minor || b.grp || mission.def) continue;
+            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.vx - fv.x, y: b.vy - fv.y }, lag = handLag(v.x, v.y);
+            const d = distToSegment(x, y, bx, by, bx + lag.x, by + lag.y) - drawRadius(b);
+            if (d < bestD) { bestD = d; best = b; }
+        }
+        return best;
+    }
+
+    // The pink arrow under a press at (x, y)? They show a pull, and can't be dragged
+    function onForceArrow(x, y, tol) {
+        if (!settings.forces) return null;
+        for (const b of bodies) {
+            const Fm = Math.hypot(b.fx, b.fy);
+            if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId)) continue;
+            const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
+            const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;
+            if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------
@@ -9452,7 +9701,7 @@
         const base = ref ? { x: ref.vx, y: ref.vy } : fv;
         b.aim = { vx: b.vx - base.x, vy: b.vy - base.y, k, ref, frameV: fv, snap: null };
         turnAim(b.aim);   // (a turned view: aimed as drawn, see aimedVelocity)
-        // Keep the grabbed point on the arrow. A body at rest has no arrow: it is grabbed just off the
+        // Keep the grabbed point on the arrow (wherever on it, or near it, the press was). A body at rest has no arrow: it is grabbed just off the
         // edge of its disc, and the arrow grows from there as soon as the pointer moves.
         let tip = velocityTip(b);
         if (tip.len < 1) {
@@ -9642,6 +9891,8 @@
     //   forgotten, the run stops there with a note. Bodies that touch while running back still merge.
     //   An edit (or undo, run again, a restart, or switching realistic physics) starts a new history:
     //   what came before it isn't the past of the system as it is now.
+    //   Rewinding stops at the start, paused and ready to run forwards. Pressed there, Reverse runs on
+    //   into the past that would lead to this setup (there is no trail to compare it with).
     //   Hooks: stepSize, afterStep and sampleTrails in advance (the trails sampled either way in time,
     //   see sampleAtTime), noteIrreversible in mergeBodies and disrupt, the clock-based measurements
     //   (periods, Kepler's 2nd law) fed time running forwards, drawPast in renderFrame, and timeDir in
@@ -9657,6 +9908,7 @@
     const EVENT_MAX = 200;                // merges and break-ups remembered...
     const EVENT_BODIES = 20000;           // ...and at most this many bodies in their copies
     const RETRACE_NEAR = 1e-3;            // back at a merger's moment: within this fraction of its step
+    const MERGE_BACK_NOTE = '<strong>A merge can\'t be rewound.</strong> Undo brings them back.';   // (bodies that touch while running back)
     const past = {
         key: null,                        // the edit history's state when this history began (pastKey)
         from: 0,                          // trail samples from this number on were taken during it
@@ -9666,7 +9918,7 @@
         dropped: false,                   // the sample after the newest kept one was dropped (still readable)
         ghosted: false, drift: false, gap: 0, noted: false, noteTimer: 0   // (gap: the widest, px)
     };
-    Object.assign(ui, { reverse: byId('reverseToggle') });
+    Object.assign(ui, { reverse: byId('reverseBtn') });
 
     // The edit history's state: it changes with every edit, undo, run again, restart or new scene (the
     // "run again" copy is retaken, or the trail samples start again), and while a body is dragged
@@ -9754,6 +10006,13 @@
         } else if (past.events.length) {
             const ev = past.events[past.events.length - 1];
             if (ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) undoEvent(ev);
+        }
+        // (rewound to the start: it stops there, ready to run forwards, as a tape does)
+        if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
+            setPaused(true);
+            setReverse(false, true);
+            pastNote('<strong>Back at the start.</strong> Play runs it forwards again.', 6000);
+            return;
         }
         const w = past.wall;
         if (w && w.dir === -timeDir && w.dir * (simTime - w.t) <= 0) {
@@ -9901,6 +10160,7 @@
         if (trailDir === timeDir || !past.dropped || k < Math.max(trailFloor, past.from) || cleanRender) return;
         const kt = k % TRAIL_CAP, kt1 = (k + 1) % TRAIL_CAP;
         const t0 = sampleTimes[kt], t1 = sampleTimes[kt1];
+        if (timeDir * (simTime + lag - t0) > 0) return;   // (back before the oldest sample: there is no true past to compare with)
         const f = t1 !== t0 ? clamp((simTime + lag - t0) / (t1 - t0), 0, 1) : 0;
         // Relative to where the frame's origin was then, as the trails are drawn
         const L = frameId !== null ? bodyById(frameId) : null;
@@ -9965,7 +10225,9 @@
         }
         if (past.drift && !past.noted) {
             past.noted = true;
-            pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
+            // (bodies that merged on the way back left the true past for good: rounding has nothing to do with it)
+            if (past.events.some((e) => e.dir === timeDir)) pastNote(MERGE_BACK_NOTE, 8000);
+            else pastNote('<strong>Drifted from the true past:</strong> rounding errors grow in chaos. Dashed discs show where the bodies really were.', 9000);
         }
     }
 
@@ -10011,14 +10273,15 @@
             pred.key = '';
             edit.previewDirty = true;
             past.noted = false;
-            if (!quiet) pastNote(on ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Running forwards</strong> again.', 5000);
+            if (!quiet) pastNote(!on ? '<strong>Running forwards</strong> again.' : simTime > 0 ? '<strong>Running backwards:</strong> every body retraces its path.' : '<strong>Before the start:</strong> the past that would lead to this setup.', 5000);
         }
         syncReverseUi();
     }
 
     function syncReverseUi() {
         const back = timeDir < 0;
-        if (ui.reverse && ui.reverse.checked !== back) ui.reverse.checked = back;
+        if (ui.reverse) ui.reverse.setAttribute('aria-pressed', back ? 'true' : 'false');
+        if (ui.pause) ui.pause.classList.toggle('is-back', back);   // (its Play points the way time will run)
         if (ui.step) {
             const label = back ? 'Step back' : 'Step forward';
             if (ui.step.getAttribute('aria-label') !== label) {
@@ -10030,15 +10293,22 @@
         }
     }
 
-    // The settings' "Run backwards" box, and B (not while typing, nor with Ctrl, Cmd or Alt); and the
-    // moment a thrown body is let go
+    // A press of Reverse, or B. Turning it on sets time going, as nobody presses it to see nothing happen.
+    function pressReverse() {
+        const on = timeDir > 0;
+        setReverse(on);
+        if (on && timeDir < 0 && paused) setPaused(false);
+    }
+
+    // The Reverse button, and B (not while typing, nor with Ctrl, Cmd or Alt); and the moment a thrown
+    // body is let go
     function bindPlayControls() {
         window.addEventListener('pointerup', onThrowUp, true);
-        if (ui.reverse) ui.reverse.addEventListener('change', () => setReverse(ui.reverse.checked));
+        if (ui.reverse) ui.reverse.addEventListener('click', pressReverse);
         window.addEventListener('keydown', (e) => {
             if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || typingIn(e.target)) return;
             if (e.key !== 'b' && e.key !== 'B') return;
-            if (!e.repeat) setReverse(timeDir > 0);
+            if (!e.repeat) pressReverse();
             e.preventDefault();
         });
         syncReverseUi();
@@ -10197,7 +10467,11 @@
         // (by touch a Lagrange point's marker wins over a swarm's unnamed dots: the tap reads its note)
         if (b && touch && b.minor && !isChosen(b) && lagrangeShown.length && lagrangeAt(pt.x, pt.y, LAGRANGE_TAP) && !namedBodyAt(pt.x, pt.y, tol)) b = null;
         if (!handleBody && !b && !right) handleBody = onArrowTip(pt.x, pt.y, touch ? GRAB_TOUCH - 2 : GRAB_MOUSE - 1);
+        // (not quite on anything: what the press was probably meant for, rather than moving the view)
+        if (!handleBody && !b && !right) handleBody = nearArrow(pt.x, pt.y, touch ? 12 : 7, touch ? NEAR_TOUCH : NEAR_MOUSE);
+        if (!handleBody && !b) b = bodyNear(pt.x, pt.y, touch ? 18 : 12);
         if (handleBody && missionRefuse('aim', handleBody)) handleBody = null;
+        const forceOnly = !handleBody && !b && !right && !mission.def && onForceArrow(pt.x, pt.y, touch ? 10 : 6);
         const d = { id: e.pointerId, x: pt.x, y: pt.y, x0: pt.x, y0: pt.y, type: lastPointerType, moved: false, body: null, mode: 'pending', button: e.button, downT: performance.now() };
         if (handleBody) {
             d.mode = 'aim';
@@ -10221,6 +10495,10 @@
                     }, 520);
                 }
             }
+        } else if (forceOnly) {
+            // (a press on a pink arrow, which looks as if it could be dragged, says what it is)
+            d.mode = 'done';
+            showHint('note', '<strong>Pink arrows</strong> show gravity\'s pull. Drag a <strong>teal tip</strong> to aim.', { ms: 5000 });
         } else {
             d.mode = 'pending';
         }
@@ -10248,12 +10526,14 @@
                 const [a, b] = pts;
                 const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
                 const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+                const was = { zoom: view.zoom, panX: view.panX, panY: view.panY };
                 view.zoom = clamp(pinch.zoom0 * dist / pinch.d0, 1e-7, 1e7);
                 view.anim = null;
                 updateScale();
                 // keep the world point that was under the fingers' midpoint under it
                 view.panX = pinch.wx - F.x - (mx - viewW / 2) / scale;
                 view.panY = pinch.wy - F.y + (my - viewH / 2) / scale;
+                if (view.zoom > was.zoom && insideOf()) { Object.assign(view, was); updateScale(); }   // (no further in)
             }
             return;
         }
@@ -10262,6 +10542,7 @@
             view.panX -= dx / scale;
             view.panY += dy / scale;
             view.anim = null;
+            view.panned = true;
             return;
         }
         if (d.mode === 'press' && far && missionRefuse('move', d.body)) d.mode = 'pan';
@@ -10305,6 +10586,10 @@
             endHold(d, !cancelled && (d.mode === 'move' || d.moved));
             return;
         }
+        if (d.mode === 'pan' && !view.panTold && !mission.def && Math.hypot(d.x - d.x0, d.y - d.y0) > 30) {
+            view.panTold = true;
+            showHint('note', '<strong>You moved the view.</strong> Fit view puts it back.', { ms: 5000 });
+        }
         if (cancelled || d.mode === 'done') return;
         if (d.button === 2) {
             // Right-click on empty space just closes the menu
@@ -10346,7 +10631,7 @@
         updateDrawnPositions();
         let tipOf = onHandle(x, y, GRAB_MOUSE);
         if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
-        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1);
+        if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
         if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
     }
 
@@ -10436,16 +10721,21 @@
 
     function chartsVisible() { return !!(charts && ui.chartsContainer && ui.chartsContainer.style.display !== 'none'); }
 
+    let chartsFrom = null;   // where the page was when the graphs opened
     function setChartsVisible(visible) {
         if (!ui.chartsContainer) return;
         ui.chartsContainer.style.display = visible ? 'block' : 'none';
         document.body.classList.toggle('charts-visible', visible);
         if (visible && !charts) charts = makeCharts();
         if (visible) resetCharts();
-        // (they open under the info bar, below the fold on most screens)
-        if (visible && !document.body.classList.contains('sim-fullscreen-active')) {
-            const glide = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: glide ? 'smooth' : 'auto' });
+        // (they open under the info bar, below the fold on most screens; closed, the page goes back)
+        if (document.body.classList.contains('sim-fullscreen-active')) return;
+        if (visible) {
+            chartsFrom = window.scrollY;
+            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
+        } else if (chartsFrom !== null) {
+            window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
+            chartsFrom = null;
         }
     }
 
@@ -10670,6 +10960,7 @@
     function flashNote(el, text) {
         if (!el) return;
         el.textContent = text;
+        revealInPanel(el);
         clearTimeout(share.noteTimers.get(el));
         share.noteTimers.set(el, setTimeout(() => { el.textContent = el.dataset.text || ''; }, NOTE_MS));
     }
@@ -11146,6 +11437,7 @@
 
     function applySettings(set) {
         const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        paceZoom.was = 0;
         setSpeedValue(set.sp);
         check(ui.realistic, 'realistic', set.re);
         check(ui.merge, 'merge', set.me);
@@ -11433,6 +11725,7 @@
     }
 
     function noteTornApart(L, H) {
+        tornNews = { L, H, chosen: selectedId === L.id };
         if (!settings.stability) return;
         stabilityRestart(performance.now());
         if (!stab.ended) endStability('torn', L, H, simTime);
@@ -11620,17 +11913,27 @@
     }
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
+    let viewLost = null;
     function checkInView() {
+        // (zoomed well back out from where a slower time was set: the old speed again)
+        if (paceZoom.was && (view.anim ? view.anim.zoom : view.zoom) < 0.5 * paceZoom.zoom) restoreSpeed();
+        // (a glide passes through views that show nothing: only where it ends counts)
         if (!ui.fit || !viewW || !bodies.length || dragging()) return;
-        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy); return x > 0 && x < viewW && y > 0 && y < viewH; });
-        if (out === ui.fit.classList.contains('is-wanted')) return;
-        ui.fit.classList.toggle('is-wanted', out);
-        if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
+        if (view.anim) { if (viewLost === null) ui.fit.classList.toggle('is-wanted', !!view.panned); return; }
+        const inside = insideOf();   // (panned into a body: everything else is out of view, but that isn't the news)
+        const out = !bodies.some((b) => { const x = sx(b.dx), y = sy(b.dy), r = (b.R / AU_KM) * scale; return x > -r && x < viewW + r && y > -r && y < viewH + r; });
+        ui.fit.classList.toggle('is-wanted', out || !!inside || !!view.panned);   // (moved by hand: the way back stands out too)
+        const lost = inside ? inside.id : out ? -1 : null;
+        if (lost === viewLost) return;
+        viewLost = lost;
+        if (inside) showHint('note', `<strong>You are inside ${escapeHtml(theName(inside))}.</strong> Fit view brings it back.`, { tag: 'lost', ms: 6000 });
+        else if (out) showHint('note', '<strong>Everything is out of view.</strong> Fit view brings it back.', { tag: 'lost', ms: 6000 });
         else clearHint('note', 'lost');
     }
 
     function shareTick() {
         const now = performance.now();
+        if (scene.progress) refreshHint();
         syncSceneList();
         syncFolds();
         checkInView();
@@ -11645,7 +11948,46 @@
         if (token) { setPaused(true); openSetup(token, true); } else offerAutosave();
     }
 
+    // Scroll the settings just enough to show what has just opened or appeared in them (the page itself stays)
+    function revealInPanel(el) {
+        const sc = el.closest ? el.closest('.sim-controls-content') : null;
+        if (!sc) return;
+        requestAnimationFrame(() => {
+            const r = el.getBoundingClientRect(), s = sc.getBoundingClientRect();
+            let d = 0;
+            if (r.bottom > s.bottom - 8) d = Math.min(r.bottom - s.bottom + 8, r.top - s.top - 8);
+            else if (r.top < s.top + 8) d = r.top - s.top - 8;
+            if (Math.abs(d) > 1) sc.scrollBy({ top: d, behavior: quickMotion() });
+        });
+    }
+
+    const quickMotion = () => (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+
+    // About opens with its heading at the top of the screen; closed again, the page goes back to where
+    // it was, as it does for the graphs (see setChartsVisible)
+    function bindPageFolds() {
+        const about = document.querySelector('details.description-area');
+        for (const d of document.querySelectorAll('.sim-controls-content details')) {
+            d.addEventListener('toggle', () => { if (d.open) revealInPanel(d); });
+        }
+        if (!about) return;
+        let from = null;
+        const sum = about.querySelector('summary');
+        about.addEventListener('toggle', () => {
+            if (about.open) {
+                from = window.scrollY;
+                const top = about.getBoundingClientRect().top;
+                if (top > 0.3 * window.innerHeight || top < 0) window.scrollBy({ top: top - 8, behavior: quickMotion() });
+            } else if (from !== null) {
+                window.scrollTo({ top: from, behavior: quickMotion() });
+                from = null;
+                if (sum) sum.blur();
+            }
+        });
+    }
+
     function bindShare() {
+        bindPageFolds();
         Object.assign(ui, {
             foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
             shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
@@ -11819,6 +12161,7 @@
         k2.bid = null;
         resetFlyby();
         flashes.length = 0;
+        clearHint('note', 'chosen');   // (a "Zoom in" for a moon that may no longer be there)
         pred.key = '';
         eccDrag = null;
         forcesDirty = true;
@@ -13701,6 +14044,7 @@
         if (w === viewW && h === viewH && newDpr === dpr) return;
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
         if ((first || view.pendingBox) && scene) {
@@ -13758,7 +14102,8 @@
                 settings.speed = SPEED_STOPS[clamp(parseInt(ui.speed.value, 10) || 0, 0, SPEED_STOPS.length - 1)];
                 showSpeed();
             };
-            ui.speed.addEventListener('input', upd);
+            // (the canvas says what the new speed means, as it does for [ and ])
+            ui.speed.addEventListener('input', () => { upd(); paceZoom.was = 0; speedFlash = performance.now() + 1500; });
             upd();
         }
         if (ui.scene) {
@@ -13902,7 +14247,7 @@
         updateScale();
         applyHolds();
         let steps = 0;
-        if (!paused && dtReal > 0) {
+        if (!paused && dtReal > 0 && !timeHeld()) {
             const want = dtReal * settings.speed * rate();
             const before = timeDir * simTime + acc;
             steps = advance(want, 0, clamp(0.8 * Math.min(perf.interval, 20) - perf.render - perf.other, 3, PHYSICS_MS));

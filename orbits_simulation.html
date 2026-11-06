@@ -187,39 +187,8 @@
 										<button type="button" class="orb-keys-btn" id="keysHelpBtn" aria-haspopup="dialog" title="Keys and gestures (?)"><span class="orb-keys-q" aria-hidden="true">?</span>Help</button>
 									</div>
 									<div class="sim-controls-content">
-										<div class="sim-control-group sim-speed-control">
-											<label>Speed: <span id="speedVal" class="sim-value" style="--chars: 4">1</span>&times; <span class="orb-note orb-speed-note" id="speedNote">1 yr every 6 s</span>
-												<input type="range" id="speedSlider" min="0" max="23" step="1" value="11" aria-describedby="speedNote" title="[ slower, ] faster">
-											</label>
-											<div class="sim-checkbox-group">
-												<input type="checkbox" id="reverseToggle" aria-describedby="reverseNote">
-												<label for="reverseToggle" title="Every body retraces its path, as Newton's laws work both ways (B)">Run backwards</label>
-											</div>
-											<p class="orb-note" id="reverseNote" hidden>Newton's laws work both ways: every body retraces its path<span class="orb-keys-note"> (B)</span>.</p>
-										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label" id="sceneLabel">Scene</p>
-											<select id="sceneSelect" aria-labelledby="sceneLabel">
-												<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
-												<option value="ellipse">Elliptical orbit</option>
-												<option value="inner">Inner planets</option>
-												<option value="solar">The Solar System on a date</option>
-												<option value="comet">Comet and Earth</option>
-												<option value="earth-moon">Earth &amp; Moon</option>
-												<option value="moon">Planet with a moon</option>
-												<option value="binary">Binary stars</option>
-												<option value="figure8">Three stars: figure of eight</option>
-												<option value="pythagorean">Three stars: chaos</option>
-												<option value="slingshot">Slingshot (gravity assist)</option>
-												<option value="blackhole">Neutron star and black hole</option>
-												<option value="tde">Star and black hole</option>
-												<option value="mercury">Mercury's orbit turns</option>
-												<option value="inspiral">Black holes spiral together</option>
-												<option value="trojans">Jupiter's Trojans and Hildas</option>
-												<option value="moondisc">A moon forming</option>
-												<option value="random">Random system</option>
-												<option value="empty">A lone star (build your own)</option>
-											</select>
+											<p class="sim-control-group-label">Other ways to start</p>
 											<div class="orb-date" id="startDateRow" hidden>
 												<label for="startDateInput">Start date</label>
 												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
@@ -353,7 +322,7 @@
 								<div class="simulation-main-content">
 									<div class="simulation-display-container">
 										<div class="sim-canvas-wrapper">
-											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/10; --aspect-ratio-portrait: 1/1;">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/10; --aspect-ratio-portrait: 21/20;">
 												<canvas id="simulationCanvas" class="sim-canvas" role="application" tabindex="0" aria-roledescription="simulation" aria-label="Stars, planets and moons moving under gravity, with their trails" aria-describedby="canvasKeys"></canvas>
 											</div>
 											<p class="orb-sr-only" id="canvasKeys">N chooses the next body and Shift+N the one before. Enter opens the chosen body's menu, Z zooms to its orbit and the arrow keys push it. Space pauses. Question mark lists every key.</p>
@@ -484,6 +453,7 @@
 														</div>
 													</div>
 												</div>
+												<p class="orb-pop-note orb-pop-why" id="popFieldWhy" role="status" hidden></p>
 												<div class="orb-pop-step">
 													<span class="orb-field-label" id="popStepLabel">Step</span>
 													<div class="orb-seg" role="group" aria-labelledby="popStepLabel">
@@ -520,7 +490,7 @@
 												<div class="stats-box" title="Speed relative to the body it orbits">
 													<strong>Speed:</strong> <span id="statSpeed" class="sim-value" style="--chars: 6">&ndash;</span> km/s
 												</div>
-												<div class="stats-box" title="Gravitational pull of the body it orbits: F = Gm₁m₂/r²">
+												<div class="stats-box orb-force-box" title="Gravitational pull of the body it orbits: F = Gm₁m₂/r²">
 													<strong>Gravity:</strong> <span id="statForce" class="sim-value" style="--chars: 8">&ndash;</span> N
 												</div>
 												<div class="stats-box orb-period-box" id="statPeriodBox" title="Time for one orbit">
@@ -531,12 +501,44 @@
 												</div>
 											</div>
 											<div class="sim-info-actions">
+												<div class="orb-scene-pick">
+													<label for="sceneSelect">Scene</label>
+													<select id="sceneSelect" title="Choose what to watch">
+													<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
+													<option value="ellipse">Elliptical orbit</option>
+													<option value="inner">Inner planets</option>
+													<option value="solar">The Solar System on a date</option>
+													<option value="comet">Comet and Earth</option>
+													<option value="earth-moon">Earth &amp; Moon</option>
+													<option value="moon">Planet with a moon</option>
+													<option value="binary">Binary stars</option>
+													<option value="figure8">Three stars: figure of eight</option>
+													<option value="pythagorean">Three stars: chaos</option>
+													<option value="slingshot">Slingshot (gravity assist)</option>
+													<option value="blackhole">Neutron star and black hole</option>
+													<option value="tde">Star and black hole</option>
+													<option value="mercury">Mercury's orbit turns</option>
+													<option value="inspiral">Black holes spiral together</option>
+													<option value="trojans">Jupiter's Trojans and Hildas</option>
+													<option value="moondisc">A moon forming</option>
+													<option value="random">Random system</option>
+													<option value="empty">A lone star (build your own)</option>
+												</select>
+												</div>
+												<button type="button" id="reverseBtn" class="sim-icon-button orb-cap orb-reverse" data-cap="Reverse" aria-label="Run time backwards" title="Run time backwards (B)" aria-pressed="false">
+													<span class="icon solid fa-backward"></span>
+												</button>
 												<button type="button" id="pauseBtn" class="sim-icon-button orb-cap" aria-label="Pause" title="Pause (Space)" aria-pressed="false">
 													<span class="icon solid fa-pause"></span>
 												</button>
 												<button type="button" id="stepBtn" class="sim-icon-button orb-cap" data-cap="Step" aria-label="Step forward" title="Step forward a moment (.)">
 													<span class="icon solid fa-step-forward"></span>
 												</button>
+												<label class="orb-speed sim-speed-control" title="How fast time runs ([ slower, ] faster)">
+													<input type="range" id="speedSlider" min="0" max="23" step="1" value="11" aria-label="Speed" aria-describedby="speedNote">
+													<span class="orb-speed-cap">Speed <span id="speedVal" class="sim-value">1</span>&times;</span>
+													<span class="orb-sr-only" id="speedNote">1 yr every 6 s</span>
+												</label>
 												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
 													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
 													<span class="icon solid fa-chart-bar"></span>
@@ -599,7 +601,7 @@
 
 											<h4>How to use it</h4>
 											<ul>
-												<li><strong>Aim a velocity:</strong> drag the tip of a teal arrow. It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go. Shift gives fine control; on a touch screen, hold the tip still for a moment first.</li>
+												<li><strong>Aim a velocity:</strong> drag the tip of a teal arrow (time waits while you do). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go. Shift gives fine control; on a touch screen, hold the tip still for a moment first.</li>
 												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, or a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
 												<li><strong>View from a body:</strong> double-click or double-tap it. <em>Rotating</em> views are in the settings, under <em>View from</em>.</li>
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>
@@ -608,7 +610,7 @@
 												<li><strong>Random systems:</strong> <span class="icon solid fa-dice"></span> Random system, in the settings, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years?</li>
 												<li><strong>Save and share:</strong> <span class="icon solid fa-link"></span> Copy a link, at the end of the settings, copies a link that opens this exact setup, paused. Your work is also saved in this browser: next time, "Carry on where you left off" appears for a while.</li>
 												<li><strong>Download data (CSV):</strong> in <em>More options</em> or under the graphs, for Kepler's 3rd law, the graphs or every body.</li>
-												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-history"></span> run again, <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
+												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step, the scene and the speed, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-history"></span> run again, <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
 											</ul>
 
 											<h4>Things to try</h4>
@@ -630,7 +632,7 @@
 											<ul>
 												<li><strong>True sizes:</strong> every body is drawn at its true size (a ring marks the tiny ones).</li>
 												<li><strong>Relativity:</strong> Einstein's general relativity adds its first correction to gravity, so an orbit close to a neutron star or black hole slowly turns, tracing a rosette. Mercury's turns too, by 43&Prime; a century.</li>
-												<li><strong>Tides:</strong> a star or planet inside the Roche limit of a much denser body is torn apart. Its pieces still pull on each other, so some may gather into clumps again. In "A moon forming", tides tear apart clumps that stray too close to Earth.</li>
+												<li><strong>Tides:</strong> a star or planet inside the Roche limit of a much denser body is torn apart, as in "Star and black hole". Its pieces still pull on each other, so some may gather into clumps again. In "A moon forming", tides tear apart clumps that stray too close to Earth.</li>
 											</ul>
 											<p>Either way, bodies merge when their real surfaces touch, and a black hole swallows anything that crosses its event horizon.</p>
 											<p>A card measures how far the chosen body's orbit turns each time round, against Einstein's formula, 6&pi;<em>GM</em>/(<em>c</em><sup>2</sup><em>a</em>(1&nbsp;&minus;&nbsp;<em>e</em><sup>2</sup>)). Where other planets pull on it too, it shows how much of the turn is Einstein's.</p>
@@ -646,7 +648,7 @@
 											<p>Par, the &Delta;<em>v</em> of the classic route, comes from <em>v</em><sup>2</sup> = <em>GM</em>(2/<em>r</em> &minus; 1/<em>a</em>). The closer you get to it, the more stars you earn.</p>
 
 											<h4>Running time backwards</h4>
-											<p>Newton's laws work just as well backwards: reverse every velocity and each body retraces its path. Tick <em>Run backwards</em> (or press B) and the clock counts down as the bodies go back along their trails. The velocity arrows still show each body's velocity, so now they point against its motion.</p>
+											<p>Newton's laws work just as well backwards: reverse every velocity and each body retraces its path. Press <span class="icon solid fa-backward"></span> Reverse, beside Pause (or B), and the clock counts down as the bodies go back along their trails. The velocity arrows still show each body's velocity, so now they point against its motion. A rewind stops at the start; press Reverse again to see what would have led there.</p>
 											<p>In a chaotic system such as "Three stars: chaos", the tiny rounding errors of any computer grow at every close encounter. After a long run the backward motion drifts away from the true past, and faint dashed discs show where the stars really were.</p>
 											<p>A merger, or a star torn apart, can't run backwards by itself: the simulation puts the bodies back as they were just before.</p>
 
@@ -705,7 +707,7 @@
 													<div><dt><kbd>Space</kbd></dt><dd>Pause or play</dd></div>
 													<div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Slower · faster</dd></div>
 													<div><dt><kbd>.</kbd></dt><dd>Pause, then step a moment at a time</dd></div>
-													<div><dt><kbd>B</kbd></dt><dd>Run backwards, or forwards again</dd></div>
+													<div><dt><kbd>B</kbd></dt><dd>Reverse: run backwards, or forwards again</dd></div>
 													<div><dt><kbd>R</kbd></dt><dd>Run again from your last change</dd></div>
 													<div><dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></dt><dd>Undo · redo (on a Mac <kbd>⌘</kbd>+<kbd>Z</kbd> · <kbd>⇧</kbd>+<kbd>⌘</kbd>+<kbd>Z</kbd>)</dd></div>
 												</dl>
