@@ -7647,8 +7647,71 @@
     // Force arrows: px length from the force, compressed for very strong pulls (equal forces always
     // get equal arrows, so the Sun's arrow matches Earth's).
     function forceLength(f) {
-        const Lmax = 100 * sizeScale;
+        const Lmax = 100 * sizeScale * arrowK;
         return Lmax * (1 - Math.exp(-Math.LN2 * f / forceRef));   // the reference force is half the maximum
+    }
+
+    // Arrow size (More options). Every arrow is multiplied by arrowK, the same for all of them, so equal
+    // speeds and forces keep equal arrows and the arrow key (which is drawn with the same lengths) stays
+    // true. It follows the zoom through the typical orbit on the screen: the middle one of the named bodies'
+    // (semi-major axis, or distance if unbound), which holds still as they go round.
+    //   Fixed: 1. Scale with zoom: a reference arrow is ARROW_ORBIT of that orbit, within limits. Automatic: 1
+    // until a reference arrow would be over ARROW_ROOM of it, then it shrinks with the view, to ARROW_K_MIN.
+    // Under that (ARROW_K_ALONE) the bodies crowd too closely for arrows to tell apart, so all but the chosen
+    // body's fade out; and the arrows of bodies not chosen are drawn fainter (ARROW_BACK) if there are many.
+    const ARROW_ORBIT = 0.27, ARROW_ROOM = 0.36, ARROW_K_MIN = 0.35, ARROW_K_ALONE = 0.22, ARROW_BACK = 0.6;
+    const ARROW_NOTES = {
+        auto: 'They shrink as you zoom out. When crowded, only the chosen body\'s show.',
+        fixed: 'The same length at any zoom.',
+        zoom: 'They grow and shrink with the view, like the orbits.'
+    };
+    Object.assign(settings, { arrowSize: 'auto' });
+    Object.assign(ui, { arrowSize: byId('arrowSizeSelect') });
+    let arrowK = 1, arrowBack = 1;
+    const arrowSpan = { au: 0, want: 0, t: -Infinity, scene: null, list: [] };
+
+    // The typical orbit (AU); 0 if nothing orbits anything
+    function measureArrowSpan() {
+        const a = arrowSpan.list;
+        a.length = 0;
+        for (const b of bodies) {
+            if (b.grp || b.minor || !b.primary) continue;
+            // (a is steady as an orbit goes round, but no use to a pair that has barely stayed together)
+            const r = hyp(b.x - b.primary.x, b.y - b.primary.y), el = b.bound ? elementsOf(b, b.primary) : null;
+            a.push(el && el.a > 0 ? Math.min(el.a, 3 * r) : r);
+        }
+        if (!a.length) return 0;
+        a.sort((p, q) => p - q);
+        return a[a.length >> 1];
+    }
+
+    // From countArrows, each frame (n: the named bodies). The typical orbit is measured ten times a second, and
+    // a change of it glides (the arrows mustn't jump with a close passing), but the zoom counts at once.
+    function sizeArrows(n) {
+        const now = performance.now(), S = arrowSpan;
+        if (S.scene !== scene || now - S.t >= 100) {
+            const au = measureArrowSpan();
+            if (au > 0 || S.scene !== scene) S.want = au;
+            if (S.scene !== scene || !(S.au > 0)) S.au = S.want;
+            S.scene = scene; S.t = now;
+        }
+        S.au += 0.01 * (S.want - S.au);
+        arrowK = 1; arrowBack = 1;
+        if (settings.arrowSize === 'fixed' || !(S.au > 0)) return;
+        const room = (S.au * scale) / arrowUnit();
+        if (settings.arrowSize === 'zoom') { arrowK = clamp(ARROW_ORBIT * room, 0.1, 4); return; }
+        arrowK = clamp(ARROW_ROOM * room, ARROW_K_MIN, 1);
+        arrowBack = clamp((ARROW_ROOM * room - ARROW_K_ALONE) / (ARROW_K_MIN - ARROW_K_ALONE), 0, 1) * (n > 2 && selectedId !== null ? ARROW_BACK : 1);
+    }
+
+    function syncArrowSize() {
+        if (ui.arrowSize) ui.arrowSize.value = settings.arrowSize;
+        setText(byId('arrowSizeNote'), ARROW_NOTES[settings.arrowSize] || ARROW_NOTES.auto);
+    }
+    function bindArrowSize() {
+        if (!ui.arrowSize) return;
+        syncArrowSize();
+        ui.arrowSize.addEventListener('change', () => { settings.arrowSize = ui.arrowSize.value; syncArrowSize(); });
     }
 
     // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
@@ -7662,7 +7725,7 @@
     const pxPerSpeed = () => arrowUnit() / vRef;
     function arrowLength(v) {
         const L = v * pxPerSpeed(), L0 = arrowUnit();
-        return L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0)));
+        return arrowK * (L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0))));
     }
 
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
@@ -7725,12 +7788,14 @@
     }
 
     // Above this many named bodies only the chosen body's arrows are drawn: the rest would swamp the view
+    // (and when they crowd too closely: see sizeArrows)
     const ARROWS_ALL_MAX = 8;
     let arrowsBusy = false;
     function countArrows() {
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
-        arrowsBusy = n > ARROWS_ALL_MAX;
+        sizeArrows(n);
+        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0;
     }
 
     const gasHeld = new Set();
@@ -7750,8 +7815,10 @@
                 if (L < 3) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
                 const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;   // (turned with the view)
+                ctx.globalAlpha = b === subj ? 1 : arrowBack;
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
             }
+            ctx.globalAlpha = 1;
         }
         // Velocities only when they are switched on (or while one is being aimed): plain arrows, like
         // the forces. An arrow's tip is dragged to aim it (an invisible grab area round the tip); the
@@ -7767,7 +7834,9 @@
             const len = Math.hypot(dx, dy);
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
             if (tip.len > 2.5) {
+                ctx.globalAlpha = hot || b === subj ? 1 : arrowBack;
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+                ctx.globalAlpha = 1;
                 // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
                 if (b === subj && !b.aim && !cleanRender && settings.velocities) {
                     ctx.strokeStyle = hot ? hotColour : C.velocity;
@@ -8338,14 +8407,16 @@
         if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
-        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
+        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths (scaled with
+        // the zoom far enough for that to be too long or too short to read, other round values: see sizeArrows)
+        const nk = arrowK > 1 ? arrowK : arrowK < ARROW_K_MIN ? Math.max(arrowK / ARROW_K_MIN, 0.36) : 1;
         if (showV) {
-            const kms = niceNearest(0.7 * vRef * AUYR_KMS);
+            const kms = niceNearest((0.7 * vRef * AUYR_KMS) / nk);
             if (kms !== legend.kms) { legend.kms = kms; legend.vText = legendSpeedText(kms); }
             legend.vPx = arrowLength(kms / AUYR_KMS);
         }
         if (showF) {
-            const N = niceNearest(0.8 * forceToNewtons(forceRef));
+            const N = niceNearest((0.8 * forceToNewtons(forceRef)) / nk);
             if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
@@ -12789,7 +12860,7 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits, s.arrowSize].join(',');
     }
 
     // ------------------------------------------------------------------
@@ -13005,7 +13076,7 @@
             // (sh: what is shown; the last four came later, so an older link reads them as off)
             set: {
                 sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
-                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement, as: st.arrowSize
             },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
             ro: turnSetup()
@@ -13105,7 +13176,8 @@
             sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true),
                 flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
-            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular'
+            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular',
+            as: ['auto', 'fixed', 'zoom'].includes(raw.as) ? raw.as : 'auto'
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -13236,6 +13308,8 @@
         settings.placement = set.pl;
         if (ui.placement) ui.placement.value = set.pl;
         syncPlacementNote();
+        settings.arrowSize = set.as;
+        syncArrowSize();
         forcesDirty = true;
         pred.key = '';
     }
@@ -16431,6 +16505,7 @@
         window.addEventListener('pointercancel', hintLetGo, true);
         window.addEventListener('click', () => { hintPressed = false; setTimeout(refreshHint, 0); }, true);
         bindHint();
+        bindArrowSize();
         bindTurn();
     }
 
@@ -16635,6 +16710,8 @@
             const ref = pp.refId !== null ? bodyById(pp.refId) : null;
             return { ref: ref ? ref.name : null, end: pp.end, pts: pp.pts.slice() };
         },
+        // The arrows' size as drawn last (see sizeArrows)
+        arrowSizing: () => ({ k: arrowK, back: arrowBack, busy: arrowsBusy, au: arrowSpan.au, mode: settings.arrowSize, vPx: legend.vPx, vKms: legend.kms, fPx: legend.fPx, N: legend.N }),
         // Where the velocity handle of a body is on the canvas (CSS px), and its arrow's length
         handle(name) {
             const b = bodies.find((q) => q.name === name);

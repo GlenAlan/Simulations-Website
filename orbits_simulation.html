@@ -283,6 +283,15 @@
 												<p class="orb-note" id="placementNote" aria-live="polite">Round the body it would orbit there.</p>
 											</div>
 											<div class="sim-control-group">
+												<p class="sim-control-group-label" id="arrowSizeLabel">Arrow size</p>
+												<select id="arrowSizeSelect" aria-labelledby="arrowSizeLabel" aria-describedby="arrowSizeNote">
+													<option value="auto" selected>Automatic</option>
+													<option value="fixed">Fixed on screen</option>
+													<option value="zoom">Scale with zoom</option>
+												</select>
+												<p class="orb-note" id="arrowSizeNote" aria-live="polite">They shrink as you zoom out. When crowded, only the chosen body's show.</p>
+											</div>
+											<div class="sim-control-group">
 												<p class="sim-control-group-label">Also show</p>
 												<div class="sim-checkbox-group">
 													<input type="checkbox" id="comToggle">
