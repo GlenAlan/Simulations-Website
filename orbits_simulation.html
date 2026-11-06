@@ -551,16 +551,16 @@
 													<span class="orb-speed-cap">Speed <span id="speedVal" class="sim-value">1</span>&times;</span>
 													<span class="orb-sr-only" id="speedNote">1 yr every 6 s</span>
 												</label>
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
-													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
-													<span class="icon solid fa-chart-bar"></span>
-												</label>
-												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
+												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap is-idle" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
 													<span class="icon solid fa-history"></span>
 												</button>
 												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button orb-cap" data-cap="Restart" aria-label="Restart the scene" title="Restart the scene from its original setup">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
 											</div>
 										</div>
 									</div>
@@ -623,7 +623,7 @@
 												<li><strong>Random systems:</strong> Random system, in the scene list, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years? <em>New system</em>, in the hint by the canvas, makes another.</li>
 												<li><strong>Save and share:</strong> <span class="icon solid fa-link"></span> Copy a link, at the end of the settings, copies a link that opens this exact setup, paused. Your work is also saved in this browser: next time, "Carry on where you left off" appears for a while.</li>
 												<li><strong>Download data (CSV):</strong> in <em>More options</em> or under the graphs, for Kepler's 3rd law, the graphs or every body.</li>
-												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step, the scene and the speed, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-history"></span> run again, <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
+												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step (while paused), the scene and the speed, <span class="icon solid fa-history"></span> run again (once you have changed something), <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
 											</ul>
 
 											<h4>Things to try</h4>

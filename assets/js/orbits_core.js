@@ -13417,6 +13417,7 @@
             chance.exact = ui.deterministic.checked;
             storeSet(CHANCE_KEY, chance.exact ? '1' : '');
             syncRestartTitle();
+            updateHistoryUi();   // (Run again shows from the start only while Restart would start it differently)
         });
     }
 
@@ -14755,7 +14756,14 @@
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
             const t = `Run again from ${hist.rwFromStart ? 'the start' : 'your last change'}`;
-            ui.rewindBtn.disabled = !canRunAgain();
+            // (just pressed, with the first step still to come, it stays as it is: it would only blink)
+            const can = canRunAgain() || (hist.rwFresh && !paused);
+            // It shows once it has something to do. From the start of a scene it is only Restart, which R
+            // still does, unless Restart would start it differently (see "A touch of chance").
+            const idle = !can || (hist.rwFromStart && !(scene && scene.vary && !chance.exact));
+            if (idle) barFocusFrom(ui.rewindBtn);
+            ui.rewindBtn.classList.toggle('is-idle', idle);
+            ui.rewindBtn.disabled = !can;
             ui.rewindBtn.title = `${t} (R)`;
             ui.rewindBtn.setAttribute('aria-label', t);
         }
@@ -16759,9 +16767,17 @@
         setText(ui.trailVal, n === 0 ? 'off' : fmtDuration(n * scene.Tref));
     }
 
+    // A bar button about to go hands the keyboard's focus on, or it would be lost: to Pause, or a mission's Play
+    function barFocusFrom(btn) {
+        if (!btn || document.activeElement !== btn) return;
+        const heir = mission.def && ui.mc ? ui.mc.play : ui.pause;
+        if (heir) heir.focus({ preventScroll: true });
+    }
+
     function setPaused(p) {
         paused = !!p;
         if (!ui.pause) return;
+        if (!paused) barFocusFrom(ui.step);   // (it shows while paused: see the styles)
         ui.pause.setAttribute('aria-pressed', paused ? 'true' : 'false');
         ui.pause.setAttribute('aria-label', paused ? 'Play' : 'Pause');
         ui.pause.title = paused ? 'Play (Space)' : 'Pause (Space)';

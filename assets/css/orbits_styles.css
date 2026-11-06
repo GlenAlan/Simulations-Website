@@ -1513,7 +1513,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
 /* ---------- Undo, redo and "run again" ----------
    Undo and redo sit beside "Fit view": icons at the end of the hint's row under the canvas, two
-   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart. */
+   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart, once it
+   has something to do. */
 .orb-history {
     display: flex;
     gap: 6px;
@@ -1534,11 +1535,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
 .orb-history-text {
     display: none;
-}
-
-/* A greyed-out button still shows where it is */
-.sim-info-actions .orb-rewind:disabled {
-    opacity: 0.35;
 }
 
 /* Narrow screens: the buttons leave the hint less width, so it gets a third line (or a line and a
@@ -1721,7 +1717,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 }
 
 /* The rest of the buttons keep to the row's far end, with the clock between them and the scene */
-.orbits-sim .sim-info-actions > .sim-show-charts-label {
+.orbits-sim .sim-info-actions > .orb-rewind,
+.orbits-sim.orb-mission-on .sim-info-actions > .sim-show-charts-label {
     margin-left: auto;
 }
 
@@ -4312,4 +4309,20 @@ dialog.orb-help::backdrop {
 .sim-controls-content > .orb-date[hidden] + .sim-control-group {
     padding-top: 0;
     border-top: 0;
+}
+
+/* ---------- Bar buttons with nothing to do yet ----------
+   Step while paused, Run again once there is a change to go back to. Hidden, each keeps its place, at the
+   clock's end or the other buttons' start, so no press of Pause or Run again moves anything under the
+   pointer, and on a phone the row's two gaps are one, between the clock and the rest. */
+#pauseBtn[aria-pressed="false"] + #stepBtn,
+.sim-info-actions .orb-rewind.is-idle {
+    visibility: hidden;
+}
+
+/* (a mission's grid of buttons has no Pause to keep still: it closes up) */
+@media screen and (max-width: 700px), (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on #pauseBtn[aria-pressed="false"] + #stepBtn {
+        display: none;
+    }
 }
