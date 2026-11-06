@@ -2874,13 +2874,56 @@
         return { lines, wave: gw.waveN > 1 };
     }
 
+    // ---- How fast the chosen body's clock runs, against one far away ----
+    //   dtau/dt = sqrt(1 - 2U/c^2 - v^2/c^2)      U = sum of G m / r over the other bodies
+    // with v its speed relative to the whole system: the first post-Newtonian metric, the same level as
+    // pnPair. (For a circular orbit round a single mass it gives sqrt(1 - 3GM/(rc^2)), which is Schwarzschild's
+    // exact answer. Earth round the Sun comes to 1.48e-8 slow, 0.47 s a year, the published gap between the
+    // TCB and TCG time scales. Close to a black hole r here is not quite Schwarzschild's r, so from 10% slow
+    // it says "about".) The body's own gravity isn't counted, so it
+    // is a clock beside it, which for a star remnant, with strong gravity of its own, the words say. A
+    // black hole has no surface to put one on. Worked out with the other readouts, not every frame.
+    const CLOCK_MIN = 0.1 / YEAR_S;       // fraction: slower than this (0.1 s a year) isn't shown
+    const clock = { id: null, x: 0, loss: 0 };
+    function updateClock() {
+        const b = settings.realistic ? bodyById(selectedId) : null;
+        clock.id = null;
+        if (!b || b.kind === 'blackhole' || b.held || bodies.length < 2) return;
+        let U = 0;
+        for (const q of bodies) {
+            if (q === b) continue;
+            const r = hyp(q.x - b.x, q.y - b.y);
+            if (r > 0) U += (G * q.m) / r;
+        }
+        const c = totals(bodies), vx = b.vx - c.vx, vy = b.vy - c.vy;
+        const x = (2 * U + vx * vx + vy * vy) / C2;
+        // (1 - sqrt(1 - x), not lost in rounding when x is a few billionths)
+        const loss = x < 1 ? x / (1 + Math.sqrt(1 - x)) : 1;
+        if (loss < CLOCK_MIN) return;
+        clock.id = b.id; clock.x = x; clock.loss = loss;
+    }
+    // Time lost in a year, in a unit that suits
+    function clockLost(loss) {
+        const s = loss * YEAR_S;
+        return s < 90 ? `${fig2(s)} s` : s < 5400 ? `${fig2(s / 60)} minutes` : s < 129600 ? `${fig2(s / 3600)} hours` : `${fig2(s / 86400)} days`;
+    }
+    function clockLines(b, compact, title) {
+        if (!b || clock.id !== b.id) return null;
+        const who = isCompact(b) ? 'A clock beside it' : 'Its clock', x = clock.x;
+        if (x > 0.9) return [[title(`${who} has almost stopped`)]];
+        const lost = `${x > 0.1 ? 'about ' : ''}${clockLost(clock.loss)} a year`;
+        if (compact) return [[title(`${who} loses `), [lost]]];
+        return [[title(`${who} runs slow`)], [[`Loses ${lost}`]]];
+    }
+
     function drawRelativityCard(C, subj, y, fs, compact) {
         if (!settings.realistic || cleanRender) return y;
         const title = (t) => [t, true, C.kepler];
         const pl = precessionLines(subj, compact, title, C);
         const wl = waveLines(subj, compact, title, C);
-        if (!pl && !wl) return y;
-        const lines = (pl || []).concat(wl ? wl.lines : []);
+        const cl = clockLines(subj, compact, title);
+        if (!pl && !wl && !cl) return y;
+        const lines = (pl || []).concat(cl || [], wl ? wl.lines : []);
         const lh = Math.round(fs * 1.4);
         const widthOf = (line) => line.reduce((s, seg) => { ctx.font = font(fs, seg[1]); return s + ctx.measureText(seg[0]).width; }, 0);
         const sketchH = wl && wl.wave ? (compact ? 18 : 30) : 0;
@@ -5815,6 +5858,7 @@
         computeDrawRadii();
         placeCloseUp();
         drawGravityWell(C);   // (underneath everything: see "Gravity well")
+        drawLensedStars(C);   // (see "Bent starlight")
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
         drawPast(C);
@@ -6149,6 +6193,189 @@
         ctx.beginPath();
         ctx.arc(x, y, r - lw * 0.85, 0, TAU);
         ctx.fill();
+    }
+
+    // ---- Bent starlight round a black hole (realistic physics) ----
+    // The canvas looks straight down on a flat system, so the bodies in it are not behind a black hole
+    // along the line of sight, and their pictures aren't bent. What a black hole does bend is the light of
+    // stars far behind the plane. Each star here goes where the point-lens equation puts it. A star in
+    // direction beta from the hole has two images, on the line through the hole, at
+    //   theta = (beta +- sqrt(beta^2 + 4 thetaE^2)) / 2      with thetaE^2 = 4GM/c^2 / D
+    // for stars far behind the hole, seen from distance D (Einstein 1936; Refsdal 1964). In the plane of the
+    // canvas, where lengths are angles times D, the Einstein radius is E = sqrt(4GM/c^2 D): the one number
+    // not given by the scene is D, as nothing says where the viewer is. It is chosen once, so that the ring
+    // of the heaviest hole is about a tenth of the canvas across as it first shows, and said on the canvas:
+    // the strength of the bending is real for a viewer that far away. (A real telescope, light years away,
+    // sees a ring far wider than this canvas and far too small on its sky to make out.) Every point of the
+    // edge of a star's disc is sent through the equation, so its images are the true shapes, and painted
+    // evenly: lensing keeps a star's surface brightness, so an image is brighter as a whole by just the
+    // magnification, in its area. A star right behind the hole becomes the ring itself. The dots' own size
+    // is a symbol, as real stars would be far smaller, and their rings thinner and brighter.
+    // The stars are fixed in the world, so what counts is how the hole moves against them: its own orbit,
+    // and a slow drift of at most 30 km/s, about what stars near each other have, slower if that would be
+    // too fast to follow at the scene's rate. The first star is put to pass right behind the hole in the
+    // first few seconds. The sky is a tile repeated, so there are always the same few stars near a hole, and
+    // they fade out where the bending gets small. It is a picture and nothing else: no physics reads it.
+    // Two holes well apart each bend the stars nearest them. With their rings overlapping, the light is
+    // bent by both at once, which this equation can't say, so they show no stars: nor does a hole whose
+    // ring is too close to it for weak bending (the equation is 15% out at 10 horizon radii and 30% at 5).
+    const LENS_N = 30, LENS_TILE = 7, LENS_K = 64, LENS_HOLES = 3;
+    const LENS_FILL = 0.1;                // the ring's radius over the shorter side of the canvas, when D is chosen
+    const LENS_KMS = 30;                  // km/s: the fastest drift of the stars past the hole
+    const LENS_CROSS_S = 10;              // s: and the shortest time to cross the ring at 1x
+    const LENS_PASS_S = 7;                // s: when the first star passes behind the hole, at 1x
+    const LENS_MIN_E = 8;                 // Einstein radius in horizon radii: closer in, light isn't weakly bent (no ring drawn)
+    const LENS_SHADOW = 1.5 * Math.sqrt(3);   // horizon radii: light aimed closer than this falls in
+    const lens = { D: 0, E0: 0, ox: 0, oy: 0, t0: 0, vx: 0, vy: 0, scene: null, n: 0, drawn: false, note: '' };
+    const LENS_U = new Float64Array(2 * LENS_N), LENS_R = new Float64Array(LENS_N);
+    const LENS_COS = new Float64Array(LENS_K), LENS_SIN = new Float64Array(LENS_K);
+    const LH = { x: new Float64Array(LENS_HOLES), y: new Float64Array(LENS_HOLES), X: new Float64Array(LENS_HOLES), Y: new Float64Array(LENS_HOLES), m: new Float64Array(LENS_HOLES), a: new Float64Array(LENS_HOLES), E: new Float64Array(LENS_HOLES), b: new Array(LENS_HOLES).fill(null) };
+    for (let i = 0; i < LENS_N; i++) {
+        // (evenly scattered, with no clumps or gaps: the R2 sequence)
+        const f = (x) => x - Math.floor(x);
+        LENS_U[2 * i] = f(0.5 + i * 0.7548776662) - 0.5;
+        LENS_U[2 * i + 1] = f(0.5 + i * 0.5698402910) - 0.5;
+        LENS_R[i] = 1.05 + 1.05 * f(i * 0.6180339887);
+    }
+    for (let k = 0; k < LENS_K; k++) { LENS_COS[k] = Math.cos((TAU * k) / LENS_K); LENS_SIN[k] = Math.sin((TAU * k) / LENS_K); }
+
+    // The viewer's distance, the stars' start and their drift: once a scene has a hole to show
+    function chooseLens(m, x, y) {
+        const rs = (2 * G * m) / C2;
+        const want = (LENS_FILL * Math.min(visR - visL, viewH)) / scale;
+        lens.D = +Math.max((want * want) / (2 * rs), 0.5 * LENS_MIN_E * LENS_MIN_E * rs).toPrecision(2);
+        lens.E0 = Math.sqrt(2 * rs * lens.D);
+        const v = Math.min(LENS_KMS / AUYR_KMS, (2 * lens.E0) / (LENS_CROSS_S * rate()));
+        lens.vx = v * 0.9563; lens.vy = v * 0.2924;   // (17 degrees off the x axis, so each pass differs from the last)
+        lens.ox = x; lens.oy = y; lens.t0 = simTime; lens.scene = scene;
+        // The first star, and it the largest: a pass almost dead behind the hole
+        const L = LENS_TILE * lens.E0, tp = LENS_PASS_S * rate();
+        LENS_U[0] = (-lens.vx * tp - 0.012 * lens.E0 * 0.2924) / L;
+        LENS_U[1] = (-lens.vy * tp + 0.012 * lens.E0 * 0.9563) / L;
+        LENS_R[0] = 2.4;
+        const au = lens.D, ly = au / C_LIGHT;   // (a light year is C_LIGHT AU)
+        lens.note = `Bent starlight, as seen from ${au < 0.1 ? `${fig2(au * AU_KM)} km` : ly < 0.1 ? `${fig2(au)} AU` : `${fig2(ly)} light years`} away`;
+    }
+
+    // The holes to draw this frame, into LH (heaviest first; where they are in the world, unturned):
+    // how many. Each has its alpha, for how far it is off the canvas, how small its ring looks and how fast
+    // the stars rush past it on screen.
+    function lensHoles() {
+        let n = 0;
+        for (const b of bodies) {
+            if (b.kind !== 'blackhole' || (n === LENS_HOLES && b.m <= LH.m[n - 1])) continue;
+            let i = n < LENS_HOLES ? n++ : n - 1;
+            while (i > 0 && LH.m[i - 1] < b.m) { LH.m[i] = LH.m[i - 1]; LH.b[i] = LH.b[i - 1]; i--; }
+            LH.m[i] = b.m; LH.b[i] = b;
+        }
+        if (!n) { lens.D = 0; return 0; }
+        const c = turn.c, sn = turn.s;
+        for (let i = 0; i < n; i++) {
+            const b = LH.b[i], x = b.dx - F.x, y = b.dy - F.y;
+            LH.x[i] = F.x + c * x + sn * y;
+            LH.y[i] = F.y - sn * x + c * y;
+            LH.X[i] = sx(b.dx);
+            LH.Y[i] = sy(b.dy);
+        }
+        if (!lens.D || lens.scene !== scene) {
+            if (view.anim) return 0;   // (the view is still settling)
+            chooseLens(LH.m[0], LH.x[0], LH.y[0]);
+        }
+        for (let i = 0; i < n; i++) LH.E[i] = Math.sqrt(((4 * G * LH.m[i]) / C2) * lens.D);
+        for (let i = 0; i < n; i++) {
+            const b = LH.b[i], X = LH.X[i], Y = LH.Y[i];
+            const off = Math.max(visL - X, X - visR, -Y, Y - viewH, 0);
+            const Epx = LH.E[i] * scale;
+            const short = Math.min(visR - visL, viewH);
+            let a = clamp(1 - off / 40, 0, 1) * clamp((Epx - 14) / 14, 0, 1) * clamp((0.7 * short - Epx) / (0.25 * short), 0, 1);
+            if (LH.E[i] < LENS_MIN_E * ((2 * G * LH.m[i]) / C2)) a = 0;
+            for (let j = 0; j < n; j++) {
+                if (j !== i) a *= clamp((hyp(LH.x[i] - LH.x[j], LH.y[i] - LH.y[j]) / (LH.E[i] + LH.E[j]) - 1.5) / 0.5, 0, 1);
+            }
+            if (!paused && a > 0) {
+                let v = hyp(b.vx - lens.vx, b.vy - lens.vy) * scale;
+                if (turn.on) v += Math.abs(turn.omega) * 3 * Epx;
+                a *= clamp(2 - (v * settings.speed * rate()) / 500, 0, 1);
+            }
+            LH.a[i] = a;
+        }
+        return n;
+    }
+
+    // Drawn from the frame, under everything but the gravity well
+    function drawLensedStars(C) {
+        lens.drawn = false;
+        if (!settings.realistic || cleanRender) return;
+        const n = lensHoles();
+        if (!n) return;
+        let E = 0;
+        for (let i = 0; i < n; i++) E = Math.max(E, LH.E[i]);
+        const L = LENS_TILE * Math.max(lens.E0, E / 1.5), half = L / 2;
+        const t = simTime + lag - lens.t0, ax = lens.ox + lens.vx * t, ay = lens.oy + lens.vy * t;
+        const base = C.dark ? 0.8 : 0.6;
+        ctx.fillStyle = C.dark ? '#dde7ff' : '#3f4c68';
+        for (let h = 0; h < n; h++) {
+            if (!(LH.a[h] > 0.01)) continue;
+            const hx = LH.x[h], hy = LH.y[h], Eh = LH.E[h];
+            for (let i = 0; i < LENS_N; i++) {
+                let rx = ax + LENS_U[2 * i] * L - hx, ry = ay + LENS_U[2 * i + 1] * L - hy;
+                rx -= L * Math.round(rx / L);
+                ry -= L * Math.round(ry / L);
+                const beta = hyp(rx, ry);
+                if (beta >= half) continue;
+                let a = LH.a[h] * Math.min(1, (half - beta) / (0.4 * half));
+                // (each star is bent by the hole it is nearest, in rings; midway it fades, so it never jumps)
+                for (let o = 0; o < n; o++) {
+                    if (o === h) continue;
+                    let qx = ax + LENS_U[2 * i] * L - LH.x[o], qy = ay + LENS_U[2 * i + 1] * L - LH.y[o];
+                    qx -= L * Math.round(qx / L);
+                    qy -= L * Math.round(qy / L);
+                    a *= clamp((hyp(qx, qy) / LH.E[o] - beta / Eh) / 0.7, 0, 1);
+                }
+                if (a < 0.02) continue;
+                ctx.globalAlpha = a * base;
+                lensedStar(rx * scale, ry * scale, LENS_R[i], Eh * scale, h);
+                lens.drawn = true;
+            }
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    // One star's images: its centre at (bx, by) px from hole h, in the world's directions, radius rho px
+    function lensedStar(bx, by, rho, E, h) {
+        const c = turn.c, sn = turn.s, X = LH.X[h], Y = LH.Y[h];
+        const beta = hyp(bx, by), root = Math.sqrt(beta * beta + 4 * E * E);
+        const out = (beta + root) / 2, inn = (root - beta) / 2;   // the two images' distances from the hole
+        const shadow = (LENS_SHADOW * ((2 * G * LH.m[h]) / C2)) * scale;
+        ctx.beginPath();
+        // Hardly bent: a dot, its centre moved out
+        const stretch = beta > 0 ? out / beta : Infinity;
+        if ((stretch - 1) * rho < 0.4) {
+            const px = X + (c * bx - sn * by) * stretch, py = Y - (sn * bx + c * by) * stretch;
+            if (px < -5 || px > viewW + 5 || py < -5 || py > viewH + 5) return;
+            ctx.arc(px, py, rho, 0, TAU);
+        } else {
+            lensedOutline(X, Y, bx, by, rho, E, 1, stretch < 3 ? 4 : stretch < 10 ? 2 : 1);
+        }
+        // The second image, inside the ring and across from the star: small and faint unless the star is
+        // close behind, and lost if its light came too close to the hole
+        const s2 = beta > 0 ? inn / beta : Infinity;
+        if (inn >= shadow && s2 * rho >= 0.35) lensedOutline(X, Y, bx, by, rho, E, -1, s2 < 3 ? 4 : s2 < 10 ? 2 : 1);
+        ctx.fill('evenodd');
+    }
+
+    // The edge of a star's disc sent through the lens equation, on the outer side (sign 1) or inner (-1):
+    // every step-th point
+    function lensedOutline(X, Y, bx, by, rho, E, sign, step) {
+        const c = turn.c, sn = turn.s, E4 = 4 * E * E;
+        for (let k = 0; k < LENS_K; k += step) {
+            const qx = bx + rho * LENS_COS[k], qy = by + rho * LENS_SIN[k];
+            const q = Math.max(hyp(qx, qy), 1e-6), f = (q + sign * Math.sqrt(q * q + E4)) / (2 * q);
+            const ix = qx * f, iy = qy * f;
+            const px = X + c * ix - sn * iy, py = Y - sn * ix - c * iy;
+            if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
     }
 
     const pieceColour = (color, C) => (C.dark ? color : bodyStroke(bodyStroke(color, false), false));
@@ -7476,8 +7703,11 @@
             Object.assign(sizeNote, { scene, realistic: settings.realistic, until: now + SIZE_NOTE_MS });
         }
         edges.noteLeft = Infinity;
-        if (now < sizeNote.until) {
-            const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+        const lensNote = lens.drawn ? lens.note : '';
+        if (now < sizeNote.until || lensNote) {
+            let note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+            // (bent starlight stays said while it shows; "Sizes to scale" beside it if there is room)
+            if (lensNote) note = now < sizeNote.until && ctx.measureText(`${note}. ${lensNote}`).width < visR - edges.scaleRight - 20 ? `${note}. ${lensNote}` : lensNote;
             ctx.textAlign = 'right';
             ctx.fillText(note, visR - pad - 2, y0 + 2);
             edges.noteLeft = visR - pad - 2 - ctx.measureText(note).width;
@@ -8270,6 +8500,7 @@
     function setText(el, t) { if (el && el.textContent !== t) el.textContent = t; }
 
     function updateReadouts() {
+        updateClock();   // (for the relativity card)
         updateMission();
         const tm = timeReadout();   // (the date, in a scene with a start date)
         setText(ui.statTime, tm.v);
@@ -15302,6 +15533,13 @@
         fit: fitAll,
         fitBox(box) { fitBox(box, false); },
         setCleanRender(v) { cleanRender = !!v; },
+        // What the relativity card and the bent starlight are showing, for tests
+        clockInfo() {
+            updateClock();
+            const b = bodyById(clock.id);
+            return b ? { name: b.name, x: clock.x, loss: clock.loss, lostPerYear: clockLost(clock.loss) } : null;
+        },
+        lensInfo: () => ({ drawn: lens.drawn, D: lens.D, E0: lens.E0, note: lens.note, Epx: lens.E0 * scale }),
         setRealistic(v) { if (ui.realistic) ui.realistic.checked = !!v; settings.realistic = !!v; forcesDirty = true; },
         flyby() { return Object.assign({}, flyby, { pts: flyby.pts.length / 2 }); },
         // The path predicted for a body if it were launched now with world velocity (vx, vy): points
