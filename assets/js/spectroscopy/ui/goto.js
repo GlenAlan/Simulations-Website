@@ -30,6 +30,8 @@ const HIDDEN_AT_OR_BELOW = 0.03;    // A band strength this small draws nothing 
 const FRAME_MARGIN = 1.7;           // An extended object fills about 60% of the view
 const POINT_FOV_DEG = 10;
 const CLOSE_POINT_FOV_DEG = { binary: 4, multiple: 4, black_hole: 4 }; // Pairs need a tighter view to come apart
+const SPLIT_PX = 20;                // Device pixels apart at which the sky draws a multiple's stars separately
+const CLOSEST_PAIR_DEG = 0.02;      // About the tightest pair a multiple draws, for reaching one star of it
 const MAG_MARGIN = 1;               // Stop a magnitude inside the limit, or the object only just glimmers
 
 // Layers that add their own pick candidates (cluster members, stars of a multiple) once they can be told apart
@@ -132,6 +134,13 @@ function fovShowingMag(mag, fov) {
 
 function strongestBand(body) {
     return BANDS.reduce((best, band) => (body.bands[band] > body.bands[best] ? band : best), 'visible');
+}
+
+function animationFrames(n) {
+    return new Promise((resolve) => {
+        const step = () => (n-- > 0 ? requestAnimationFrame(step) : resolve());
+        step();
+    });
 }
 
 function isTextEntry(el) {
@@ -248,7 +257,7 @@ export function initGoto(app) {
             if (p && p.onScreen) distances.set(code, Math.hypot(p.x - frame.width / 2, p.y - frame.height / 2));
         };
         universe.bodies.forEach((body) => {
-            if (engine.bodyShows(body)) consider(body.code, body.sky.az, body.sky.alt);
+            if (engine.bodyShows(body) && !isFaintInBand(body)) consider(body.code, body.sky.az, body.sky.alt);
         });
         PICK_LAYERS.forEach((id) => {
             const layer = engine.getLayer(id);
@@ -412,9 +421,13 @@ export function initGoto(app) {
         if (answerPrompt) answer('cancel');
     }
 
+    function isFaintInBand(body) {
+        return body.bands[app.band] <= HIDDEN_AT_OR_BELOW;
+    }
+
     function isHidden({ body, path }) {
         if (path === 'planet') return false; // Not drawn on the sky at all: the flight ends in its system, whatever the band
-        return body.bands[app.band] <= HIDDEN_AT_OR_BELOW && strongestBand(body) !== app.band;
+        return isFaintInBand(body) && strongestBand(body) !== app.band;
     }
 
     // --- Flights ---
@@ -439,11 +452,20 @@ export function initGoto(app) {
         });
     }
 
-    function frameFor(body) {
+    // A multiple's stars only come apart once they are some pixels apart, so its view depends on the canvas
+    function pointFov(body, path) {
+        const widest = CLOSE_POINT_FOV_DEG[body.kind] || POINT_FOV_DEG;
+        if (!body.visual_sep_deg) return widest;
+        const { height, dpr } = engine.currentFrame();
+        const sep = path === 'component' ? Math.min(body.visual_sep_deg, CLOSEST_PAIR_DEG) : body.visual_sep_deg;
+        return Math.min(widest, (sep * height * dpr) / SPLIT_PX);
+    }
+
+    function frameFor({ body, path }) {
         // fov is vertical, so a portrait canvas needs a wider one to fit the object across
         const narrowest = Math.min(1, engine.camera.aspect || 1);
         const span = skySpanDeg(body);
-        const framed = span > 0 ? (span * FRAME_MARGIN) / narrowest : CLOSE_POINT_FOV_DEG[body.kind] || POINT_FOV_DEG;
+        const framed = span > 0 ? (span * FRAME_MARGIN) / narrowest : pointFov(body, path);
         const fov = Math.max(MIN_FOV, Math.min(MAX_FOV, framed));
         const shows = engine.bodyShows(body, limitingMag(fov) - MAG_MARGIN);
         return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingMag(body.brightness && body.brightness.mag, fov) };
@@ -455,7 +477,8 @@ export function initGoto(app) {
         return app.band === 'visible' ? fovShowingMag(member.brightness && member.brightness.mag, fov) : fov;
     }
 
-    async function fly({ entity, body, path }, id) {
+    async function fly(resolved, id) {
+        const { entity, body, path } = resolved;
         const stillCurrent = () => id === flightId;
 
         if (app.view === 'system' && app.systemCode === body.code) {
@@ -468,7 +491,7 @@ export function initGoto(app) {
             if (!stillCurrent()) return false;
         }
 
-        await slew(frameFor(body));
+        await slew(frameFor(resolved));
         if (!stillCurrent()) return false;
 
         if (path === 'planet' && app.system) {
@@ -476,14 +499,18 @@ export function initGoto(app) {
             if (!stillCurrent()) return false;
             app.system.focusPlanet(entity.code);
         }
+        select(entity.code);
         if (path === 'member') {
+            // Selected before the zoom, and the zoom waits a few frames. Just after a selection the shell pulls the
+            // selected body back on screen if it has gone, and a member's body is its cluster: selected at the end,
+            // the camera would be dragged off the member again.
+            await animationFrames(3);
             const dir = await memberDirection(body, entity);
             if (!stillCurrent()) return false;
             await slew({ az: dir.az, alt: dir.alt, fov: memberFov(body, entity) }, { duration: MEMBER_ZOOM_S, pullBack: false });
             if (!stillCurrent()) return false;
             bus.emit('highlight', { code: entity.code });
         }
-        select(entity.code);
         return true;
     }
 

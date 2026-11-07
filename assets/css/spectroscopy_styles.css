@@ -63,22 +63,21 @@
 
 /* === GOTO: the search box and its dropdown === */
 .spectro-goto {
-    --goto-surface: var(--color-bg);
-    --goto-strong: var(--sim-value-color); /* Key text and focus rings: the accent is too pale on the light theme */
+    /* On the night sky in either site theme, so it wears the same dark glass as the bars beside it. White on this
+       clears 4.5:1 with the brightest possible sky behind it. */
+    --goto-glass: var(--spectro-glass, rgba(14, 16, 22, 0.66));
+    --goto-solid: #0e1016; /* Where it opens over other controls, whose text mustn't show through */
+    --goto-text: var(--spectro-glass-text, #f4f4f6);
+    --goto-line: var(--spectro-glass-line, rgba(255, 255, 255, 0.16));
+    --goto-hover: var(--spectro-glass-hover, rgba(255, 255, 255, 0.13));
     position: relative;
     z-index: 2; /* The dropdown opens over the band switcher, not under it */
     width: max-content;
-    color: var(--goto-strong); /* The site's text colour reads faint in this thin face over the sky */
+    color: var(--goto-text);
     font-size: 14px;
     font-weight: 400;
     line-height: 1.3;
     text-align: left;
-}
-
-@supports (background: color-mix(in srgb, red, blue)) {
-    .spectro-goto {
-        --goto-surface: color-mix(in srgb, var(--color-bg) 94%, transparent);
-    }
 }
 
 .spectro-goto .spectro-goto-toggle,
@@ -87,24 +86,38 @@
 .spectro-goto-prompt,
 .spectro-goto-message:not(:empty) {
     box-sizing: border-box;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--goto-line);
     border-radius: var(--sim-radius);
-    background-color: var(--goto-surface);
+}
+
+.spectro-goto .spectro-goto-toggle,
+.spectro-goto-form {
+    background-color: var(--goto-glass);
+}
+
+.spectro-goto-list,
+.spectro-goto-prompt,
+.spectro-goto-message:not(:empty),
+.spectro-goto.is-compact .spectro-goto-form {
+    background-color: var(--goto-solid);
+}
+
+.spectro-goto .sim-icon-button {
+    color: var(--goto-text) !important;
 }
 
 .spectro-goto .sim-icon-button:focus-visible {
-    outline-color: var(--goto-strong);
+    outline-color: var(--goto-text);
 }
 
-/* Not behind (hover: hover): the site's button:hover also sticks after a tap, in an accent too pale on the light theme */
+/* Not behind (hover: hover): the site's button:hover also sticks after a tap */
 .spectro-goto .sim-icon-button:hover {
     box-shadow: none;
-    color: var(--goto-strong) !important;
 }
 
 @media (hover: hover) {
     .spectro-goto .sim-icon-button:hover {
-        background-color: var(--color-bg-subtle);
+        background-color: var(--goto-hover);
     }
 }
 
@@ -126,7 +139,7 @@
 .spectro-goto .spectro-goto-label {
     margin: 0;
     padding: 0 6px 0 10px;
-    color: var(--goto-strong);
+    color: inherit;
     font-size: inherit;
     font-weight: 600;
     white-space: nowrap;
@@ -194,14 +207,14 @@
 
 @media (hover: hover) {
     .spectro-goto-option:hover {
-        background-color: var(--color-bg-subtle);
+        background-color: var(--goto-hover);
     }
 }
 
 .spectro-goto-option.is-active {
-    outline: 2px solid var(--goto-strong);
+    outline: 2px solid var(--goto-text);
     outline-offset: -2px;
-    background-color: var(--color-bg-subtle);
+    background-color: var(--goto-hover);
 }
 
 .spectro-goto-code {
@@ -255,7 +268,7 @@
 }
 
 .spectro-goto .spectro-goto-choices button:focus-visible {
-    outline: 2px solid var(--goto-strong);
+    outline: 2px solid var(--goto-text);
     outline-offset: 2px;
 }
 
@@ -265,13 +278,13 @@
 
 .spectro-goto .spectro-goto-choices .spectro-goto-switch {
     box-shadow: none;
-    background-color: var(--goto-strong);
-    color: var(--color-bg) !important;
+    background-color: var(--goto-text);
+    color: var(--goto-solid) !important;
 }
 
 .spectro-goto .spectro-goto-choices .spectro-goto-stay {
-    box-shadow: inset 0 0 0 1px var(--goto-strong);
-    color: var(--goto-strong) !important;
+    box-shadow: inset 0 0 0 1px var(--goto-text);
+    color: var(--goto-text) !important;
 }
 
 /* The message box stays in the page when empty, so a screen reader is already watching it when a message arrives */
@@ -280,7 +293,7 @@
 }
 
 .spectro-goto-message.is-error:not(:empty) {
-    border-left: 3px solid var(--color-accent-active);
+    border-left: 3px solid var(--color-accent);
 }
 
 /* On a narrow canvas, an icon that opens the box: it can't crowd the top bar */
