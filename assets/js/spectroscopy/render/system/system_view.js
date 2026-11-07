@@ -55,6 +55,7 @@ const COMPILE_WAIT_MS = 4000;       // The longest a flight waits for its shader
 const WARM_AFTER_SELECT_MS = 500;
 const KEY_ZOOM_RATE = 1.3;          // Zooming with a key held down, as a log of the field of view a second, as on the sky
 const VIEW_SHOWN_AT = 0.4;          // A zoom this far in would settle in, not back, so the rest of the page can hear about it
+const CARRIED_PAUSE_MS = 450;       // A pause this long ends the zoom that carried the student in (see applyZoom)
 const HOLE_APPROACH = 1.5;          // How far off a zoom into a black hole's system starts, as a share of where it ends
 const HOLE_SKY_ZOOM = 1.25;         // How far the sky narrows meanwhile
 const HOLE_NEAR_FOV = 1;            // The sky draws a black hole about as big as this view does at a field of view like this
@@ -162,6 +163,9 @@ export function initSystemView(app) {
     let hold = null;            // Test hook: a fixed tNorm
     let hand = null;            // The student's zoom is moving tNorm: see zoom_into.js. Otherwise the flight is on a clock.
     let keyZoom = 0;            // A zoom key held down during that move: -1 in, +1 out
+    let carriedIn = false;      // A zoom carried the student in, and is still going: see applyZoom
+    let settleAfterCarry = false; // ... and once it stops, the camera settles where the button's flight leaves it
+    let lastZoomAt = -Infinity; // performance.now of the last zoom step in the system
     let viewShown = true;       // Has the page been told the view changed? A zoom waits to see if it's really going in.
     let useFade = false;        // This transition is the Reduce motion cross-fade
     let path = null;            // The flight's fixed values: see beginFlight
@@ -738,6 +742,13 @@ export function initSystemView(app) {
             return;
         }
         if (!canInteract()) return;
+        // The zoom that carried the student in stops at the system's own framing, as the button's flight does: the rest of
+        // that gesture's steps in go no further. A pause, or a step out, and zooming works as usual.
+        const now = performance.now();
+        if (carriedIn && (now - lastZoomAt > CARRIED_PAUSE_MS || factor > 1)) carriedIn = false;
+        lastZoomAt = now;
+        if (carriedIn) return;
+        settleAfterCarry = false;
         if (cam.target) {
             cam.distT = Math.max(minDistance(), cam.distT * factor);
             // Pulling far enough back from a planet lets go of it
@@ -1656,6 +1667,17 @@ export function initSystemView(app) {
             backdrop.set(stage.backdrop, stage.backdropZoom, frame.dpr);
         }
         if (hold === null) finishIfDone();
+        settleIfCarried();
+    }
+
+    // The zoom that carried the student in has stopped: the camera settles where the button's flight leaves it. Only a black
+    // hole's flight by hand ends closer in than that (lockHoleToSky, so that zooming in never shrinks the hole), and this
+    // brings its companion into view.
+    function settleIfCarried() {
+        if (!settleAfterCarry || mode !== 'system' || performance.now() - lastZoomAt <= CARRIED_PAUSE_MS) return;
+        settleAfterCarry = false;
+        carriedIn = false;
+        if (!cam.flight && !cam.target && cam.zoom < 1) startFocusFlight(null, 1);
     }
 
     function stepHand(dt) {
@@ -1708,6 +1730,9 @@ export function initSystemView(app) {
 
     // If a panel for something else is open, it moves to where the student has gone. If none is, none opens in their face.
     function arrivedByHand() {
+        carriedIn = true;
+        settleAfterCarry = true;
+        lastZoomAt = performance.now();
         if (!viewShown) showView();
         const drawer = app.drawer;
         const reading = app.selected ? app.selected.body.code === model.code || app.selected.entity.code === model.code : false;
@@ -1718,6 +1743,8 @@ export function initSystemView(app) {
         restoreSky();
         sharedUniforms.uSkyFade.value = 1;
         engine.setSkyVisible(true);
+        carriedIn = false;
+        settleAfterCarry = false;
         const previous = model;
         // Back by zoom, the student may well zoom straight in again: it stays ready for a while, undrawn
         const stayReady = !!hand;
