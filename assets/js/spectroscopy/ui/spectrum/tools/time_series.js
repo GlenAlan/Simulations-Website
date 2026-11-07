@@ -25,6 +25,7 @@ const FILL_PER_FRAME = 2;        // Columns worked out per frame, so that playba
 const LONGEST_SHOWN_DAYS = 20000; // A slower orbit than this can't be played: its stars would barely move
 const MIN_ERR_KMS = 0.5;
 const MIN_LINE_DEPTH = 0.03;     // As in suggestTrackingLines: shallower than this, a star doesn't really show a line
+const POOR_K_SHARE = 0.05;       // A speed swing known no better than this may well read better from another of the star's lines
 const MIN_SAMPLES_PER_SWING = 6; // Sampled less often than this, a swing can't be read, and what fits it instead is false
 const MIN_CYCLES_FOR_PERIOD = 1.15; // As in fitOrbit: a period only counts once more than one cycle has gone by
 const SPEED_SHARES = [1 / 36, 1 / 18, 1 / 9, 1 / 4.5]; // The time to show covered per second: a full picture in 36 s at the slowest
@@ -84,6 +85,7 @@ function mount(container, api) {
     const intro = para('Press Play and watch the line move. Each star\'s lines swing to and fro as it orbits. The time for one swing is the period.');
     const lineField = labelledSelect('Line to follow', (value) => {
         line = lines[Number(value)];
+        linePicked = true;
         rebuild();
     });
     const spanField = labelledSelect('Time to show', (value) => {
@@ -110,6 +112,7 @@ function mount(container, api) {
     let stars = [];
     let lines = [];
     let line = null;
+    let linePicked = false;
     let span = 1;
     let shortest = 1;
     let vLo = -100;
@@ -305,9 +308,10 @@ function mount(container, api) {
 
     // ---------- Results ----------
 
-    // A star whose chosen line wouldn't do, once the whole picture is in: its other lines, one at a time, over the same moments
+    // A star whose line wouldn't do, once the whole picture is in: its other lines, over the same moments, keeping the sharpest reading
     function tryOtherLines(star) {
         star.triedOthers = true;
+        const sharpness = (fit) => fit.err_K_kms / fit.K_kms;
         for (const other of star.own) {
             if (sameLine(other, star.line)) continue;
             star.last = null;
@@ -317,13 +321,18 @@ function mount(container, api) {
                 if (point) points.push(point);
             }
             const fit = points.length >= 12 ? fitOrbit(points) : null;
-            if (fit) {
+            if (fit && (!star.fit || sharpness(fit) < sharpness(star.fit))) {
                 star.points = points;
                 star.fit = fit;
                 star.line = other;
-                return;
             }
         }
+    }
+
+    // A line the student picked is the one they want read, as long as it gives a reading at all
+    function wantsAnotherLine(star) {
+        if (star.tooFast || star.tooSlow || star.triedOthers) return false;
+        return !star.fit || (!linePicked && star.fit.err_K_kms > POOR_K_SHARE * star.fit.K_kms);
     }
 
     function updateResults() {
@@ -331,7 +340,7 @@ function mount(container, api) {
         const covered = filledCount >= COLUMNS;
         stars.forEach((star) => {
             star.fit = !star.tooFast && star.points.length >= 12 ? fitOrbit(star.points) : null;
-            if (covered && !star.fit && !star.tooFast && !star.tooSlow && !star.triedOthers) tryOtherLines(star);
+            if (covered && wantsAnotherLine(star)) tryOtherLines(star);
         });
         result.replaceChildren(...orbitResults({
             resolved,
@@ -479,6 +488,7 @@ function mount(container, api) {
         const suggestions = suggestTrackingLines(overviews, 6);
         lines = suggestions;
         line = lines[0] || null;
+        linePicked = false;
         stars.forEach((star, s) => {
             star.own = suggestTrackingLines([overviews[s]], 4);
             star.seenLines = (overviews[s].lines || []).filter((l) => !l.band && l.depth > MIN_LINE_DEPTH);
