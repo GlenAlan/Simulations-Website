@@ -4626,6 +4626,13 @@ details.description-area > summary::after {
     color: #e6e9f2 !important;
     box-shadow: inset 0 0 0 2px #e6e9f2;
 }
+
+/* The System tab's switches are finger-sized on a touch screen */
+@media (pointer: coarse) {
+    .spectro-system-tab .sim-checkbox-group input[type="checkbox"] + label {
+        min-height: 44px;
+    }
+}
 /* === end SKYFIX === */
 
 
