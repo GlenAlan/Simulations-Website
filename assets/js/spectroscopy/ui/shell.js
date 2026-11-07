@@ -4,7 +4,7 @@
 import { bus, select, setBand, setLayer, setSetting } from '../core/state.js';
 import { announce } from './drawer.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
-import { DEFAULT_VIEW } from '../core/sky.js';
+import { DEFAULT_VIEW, MIN_FOV } from '../core/sky.js';
 import { helpSections } from '../content/help.js';
 import { initLegend } from './legend.js';
 import { initViewAids } from './view_aids.js';
@@ -507,7 +507,9 @@ function initContextBar(app) {
 
     // Written only when the words change, so the bar isn't laid out again every frame
     let lastFov = -1;
-    return function updateZoom(fov) {
+    return function updateZoom(frameFov) {
+        // The start of a zoom into a system goes on past the limit of the student's own zoom
+        const fov = Math.max(MIN_FOV, frameFov);
         if (Math.abs(fov - lastFov) < 0.005) return;
         lastFov = fov;
         const words = zoomWords(fov);

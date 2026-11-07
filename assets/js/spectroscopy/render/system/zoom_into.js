@@ -9,7 +9,8 @@
 //   What's being zoomed into has to be the only thing in play. A star qualifies at a field of view of CAPTURE_FOV or less,
 //   once nothing else star-like is within CLEAR_SHARE of the view's height of it. Until then the sky goes on zooming as usual.
 //   So a lone star hands over early, and one in a crowded field or among a cluster's members only once it stands apart.
-//   Whatever the sky still has to show comes first: a multiple's stars have to come apart, and a black hole shows its lens.
+//   Whatever the sky still has to show comes first: a multiple's stars have to come apart, a black hole shows its lens, and a
+//   faint star has to be showing properly. With only that one thing in play, a wheel covers the way down in fewer notches.
 //   At the sky's zoom limit, whatever is left and being pointed at can be entered.
 // Which star: the one under the pointer, or else the selected one if it's on show, or else one near the centre of the view.
 // Pointing at something that isn't a system, such as a galaxy, means no capture at all.
@@ -38,7 +39,7 @@ const POINTER_NEAR_CENTRE_SHARE = 0.25;
 const GESTURE_GONE_MS = 450;    // A zoom this long ago isn't going on any more
 const KEEP_READY_S = 8;         // How long a system stays ready for a student who has stopped zooming at it
 
-const MOST_PER_S = 1.5;          // The fastest the move goes, of its whole length a second. A big bright star fills much of the
+const MOST_PER_S = 1.5;         // The fastest the move goes, of its whole length a second. A big bright star fills much of the
                                 // screen by the end of it, and rocking the wheel must not be able to flash that over 3 times a second.
 const PAUSE_S = 0.5;            // A gesture has stopped after this long: long enough to span slow, single notches
 const SETTLE_MIN_S = 0.3;       // The move's rest takes this long...
@@ -98,7 +99,7 @@ function createHand(t) {
 // beginOut(hand), hasReady(), enter(code), exit()
 export function createZoomInto(app, view) {
     const engine = app.engine;
-    let aim = null;             // { code, fov, clear }: the star a zoom is headed for
+    let aim = null;             // { code, fov, seen, alone }: the star a zoom is headed for, and how it stands
     let lookedAt = -Infinity;
     let lastIn = -Infinity;     // performance.now of the last step inwards
     let point = null;
@@ -112,9 +113,7 @@ export function createZoomInto(app, view) {
     const reduced = () => !!app.settings.reduceMotion;
 
     function systemOf(resolved) {
-        if (!resolved || !app.system) return null;
-        if (app.system.systemOf) return app.system.systemOf(resolved);
-        return app.system.hasSystemView(resolved.body) ? resolved.body : null;
+        return resolved ? app.system.systemOf(resolved) : null;
     }
 
     // The field of view at which the sky has shown all it has of this system
@@ -239,7 +238,7 @@ export function createZoomInto(app, view) {
         return true;
     }
 
-    // Zooming out past the system's outermost distance. Returns the hand, if the move has begun.
+    // Zooming out past the system's outermost distance
     function zoomedOutPast(log) {
         if (reduced()) {
             pressure += log;
