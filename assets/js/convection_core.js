@@ -56,6 +56,7 @@ let heatRadius = 8,    // brush radius as a percentage of the box width (the sam
     coolRate   = 0.5;  // surface cooling, 0 ... 1
 const baseHeatAmp = 0.5; // heat added per step at strength 1x (before heatAmpMult)
 let brushMode = 1;       // what a plain press does: +1 = heat, -1 = cool (Heat / Cool switch)
+let showBrushGuides = true; // crosshair cursor and brush circle (settings toggle)
 
 // POINTER STATE: every mouse button, finger or pen currently pressed on the canvas.
 // pointerId -> { x, y, sign } with x/y as fractions of the canvas size and sign +1 = heat, -1 = cool
@@ -80,6 +81,7 @@ const resetSimButton = document.getElementById('resetSimulationBtn');
 const modeButtons = Array.from(document.querySelectorAll('.thermal-mode [data-mode]'));
 const hintEl = document.getElementById('thermalHint');
 const legendBar = document.getElementById('colourLegendBar');
+const brushGuidesToggle = document.getElementById('brushGuidesToggle');
 
 // Offscreen canvas
 let offscreenCanvas = null;
@@ -153,6 +155,13 @@ if(heatAmpSlider && ampVal) {
     heatAmpSlider.oninput = () => { heatAmp = +heatAmpSlider.value; ampVal.textContent = heatAmp.toFixed(1); };
 }
 if(coolSlider && coolVal) coolSlider.oninput = () => { coolRate = +coolSlider.value / 100; coolVal.textContent = coolSlider.value; };
+// Turning the guides off hides the brush circle and gives the canvas the normal cursor (convection_styles.css)
+function syncBrushGuides() {
+    showBrushGuides = !brushGuidesToggle || brushGuidesToggle.checked;
+    if (canvas) canvas.classList.toggle('no-brush-guides', !showBrushGuides);
+}
+if (brushGuidesToggle) brushGuidesToggle.addEventListener('change', syncBrushGuides);
+syncBrushGuides(); // A browser restoring the form state may have left it unchecked
 
 
 // Pointer position as a fraction of the canvas size (resolution-independent)
@@ -238,39 +247,69 @@ modeButtons.forEach((button, index) => {
 });
 setBrushMode(1);
 
+// The solver functions copy N and size (and the global arrays they use) into locals before their loops:
+// the engine can then keep them in registers instead of re-reading the mutable globals on every cell.
 function IX(i,j){ return i + j*size; }
 function setBnd(b, x_arr) {
-  for (let i = 1; i <= N; i++) {
+  const n = N, sz = size;
+  const top = (n + 1) * sz; // IX(0, N+1)
+  for (let i = 1; i <= n; i++) {
+    const row = i * sz;
     // Vertical boundaries (sides: left i=0, right i=N+1)
     // b=1 for reflection (e.g., u velocity against vertical wall)
-    x_arr[IX(0, i)]   = (b === 1) ? -x_arr[IX(1, i)] : x_arr[IX(1, i)];
-    x_arr[IX(N+1, i)] = (b === 1) ? -x_arr[IX(N, i)] : x_arr[IX(N, i)];
+    x_arr[row]         = (b === 1) ? -x_arr[row + 1] : x_arr[row + 1];
+    x_arr[row + n + 1] = (b === 1) ? -x_arr[row + n] : x_arr[row + n];
 
     // Horizontal boundaries (bottom j=0, top j=N+1; j increases upwards and is drawn flipped)
     // b=2 for reflection (e.g., v velocity against horizontal wall)
-    x_arr[IX(i, 0)]   = (b === 2) ? -x_arr[IX(i, 1)] : x_arr[IX(i, 1)];
-    x_arr[IX(i, N+1)] = (b === 2) ? -x_arr[IX(i, N)] : x_arr[IX(i, N)];
+    x_arr[i]       = (b === 2) ? -x_arr[sz + i] : x_arr[sz + i];
+    x_arr[top + i] = (b === 2) ? -x_arr[top - sz + i] : x_arr[top - sz + i];
   }
-  x_arr[IX(0,   0)]   = 0.5*(x_arr[IX(1,0)]   + x_arr[IX(0,1)]);
-  x_arr[IX(0,   N+1)] = 0.5*(x_arr[IX(1,N+1)] + x_arr[IX(0,N)]);
-  x_arr[IX(N+1, 0)]   = 0.5*(x_arr[IX(N,0)]   + x_arr[IX(N+1,1)]);
-  x_arr[IX(N+1, N+1)] = 0.5*(x_arr[IX(N, N+1)]+ x_arr[IX(N+1,N)]);
+  x_arr[0]           = 0.5*(x_arr[1]       + x_arr[sz]);              // IX(0, 0)
+  x_arr[top]         = 0.5*(x_arr[top + 1] + x_arr[top - sz]);        // IX(0, N+1)
+  x_arr[n + 1]       = 0.5*(x_arr[n]       + x_arr[sz + n + 1]);      // IX(N+1, 0)
+  x_arr[top + n + 1] = 0.5*(x_arr[top + n] + x_arr[top - sz + n + 1]); // IX(N+1, N+1)
 }
-// Gauss-Seidel relaxation for c*x - a*(sum of 4 neighbours) = x0, starting from the current contents of x_arr
+// One Gauss-Seidel update of the cell at index p
+function relaxCell(x_arr, x0_arr, p, sz, a, c_inv) {
+  x_arr[p] = (x0_arr[p] + a*(x_arr[p - 1] + x_arr[p + 1] + x_arr[p - sz] + x_arr[p + sz])) * c_inv;
+}
+// Gauss-Seidel relaxation for c*x - a*(sum of 4 neighbours) = x0, starting from the current contents of x_arr.
+// A sweep updates the cells row by row, each from the neighbours already updated (left, below) and the
+// ones still to come (right, above). Each cell has to wait for the one just before it, so the sweep goes
+// four rows at a time instead, each row one column behind the row below: every cell still sees exactly
+// the same neighbour values, and gets exactly the same result, but four cells are in progress at once,
+// which is over twice as fast.
 function linSolve(b, x_arr, x0_arr, a, c, iterations = iter) {
+  const n = N, sz = size;
   const c_inv = 1.0 / c;
   for (let k_iter = 0; k_iter < iterations; k_iter++) {
-    for (let j = 1; j <= N; j++) {
-      const prev_j_idx = (j - 1) * size;
-      const curr_j_idx = j * size;
-      const next_j_idx = (j + 1) * size;
-      for (let i = 1; i <= N; i++) {
-        const idx = curr_j_idx + i;
-        x_arr[idx] = (x0_arr[idx] + a*(
-          x_arr[idx - 1]     + x_arr[idx + 1] +    // x_arr[IX(i-1,j)] + x_arr[IX(i+1,j)]
-          x_arr[prev_j_idx + i] + x_arr[next_j_idx + i] // x_arr[IX(i,j-1)] + x_arr[IX(i,j+1)]
-        )) * c_inv;
+    let j = 1;
+    for (; j + 3 <= n; j += 4) {
+      const r0 = j * sz, r1 = r0 + sz, r2 = r1 + sz, r3 = r2 + sz;
+      // Start of the staircase: columns 1-3 of the lower rows
+      for (let t = 1; t <= 3; t++) {
+        for (let r = 0; r < t; r++) relaxCell(x_arr, x0_arr, r0 + r * sz + t - r, sz, a, c_inv);
       }
+      for (let i = 4; i <= n; i++) {
+        let p = r0 + i;
+        x_arr[p] = (x0_arr[p] + a*(x_arr[p - 1] + x_arr[p + 1] + x_arr[p - sz] + x_arr[p + sz])) * c_inv;
+        p = r1 + i - 1;
+        x_arr[p] = (x0_arr[p] + a*(x_arr[p - 1] + x_arr[p + 1] + x_arr[p - sz] + x_arr[p + sz])) * c_inv;
+        p = r2 + i - 2;
+        x_arr[p] = (x0_arr[p] + a*(x_arr[p - 1] + x_arr[p + 1] + x_arr[p - sz] + x_arr[p + sz])) * c_inv;
+        p = r3 + i - 3;
+        x_arr[p] = (x0_arr[p] + a*(x_arr[p - 1] + x_arr[p + 1] + x_arr[p - sz] + x_arr[p + sz])) * c_inv;
+      }
+      // End of the staircase: the last columns of the upper rows
+      for (let t = n + 1; t <= n + 3; t++) {
+        for (let r = t - n; r <= 3; r++) relaxCell(x_arr, x0_arr, r0 + r * sz + t - r, sz, a, c_inv);
+      }
+    }
+    // Rows left over when N is not a multiple of 4
+    for (; j <= n; j++) {
+      const end = j * sz + n + 1;
+      for (let p = j * sz + 1; p < end; p++) relaxCell(x_arr, x0_arr, p, sz, a, c_inv);
     }
     setBnd(b, x_arr);
   }
@@ -292,47 +331,47 @@ function diffuse(b, x_arr, x0_arr, diff_coeff) {
 // viscous flow. Without this warm start a few sweeps are far from converged for viscous fluids such as
 // honey (more so on larger grids), which made them flow several times too freely.
 function diffuseVelocity(b, x_arr, x0_arr, diff_coeff, delta_arr) {
-  const a = physicsDt * diff_coeff * N * N;
+  const n = N, sz = size;
+  const a = physicsDt * diff_coeff * n * n;
   const rhs = divergence; // Free scratch space at this point of the step
   setBnd(b, x0_arr);
-  for (let j = 1; j <= N; j++) {
-    const curr_j_idx = j * size;
-    for (let i = 1; i <= N; i++) {
-      const idx = curr_j_idx + i;
-      rhs[idx] = a * (x0_arr[idx - 1] + x0_arr[idx + 1] + x0_arr[idx - size] + x0_arr[idx + size] - 4*x0_arr[idx]);
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let idx = j * sz + 1; idx < end; idx++) {
+      rhs[idx] = a * (x0_arr[idx - 1] + x0_arr[idx + 1] + x0_arr[idx - sz] + x0_arr[idx + sz] - 4*x0_arr[idx]);
     }
   }
   linSolve(b, delta_arr, rhs, a, 1 + 4*a, diffusionIterations(a));
-  for (let j = 1; j <= N; j++) {
-    const curr_j_idx = j * size;
-    for (let i = 1; i <= N; i++) {
-      const idx = curr_j_idx + i;
-      x_arr[idx] = x0_arr[idx] + delta_arr[idx];
-    }
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let idx = j * sz + 1; idx < end; idx++) x_arr[idx] = x0_arr[idx] + delta_arr[idx];
   }
   setBnd(b, x_arr);
 }
 function advect(b, d_arr, d0_arr, u_vel, v_vel) {
-  const dt0 = physicsDt * N;
-  for (let j = 1; j <= N; j++) {
-    for (let i = 1; i <= N; i++) {
-      const current_idx = IX(i,j);
+  const n = N, sz = size;
+  const dt0 = physicsDt * n;
+  const maxCoord = n + 0.5;
+  for (let j = 1; j <= n; j++) {
+    const curr_j_idx = j * sz;
+    for (let i = 1; i <= n; i++) {
+      const current_idx = curr_j_idx + i;
       let x_coord = i - dt0 * u_vel[current_idx];
       let y_coord = j - dt0 * v_vel[current_idx];
 
-      x_coord = Math.max(0.5, Math.min(N + 0.5, x_coord));
-      y_coord = Math.max(0.5, Math.min(N + 0.5, y_coord));
+      x_coord = Math.max(0.5, Math.min(maxCoord, x_coord));
+      y_coord = Math.max(0.5, Math.min(maxCoord, y_coord));
 
-      const i0 = x_coord | 0, i1 = i0 + 1; // Use bitwise OR for floor on positive numbers
-      const j0 = y_coord | 0, j1 = j0 + 1; // Use bitwise OR for floor on positive numbers
+      const i0 = x_coord | 0; // Use bitwise OR for floor on positive numbers
+      const j0 = y_coord | 0;
 
       const s1 = x_coord - i0, s0 = 1 - s1;
       const t1 = y_coord - j0, t0 = 1 - t1;
 
-      const base_idx_i0j0 = IX(i0, j0);
+      const base_idx_i0j0 = i0 + j0 * sz; // IX(i0, j0)
       d_arr[current_idx] =
-        s0*(t0*d0_arr[base_idx_i0j0] + t1*d0_arr[base_idx_i0j0 + size]) + 
-        s1*(t0*d0_arr[base_idx_i0j0 + 1] + t1*d0_arr[base_idx_i0j0 + 1 + size]); 
+        s0*(t0*d0_arr[base_idx_i0j0] + t1*d0_arr[base_idx_i0j0 + sz]) +
+        s1*(t0*d0_arr[base_idx_i0j0 + 1] + t1*d0_arr[base_idx_i0j0 + 1 + sz]);
     }
   }
   setBnd(b, d_arr);
@@ -341,51 +380,47 @@ function advect(b, d_arr, d0_arr, u_vel, v_vel) {
 // p_arr is not cleared: it still holds this projection's pressure from the previous step, which is
 // already close to the answer, so the few Gauss-Seidel sweeps converge at every grid size.
 function project(u_vel, v_vel, p_arr, div_arr) {
-  const h = 1.0 / N;
-  for (let j = 1; j <= N; j++) {
-    const prev_j_idx = (j-1) * size;
-    const curr_j_idx = j * size;
-    const next_j_idx = (j+1) * size;
-    for (let i = 1; i <= N; i++) {
-      const idx = curr_j_idx + i;
+  const n = N, sz = size;
+  const h = 1.0 / n;
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let idx = j * sz + 1; idx < end; idx++) {
       div_arr[idx] = -0.5 * h * (
-        u_vel[idx + 1] - u_vel[idx - 1] +           // u_vel[IX(i+1,j)] - u_vel[IX(i-1,j)]
-        v_vel[next_j_idx + i] - v_vel[prev_j_idx + i] // v_vel[IX(i,j+1)] - v_vel[IX(i,j-1)]
+        u_vel[idx + 1] - u_vel[idx - 1] +  // u_vel[IX(i+1,j)] - u_vel[IX(i-1,j)]
+        v_vel[idx + sz] - v_vel[idx - sz]  // v_vel[IX(i,j+1)] - v_vel[IX(i,j-1)]
       );
     }
   }
   setBnd(0, div_arr); setBnd(0, p_arr);
   linSolve(0, p_arr, div_arr, 1, 4);
 
-  const N_half = 0.5 * N;
+  const N_half = 0.5 * n;
   let pSum = 0;
 
-  for (let j = 1; j <= N; j++) {
-    const prev_j_idx = (j-1) * size;
-    const curr_j_idx = j * size;
-    const next_j_idx = (j+1) * size;
-    for (let i = 1; i <= N; i++) {
-      const idx = curr_j_idx + i;
-      u_vel[idx] -= N_half * (p_arr[idx + 1] - p_arr[idx - 1]); // p_arr[IX(i+1,j)] - p_arr[IX(i-1,j)]
-      v_vel[idx] -= N_half * (p_arr[next_j_idx + i] - p_arr[prev_j_idx + i]); // p_arr[IX(i,j+1)] - p_arr[IX(i,j-1)]
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let idx = j * sz + 1; idx < end; idx++) {
+      u_vel[idx] -= N_half * (p_arr[idx + 1] - p_arr[idx - 1]);   // p_arr[IX(i+1,j)] - p_arr[IX(i-1,j)]
+      v_vel[idx] -= N_half * (p_arr[idx + sz] - p_arr[idx - sz]); // p_arr[IX(i,j+1)] - p_arr[IX(i,j-1)]
       pSum += p_arr[idx];
     }
   }
   // Pressure is only defined up to a constant; keep its mean at zero so the reused field can't drift
-  const pMean = pSum / (N*N);
-  for (let k = 0; k < p_arr.length; k++) p_arr[k] -= pMean;
+  const pMean = pSum / (n*n);
+  for (let k = 0, len = p_arr.length; k < len; k++) p_arr[k] -= pMean;
   setBnd(1, u_vel); setBnd(2, v_vel);
 }
 function sumInterior(x_arr) {
+  const n = N, sz = size;
   let sum = 0;
-  for (let j = 1; j <= N; j++) {
-    const base_j_idx = j * size;
-    for (let i = 1; i <= N; i++) sum += x_arr[base_j_idx + i];
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let idx = j * sz + 1; idx < end; idx++) sum += x_arr[idx];
   }
   return sum;
 }
 function addSource(x_arr, s_arr) {
-  for (let i = 0; i < x_arr.length; i++) x_arr[i] += physicsDt * s_arr[i];
+  for (let i = 0, len = x_arr.length; i < len; i++) x_arr[i] += physicsDt * s_arr[i];
 }
 
 // Temperature colour map (0 = blue, 0.5 = green, 1 = red), precomputed so rendering is a table lookup.
@@ -425,7 +460,7 @@ const colorLUT = new Uint8Array(COLOR_LEVELS * 3);
 
 // Outline of the brush: under an idle mouse, and around every pointer that is heating or cooling
 function drawBrushOutlines() {
-    if (!hoverPointer && activePointers.size === 0) return;
+    if (!showBrushGuides || (!hoverPointer && activePointers.size === 0)) return;
     const w = canvas.width, h = canvas.height;
     const radius = heatRadius / 100 * w;
     const dpr = w / Math.max(1, canvas.clientWidth);
@@ -506,25 +541,27 @@ function applyHeatBrush(xFrac, yFrac, sign) {
   }
 }
 function simulate() {
+  const n = N, sz = size;
   dens_prev.fill(0);
 
   // Heat or cool around every active pointer (mouse, fingers, pen)
   activePointers.forEach((pointer) => applyHeatBrush(pointer.x, pointer.y, pointer.sign));
 
-  prev_avg_density = avg_density; avg_density = 0;
+  prev_avg_density = avg_density;
 
   // Buoyancy: fluid warmer than average is pushed up (+v), cooler fluid down (Boussinesq approximation)
   const buoyancyStep = physicsDt * buoyancyCoeff;
-  for (let j = 1; j <= N; j++) {
-    const base_j_idx = j * size;
-    for (let i = 1; i <= N; i++) {
-      const id = base_j_idx + i;
-      avg_density += dens[id];
-      const anomaly = dens[id] - prev_avg_density;
-      v[id] += buoyancyStep * anomaly;
+  const temp = dens, vel_v = v, prevAvg = prev_avg_density;
+  let tempSum = 0;
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let id = j * sz + 1; id < end; id++) {
+      tempSum += temp[id];
+      const anomaly = temp[id] - prevAvg;
+      vel_v[id] += buoyancyStep * anomaly;
     }
   }
-  avg_density /= (N*N);
+  avg_density = tempSum / (n*n);
 
   u0.set(u); diffuseVelocity(1, u, u0, visc, viscousDeltaU);
   v0.set(v); diffuseVelocity(2, v, v0, visc, viscousDeltaV);
@@ -539,8 +576,8 @@ function simulate() {
 
   addSource(dens, dens_prev);
   // Clamp temperature after adding the heat source: 0 = 0 °C (blue) ... 1 = 100 °C (red)
-  for (let i = 0; i < dens.length; i++) {
-    dens[i] = Math.max(0, Math.min(1, dens[i]));
+  for (let i = 0, len = temp.length; i < len; i++) {
+    temp[i] = Math.max(0, Math.min(1, temp[i]));
   }
   const heatBefore = sumInterior(dens);
   dens0.set(dens); diffuse(0, dens, dens0, diff);
@@ -549,29 +586,28 @@ function simulate() {
   // Diffusion and advection only move heat around, but semi-Lagrangian advection is not exactly
   // conservative (mostly next to the walls). Spread the tiny error evenly over the fluid so the total
   // heat only changes through heating, cooling and the 0-100 °C limits.
-  const heatCorrection = (heatBefore - sumInterior(dens)) / (N*N);
-  for (let j = 1; j <= N; j++) {
-    const base_j_idx = j * size;
-    for (let i = 1; i <= N; i++) {
-      const idx = base_j_idx + i;
-      dens[idx] = Math.max(0, Math.min(1, dens[idx] + heatCorrection));
+  const heatCorrection = (heatBefore - sumInterior(dens)) / (n*n);
+  for (let j = 1; j <= n; j++) {
+    const end = j * sz + n + 1;
+    for (let idx = j * sz + 1; idx < end; idx++) {
+      temp[idx] = Math.max(0, Math.min(1, temp[idx] + heatCorrection));
     }
   }
 
   // Surface cooling: a layer 3 cells deep on the 64x64 reference grid (the same physical depth at
   // every grid size) loses heat, most strongly right at the surface
-  const coolRows = Math.max(1, Math.round(3 * N / referenceN));
+  const coolRows = Math.max(1, Math.round(3 * n / referenceN));
   for (let k = 0; k < coolRows; k++) {
-    const j_cool = N - k;
-    const currentGradient = 1.0 / (1 + k * referenceN / N); // 1, 1/2, 1/3 on the 64x64 grid
-    const base_j_cool_idx = j_cool * size;
+    const j_cool = n - k;
+    const currentGradient = 1.0 / (1 + k * referenceN / n); // 1, 1/2, 1/3 on the 64x64 grid
+    const base_j_cool_idx = j_cool * sz;
     const scaledCoolRateBase = (coolAmpMult * coolRate / 100) * currentGradient;
 
-    for (let i = 1; i <= N; i++) {
+    for (let i = 1; i <= n; i++) {
         const noise = 1 + (Math.random() - 0.5) * 0.2; // 0.9 to 1.1
         const idx = base_j_cool_idx + i;
-        dens[idx] *= (1 - scaledCoolRateBase * noise);
-        dens[idx] = Math.max(0, dens[idx]);
+        temp[idx] *= (1 - scaledCoolRateBase * noise);
+        temp[idx] = Math.max(0, temp[idx]);
     }
   }
   setBnd(0, dens);
