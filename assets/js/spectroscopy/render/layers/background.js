@@ -761,11 +761,14 @@ function buildHorizon() {
     const nearStep = 0.04;
     const nearColumns = Math.round(360 / nearStep);
     const trees = plantTrees(rng, nearColumns, nearStep);
+    // Its foot is low enough to fill the bottom of any view (never more than 8 degrees below the horizon, see the engine's
+    // altFloor), and no lower: a foot far below would be behind the camera, and the graphics card's cut of a triangle there
+    // can leave a hair's gap between two columns, a bright line down the ground where one lands on a pixel's middle.
     ridges.push({
         step: nearStep,
         height: (az, i) => 1.05 + 1.0 * nearNoise(az) + trees[i % nearColumns],
         colour: [0.0018, 0.0022, 0.0030],
-        bottom: -70
+        bottom: -16
     });
 
     // Each column has three rows: just above the ridge, just below it, and the foot. vBelow is degrees below the
