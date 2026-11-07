@@ -38,7 +38,7 @@ export const DEPTH_TABLE = {
     binary: { near: 0, far: 1, kSize: 0, kDim: 0 },
     multiple: { near: 0, far: 1, kSize: 0, kDim: 0 },
     rogue_planet: { near: 0, far: 1, kSize: 0, kDim: 0 },
-    neutron_star: { near: 0.1, far: 0.9, kSize: 0, kDim: 0 },   // Those with a remnant's parent take its depth instead
+    neutron_star: { near: 0.1, far: 0.9, kSize: 0, kDim: 0 },   // One a supernova left behind takes that supernova's depth instead
     black_hole: { near: 0.1, far: 0.9, kSize: 0, kDim: 0 },
     quasar: { near: 0.8, far: 1, kSize: 0, kDim: 0 },
     home_planet: { near: 0, far: 0, kSize: 0, kDim: 0 }
