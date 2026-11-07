@@ -1898,7 +1898,546 @@
 
 
     // ===================================================================== [overlays]
+    // Four optional overlays, all off by default and switched on in the panel:
+    //   Velocity components (Show): v_x and v_y arrows on the selected particle, head to tail along its velocity arrow,
+    //     and faint ones at some of its earlier strobe dots, so the eye sees v_x stay the same while v_y grows.
+    //   Right-hand rule (Show): a small card in the top-right corner with v, B and F = qv x B for the selected particle.
+    //   Grid in cm (Measure): 1 cm squares over the whole view, 0 at the box's left edge on the centre line.
+    //   Equipotentials (Measure): dashed lines across the plate gap at round voltages, 0 V at the negative plate.
+    // They all draw under the trails and particles, so they never hide a particle.
+    const OV_VEL_PX = 46;       // Velocity arrow length for a particle's reference speed (CSS px), as the core draws it
+    const OV_GHOST_GAP = 1.5;   // Earlier-dot arrows sit at least this many arrow lengths apart
+    const ovSamples = new WeakMap(); // Particle -> { list: [{ x, y, vx, vy, n, free, end }], count, firstFree }
+    const ovLast = {};               // What each overlay drew in the last frame (for tests)
 
+    function ovColors() {
+        return isDarkMode() ? {
+            gridMinor: 'rgba(230, 230, 230, 0.07)', gridMajor: 'rgba(230, 230, 230, 0.16)',
+            equip: 'rgba(230, 230, 230, 0.5)', card: 'rgba(24, 27, 31, 0.92)', halo: 'rgba(18, 20, 23, 0.85)',
+        } : {
+            gridMinor: 'rgba(40, 40, 40, 0.08)', gridMajor: 'rgba(40, 40, 40, 0.18)',
+            equip: 'rgba(40, 40, 40, 0.5)', card: 'rgba(255, 255, 255, 0.92)', halo: 'rgba(247, 248, 250, 0.85)',
+        };
+    }
+
+    // An arrow in canvas px with a chosen head size and an optional dashed shaft
+    function ovArrow(x0, y0, x1, y1, color, width, head, dash) {
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+        const len = Math.hypot(dx, dy);
+        if (len < 3) return;
+        const ux = dx / len;
+        const uy = dy / len;
+        const h = Math.min(head, len * 0.5);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = width;
+        ctx.lineCap = 'butt';
+        if (dash) ctx.setLineDash(dash);
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1 - ux * h * 0.8, y1 - uy * h * 0.8);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1 - ux * h - uy * h * 0.5, y1 - uy * h + ux * h * 0.5);
+        ctx.lineTo(x1 - ux * h + uy * h * 0.5, y1 - uy * h - ux * h * 0.5);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // Text with a soft background-coloured halo, so it stays legible over field lines and symbols
+    function ovHaloText(text, x, y, color, halo) {
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = halo;
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = color;
+        ctx.fillText(text, x, y);
+    }
+
+    // "v" with a subscript, centred on (x, y)
+    function ovSubLabel(sub, x, y, color, size, halo) {
+        ctx.font = font(size, 700);
+        const wMain = ctx.measureText('v').width;
+        ctx.font = font(Math.round(size * 0.78), 700);
+        const wSub = ctx.measureText(sub).width;
+        const x0 = x - (wMain + wSub) / 2;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.font = font(size, 700);
+        ovHaloText('v', x0, y, color, halo);
+        ctx.font = font(Math.round(size * 0.78), 700);
+        ovHaloText(sub, x0 + wMain + 0.5, y + size * 0.3, color, halo);
+    }
+
+    function ovWrap(text, maxW) {
+        const lines = [];
+        let line = '';
+        for (const word of text.split(' ')) {
+            const t = line ? `${line} ${word}` : word;
+            if (line && ctx.measureText(t).width > maxW) {
+                lines.push(line);
+                line = word;
+            } else {
+                line = t;
+            }
+        }
+        if (line) lines.push(line);
+        return lines;
+    }
+
+    // ----- Velocity samples: the core keeps positions only, so note the velocity whenever a trail gets a new dot
+    function ovRecord(p) {
+        let s = ovSamples.get(p);
+        if (!s) {
+            s = { list: [], count: 0, firstFree: -1 };
+            ovSamples.set(p, s);
+        }
+        const tr = p.trail;
+        const n = tr.length / 2;
+        if (n === 0) return;
+        const last = s.list[s.list.length - 1];
+        // How many dots are new: find the last one already noted (the trail drops its oldest dots when it is full)
+        let fresh = n;
+        if (last) {
+            fresh = -1;
+            for (let j = n - 1; j >= 0 && j >= n - 64; j--) {
+                if (tr[2 * j] === last.x && tr[2 * j + 1] === last.y) {
+                    fresh = n - 1 - j;
+                    break;
+                }
+            }
+            if (fresh < 0) fresh = 1;
+        }
+        const ended = p.state === 'stopped' || p.state === 'gone';
+        for (let i = n - fresh; i < n; i++) {
+            // Several dots in one long frame: share out the change in velocity since the last one
+            const f = (i - (n - fresh) + 1) / fresh;
+            const vx = last ? last.vx + (p.vx - last.vx) * f : p.vx;
+            const vy = last ? last.vy + (p.vy - last.vy) * f : p.vy;
+            const x = tr[2 * i];
+            const y = tr[2 * i + 1];
+            // Dots inside the accelerator's barrel are not part of the flight
+            const inGun = p.state === 'gun' || (p.ux !== undefined && p.bx !== undefined &&
+                (x - p.bx) * p.ux + (y - p.by) * p.uy < GUN_L - 1e-9);
+            const smp = { x, y, vx, vy, n: s.count++, free: !inGun, end: ended && i === n - 1 };
+            if (smp.free && s.firstFree < 0) s.firstFree = smp.n;
+            s.list.push(smp);
+        }
+        if (s.list.length > TRAIL_MAX + 2) s.list.splice(0, s.list.length - TRAIL_MAX - 2);
+    }
+
+    // Canvas px per m/s for a particle's velocity arrow at speed v: the same mapping as the core's v arrow
+    function ovVelScale(p, v) {
+        if (!(v > 0)) return 0;
+        return clamp(OV_VEL_PX * v / refSpeedFor(p.qe, p.m), 8, 120) / v;
+    }
+
+    // ----- Velocity components
+    function ovDrawComponents() {
+        const p = selected;
+        ovLast.components = null;
+        if (!p) return;
+        const oc = ovColors();
+        const col = pal.velocity;
+        const alive = p.state === 'free' || p.state === 'gun';
+        const v = Math.hypot(p.vx, p.vy);
+        const k = ovVelScale(p, v);
+        const cx = px(p.x);
+        const cy = py(p.y);
+        const r = bodyRadius(p) + 2;
+        const ghosts = ovDrawGhosts(p, alive ? Math.max(OV_VEL_PX, v * k) + r + 8 : 0);
+        ovLast.components = { ghosts, lx: 0, ly: 0 };
+        if (!alive || !(v > 0)) return;
+        // Head to tail from where the v arrow starts: v_x along, then v_y up or down to the tip of v
+        const ox0 = cx + (p.vx / v) * r;
+        const oy0 = cy - (p.vy / v) * r;
+        const lx = p.vx * k;
+        const ly = -p.vy * k;
+        const ax = ox0 + lx;
+        ovArrow(ox0, oy0, ax, oy0, col, 2, 8, [5, 3]);
+        ovArrow(ax, oy0, ax, oy0 + ly, col, 2, 8, [5, 3]);
+        ovLast.components.lx = lx;
+        ovLast.components.ly = ly;
+        // Labels outside the triangle, so they never sit on the v arrow
+        const fs = clamp(fontPx, 11, 14);
+        const sy = ly > 0 ? 1 : -1;
+        const sx = lx >= 0 ? 1 : -1;
+        if (Math.abs(lx) >= 16) ovSubLabel('x', ox0 + lx / 2, oy0 - sy * (fs * 0.75 + 2), col, fs, oc.halo);
+        if (Math.abs(ly) >= 16) {
+            // Halfway up v_y, unless the triangle is so flat that the v label at its tip is close: then by the corner
+            const flat = Math.abs(ly) < 34 && Math.abs(ly) < Math.abs(lx);
+            ovSubLabel('y', ax + sx * (fs * 0.9 + 2), flat ? oy0 - sy * (fs * 0.6) : oy0 + ly / 2, col, fs, oc.halo);
+        }
+    }
+
+    // Faint v_x and v_y at every few strobe dots (equal times apart) across the field box, leaving out those next to
+    // the particle itself. Returns how many dots got arrows.
+    function ovDrawGhosts(p, keepOut) {
+        const s = ovSamples.get(p);
+        if (!s || s.firstFree < 0) return 0;
+        // Dots far enough apart that one dot's arrows don't reach the next one's: an arrow is OV_VEL_PX / vRef px
+        // per m/s, and successive dots are strobeDt * scale px per m/s apart, so the ratio holds at any speed
+        const every = Math.max(3, Math.ceil(OV_GHOST_GAP * (OV_VEL_PX / refSpeedFor(p.qe, p.m)) / (p.strobeDt * scale)));
+        const cx = px(p.x);
+        const cy = py(p.y);
+        let count = 0;
+        ctx.globalAlpha = 0.55;
+        for (const smp of s.list) {
+            if (!smp.free || smp.end || (smp.n - s.firstFree) % every !== 0) continue;
+            if (smp.x < -1e-4 || smp.x > PLATE_L + 1e-4) continue;
+            const x = px(smp.x);
+            const y = py(smp.y);
+            if (keepOut > 0 && Math.hypot(x - cx, y - cy) < keepOut) continue;
+            const k = ovVelScale(p, Math.hypot(smp.vx, smp.vy));
+            const lx = smp.vx * k;
+            const ly = -smp.vy * k;
+            const sx = lx >= 0 ? 1 : -1;
+            const sy = ly >= 0 ? 1 : -1;
+            if (Math.abs(lx) >= 6) ovArrow(x + sx * 3, y, x + lx, y, pal.velocity, 1.5, 6, [4, 3]);
+            if (Math.abs(ly) >= 6) ovArrow(x, y + sy * 3, x, y + ly, pal.velocity, 1.5, 6, [4, 3]);
+            count++;
+        }
+        ctx.globalAlpha = 1;
+        return count;
+    }
+
+    // ----- Right-hand rule card
+    function ovRhrState(p) {
+        const none = (why) => ({ lines: ['No magnetic force:', why] });
+        if (!p) return { lines: ['Fire or drop a charge'] };
+        if (!bActive()) return none('B is off');
+        if (p.qe === 0) return none('no charge');
+        if (p.state === 'stopped') return none('not moving');
+        if (p.state === 'gone') return none('out of view');
+        if (p.state === 'gun') return none('in the launcher');
+        if (!insideB(p.x, p.y)) return none('no B here');
+        const v = Math.hypot(p.vx, p.vy);
+        const f = forcesOn(p);
+        const fb = Math.hypot(f.fbx, f.fby);
+        if (!(v > 0) || !(fb > 0)) return none('not moving');
+        return {
+            diagram: { vx: p.vx / v, vy: -p.vy / v, fx: f.fbx / fb, fy: -f.fby / fb, qe: p.qe, label: p.label },
+            lines: p.qe < 0 ? ['Negative charge:', 'F is reversed'] : [],
+        };
+    }
+
+    function ovDrawRhr() {
+        ovLast.rhr = null;
+        // The card fits in the strip right of the field box, so it never covers the box
+        const strip = viewW - px(PLATE_L);
+        const margin = strip < 100 ? 3 : 6;
+        const w = Math.min(strip - 2 * margin, 136);
+        if (w < 56) return;
+        const st = ovRhrState(selected);
+        const oc = ovColors();
+        const fs = clamp(fontPx - 1, 10, 13);
+        const pad = w < 90 ? 5 : 7;
+        const x = viewW - margin - w;
+        const y = margin;
+        const inner = w - 2 * pad;
+        const d = st.diagram ? Math.min(w - 6, 112) : 0;
+        // Wrap each phrase on its own, so a narrow card breaks at the colon first
+        ctx.font = font(fs, 400);
+        const lines = [];
+        st.lines.forEach((t) => ovWrap(t, inner).forEach((l) => lines.push(l)));
+        const head = fs + 9;
+        const lineH = fs + 3;
+        const h = pad + head + (d ? d + 6 : 0) + lines.length * lineH + pad - 2;
+        ctx.fillStyle = oc.card;
+        ctx.strokeStyle = pal.faint;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 6);
+        else ctx.rect(x + 0.5, y + 0.5, w - 1, h - 1);
+        ctx.fill();
+        ctx.stroke();
+        // The rule itself
+        ctx.font = font(fs + 1, 700);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = pal.text;
+        ctx.fillText('F = qv × B', x + w / 2, y + pad);
+        let yy = y + pad + head;
+        if (st.diagram) {
+            ovDrawRhrDiagram(st.diagram, x + w / 2, yy + d / 2, d, fs);
+            yy += d + 6;
+        }
+        ctx.font = font(fs, 400);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = pal.text;
+        lines.forEach((l, i) => ctx.fillText(l, x + w / 2, yy + i * lineH));
+        ovLast.rhr = { x, y, w, h, lines, diagram: st.diagram || null };
+    }
+
+    // The charge in the middle, v and F from it, and the field's symbol in the quarter left empty
+    function ovDrawRhrDiagram(g, cx, cy, d, fs) {
+        const rq = d > 90 ? 6.5 : 5.5;
+        const lab = fs + 1;
+        const L = clamp(d / 2 - rq - 2 - lab * 1.1, 10, 34);
+        const one = (ux, uy, color, label) => {
+            const x0 = cx + ux * (rq + 2);
+            const y0 = cy + uy * (rq + 2);
+            ovArrow(x0, y0, x0 + ux * L, y0 + uy * L, color, 2.2, 7);
+            ctx.font = font(lab, 700);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = color;
+            ctx.fillText(label, x0 + ux * (L + lab * 0.75), y0 + uy * (L + lab * 0.75));
+        };
+        one(g.vx, g.vy, pal.velocity, 'v');
+        one(g.fx, g.fy, pal.forceB, 'F');
+        // B symbol, away from both arrows
+        let bx = -(g.vx + g.fx);
+        let by = -(g.vy + g.fy);
+        const bl = Math.hypot(bx, by) || 1;
+        bx /= bl;
+        by /= bl;
+        const br = d > 90 ? 7 : 5.5;
+        const bd = rq + 2 + L * 0.55 + br;
+        const sx = cx + bx * bd;
+        const sy = cy + by * bd;
+        ctx.strokeStyle = pal.bSym;
+        ctx.fillStyle = pal.bSym;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(sx, sy, br, 0, Math.PI * 2);
+        ctx.stroke();
+        if (settings.bOut) {
+            ctx.beginPath();
+            ctx.arc(sx, sy, Math.max(1.4, br * 0.3), 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            const e = br * 0.62;
+            ctx.beginPath();
+            ctx.moveTo(sx - e, sy - e);
+            ctx.lineTo(sx + e, sy + e);
+            ctx.moveTo(sx + e, sy - e);
+            ctx.lineTo(sx - e, sy + e);
+            ctx.stroke();
+        }
+        ctx.font = font(lab, 700);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('B', sx + bx * (br + lab * 0.7), sy + by * (br + lab * 0.7));
+        // The charge, with its sign
+        ctx.fillStyle = colorForCharge(g.qe);
+        ctx.beginPath();
+        ctx.arc(cx, cy, rq, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = font(g.label.length > 1 ? rq * 1.1 : rq * 1.6, 700);
+        ctx.fillText(g.label, cx, cy + 0.5);
+    }
+
+    // ----- Grid in cm
+    function ovBox(x, y, w, h) {
+        return { x0: x, y0: y, x1: x + w, y1: y + h };
+    }
+
+    function ovOverlaps(a, list) {
+        return list.some((b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0);
+    }
+
+    // Places the grid's labels keep clear of: the hint line and the accelerator
+    function ovKeepClear() {
+        const list = [];
+        const hint = hintOverride !== null ? hintOverride : (interacted ? '' : defaultHint());
+        if (hint) {
+            ctx.font = font(fontPx, 400);
+            const w = ctx.measureText(hint).width;
+            list.push(ovBox(viewW / 2 - w / 2 - 6, viewH - 8 - fontPx - 3, w + 12, fontPx + 6));
+        }
+        const l = activeLauncher();
+        if (l && typeof l.bounds === 'function') {
+            const b = l.bounds();
+            if (b) list.push(b);
+        } else if (l === launchers.accelerator) {
+            const g = gunGeometry();
+            const xs = [g.bx, g.mx, settings.lockGeometry ? g.mx : g.kx];
+            const ys = [g.by, g.my, settings.lockGeometry ? g.my : g.ky];
+            list.push({ x0: Math.min(...xs) - 22, x1: Math.max(...xs) + 22, y0: Math.min(...ys) - 22, y1: Math.max(...ys) + 18 + fontPx + 4 });
+        }
+        return list;
+    }
+
+    function ovDrawGrid() {
+        const cm = scale / 100; // px per cm
+        ovLast.grid = null;
+        if (cm < 5) return;
+        const oc = ovColors();
+        const i0 = Math.ceil(viewRect.x0 * 100 - 1e-6);
+        const i1 = Math.floor(viewRect.x1 * 100 + 1e-6);
+        const j0 = Math.ceil(viewRect.y0 * 100 - 1e-6);
+        const j1 = Math.floor(viewRect.y1 * 100 + 1e-6);
+        ctx.lineWidth = 1;
+        [false, true].forEach((major) => {
+            ctx.strokeStyle = major ? oc.gridMajor : oc.gridMinor;
+            ctx.beginPath();
+            for (let i = i0; i <= i1; i++) {
+                if ((i % 5 === 0) !== major) continue;
+                const x = Math.round(px(i / 100)) + 0.5;
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, viewH);
+            }
+            for (let j = j0; j <= j1; j++) {
+                if ((j % 5 === 0) !== major) continue;
+                const y = Math.round(py(j / 100)) + 0.5;
+                ctx.moveTo(0, y);
+                ctx.lineTo(viewW, y);
+            }
+            ctx.stroke();
+        });
+        // Labels along the bottom and left edges, every 1, 2 or 5 cm so they never crowd
+        const fs = clamp(fontPx - 2, 10, 12);
+        ctx.font = font(fs, 400);
+        const step = [1, 2, 5, 10].find((s) => s * cm >= fs * 2.4) || 10;
+        const num = (n) => (n < 0 ? `−${-n}` : String(n));
+        const rowTop = viewH - 3 - fs;
+        const clear = ovKeepClear();
+        // A label on a patch of background, so its own grid line doesn't run through it
+        const label = (text, b, tx, ty) => {
+            ctx.fillStyle = pal.bg;
+            ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+            ctx.fillStyle = pal.muted;
+            ctx.fillText(text, tx, ty);
+        };
+        ctx.textBaseline = 'middle';
+        // The unit, once, in the bottom-left corner
+        ctx.textAlign = 'left';
+        const unitW = ctx.measureText('cm').width;
+        label('cm', ovBox(2, rowTop - 1, unitW + 4, fs + 2), 4, rowTop + fs / 2);
+        clear.push(ovBox(0, rowTop - 2, unitW + 10, fs + 4));
+        const labelsX = [];
+        const labelsY = [];
+        ctx.textAlign = 'center';
+        for (let i = i0; i <= i1; i++) {
+            if (i % step !== 0) continue;
+            const x = px(i / 100);
+            const w = ctx.measureText(num(i)).width;
+            const b = ovBox(x - w / 2 - 2, rowTop - 1, w + 4, fs + 2);
+            if (b.x0 < 1 || b.x1 > viewW - 1 || ovOverlaps(b, clear)) continue;
+            label(num(i), b, x, rowTop + fs / 2);
+            labelsX.push(i);
+        }
+        ctx.textAlign = 'left';
+        for (let j = j0; j <= j1; j++) {
+            if (j % step !== 0) continue;
+            const y = py(j / 100);
+            const w = ctx.measureText(num(j)).width;
+            const b = ovBox(2, y - fs / 2 - 1, w + 4, fs + 2);
+            if (b.y0 < 1 || b.y1 > rowTop - 2 || ovOverlaps(b, clear)) continue;
+            label(num(j), b, 4, y);
+            labelsY.push(j);
+        }
+        ovLast.grid = { step, labelsX, labelsY };
+    }
+
+    // ----- Equipotentials between the plates
+    function ovEquipotentials() {
+        if (!eActive() || !(settings.plateV > 0)) return [];
+        const V = settings.plateV;
+        const gapPx = settings.gap * scale;
+        const fs = clamp(fontPx - 2, 10, 12);
+        // Every 100 V where there is room, fewer when the gap is small, smaller steps for small voltages
+        let step = 0;
+        for (const s of [1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500]) {
+            if (s < V / 10 || s < Math.min(100, V / 4)) continue;
+            if ((s / V) * gapPx < fs + 9) continue;
+            step = s;
+            break;
+        }
+        if (!step) return [];
+        const zero = settings.plusTop ? -settings.gap / 2 : settings.gap / 2; // The negative plate is at 0 V
+        const up = settings.plusTop ? 1 : -1;
+        const out = [];
+        for (let k = 1; k * step < V - 1e-9; k++) {
+            const volts = k * step;
+            out.push({ volts, y: zero + up * settings.gap * volts / V });
+        }
+        return out;
+    }
+
+    function ovDrawEquipotentials() {
+        const list = ovEquipotentials();
+        ovLast.equip = [];
+        if (!list.length) return;
+        const oc = ovColors();
+        const fs = clamp(fontPx - 2, 10, 12);
+        const x0 = px(0);
+        const x1 = px(PLATE_L);
+        ctx.font = font(fs, 400);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        for (const e of list) {
+            const y = Math.round(py(e.y)) + 0.5;
+            const text = `${+e.volts.toFixed(1)} V`;
+            const w = ctx.measureText(text).width;
+            // The voltage at the left end, on a small backing so a field line can't cut through it, then the line
+            ctx.fillStyle = oc.halo;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(x0 + 2, y - fs / 2 - 2, w + 8, fs + 4, 3);
+            else ctx.rect(x0 + 2, y - fs / 2 - 2, w + 8, fs + 4);
+            ctx.fill();
+            ctx.fillStyle = pal.muted;
+            ctx.fillText(text, x0 + 6, y);
+            ctx.strokeStyle = oc.equip;
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([6, 5]);
+            ctx.beginPath();
+            ctx.moveTo(x0 + w + 13, y);
+            ctx.lineTo(x1, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ovLast.equip.push({ volts: e.volts, y: e.y, cy: y, text });
+        }
+    }
+
+    features.push({
+        init() {
+            // One-line notes on the panel toggles
+            const notes = {
+                componentsToggle: "Horizontal and vertical parts of the selected particle's velocity",
+                rhrToggle: 'Directions of v, B and the magnetic force F = qv × B on the selected particle',
+                gridToggle: 'A 1 cm grid for measuring deflections and radii',
+                equipToggle: 'Dashed lines of equal voltage between the plates',
+            };
+            Object.keys(notes).forEach((id) => {
+                const label = document.querySelector(`label[for="${id}"]`);
+                if (label && !label.title) label.title = notes[id];
+            });
+            Object.assign(window.chargesSim, {
+                overlays: {
+                    get last() { return ovLast; },
+                    // Velocity noted at each strobe dot of a particle (default: the selected one)
+                    samples(p = selected) {
+                        const s = p && ovSamples.get(p);
+                        return s ? s.list.map((m) => ({ ...m })) : [];
+                    },
+                    equipotentials: () => ovEquipotentials().map((e) => ({ ...e })),
+                    rhrState: () => ovRhrState(selected),
+                },
+            });
+        },
+        frame() {
+            for (const p of particles) ovRecord(p);
+        },
+        drawUnder() {
+            ovLast.grid = null;
+            ovLast.equip = null;
+            ovLast.components = null;
+            ovLast.rhr = null;
+            if (settings.show.grid) ovDrawGrid();
+        },
+        drawMid() {
+            if (settings.show.equip) ovDrawEquipotentials();
+            if (settings.show.components) ovDrawComponents();
+            if (settings.show.rhr) ovDrawRhr();
+        },
+    });
 
     // ===================================================================== end [overlays]
 
