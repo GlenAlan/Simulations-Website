@@ -34,23 +34,23 @@ export function listTools() {
     return registry().slice();
 }
 
-// What each tool's button says, short enough to sit in a row, and what it's for.
+// What each tool's button says: the thing it measures, in one word where one will do, with a mark for the dock. The laws
+// and methods it uses are named inside the tool and in about, which is the button's tooltip.
 //   staysOpen   it changes whose light is shown, so it can stay open beside another tool
 //   leavesPlot  it needs no room of its own, so the plot stays at full size while it's open
 //   ownFigure   it has a figure of its own, and needs the room for that more than it needs the plot beside it
 //   comesBack   left on, it comes back on the next object it applies to
 function words(id) {
     switch (id) {
-    // Named by what they answer; the laws they use are named inside
-    case 'wien': return { short: 'How hot?', about: 'Find the temperature: fit a black-body curve, compare standard stars, or use Wien\'s law' };
-    case 'doppler': return { short: 'How is it moving?', about: 'Find the speed: slide reference lines onto the dips, or measure one line' };
-    case 'line-zoom': return { short: 'Line zoom', about: 'Look closely at one line and measure its width' };
-    case 'photometer': return { short: 'Photometer', about: 'Read the brightness and the distance' };
-    case 'time-series': return { short: 'Time series', about: 'Follow the lines over time to find the period', ownFigure: true };
-    case 'stars-shown': return { short: 'Stars shown', about: 'Choose which stars\' light makes up the spectrum', staysOpen: true };
-    case 'light-curve': return { short: 'Light curve', about: 'Brightness against time, with Play', ownFigure: true };
-    case 'pulse-timing': return { short: 'Pulse timing', about: 'Time the pulses to find how fast it spins', ownFigure: true };
-    case 'subtract-star': return { short: 'Subtract star', about: 'Remove the host star\'s light', staysOpen: true, leavesPlot: true, comesBack: true };
+    case 'wien': return { short: 'Temperature', icon: 'fa-thermometer-half', about: 'Temperature: fit a black-body curve, compare standard stars, or use Wien\'s law' };
+    case 'doppler': return { short: 'Velocity', icon: 'fa-arrows-alt-h', about: 'Velocity along your line of sight, from the Doppler shift: slide reference lines onto the dips, or measure one line' };
+    case 'line-zoom': return { short: 'Spin', icon: 'fa-sync-alt', about: 'Spin: how fast it turns, from how wide one line is' };
+    case 'photometer': return { short: 'Brightness', icon: 'fa-sun', about: 'Brightness, and from it the distance, with the photometer' };
+    case 'time-series': return { short: 'Period', icon: 'fa-wave-square', about: 'Period: follow the lines over time, in a time series', ownFigure: true };
+    case 'stars-shown': return { short: 'Stars', icon: 'fa-star', about: 'Stars: choose whose light makes up the spectrum', staysOpen: true };
+    case 'light-curve': return { short: 'Light curve', icon: 'fa-chart-line', about: 'Light curve: brightness against time, with Play', ownFigure: true };
+    case 'pulse-timing': return { short: 'Pulses', icon: 'fa-heartbeat', about: 'Pulses: time them to find how fast it spins', ownFigure: true };
+    case 'subtract-star': return { short: 'Planet light', icon: 'fa-minus-circle', about: 'Planet light: take the host star\'s light away', staysOpen: true, leavesPlot: true, comesBack: true };
     default: return {};
     }
 }
