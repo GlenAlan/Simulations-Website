@@ -40,6 +40,15 @@ export function velocityText(v, err) {
     return `${value} ± ${shown} km/s`;
 }
 
+// Every galaxy in this sky is moving away from us, as nearly all are in the real one. A far galaxy's lines move a long way, so a
+// dip near where one line belongs is often another line that has moved there: Na D lands beside Hα's rest place at z ≈ 0.11.
+// Said when a reading comes out as a galaxy coming towards us at more than galaxies' own motions allow.
+const GALAXY_TOWARDS_KMS = 300;
+export function galaxyWarning(entity, z) {
+    if (!entity || entity.kind !== 'galaxy' || !(z * C_KMS < -GALAXY_TOWARDS_KMS)) return '';
+    return 'Almost every galaxy is moving away from us. A far galaxy\'s lines move a long way, so this dip may be a different line that has moved here.';
+}
+
 function nmText(nm) {
     const size = Math.abs(nm);
     const digits = size < 1 ? 2 : size < 10 ? 1 : 0;
@@ -66,6 +75,7 @@ const OFFERED = {
     star: ['halpha', 'cahk', 'nad'],
     galaxy: ['cahk', 'mgb', 'nad', 'halpha', 'oiii'],
     quasar: ['lya', 'civ', 'mgii', 'halpha'],
+    nucleus: ['halpha', 'hbeta', 'oiii', 'cahk', 'nad'],
     nebula: ['halpha', 'hbeta', 'oiii']
 };
 const MOST_TARGETS = 3;
@@ -214,6 +224,7 @@ export function createSlide(container, api, { says, single = false }) {
     // ---------- Building it ----------
 
     const answer = el('p', { class: 'spectro-tool-answer' });
+    const warning = el('p', { class: 'spectro-tool-warning', hidden: true });
     const working = el('p', { class: 'spectro-tool-line' });
     // The single line's working, a step at a time, filled in as the line moves
     const workItems = [0, 1, 2, 3].map(() => el('li'));
@@ -228,7 +239,7 @@ export function createSlide(container, api, { says, single = false }) {
     const useBox = el('div', { class: 'spectro-hands-use' });
     const none = para('No line here stands out clearly enough to line up. Try Measure one line.');
     none.hidden = true;
-    const root = el('div', { class: 'spectro-hands-pane' }, answer, single ? workSteps : working, hint, none, sliderRow, ends, zoomRow, useBox);
+    const root = el('div', { class: 'spectro-hands-pane' }, answer, warning, single ? workSteps : working, hint, none, sliderRow, ends, zoomRow, useBox);
     container.append(root);
 
     // ---------- The shift ----------
@@ -338,6 +349,9 @@ export function createSlide(container, api, { says, single = false }) {
             working.hidden = false;
             working.textContent = `Moved ${nmText(r.d.dlambda_nm)} at ${r.line.label}, so ${r.d.beyondCz ? 'z = Δλ ÷ λ' : 'v = c × Δλ ÷ λ'}`;
         }
+        const warn = r ? galaxyWarning(api.resolved && api.resolved.entity, r.z) : '';
+        if (warning.textContent !== warn) warning.textContent = warn;
+        warning.hidden = !warn;
         if (single) renderSteps(r);
         slider.setAttribute('aria-valuetext', r ? `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}` : 'Not moved');
         renderUse(r);
@@ -360,7 +374,7 @@ export function createSlide(container, api, { says, single = false }) {
                 para(`Sent to Hubble: ${answerText(r)}.`),
                 actionRow(
                     diagramLink('hubble'),
-                    api.resolved.entity.kind === 'galaxy' && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Photometer next') : null
+                    api.resolved.entity.kind === 'galaxy' && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Brightness next') : null
                 ));
             return;
         }

@@ -10,6 +10,7 @@
 
 import { app, bus } from '../core/state.js';
 import { infoFor } from '../content/info.js';
+import { withSeed } from '../core/seed.js';
 
 // Tell screen readers something through the page's one live region. Cleared first, so a repeat is read out again.
 let announceTimer = 0;
@@ -43,6 +44,7 @@ export function objectLink(code) {
     url.hash = '';
     url.searchParams.set('goto', code);
     if (app.band !== 'visible') url.searchParams.set('band', app.band);
+    withSeed(url, app.universe && app.universe.seed);       // Another sky's link has to say which sky
     return url.href;
 }
 

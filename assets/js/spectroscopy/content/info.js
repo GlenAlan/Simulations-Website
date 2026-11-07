@@ -170,7 +170,7 @@ function planetCountRow(body) {
 const STAR_NOTES = [
     {
         heading: 'Temperature',
-        text: "A star's continuum is close to a black body curve, so its peak gives the temperature: T = b/λmax (Wien's law). Use the Wien tool. If the peak falls off the chart, below 90 nm (hotter than about 32,000 K), fit the black-body reference instead."
+        text: "A star's continuum is close to a black body curve, so its peak gives the temperature: T = b/λmax (Wien's law). Use the Temperature tool: fit a black-body curve, compare standard stars, or mark the peak. If the peak falls off the chart, below 90 nm (hotter than about 32,000 K), fit the curve instead."
     },
     {
         heading: 'Dark lines',
@@ -178,7 +178,7 @@ const STAR_NOTES = [
     },
     {
         heading: 'Motion',
-        text: 'If every line is shifted by the same amount, the whole star is moving along your line of sight: z = Δλ/λ₀ and v = cz. Positive means moving away. Use the Doppler tool.'
+        text: 'If every line is shifted by the same amount, the whole star is moving along your line of sight: z = Δλ/λ₀ and v = cz. Positive means moving away. Use the Velocity tool, by the Doppler shift.'
     },
     {
         heading: 'Line width',
@@ -186,7 +186,7 @@ const STAR_NOTES = [
     },
     {
         heading: 'Slow spinners',
-        text: 'Fast spins show in the full spectrum; slow ones need Line zoom. Below about 5 km/s the tool reads "unresolved (< 5 km/s)". That means too slow for this instrument to measure, not that the star has stopped spinning.'
+        text: 'Fast spins show in the full spectrum; slow ones need the Spin tool, which zooms in on one line. Below about 5 km/s it reads "under 5 km/s". That means too slow for this instrument to measure, not that the star has stopped spinning.'
     }
 ];
 
@@ -252,13 +252,14 @@ function componentInfo({ entity, body }) {
     const star = entity.star;
     const parent = entity.parent || body?.code;
     const code = parent ? ` ${parent}` : '';
+    if (body?.kind === 'galaxy') return closeStarInfo(entity, body, parent);
     if (body?.kind === 'black_hole') {
         return {
             kindLabel: 'Companion star',
             lead: 'The star you can see in a black hole system.',
             summary: `The star you can see in the black hole system${code}. Its lines swing back and forth as it orbits something massive and dark.`,
             notes: [
-                { heading: 'Why it matters', text: 'This star is the only way to weigh its unseen partner. Use Time series to follow its lines, read the period and the speed, then go to Kepler\'s third law.' },
+                { heading: 'Why it matters', text: 'This star is the only way to weigh its unseen partner. Use the Period tool to follow its lines, read the period and the speed, then go to Kepler\'s third law.' },
                 ...starNotes(star)
             ],
             rarity: BLACK_HOLE_RARITY,
@@ -270,7 +271,7 @@ function componentInfo({ entity, body }) {
         lead: 'One star of a multiple system, taken on its own.',
         summary: `One star of the system${code}, seen on its own. Its lines shift back and forth as it orbits.`,
         notes: [
-            { heading: 'Its system', text: 'From far off it is seen as one point with its companions. Taken alone, this star\'s lines are much easier to follow than in the combined spectrum. Use Time series to read how they swing, then compare with the other stars.' },
+            { heading: 'Its system', text: 'From far off it is seen as one point with its companions. Taken alone, this star\'s lines are much easier to follow than in the combined spectrum. Use the Period tool to read how they swing, then compare with the other stars.' },
             ...starNotes(star)
         ],
         rarity: MULTIPLE_RARITY,
@@ -323,7 +324,7 @@ function figureEightInfo(entity) {
         notes: [
             { heading: 'A perfect solution', text: 'Most real triples are hierarchical: a close pair with a third star far out. This is something else: an exact solution of the three-body problem, found by computer by Cris Moore in 1993 and proved by Chenciner and Montgomery in 2000.' },
             { heading: 'So rare it may not exist', text: 'It only works if the three masses are almost exactly equal, and the stars would have to fall into this path just so. It is extremely unlikely in nature. Here the orbit is played back from a stored path, so it never drifts.' },
-            { heading: 'What to look for', text: 'Three sets of lines whose Doppler shifts weave over and under one another in a repeating 3-way pattern, unlike any binary. Compare them with an ordinary binary using Time series.' },
+            { heading: 'What to look for', text: 'Three sets of lines whose Doppler shifts weave over and under one another in a repeating 3-way pattern, unlike any binary. Compare them with an ordinary binary using the Period tool.' },
             { heading: 'No planets', text: 'With three stars swapping places on one path, no planet could keep a stable orbit here.' }
         ],
         rarity: 'One estimate puts systems like this at somewhere between one per galaxy and one per Universe.',
@@ -338,7 +339,7 @@ function doubleDoubleInfo(entity) {
         summary: 'Two close pairs of stars, with the pairs orbiting each other at a great distance. It looks like one point at first. Zoom in and it becomes two, and each of those is itself a binary.',
         notes: [
             { heading: 'Like Epsilon Lyrae', text: 'The real "Double Double", about 160 light-years away in Lyra, is a pair of stars in binoculars, and a small telescope splits each of them again. Its pairs take centuries to orbit. These are much closer together, so their lines change over days.' },
-            { heading: 'Untangling it', text: 'The combined spectrum holds four sets of lines. Select one pair to isolate its two stars, work out that pair with Time series, then do the other. Each pair has its own period.' },
+            { heading: 'Untangling it', text: 'The combined spectrum holds four sets of lines. Pick one pair with the Stars tool, work out that pair with the Period tool, then do the other. Each pair has its own period.' },
             { heading: 'The outer orbit', text: 'The two pairs take so long to go round each other that they hardly move while you watch. Wide orbits like this keep a four-star system stable.' }
         ],
         rarity: 'About 3% of Sun-like stars belong to a system of four or more.',
@@ -346,19 +347,28 @@ function doubleDoubleInfo(entity) {
     };
 }
 
+// How many stars, said in the system's name on the sky and in its panel, so a binary and a triple can be told apart at a glance
+const COUNT_WORDS = { 2: ['Binary star', 'Two stars'], 3: ['Triple star', 'Three stars'] };
+// A multiple star's next step: its clock set to when the lines are furthest apart and playing, with the Period tool open on a
+// line that shows them split
+const SEE_SPLIT = { label: 'See the lines split', tab: 'spectrum', tool: 'time-series', split: true };
+
 function multipleInfo({ entity }) {
-    if (entity.architecture === 'figure_eight') return figureEightInfo(entity);
-    if (entity.architecture === 'double_double') return doubleDoubleInfo(entity);
+    if (entity.architecture === 'figure_eight') return { ...figureEightInfo(entity), next: SEE_SPLIT };
+    if (entity.architecture === 'double_double') return { ...doubleDoubleInfo(entity), next: SEE_SPLIT };
+    const count = Array.isArray(entity.stars) ? entity.stars.length : 0;
+    const [kindLabel, many] = COUNT_WORDS[count] || ['Multiple star', 'Several stars'];
     return {
-        kindLabel: 'Binary or multiple star',
-        lead: 'Two or more stars bound by gravity, too close together to split by eye.',
-        summary: 'Two or more stars bound by gravity, too close together to split by eye. The spectrum can split them. Watch how the lines move, and work out how many stars there are.',
+        kindLabel,
+        lead: `${many} bound by gravity, too close together to split by eye.`,
+        summary: `${many} bound by gravity, too close together to split by eye. The spectrum can split them: watch how the lines move.`,
+        next: SEE_SPLIT,
         notes: present(
             planetsNote(entity),
-            { heading: 'What to look for', text: 'As two stars orbit, one comes towards you while the other moves away, so their lines separate, merge and separate again. This is a spectroscopic binary. Use Time series to follow a line and read the period.' },
+            { heading: 'What to look for', text: 'As two stars orbit, one comes towards you while the other moves away, so their lines separate, merge and separate again. This is a spectroscopic binary. Use the Period tool to follow a line and read the period.' },
             { heading: 'Weighing the stars', text: 'The period and the speeds give the size of the orbit, and Kepler\'s third law then gives the total mass: r³/T² = G(M₁ + M₂)/4π².' },
             { heading: 'A blend of spectra', text: 'The light is a blend, so you are seeing more than one temperature at once. Each star has its own code, so you can also study one alone.' },
-            { heading: 'Is there a third?', text: 'Most real triples are hierarchical: a close pair with a third star on a much wider orbit, at least ten times the period. That keeps them stable. Look for a slow drift on top of a fast swing, or a third set of lines.' }
+            count >= 3 && { heading: 'The third star', text: 'Most real triples are hierarchical: a close pair with a third star on a much wider orbit, at least ten times the period. That keeps them stable. In the lines, look for a slow drift on top of a fast swing, or a third set of lines.' }
         ),
         rarity: MULTIPLE_RARITY,
         catalogue: clean([systemRows(entity), observedRows(entity, entity, "System's radial velocity"), planetCountRow(entity)])
@@ -436,7 +446,7 @@ function orbitAndSizeNote(block, hostText) {
 
 const REFLECTED_NOTE = {
     heading: 'Reflected light',
-    text: "A planet shines mainly by reflecting its star's light, so its spectrum is the star's, dimmed by its albedo, with bites taken out by any gases in its air. Use Subtract star to remove the star, then compare what is left with the molecule references. A surface can leave its mark too, as plants do on Earth with the red edge."
+    text: "A planet shines mainly by reflecting its star's light, so its spectrum is the star's, dimmed by its albedo, with bites taken out by any gases in its air. Use the Planet light tool to take the star's light away, then compare what is left with the molecule references. A surface can leave its mark too, as plants do on Earth with the red edge."
 };
 
 function planetInfo({ entity, body }) {
@@ -449,6 +459,7 @@ function planetInfo({ entity, body }) {
             orbitAndSizeNote(entity, host),
             { heading: "Kepler's third law", text: "Every planet here obeys r³/T² = GM/4π². Put in this planet's orbit and period and you have the mass of what it orbits. You can also find its speed: v = 2πr/T." },
             REFLECTED_NOTE,
+            { heading: 'Reading the bands', text: 'Bands can overlap: water vapour shares 2.7 µm with carbon dioxide, and 1.4 µm with methane, so its band at 1.9 µm is the clean test for it. Nitrogen, argon, hydrogen and helium leave almost no bands in this range. A thick hydrogen atmosphere shows instead in the planet\'s size: a large radius for its mass.' },
             { heading: 'Habitable zone', text: "The zone where a planet's surface could hold liquid water runs from about √(L/1.1) to √(L/0.53) AU, with L in L☉. Turn on Habitable zone in Layers to see it round a main-sequence star. Being in the zone does not prove there is water: only the spectrum can show that." }
         ),
         rarity: 'More than 6,000 exoplanets have been confirmed, and most stars probably have at least one planet.',
@@ -476,7 +487,7 @@ function homePlanetInfo({ entity }) {
         notes: present(
             orbitAndSizeNote(block, 'the Sun (never shown in this sky)'),
             HOME_NOTES[entity.name] && { heading: `About ${entity.name}`, text: HOME_NOTES[entity.name] },
-            { heading: 'Reflected light', text: 'Its spectrum is sunlight, dimmed by its albedo, with bites taken out by any gases in its air. Use Subtract star to remove the sunlight, then compare what is left with the molecule references.' }
+            { heading: 'Reflected light', text: 'Its spectrum is sunlight, dimmed by its albedo, with bites taken out by any gases in its air. Use the Planet light tool to take the sunlight away, then compare what is left with the molecule references.' }
         ),
         rarity: 'Our Solar System has eight planets. Seven are in this sky; Earth is not.',
         catalogue: clean([planetRows(block, entity), observedRows(entity, entity, 'Radial velocity')])
@@ -689,6 +700,24 @@ const MORPHOLOGY_NOTE = {
     irregular: { heading: 'An irregular', text: 'Irregulars have no tidy shape, often after a close pass by another galaxy. Clumps of young stars are common.' }
 };
 
+// "about 300 million", "about 2.4 billion": a hole's mass in words, in solar masses
+function massWords(m) {
+    if (!isNum(m)) return null;
+    if (m >= 1e9) return `${sig(m / 1e9, 2)} billion`;
+    if (m >= 1e6) return `${sig(m / 1e6, 2)} million`;
+    return withCommas(Math.round(Number(sig(m, 2))));
+}
+
+// What a galaxy's own page says of the black hole at its middle
+function centreNote(nucleus) {
+    if (!nucleus || !nucleus.nucleus) return null;
+    const n = nucleus.nucleus;
+    if (n.active) {
+        return { heading: 'Its black hole', text: `At its centre is a black hole of about ${massWords(n.mass_Msun)} times the Sun's mass, ${nucleus.code}, and it is feeding: gas falling in makes the bright point at the core. Zoom in on the core and click that point to study it.` };
+    }
+    return { heading: 'Its black hole', text: `Like nearly every big galaxy, it has a black hole at its centre, ${nucleus.code}, of about ${massWords(n.mass_Msun)} times the Sun's mass. Hardly any gas is falling in, so it is quiet and nothing of it shows.` };
+}
+
 function galaxyInfo({ entity }) {
     const block = entity.galaxy || {};
     const shape = MORPHOLOGY_NOTE[block.morphology] ? capital(block.morphology) : null;
@@ -697,9 +726,10 @@ function galaxyInfo({ entity }) {
         lead: 'Billions of stars, too far away to pick out one by one.',
         summary: 'Billions of stars, too far away to pick out one by one. Their light adds up to a single spectrum, and its redshift tells you how fast the galaxy is moving away.',
         notes: present(
-            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Doppler tool. Above about z = 0.1, v = cz starts to fail, so quote z too." },
-            { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d from the Photometer, add the galaxy to the Hubble plot, and the gradient gives H₀." },
+            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Above about z = 0.1, v = cz starts to fail, so quote z too." },
+            { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d with the Brightness tool, add the galaxy to the Hubble plot, and the gradient gives H₀." },
             MORPHOLOGY_NOTE[block.morphology],
+            centreNote(entity.nucleus),
             { heading: 'Faint means noisy', text: 'Distant galaxies give noisy spectra. Measure several lines, and take note of the uncertainty the tool reports.' }
         ),
         rarity: 'Common: the observable Universe holds hundreds of billions. Among bright nearby ones, spirals lead, while the faint dwarfs that outnumber them all are too dim to see at these distances.',
@@ -711,6 +741,7 @@ function galaxyInfo({ entity }) {
             row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
             row('Radio lobes', yesNo(block.radio_lobes)),
             row('Active nucleus', yesNo(block.active_nucleus)),
+            row('Central black hole', entity.nucleus ? entity.nucleus.code : null),
             row('Measured brightness', isNum(entity.brightness?.flux_Wm2) ? `${sig(entity.brightness.flux_Wm2, 3)} W/m²` : null),
             row('Apparent magnitude', num(entity.brightness?.mag))
         ])
@@ -727,7 +758,7 @@ function blackHoleInfo({ entity }) {
         lead: 'Something so massive and compact that not even light can escape it.',
         summary: 'You cannot see the hole itself. What you can see is a companion star swinging round something massive and dark, and gas glowing in X-rays as it falls in.',
         notes: present(
-            { heading: 'Weighing the unseen', text: `Select the companion${companion?.code ? `, ${companion.code},` : ''} and use Time series to read its period T and its speed v. If the companion is much the lighter of the two, M ≈ v³T/(2πG). You don't know the tilt of the orbit, so this is a minimum mass.` },
+            { heading: 'Weighing the unseen', text: `Select the companion${companion?.code ? `, ${companion.code},` : ''} and use the Period tool to read its period T and its speed v. If the companion is much the lighter of the two, M ≈ v³T/(2πG). You don't know the tilt of the orbit, so this is a minimum mass.` },
             { heading: 'Why a black hole?', text: 'A neutron star cannot be heavier than about 3 M☉. Anything heavier that gives out no light of its own must be a black hole.' },
             { heading: 'Other bands', text: 'Gas falling in forms an accretion disc, hot enough to shine brightly in X-rays, which is the main way to find one. Some black holes also drive jets, seen in radio.' },
             { heading: 'Look closely', text: 'Zoom in: its gravity bends the light of stars behind it, and the side of the disc spinning towards you looks brighter.' }
@@ -745,6 +776,98 @@ function blackHoleInfo({ entity }) {
             observedRows(entity, entity, "System's radial velocity")
         ])
     };
+}
+
+// ---------- Black holes at the centres of galaxies ----------
+
+const NUCLEUS_RARITY = 'Nearly every big galaxy has a black hole at its centre. Only about 1 nearby galaxy in 10 has one feeding brightly enough to see; this sky has a few more, so that you can find them.';
+
+const BROAD_NOTE = {
+    heading: 'How broad lines reveal a black hole',
+    text: 'Gas close to the hole whirls round it at thousands of km/s. Some is coming towards you and some going away, so the Doppler effect spreads each line out: the wider the line, the faster the gas. Measure the width of Hα with Line zoom to find the speed v. How far out the gas is, R, comes from timing: when the disc brightens, the broad lines brighten a few days later, and that delay times the speed of light is R. Gravity holding gas that fast that close needs a mass M ≈ v²R/G: millions of Suns, in a space smaller than a few light-weeks. Only a black hole fits.'
+};
+
+function nucleusInfo({ entity, body }) {
+    const n = entity.nucleus || {};
+    const galaxy = entity.parent || body?.code;
+    const mass = massWords(n.mass_Msun);
+    const where = 'the centre of its galaxy';       // The Overview names the galaxy just below
+    const typeText = n.type === 1 ? 'Type 1: seen down the dust ring\'s axis, broad lines show'
+        : n.type === 2 ? 'Type 2: seen through the dust ring, broad lines hidden' : null;
+    const catalogue = clean([
+        row('Mass', isNum(n.mass_Msun) ? `${num(n.mass_Msun, ' M☉', 2)} (about ${mass})` : null),
+        row('Galaxy', galaxy),
+        row('Feeding', yesNo(n.active)),
+        row('Kind', typeText),
+        row('Radio jets', yesNo(n.jets)),
+        row('Power given out', num(n.luminosity_Lsun, ' L☉', 2)),
+        row('Share of its greatest possible power (Eddington ratio)', isNum(n.eddington_ratio) ? sig(n.eddington_ratio, 2) : null),
+        row('X-ray power', num(n.xray_Lsun, ' L☉', 2)),
+        row('Broad-line gas, distance from the hole', isNum(n.blr_light_days) ? `${sig(n.blr_light_days, 2)} light-days` : null),
+        row('Broad lines, full width at half height', n.active && isNum(n.broad_fwhm_kms) ? `${withCommas(n.broad_fwhm_kms)} km/s` : null),
+        row('Narrow lines, full width at half height', n.active && isNum(n.narrow_fwhm_kms) ? `${withCommas(n.narrow_fwhm_kms)} km/s` : null),
+        row("Stars' speeds in the bulge (σ)", num(n.sigma_kms, ' km/s')),
+        row('Redshift, z', isNum(n.z) ? n.z.toFixed(4) : null),
+        row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+        row('Distance', distanceText(entity.distance_pc))
+    ]);
+    if (!n.active) {
+        return {
+            kindLabel: 'Central black hole',
+            lead: `A black hole of about ${mass} times the Sun's mass at ${where}. It is quiet: almost nothing is falling in.`,
+            summary: `Nearly every big galaxy has a black hole at its centre, and the bigger the galaxy's bulge, the heavier it is. This one is quiet: so little gas falls in that it gives out almost no light, and what you see here is the light of the stars round it.`,
+            notes: [
+                { heading: 'Weighing a quiet one', text: "The stars near a galaxy's centre move faster round a heavier hole, so their lines are wider. Measure a line's width with Line zoom: the heavier the hole, the wider." },
+                { heading: 'Our own Galaxy\'s', text: 'The Milky Way has one too, Sagittarius A*, about 4 million times the Sun\'s mass. Astronomers followed stars orbiting it for over 25 years, and Kepler\'s third law gave its mass. That work won the 2020 Nobel Prize in Physics. Zoom in on this one to see stars like those.' }
+            ],
+            rarity: NUCLEUS_RARITY,
+            catalogue
+        };
+    }
+    const notes = [BROAD_NOTE];
+    if (n.type === 2) notes.push({ heading: 'Hidden by dust', text: 'A thick ring of dust surrounds the disc. From this side it blocks the disc and the fast gas, so the broad lines are hidden and only the narrow lines of slower gas further out show. The dust, warmed by the disc, glows in infrared, and X-rays get through it.' });
+    else notes.push({ heading: 'Broad and narrow', text: 'Hα and Hβ are broad here, from gas close in. [O III] stays narrow: it only shines in thin gas far out, where things move far more slowly.' });
+    notes.push(
+        { heading: 'Measuring its redshift', text: "Its lines are shifted by its galaxy's redshift. Slide the reference lines onto them with the Doppler tool, as you would for the galaxy." },
+        { heading: 'Other bands', text: `The hot disc shines most in ultraviolet and X-rays, and warm dust round it in infrared.${n.jets ? ' This one also drives jets, which glow in radio and blow up the giant lobes either side of its galaxy.' : ''}` }
+    );
+    return {
+        kindLabel: 'Active galactic nucleus',
+        lead: `A black hole of about ${mass} times the Sun's mass at ${where}, feeding on gas that glows as it falls in.`,
+        summary: 'Gas spiralling into a giant black hole heats up and shines, and can outshine the galaxy\'s billions of stars from a space smaller than a few light-weeks.',
+        notes,
+        rarity: NUCLEUS_RARITY,
+        catalogue
+    };
+}
+
+// One of the few stars on close orbits round a galaxy's central black hole
+function closeStarInfo(entity, body, parent) {
+    const star = entity.star;
+    const hole = parent ? nucleusOf(body, parent) : null;
+    const i = hole ? hole.nucleus.stars.indexOf(entity) : -1;
+    const orbit = i >= 0 ? hole.nucleus.orbits[i] : null;
+    return {
+        kindLabel: 'Star near a giant black hole',
+        lead: 'A star on a tight, fast orbit round the black hole at the centre of its galaxy.',
+        summary: `One of a few stars on tight, fast orbits round the black hole${parent ? ` ${parent}` : ''}. From this far away it is lost in the light of its galaxy, so its spectrum is mostly noise.`,
+        notes: [
+            { heading: 'Weighing a black hole with stars', text: 'At the centre of our own Galaxy, astronomers followed stars like this round Sagittarius A* for over 25 years. Their orbits, with Kepler\'s third law, r³/T² = GM/4π², gave its mass: about 4 million times the Sun\'s.' }
+        ],
+        rarity: 'Only round our own Galaxy\'s black hole are stars like this close enough to follow.',
+        catalogue: clean([
+            row('Black hole', parent),
+            row('Orbit, average distance', orbit ? `${withCommas(Math.round(orbit.a_AU))} AU` : null),
+            row('Orbital period', orbit ? periodText(orbit.period_days) : null),
+            starRows(star),
+            observedRows(entity, body)
+        ])
+    };
+}
+
+// The nucleus a close star belongs to, from its galaxy: no lookup through the app, so this stays pure
+function nucleusOf(body, code) {
+    return body && body.nucleus && body.nucleus.code === code ? body.nucleus : null;
 }
 
 const SUPERNOVA_TYPE = {
@@ -826,12 +949,14 @@ const BUILDERS = {
     neutron_star: neutronStarInfo,
     galaxy: galaxyInfo,
     black_hole: blackHoleInfo,
+    nucleus: nucleusInfo,
     supernova: supernovaInfo,
     quasar: quasarInfo
 };
 
 // The first thing a student needs telling, for nearly everything in the sky
 const START_WITH_SPECTRUM = { label: 'Open the Spectrum tab to start', tab: 'spectrum' };
+
 
 export function infoFor(resolved) {
     const entity = resolved?.entity || {};

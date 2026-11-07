@@ -28,7 +28,7 @@ import { starSpectrum, starPartsOf, parentOf, fluxOf } from './stellar.js';
 import { planetSpectrum, roguePlanetSpectrum } from './planet.js';
 import { nebulaSpectrum, cometSpectrum } from './nebular.js';
 import { supernovaSpectrum, supernovaLightCurve, supernovaMag, SUPERNOVA_SPAN_DAYS } from './supernova.js';
-import { galaxySpectrum, quasarSpectrum, redshiftOf } from './extragalactic.js';
+import { galaxySpectrum, quasarSpectrum, nucleusSpectrum, redshiftOf } from './extragalactic.js';
 import { buildReference } from './reference.js';
 
 export const makeGrid = latticeGrid;
@@ -83,6 +83,8 @@ function buildSpectrum(entity, grid, opts) {
         return galaxySpectrum(entity, grid);
     case 'quasar':
         return quasarSpectrum(entity, grid);
+    case 'nucleus':
+        return nucleusSpectrum(entity, grid, parentOf(entity, opts));
     case 'neutron_star':
         return thermalBody(entity.neutron_star.teff_K ?? 1e6, grid, snrFromFlux(effectiveFlux(entity.brightness)),
             'This object is too faint to show any lines: only a very faint, hot thermal glow, rising towards the ultraviolet. Neutron stars are better found in radio and X-rays.');
@@ -198,7 +200,8 @@ export function autoRange(entity) {
         return { lo_nm: 90, hi_nm: 750 };
     case 'supernova':
         return { lo_nm: 300, hi_nm: 950 };
-    case 'galaxy': {
+    case 'galaxy':
+    case 'nucleus': {
         const stretch = 1 + redshiftOf(entity);
         return clampRange(370 * stretch, 700 * stretch);
     }

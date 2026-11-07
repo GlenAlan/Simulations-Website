@@ -35,6 +35,7 @@ import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, 
 import { createZoomInto } from './zoom_into.js';
 import { createStar, surfaceColour } from './star_surface.js';
 import { createHole, createPulsarBeams } from './remnants.js';
+import { holeLook, createDustRing } from './nucleus_view.js';
 import { createOrbitLine, createOrbitGlow } from './orbit_lines.js';
 import { createBackdrop } from './backdrop.js';
 import { createMassStream } from './mass_stream.js';
@@ -206,13 +207,16 @@ export function initSystemView(app) {
         const quality = app.qualityLevel;
         const group = new THREE.Group();
         const hole = model.body.black_hole;
+        const giant = holeLook(model.body);     // A galaxy's own black hole (nucleus_view.js)
         const stars = model.stars.map((s) => {
             const isHole = s.star.stage === 'black_hole';
             const make = isHole ? createHole : createStar;
-            const star = make(s.star, { seed: s.code, quality, jets: isHole && !!(hole && hole.jets) });
+            const star = make(s.star, { seed: s.code, quality, jets: isHole && !!(hole && hole.jets), ...(isHole && giant ? giant : {}) });
             group.add(star.group);
             return star;
         });
+        const dust = giant ? createDustRing(model.body, stars[0]) : null;
+        if (dust) group.add(dust.object);
         // How each star shows in each band, and the flares of an active M dwarf
         const accretor = model.stream && !model.stream.ontoHole ? model.stream.accretor : -1;
         const bandLooks = model.stars.map((s, i) => (s.star.stage === 'black_hole' ? null : starBandLook(s, i === accretor)));
@@ -339,7 +343,7 @@ export function initSystemView(app) {
         const steady = new Map(model.nodes.map((n) => [n, [0, 0, 0]]));
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
-            bandLooks, flares, bandSeen: null, comets, cometLabels,
+            bandLooks, flares, bandSeen: null, comets, cometLabels, dust,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
             lastStars: new Float64Array(model.stars.length * 3),
             lastPlanets: new Float64Array(model.planets.length * 3),
@@ -379,6 +383,7 @@ export function initSystemView(app) {
             s.line.dispose();
         });
         if (world.beams) world.beams.dispose();
+        if (world.dust) world.dust.dispose();
         if (world.halo) {
             world.halo.geometry.dispose();
             world.halo.material.dispose();
@@ -1262,6 +1267,7 @@ export function initSystemView(app) {
         if (world.beams) {
             world.beams.update({ dt: frame.dt, reveal: showReveal, reduceMotion: reduce, radius: sizes.stars[0] });
         }
+        if (world.dust) world.dust.update({ reveal: showReveal * (1 - smear.stars[0]), radius: sizes.stars[0], position: positions.stars[0] });
 
         // Planets. While one is in focus, any others in front of it or beside it stand back.
         const focus = sizeView.focus;
@@ -1732,7 +1738,8 @@ export function initSystemView(app) {
         if (!live || !model) return;
         const n = model.planets.length;
         const main = model.stars[0].star.stage;
-        const stars = main === 'black_hole' ? 'a black hole and a star'
+        const stars = model.body.kind === 'nucleus' ? `a giant black hole and ${model.stars.length - 1} stars close round it`
+            : main === 'black_hole' ? 'a black hole and a star'
             : main === 'neutron_star' ? 'a neutron star'
                 : model.stars.length === 1 ? 'a star' : `${model.stars.length} stars`;
         const planets = n === 0 ? 'no planets' : n === 1 ? 'one planet' : `${n} planets`;

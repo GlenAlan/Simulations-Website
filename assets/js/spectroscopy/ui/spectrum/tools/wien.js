@@ -539,11 +539,11 @@ function mount(container, api) {
         return null;
     }
 
-    // The way on from a reading: to the H-R diagram, and to the Photometer if that's what the diagram still needs
+    // The way on from a reading: to the H-R diagram, and to Brightness if that's what the diagram still needs
     function nextSteps() {
         const m = getMeasurement(api.resolved.entity.code) || {};
         const items = [diagramLink('hr')];
-        if (hasTab('hr') && !(m.flux_Wm2 > 0)) items.push(toolLink(api, 'photometer', 'Photometer next'));
+        if (hasTab('hr') && !(m.flux_Wm2 > 0)) items.push(toolLink(api, 'photometer', 'Brightness next'));
         return actionRow(...items);
     }
 
@@ -564,7 +564,7 @@ function mount(container, api) {
             // A blend's one temperature is true of the blend and of no star in it, so it isn't sent on as if it were a star's
             fill(useBox,
                 para(`This is ${blend} stars' light added together. That one temperature is true of the blend, but of no star in it.`),
-                actionRow(toolLink(api, 'stars-shown', 'Read each star with Stars shown')));
+                actionRow(toolLink(api, 'stars-shown', 'Read each star with the Stars tool')));
             return;
         }
         if (used) {

@@ -11,11 +11,13 @@
 //   Mapping   xOf(nm), nmOf(x), yOf(flux, 'body'|'ref'), fluxAt(nm, 'body'|'ref'), panes() (all in CSS pixels of the canvas)
 //   Cursor    setCursor(nm|null), getCursor()
 //   Events    onClick(fn(nm, e)), onHover(fn(nm|null, e)), onRangeChange(fn(lo, hi)): each returns a function that removes it
-//   Drawing   addOverlay(fn(ctx, plot)) -> remove, redraw(now?), showLineLabels(on), labelBand(), setTopCap(note), setAriaLabel(text), dispose()
-//   Chrome    stage (the element the panel puts its own controls on), setChrome({ headers, top }), onLayout(fn(layout))
+//   Drawing   addOverlay(fn(ctx, plot)) -> remove, redraw(now?), showLineLabels(on), labelBand(), setTopCap(note), setFitFloor(on),
+//             setAriaLabel(text), dispose()
+//   Chrome    stage (the element the panel puts its own controls on), setChrome({ headers, top, refRow }), onLayout(fn(layout))
 //
-// The panel puts its controls on the plot: a header row above each pane (headers px tall), and a strip across the top (top px).
-// The plot leaves room for them and says where they go through onLayout. Values are read where the pointer is: the wavelength
+// The panel puts its controls on the plot: a strip across the top (top px), a header over the object's pane (headers px), and
+// the reference's row (refRow px) under the object's spectrum: under the axis in overlay, between the panes when stacked.
+// The plot leaves room for them and says where they go through onLayout (refRowY, refRowH). Values are read where the pointer is: the wavelength
 // on the axis, and each spectrum's value beside its point.
 //
 // The plot is pinned in its panel, so the wheel is the plot's: it zooms about the pointer, and a sideways scroll pans. A touch
@@ -235,24 +237,25 @@ function measureNoise(sp, fluxPeak) {
     return (values[values.length >> 1] * 1.4826) / Math.SQRT2;
 }
 
-// A y axis's ticks from 0 up to top: round numbers, shown as a mantissa with any power of ten said once in the title
-function yTicks(top, maxTicks = 3) {
+// A y axis's ticks from bottom (usually 0) up to top: round numbers, shown as a mantissa with any power of ten said once in the title
+function yTicks(top, maxTicks = 3, bottom = 0) {
     const exp = top < 0.01 || top >= 1000 ? Math.floor(Math.log10(top)) : 0;
     const scaled = top / 10 ** exp;
-    const rawStep = scaled / maxTicks;
+    const floor = bottom / 10 ** exp;
+    const rawStep = (scaled - floor) / maxTicks;
     const e = Math.floor(Math.log10(rawStep));
     const m = rawStep / 10 ** e;
     const step = (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * 10 ** e;
     const digits = Math.max(0, Math.ceil(-Math.log10(step) - 1e-9));
     const ticks = [];
-    for (let i = 0; i * step <= scaled * (1 + 1e-9); i++) {
+    for (let i = Math.ceil(floor / step - 1e-9); i * step <= scaled * (1 + 1e-9); i++) {
         ticks.push({ value: i * step * 10 ** exp, label: i === 0 ? '0' : (i * step).toFixed(digits) });
     }
     return { ticks, exp };
 }
 
 function makeSeries() {
-    return { sp: null, label: '', key: '', cols: null, top: 1, exp: 0, peak: 0, fluxPeak: 0, noiseK: 0, emissive: false, strip: null, paneNote: '', capNote: '', capped: false };
+    return { sp: null, label: '', key: '', cols: null, top: 1, bottom: 0, exp: 0, peak: 0, fluxPeak: 0, noiseK: 0, emissive: false, strip: null, paneNote: '', capNote: '', capped: false };
 }
 
 function makeColumns(n) {
@@ -308,9 +311,11 @@ export function createPlot(container, opts = {}) {
     let mode = 'stacked';
     let labelsOn = false;
     let cursorNm = null;
+    let fitFloor = false;
 
-    // Room kept for the panel's own controls: a header above each pane, and a strip across the top
-    const chrome = { headers: 26, top: 32 };
+    // Room kept for the panel's own controls: a strip across the top, a header over the object's pane, and the reference's row,
+    // which is under the object's spectrum: under its axis in overlay, and between the two panes when they are stacked
+    const chrome = { headers: 26, top: 32, refRow: 0, refLine: 0 };
     const layoutFns = new Set();
     let layoutKey = '';
 
@@ -410,29 +415,38 @@ export function createPlot(container, opts = {}) {
         const stripGap = 2;
         const paneGap = compact ? 4 : 7;
         const axisH = 20;
+        const refRowH = chrome.refRow || titleH;
+        // The reference's key goes beside its name, on the row's first line if it has two
+        const refKeyH = Math.min(refRowH, chrome.refLine || refRowH);
         const base = { x: left, w: plotW, stripH };
         let body;
         let ref = null;
+        let refRowY;
+        let axisY;
         if (mode === 'overlay' || !hasRef()) {
+            // One pane, with the reference's row under its axis: the row is there even with no reference, to choose one
             const strips = hasRef() ? 2 : 1;
-            // A header each, one above the other: the reference's header is there even with no reference, to choose one
-            const rows = 2;
-            const h = Math.max(20, cssH - rulerH - rows * titleH - strips * (stripH + stripGap) - axisH);
-            const y = rulerH + rows * titleH;
-            body = { ...base, titleY: rulerH, y, h, stripY: y + h + stripGap };
-            if (hasRef()) ref = { ...base, titleY: rulerH + (rows - 1) * titleH, y, h, stripY: body.stripY + stripH + stripGap };
+            const h = Math.max(20, cssH - rulerH - titleH - strips * (stripH + stripGap) - axisH - refRowH);
+            const y = rulerH + titleH;
+            body = { ...base, titleY: rulerH, titleH, y, h, stripY: y + h + stripGap };
+            const lastStrip = hasRef() ? body.stripY + stripH + stripGap : body.stripY;
+            axisY = lastStrip + stripH;
+            refRowY = axisY + axisH;
+            if (hasRef()) ref = { ...base, titleY: refRowY, titleH: refKeyH, y, h, stripY: lastStrip };
         } else {
-            const free = Math.max(40, cssH - rulerH - 2 * titleH - 2 * (stripH + stripGap) - paneGap - axisH);
-            const bodyH = Math.round(free * 0.58);
+            // Stacked: the reference's row straight under the object's spectrum, and the two panes the same height
+            const free = Math.max(40, cssH - rulerH - titleH - refRowH - 2 * (stripH + stripGap) - paneGap - axisH);
+            const bodyH = Math.round(free * 0.5);
             const refH = free - bodyH;
             const y0 = rulerH + titleH;
-            body = { ...base, titleY: rulerH, y: y0, h: bodyH, stripY: y0 + bodyH + stripGap };
-            const titleY = body.stripY + stripH + paneGap;
-            ref = { ...base, titleY, y: titleY + titleH, h: refH, stripY: titleY + titleH + refH + stripGap };
+            body = { ...base, titleY: rulerH, titleH, y: y0, h: bodyH, stripY: y0 + bodyH + stripGap };
+            refRowY = body.stripY + stripH + paneGap;
+            ref = { ...base, titleY: refRowY, titleH: refKeyH, y: refRowY + refRowH, h: refH, stripY: refRowY + refRowH + refH + stripGap };
+            axisY = ref.stripY + stripH;
         }
-        const last = ref || body;
         return {
-            refRowY: ref ? ref.titleY : rulerH + titleH,
+            refRowY,
+            refRowH,
             left,
             right: left + plotW,
             plotW,
@@ -443,7 +457,7 @@ export function createPlot(container, opts = {}) {
             body,
             ref,
             top: rulerH,
-            axisY: last.stripY + stripH,
+            axisY,
             bottom: cssH
         };
     }
@@ -488,6 +502,7 @@ export function createPlot(container, opts = {}) {
         const k = s.noiseK;
         let peak = 0;
         let linePeak = 0;
+        let lineLow = Infinity;
         let contPeak = 0;
         let excess = 0;
         let any = false;
@@ -552,6 +567,7 @@ export function createPlot(container, opts = {}) {
             }
             if (cont > 0 && (lineMin < 0.995 * cont || lineMax > 1.005 * cont)) flat = false;
             if (lineMax > linePeak) linePeak = lineMax;
+            if (lineMin < lineLow) lineLow = lineMin;
             if (cont > contPeak) contPeak = cont;
             if (lineMax - cont > excess) excess = lineMax - cont;
             c.min[col] = fMin;
@@ -585,6 +601,21 @@ export function createPlot(container, opts = {}) {
             s.paneNote = 'Too faint here to show more than noise';
             // Nor is noise scaled up to fill the pane, or its spikes would look like lines
             if (linePeak < 0.01 * s.fluxPeak) s.top = 0.01 * s.fluxPeak;
+        }
+        // Asked to, for a close look at one line: the axis runs from just under the deepest point in view to just over the
+        // highest, so a shallow line fills the pane instead of lying flat along its top
+        s.bottom = 0;
+        if (typeof fitFloor === 'number' && any && !s.paneNote && !s.capped && fitFloor > 0 && fitFloor < 1
+            && lineLow >= linePeak * (fitFloor - 0.3 * (1 - fitFloor))) {
+            // A floor held at a share of the top, for lines that move: the scale stays put while they do. Zoomed out to where
+            // much falls below it, the axis goes back to zero.
+            s.top = linePeak * (1 + 0.1 * (1 - fitFloor));
+            s.bottom = fitFloor * linePeak;
+        } else if (fitFloor === true && any && !s.paneNote && !s.capped && lineLow > 0 && linePeak - lineLow < 0.7 * linePeak) {
+            // Never closer than 3% of the level, or a featureless stretch would blow its noise up into lines
+            const pad = Math.max(0.12 * (linePeak - lineLow), 0.5 * (0.03 * linePeak - (linePeak - lineLow)));
+            s.top = linePeak + pad;
+            s.bottom = Math.max(0, lineLow - pad);
         }
         paintStrip(s);
     }
@@ -671,7 +702,7 @@ export function createPlot(container, opts = {}) {
 
     function yOfPane(flux, s, pane) {
         const band = labelBand(pane);
-        return pane.y + pane.h - (flux / s.top) * (pane.h - band);
+        return pane.y + pane.h - ((flux - s.bottom) / (s.top - s.bottom)) * (pane.h - band);
     }
 
     function drawWell(pane) {
@@ -725,7 +756,7 @@ export function createPlot(container, opts = {}) {
 
     function drawYAxis(pane, s) {
         const band = labelBand(pane);
-        const { ticks, exp } = yTicks(s.top, pane.h - band < 64 ? 2 : 3);
+        const { ticks, exp } = yTicks(s.top, pane.h - band < 64 ? 2 : 3, s.bottom);
         s.exp = exp;
         ctx.save();
         ctx.strokeStyle = tokens.grid;
@@ -739,6 +770,20 @@ export function createPlot(container, opts = {}) {
             ctx.lineTo(pane.x + pane.w, y);
         });
         ctx.stroke();
+        // An axis that doesn't start at zero says so, with the usual break at its foot
+        if (s.bottom > 0) {
+            const x = pane.x;
+            const y = pane.y + pane.h - 6;
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = tokens.ink;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(x - 4, y + 2);
+            ctx.lineTo(x + 4, y - 1);
+            ctx.moveTo(x - 4, y + 5);
+            ctx.lineTo(x + 4, y + 2);
+            ctx.stroke();
+        }
         ctx.restore();
 
         ctx.fillStyle = tokens.ink;
@@ -755,8 +800,9 @@ export function createPlot(container, opts = {}) {
         const c = s.cols;
         if (!c) return;
         const band = labelBand(pane);
-        const bottom = pane.y + pane.h;
-        const k = (pane.h - band) / s.top;
+        const k = (pane.h - band) / (s.top - s.bottom);
+        // Where zero would be, so that a raised floor needs no change below
+        const bottom = pane.y + pane.h + s.bottom * k;
         const left = layout.left;
 
         ctx.save();
@@ -895,7 +941,7 @@ export function createPlot(container, opts = {}) {
     // The pane's key, and for the object its name. The reference's name is the panel's picker, in the same row. The unit of
     // the scale is in the gutter beside it.
     function drawTitle(pane, s, which) {
-        const y = pane.titleY + layout.titleH / 2 + 0.5;
+        const y = pane.titleY + pane.titleH / 2 + 0.5;
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
         ctx.fillStyle = tokens.ink;
@@ -908,17 +954,17 @@ export function createPlot(container, opts = {}) {
     }
 
     function drawOverlayTitle(pane) {
-        const y = pane.titleY + layout.titleH / 2 + 0.5;
+        const y = pane.titleY + pane.titleH / 2 + 0.5;
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        // A row each: the reference's name is the panel's own control, in the row beside its key
+        // A row each: the object's above its spectrum, and the reference's under it, where its name is the panel's own control
         const x0 = drawLineKey(pane.x, y, tokens.body, false);
         ctx.font = fontOf(11.5, 700);
         ctx.fillStyle = tokens.ink;
         ctx.fillText(ellipsize(series.body.label || 'This object', pane.w * 0.4), x0, y);
         ctx.font = fontOf(11);
         ctx.fillText('flux', 6, y);
-        drawLineKey(pane.x, layout.ref.titleY + layout.titleH / 2 + 0.5, tokens.ref, true);
+        drawLineKey(pane.x, layout.ref.titleY + layout.ref.titleH / 2 + 0.5, tokens.ref, true);
     }
 
     function drawOverlayUnit(pane, s) {
@@ -1012,8 +1058,7 @@ export function createPlot(container, opts = {}) {
                 const v = s.cols.lineMax[Math.max(0, Math.min(s.cols.n - 1, col + d))];
                 if (v > top) top = v;
             }
-            const k = (pane.h - labelBand(pane)) / s.top;
-            const yCurve = top === top ? bottom - top * k : bottom;
+            const yCurve = top === top ? Math.min(bottom, yOfPane(top, s, pane)) : bottom;
             ctx.save();
             ctx.strokeStyle = ink;
             ctx.globalAlpha = 0.6;
@@ -1067,7 +1112,7 @@ export function createPlot(container, opts = {}) {
         scale = wavelengthScale(lo, hi, layout.left, layout.plotW);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssW, cssH);
-        const nextKey = [layout.body.titleY, layout.refRowY, !!layout.ref, layout.titleH, layout.left, layout.plotW, mode, layout.compact].join();
+        const nextKey = [layout.body.titleY, layout.refRowY, layout.refRowH, !!layout.ref, layout.titleH, layout.left, layout.plotW, mode, layout.compact].join();
         if (nextKey !== layoutKey) {
             layoutKey = nextKey;
             layoutFns.forEach((fn) => fn(layout, mode));
@@ -1836,6 +1881,16 @@ export function createPlot(container, opts = {}) {
         },
         setAriaLabel(text) {
             canvas.setAttribute('aria-label', text);
+        },
+        // true: the flux axis fits what's in view from just under its lowest point, for a close look at one line. A number from 0
+        // to 1: the axis starts at that share of the highest point in view, and stays there as lines move. false: from zero.
+        setFitFloor(on) {
+            const next = typeof on === 'number' ? on : !!on;
+            if (fitFloor === next) return;
+            fitFloor = next;
+            series.body.key = '';
+            series.ref.key = '';
+            redraw();
         },
         lastDrawMs: () => lastDrawMs,
         dispose() {

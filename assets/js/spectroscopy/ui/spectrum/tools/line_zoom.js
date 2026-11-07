@@ -12,6 +12,7 @@ import { C_KMS, R_ZOOM, R_OVERVIEW } from '../../../core/phys.js';
 import { lineWidth, lineZoomWindow, hasLongWings, suggestRotationLines, resolvingPower, rotationLimitKms, ROTATION_FWHM, FASTEST_SPIN_KMS } from '../../../spectra/measure.js';
 import { gridFor } from '../../../spectra/kernel.js';
 import { renderStars, starPartsOf } from '../../../spectra/stellar.js';
+import { broadLineWidth, BROAD_LINE_HALF } from '../../../spectra/extragalactic.js';
 import { el } from '../../plot2d.js';
 import { actionRow, fill, overlayTheme, para, plotLabel, resultLine, searchNmAt, statusBox } from './common.js';
 import { borrowReference, drawGrip, handTheme, HAND_DASH, plotGrab, reachOf } from './hands_on.js';
@@ -165,12 +166,23 @@ function isStarLike(entity) {
     return !!(entity.star || entity.stars || entity.black_hole);
 }
 
+// The lines on offer. At a galaxy's centre with bright lines, only those: its stars' dark Hα sits at the same wavelength as the
+// bright one, and isn't the line to measure there.
+function linesFor(overview, entity) {
+    const atoms = ((overview && overview.lines) || []).filter((l) => !l.band);
+    const bright = entity && entity.kind === 'nucleus' ? atoms.filter((l) => l.type === 'em') : [];
+    return bright.length ? bright : atoms;
+}
+
 const WIDTH_MEANS = {
     galaxy: 'Stars moving about inside the galaxy smear every line.',
     quasar: 'Gas whirling round the central black hole spreads these lines out.',
     supernova: 'Gas thrown out by the explosion moves at a huge range of speeds.',
-    nebula: 'The gas in the nebula moving about, and its heat, widen this line.'
+    nebula: 'The gas in the nebula moving about, and its heat, widen this line.',
+    nucleus: 'The stars round the black hole, moving every which way, smear this line.'
 };
+// A galaxy's centre: a bright line's width is how fast the gas round its black hole moves
+const GAS_MEANS = 'The gas whirling round the black hole spreads this line out. The faster it moves, the wider the line.';
 
 function mount(container, api) {
     const { plot } = api;
@@ -192,9 +204,11 @@ function mount(container, api) {
     container.append(chips, answer, widthLine, hint, sliderBox, checkBox, result, historyEl, says);
 
     const started = plot.getRange();
-    // The dashed line is the comparison here, so the reference stands aside and the star's line has the whole plot
+    // The dashed line is the comparison here, so the reference stands aside and the star's line has the whole plot, with the
+    // flux axis fitted to it: a fast spinner's line is shallow, and from zero it would lie almost flat
     const reference = borrowReference(api);
     reference.show('none');
+    if (plot.setFitFloor) plot.setFitFloor(true);
     let line = null;          // The line on show: { rest_nm, obs_nm, label, species }
     let twin = null;          // The still twin over the view
     let spun = null;          // Its ratio, spun to the student's speed
@@ -215,8 +229,8 @@ function mount(container, api) {
     // its strongest lines.
     function offered() {
         const overview = api.getOverview();
-        const atoms = ((overview && overview.lines) || []).filter((l) => !l.band);
         const { entity } = api.resolved;
+        const atoms = linesFor(overview, entity);
         const list = [];
         const add = (l) => { if (l && !list.some((x) => same(x, l))) list.push(l); };
         // The line on show, such as one carried over from the last star, is always among them
@@ -225,7 +239,11 @@ function mount(container, api) {
             suggestRotationLines(overview || {}, 1).forEach(add);
             PRESSURE_LINES.forEach((label) => add(atoms.find((l) => l.label === label)));
         } else {
-            atoms.filter((l) => l.obs_nm > 330).sort((a, b) => Math.abs(b.depth) - Math.abs(a.depth)).slice(0, 3).forEach(add);
+            // At a galaxy's centre the bright lines are what the tool is for, if there are any, and the broad ones first
+            const pool = atoms.filter((l) => l.obs_nm > 330);
+            const bright = entity.kind === 'nucleus' ? pool.filter((l) => l.type === 'em') : [];
+            const weight = (l) => Math.abs(l.depth) * (l.broad ? 20 : 1);
+            (bright.length ? bright : pool).sort((a, b) => weight(b) - weight(a)).slice(0, 3).forEach(add);
         }
         return list;
     }
@@ -249,7 +267,9 @@ function mount(container, api) {
         widthKms = null;
         checkKey = '';
         const overview = api.getOverview();
-        const view = lineZoomWindow(overview, l.obs_nm, { line: l, searchNm: l.obs_nm * 0.0015, hydrogen: l.species === 'H I' });
+        // A galaxy's black hole's broad line needs a wide view, with continuum either side (spectra/extragalactic.js)
+        const view = l.broad ? { centre_nm: l.obs_nm, half_nm: l.obs_nm * BROAD_LINE_HALF }
+            : lineZoomWindow(overview, l.obs_nm, { line: l, searchNm: l.obs_nm * 0.0015, hydrogen: l.species === 'H I' });
         if (view) api.setResolution('zoom', { lo_nm: view.centre_nm - view.half_nm, hi_nm: view.centre_nm + view.half_nm });
         twin = null;
         renderChips(offered());
@@ -408,7 +428,7 @@ function mount(container, api) {
         const spectrum = api.getSpectrum();
         if (!spectrum || !line) return;
         const near = shape ? shape.centre : line.obs_nm;
-        measured = lineWidth(spectrum, near, { searchNm: near * 0.0006, hydrogen: line.species === 'H I' });
+        measured = line.broad ? broadLineWidth(spectrum, line.obs_nm) : lineWidth(spectrum, near, { searchNm: near * 0.0006, hydrogen: line.species === 'H I' });
         if (!measured) measured = { none: true };
     }
 
@@ -420,6 +440,15 @@ function mount(container, api) {
             return;
         }
         const w = measured;
+        if (entity.kind === 'nucleus' && w.type === 'em') {
+            // The gas's speed is about the line's whole width: the sum that weighs the hole uses it so
+            const speed = Math.sqrt(Math.max(0, w.fwhm_kms ** 2 - w.instrument_kms ** 2));
+            fill(result,
+                resultLine(`How fast the gas moves: about ${kmsText(speed)} km/s`, true),
+                resultLine(`The line is ${kmsText(w.fwhm_kms)} km/s wide at half its height: v ≈ c × width ÷ λ₀`),
+                para(GAS_MEANS));
+            return;
+        }
         if (!isStarLike(entity)) {
             const spread = 0.5 * Math.sqrt(Math.max(0, w.fwhm_kms ** 2 - w.instrument_kms ** 2));
             fill(result,
@@ -488,9 +517,22 @@ function mount(container, api) {
     function gripAt() {
         if (!shape) return null;
         const pane = plot.panes().body;
-        const x = plot.xOf(shape.centre * (1 + shape.halfKms / C_KMS));
+        let x = plot.xOf(shape.centre * (1 + shape.halfKms / C_KMS));
         const cont = twin.continuum[indexOf(shape.centre)];
-        const y = plot.yOf(cont * (1 - shape.depth / 2));
+        let y = plot.yOf(cont * (1 - shape.depth / 2));
+        // The axis fits the star's own line, so a still twin deeper than that runs out of the bottom: the grip goes where
+        // its side comes into view
+        const low = pane.y + pane.h - 10;
+        if (y > low) {
+            for (let i = indexOf(shape.centre); i < spun.length; i++) {
+                const yi = plot.yOf(spun[i] * twin.continuum[i]);
+                if (yi <= low) {
+                    x = plot.xOf(twin.wl[i]);
+                    y = yi;
+                    break;
+                }
+            }
+        }
         if (x < pane.x || x > pane.x + pane.w || y < pane.y || y > pane.y + pane.h) return null;
         return { x, y };
     }
@@ -635,7 +677,7 @@ function mount(container, api) {
             checkKey = '';
             api.setResolution('zoom');
             // The same line as on the last star, so the two can be compared, if this one shows it
-            const again = lastLine ? ((api.getOverview() || {}).lines || []).find((l) => !l.band && same(l, lastLine)) : null;
+            const again = lastLine ? linesFor(api.getOverview(), api.resolved.entity).find((l) => same(l, lastLine)) : null;
             const first = again || offered()[0] || null;
             line = first;
             renderChips(offered());
@@ -654,6 +696,7 @@ function mount(container, api) {
             offOpts();
             removeOverlay();
             reference.dispose();
+            if (plot.setFitFloor) plot.setFitFloor(false);
             api.setResolution('overview');
             plot.setRange(started.lo, started.hi, { animate: !reduceMotion() });
         }

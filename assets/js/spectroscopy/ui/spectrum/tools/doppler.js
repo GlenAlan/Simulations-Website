@@ -11,7 +11,7 @@ import { blendAllowance, lineCentre, dopplerFrom, combineDoppler } from '../../.
 import { el } from '../../plot2d.js';
 import { actionRow, diagramLink, fill, hasTab, overlayTheme, para, plotLabel, plotMark, resultLine, searchNmAt, statusBox, termLine, toolLink } from './common.js';
 import { borrowReference, modeRow } from './hands_on.js';
-import { createSlide, direction, velocityText, zText } from './doppler_slide.js';
+import { createSlide, direction, galaxyWarning, velocityText, zText } from './doppler_slide.js';
 
 const MAX_CANDIDATES = 6;
 // Faster than this along the line of sight, and a star has almost certainly been given the wrong rest line
@@ -22,7 +22,8 @@ const NEARER_LINE_KMS = 100;
 // How far from the clicked wavelength a rest line can be, by kind of object: depends only on the kind
 function restWindow(entity, centre) {
     switch (entity.kind) {
-    case 'galaxy': return { lo: centre / 1.32, hi: centre * 1.012 };
+    case 'galaxy':
+    case 'nucleus': return { lo: centre / 1.32, hi: centre * 1.012 };
     case 'quasar': return { lo: centre / 5.5, hi: centre * 1.02 };
     case 'supernova': return { lo: centre * 0.97, hi: centre * 1.07 };
     default: return { lo: centre * 0.992, hi: centre * 1.008 };
@@ -58,7 +59,7 @@ function candidatesFor(api, centre) {
     const reference = api.getReference();
     take(reference && reference.lines, true);
     const list = [...seen.values()];
-    const far = entity.kind === 'galaxy' || entity.kind === 'quasar';
+    const far = entity.kind === 'galaxy' || entity.kind === 'quasar' || entity.kind === 'nucleus';
     list.sort((a, b) => (far ? b.strength - a.strength : Math.abs(a.line.rest_nm - centre) - Math.abs(b.line.rest_nm - centre)));
     return list.slice(0, MAX_CANDIDATES);
 }
@@ -203,6 +204,8 @@ function mountExact(container, api, isActive) {
     // A close pair of lines is easy to swap, and the tiny uncertainty on the answer says nothing about that. On a star, a
     // nearer line than the one chosen, or a speed no star has, is worth saying out loud.
     function wrongLineWarning(v, beyond) {
+        const galaxy = !beyond && galaxyWarning(api.resolved.entity, v / C_KMS);
+        if (galaxy) return el('p', { class: 'spectro-tool-warning', text: galaxy });
         if (beyond || !found || !rest || !isStar(api.resolved.entity)) return null;
         const faster = Math.abs(v) > STAR_SPEED_LIMIT_KMS;
         const nearest = candidatesFor(api, found.centre_nm)[0];
@@ -232,7 +235,7 @@ function mountExact(container, api, isActive) {
             // The way on comes before the explaining, so that it's on screen along with the answer
             actionRow(
                 diagramLink('hubble'),
-                hasTab('hubble') && api.resolved.entity.kind === 'galaxy' && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Photometer next') : null,
+                hasTab('hubble') && api.resolved.entity.kind === 'galaxy' && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Brightness next') : null,
                 keyboardUsed ? el('button', { type: 'button', class: 'spectro-tool-next', text: 'Measure another line', onclick: () => plot.canvas.focus() }) : null
             ),
             termLine(beyond ? shift : `${shift}, so z = Δλ ÷ λ₀ = ${zText(combined.z, combined.err_z)}, and v = cz`, seen),

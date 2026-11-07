@@ -11,6 +11,7 @@ import { componentStates, figureEightPath, planetOrbitCentre } from '../../data/
 import { memberDirection } from '../layers/sky_tangent.js';
 import { cometsOf, cometOrbit } from './comet_orbits.js';
 import { rocheShare } from '../../data/dynamics.js';
+import { nucleusSystemOf, supermassiveRadius, CLOSE_STAR_SHARE, CLOSE_STAR_FLOOR_PX } from './nucleus_model.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -56,9 +57,12 @@ function memberSystem(member, cluster) {
     return system;
 }
 
-// What a resolved selection opens: its body, or for a cluster member the member. Null if there's nothing to visit.
+// What a resolved selection opens: its body, or for a cluster member the member, or for a galaxy's black hole or one of
+// the stars round it, that hole (render/system/nucleus_model.js). Null if there's nothing to visit.
 export function systemBodyOf(resolved) {
     if (!resolved) return null;
+    const nucleus = nucleusSystemOf(resolved);
+    if (nucleus) return nucleus;
     const body = resolved.path === 'member' ? memberSystem(resolved.entity, resolved.body) : resolved.body;
     return canDraw(body) ? body : null;
 }
@@ -245,7 +249,8 @@ export function buildModel(body) {
     model.aMin = aMin;
     model.aMax = aMax;
     model.logUseful = aMax / aMin > 1.5;
-    model.startLog = aMax / aMin > 300;   // True scale would hide the inner parts: the double-double
+    // True scale would hide the inner parts: the double-double, and a galaxy's black hole among its stars
+    model.startLog = aMax / aMin > 300 || body.kind === 'nucleus';
     const a0 = aMin / 2;
     const denom = Math.log1p(aMax / a0);
     model.logRadius = (a) => FRAME * Math.log1p(a / a0) / (denom || 1);
@@ -301,11 +306,13 @@ export function planetReach(planet) {
 // Star and planet sizes at each end of the log mix, worked out once. A star never covers its own innermost orbit or its
 // partner, and a planet starts out well under the size of its star.
 function computeSizes(model) {
+    const nucleus = model.body.kind === 'nucleus';
     const atMix = (m) => {
         const out = model.stars.map((s) => {
             if (model.lone) return loneRadius(s.star);
+            if (s.star.supermassive) return supermassiveRadius(model, ringRadius, FRAME, m);
             // A hole's radius is its disc's edge, and most of the disc is faint: it needs more room to be seen
-            const own = s.star.stage === 'black_hole' ? HOLE_DISC : 1;
+            const own = s.star.stage === 'black_hole' ? HOLE_DISC : nucleus ? CLOSE_STAR_SHARE : 1;
             const base = own * (SIZE_TRUE + (SIZE_LOG - SIZE_TRUE) * m) * compressedSize(s.star.radius_Rsun);
             const real = (1 - m) * s.star.radius_Rsun * RSUN_AU * model.unit;
             return Math.max(base, real);
@@ -347,6 +354,7 @@ function computeSizes(model) {
     // The smallest either may be on screen, in pixels of radius, so that everything is still something to click
     model.starFloorPx = model.stars.map((s) => {
         if (s.star.stage === 'black_hole') return 22;
+        if (nucleus) return CLOSE_STAR_FLOOR_PX;
         return Math.max(6, Math.min(44, 9 * compressedSize(s.star.radius_Rsun)));
     });
     model.planetFloorPx = model.planets.map((e) => {

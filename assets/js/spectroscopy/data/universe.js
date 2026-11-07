@@ -12,6 +12,7 @@
 //   deep: true marks the further, fainter bodies added behind the first sky (data/quotas.js SKY_SCALE). They rank for
 //   depth among their own kind's (core/depth.js); nothing else need treat them differently.
 //   A star or multi-star body may also have comets[], comets of its own (data/exocomets.js), which resolve with path 'comet'.
+//   A galaxy may have nucleus, its central black hole (data/nuclei.js), which resolves with path 'nucleus'.
 //   Radial velocities come from data/motions.js, once the sky is laid out.
 //
 // generateUniverse(seed) -> { seed, bodies[], cometTailAz, cometSun, counts, resolve(code), allCodes() }
@@ -34,6 +35,7 @@ import { unseal } from './sealed.js';
 import { bandStrengths } from './band_table.js';
 import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion } from './quotas.js';
 import { assignVelocities } from './motions.js';
+import { addNuclei, nucleusEntities } from './nuclei.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
@@ -56,6 +58,7 @@ const DEEP_SLOPE = 0.05;
 const DEEP_FAINTEST = { O: 13, B: 13, A: 13.5, F: 14.5, G: 15, K: 16, M: 17.2, WD: 17.2, GIANT: 13 };
 const DEEP_MULTI_FAINTEST = 15;
 const DEEP_FARTHEST_PC = 12000;
+const TARGET_ALT_MIN = 20;      // In a sky other than the standard one, the target's host still sits well clear of the horizon
 
 function deepTargetMag(rng, faintest) {
     const top = 10 ** (DEEP_SLOPE * (faintest - DEEP_BRIGHTEST_MAG));
@@ -270,7 +273,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
             addToTally(tally, spec.type);
             return planetFromSpec(r, spec, ctx);
         });
-        add(body, 'even', { fixed: target.host.sky, clear_deg: target.host.clear_deg });
+        // Its place is chosen for the standard sky. In any other, it is placed like everything else, so that no star sits
+        // still while the rest move when the seed is changed: that would give it away.
+        const where = seed === DEFAULT_SEED ? { fixed: target.host.sky } : { altMin: TARGET_ALT_MIN };
+        add(body, 'even', { ...where, clear_deg: target.host.clear_deg });
     }
     sealed.decoys.forEach((decoy, i) => {
         const r = fixedStream.fork(`decoy:${i}`);
@@ -490,6 +496,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const fixedMotion = new Set([target.host.code, ...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK']);
     assignVelocities(sky, root.fork('motions'), fixedMotion);
 
+    // ---------- Black holes at the centres of galaxies ----------
+    // A stream and codes of their own, drawn after every other code, and after the motions they copy (data/nuclei.js)
+    addNuclei(root.fork('nuclei'), sky, coder('nuclei'));
+
     const all = sky.concat(home);
 
     // Last of all, because band strengths read every other field. Band strengths are cached by temperature, so the first
@@ -516,6 +526,8 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     bandsOf(all.filter((body) => firstSet.has(body) || body.kind === 'home_planet'));
     bandsOf(second);
     all.forEach((body) => (body.comets || []).forEach((comet) => { comet.bands = bandStrengths(comet); }));
+    // After everything else's, so that nothing they put in the band table's caches can change anyone else's
+    all.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
 
     const byCode = new Map();
     const register = (entity, body, path) => byCode.set(entity.code, { entity, body, path });
@@ -525,6 +537,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         (body.comets || []).forEach((comet) => register(comet, body, 'comet'));
         (body.stars || []).forEach((star) => register(star, body, 'component'));
         if (body.black_hole) register(body.black_hole.companion, body, 'component');
+        if (body.nucleus) {
+            register(body.nucleus, body, 'nucleus');
+            body.nucleus.nucleus.stars.forEach((star) => register(star, body, 'component'));
+        }
         if (body.cluster) {
             body.cluster.members.forEach((member) => {
                 if (member.stars) {

@@ -4393,6 +4393,218 @@ details.description-area > summary::after {
 /* === end KEYS === */
 
 
+/* === UIPOLISH: four text sizes across the drawer, and small layout fixes. After KEYS, so these win over it === */
+/* 12 px for labels and small print, 13.5 px for controls and a tool's words, 15 px for reading, about 17 px for titles and
+   answers. Glyph buttons such as + and − keep their own. The site sets every panel paragraph at 0.85em (12.75 px here):
+   the first rule lifts that to 13.5 at the same weight, so anything sized on purpose still wins. */
+:where(.spectro-sim) .sim-controls-content p {
+    font-size: 13.5px;
+}
+
+#simulationControlsPanel .spectro-hands-ends,
+#simulationControlsPanel .spectro-page kbd,
+#simulationControlsPanel .spectro-ov-stat dt {
+    font-size: 12px;
+}
+
+#simulationControlsPanel .spectro-spectrum button.spectro-flat:not(.spectro-glyph):not(.spectro-tool-chip),
+#simulationControlsPanel .spectro-pinned button.spectro-play,
+#simulationControlsPanel button.spectro-play,
+#simulationControlsPanel button.spectro-tool-next,
+#simulationControlsPanel .spectro-spectrum button.spectro-hands-mode,
+#simulationControlsPanel .spectro-spectrum button.spectro-hands-chip,
+#simulationControlsPanel .spectro-band-chip-name,
+#simulationControlsPanel .spectro-fig-working,
+#simulationControlsPanel .spectro-fig-tab .spectro-fig-card-status,
+#simulationControlsPanel .spectro-fig-tab button.spectro-fig-button,
+#simulationControlsPanel .spectro-fig-tab button.spectro-fig-link,
+#simulationControlsPanel .spectro-fig-tab button.spectro-fig-toggle,
+#simulationControlsPanel .spectro-fig-cell-value,
+#simulationControlsPanel .spectro-ov-status {
+    font-size: 13.5px;
+}
+
+#simulationControlsPanel .spectro-info p,
+#simulationControlsPanel .spectro-info-section h4,
+#simulationControlsPanel .spectro-fact,
+#simulationControlsPanel .spectro-next,
+#simulationControlsPanel .spectro-fig-tab .spectro-fig-card-title,
+#simulationControlsPanel .spectro-ov-stat dd,
+#simulationControlsPanel .spectro-page p,
+#simulationControlsPanel .spectro-page li,
+#simulationControlsPanel .spectro-page dt,
+#simulationControlsPanel .spectro-page dd {
+    font-size: 15px;
+}
+
+/* The reference's row, under the object's spectrum: a little taller than the object's header, as a row of real controls,
+   with Overlay and Stacked as a pair of words, the one on show marked */
+.spectro-ref-arrange {
+    display: flex;
+    align-items: center;
+    margin-right: 6px;
+}
+
+.spectro-pane-ref.is-none .spectro-ref-arrange {
+    display: none;
+}
+
+@media (pointer: fine) {
+    .spectro-pane-ref .spectro-spectrum input.spectro-ref-input,
+    .spectro-spectrum .spectro-pane-ref input.spectro-ref-input,
+    .spectro-spectrum .spectro-pane-ref button.spectro-ref-open,
+    .spectro-pane-ref .spectro-ref-flat button.spectro-square {
+        height: 30px;
+    }
+}
+
+#simulationControlsPanel .spectro-spectrum .spectro-pane-ref input.spectro-ref-input {
+    font-size: 13.5px;
+}
+
+/* In a tight row the name gives way, never the arrows, and never under its own caret */
+.spectro-pane-ref .spectro-ref-flat button.spectro-square {
+    flex: 0 0 auto;
+}
+
+.spectro-pane-ref .spectro-ref-flat .spectro-ref-box {
+    min-width: 5em;
+}
+
+.spectro-spectrum .spectro-pane-ref input.spectro-ref-input {
+    min-width: 5em;
+}
+
+/* A narrow drawer: the reference and its arrows on one line, how it's shown on the next */
+.spectro-pane-ref.is-two-lines {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 0;
+}
+
+.spectro-pane-ref.is-two-lines .spectro-ref-flat {
+    flex: 1 0 100%;
+}
+
+.spectro-pane-ref.is-two-lines .spectro-ref-opts {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+}
+
+/* On a tall screen one spectrum needs no more height than a laptop gives it: the plot stops growing, and the room under it is
+   where a tool opens, so opening one doesn't shrink the plot. Stacked, the two panes share the full height. The dock stays at
+   the bottom. */
+.spectro-instrument:not(.is-stacked) .spectro-head {
+    max-height: 470px;
+}
+
+.spectro-instrument .spectro-tool-bar {
+    margin-top: auto;
+}
+
+/* A narrow drawer keeps every control in its row by drawing the words closer together. The range buttons are never let wrap
+   onto a second line, which would fall under the object's header: on the narrowest phones, where 44 px targets can't all fit,
+   the row scrolls sideways instead. */
+@container (max-width: 400px) {
+    #simulationControlsPanel .spectro-spectrum .spectro-pane-ref button.spectro-flat,
+    #simulationControlsPanel .spectro-spectrum .spectro-range button.spectro-flat {
+        padding: 0 4px;
+    }
+
+    .spectro-ref-arrange {
+        margin-right: 2px;
+    }
+}
+
+@container (max-width: 372px) {
+    .spectro-presets {
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+}
+
+/* The dock: a name is never squeezed into the next one. When there are more tools than fit in a narrow drawer, as on a triple
+   star, they go on two rows. */
+#simulationControlsPanel .spectro-tool-bar {
+    flex-wrap: wrap;
+}
+
+#simulationControlsPanel .spectro-tool-bar button.spectro-flat:not(.spectro-help-button) {
+    flex: 1 0 auto;
+    min-width: min-content;
+}
+
+@media (pointer: coarse) {
+    #simulationControlsPanel .spectro-tool-bar button.spectro-flat:not(.spectro-help-button) {
+        flex: 1 0 44px;
+        min-width: min-content;
+    }
+}
+
+/* A note under the plot, such as what a molecule reference can't show, keeps the same edge as everything else there: the
+   site's rule for panel paragraphs would otherwise take its margins away */
+.spectro-sim .spectro-area > p {
+    margin: 0.4em 12px;
+}
+
+/* Layers: the visited count comes and goes with its switch, so it sits under the last switch, where nothing below it is a
+   switch to be reached for */
+.spectro-sim .spectro-layers-menu .spectro-visited-line {
+    order: 1;
+    margin-top: 0;
+}
+/* === end UIPOLISH === */
+
+
+/* === UNIVERSE: the sky's seed in Settings, and the note on a custom sky === */
+.spectro-seed-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.spectro-seed-row input {
+    flex: 1 1 7em;
+    min-width: 0;
+    height: 44px;
+    padding: 0 0.75em;
+    font: inherit;
+    font-size: 0.95em;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+/* Words, not the site's big capitals, so the row stays one row */
+#simulationControlsPanel .spectro-seed-row button {
+    flex: 0 0 auto;
+    width: auto;
+    height: 44px;
+    padding: 0 0.85em;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: normal;
+    text-transform: none;
+    line-height: 1;
+}
+
+.spectro-seed-row button[hidden] {
+    display: none;
+}
+
+.spectro-sky-tag {
+    margin-left: 0.6em;
+    font-weight: 400;
+    opacity: 0.75;
+}
+/* === end UNIVERSE === */
+
+
 /* === OVERLAYS: labels and markers over the sky === */
 /* Drawn over the sky, under the bars; drags go straight through it to the canvas */
 #spectroOverlay > .spectro-overlay-canvas {

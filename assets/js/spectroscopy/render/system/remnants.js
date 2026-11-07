@@ -185,9 +185,15 @@ function holeTextures() {
 
 const quadGeometry = new THREE.PlaneGeometry(2, 2);
 
+// opts: { seed, quality, jets, glow, flow, jetScale }. glow scales the disc's light, flow how fast its gas swirls round, and
+// jetScale the jets' length in the hole's radii: a galaxy's giant hole has a slower disc, dim if it's starved, and longer jets.
 export function createHole(starData, opts = {}) {
     const rng = new Rng(hashString(opts.seed || 'hole'));
     const { tRay, tEnd, tBody } = holeTextures();
+    const glow = opts.glow ?? 1;
+    const flow = opts.flow ?? 1;
+    const jetScale = opts.jetScale ?? 6;
+    const twinkle = flow === 1 ? sharedUniforms.uTwinkle : { value: sharedUniforms.uTwinkle.value * flow };
     const material = new THREE.ShaderMaterial({
         toneMapped: false,
         transparent: true,
@@ -200,7 +206,7 @@ export function createHole(starData, opts = {}) {
         fragmentShader: HOLE_FRAGMENT,
         uniforms: {
             uTime: sharedUniforms.uTime,
-            uTwinkle: sharedUniforms.uTwinkle,
+            uTwinkle: twinkle,
             tRay: { value: tRay },
             tEnd: { value: tEnd },
             tBody: { value: tBody },
@@ -248,6 +254,7 @@ export function createHole(starData, opts = {}) {
         group,
         look: null,
         radius: 1,
+        normal,                 // The disc's axis, in the system's own axes, for anything that must line up with it
         setRadius(r) {
             api.radius = r;
             quad.scale.setScalar((r * QUAD_M) / R_OUT);
@@ -262,7 +269,7 @@ export function createHole(starData, opts = {}) {
                 x += w[b] * HOLE_DISC[b][0];
                 y += w[b] * HOLE_DISC[b][1];
             }
-            material.uniforms.uBandDisc.value.set(x, y);
+            material.uniforms.uBandDisc.value.set(x * glow, y * glow);
             const { tint, share } = falseTint(w, tintOut);
             material.uniforms.uBandTint.value.set(tint[0], tint[1], tint[2], share);
             if (jets) jets.setColour(bandRgb(w, [0, 0, 0], JET_BANDS, jetRgb));
@@ -276,6 +283,7 @@ export function createHole(starData, opts = {}) {
         update(s) {
             quad.quaternion.copy(s.camera.getWorldQuaternion(qCam));
             const u = material.uniforms;
+            if (twinkle !== sharedUniforms.uTwinkle) twinkle.value = sharedUniforms.uTwinkle.value * flow;
             u.uReveal.value = s.reveal;
             group.visible = s.reveal > 0.001;
             const pxPerM = Math.max(0.05, (s.pxRadius * (s.dpr || 1)) / R_OUT);
@@ -285,7 +293,7 @@ export function createHole(starData, opts = {}) {
             u.uN.value.copy(normal).applyMatrix3(rot);
             u.uE1.value.copy(e1).applyMatrix3(rot);
             u.uE2.value.copy(e2).applyMatrix3(rot);
-            if (jets) jets.update({ dt: s.dt, reveal: s.reveal, reduceMotion: s.reduceMotion, scale: api.radius * 6 });
+            if (jets) jets.update({ dt: s.dt, reveal: s.reveal, reduceMotion: s.reduceMotion, scale: api.radius * jetScale });
         },
         dispose() {
             material.dispose();
