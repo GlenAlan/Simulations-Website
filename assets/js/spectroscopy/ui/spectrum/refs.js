@@ -1,10 +1,12 @@
 // The reference picker: one grouped, searchable list (spec 10.3), a black-body temperature slider, a slider that
 // Doppler-shifts the reference to line it up with the object, and the line labels switch.
 //
-//   const picker = createRefPicker(container, { onChange(state), onLabels(on), onOpenChange(open) })
+//   const picker = createRefPicker(container, { onChange(state), onLabels(on), onOpenChange(open), onFrame(lo, hi) })
 //   picker.state() -> { id, item, T, z, shift_kms, labels }   item is null for "No reference"
 //   picker.setEntity(resolved)   sets the shift slider's range for this kind of object and zeroes it
-//   picker.choose(id), picker.setShiftZ(z), picker.dispose()
+//   picker.setView(lo, hi)       the range on show: a reference with a range of its own offers to go there when it's elsewhere
+//   picker.setNote(text)         a note under the list, for what the reference's spectrum says about itself
+//   picker.choose(id), picker.setTemperature(T), picker.setShiftZ(z), picker.dispose()
 //
 // The list is a combobox over a listbox rather than a native select, because a select's rows can't be made 44 px
 // tall on a desktop and can't be filtered. It opens in place, under the plot, so the plot stays on screen; arrow keys
@@ -15,8 +17,6 @@ import { C_KMS, wienPeakNm } from '../../core/phys.js';
 import { withCommas, wavelength } from '../../core/format.js';
 
 const NONE = { id: 'none', label: 'No reference', kind: 'none' };
-const T_MIN = 1000;
-const T_MAX = 50000;
 let nextId = 0;
 
 function norm(text) {
@@ -43,14 +43,14 @@ function make(tag, props = {}, children = []) {
 }
 
 // Temperatures are far apart at the hot end, so the slider is logarithmic and the value is shown to 3 figures
-function sliderToT(s) {
-    const T = T_MIN * (T_MAX / T_MIN) ** (s / 1000);
+function sliderToT(s, min, max) {
+    const T = min * (max / min) ** (s / 1000);
     const step = T < 10000 ? 10 : 100;
-    return Math.min(T_MAX, Math.round(T / step) * step);
+    return Math.min(max, Math.round(T / step) * step);
 }
 
-function tToSlider(T) {
-    return Math.round((1000 * Math.log(T / T_MIN)) / Math.log(T_MAX / T_MIN));
+function tToSlider(T, min, max) {
+    return Math.round((1000 * Math.log(T / min)) / Math.log(max / min));
 }
 
 // How far the shift slider reaches: enough for the object's kind, in the unit that suits it. Depends only on the kind,
@@ -101,17 +101,23 @@ function repeating(button, step) {
     button.addEventListener('click', (e) => { if (e.detail === 0) step(); });
 }
 
-export function createRefPicker(container, { onChange = () => {}, onLabels = () => {}, onOpenChange = () => {} } = {}) {
+export function createRefPicker(container, { onChange = () => {}, onLabels = () => {}, onOpenChange = () => {}, onFrame = () => {} } = {}) {
     const uid = `spectroRef${++nextId}`;
 
     const allItems = [];
     REFERENCE_GROUPS.forEach((group) => {
-        group.items.forEach((item) => allItems.push({ item, group, text: norm(`${item.label} ${group.label} ${item.species ?? ''} ${item.id} ${item.keywords ?? ''}`) }));
+        group.items.forEach((item) => {
+            const words = [item.label, group.label, item.species, item.id, ...(item.keywords || [])];
+            allItems.push({ item, group, text: norm(words.filter(Boolean).join(' ')) });
+        });
     });
+    const blackBody = (allItems.find((entry) => entry.item.kind === 'blackbody') || {}).item || {};
+    const T_MIN = blackBody.T_min_K ?? 1000;
+    const T_MAX = blackBody.T_max_K ?? 50000;
 
     const state = {
         id: allItems.length ? allItems[0].item.id : NONE.id,
-        T: 5800,
+        T: blackBody.T_default_K ?? 5800,
         z: 0,
         labels: false
     };
@@ -146,7 +152,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
 
     const tValue = make('span', { class: 'spectro-value' });
     const tLabel = make('label', { htmlFor: `${uid}T` }, [document.createTextNode('Black-body temperature: '), tValue]);
-    const tSlider = make('input', { type: 'range', id: `${uid}T`, min: 0, max: 1000, step: 1, value: tToSlider(state.T) });
+    const tSlider = make('input', { type: 'range', id: `${uid}T`, min: 0, max: 1000, step: 1, value: tToSlider(state.T, T_MIN, T_MAX) });
     const tRow = make('div', { class: 'spectro-ref-slider', hidden: true }, [tLabel, tSlider]);
 
     const labelsInput = make('input', { type: 'checkbox', id: `${uid}Labels` });
@@ -166,7 +172,10 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
     const shiftFoot = make('div', { class: 'spectro-shift-foot' }, [shiftValue, shiftReset]);
     const shiftDetails = make('details', { class: 'sim-controls-more spectro-more' }, [shiftSummary, shiftNote, shiftRow, shiftFoot]);
 
-    const root = make('div', { class: 'spectro-ref' }, [label, row, list, status, tRow, labelsRow, shiftDetails]);
+    const frameButton = make('button', { type: 'button', class: 'spectro-text-button spectro-ref-frame', hidden: true });
+    const refNote = make('p', { class: 'spectro-hint', hidden: true });
+
+    const root = make('div', { class: 'spectro-ref' }, [label, row, list, status, frameButton, refNote, tRow, labelsRow, shiftDetails]);
     container.appendChild(root);
 
     // ---------- The list ----------
@@ -179,7 +188,30 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
 
     function emit() {
         onChange(api.state());
+        syncFrame();
     }
+
+    // ---------- A reference with a range of its own offers to go there ----------
+
+    let view = null;
+    let frameTarget = null;
+
+    function syncFrame() {
+        const item = itemOf(state.id);
+        const shown = item && item.lo_nm && item.hi_nm && view;
+        const lo = shown ? item.lo_nm * (1 + state.z) : 0;
+        const hi = shown ? item.hi_nm * (1 + state.z) : 0;
+        const elsewhere = !!shown && (view.hi < lo || view.lo > hi);
+        frameTarget = elsewhere ? [lo, hi] : null;
+        frameButton.hidden = !elsewhere;
+        if (elsewhere) {
+            frameButton.textContent = `Show its lines: ${wavelength(lo, 0)} to ${wavelength(hi, 0)}`;
+        }
+    }
+
+    frameButton.addEventListener('click', () => {
+        if (frameTarget) onFrame(frameTarget[0], frameTarget[1]);
+    });
 
     function currentLabel() {
         const item = itemOf(state.id);
@@ -406,7 +438,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
     }
 
     tSlider.addEventListener('input', () => {
-        state.T = sliderToT(Number(tSlider.value));
+        state.T = sliderToT(Number(tSlider.value), T_MIN, T_MAX);
         syncT();
         emit();
     });
@@ -490,6 +522,14 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
             applySettings();
             syncShift();
         },
+        setView(lo, hi) {
+            view = { lo, hi };
+            syncFrame();
+        },
+        setNote(text) {
+            refNote.textContent = text || '';
+            refNote.hidden = !text;
+        },
         choose(id) {
             if (id !== NONE.id && !itemOf(id)) return false;
             close();
@@ -499,7 +539,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
         },
         setTemperature(T) {
             state.T = Math.min(T_MAX, Math.max(T_MIN, T));
-            tSlider.value = tToSlider(state.T);
+            tSlider.value = tToSlider(state.T, T_MIN, T_MAX);
             syncT();
             emit();
         },

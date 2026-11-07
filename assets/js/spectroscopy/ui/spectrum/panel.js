@@ -120,6 +120,9 @@ function createSpectrumPanel(app, container) {
         },
         onOpenChange(open) {
             root.classList.toggle('is-picking', open);
+        },
+        onFrame(lo, hi) {
+            plot.setRange(lo, hi, { animate: true });
         }
     });
     instrument.appendChild(note);
@@ -239,6 +242,7 @@ function createSpectrumPanel(app, container) {
             refShown = null;
             refKey = '';
             plot.setReference(null);
+            picker.setNote('');
             return;
         }
         const { lo, hi } = plot.getRange();
@@ -269,6 +273,7 @@ function createSpectrumPanel(app, container) {
         refZ = st.z;
         refShown = applyShift(refBase, st.z);
         plot.setReference(refShown, refName());
+        picker.setNote(st.item.note || refBase.note || '');
     }
 
     function updateNote() {
@@ -278,8 +283,9 @@ function createSpectrumPanel(app, container) {
     }
 
     let viewQueued = 0;
-    function onViewChanged() {
+    function onViewChanged(lo, hi) {
         syncPresets();
+        picker.setView(lo, hi);
         describeSoon();
         if (viewQueued) return;
         viewQueued = requestAnimationFrame(() => {
@@ -371,6 +377,7 @@ function createSpectrumPanel(app, container) {
         updateNote();
         computeReference(false);
         syncPresets();
+        picker.setView(frame.lo, frame.hi);
         describeSoon();
         syncTools(); // Last, so a tool's setEntity can read the spectrum
     }
