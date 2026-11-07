@@ -1785,8 +1785,10 @@ export function initSystemView(app) {
             : main === 'black_hole' ? 'a black hole and a star'
             : main === 'neutron_star' ? 'a neutron star'
                 : model.stars.length === 1 ? 'a star' : `${model.stars.length} stars`;
+        const nc = model.comets ? model.comets.length : 0;
+        const comets = nc === 0 ? '' : nc === 1 ? ' and a comet' : ` and ${nc} comets`;
         const planets = n === 0 ? 'no planets' : n === 1 ? 'one planet' : `${n} planets`;
-        live.textContent = `In system ${model.code}: ${stars} and ${planets}. Press Escape to go back to the sky.`;
+        live.textContent = `In system ${model.code}: ${stars}${comets ? ', ' : ' and '}${planets}${comets}. Press Escape to go back to the sky.`;
     }
 
     // ---------- Drawing ----------
@@ -2135,7 +2137,8 @@ export function initSystemView(app) {
             listeners.add(fn);
             return () => listeners.delete(fn);
         },
-        hasSystemView,
+        // Without graphics there's no view to go into, so nothing offers one
+        hasSystemView: (body) => !!engine.renderer && hasSystemView(body),
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
         _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
