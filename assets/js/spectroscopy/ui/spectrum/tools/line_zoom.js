@@ -8,6 +8,7 @@
 
 import { registerTool } from './index.js';
 import { app } from '../../../core/state.js';
+import { plusMinus } from '../../../core/format.js';
 import { C_KMS, R_ZOOM, R_OVERVIEW } from '../../../core/phys.js';
 import { lineWidth, lineZoomWindow, hasLongWings, suggestRotationLines, resolvingPower, rotationLimitKms, ROTATION_FWHM, FASTEST_SPIN_KMS } from '../../../spectra/measure.js';
 import { gridFor } from '../../../spectra/kernel.js';
@@ -468,8 +469,10 @@ function mount(container, api) {
         if (entity.kind === 'nucleus' && w.type === 'em') {
             // The gas's speed is about the line's whole width: the sum that weighs the hole uses it so
             const speed = Math.sqrt(Math.max(0, w.fwhm_kms ** 2 - w.instrument_kms ** 2));
+            // A broad line in a noisy spectrum can only be read roughly, and says so
+            const err = w.err_fwhm_kms > 0 && speed > 0 ? (w.err_fwhm_kms * w.fwhm_kms) / speed : 0;
             fill(result,
-                resultLine(`How fast the gas moves: about ${kmsText(speed)} km/s`, true),
+                resultLine(`How fast the gas moves: ${err ? plusMinus(speed, err) : `about ${kmsText(speed)}`} km/s`, true),
                 resultLine(`The line is ${kmsText(w.fwhm_kms)} km/s wide at half its height: v ≈ c × width ÷ λ₀`),
                 para(GAS_MEANS));
             return;
