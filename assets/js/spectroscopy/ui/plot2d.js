@@ -1,0 +1,657 @@
+// The parts the H-R diagram and the Hubble plot share, so the two read as one kind of figure: a crisp canvas that
+// follows the site's theme, scales and ticks, markers and labels, the card that asks for a missing measurement,
+// the list of plotted objects and the table under "Show as table". Nothing touches the page until it is called,
+// so the maths at the top can be tested under Node.
+
+import { blackBodyRGB } from '../core/phys.js';
+import { superscript } from '../core/format.js';
+import { recordMeasurement, getMeasurement } from '../core/measurements.js';
+
+// ---------- Maths ----------
+
+export function linearScale(d0, d1, r0, r1) {
+    const k = (r1 - r0) / (d1 - d0);
+    const scale = (x) => r0 + (x - d0) * k;
+    scale.invert = (p) => d0 + (p - r0) / k;
+    return scale;
+}
+
+export function logScale(d0, d1, r0, r1) {
+    const inner = linearScale(Math.log10(d0), Math.log10(d1), r0, r1);
+    const scale = (x) => inner(Math.log10(x));
+    scale.invert = (p) => 10 ** inner.invert(p);
+    return scale;
+}
+
+function niceStep(span, count) {
+    const raw = span / Math.max(1, count);
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const n = raw / mag;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
+
+// Round ticks from 1, 2 and 5 times a power of ten
+export function niceTicks(lo, hi, count = 5) {
+    const step = niceStep(hi - lo, count);
+    const ticks = [];
+    // Adding 0 turns a -0 into 0, which would otherwise print as "-0" on the axis
+    for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) ticks.push(k * step + 0);
+    return ticks;
+}
+
+// The next round number at or above x, for the top of an axis
+export function niceCeil(x, count = 5) {
+    const step = niceStep(x, count);
+    return Math.ceil(x / step - 1e-9) * step;
+}
+
+// "10⁻²", with 1 and 10 written plainly as a textbook would
+export function powerLabel(exponent) {
+    if (exponent === 0) return '1';
+    if (exponent === 1) return '10';
+    return `10${superscript(exponent)}`;
+}
+
+// Least squares through the origin: y = m x. The uncertainty in m comes from the scatter about the line.
+export function fitThroughOrigin(xs, ys) {
+    const n = xs.length;
+    let sxx = 0;
+    let sxy = 0;
+    for (let i = 0; i < n; i++) {
+        sxx += xs[i] * xs[i];
+        sxy += xs[i] * ys[i];
+    }
+    if (n === 0 || sxx === 0) return null;
+    const slope = sxy / sxx;
+    let rss = 0;
+    for (let i = 0; i < n; i++) rss += (ys[i] - slope * xs[i]) ** 2;
+    return { slope, err: n > 1 ? Math.sqrt(rss / (n - 1) / sxx) : null, n };
+}
+
+const FROM_SUPER = { '⁻': '-', '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+
+// What students type: "5,100", "3.2e-9", "3.2 × 10^-9", "3.2x10⁻⁹". NaN for anything else.
+export function parseNumber(text) {
+    let t = String(text).trim().toLowerCase().replace(/[−–]/g, '-').replace(/[,\s]/g, '');
+    t = t.replace(/[⁻⁰¹²³⁴-⁹]+/g, (m) => `^${[...m].map((c) => FROM_SUPER[c]).join('')}`);
+    t = t.replace(/[x×*·]10\^?([-+]?\d+)$/, 'e$1');
+    t = t.replace(/^10\^([-+]?\d+)$/, '1e$1');
+    if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/.test(t)) return NaN;
+    return Number(t);
+}
+
+// ---------- Colour ----------
+
+// A black body's colour as a CSS colour; blackBodyRGB is linear, so it is encoded for the screen here
+export function blackBodyCss(T) {
+    const encode = (v) => Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055));
+    const [r, g, b] = blackBodyRGB(T).map(encode);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+// The site's tokens, read from the page so both themes work without a second set of colours here
+export function readTheme(node) {
+    const style = getComputedStyle(node);
+    const token = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
+    return {
+        text: token('--color-text', '#585858'),
+        strong: token('--sim-value-color', '#2b2b2b'),
+        border: token('--color-border', '#c9c9c9'),
+        paper: token('--color-bg', '#ffffff'),
+        accent: token('--color-accent-active', '#ee5f81'),
+        font: style.fontFamily,
+        isDark: document.documentElement.classList.contains('dark-mode')
+    };
+}
+
+export function fontOf(theme, size = 12, weight = 400, style = '') {
+    return `${style} ${weight} ${size}px ${theme.font}`.trim();
+}
+
+// ---------- Small DOM helper ----------
+
+export function el(tag, props = {}, ...children) {
+    const node = document.createElement(tag);
+    Object.entries(props).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === false) return;
+        if (key === 'class') node.className = value;
+        else if (key === 'text') node.textContent = value;
+        else if (key === 'hidden') node.hidden = true;
+        else if (key.startsWith('on')) node.addEventListener(key.slice(2).toLowerCase(), value);
+        else node.setAttribute(key, value === true ? '' : value);
+    });
+    node.append(...children.filter((c) => c !== null && c !== undefined && c !== false));
+    return node;
+}
+
+// ---------- The figure ----------
+
+// A canvas at the display's real pixel density, sized from its container. draw(ctx, view) is given
+// { width, height, dpr, theme } in CSS pixels. It only draws while it has a width, so a hidden tab costs nothing;
+// onShow should call redraw.
+export function createFigure(parent, { label, height, draw }) {
+    const canvas = el('canvas', { role: 'img', 'aria-label': label });
+    const tip = el('div', { class: 'spectro-fig-tip', hidden: true, 'aria-hidden': 'true' });
+    const wrap = el('div', { class: 'spectro-fig' }, canvas, tip);
+    parent.appendChild(wrap);
+
+    const ctx = canvas.getContext('2d');
+    let width = 0;
+    let cssHeight = 0;
+    let dpr = 0;
+
+    function redraw() {
+        const w = wrap.clientWidth;
+        if (!w) return;
+        const h = Math.round(height(w));
+        const density = Math.min(window.devicePixelRatio || 1, 3);
+        if (w !== width || h !== cssHeight || density !== dpr) {
+            width = w;
+            cssHeight = h;
+            dpr = density;
+            canvas.width = Math.round(w * dpr);
+            canvas.height = Math.round(h * dpr);
+            canvas.style.height = `${h}px`;
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, cssHeight);
+        draw(ctx, { width, height: cssHeight, dpr, theme: readTheme(wrap) });
+    }
+
+    new ResizeObserver(() => { if (wrap.clientWidth !== width) redraw(); }).observe(wrap);
+    new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    return {
+        wrap,
+        canvas,
+        redraw,
+        setLabel(text) { canvas.setAttribute('aria-label', text); },
+        pointerPos(event) {
+            const box = canvas.getBoundingClientRect();
+            return { x: event.clientX - box.left, y: event.clientY - box.top, touch: event.pointerType === 'touch' };
+        },
+        showTip(x, y, lines) {
+            tip.replaceChildren(...lines.map((line) => el('span', { text: line })));
+            tip.hidden = false;
+            // Kept inside the figure, and on the far side of the point when near the right-hand edge
+            const flip = x > width - tip.offsetWidth - 18;
+            tip.style.left = `${flip ? x - tip.offsetWidth - 10 : x + 10}px`;
+            tip.style.top = `${Math.max(2, y - tip.offsetHeight - 8)}px`;
+        },
+        hideTip() { tip.hidden = true; }
+    };
+}
+
+// Paper, grid, frame, tick labels and axis titles. Ticks are { at (px), text, grid }; a label that would run into
+// the one before it is dropped, so a narrow drawer keeps fewer, readable ticks.
+export function drawFrame(ctx, rect, theme, { xTicks, yTicks, xTitle, yTitle }) {
+    const right = rect.x + rect.w;
+    const bottom = rect.y + rect.h;
+    ctx.fillStyle = theme.paper;
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = theme.border;
+    ctx.beginPath();
+    xTicks.forEach((t) => {
+        if (t.grid === false) return;
+        const x = Math.round(t.at) + 0.5;
+        ctx.moveTo(x, rect.y);
+        ctx.lineTo(x, bottom);
+    });
+    yTicks.forEach((t) => {
+        if (t.grid === false) return;
+        const y = Math.round(t.at) + 0.5;
+        ctx.moveTo(rect.x, y);
+        ctx.lineTo(right, y);
+    });
+    ctx.stroke();
+
+    ctx.font = fontOf(theme, 12);
+    ctx.fillStyle = theme.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    let lastEnd = -Infinity;
+    xTicks.forEach((t) => {
+        if (!t.text) return;
+        const half = ctx.measureText(t.text).width / 2;
+        if (t.at - half < lastEnd + 5 || t.at + half > right + 12) return;
+        ctx.fillText(t.text, t.at, bottom + 6);
+        lastEnd = t.at + half;
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    yTicks.forEach((t) => {
+        if (t.text) ctx.fillText(t.text, rect.x - 6, t.at);
+    });
+
+    ctx.strokeStyle = theme.text;
+    ctx.beginPath();
+    xTicks.forEach((t) => {
+        const x = Math.round(t.at) + 0.5;
+        ctx.moveTo(x, bottom);
+        ctx.lineTo(x, bottom + (t.text ? 4 : 2.5));
+    });
+    yTicks.forEach((t) => {
+        const y = Math.round(t.at) + 0.5;
+        ctx.moveTo(rect.x, y);
+        ctx.lineTo(rect.x - (t.text ? 4 : 2.5), y);
+    });
+    ctx.stroke();
+    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+
+    ctx.font = fontOf(theme, 12, 600);
+    ctx.fillStyle = theme.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    if (xTitle) ctx.fillText(xTitle, rect.x + rect.w / 2, bottom + 36);
+    if (yTitle) {
+        ctx.save();
+        ctx.translate(13, rect.y + rect.h / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(yTitle, 0, 0);
+        ctx.restore();
+    }
+}
+
+function markerPath(ctx, shape, x, y, r) {
+    ctx.beginPath();
+    if (shape === 'square') {
+        const s = r * 0.9;
+        ctx.rect(x - s, y - s, 2 * s, 2 * s);
+    } else if (shape === 'diamond') {
+        const s = r * 1.3;
+        ctx.moveTo(x, y - s);
+        ctx.lineTo(x + s, y);
+        ctx.lineTo(x, y + s);
+        ctx.lineTo(x - s, y);
+        ctx.closePath();
+    } else if (shape === 'triangle') {
+        const s = r * 1.3;
+        ctx.moveTo(x, y - s);
+        ctx.lineTo(x + s * 0.95, y + s * 0.72);
+        ctx.lineTo(x - s * 0.95, y + s * 0.72);
+        ctx.closePath();
+    } else {
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+    }
+}
+
+// fill may be null for a hollow marker
+export function drawMarker(ctx, shape, x, y, r, { fill, stroke, width = 1.25 }) {
+    markerPath(ctx, shape, x, y, r);
+    if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fill();
+    }
+    ctx.lineWidth = width;
+    ctx.strokeStyle = stroke;
+    ctx.stroke();
+}
+
+// The same shapes as small icons for the legend and lists
+export function markerIcon(shape, { fill = 'currentColor', hollow = false } = {}) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 14 14');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'spectro-fig-icon');
+    const paths = {
+        square: 'M2.5 2.5h9v9h-9z',
+        diamond: 'M7 1l6 6-6 6-6-6z',
+        triangle: 'M7 1.5l6 10.5H1z',
+        circle: 'M7 2a5 5 0 1 0 0 10a5 5 0 1 0 0-10z'
+    };
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', paths[shape] || paths.circle);
+    path.setAttribute('fill', hollow ? 'none' : fill);
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.3');
+    svg.appendChild(path);
+    return svg;
+}
+
+export function drawErrorBar(ctx, x0, y0, x1, y1, stroke) {
+    const cap = 3;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    if (x0 === x1) {
+        ctx.moveTo(x0 - cap, y0);
+        ctx.lineTo(x0 + cap, y0);
+        ctx.moveTo(x1 - cap, y1);
+        ctx.lineTo(x1 + cap, y1);
+    } else {
+        ctx.moveTo(x0, y0 - cap);
+        ctx.lineTo(x0, y0 + cap);
+        ctx.moveTo(x1, y1 - cap);
+        ctx.lineTo(x1, y1 + cap);
+    }
+    ctx.stroke();
+}
+
+// Text with a thin halo in the paper colour, so it stays readable over grid lines and bands
+export function haloText(ctx, text, x, y, theme, { align = 'left', baseline = 'middle', colour, font } = {}) {
+    ctx.font = font || fontOf(theme, 12);
+    ctx.textAlign = align;
+    ctx.textBaseline = baseline;
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = theme.paper;
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = colour || theme.text;
+    ctx.fillText(text, x, y);
+}
+
+// Finds a free spot for each point's label: right, left, above, below. A label with no free spot is left out; the
+// list and the tooltip still name that point.
+export function createLabelPlacer(ctx, rect) {
+    const taken = [];
+    const free = (box) => box.x >= rect.x + 1 && box.x + box.w <= rect.x + rect.w - 1
+        && box.y >= rect.y + 1 && box.y + box.h <= rect.y + rect.h - 1
+        && !taken.some((t) => box.x < t.x + t.w && box.x + box.w > t.x && box.y < t.y + t.h && box.y + box.h > t.y);
+    return {
+        // Marks a point's own marker as taken, so another point's label doesn't sit on it
+        reserve(x, y, r) { taken.push({ x: x - r, y: y - r, w: 2 * r, h: 2 * r }); },
+        reserveBox(x, y, w, h) { taken.push({ x, y, w, h }); },
+        place(text, x, y, r) {
+            const w = ctx.measureText(text).width + 2;
+            const h = 12;
+            const gap = r + 3;
+            const spots = [
+                { x: x + gap, y: y - h / 2 },
+                { x: x - gap - w, y: y - h / 2 },
+                { x: x - w / 2, y: y - gap - h },
+                { x: x - w / 2, y: y + gap }
+            ];
+            const spot = spots.find((s) => free({ ...s, w, h }));
+            if (!spot) return null;
+            taken.push({ ...spot, w, h });
+            return { x: spot.x + 1, y: spot.y + h / 2 };
+        }
+    };
+}
+
+// The closest point within reach of the pointer: a finger gets a bigger reach than a mouse
+export function nearestPoint(points, pos) {
+    const reach = pos.touch ? 22 : 11;
+    let best = null;
+    let bestD = reach * reach;
+    points.forEach((p) => {
+        if (p.px === undefined) return;
+        const d = (p.px - pos.x) ** 2 + (p.py - pos.y) ** 2;
+        if (d <= bestD) {
+            best = p;
+            bestD = d;
+        }
+    });
+    return best;
+}
+
+// ---------- The card that plots the current object, asking for whatever hasn't been measured yet ----------
+
+// fields: [{ key (in the measurement store), label, unit, scale (typed unit to stored unit), placeholder, hint,
+//            allowNegative, extra (cleared alongside a typed value, as a tool's uncertainty no longer applies),
+//            show(m) -> text of a measured value }]
+// options: title(code), status(code, m), working(code, m) -> lines or null, isPlotted(code), onAdd(code),
+//          onRemove(code), onHint(), addLabel, removeLabel
+export function createMeasureCard(parent, options) {
+    const { fields } = options;
+    const title = el('p', { class: 'spectro-fig-card-title' });
+    const status = el('p', { class: 'spectro-fig-card-status' });
+    const rows = el('div', { class: 'spectro-fig-rows', hidden: true });
+    const working = el('p', { class: 'spectro-fig-working', hidden: true });
+    const message = el('p', { class: 'spectro-fig-message', role: 'status', hidden: true });
+    const button = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main' });
+    const root = el('div', { class: 'spectro-fig-card' }, title, status, rows, working, message, button);
+    parent.appendChild(root);
+
+    const typedByCode = new Map();  // What this card was told by hand, so it can tell that from a tool's reading
+    const inputs = new Map();
+    let code = null;
+    let formOpen = false;
+    let committing = false;
+
+    const stored = () => getMeasurement(code) || {};
+    const has = (m, field) => Number.isFinite(m[field.key]);
+    const isTyped = (m, field) => {
+        const typed = typedByCode.get(code);
+        return Boolean(typed) && typed[field.key] !== undefined && typed[field.key] === m[field.key];
+    };
+
+    function commit(field, input, errorLine, tick) {
+        const text = input.value.trim();
+        const typed = typedByCode.get(code) || {};
+        if (text === '') {
+            errorLine.hidden = true;
+            input.removeAttribute('aria-invalid');
+            tick.hidden = true;
+            if (typed[field.key] !== undefined) {
+                delete typed[field.key];
+                committing = true;
+                recordMeasurement(code, { [field.key]: undefined, ...field.extra });
+                committing = false;
+            }
+            return true;
+        }
+        const value = parseNumber(text);
+        if (!Number.isFinite(value) || (!field.allowNegative && value <= 0)) {
+            input.setAttribute('aria-invalid', 'true');
+            errorLine.textContent = `Enter a ${field.allowNegative ? '' : 'positive '}number, such as ${field.placeholder}`;
+            errorLine.hidden = false;
+            tick.hidden = true;
+            return false;
+        }
+        input.removeAttribute('aria-invalid');
+        errorLine.hidden = true;
+        tick.hidden = false;
+        const stores = value * (field.scale || 1);
+        if (typed[field.key] === stores && stored()[field.key] === stores) return true;
+        typed[field.key] = stores;
+        typedByCode.set(code, typed);
+        committing = true;
+        recordMeasurement(code, { [field.key]: stores, ...field.extra });
+        committing = false;
+        return true;
+    }
+
+    function inputRow(field, m) {
+        const id = `spectroFig-${code}-${field.key}`;
+        const input = el('input', {
+            type: 'text',
+            id,
+            inputmode: field.allowNegative ? 'text' : 'decimal',
+            autocomplete: 'off',
+            placeholder: field.placeholder
+        });
+        if (has(m, field)) input.value = String(Number((m[field.key] / (field.scale || 1)).toPrecision(6)));
+        const tick = el('span', { class: 'spectro-fig-tick', hidden: !has(m, field) }, '✓ Accepted');
+        const errorLine = el('p', { class: 'spectro-fig-error', role: 'alert', hidden: true });
+        input.addEventListener('change', () => commit(field, input, errorLine, tick));
+        input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            if (commit(field, input, errorLine, tick) && !fields.some((f) => !has(stored(), f))) {
+                button.click();
+                button.focus();
+            }
+        });
+        inputs.set(field, { input, errorLine, tick });
+        return el('div', { class: 'spectro-fig-row spectro-fig-row-input' },
+            el('label', { for: id, text: field.label }),
+            el('span', { class: 'spectro-fig-inputline' }, input, el('span', { class: 'spectro-fig-unit', text: field.unit }), tick),
+            errorLine,
+            el('button', { type: 'button', class: 'spectro-fig-hint', text: field.hint, onclick: () => options.onHint(field) }));
+    }
+
+    function measuredRow(field, m) {
+        return el('div', { class: 'spectro-fig-row' },
+            el('span', { class: 'spectro-fig-rowlabel', text: field.label }),
+            el('span', { class: 'spectro-fig-rowvalue' }, el('span', { class: 'spectro-fig-tick', text: '✓' }), ` ${field.show(m)}`));
+    }
+
+    function missingRow(field) {
+        return el('div', { class: 'spectro-fig-row' },
+            el('span', { class: 'spectro-fig-rowlabel', text: field.label }),
+            el('span', { class: 'spectro-fig-rowvalue', text: 'Not measured yet' }));
+    }
+
+    function renderRows() {
+        const m = stored();
+        rows.replaceChildren();
+        inputs.clear();
+        rows.hidden = !formOpen && !fields.some((f) => has(m, f));
+        if (rows.hidden) return;
+        fields.forEach((field) => {
+            if (has(m, field) && !isTyped(m, field)) rows.appendChild(measuredRow(field, m));
+            else if (formOpen || has(m, field)) rows.appendChild(inputRow(field, m));
+            else rows.appendChild(missingRow(field));
+        });
+    }
+
+    function renderOutcome() {
+        const m = stored();
+        status.textContent = options.status(code, m);
+        status.hidden = !status.textContent;
+        const lines = options.working(code, m);
+        working.hidden = !lines;
+        working.replaceChildren(...(lines || []).map((line) => el('span', { text: line })));
+        const plotted = options.isPlotted(code);
+        button.textContent = plotted ? options.removeLabel : options.addLabel;
+        button.setAttribute('aria-label', `${plotted ? options.removeLabel : options.addLabel}: ${code}`);
+        // The "still needed" line stays true as values arrive
+        const missing = fields.filter((f) => !has(m, f));
+        if (plotted || missing.length === 0) message.hidden = true;
+        else message.textContent = stillNeeded(missing);
+    }
+
+    function stillNeeded(missing) {
+        return `Still needed: ${missing.map((f) => f.label.toLowerCase()).join(', ')}.`;
+    }
+
+    button.addEventListener('click', () => {
+        if (options.isPlotted(code)) {
+            options.onRemove(code);
+            return;
+        }
+        // A value still in its box counts, even if the box hasn't lost focus yet
+        const allGood = [...inputs.entries()].every(([field, { input, errorLine, tick }]) => commit(field, input, errorLine, tick));
+        if (!allGood) return;
+        const m = stored();
+        const missing = fields.filter((f) => !has(m, f));
+        if (missing.length === 0) {
+            options.onAdd(code);
+            return;
+        }
+        formOpen = true;
+        renderRows();
+        renderOutcome();
+        message.textContent = stillNeeded(missing);
+        message.hidden = false;
+        const first = inputs.get(missing[0]);
+        if (first) first.input.focus();
+    });
+
+    return {
+        root,
+        setCode(next, heading) {
+            if (next !== code) {
+                formOpen = false;
+                message.hidden = true;
+            }
+            code = next;
+            title.textContent = heading || next;
+            // A value being typed into this card leaves the boxes alone, so focus stays put
+            if (!committing) renderRows();
+            renderOutcome();
+        },
+        // Called when a measurement arrives
+        refresh() {
+            if (code === null) return;
+            if (!committing) renderRows();
+            renderOutcome();
+        },
+        setHidden(hidden) { root.hidden = hidden; }
+    };
+}
+
+// ---------- The list of plotted objects ----------
+
+// focusAfterLast() names what takes keyboard focus when the last row goes
+export function createPlottedList(parent, heading, focusAfterLast) {
+    const list = el('ul', { class: 'spectro-fig-list' });
+    const root = el('div', { class: 'spectro-fig-listgroup', hidden: true },
+        el('p', { class: 'sim-control-group-label', text: heading }), list);
+    parent.appendChild(root);
+    return {
+        // rows: [{ key, badge, icon, code, detail, current, onSelect, onRemove }]
+        update(rows) {
+            root.hidden = rows.length === 0;
+            const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+            list.replaceChildren(...rows.map((row) => el('li', { class: row.current ? 'is-current' : null },
+                el('span', { class: 'spectro-fig-badge' }, row.icon || null, row.badge ? el('span', { text: row.badge }) : null),
+                el('button', {
+                    type: 'button',
+                    class: 'spectro-fig-code',
+                    text: row.code,
+                    'data-key': `select:${row.key}`,
+                    'aria-label': `Select ${row.code}`,
+                    'aria-current': row.current ? 'true' : null,
+                    onclick: row.onSelect
+                }),
+                el('span', { class: 'spectro-fig-detail', text: row.detail }),
+                el('button', {
+                    type: 'button',
+                    class: 'spectro-fig-remove',
+                    text: '×',
+                    'data-key': `remove:${row.key}`,
+                    'aria-label': `Remove ${row.code} from the plot`,
+                    onclick: row.onRemove
+                }))));
+            if (focusedKey) {
+                const buttons = [...list.querySelectorAll('button')];
+                const next = buttons.find((b) => b.dataset.key === focusedKey) || buttons.find((b) => b.classList.contains('spectro-fig-remove'));
+                if (next) next.focus();
+                else focusAfterLast().focus();
+            }
+        }
+    };
+}
+
+// ---------- The table alternative ----------
+
+// A closed disclosure holding the same data as the canvas. rows() returns arrays of cells, each a string or
+// { button, label, onClick }. It's only built while it's open.
+export function createDataTable(parent, { label, columns, rows }) {
+    const table = el('table', { class: 'spectro-fig-table' });
+    const scroller = el('div', { class: 'spectro-fig-tablewrap', tabindex: '0', role: 'region', 'aria-label': label }, table);
+    const empty = el('p', { class: 'spectro-fig-card-status', text: 'Nothing plotted yet.', hidden: true });
+    const details = el('details', { class: 'sim-controls-more spectro-fig-more' }, el('summary', { text: 'Show as table' }), empty, scroller);
+    parent.appendChild(details);
+
+    function update() {
+        if (!details.open) return;
+        const data = rows();
+        empty.hidden = data.length > 0;
+        scroller.hidden = data.length === 0;
+        table.replaceChildren(
+            el('caption', { class: 'spectro-fig-sr', text: label }),
+            el('thead', {}, el('tr', {}, ...columns.map((c) => el('th', { scope: 'col', text: c })))),
+            el('tbody', {}, ...data.map((cells) => el('tr', {}, ...cells.map((cell) => el('td', {}, typeof cell === 'object' && cell
+                ? el('button', { type: 'button', class: 'spectro-fig-code', text: cell.button, 'aria-label': cell.label, onclick: cell.onClick })
+                : String(cell)))))));
+    }
+    details.addEventListener('toggle', update);
+    return { update, details };
+}
+
+// A row of on/off chips in the site's own style
+export function createChip(parent, id, label, onChange) {
+    const input = el('input', { type: 'checkbox', id, onchange: () => onChange(input.checked) });
+    parent.append(input, el('label', { for: id, text: label }));
+    return input;
+}
