@@ -83,13 +83,15 @@ export function curveAt(amp, T, nm) {
     return wienCurveAt({ T_K: T, amp }, nm);
 }
 
-// Fitting a whole curve by eye in the full range comes within a few per cent for stars cooler than about 32,000 K, measured
-// across the sky's stars. Hotter, the peak is off the short end and only a slope is left to match, which hardly changes with
-// temperature: an O6 star looks as good at 31,000 K as at 43,000 K.
+// The best fit of a whole curve in the full range comes within 2% for B to K stars and giants, measured across the sky's
+// stars. The coolest stars' molecular bands bite into the top of their light, so a fit to them runs about 5% cool. Hotter
+// than about 32,000 K, the peak is off the short end and only a slope is left to match, which hardly changes with
+// temperature: an O6 star looks as good at 31,000 K as at 43,000 K, and the hottest white dwarfs fit 20 to 30% cool.
 const PEAK_OFF_SCALE_K = 32000;
 export function fitError(T) {
-    if (T >= 2 * PEAK_OFF_SCALE_K) return 0.3 * T;
-    return (T >= PEAK_OFF_SCALE_K ? 0.2 : 0.05) * T;
+    if (T >= 50000) return 0.4 * T;
+    if (T >= PEAK_OFF_SCALE_K) return 0.2 * T;
+    return (T < 3500 ? 0.08 : 0.05) * T;
 }
 
 // ---------- A mark on the peak ----------
