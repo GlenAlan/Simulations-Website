@@ -6,9 +6,12 @@ import { DEFAULT_SEED, CODE_ALPHABET } from './rng.js';
 
 export const SEED_MAX_LENGTH = 32;
 
-// A seed as typed or read from a link: no control characters, runs of space made one, trimmed, and not too long
+// A seed as typed or read from a link: no control characters, runs of space made one, trimmed, and not too long. Cleaning
+// it again changes nothing, so a link made from a seed opens the same sky: the cut never leaves half of an emoji (a link
+// can't carry half of one) or a space at the end (the link's own cleaning would trim it off).
 export function cleanSeed(text) {
-    return String(text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, SEED_MAX_LENGTH);
+    return String(text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, SEED_MAX_LENGTH)
+        .replace(/[\ud800-\udbff]$/, '').trimEnd();
 }
 
 export function isDefaultSeed(seed) {
