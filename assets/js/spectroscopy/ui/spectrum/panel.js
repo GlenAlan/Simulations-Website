@@ -35,7 +35,7 @@ const FULL_RANGE = { lo: SPECTRUM_LO_NM, hi: SPECTRUM_HI_NM, R: R_OVERVIEW };
 const OVERVIEW_MIN_RATIO = 1.002;    // About 1.3 nm at Hα, which is 20 samples at overview resolution
 const ZOOM_MIN_RATIO = 1.0001;       // About 0.07 nm at Hα, which is 20 samples at line-zoom resolution
 const ZOOM_UPGRADE_RATIO = 1.08;     // Higher resolution only shows on screen once the view is this narrow
-const NO_SPECTRUM_NOTE = 'This object gives off too little light to record a spectrum in this range. Its Overview tab says what can be seen of it instead.';
+const NO_SPECTRUM_NOTE = 'This object gives off too little light to record a spectrum in this range. Its Info tab says what can be seen of it instead.';
 const RUNS_OFF_TOP = 'Part of this curve runs off the top';
 
 // The wavelength buttons, in two rows that never move: the wide views, then the views around one line

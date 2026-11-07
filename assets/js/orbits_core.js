@@ -28,10 +28,10 @@
  *   each is followed exactly round the body it is orbiting, so the swiftest doesn't hold back the rest. Just
  *   outside that limit, a star or gas giant stays whole, but each close pass takes energy out of the orbit, and it
  *   is drawn stretched by the tide (see "Tides on a body that stays whole").
- *   It also shows relativity without changing any path: starlight bent round a black hole ("Bent starlight"),
- *   and how slow the chosen body's clock runs (the relativity card).
+ *   It also shows how slow the chosen body's clock runs (the relativity card), which changes no path.
  *   Compact bodies close together also get the 2PN terms and gravitational-wave radiation reaction (2.5PN),
- *   so they spiral in, and plunge together at their innermost stable orbit. A card measures how far the
+ *   so they spiral in. Two black holes then plunge until their horizons meet; anything else that is compact falls
+ *   in at the innermost stable orbit. A card measures how far the
  *   chosen body's orbit turns each time round against Einstein's formula, and follows the waves.
  *
  * Crowded scenes (more than SWARM_N bodies, or made as a swarm) draw their light bodies as plain dots
@@ -44,6 +44,7 @@
  *   drawn positions (dx, dy) are turned about the frame's origin, so they are NOT world positions; a
  *   screen point goes back to the world through unturnPoint (see "Rotating frame" after syncFrameUi).
  *   The gravity well (the potential as a contour map) and the Lagrange points are drawn there too.
+ *   "Planets seen from Earth" adds a strip of the sky as seen from a planet (see "The sky from a planet").
  *
  * Each body's "primary" is the body it orbits: the most local heavier body that it is bound to and is
  *   inside the Hill sphere of (the Moon orbits Earth even though the Sun pulls it harder). Readouts, the
@@ -81,6 +82,7 @@
         showCharts: byId('showCharts'), chartsContainer: byId('charts-container'),
         fps: byId('fpsDisplay'),
         pop: byId('bodyPopover'), popDot: byId('popDot'), popName: byId('popName'), popClose: byId('popClose'),
+        popHead: byId('popHead'), popGrip: byId('popGrip'),
         popLock: byId('popLock'), popLockText: byId('popLockText'), popCircular: byId('popCircular'), popDelete: byId('popDelete'),
         popMass: byId('popMass'), popMassVal: byId('popMassVal'),
         popSpeed: byId('popSpeed'), popSpeedVal: byId('popSpeedVal'), popSpeedNote: byId('popSpeedNote'),
@@ -125,16 +127,20 @@
 
     // Sample bodies for the palette (and the scenes). Masses and radii are real (radii in km); the drawn
     // size is compressed unless realistic physics is on. The star remnants are drawn by their kind (a
-    // black hole stays a black hole whatever its mass). info: the palette chip's tooltip.
+    // black hole stays a black hole whatever its mass). info: the palette chip's tooltip; as: the kind of body it makes.
+    // (Sagittarius A*: 4.3 million suns, GRAVITY Collaboration 2022. The supergiant is Betelgeuse: 764 solar radii, 16.5
+    // to 19 solar masses, Joyce et al. 2020, ApJ 902, 63.)
     const KINDS = {
         sun: { name: 'Sun', m: 1, R: 696000, color: '#ffd166', info: 'our star' },
         dwarf: { name: 'Red dwarf', m: 0.3, R: 210000, color: '#ff8a5c', info: 'the most common kind of star' },
         redgiant: { name: 'Red giant', m: 1.2, R: 3.0e7, color: '#ff6a48', info: 'an old star swollen to 43 times the Sun\'s size' },
+        supergiant: { name: 'Red supergiant', chip: 'Supergiant', as: 'redgiant', m: 17, R: 764 * 696000, color: '#ff5238', info: 'a heavy star near its end: Betelgeuse is about 760 times the Sun\'s size' },
         bluegiant: { name: 'Blue giant', m: 15, R: 4.6e6, color: '#9cc3ff', info: 'a hot, heavy, short-lived star' },
         browndwarf: { name: 'Brown dwarf', m: 0.05, R: 70000, color: '#b86b7f', info: 'too light to shine like a star: 52 Jupiters' },
         whitedwarf: { name: 'White dwarf', m: 0.6, R: 8700, color: '#e9f0ff', info: 'the Earth-sized core left by a star like the Sun' },
         neutron: { name: 'Neutron star', m: 1.4, R: 12, color: '#a9d4ff', info: 'a city-sized core left by a supernova' },
         blackhole: { name: 'Black hole', m: 10, R: horizonKm(10), color: '#ffab5e', info: 'nothing that crosses its event horizon gets out' },
+        sgra: { name: 'Sagittarius A*', chip: 'Supermassive', as: 'blackhole', m: 4.3e6, R: horizonKm(4.3e6), color: '#ffab5e', info: 'the black hole at the centre of our galaxy' },
         jupiter: { name: 'Jupiter', m: MJUP, R: 69911, color: '#e0b48a', info: 'the largest planet' },
         earth: { name: 'Earth', m: MEARTH, R: 6371, color: '#7ecaf6', info: 'our planet' },
         mars: { name: 'Mars', m: 0.10745 * MEARTH, R: 3390, color: '#e8825e', info: 'a small rocky planet' },
@@ -147,17 +153,18 @@
         probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
     const PALETTE = [
-        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
-        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole'] },
-        { label: 'Planets and moons', kinds: ['jupiter', 'earth', 'mars', 'moon'] },
-        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
+        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'supergiant', 'bluegiant', 'browndwarf'] },
+        { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole', 'sgra'] },
+        { label: 'Planets', kinds: ['jupiter', 'neptune', 'earth', 'mars'] },
+        { label: 'Moons and small bodies', kinds: ['moon', 'comet', 'asteroid', 'custom'] }
     ];
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
-    // Values the mass and radius sliders snap to
-    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15];
+    // Values the mass and radius sliders snap to. The two heaviest: Sagittarius A* (GRAVITY Collaboration
+    // 2022, A&A 657, L12) and M87* (Event Horizon Telescope 2019, ApJL 875, L6).
+    const MASS_SNAPS = [KINDS.moon.m, KINDS.mars.m, MEARTH, MJUP, 0.05, 0.3, 0.6, 1, 1.4, 10, 15, 4.3e6, 6.5e9];
     const RADIUS_SNAPS = [12, 1737, 3390, 6371, 8700, 69911, 210000, 696000, 4.6e6, 3.0e7];
 
-    // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same scene every time)
+    // Repeatable pseudo-random numbers in [0, 1) for the crowded scenes (the same numbers from the same seed)
     function seeded(seed) {
         let s = seed;
         return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
@@ -175,7 +182,10 @@
     // Every scene starts with the centre of mass at rest at the origin. Tref: the scene's reference
     // period (6 s on screen at 1x); vref: the speed drawn as a medium arrow (default: the subject's
     // average orbital speed); tip: a line for the hint bar when the scene opens; swarm: its light bodies
-    // are drawn as a swarm (dots, no names) however few are left.
+    // are drawn as a swarm (dots, no names) however few are left; vary: the start changes a little each time
+    // (see "A touch of chance"): for a body, by its place in the list, how far each field of its entry may
+    // go either way (orbit: a, e, w, nu in their own units; at and v, each component; m and R, as a fraction),
+    // or a function from a seed to the whole list of bodies; rolls: the only seeds to use (else any).
     // ------------------------------------------------------------------
     const SCENES = {
         'sun-earth': {
@@ -211,7 +221,7 @@
         },
         moon: {
             units: 'au', Tref: 1, subject: 2, trail: 4, box: [-1.15, 1.15, -1.15, 1.15],
-            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from">the giant planet</button>: the star circles it.'),
+            tip: () => (frameId !== null && bodyById(frameId) && bodyById(frameId).name === 'Giant planet' ? 'The star circles the giant planet, as the Sun seems to circle Earth.' : 'View from <button type="button" class="orb-hint-btn orb-hint-view" title="Also in Settings, under View from or rotate">the giant planet</button>: the star circles it.'),
             // A heavy giant planet (31 Jupiters) so its moon can orbit at a visible distance: 0.065 AU is
             // 0.3 of its Hill radius, where the star hardly disturbs the moon.
             bodies: [
@@ -246,9 +256,16 @@
         // their real sizes, never touch). They fall together, swing through close encounters, and after
         // about 60 time units (9,500 years) the 4 and 5 leave as a tight binary and the 3 is flung out
         // (Szebehely & Peters 1967). Chaotic: the integrator's accuracy is enough to end as published.
+        // That is the exact start. A roll moves each star by up to 0.01 AU, about its own radius in a triangle 500 AU
+        // across, which is enough to change who is thrown out and when. rolls: of 300 tried, half had one star out within
+        // 20,000 years and a binary left, and these are the first 24 of them; in 29%, two stars touched and merged first.
+        // (Tried with realistic physics off. With it on, close passes cost energy, and stars often collide, exact start included.)
         pythagorean: {
             units: 'au', Tref: 1200, subject: 0, trail: 3, com: true, vref: 1.6, box: [-420, 330, -260, 360],
             tip: 'Three stars start at rest. Who gets thrown out? Then press Reverse.',
+            vary: { 0: { at: 0.01 }, 1: { at: 0.01 }, 2: { at: 0.01 } },
+            rolls: [931881178, 1881322046, 508018130, 1724848045, 51502358, 1519719012, 315046732, 1289095965, 122236591, 1344905852, 896632190, 207424203,
+                1889654510, 1144945885, 43675643, 1787382926, 1621423335, 1771043348, 856947885, 901348321, 966114771, 1238003908, 1659197999, 1779204498],
             bodies: [
                 { kind: 'sun', name: 'Star A', m: 3, R: 1.74e6, color: '#ffd166', at: [100, 300] },
                 { kind: 'sun', name: 'Star B', m: 4, R: 2.0e6, color: '#ff9a52', at: [-200, -100] },
@@ -272,7 +289,7 @@
         // realistic physics, general relativity turns the ellipse by 17.4 degrees an orbit (Einstein's
         // formula: 16.5; the 2PN terms add the rest), and gravitational waves shrink it by about 1 km an orbit.
         blackhole: {
-            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
+            units: 'km', time: 's', Tref: 0.3 / YEAR_S, subject: 1, trail: 5, realistic: true, relCard: true, box: [-3200, 1700, -1900, 1900].map((v) => v / AU_KM),
             tip: 'Relativity swings this orbit round into a rosette.',
             bodies: [
                 { kind: 'blackhole' },
@@ -282,10 +299,13 @@
         // A Sun-like star on an elliptical orbit round a 1,000-solar-mass black hole, coming within 9 million
         // km of it every 2.2 days: half its own Roche limit. With realistic physics the black hole's tides
         // tear it apart at the first close pass, and the pieces spread out round the orbit. (The hole is
-        // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.)
+        // much heavier than the star, as in real tidal disruptions, so its own wobble hardly matters.) A roll
+        // changes how close it comes, by up to 6% (still well inside the limit), the way its orbit points and, by 1%,
+        // its mass, which sets how it breaks (tearPattern).
         tde: {
-            units: 'au', time: 'd', Tref: 0.006, subject: 1, trail: 4, realistic: true, box: [-0.62, 0.3, -0.3, 0.3],
+            units: 'au', time: 'd', Tref: 0.006, noClock: true, subject: 1, trail: 4, realistic: true, box: [-0.62, 0.3, -0.3, 0.3],
             tip: 'At its first close pass, the black hole\'s tides tear this star apart.',
+            vary: { 1: { e: 0.01, w: 12, m: 0.01 } },
             bodies: [
                 { kind: 'blackhole', m: 1000, R: horizonKm(1000) },
                 { kind: 'sun', name: 'Star', orbit: { around: 0, a: 0.33, e: 0.818, w: 0, nu: 180 } }
@@ -306,10 +326,13 @@
         // They meet half a year in, at 30 km/s, about three times their escape speed, which throws off debris (Leinhardt
         // and Stewart 2012, see collisionOutcome). Most of the Earth is left, and what comes off goes round the Sun on
         // orbits of its own, all through the one point. (A planet is a very small target, so B's start is tuned with the
-        // integrator itself, to hit near the middle: a quarter of the way from the centre to the edge.)
+        // integrator itself, to hit near the middle: a quarter of the way from the centre to the edge.) A roll moves B's
+        // start by up to 0.0003 degrees, which is too small to see and still hits every time (at 0.0005 about one in ten
+        // misses), but it changes how squarely they meet; and its mass by 1%, which changes how the debris goes (throwDebris).
         collide: {
             units: 'au', Tref: 1, noClock: true, subject: 1, trail: 4, realistic: true, box: [-1.8, 2.9, -1.5, 1.5],
             tip: 'Two planets on crossing orbits. Watch what the crash throws out.',
+            vary: { 2: { nu: 0.0003, m: 0.01 } },
             bodies: [
                 { kind: 'sun' },
                 { kind: 'earth', name: 'Planet A', orbit: { around: 0, a: 1, e: 0, nu: -122.70422048691768 } },
@@ -325,7 +348,7 @@
         // asteroids pull on each other and on Jupiter as well, far too weakly to see.
         trojans: {
             units: 'au', Tref: 11.86, subject: 1, trail: 1, swarm: true, box: [-6.3, 6.3, -6.3, 6.3],
-            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in Settings, under View from">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
+            tip: () => (turn.on ? 'Jupiter herds 500 asteroids. Turning with it, the patterns hold still.' : '<button type="button" class="orb-hint-btn orb-hint-turn" title="Also in its menu, and in Settings under View from or rotate">Rotate with Jupiter</button>: the asteroids\' patterns hold still.'),
             bodies: (function () {
                 const rnd = seeded(11);
                 const list = [{ kind: 'sun' }, { kind: 'jupiter', orbit: { around: 0, a: 5.2026, e: 0.0484, w: 0, nu: 0 } }];
@@ -354,8 +377,10 @@
         // disc everything is in one plane, so they meet more often than in a real, thicker one.)
         moondisc: {
             units: 'km', Tref: 0.5 / DAYS_PER_YEAR, subject: 0, forceBody: 1, vref: 0.75, trail: 1, swarm: true, progress: true, box: [-50000, 50000, -50000, 50000].map((v) => v / AU_KM),
-            bodies: (function () {
-                const rnd = seeded(5);
+            get bodies() { return this.vary(5); },
+            // (each time a new draw of the same disc)
+            vary(seed) {
+                const rnd = seeded(seed);
                 const n = 400, mass = (2 * KINDS.moon.m) / n;
                 const R = Math.cbrt((3 * mass * MSUN_KG) / (4 * Math.PI * 3300)) / 1000;   // km, at the Moon's density
                 const list = [{ kind: 'earth' }];
@@ -365,14 +390,14 @@
                         orbit: { around: 0, a, e: 0.02 * rnd(), w: 360 * rnd(), nu: 360 * rnd() } });
                 }
                 return list;
-            })()
+            }
         },
         // The Sun and Mercury alone, with realistic physics: relativity turns Mercury's orbit forward by
         // 6 pi GM/(c^2 a (1 - e^2)) = 0.1035" each time round, 43" a century. (The other planets turn it by
         // about 532" a century more, as in "Inner planets": what Newton could explain; the 43" left over
         // was explained by Einstein in 1915.)
         mercury: {
-            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, box: [-0.52, 0.52, -0.52, 0.52],
+            units: 'au', Tref: 87.969 / DAYS_PER_YEAR, subject: 1, trail: 4, realistic: true, relCard: true, box: [-0.52, 0.52, -0.52, 0.52],
             tip: 'This orbit turns 43″ a century: too small to see, so the card measures it.',
             bodies: [
                 { kind: 'sun' },
@@ -384,9 +409,9 @@
         // about to enter LIGO's range. They start on a circular orbit as relativity has it here (r omega^2
         // equal to the pull with its 1PN and 2PN terms: about 0.93 of Kepler's omega), already closing at
         // Peters' rate, dr/dt = -(64/5) eta (GM)^3/(c^5 r^3). The waves carry off their orbital energy: they
-        // spiral together, faster and faster, and plunge at their innermost stable orbit (576 km) after
-        // about 0.4 s (Peters' formula: 0.61 s to reach zero; at this distance the relativistic corrections
-        // to that are large).
+        // spiral together, faster and faster, and start to plunge 576 km apart after about 0.38 s (Peters'
+        // formula: 0.61 s to reach zero; at this distance the relativistic corrections to that are large).
+        // Their horizons meet 18 ms later, 192 km apart (see plungeForce).
         inspiral: (function () {
             const m1 = 36, m2 = 29, M = m1 + m2, eta = (m1 * m2) / (M * M), r = 1200 / AU_KM, gm = G * M, g = gm / (C2 * r);
             // x = r^3 omega^2 / GM: 1 + (1 + 3 eta) x g - (4 + 2 eta) g + 2PN terms (from pnPair at rdot = 0)
@@ -398,8 +423,9 @@
             const w = Math.sqrt((x * gm) / (r * r * r));
             const vr = (-64 / 5) * eta * gm * gm * gm / (C2 * C2 * C_LIGHT * r * r * r), vt = r * w;
             return {
-                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
-                tip: 'Gravitational waves drain the orbit until the black holes merge.',
+                units: 'km', time: 's', Tref: TAU / w, subject: 1, trail: 6, realistic: true, relCard: true, box: [-1300, 1300, -850, 850].map((v) => v / AU_KM),
+                tip: () => (settings.realistic ? 'Gravitational waves drain the orbit until the black holes merge.' : 'Just Newton: no waves, so these black holes orbit for ever.'),
+                offNote: 'no waves, so they orbit for ever. Drawn larger than life.',
                 bodies: [
                     { kind: 'blackhole', name: 'Black hole A', m: m1, R: horizonKm(m1), at: [-(m2 / M) * r, 0], v: [-(m2 / M) * vr, -(m2 / M) * vt] },
                     { kind: 'blackhole', name: 'Black hole B', m: m2, R: horizonKm(m2), color: '#8fb8ff', at: [(m1 / M) * r, 0], v: [(m1 / M) * vr, (m1 / M) * vt] }
@@ -407,7 +433,8 @@
             };
         })(),
         empty: {
-            units: 'au', Tref: 1, subject: 0, vref: TAU, box: [-1.5, 1.5, -1.5, 1.5],
+            // (its star feels no pull as it opens, so its force arrows are set by Earth's pull from the Sun, as its velocities by Earth's speed)
+            units: 'au', Tref: 1, subject: 0, vref: TAU, fref: G * MEARTH, box: [-1.5, 1.5, -1.5, 1.5],
             bodies: [{ kind: 'sun' }]
         }
     };
@@ -440,7 +467,7 @@
     const COLOUR_STEPS = 40;              // colours per factor of ten in mass (6% apart in mass, 3% in temperature)
     const DEEPEN = 1.3;
     const SUN_TINT_COOL = 0.35, SUN_TINT_HOT = 0.3;   // how far the Sun's yellow reaches (in ln T)
-    const KEEPS_LOOK = { redgiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, custom: 1 };
+    const KEEPS_LOOK = { redgiant: 1, supergiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, sgra: 1, custom: 1 };
     const KIND_COLOUR = {};               // each kind's colour as first defined: the scenes were designed with these
     for (const k of Object.keys(KINDS)) KIND_COLOUR[k] = KINDS[k].color;
     const starColourCache = new Map();
@@ -543,7 +570,7 @@
     const JD_MIN = jdOfDate(1800, 1, 1), JD_MAX = jdOfDate(2050, 12, 31);   // the table's range
 
     Object.assign(KINDS, {
-        saturn: { name: 'Saturn', m: 1 / 3497.9018, R: 58232, color: '#e3c47a', info: 'the ringed giant planet' },
+        saturn: { name: 'Saturn', m: 1 / 3497.9018, R: 58232, color: '#e3c47a' },
         uranus: { name: 'Uranus', m: 1 / 22902.98, R: 25362, color: '#9ad8dc', info: 'an ice giant' },
         neptune: { name: 'Neptune', m: 1 / 19412.26, R: 24622, color: '#6f8ff0', info: 'the farthest planet' },
         pluto: { name: 'Pluto', m: 1 / 1.3605e8, R: 1188, color: '#c9a98c', info: 'a dwarf planet' }
@@ -644,6 +671,16 @@
         units: 'au', Tref: 1, subject: 3, dated: true, box: [-1.8, 1.8, -1.8, 1.8],
         tip: 'Real positions on the start date, in the settings. Fit view shows the outer planets.',
         get bodies() { return solarSystemBodies(startDate.chosen); }
+    };
+
+    // The same real orbits as seen from Earth (see "The sky from a planet"), out to Saturn: the planets anyone can
+    // see without a telescope. It opens 51 days before Mars stops and starts back against the stars, as it really
+    // does on 10 January 2027 (to 1 April, 19 degrees, round its opposition on 19 February). A year takes 12 s at 1x,
+    // so that shows within 2 s, and takes about 3; the trail holds two and a half years, a loop and a bit.
+    SCENES.sky = {
+        units: 'au', Tref: 0.5, subject: 4, trail: 6, dated: true, sky: true, noClock: true, openJd: jdOfDate(2026, 11, 20), box: [-2.8, 2.8, -2.8, 3.2],
+        tip: () => skyTip(),
+        get bodies() { return solarSystemBodies(startDate.chosen).slice(0, 7); }
     };
 
     // 'YYYY-MM-DD' to a Julian date (00:00 UTC), or NaN; and back
@@ -936,7 +973,7 @@
     const sampleTimes = new Float64Array(TRAIL_CAP);
 
     // View: px per AU = zoom * min(canvas width, height), so the scene scales with the canvas
-    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0 };
+    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0, wide: false };
     let viewW = 0, viewH = 0, dpr = 1;
     // What can be seen of the canvas (its px): all of it, but for the Settings drawer over one side;
     // and where the middle of the view goes on it (see syncDrawer)
@@ -1014,6 +1051,7 @@
     function fmtTime(yr) {
         // (the clock goes below zero when time runs backwards past the start)
         const a = Math.abs;
+        if (scene.minutes) { const m = (yr * YEAR_S) / 60; return { v: a(m) < 1000 ? m.toFixed(1) : fmtWhole(m), u: 'min' }; }
         if (timeInSeconds()) {
             const s = yr * YEAR_S;
             return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : fmtWhole(s), u: 's' };
@@ -1026,6 +1064,10 @@
     }
     // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
+        if (scene.minutes && yr * YEAR_S >= 60) {
+            const m = (yr * YEAR_S) / 60;
+            return m < 300 ? `${m.toFixed(precise ? 1 : 0)} min` : m < 2880 ? `${(m / 60).toFixed(1)} h` : `${(m / 1440).toFixed(1)} days`;
+        }
         if (timeInSeconds() || yr * YEAR_S < 600) {
             const s = yr * YEAR_S;
             if (s < 1) return `${precise ? s.toFixed(3) : +s.toFixed(3)} s`;
@@ -1070,9 +1112,14 @@
             m: props.m, R: props.R,
             x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, px: 0, py: 0, pvx: 0, pvy: 0,
             dx: 0, dy: 0,                 // drawn position (extrapolated)
+            dvx: 0, dvy: 0, dfx: 0, dfy: 0,   // drawn velocity and force (see updateDrawnPositions)
+            arrowV: 1, arrowF: 1,         // how strongly its velocity and force arrows are drawn (see quietMoons)
             held: null,                   // { offX, offY } while dragged: position relative to the frame origin
             trail: null,                  // samples (allocated at the first one: see recordSample)
             trailStart: sampleCount,      // first valid sample
+            layerPen: -1,                 // the newest sample of its trail on the swarm's canvases, -1 with none there
+            orbitDrawn: false,            // its trail was last drawn from its orbit (see orbitTrail)
+            fastOrbit: null,              // { a, b, hosted } while relativity keeps it from being a close pair (see fastOrbits)
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
@@ -1217,7 +1264,7 @@
             if (b.grp < 0 && gasRows < 0) gasRows = 0;
             xs[k] = b.x; ys[k] = b.y; vxs[k] = b.vx; vys[k] = b.vy; ms[k] = b.m;
             const g = b.grp || 0;
-            grp[k] = g && (b.minor || g < 0) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, and gas is held up by its pressure: no group)
+            grp[k] = g && (b.minor || g < 0 || g % 1) ? -1 - k : g;   // (the pieces of a dot in a swarm are too light to feel each other, gas is held up by its pressure, and for debris see throwDebris: no group)
             if (g) anyPieces = true;
             eps[k] = g ? softLength(b) : 0;
             // (the last acceleration: the tree's relative criterion needs it)
@@ -1280,6 +1327,11 @@
                 const k = 1.6 * eta * gm * gm / (C5 * r2 * r);
                 A += k * (18 * v2 + (2 / 3) * gr - 25 * rd2) * rd;
                 B -= k * (6 * v2 - 2 * gr - 15 * rd2);
+            }
+            // (gasList: the bodies these slots belong to)
+            if (gm > ISCO_C2 * r && holePair(gasList[i], gasList[j])) {
+                plungeForce(r, rd, (nx * vy - ny * vx) / r, gm, eta);
+                A = PLF.A; B = PLF.B;
             }
         }
         const ax = A * nx + B * vx, ay = A * ny + B * vy;
@@ -1571,7 +1623,9 @@
         }
         tCount = 0;
         let kmax = 0;
-        if (nl > 0) {
+        // (one body alone has nothing in the tree to feel: its own cell, a rounding error from it, mustn't count as something else)
+        if (nl === 1) { const k = BIDX[0]; CAX[k] = 0; CAY[k] = 0; CB1[k] = 0; CB2[k] = 0; CP1[k] = -1; }
+        if (nl > 1) {
             const half = 0.5 * Math.max(x1 - x0, y1 - y0) * (1 + 1e-9) + 1e-300;
             buildCell(0, nl, 0.5 * (x0 + x1), 0.5 * (y0 + y1), half, 0);
             for (let s = 0; s < nl; s++) { const k = BIDX[s]; BX[s] = SX[k]; BY[s] = SY[k]; BM[s] = SM[k]; }
@@ -1616,6 +1670,7 @@
     const KEP_GAMMA = 0.02;
     const KEP_TURN = 0.05;                // step <= KEP_TURN x sqrt(r^3 / GM): about 4 degrees of the pair's turn
     const KEP_UNRESOLVED = 0.25;          // periods under this many trail samples are not followed turn by turn
+    const ORBIT_TRAIL = 2, ORBIT_TRAIL_OFF = 2.5;   // periods under this many trail samples have trails drawn from the orbit (see orbitTrail), until over the second
     const PN_PAIR_MAX = 1e-6;
     // A piece of a torn-apart body (see "Tidal disruption"), so light that it can't disturb its host much (at
     // most a HOST_MIN-th of its mass), is followed round it the same way, relativity or not, and many can
@@ -1639,7 +1694,7 @@
     const HOST_GW = 1e6;                  // radiation may take this many trail samples or more to close the orbit
     const LIGHT = 1e-9;                   // the lighter of a pair by this much: it moves the other not at all, and has nothing else to answer for
     const ROCHE_NEAR = 392;               // (3 ROCHE)^3: inside three times its Roche limit a whole body is followed closely
-    const mainPairs = [];                 // { a, b, touch, fast, hosted, closest } for the bodies (hosted: a goes round b, see driftHosted)
+    const mainPairs = [];                 // { a, b, touch, fast, orbit, hosted, closest } for the bodies (hosted: a goes round b, see driftHosted)
     let mainStamp = 0, mainN = 0;
 
     // Universal-variable Kepler drift (Danby's G-functions): exact for ellipses, parabolas and hyperbolas,
@@ -1741,8 +1796,22 @@
         keplerDrift(l.x - h.x, l.y - h.y, l.vx - h.vx, l.vy - h.vy, G * M, dt);
         h.x = cx - fl * KX; h.y = cy - fl * KY; h.vx = cvx - fl * KVX; h.vy = cvy - fl * KVY;
         l.x = h.x + KX; l.y = h.y + KY; l.vx = h.vx + KVX; l.vy = h.vy + KVY;
-        if (KMIN < (h.R + l.R) / AU_KM) p.touch = true;
+        if (KMIN < (h.R + l.R) / AU_KM && KMIN < contactReach(h, l)) p.touch = true;
         if (KMIN < p.closest) p.closest = KMIN;
+    }
+
+    // Relativity's turn of an orbit (see driftHosted), on the drift just done: KX, KY, KVX, KVY
+    function relativityTurn(rx, ry, vx, vy, gm, dt) {
+        const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
+        let swept = Math.atan2(rx * KY - ry * KX, rx * KX + ry * KY);
+        if (swept * way < 0) swept += way * TAU;
+        const w = (3 * gm * gm / (C2 * h * h)) * (swept + way * TAU * Math.abs(KTURNS));
+        if (h !== 0 && w !== 0) {
+            const c = Math.cos(w), s = Math.sin(w);
+            const x1 = c * KX - s * KY, vx1 = c * KVX - s * KVY;
+            KY = s * KX + c * KY; KVY = s * KVX + c * KVY;
+            KX = x1; KVX = vx1;
+        }
     }
 
     // Move a host and its pieces. The whole group's centre of mass goes in a straight line; each piece goes
@@ -1779,23 +1848,11 @@
             const vx = HPX[i] * im, vy = HPY[i] * im;
             const r2 = rx * rx + ry * ry;
             keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
-            let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
-            if (KMIN < (H.R + f.R) / AU_KM || (real && gm > ISCO_C2 * KMIN) || (f.grp < 0 && KMIN < gasFall(mH))) p.touch = true;
+            if ((KMIN < (H.R + f.R) / AU_KM && KMIN < contactReach(H, f)) || (real && gm > ISCO_C2 * KMIN) || (f.grp < 0 && KMIN < gasFall(mH))) p.touch = true;
             if (KMIN < p.closest) p.closest = KMIN;
-            if (real) {
-                const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
-                let swept = Math.atan2(rx * ky - ry * kx, rx * kx + ry * ky);
-                if (swept * way < 0) swept += way * TAU;
-                const w = (3 * gm * gm / (C2 * h * h)) * (swept + way * TAU * Math.abs(KTURNS));
-                if (h !== 0 && w !== 0) {
-                    const c = Math.cos(w), s = Math.sin(w);
-                    const x1 = c * kx - s * ky, vx1 = c * kvx - s * kvy;
-                    ky = s * kx + c * ky; kvy = s * kvx + c * kvy;
-                    kx = x1; kvx = vx1;
-                }
-            }
-            HRX[i] = kx; HRY[i] = ky;
-            const px = kvx / im, py = kvy / im;
+            if (real) relativityTurn(rx, ry, vx, vy, gm, dt);
+            HRX[i] = KX; HRY[i] = KY;
+            const px = KVX / im, py = KVY / im;
             HPX[i] = px; HPY[i] = py;
             tx += px; ty += py;
         }
@@ -1857,7 +1914,7 @@
 
     // Follow a and b as a close pair (a, a piece of a torn-apart body or a light whole body, round its host b)
     function followPair(a, b, fast, hosted) {
-        const q = { a, b, touch: false, fast, hosted: !!(hosted || a.grp), closest: Infinity };
+        const q = { a, b, touch: false, fast, orbit: false, hosted: !!(hosted || a.grp), closest: Infinity };
         mainPairs.push(q);
         a.kep = q;
         if (!q.hosted) b.kep = q;
@@ -2042,7 +2099,9 @@
         const gm = G * (a.m + b.m);
         const vx = b.vx - a.vx, vy = b.vy - a.vy;
         const beta = 2 * gm / r - (vx * vx + vy * vy);
-        p.fast = beta > 0 && TAU * gm / (beta * Math.sqrt(beta)) < KEP_UNRESOLVED * sampleDt;
+        const period = beta > 0 ? TAU * gm / (beta * Math.sqrt(beta)) : Infinity;
+        p.fast = period < KEP_UNRESOLVED * sampleDt;
+        p.orbit = period < (p.orbit ? ORBIT_TRAIL_OFF : ORBIT_TRAIL) * sampleDt;
         if (p.fast) return Infinity;
         if (!p.hosted) return KEP_TURN * Math.sqrt(r2 * r / gm);
         const own = HOST_TURN * Math.sqrt(r2 * r / gm);
@@ -2111,6 +2170,7 @@
 
     function touching(a, b) {
         if (a.held || b.held || (a.grp && a.grp === b.grp)) return false;
+        if (scene.cannon && (a.kind === 'probe' || b.kind === 'probe')) return false;   // (see "Newton's cannon")
         if (a.kep && (a.kep === b.kep || a.kep.b === b)) return a.kep.touch;
         if (b.kep && b.kep.b === a) return b.kep.touch;
         const reach = (a.R + b.R) / AU_KM;
@@ -2119,8 +2179,10 @@
         const ex = x1 - x0, ey = y1 - y0;
         const ee = ex * ex + ey * ey;
         const t = ee > 0 ? clamp(-(x0 * ex + y0 * ey) / ee, 0, 1) : 1;
-        const cx = x0 + t * ex, cy = y0 + t * ey;
-        return cx * cx + cy * cy < reach * reach;
+        const cx = x0 + t * ex, cy = y0 + t * ey, d2 = cx * cx + cy * cy;
+        if (!(d2 < reach * reach)) return false;
+        const c = contactReach(a, b);
+        return d2 < c * c;
     }
 
     function firstContact() {
@@ -2180,9 +2242,11 @@
         while (firstContact()) {
             const a = contactA, b = contactB;
             if (a.kep) a.kep.touch = false;
-            if (!(settings.realistic && collide(a, b))) mergeBodies(a, b);
+            if (!settings.realistic) mergeBodies(a, b);
+            else if (!((holePair(a, b) && plunge(a, b)) || collide(a, b))) mergeBooked(a, b);
             merged = true;
         }
+        if (overLimit) { whiteDwarfBlast(overLimit); merged = true; }
         if (merged) computeForces();
         return merged;
     }
@@ -2198,43 +2262,56 @@
         for (const p of mainPairs) {
             if (!p.touch || !p.hosted) continue;
             p.touch = false;
-            const f = p.a, H = p.b, fell = settings.realistic && (f.grp < 0 || G * (H.m + f.m) > ISCO_C2 * (H.R + f.R) / AU_KM);
-            const before = fell ? energyOf([f, H]) : 0;
-            if (!(settings.realistic && collide(f, H))) mergeBodies(f, H);
-            if (fell) groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([H]) - before);
+            const f = p.a, H = p.b;
+            if (!settings.realistic) mergeBodies(f, H);
+            else if (!collide(f, H)) mergeBooked(f, H);
             merged = true;
         }
         listsWait = false;
         return merged;
     }
 
+    // A merger in realistic physics: what it takes with it is kept in the books (under FALLEN), as a collision's heat is.
+    function mergeBooked(a, b) {
+        const before = energyOf([a, b]);
+        mergeBodies(a, b);
+        groupEnergy.set(FALLEN, (groupEnergy.get(FALLEN) || 0) + energyOf([bodies.includes(a) ? a : b]) - before);
+    }
+
     // The survivor is the heavier body, or the black hole if there is one (it swallows the other from
-    // the inside, whatever their masses).
+    // the inside, whatever their masses). In realistic physics: see survivorOf.
     function mergeBodies(a, b) {
         noteIrreversible('merge');   // (running backwards: a copy of the system from just before)
         const bh = (q) => q.kind === 'blackhole';
-        const big = bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
+        const big = settings.realistic ? survivorOf(a, b) : bh(a) !== bh(b) ? (bh(a) ? a : b) : (a.m >= b.m ? a : b), small = big === a ? b : a;
         const auto = autoColoured(big);   // (a star's colour follows its mass: see starColour)
         noteCollision(big, small);   // (the stability timer)
         const M = a.m + b.m;
         const fx = M > 0 ? (a.m * a.x + b.m * b.x) / M : big.x, fy = M > 0 ? (a.m * a.y + b.m * b.y) / M : big.y;
         // (a small flash for two bodies of a swarm: in a disc of moonlets they merge by the hundred)
-        flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 ? 8 : 30 });
+        if (settings.realistic) impactFlash(big, small, (small.x - big.x) / (hyp(small.x - big.x, small.y - big.y) || 1), (small.y - big.y) / (hyp(small.x - big.x, small.y - big.y) || 1));
+        else flashes.push({ x: fx, y: fy, t: performance.now(), color: big.color, r0: drawRadius(big), grow: (big.minor && small.minor) || small.grp < 0 ? 8 : 30 });
         big.vx = M > 0 ? (a.m * a.vx + b.m * b.vx) / M : big.vx;
         big.vy = M > 0 ? (a.m * a.vy + b.m * b.vy) / M : big.vy;
         big.x = fx; big.y = fy;
+        const grown = settings.realistic ? grownRadius(big, M, (a.R * a.R * a.R + b.R * b.R * b.R) / M) : 0;   // (see "What a merged body becomes")
         big.m = M;
         // A black hole's horizon grows with its mass; a white dwarf or neutron star keeps its size (they
         // are held up by pressure, not by being big); anything else keeps its density.
-        if (!isCompact(big)) big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);
+        if (grown) big.R = grown;
+        else if (!isCompact(big)) big.R = Math.cbrt(a.R * a.R * a.R + b.R * b.R * b.R);
         big.track = null;
         removeBody(small, big);
         collapseIfTooHeavy(big);
+        if (settings.realistic) settleMerged(big);
         if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (not for a swarm's bodies, or torn-apart pieces: they merge by the hundred; and the stability
         // timer says so itself)
         if (!small.minor && !small.grp && timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }   // (running backwards: not the usual crash)
-        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} crashed into ${escapeHtml(theName(big))}</strong> and merged with it.`, { ms: 6000 });
+        else if (!small.minor && !small.grp && !settings.stability && !scene.progress) {
+            const swallowed = settings.realistic && isStar(big) && small.m < 0.01 * big.m, sank = settings.realistic && isCompact(small) && !isCompact(big);
+            showHint('note', `<strong>${escapeHtml(sentenceCase(theName(small)))} ${swallowed ? 'fell into' : sank ? 'sank into' : 'crashed into'} ${escapeHtml(theName(big))}</strong>${swallowed ? ' and was swallowed.' : sank ? ', down to its centre.' : ' and merged with it.'}`, { ms: 6000 });
+        }
     }
 
     // Said as a merger is (not for a swarm's bodies, which go by the hundred; the stability timer says so
@@ -2293,18 +2370,37 @@
             hs = tideHeavy;
         }
         for (const L of bodies) {
-            if (L.grp || L.held || isCompact(L) || L.m < 1e-17) continue;   // not probes: they are held together by their structure
+            if (L.grp || L.held || L.kind === 'neutron' || L.kind === 'blackhole' || L.m < 1e-17) continue;   // not probes: they are held together by their structure
             for (const H of hs) {
                 if (H === L || H.held || H.m < 5 * L.m || H.grp < 0) continue;   // (gas is too thin to tear anything)
+                if (L.kind === 'whitedwarf' && H.kind !== 'neutron' && H.kind !== 'blackhole') continue;   // (only something far denser tears a white dwarf)
                 const dx = L.x - H.x, dy = L.y - H.y;
                 // (going round H it may have passed closer between the ends of the step: going forwards, as nothing
                 // that passed like that stayed whole, running back retraces it)
                 const d = timeDir > 0 && L.kep && L.kep.hosted && L.kep.b === H ? Math.min(Math.hypot(dx, dy), L.kep.closest) : Math.hypot(dx, dy);
                 const roche = (ROCHE * L.R * Math.cbrt(H.m / L.m)) / AU_KM;
-                if (d < roche && roche > (H.R + L.R) / AU_KM && disrupt(L, H)) return true;
+                if (d < roche && roche > (H.R + L.R) / AU_KM && tideWins(L, H) && disrupt(L, H)) return true;
             }
         }
         return false;
+    }
+
+    // Inside the limit, does the tide have the time to tear it? The limit is for a body that stays there. One on its way
+    // past or into H has only the pass. A body on an orbit that reaches H's surface hits it whole: from the limit to the
+    // surface takes under two of its own free-fall times, at any mass (so an asteroid or a moon makes a crater, not a stream
+    // of beads). Only a compact H has no surface to reach first. A body passing faster than H's escape speed is torn only if
+    // the pass's impulse, 2 G M R / (b^2 v) on its edge with b no closer than R, tops its own escape speed (Spitzer 1958;
+    // that puts the distance near R (M / m)^(1/3), as in Sridhar & Tremaine 1992, Icarus 95, 86, and Guillochon &
+    // Ramirez-Ruiz 2013, ApJ 767, 25). So a star at a tenth of the speed of light goes by a black hole whole.
+    function tideWins(L, H) {
+        const rx = L.x - H.x, ry = L.y - H.y, vx = L.vx - H.vx, vy = L.vy - H.vy;
+        const gm = G * (L.m + H.m), r = hyp(rx, ry), v2 = vx * vx + vy * vy, h = rx * vy - ry * vx;
+        const beta = 2 * gm / r - v2, p = (h * h) / gm;
+        const closest = p / (1 + Math.sqrt(Math.max(0, 1 - (p * beta) / gm)));
+        if (!isCompact(H) && closest < (H.R + L.R) / AU_KM) return false;
+        if (beta >= 0) return true;
+        const R = L.R / AU_KM, b = Math.max(closest, R), kick = (2 * G * H.m * R) / (b * b * Math.sqrt(2 * gm / b - beta));
+        return kick * kick >= (2 * G * L.m) / R;
     }
 
     // How a body breaks: ragged, not a row of equal beads. The pieces' masses, the gaps along the line to
@@ -2352,7 +2448,7 @@
             const s = shape.along[i], q = shape.off[i];
             const m = i < n - 1 ? L.m * shape.share[i] : left;   // (the last takes what rounding left: the mass adds up exactly)
             left -= m;
-            const f = newBody({ name, kind: L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
+            const f = newBody({ name, kind: isCompact(L) ? 'custom' : L.kind, m, R: L.R * Math.cbrt(shape.share[i]), color: L.color });
             f.grp = gas ? -L.id : L.id;
             f.minor = gas > 0;
             f.heft = heftOf(n * shape.share[i]);
@@ -2383,15 +2479,31 @@
     // Below the two bodies' mutual escape speed they merge, as ever. A glancing hit (b > R / (R + r)) slower than
     // V_c = V_esc (2.43 Gamma Th^2.5 - 0.0408 Gamma + 1.86 Th^2.5 + 1.08), Gamma = ((m1 - m2) / M)^2, Th = 1 - b
     // (Kokubo & Genda 2010, ApJ 714, L21) still merges; a faster one, not fast enough to erode the target, is a
-    // hit and run: both go on, and the smaller sheds what a reverse impact takes from it (LS12 again).
-    // Debris is thrown past the escape speed from what is left at it, with a third of the energy to spare (a
-    // round figure: LS12's fragments go at about that speed), in pieces whose masses follow their
-    // size distribution (number larger than D going as D^-2.85). Mass and momentum are kept exactly. Angular
-    // momentum is kept by turning the debris round what is left, as far as a speed limit lets that go: the
-    // rest would be the spin of what is left, as in a merger, where all of it goes that way. (The bodies have
-    // no spin here.) What the books gain or lose (the heat of the impact, mostly) is kept under groupEnergy.
-    // Not for black holes, neutron stars or white dwarfs (their own binding is far beyond these laws: they
-    // swallow), a swarm's dots (they go by the hundred), pieces, or a mission's bodies.
+    // hit and run: both go on along the orbit they were on, past each other, and the smaller sheds what a reverse
+    // impact takes from it (LS12 again).
+    // Stars and gas giants have no strength and their mass is at their middle, so: R_C1 is their real size; they lose
+    // mass even from a bound orbit; and the loss falls off as exp(-1.8 r_p / (R1,half + R2,half)), r_p the closest the
+    // orbit would come, with half a star's mass inside a quarter of its radius (Lombardi et al. 2002, ApJ 568, 939).
+    // Head on at the escape speed that gives 0.3 q / (1 + q)^2 of the mass, as Glebbeek et al. 2013 find (7.5% for equals).
+    // Debris goes from where they hit. Its speeds are past the escape speed from what is left, with a third of the energy
+    // to spare (a round figure: LS12's fragments go at about that speed), up to half the impact's speed, smaller pieces
+    // faster, as m^(-1/6) (Nakamura & Fujiwara 1991, Icarus 92, 132), in pieces whose masses follow LS12's size
+    // distribution (number larger than D going as D^-2.85). No piece outweighs what is left, unless there are too few
+    // pieces to carry the mass that way (12: each then stands for a cloud of smaller ones). Directions are a hollow cone,
+    // two lobes in this flat world, at 45 degrees to the surface for a small impactor (Melosh 1989), tipped downrange by
+    // half the impact's obliquity, with the downrange lobe the heavier (Gault & Wedekind 1978), opening out to a sheet at
+    // right angles to a head-on pair of equals. These directions are a sketch of what the simulations show, not a fit.
+    // Mass and momentum are kept exactly, so what is left recoils from its debris. Angular momentum is kept by turning
+    // the debris round what is left, as far as a speed limit lets that go: the rest would be the spin of what is left,
+    // as in a merger, where all of it goes that way. (The bodies have no spin here.) What the books gain or lose (the
+    // heat of the impact, mostly) is kept under groupEnergy.
+    // A far smaller impactor makes a crater and a plume instead: mass above speed v going as
+    // M(>v) / m = (3 k / 4 pi) (C1)^(3 mu) (v / U)^(-3 mu), the scaling of Housen & Holsapple 2011 (Icarus 211, 856) for
+    // rock (k = 0.3, C1 = 1.5, mu = 0.55), taken from where it can rise a fifth of the radius. What doesn't escape falls
+    // back. On a star there is nothing to throw: it is just swallowed. A slower, oblique giant impact merges but leaves a disc in
+    // orbit: DISC_K of the part of the impactor that missed the target, fitted to Canup & Asphaug 2001 (Nature 412, 708) and
+    // Canup 2004 (Icarus 168, 433): 2% of the mass, about 1.6 Moons, for a tenth of the Earth hitting at 45 degrees.
+    // Not for a swarm's dots (they go by the hundred), pieces, or a mission's bodies. Dead stars: see deadStarHit.
     // ------------------------------------------------------------------
     const LS_CSTAR = 1.9, LS_MU = 0.36;
     const RHO1 = (1000 * Math.pow(AU_KM * 1000, 3)) / MSUN_KG;   // 1000 kg/m^3 in M_sun / AU^3
@@ -2399,12 +2511,18 @@
     const DEBRIS_LOTS = 60;               // ...and with this many pieces about already, bodies just merge
     const DEBRIS_EFF = 1 / 3;             // the share of the energy left after unbinding that goes into the debris
     const DEBRIS_TURN = 0.7;              // (speed from turning the debris, as a share of its speed from the impact)
+    const FLUID_LOSS = 7.2;               // (1.8 / a quarter: see above)
+    const CRATER_MAX = 0.01;              // an impactor lighter than this share of the target makes a crater
+    const CRATER_K = 0.14;                // (3 k / 4 pi) C1^(3 mu), and 3 mu:
+    const CRATER_POW = 1.65;
+    const CRATER_VMIN = 0.4;              // the slowest ejecta followed, as a share of the escape speed
+    const DISC_K = 0.27;
 
     // The largest piece of two bodies left by a collision, as a share of their mass (LS12): mt is the target,
     // mp what hits it, a the share of mp that meets it, r their size
-    function largestRemnant(mt, mp, a, V, rC) {
+    function largestRemnant(mt, mp, a, V, rC, fluid) {
         const M = mt + mp, mu = (mt * mp) / M, g = mp / mt;
-        const Rc = Math.max(Math.cbrt((3 * M) / (4 * Math.PI * RHO1)), rC);
+        const Rc = fluid ? rC : Math.max(Math.cbrt((3 * M) / (4 * Math.PI * RHO1)), rC);
         const Q1 = LS_CSTAR * 0.6 * G * M / Rc;
         const Qg = Q1 * Math.pow(((g + 1) * (g + 1)) / (4 * g), 2 / (3 * LS_MU) - 1);
         const ma = (a * mp * mt) / (a * mp + mt);
@@ -2417,99 +2535,107 @@
         return l >= 2 * R ? 1 : clamp((3 * R * l * l - l * l * l) / (4 * R * R * R), 1e-6, 1);
     }
 
+    // How they met, at the moment they touched, from the start of the step they touched in (the end of it may find them
+    // deep inside each other, with the last kick far too strong): the speed squared, the escape speed squared, the impact
+    // parameter, the pair's h and the direction from big to small where they touch
+    const hit = { V2: 0, esc2: 0, b: 0, h: 0, nx: 1, ny: 0, rx: 0, ry: 0, vx: 0, vy: 0 };
+    function readHit(big, small) {
+        const reach = (big.R + small.R) / AU_KM, gm = G * (big.m + small.m);
+        const rx = small.px - big.px, ry = small.py - big.py, vx = small.pvx - big.pvx, vy = small.pvy - big.pvy;
+        const r = hyp(rx, ry), v2 = vx * vx + vy * vy, rv = rx * vx + ry * vy, c = r * r - reach * reach;
+        hit.V2 = v2 + (r > reach ? 2 * gm * (1 / reach - 1 / r) : 0);
+        hit.esc2 = (2 * gm) / reach;
+        hit.h = rx * vy - ry * vx;
+        hit.b = Math.min(1, Math.abs(hit.h) / (Math.sqrt(hit.V2) * reach));
+        hit.rx = rx; hit.ry = ry; hit.vx = vx; hit.vy = vy;
+        // (one step's path is near enough straight)
+        let t = 0;
+        if (c > 0 && v2 > 0) {
+            const d = rv * rv - v2 * c;
+            t = Math.max(0, d > 0 ? (-rv - Math.sqrt(d)) / v2 : -rv / v2);
+        }
+        const px = rx + t * vx, py = ry + t * vy, q = hyp(px, py);
+        hit.nx = q > 0 ? px / q : 1; hit.ny = q > 0 ? py / q : 0;
+    }
+
     // What a collision of a and b does; null means they merge. { big, small, Md (the debris' mass), V, b, and for a
-    // hit and run graze (the share of the small body that met the big one), sep and V2p (how they part) }
+    // hit and run graze (the share of the small body that met the big one), sep, V2p, ux, uy (how they part); or crater, disc }
     function collisionOutcome(a, b) {
         const big = a.m >= b.m ? a : b, small = big === a ? b : a;
         const m1 = big.m, m2 = small.m, M = m1 + m2;
         const R1 = big.R / AU_KM, R2 = small.R / AU_KM, reach = R1 + R2;
-        // At the moment they touched, from the start of the step they touched in (the end of it may find them
-        // deep inside each other, with the last kick far too strong)
-        const rx = small.px - big.px, ry = small.py - big.py, vx = small.pvx - big.pvx, vy = small.pvy - big.pvy;
-        const r = hyp(rx, ry), gm = G * M;
-        const V2 = vx * vx + vy * vy + (r > reach ? 2 * gm * (1 / reach - 1 / r) : 0);
-        const esc2 = (2 * gm) / reach;
-        if (!(V2 > esc2)) return null;
-        const V = Math.sqrt(V2), h = rx * vy - ry * vx, b0 = Math.min(1, Math.abs(h) / (V * reach));
+        readHit(big, small);
+        const fluid = tideIndex(big) > 0 && tideIndex(small) > 0, gm = G * M, h = hit.h, esc2 = hit.esc2;
+        const V2 = fluid ? Math.max(hit.V2, esc2) : hit.V2, V = Math.sqrt(V2), b0 = Math.min(1, Math.abs(h) / (V * reach));
         const l = reach * (1 - b0), rC = Math.cbrt(R1 * R1 * R1 + R2 * R2 * R2);
         const al = R1 > b0 * reach + R2 ? 1 : lensShare(R2, l);
-        const lr = largestRemnant(m1, m2, al, V, rC);
+        if (!fluid && !(V2 > esc2)) return gentleHit(big, small, V2, esc2, b0, al);
+        if (m2 < CRATER_MAX * m1) return gentleHit(big, small, V2, esc2, b0, al);
+        let lr = largestRemnant(m1, m2, al, V, rC, fluid);
+        if (fluid) {
+            const p = (h * h) / gm, e = Math.sqrt(Math.max(0, 1 + (p * (V2 - esc2)) / gm));
+            lr = 1 - (1 - lr) * Math.exp(-FLUID_LOSS * (p / (1 + e)) / reach);
+        }
         const Md = M * (1 - lr);
         if (b0 > R1 / reach && lr * M > m1) {
             // A glancing hit that doesn't erode the target
             const Gam = ((m1 - m2) / M) * ((m1 - m2) / M), th = Math.pow(1 - b0, 2.5);
-            if (V < Math.sqrt(esc2) * (2.43 * Gam * th - 0.0408 * Gam + 1.86 * th + 1.08)) return null;
+            if (V < Math.sqrt(esc2) * (2.43 * Gam * th - 0.0408 * Gam + 1.86 * th + 1.08)) return gentleHit(big, small, V2, esc2, b0, al);
             // A hit and run. The part of the target that meets the projectile hits it in turn
             const be = lensShare(R1, l), mi = be * m1;
             const rC2 = Math.cbrt(R2 * R2 * R2 + be * R1 * R1 * R1);
-            const lr2 = mi > m2 ? largestRemnant(mi, m2, 1, V, rC2) : largestRemnant(m2, mi, 1, V, rC2);
+            const lr2 = mi > m2 ? largestRemnant(mi, m2, 1, V, rC2, fluid) : largestRemnant(m2, mi, 1, V, rC2, fluid);
             const left = Math.min(m2, lr2 * (mi + m2));
-            const Mg = m2 - left;
+            const Mg = Math.min(m2 - left, al * m2);   // (the part that missed the target flies on, whatever hit the rest)
             // They part at a little over touching, having lost the share of their relative motion's energy that met
             const part = 1.02 * reach, V2c = V2 * (1 - al);
-            if (!(V2c > (2 * gm) / part)) return null;   // (too slow to part after all)
+            if (!(V2c > (2 * gm) / part)) return gentleHit(big, small, V2, esc2, b0, al);   // (too slow to part after all)
             // (placed where one step's backward leg can't take them back to touching: see throwDebris)
             const sep = part + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt(V2c);
             const V2p = V2c - 2 * gm * (1 / part - 1 / sep), vt = h / sep;
-            if (vt * vt > V2p) return null;
-            return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p };
+            if (vt * vt > V2p) return gentleHit(big, small, V2, esc2, b0, al);
+            // On the way out of the orbit they came in on, past its closest point (not back the way they came)
+            const r = hyp(hit.rx, hit.ry), k = (hit.vx * hit.vx + hit.vy * hit.vy - gm / r) / gm, rv = (hit.rx * hit.vx + hit.ry * hit.vy) / gm;
+            const ex = k * hit.rx - rv * hit.vx, ey = k * hit.ry - rv * hit.vy, ee = hyp(ex, ey);
+            const e2 = Math.sqrt(1 + ((h * h) / (gm * gm)) * (V2c - (2 * gm) / part));
+            const f = (h < 0 ? -1 : 1) * Math.acos(clamp(((h * h) / (gm * sep) - 1) / e2, -1, 1));
+            const cf = Math.cos(f), sf = Math.sin(f), wx = ee > 0 ? ex / ee : hit.nx, wy = ee > 0 ? ey / ee : hit.ny;
+            return { big, small, Md: Mg >= 0.02 * m2 ? Mg : 0, graze: al, V, b: b0, sep, V2p, ux: cf * wx - sf * wy, uy: sf * wx + cf * wy };
         }
-        if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return null;
+        if (!(Md >= Math.min(0.005 * M, 0.05 * m2))) return gentleHit(big, small, V2, esc2, b0, al);
         return { big, small, Md, graze: 0, V, b: b0 };
     }
 
-    // Throw debris of mass Md from body c (the two together have this mass). c is what is left, and the debris and c
-    // keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as DEBRIS_TURN
-    // allows. extra: energy to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in tearPattern,
-    // so Run again and a shared link break them the same way; grp: the debris' group.
-    function throwDebris(c, mass, Md, X, Y, VX, VY, L, extra, volume, seed, color, grp) {
-        const Mc = mass - Md;
-        const n = Math.min(clamp(Math.round(4 + (30 * Md) / mass), 4, DEBRIS_MAX), MAX_BODIES - bodies.length);
-        const rnd = seeded(seed);
-        rnd(); rnd();
-        const share = new Array(n);
-        let W = 0;
-        for (let i = 0; i < n; i++) { share[i] = Math.pow(i + 1, -3 / 2.85) * (0.8 + 0.4 * rnd()); W += share[i]; }
-        c.m = Mc;
-        c.R = Math.cbrt(volume * Mc);
-        const parts = [], name = uniqueName('Debris');
-        const Rc = c.R / AU_KM;
-        const v8 = Math.sqrt((2 * DEBRIS_EFF * Math.max(0, extra)) / Md);
-        const a0 = TAU * rnd();
-        const speed = new Array(n);
-        let left = Md, sx0 = 0, sy0 = 0, svx = 0, svy = 0;
-        for (let i = 0; i < n; i++) {
-            const m = i < n - 1 ? Md * (share[i] / W) : left;
-            left -= m;
-            const f = newBody({ name, kind: c.kind, m, R: Math.cbrt(volume * m), color });
-            f.grp = grp;
-            f.heft = heftOf((n * m) / Md);
-            const ang = a0 + (TAU * (i + 0.7 * rnd())) / n, ux = Math.cos(ang), uy = Math.sin(ang);
-            // Far enough out that one step's backward leg (see yoshida) can't take it back to what it left: about
-            // where it would be by the next step anyway
-            const d0 = (Rc + f.R / AU_KM) * (1.3 + 0.5 * rnd()), vf = v8 * (0.6 + 0.8 * rnd());
-            const d = d0 + (0.6 * sampleDt / HOST_STEPS) * Math.sqrt((2.04 * G * (Mc + m)) / d0 + vf * vf);
-            const esc2 = (2 * G * (Mc + m)) / d;
-            const w = Math.sqrt(esc2 * 1.02 + vf * vf);
-            f.x = d * ux; f.y = d * uy;
-            f.vx = w * ux; f.vy = w * uy;
-            speed[i] = w;
-            sx0 += m * f.x; sy0 += m * f.y; svx += m * f.vx; svy += m * f.vy;
-            parts.push(f);
+    // What a hit too small or too gentle to throw debris by LS12 leaves: a crater and a plume, a disc, or (null) nothing
+    function gentleHit(big, small, V2, esc2, b0, al) {
+        const m1 = big.m, m2 = small.m, V = Math.sqrt(V2), rock = tideIndex(big) === 0 && tideIndex(small) === 0;
+        if (m2 < CRATER_MAX * m1) {
+            if (m1 >= STAR_MASS || !(V2 > esc2)) return null;
+            return { big, small, Md: Math.min(0.2 * m1, CRATER_K * Math.pow(V / (CRATER_VMIN * Math.sqrt(esc2)), CRATER_POW) * m2), graze: 0, V, b: b0, crater: true };
         }
-        // Relative to c so far. The centre of mass and momentum then fix where c goes
+        const Md = DISC_K * (1 - al) * m2;
+        return rock && Md >= 0.002 * (m1 + m2) ? { big, small, Md, graze: 0, V, b: b0, disc: true } : null;
+    }
+
+    // Each piece's place and velocity, so far relative to c, become the world's. The centre of mass (X, Y), its velocity
+    // and, by turning the pieces (L: null, not at all), the angular momentum L about it are kept
+    function settleDebris(c, parts, mass, X, Y, VX, VY, L, limit) {
+        let sx0 = 0, sy0 = 0, svx = 0, svy = 0;
+        for (const f of parts) { sx0 += f.m * f.x; sy0 += f.m * f.y; svx += f.m * f.vx; svy += f.m * f.vy; }
+        // The centre of mass and momentum then fix where c goes
         const cx = -sx0 / mass, cy = -sy0 / mass, cvx = -svx / mass, cvy = -svy / mass;
-        let Lp = 0, I = 0, kMax = Infinity;
-        for (let i = 0; i < n; i++) {
-            const f = parts[i], px = f.x + cx, py = f.y + cy, qx = f.vx + cvx, qy = f.vy + cvy;
-            Lp += f.m * (px * qy - py * qx);
-            I += f.m * (f.x * f.x + f.y * f.y);
-            kMax = Math.min(kMax, (DEBRIS_TURN * speed[i]) / hyp(f.x, f.y));
+        let k = 0;
+        if (L !== null) {
+            let Lp = c.m * (cx * cvy - cy * cvx), I = -(sx0 * sx0 + sy0 * sy0) / mass, kMax = Infinity;
+            for (const f of parts) {
+                const px = f.x + cx, py = f.y + cy, qx = f.vx + cvx, qy = f.vy + cvy;
+                Lp += f.m * (px * qy - py * qx);
+                I += f.m * (f.x * f.x + f.y * f.y);
+                kMax = Math.min(kMax, (limit * hyp(f.vx, f.vy)) / hyp(f.x, f.y));
+            }
+            // A turn of the debris about c at rate k (k z x d each) adds k I, and keeps the momentum once c moves with it
+            k = clamp((L - Lp) / I, -kMax, kMax);
         }
-        Lp += Mc * (cx * cvy - cy * cvx);
-        I -= (sx0 * sx0 + sy0 * sy0) / mass;
-        // A turn of the debris about c at rate k (k z x d each) adds k I, and keeps the momentum once c moves with it
-        const k = clamp((L - Lp) / I, -kMax, kMax);
         let tx = 0, ty = 0;
         for (const f of parts) {
             const ax = -k * f.y, ay = k * f.x;
@@ -2522,19 +2648,129 @@
             f.x += c.x; f.y += c.y; f.vx += c.vx; f.vy += c.vy;
             f.px = f.x; f.py = f.y;
         }
+    }
+
+    // The pieces' masses, as LS12's size distribution (none over top)
+    function debrisMasses(n, Md, top, rnd) {
+        const share = new Array(n), out = new Array(n);
+        let W = 0;
+        for (let i = 0; i < n; i++) { share[i] = Math.pow(i + 1, -3 / 2.85) * (0.8 + 0.4 * rnd()); W += share[i]; }
+        let left = Md;
+        for (let i = 0; i < n; i++) {
+            const m = i < n - 1 ? Math.min((left * share[i]) / W, top) : left;
+            out[i] = m;
+            left -= m;
+            W -= share[i];
+        }
+        return out;
+    }
+
+    // Throw debris of mass Md from body c, left with radius Rc0 (the two together have this mass). c is what is left, and
+    // the debris and c keep the centre of mass (X, Y), its velocity (VX, VY) and angular momentum L about it, as near as
+    // DEBRIS_TURN allows. v8: its speed to spare; volume: per unit mass (km^3 / M_sun); seed: from the bodies, as in
+    // tearPattern, so Run again and a shared link break them the same way; grp: the debris' group, half a number, as
+    // debris doesn't pull on itself: what its gravity would gather again is already in what is left (LS12's largest
+    // remnant is that), and a clump of it would hold back the steps of the whole system.
+    // fan: where they leave from (angle at), the lobes' middle (axis), their angle either side of it (lobe) and width
+    // (spread: from pi they go all round), how much more goes the way of way (bias), and how many pieces (n). With vMin
+    // their speeds are those of a plume, from vMin up to vTop. The radius they start at is from, if given.
+    function throwDebris(c, Rc0, mass, Md, X, Y, VX, VY, L, v8, volume, seed, color, grp, fan) {
+        const Mc = mass - Md;
+        const n = Math.min(fan.n || clamp(Math.round(4 + (30 * Md) / mass), 4, DEBRIS_MAX), MAX_BODIES - bodies.length);
+        const rnd = seeded(seed);
+        rnd(); rnd();
+        const masses = debrisMasses(n, Md, Math.max(Mc, 1.2 * Md / n), rnd);
+        c.m = Mc;
+        c.R = Rc0;
+        const parts = [], name = uniqueName('Debris');
+        const Rc = c.R / AU_KM, lead = 0.6 * sampleDt / HOST_STEPS, round = fan.spread >= Math.PI, a0 = TAU * rnd();
+        let bx = 0, by = 0, bvx = 0, bvy = 0, bm = 0;
+        const pace = new Array(n);
+        let S = 0, down = 0, sum = 0, inWay = 0, inOther = 0;
+        for (let i = 0; i < n; i++) {
+            pace[i] = Math.pow((n * masses[i]) / Md, -1 / 6) * (0.75 + 0.5 * rnd());
+            S += masses[i] * pace[i] * pace[i];
+        }
+        S = Math.sqrt(Md / S);
+        for (let i = 0; i < n; i++) {
+            const m = masses[i];
+            const f = newBody({ name, kind: fan.kind || c.kind, m, R: Math.cbrt(volume * m), color });
+            f.grp = grp;
+            f.heft = heftOf((n * m) / Md);
+            const Rf = f.R / AU_KM;
+            // Which lobe: the one behind what it should have, so the two balance as they should
+            const toWay = sum === 0 || down < 0.5 * (1 + fan.bias) * (sum + m);
+            if (toWay) down += m;
+            sum += m;
+            // (spaced along the lobe by the golden ratio, however many there are: none on top of another)
+            const u = (0.618034 * (toWay ? inWay++ : inOther++) + 0.13 * rnd() + 0.2) % 1;
+            const ang = round ? a0 + 2.39996 * i + 0.3 * rnd() : fan.axis + (toWay ? fan.way : -fan.way) * fan.lobe + fan.spread * (2 * u - 1);
+            // It starts between where they hit and where it is heading, and just clear of c
+            const at = round ? ang : fan.at + 0.5 * Math.atan2(Math.sin(ang - fan.at), Math.cos(ang - fan.at));
+            const d0 = fan.from ? fan.from * (0.9 + 0.3 * rnd()) : (Rc + Rf) * (1.05 + 0.15 * rnd());
+            const gm = G * (c.m + m), ux = Math.cos(ang), uy = Math.sin(ang);
+            const vf = v8 * pace[i] * S;
+            const w = fan.vMin ? Math.min(fan.vTop, fan.vMin * Math.pow(1 - (i + 0.5 * (0.8 + 0.4 * rnd())) / n, -1 / CRATER_POW)) : Math.sqrt((2.04 * gm) / d0 + vf * vf);
+            // Far enough on that one step's backward leg (see yoshida) can't take it back to what it left: about where
+            // it would be by the next step anyway. (What falls back by then just stays with c.)
+            keplerDrift(d0 * Math.cos(at), d0 * Math.sin(at), w * ux, w * uy, gm, lead, false);
+            if (KMIN < Rc + Rf) { c.m += m; continue; }
+            f.x = KX; f.y = KY; f.vx = KVX; f.vy = KVY;
+            parts.push(f);
+            bx += m * KX; by += m * KY; bvx += m * KVX; bvy += m * KVY; bm += m;
+        }
+        // (an explosion, or a shell of gas leaving, has no direction to recoil from)
+        if (round) for (const f of parts) { f.x -= bx / bm; f.y -= by / bm; f.vx -= bvx / bm; f.vy -= bvy / bm; }
+        settleDebris(c, parts, mass, X, Y, VX, VY, L, DEBRIS_TURN);
         return parts;
+    }
+
+    // What a giant impact leaves in orbit round what it made: a spiral arm unwinding from where it hit, going the way the
+    // impact went, from just outside c to just beyond the Roche limit (2.9 of c's radii), the heaviest pieces furthest out.
+    function throwDisc(c, Rc0, mass, Md, X, Y, VX, VY, way, volume, seed, color, grp) {
+        const n = Math.min(8, MAX_BODIES - bodies.length);
+        const rnd = seeded(seed);
+        rnd(); rnd();
+        const masses = debrisMasses(n, Md, Md, rnd);
+        c.m = mass - Md;
+        c.R = Rc0;
+        const parts = [], name = uniqueName('Debris'), Rc = c.R / AU_KM, at = Math.atan2(hit.ny, hit.nx);
+        for (let i = 0; i < n; i++) {
+            const m = masses[i], f = newBody({ name, kind: c.kind, m, R: Math.cbrt(volume * m), color });
+            f.grp = grp;
+            f.heft = heftOf((n * m) / Md);
+            const r = Rc * (3.2 - (1.9 * i) / (n - 1)), a = at + way * (0.35 + (4.6 * (i + 0.5 * rnd())) / n);
+            const v = Math.sqrt((G * (c.m + m)) / r) * (0.98 + 0.04 * rnd()), vr = 0.05 * v * (rnd() - 0.5);
+            const ux = Math.cos(a), uy = Math.sin(a);
+            f.x = r * ux; f.y = r * uy;
+            f.vx = vr * ux - way * v * uy; f.vy = vr * uy + way * v * ux;
+            parts.push(f);
+        }
+        settleDebris(c, parts, mass, X, Y, VX, VY, null, 0);
+        return parts;
+    }
+
+    // A ring of flash where they touched, as big as what hit (the same for the two bodies of a swarm)
+    function impactFlash(big, small, nx, ny) {
+        flashes.push({
+            x: big.x + (nx * big.R) / AU_KM, y: big.y + (ny * big.R) / AU_KM, t: performance.now(), color: big.color,
+            r0: Math.min(drawRadius(small), drawRadius(big)),
+            grow: (big.minor && small.minor) || small.grp < 0 ? 8 : clamp(60 * Math.cbrt(small.m / (big.m + small.m)), 6, 45)
+        });
     }
 
     // A collision. Returns false if they just merge.
     function collide(a, b) {
-        if (mission.def || a.grp || b.grp || a.minor || b.minor || isCompact(a) || isCompact(b) || a.m < 1e-17 || b.m < 1e-17 || scene.progress) return false;
+        if (mission.def || a.grp || b.grp || a.minor || b.minor || a.m < 1e-17 || b.m < 1e-17 || scene.progress) return false;
+        if (a.kind === 'redgiant' || b.kind === 'redgiant') return false;   // (it has reached the core: see "Inside a red giant")
+        if (isCompact(a) || isCompact(b)) return deadStarHit(a, b);
         const o = collisionOutcome(a, b);
         if (!o) return false;
         let lots = 0;
         for (const q of bodies) if (q.grp) lots++;
         if (lots >= DEBRIS_LOTS || bodies.length + 4 > MAX_BODIES) return false;
         noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
-        const { big, small, Md, graze, V, sep, V2p } = o;
+        const { big, small, Md, graze, V, sep, V2p, crater, disc } = o;
         const auto = autoColoured(big);
         noteCollision(big, small);   // (the stability timer)
         const before = systemEnergy().total;
@@ -2548,26 +2784,36 @@
         for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
         const seed = ((h >>> 0) % 2147483646) + 1;
         const v1 = big.R * big.R * big.R / m1, v2 = small.R * small.R * small.R / m2;
-        const grp = nextId++;
-        flashes.push({ x: X, y: Y, t: performance.now(), color: big.color, r0: drawRadius(big), grow: 45 });
+        const grp = nextId++ + 0.5;
+        impactFlash(big, small, hit.nx, hit.ny);
+        const way = hit.h < 0 ? -1 : 1, at = Math.atan2(hit.ny, hit.nx);
         let parts = [];
         if (graze) {
-            // The two go on, along the same line, keeping the pair's angular momentum
-            const r = hyp(rx, ry), ux = rx / r, uy = ry / r, vt = (rx * vy - ry * vx) / sep;
+            // The two go on, keeping the pair's angular momentum
+            const ux = o.ux, uy = o.uy, vt = (rx * vy - ry * vx) / sep;
             const vr = Math.sqrt(V2p - vt * vt), wx = vr * ux - vt * uy, wy = vr * uy + vt * ux;
             const f1 = m2 / M, f2 = m1 / M;
             big.x = X - f1 * sep * ux; big.y = Y - f1 * sep * uy; big.vx = VX - f1 * wx; big.vy = VY - f1 * wy;
             big.px = big.x; big.py = big.y;
             const sX = X + f2 * sep * ux, sY = Y + f2 * sep * uy, sVX = VX + f2 * wx, sVY = VY + f2 * wy;
-            // (the debris is what the graze scraped off: a tenth of the speed's energy to spare, a round figure)
-            if (Md > 0) parts = throwDebris(small, m2, Md, sX, sY, sVX, sVY, 0, 0.05 * Md * V * V, v2, seed, small.color, grp);
-            else { small.x = sX; small.y = sY; small.vx = sVX; small.vy = sVY; small.px = sX; small.py = sY; }
+            // (the debris is what the graze scraped off, trailing behind it: a tenth of the speed's energy to spare, a round figure)
+            if (Md > 0) {
+                const back = Math.atan2(-wy, -wx);
+                parts = throwDebris(small, grownRadius(small, m2 - Md, v2), m2, Md, sX, sY, sVX, sVY, 0, Math.sqrt(0.1 * DEBRIS_EFF) * V, v2, seed, small.color, grp,
+                    { at: back, axis: back, lobe: 0.3, way, spread: 0.4, bias: 0 });
+            } else { small.x = sX; small.y = sY; small.vx = sVX; small.vy = sVY; small.px = sX; small.py = sY; }
             small.track = null;
         } else {
-            // What is left is the heavier body, with the debris round it. (Its density stays that of what it is made of)
-            const vol = (v1 * m1 + v2 * m2) / M;
-            const extra = 0.5 * mu * V * V - 0.5 * Md * (2 * G * (M - Md)) / ((big.R + small.R) / AU_KM);
-            parts = throwDebris(big, M, Md, X, Y, VX, VY, L, extra, vol, seed, m2 > 0.3 * M ? small.color : big.color, grp);
+            // What is left is the heavier body, with the debris round it
+            const vol = (v1 * m1 + v2 * m2) / M, Rc = grownRadius(big, M - Md, vol), color = m2 > 0.3 * M ? small.color : big.color;
+            if (disc) parts = throwDisc(big, Rc, M, Md, X, Y, VX, VY, way, vol, seed, color, grp);
+            else {
+                const size = Math.min(1, (2 * m2) / m1), wreck = Md > 0.9 * M, axis = at + way * 0.5 * Math.asin(o.b);
+                const extra = 0.5 * mu * V * V - 0.5 * Md * (2 * G * (M - Md)) / ((big.R + small.R) / AU_KM);
+                const fan = { at, axis, way, bias: o.b, lobe: (Math.PI / 4) * (1 + size), spread: wreck ? 1.2 : 0.35 + 0.45 * size };
+                if (crater) Object.assign(fan, { n: 4, lobe: Math.PI / 4, spread: 0.35, vMin: CRATER_VMIN * Math.sqrt((2 * G * M) / ((big.R + small.R) / AU_KM)), vTop: 0.9 * V });
+                parts = throwDebris(big, Rc, M, Md, X, Y, VX, VY, crater ? null : L, Math.min(0.5 * V, Math.sqrt((2 * DEBRIS_EFF * Math.max(0, extra)) / Md)), vol, seed, color, grp, fan);
+            }
             // (a few pieces in the other's colour, for the mixture they are)
             for (let k = 0; k < parts.length; k += 3) parts[k].color = small.color;
             removeBody(small, big);
@@ -2575,9 +2821,10 @@
         big.track = null;
         if (parts.length) bodies.push(...parts);
         forcesDirty = true;
-        collapseIfTooHeavy(big);
-        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         const them = theName(big), it = sentenceCase(theName(small));
+        collapseIfTooHeavy(big);
+        settleMerged(big);
+        if (auto && !KEEPS_LOOK[big.kind]) big.color = colourForMass(big);
         // (LS12's "super-catastrophic": nothing much is left of either. So what is left is one more piece, and the choice
         // of body, if it was this, goes back to the scene's own: a fragment's readouts would only confuse)
         const shattered = !graze && big.m < 0.1 * M;
@@ -2597,9 +2844,355 @@
             clearHint('tip');
             if (shattered) eventNote(`${it} and ${them} shattered`, ' each other.', 7000);
             else if (graze) eventNote(`${it} clipped ${them}`, ` and flew on${parts.length ? ', shedding debris' : ''}.`, 7000);
+            else if (disc) eventNote(`${it} crashed into ${them}`, ' and left a disc of debris in orbit.', 7000);
+            else if (crater) eventNote(`${it} hit ${them}`, ' and threw up a plume.', 7000);
             else eventNote(`${it} crashed into ${them}`, ' and threw out debris.', 7000);
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // What a merged body becomes (realistic physics).
+    //   A main-sequence star's radius follows its mass, R ~ M^0.74 (the fit its colour comes from: see "Star colours"),
+    //   from the star's own size, so a planet falling in leaves it as it was. (The real one stays swollen by the shock for
+    //   a while: Lombardi et al. 2002. Not shown: it would be gone within thousands of years.) A body that reaches
+    //   STAR_MASS has become a star. Gas giants and brown dwarfs keep their size as they gain mass, about Jupiter's from
+    //   0.3 to 80 Jupiters (Chabrier et al. 2009, AIP Conf. Proc. 1094, 102); a red giant's size is set by its core; rock
+    //   keeps its density. A white dwarf shrinks as it gains mass: R = 0.0112 R_sun sqrt(x^(-2/3) - x^(2/3)), x = M / 1.44
+    //   (Nauenberg 1972, ApJ 175, 417: 8,700 km at 0.6 solar masses, as the palette's). A neutron star keeps its size.
+    //   Whichever is denser survives, unless a star is well over the heavier: then a dead star just sinks to its centre, and
+    //   it goes on as a star (with a neutron star, a Thorne-Zytkow object: Thorne & Zytkow 1977, ApJ 212, 832). A black
+    //   hole swallows it from the inside whatever their masses. A red giant takes in what reaches its core.
+    // ------------------------------------------------------------------
+    const CHANDRASEKHAR = 1.44;           // M_sun (Chandrasekhar 1931)
+    const SINKS = 1.5;                    // a star this many times heavier than a dead star keeps it inside
+    const DEAD_RANK = { blackhole: 3, neutron: 2, whitedwarf: 1 };
+
+    const whiteDwarfRadius = (m) => {
+        const x = Math.cbrt(Math.min(m / CHANDRASEKHAR, 0.999));
+        return 0.0112 * KINDS.sun.R * Math.sqrt(1 / (x * x) - x * x);
+    };
+
+    // (vol: rock's volume per unit mass. Before its mass changes.)
+    function grownRadius(b, M, vol) {
+        if (b.kind === 'whitedwarf') return whiteDwarfRadius(M);
+        if (isCompact(b) || b.kind === 'redgiant') return b.R;
+        if (b.m >= STAR_MASS) return b.R * Math.pow(M / b.m, 0.74);
+        if (M >= STAR_MASS) return KINDS.sun.R * Math.pow(M, 0.74);
+        return b.kind === 'jupiter' || b.kind === 'browndwarf' ? b.R : Math.cbrt(vol * M);
+    }
+
+    function survivorOf(a, b) {
+        const ra = DEAD_RANK[a.kind] || 0, rb = DEAD_RANK[b.kind] || 0;
+        if (ra < 3 && rb < 3 && (a.kind === 'redgiant') !== (b.kind === 'redgiant')) return a.kind === 'redgiant' ? a : b;
+        if (ra === rb) return a.m >= b.m ? a : b;
+        const hi = ra > rb ? a : b, lo = hi === a ? b : a;
+        return hi.kind !== 'blackhole' && !isCompact(lo) && lo.m >= SINKS * hi.m ? lo : hi;
+    }
+
+    // After a body's mass has grown
+    let overLimit = null, detonate = false;
+    function settleMerged(b) {
+        if (b.kind === 'whitedwarf' && (detonate || b.m > CHANDRASEKHAR)) overLimit = b;
+        detonate = false;
+        if (b.kind === 'browndwarf' && b.m >= STAR_MASS) {
+            b.kind = 'dwarf';
+            if (/^Brown dwarf/.test(b.name)) b.name = uniqueName('Red dwarf');
+        }
+        if (b.name === 'Sun' && Math.abs(b.m - KINDS.sun.m) > 0.05) b.name = uniqueName('Star');   // (no longer our Sun)
+    }
+
+    // A star or planet (or white dwarf) meeting a dead star. Returns false if they just merge (see survivorOf).
+    // Two white dwarfs that hit nearly head on, or whose mass tops Chandrasekhar's limit, go off: see whiteDwarfBlast.
+    // (A slow merger of the heaviest might collapse to a neutron star instead: Nomoto & Iben 1985, ApJ 297, 531. It is
+    // still argued over, and is not done here.)
+    // A dead star is so small that it goes through a star, and gathers only what its gravity can pull in from a tube of
+    // the Bondi-Hoyle radius r = 2 G M / V^2 (Hoyle & Lyttleton 1939). Fast enough, that is little: both go on, the
+    // relative speed cut by what the tube's mass takes, with a Coulomb factor of 3. Slower than that it is caught. A
+    // body far lighter is torn by the tide as ever. A star up to SINKS times the dead star's mass is torn up on it,
+    // and the dead star keeps only about a tenth (a round figure): the heat of what falls in blows the rest away (Kremer
+    // et al. 2019, ApJ 881, 75; 2022, ApJ 933, 203). Where its orbits would show, that is a disc of gas (see "Gas round a
+    // compact body"). A star any heavier closes over it. (SINKS is a judgement, not a published limit.)
+    function deadStarHit(a, b) {
+        const c = (DEAD_RANK[a.kind] || 0) >= (DEAD_RANK[b.kind] || 0) ? a : b, s = c === a ? b : a;
+        if (isCompact(s) && s.kind !== 'whitedwarf') return false;   // (neutron stars and black holes: see collapseIfTooHeavy and plunge)
+        readHit(c, s);
+        if (s.kind === 'whitedwarf' && c.kind === 'whitedwarf') {
+            // Head on, the shock sets them off whatever their mass, from about this total up (Rosswog et al. 2009, ApJ 705,
+            // L128; Kushnir et al. 2013, ApJ 778, L37)
+            detonate = hit.V2 > hit.esc2 && hit.b < 0.5 && c.m + s.m >= 1;
+            return false;
+        }
+        const ra = (2 * G * c.m) / hit.V2, Rs = s.R / AU_KM, tube = Math.min(1, 1.5 * (ra / Rs) * (ra / Rs));
+        const cut = Math.max(0, 1 - (3 * tube * s.m) / c.m);
+        if (s.R > c.R && tube < 0.5 && !tideWins(s, c) && cut * cut * hit.V2 > hit.esc2) { passThrough(c, s, tube * s.m, cut); return true; }
+        if (s.m >= SINKS * c.m) return false;
+        if (s.m >= 0.2 * c.m && !gasTear(s, c)) { tornOnto(c, s); return true; }
+        if (!disrupt(s, c)) return false;
+        announceTear();
+        return true;
+    }
+
+    function tornOnto(c, s) {
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        noteCollision(c, s);   // (the stability timer)
+        const before = systemEnergy().total, M = c.m + s.m, Md = 0.9 * s.m, grp = nextId++ + 0.5;
+        const X = (c.m * c.x + s.m * s.x) / M, Y = (c.m * c.y + s.m * s.y) / M;
+        const VX = (c.m * c.vx + s.m * s.vx) / M, VY = (c.m * c.vy + s.m * s.vy) / M;
+        const bits = new Uint32Array(new Float64Array([c.m, s.m, s.R]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        const it = sentenceCase(theName(s)), them = theName(c);
+        impactFlash(c, s, 0, 0);
+        const parts = throwDebris(c, grownRadius(c, M - Md, 0), M, Md, X, Y, VX, VY, null, 0.5 * Math.sqrt(hit.V2), (s.R * s.R * s.R) / s.m, ((h >>> 0) % 2147483646) + 1, s.color, grp,
+            { spread: Math.PI, bias: 0, kind: isCompact(s) ? 'custom' : s.kind });
+        removeBody(s, c);
+        bodies.push(...parts);
+        c.track = null;
+        forcesDirty = true;
+        collapseIfTooHeavy(c);
+        settleMerged(c);
+        groupEnergy.set(grp, systemEnergy().total - before);
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
+        else if (!settings.stability) { clearHint('tip'); eventNote(`${it} was torn up on ${them}`, ', which kept a tenth of it.', 7000); }
+    }
+
+    // Going on through, as described above: placed on their way out, at the far side
+    function passThrough(c, s, dm, cut) {
+        noteIrreversible('hit');
+        noteCollision(c, s);   // (the stability timer)
+        const before = systemEnergy().total;
+        impactFlash(c, s, 0, 0);
+        const M = c.m + s.m, X = (c.m * c.x + s.m * s.x) / M, Y = (c.m * c.y + s.m * s.y) / M;
+        const VX = (c.m * c.vx + s.m * s.vx) / M, VY = (c.m * c.vy + s.m * s.vy) / M;
+        const vx = cut * (s.vx - c.vx), vy = cut * (s.vy - c.vy), V = hyp(vx, vy), ux = vx / V, uy = vy / V;
+        const rx0 = s.x - c.x, ry0 = s.y - c.y, along = rx0 * ux + ry0 * uy, gone = Math.abs(along) + (0.6 * sampleDt / HOST_STEPS) * V;
+        const reach = 1.02 * (s.R + c.R) / AU_KM, off = rx0 * uy - ry0 * ux, out = Math.max(gone, Math.sqrt(Math.max(0, reach * reach - off * off)));
+        const rx = out * ux + off * uy, ry = out * uy - off * ux;
+        const auto = autoColoured(s), mass = s.m;
+        s.R = grownRadius(s, mass - dm, (s.R * s.R * s.R) / mass);
+        s.m -= dm; c.R = grownRadius(c, c.m + dm, 0); c.m += dm;
+        const fs = c.m / M, fc = s.m / M;
+        s.x = X + fs * rx; s.y = Y + fs * ry; s.vx = VX + fs * vx; s.vy = VY + fs * vy; s.px = s.x; s.py = s.y;
+        c.x = X - fc * rx; c.y = Y - fc * ry; c.vx = VX - fc * vx; c.vy = VY - fc * vy; c.px = c.x; c.py = c.y;
+        s.track = c.track = null;
+        if (auto && !KEEPS_LOOK[s.kind]) s.color = colourForMass(s);
+        collapseIfTooHeavy(c);
+        settleMerged(c);
+        groupEnergy.set(nextId++, systemEnergy().total - before);
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (timeDir > 0 && !settings.stability) eventNote(`${sentenceCase(theName(c))} went straight through ${theName(s)}`, ', too fast to be caught.', 7000);
+    }
+
+    // ------------------------------------------------------------------
+    // Inside a red giant (realistic physics). A red giant is a tiny core inside a vast envelope of gas thinner than air,
+    // so it is no wall: a body flies in, and only reaching the core counts as a hit (contactReach). The pull is still that
+    // of a point at its centre, which overstates it a little inside.
+    //   The envelope's density is that of a convective envelope, a polytrope of index 3/2 round a point (Hjellming &
+    //   Webbink 1987, ApJ 318, 794): rho = (4 M_env / pi^2 R^3) (R / r - 1)^(3/2). Its drag on a body moving at V is
+    //   F = rho V^2 pi (R_b^2 / 2 + 3 min(2 G m / V^2, r)^2), the gas it hits plus its wake's pull on it, with a Coulomb
+    //   factor of 3 (Ostriker 1999, ApJ 513, 252). That takes a planet years to spiral down, and a star only an orbit or
+    //   two. Given as an impulse along the motion, ENV_TICKS times a trail sample, on both bodies, so momentum and angular
+    //   momentum about the pair's centre stay as they should. The energy goes into the books. Going forwards, the impulses
+    //   are logged, and running back takes them off again (as for tides).
+    //   This is a common envelope (Paczynski 1976; Ivanova et al. 2013, A&A Rev. 21, 59). The energy lost by the orbit
+    //   heats the gas, and once it tops the envelope's binding energy, alpha dE = G M M_env / (lambda R), the envelope leaves
+    //   (alpha about 0.25: Zorotovic et al. 2010, A&A 520, A86; lambda taken as 1). What is left is the core, now a white dwarf,
+    //   and the body in a tight orbit: which is how the close pairs seen today were made. A planet has too little orbit
+    //   to do that. It is lost when the core's tide tears it (2.44 R (M_core / m)^(1/3)), or when it reaches the core.
+    //   The core's mass is from the giant's radius, R = 3700 M_c^4 / (1 + M_c^3 + 1.75 M_c^4) R_sun (Joss, Rappaport & Lewis
+    //   1987, ApJ 319, 180), 0.335 solar masses at the palette's 43 R_sun, near there as M_c ~ R^0.26. That is for a star
+    //   of low mass. A heavy star's core is helium, about 0.1 M^1.4 (which fits the means in Jones et al. 2015, MNRAS 447,
+    //   3115, table 4: 4.40, 6.53 and 8.82 solar masses for stars of 15, 20 and 25), too heavy to end as a white dwarf:
+    //   without its envelope it is a hot helium star, about the size of the Sun.
+    // ------------------------------------------------------------------
+    const ENV_CORE = 12000;               // km: the size of the core, a white dwarf of that mass
+    const ENV_AL = 0.25;
+    const ENV_TICKS = 4;
+    const ENV_BOOK = -5;                  // (among the body ids of groupEnergy)
+    const ENV_LOG = 1 << 13, ENV_ROW = 5;
+    const env = { log: null, n: 0, low: 0, key: null, told: -1 };
+    const HEAVY_STAR = 8;                 // solar masses
+    const coreMass = (H) => Math.min(0.9 * H.m, H.m >= HEAVY_STAR ? 0.1 * Math.pow(H.m, 1.4) : 0.335 * Math.pow(H.R / 3e7, 0.26));
+
+    // How close (AU) a and b are when they touch
+    function contactReach(a, b) {
+        if (settings.realistic && (a.kind === 'redgiant' || b.kind === 'redgiant') && !a.grp && !b.grp && !a.minor && !b.minor && !mission.def) {
+            return ((a.kind === 'redgiant' ? ENV_CORE : a.R) + (b.kind === 'redgiant' ? ENV_CORE : b.R)) / AU_KM;
+        }
+        return (a.R + b.R) / AU_KM;
+    }
+
+    // After each step going forwards
+    function envelopeDrag(dt) {
+        const gd = sampleDt / ENV_TICKS, ticks = Math.floor(simTime / gd) - Math.floor((simTime - dt) / gd);
+        if (!ticks || mission.def) return;
+        const n = bodies.length;
+        for (let g = 0; g < n; g++) {
+            const H = bodies[g];
+            if (H.kind !== 'redgiant' || H.grp || H.held) continue;
+            const Rg = H.R / AU_KM, core = coreMass(H), Me = H.m - core, rho0 = (4 * Me) / (Math.PI * Math.PI * Rg * Rg * Rg);
+            for (let k = 0; k < n; k++) {
+                const f = bodies[k];
+                if (f === H || f.grp || f.minor || f.held || f.m < 1e-17) continue;
+                const rx = f.x - H.x, ry = f.y - H.y, r2 = rx * rx + ry * ry;
+                if (!(r2 < Rg * Rg)) continue;
+                const r = Math.sqrt(r2), vx = f.vx - H.vx, vy = f.vy - H.vy, V2 = vx * vx + vy * vy, V = Math.sqrt(V2);
+                const M = f.m + H.m, mu = (f.m * H.m) / M, Rb = f.R / AU_KM, wake = Math.min((2 * G * f.m) / V2, r), x = Rg / r - 1;
+                const k1 = rho0 * x * Math.sqrt(x) * Math.PI * (0.5 * Rb * Rb + 3 * wake * wake) * V / mu;
+                const q = 1 / (1 + k1 * ticks * gd);
+                // The orbit's energy given up since its surface, against the binding energy. (Instead of this impulse: the
+                // copy made just before either of these is of the step alone, so running back retraces it.)
+                const gm = G * M, given = mu * (0.5 * q * q * V2 - gm / r + gm / (2 * Rg));
+                if (-given * ENV_AL >= (G * H.m * Me) / Rg) { envelopeOff(H, f, core); return; }
+                if (r < Math.max(contactReach(H, f), (ROCHE * Rb) * Math.cbrt(core / f.m))) {
+                    const it = sentenceCase(theName(f)), them = theName(H);
+                    mergeBooked(f, H);
+                    computeForces();
+                    refreshBodyLists();
+                    if (!settings.stability && !scene.progress) eventNote(`${it} sank to the core of ${them}`, ' and was lost.', 7000);
+                    return;
+                }
+                // (the books count what systemEnergy does: a pair with its relativistic terms unless it is hosted)
+                const full = !(f.kep && f.kep.hosted && f.kep.b === H) && !(H.kep && H.kep.hosted && H.kep.b === f);
+                const was = full ? pairEnergy(f, H) : 0.5 * mu * V2;
+                envelopeNote(f, H, q);
+                const dvx = (q - 1) * vx, dvy = (q - 1) * vy, fF = H.m / M, fH = f.m / M;
+                f.vx += fF * dvx; f.vy += fF * dvy;
+                H.vx -= fH * dvx; H.vy -= fH * dvy;
+                const now = full ? pairEnergy(f, H) : 0.5 * mu * q * q * V2;
+                groupEnergy.set(ENV_BOOK, (groupEnergy.get(ENV_BOOK) || 0) + now - was);
+                f.track = H.track = null;
+                forcesDirty = true;
+                if (env.told !== f.id && !settings.stability && !scene.progress) {
+                    env.told = f.id;
+                    eventNote(`${sentenceCase(theName(f))} went into ${theName(H)}`, ': its thin gas slows it down.', 6000);
+                }
+            }
+        }
+    }
+
+    function envelopeNote(f, H, q) {
+        if (env.key !== past.key) { env.key = past.key; env.n = env.low = 0; env.told = -1; }
+        if (!env.log) env.log = new Float64Array(ENV_LOG * ENV_ROW);
+        const o = (env.n & (ENV_LOG - 1)) * ENV_ROW, g = env.log;
+        g[o] = past.head; g[o + 1] = f.id; g[o + 2] = H.id; g[o + 3] = q;
+        g[o + 4] = groupEnergy.get(ENV_BOOK) || 0;
+        env.n++;
+        if (env.n - env.low > ENV_LOG) env.low = env.n - ENV_LOG;
+    }
+
+    // Running back, about to retrace logged step k: take back the impulses at its end, from the velocities the run back
+    // has reached (see tideBack)
+    function envelopeBack(k) {
+        if (env.n === env.low) return;
+        if (env.key !== past.key) { env.n = env.low = 0; return; }
+        const g = env.log;
+        let any = false;
+        while (env.n > env.low) {
+            const o = ((env.n - 1) & (ENV_LOG - 1)) * ENV_ROW;
+            if (g[o] < k) break;
+            env.n--;
+            if (g[o] > k) continue;
+            const f = bodyById(g[o + 1]), H = bodyById(g[o + 2]);
+            if (!f || !H) continue;
+            const M = f.m + H.m, up = 1 / g[o + 3] - 1, dvx = up * (f.vx - H.vx), dvy = up * (f.vy - H.vy);
+            f.vx += (H.m / M) * dvx; f.vy += (H.m / M) * dvy;
+            H.vx -= (f.m / M) * dvx; H.vy -= (f.m / M) * dvy;
+            if (g[o + 4]) groupEnergy.set(ENV_BOOK, g[o + 4]); else groupEnergy.delete(ENV_BOOK);
+            any = true;
+        }
+        if (any) computeForces();
+    }
+
+    // The envelope leaves. The body had been going round the mass inside its orbit, not the whole of the giant, and so
+    // it stays in orbit round what is left (its speed relative to the core is set by what is left).
+    function envelopeOff(H, f, core) {
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        noteCollision(H, f);   // (the stability timer)
+        const before = systemEnergy().total, grp = nextId++ + 0.5, m0 = H.m, M0 = m0 + f.m;
+        const it = sentenceCase(theName(f)), them = theName(H);
+        const rvx = f.vx - H.vx, rvy = f.vy - H.vy, Rg = H.R / AU_KM;
+        const bits = new Uint32Array(new Float64Array([m0, H.R, f.m, f.R]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        flashes.push({ x: H.x, y: H.y, t: performance.now(), color: H.color, r0: drawRadius(H), grow: 60 });
+        const x0 = H.x, y0 = H.y, vx0 = H.vx, vy0 = H.vy;
+        // (gas that leaves at a little over the escape speed from the surface, a third of it to spare)
+        const vol = (KINDS.sun.R * KINDS.sun.R * KINDS.sun.R) / KINDS.sun.m;
+        const helium = core > CHANDRASEKHAR;
+        const parts = throwDebris(H, helium ? KINDS.sun.R : whiteDwarfRadius(core), m0, m0 - core, H.x, H.y, H.vx, H.vy, null, Math.sqrt((2 * G * (f.m + m0 / 3)) / Rg), vol, ((h >>> 0) % 2147483646) + 1, H.color, grp,
+            { spread: Math.PI, bias: 0, n: DEBRIS_MAX, from: Rg, kind: 'custom' });
+        // A heavy envelope, thrown as a few lumps going as the star does, would fling what is left far away. But it is a shell
+        // far wider than the pair deep inside it, and goes on as the whole system does, leaving the pair to do the same:
+        // first the lumps take up their own unevenness, then what it takes for the pair to keep the system's velocity.
+        if (helium) {
+            let Md = 0;
+            for (const q of parts) Md += q.m;
+            const k = H.m / Md, Mp = H.m + f.m;
+            for (const q of parts) { q.x += k * (H.x - x0); q.y += k * (H.y - y0); q.vx += k * (H.vx - vx0); q.vy += k * (H.vy - vy0); }
+            const ux = (m0 * vx0 + f.m * f.vx) / M0 - (H.m * vx0 + f.m * f.vx) / Mp, uy = (m0 * vy0 + f.m * f.vy) / M0 - (H.m * vy0 + f.m * f.vy) / Mp;
+            H.x = x0; H.y = y0; H.vx = vx0 + ux; H.vy = vy0 + uy;
+            f.vx += ux; f.vy += uy;
+            for (const q of parts) { q.vx -= (Mp / Md) * ux; q.vy -= (Mp / Md) * uy; }
+        }
+        // (what the debris's lumpiness did to the core, the body goes along with: the whole keeps its centre of mass and momentum)
+        const dx = H.x - x0, dy = H.y - y0, dvx = helium ? 0 : H.vx - vx0, dvy = helium ? 0 : H.vy - vy0, sh = f.m / M0;
+        f.x += dx; f.y += dy; f.vx += dvx; f.vy += dvy;
+        for (const q of [H, f].concat(parts)) { q.x -= sh * dx; q.y -= sh * dy; q.vx -= sh * dvx; q.vy -= sh * dvy; q.px = q.x; q.py = q.y; }
+        H.kind = helium ? 'bluegiant' : 'whitedwarf';
+        H.color = helium ? KINDS.bluegiant.color : KINDS.whitedwarf.color;
+        if (/^Red (super)?giant/.test(H.name)) H.name = uniqueName(helium ? 'Helium star' : 'White dwarf');
+        H.track = f.track = null;
+        const M1 = H.m + f.m, sc = Math.sqrt(M1 / M0);
+        const cvx = (H.m * H.vx + f.m * f.vx) / M1, cvy = (H.m * H.vy + f.m * f.vy) / M1;
+        f.vx = cvx + (H.m / M1) * sc * rvx; f.vy = cvy + (H.m / M1) * sc * rvy;
+        H.vx = cvx - (f.m / M1) * sc * rvx; H.vy = cvy - (f.m / M1) * sc * rvy;
+        bodies.push(...parts);
+        groupEnergy.set(grp, systemEnergy().total - before);
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (!settings.stability) { clearHint('tip'); eventNote(`${it} blew off the envelope of ${them}`, helium ? ', leaving its hot helium core.' : ', leaving its core, a white dwarf.', 8000); }
+    }
+
+    // A white dwarf pushed past the limit, or set off by a head-on hit, goes off as a Type Ia supernova: all of it burns and
+    // nothing is left (Whelan & Iben 1973, ApJ 186, 1007). The energy is the classic 1.3 x 10^44 J (Nomoto et al. 1984,
+    // ApJ 286, 644), so the debris goes at about 8,000 km/s, whatever the planets and stars round it do.
+    const IA_ENERGY = 1.3e44 / ENERGY_J;
+    function whiteDwarfBlast(b) {
+        overLimit = null;
+        if (!bodies.includes(b) || b.grp || bodies.length + 12 > MAX_BODIES) return;
+        noteIrreversible('hit');   // (running backwards: a copy of the system from just before)
+        const before = systemEnergy().total, M = b.m, grp = nextId++ + 0.5, name = sentenceCase(theName(b));
+        const bits = new Uint32Array(new Float64Array([M, b.R, b.x]).buffer);
+        let h = 2166136261;
+        for (let k = 0; k < bits.length; k++) h = Math.imul(h ^ bits[k], 16777619);
+        flashes.push({ x: b.x, y: b.y, t: performance.now(), color: '#ffffff', r0: drawRadius(b), grow: 120 });
+        const parts = throwDebris(b, b.R, M, (12 / 13) * M, b.x, b.y, b.vx, b.vy, null, Math.sqrt((2 * IA_ENERGY) / M), (b.R * b.R * b.R) / M, ((h >>> 0) % 2147483646) + 1, b.color, grp,
+            { n: 12, spread: Math.PI, kind: 'custom', bias: 0 });
+        b.kind = 'custom';
+        b.grp = grp;
+        b.name = parts[0].name;
+        b.heft = heftOf((13 * b.m) / M);
+        b.trailStart = sampleCount;
+        b.track = null;
+        bodies.push(...parts);
+        if (selectedId === b.id) selectedId = defaultSubject();
+        groupEnergy.set(grp, systemEnergy().total - before);
+        forcesDirty = true;
+        computeForces();
+        refreshBodyLists();
+        updateHistoryUi();
+        if (timeDir < 0) { past.noted = true; pastNote(MERGE_BACK_NOTE, 8000); }
+        else if (!settings.stability) { clearHint('tip'); eventNote(`${name} blew itself apart`, ': a Type Ia supernova. Only debris is left.', 8000); }
     }
 
     // ------------------------------------------------------------------
@@ -2944,6 +3537,18 @@
         if (b.kind === 'blackhole') b.R = horizonKm(b.m);
     }
 
+    // Anything inside its own event horizon is a black hole, whatever it was. (Only the mass slider gets
+    // there, so this is called from nowhere else: no scene or merger comes through it.)
+    function collapseIfInsideHorizon(b) {
+        if (b.kind === 'blackhole' || b.R > horizonKm(b.m)) return;
+        b.kind = 'blackhole';
+        b.color = KINDS.blackhole.color;
+        b.R = horizonKm(b.m);
+        flashes.push({ x: b.x, y: b.y, t: performance.now(), color: '#ffffff', r0: drawRadius(b) });
+        refreshBodyLists();
+        showHint('note', `<strong>${escapeHtml(capital(theName(b)))} is now a black hole:</strong> it fits inside its own event horizon.`, { ms: 8000, tag: 'horizon' });
+    }
+
     // ------------------------------------------------------------------
     // Tides on a body that stays whole (realistic physics). A close pass raises waves in a star or gas giant, and
     // the energy they take comes out of the orbit. For a parabolic pass (Press & Teukolsky 1977, ApJ 213, 183):
@@ -3029,7 +3634,7 @@
         const e = Math.sqrt(Math.max(0, 1 - p * beta / gm));
         if (e < TIDE_E_MIN) return false;
         const rp = p / (1 + e), R = L.R / AU_KM, q = rp / R, eta = Math.sqrt((L.m / M) * q * q * q);
-        if (eta > TIDE_ETA_MAX) return false;
+        if (eta > TIDE_ETA_MAX || q < 1) return false;   // (a pass inside a body is no tide on it: only a red giant allows one)
         const at = Math.min(p, 3 * rp);
         if (r < at) return false;
         if (hyp(L.px - H.px, L.py - H.py) >= at) {
@@ -3063,7 +3668,7 @@
         // (said once a scene, for a pass that matters)
         if (tides.told !== settings.scene && dE > 1e-3 * 0.5 * mu * Math.abs(beta)) {
             tides.told = settings.scene;
-            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', ' Close passes shrink it, until it no longer comes close enough.', 7000);
+            if (!settings.stability && !scene.progress && !mission.def) eventNote('Tides took energy from this orbit.', '', 7000);
         }
         return true;
     }
@@ -3118,6 +3723,7 @@
         for (const o of bodies) {
             if (o === b || o.grp) continue;
             const ex = o.dx - b.dx, ey = o.dy - b.dy, d2 = ex * ex + ey * ey;
+            if (d2 < R * R) continue;   // (inside it: no tide on it, as for a pass inside a red giant)
             const f = d2 > 0 ? o.m / (d2 * Math.sqrt(d2)) : 0;
             if (f > best) { best = f; c = o; }
         }
@@ -3161,8 +3767,9 @@
     // (Checked: the energy is what the 2PN motion keeps constant, to order GM/(rc^2)^3.)
     //
     // The plunge. RR_MIN is far above PN_PAIR_MAX, so these pairs are never left to the two-body (Kepler)
-    // drift; their step follows the shrinking orbit (it scales with the pair's free-fall time). At their
-    // innermost stable orbit they plunge together and merge (see plunge), keeping momentum.
+    // drift; their step follows the shrinking orbit (it scales with the pair's free-fall time). Close in, two
+    // black holes follow plungeForce until their horizons meet; anything else falls in (see plunge). Either
+    // way momentum is kept.
     //
     // The energy carried off is the work the radiation reaction does on the system's energy (with its
     // 1PN and 2PN terms, as systemEnergy counts it), added up step by step (trapezium rule): total +
@@ -3175,6 +3782,9 @@
     // on the cubic through the positions and velocities at the ends of that step), and its direction is
     // that of the Runge-Lenz vector, the closest point of the osculating ellipse, at that moment
     // (interpolated between the step's ends: a Kepler orbit keeps it exactly, so the steps don't show).
+    // Close to a black hole that vector can say little: an orbit nearly round to Newton at its closest point has
+    // almost none, swinging wildly from one end of the step to the other, and a body slower than Newton's circle there
+    // has it pointing the other way. So then it is the direction of that closest point itself, or the vector turned round.
     // The turn between one passage and the next is compared with Einstein's value for that orbit (with
     // a (1 - e^2) = 2 r_min r_max / (r_min + r_max) from its measured closest and farthest distances).
     // When other bodies' pulls on it could matter (their tides add up to more than a fifth of
@@ -3196,7 +3806,8 @@
         a: null, b: null,                 // the pair radiating most (b the lighter)
         merged: null,                     // { t, id, m, m1, m2 } after two compact bodies merged
         wave: new Float64Array(WAVE_N), waveT: 0, waveN: 0, waveDt: 0, frozen: false,
-        ring: null                        // ringing of a new black hole: { t0, A, w, tau }
+        ring: null,                       // ringing of a new black hole: { t0, A, w, tau }
+        retaken: false                    // a merger was taken back in this step (running backwards)
     };
     const watched = new Map();            // trackers of orbits: "bodyId:primaryId" -> tracker
     const apiWatch = new Set();           // bodies the test API asked about
@@ -3214,6 +3825,7 @@
         RR_X = -dx; RR_Y = -dy; RR_VX = i.vx - j.vx; RR_VY = i.vy - j.vy;
         if (!(r > 0) || !(gm > RR_MIN_C2 * r)) return 0;
         const eta = (i.m * j.m) / (msum * msum), mu = eta * msum;
+        if (gm > ISCO_C2 * r && holePair(i, j)) return gwOn ? plungePower(r, gm, mu, eta) : 0;
         const nx = -dx / r, ny = -dy / r, vx = RR_VX, vy = RR_VY;
         const rd = nx * vx + ny * vy, v2 = vx * vx + vy * vy, gr = gm / r;
         const k = 1.6 * eta * gm * gm / (C5 * r2 * r);
@@ -3251,7 +3863,8 @@
         for (let q = 0; q < pnCount; q++) {
             const i = bodies[PNI[q]], j = bodies[PNJ[q]];
             if (!i || !j) continue;
-            if (G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && plunge(i, j)) return P;
+            if (i.kind === 'blackhole' && j.kind === 'blackhole') holesCross(i, j);
+            if (G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && !holePair(i, j) && plunge(i, j)) return P;
             const p = gwOn ? radiationPower(i, j) : 0;
             if (!p) continue;
             P += p;
@@ -3266,8 +3879,9 @@
     // mass M exactly that, in Schwarzschild's coordinates; much the same for two equal masses), no orbit
     // lasts: the two plunge together within an orbit, which the 1PN terms can't follow (pushed that far,
     // they even turn gravity round: a body dropped straight onto a black hole would bounce back). So a
-    // pair (two compact bodies, as nothing else gets that close) merges there, through mergeBodies (mass
-    // and momentum kept). Two black holes make one a little lighter than the two: what the final plunge
+    // pair with a neutron star or a much lighter hole in it merges there, through mergeBodies (mass and
+    // momentum kept). Comparable black holes go on to plungeForce, and merge when their horizons meet.
+    // Two black holes make one a little lighter than the two: what the final plunge
     // and ringing radiate, from the fit E/(Mc^2) = (1 - sqrt(8/9)) eta + 4 eta^2 (4 p0 + sqrt(8/9) - 1),
     // p0 = 0.04827, to numerical-relativity mergers of black holes without spin (Barausse, Morozova &
     // Rezzolla 2012, ApJ 758, 63): 4.8% of the mass for two equal ones, 36 + 29 -> 62 solar masses, as LIGO
@@ -3276,6 +3890,7 @@
     // orbit's energy taken into the new hole) is kept, like a tidal break-up's, so the total stays level.
     const ISCO = 6;
     const ISCO_C2 = C2 / ISCO;
+    const HOLES_BOOK = -9;                // (among the body ids of groupEnergy)
     function plunge(i, j) {
         if (!settings.merge || i.held || j.held) return false;
         const bothHoles = i.kind === 'blackhole' && j.kind === 'blackhole';
@@ -3290,14 +3905,118 @@
         if (bothHoles) { big.m = M - eFit / C2; collapseIfTooHeavy(big); }
         noteMerger(big, mi, mj);
         gw.radiated += burst;
-        groupEnergy.set(`plunge ${big.id} ${simTime}`, systemEnergy().total - before + burst);
+        groupEnergy.set(HOLES_BOOK, (groupEnergy.get(HOLES_BOOK) || 0) + systemEnergy().total - before + burst);
         computeForces();
         refreshBodyLists();
         return true;
     }
 
-    // A pair's own energy, with its 1PN terms (as in systemEnergy)
+    // The last of an orbit between two black holes. The PN terms are no use here: carried on down to the horizons they
+    // reach 318 Hz at 0.89 c, and their energy turns positive. So from 6 GM/c^2 in (r, in their harmonic coordinates) the
+    // pair follows the effective-one-body picture (Buonanno & Damour 2000, PRD 62, 064015), which is cheap and keeps no
+    // state: a body of the reduced mass goes round the total mass in
+    //   ds^2 = -A dt^2 + (D/A) drho^2 + rho^2 dphi^2,  A = (1 + n1 u)/(1 + d1 u + d2 u^2 + d3 u^3),
+    //   1/D = 1 + 6 eta u^2 + 2 (26 - 3 eta) eta u^3,  u = GM/(rho c^2)
+    // (3PN, A a Pade approximant: Damour, Jaranowski & Schäfer 2000, PRD 62, 084011), while the waves take angular
+    // momentum at the quadrupole rate for its frequency, dp_phi/dt = -(32/5) eta (GM omega/c^3)^(7/3). Its equations of
+    // motion in coordinate time (Schwarzschild's geodesics at eta = 0), with h = E/(Mc^2) turning effective time into
+    // real time, kept at its value for H_eff = sqrt(8/9):
+    //   rho'' = -A A'/(2 D h^2) + rho A omega^2/D + rho'^2 (3 A'/(2 A) - D'/(2 D)),  omega' = omega rho' (A'/A - 2/rho)
+    // A choice of ours: rho = r + b, with b (0.32 for 36 + 29; 1 at eta = 0, where it is exact) setting the model's light
+    // ring, where the waves peak in this picture, at r = 2 GM/c^2, where the drawn horizons touch. So they merge as they
+    // touch, 192 km apart for 36 + 29. How far apart two holes are this close depends on the coordinates, so that is a
+    // rule for drawing, not a measurement: simulations in harmonic-like coordinates have the horizons' centres 1.7 to
+    // 2.4 GM/c^2 apart as the common horizon forms (SXS:BBH:0198, 1132). It also meets the PN orbit at 6 GM/c^2 within 2%
+    // in frequency, so nothing jumps there.
+    // Checked for 36 + 29 against SXS:BBH:0198 (q = 1.2), by the time before the common horizon: the orbit's frequency
+    // here is within 15% of half the wave's over the last 55 GM/c^3, within 6% over the last 30, and they touch at 155 Hz
+    // (2% from it, and 13% under the wave's peak, 178 Hz, which comes 5 GM/c^3 later). From this model's own innermost
+    // stable orbit (r = 4.65 GM/c^2, 446 km) to touching is 29 GM/c^3, 9.3 ms and half an orbit (simulation, from that
+    // frequency: 33.5). From 576 km it is short, 18 ms and 0.83 orbits (simulation, from that frequency: 28 ms, 1.2): the
+    // PN inspiral arrives closing at 2.3 times the rate of a model that has been on this path all along.
+    const PLUNGE_ETA = 1e-3;              // (a lighter hole would take hundreds of orbits to fall in, unseen: it falls in at once)
+    const holePair = (a, b) => a.kind === 'blackhole' && b.kind === 'blackhole' && settings.merge && !a.held && !b.held
+        && (a.m * b.m) / ((a.m + b.m) * (a.m + b.m)) > PLUNGE_ETA;
+    const PL = { eta: -1, n1: 0, d1: 0, d2: 0, d3: 0, h: 1, b: 0, A: 1, Ap: 0, E: 1, Ep: 0 };
+    const PLF = { A: 0, B: 0 };
+    // A and dA/drho (GM/c^2 = 1), 1/D and its slope, at rho, for the pair's eta
+    function plungeMetric(rho) {
+        const eta = PL.eta, u = 1 / rho, f = 2 * (26 - 3 * eta) * eta;
+        const N = 1 + PL.n1 * u, Q = 1 + u * (PL.d1 + u * (PL.d2 + u * PL.d3));
+        PL.A = N / Q;
+        PL.Ap = -u * u * (PL.n1 * Q - N * (PL.d1 + u * (2 * PL.d2 + 3 * u * PL.d3))) / (Q * Q);
+        PL.E = 1 + u * u * (6 * eta + u * f);
+        PL.Ep = -u * u * u * (12 * eta + 3 * u * f);
+    }
+    // The constants for a pair's eta (few pairs, so kept for the last one): the Pade coefficients of A, and b, from the
+    // light ring, (u^2 A)' = 0
+    function plungeFit(eta) {
+        if (eta === PL.eta) return;
+        PL.eta = eta;
+        const a3 = 2 * eta, a4 = (94 / 3 - 41 * Math.PI * Math.PI / 32) * eta;
+        PL.d1 = (a4 + 2 * a3) / (8 - a3); PL.n1 = PL.d1 - 2; PL.d2 = 2 * PL.d1; PL.d3 = 4 * PL.d1 - a3;
+        PL.h = Math.sqrt(1 + 2 * eta * (Math.sqrt(8 / 9) - 1));
+        let lo = 1.5, hi = 4;
+        for (let k = 0; k < 50; k++) {
+            const rho = 0.5 * (lo + hi);
+            plungeMetric(rho);
+            if (rho * PL.Ap - 2 * PL.A > 0) lo = rho; else hi = rho;   // (zero at the ring, above zero inside it)
+        }
+        PL.b = 0.5 * (lo + hi) - 2;
+    }
+    // The effective energy over the reduced mass, H_eff, as a share of its rest energy (from the last plungeMetric)
+    function plungeHeff(rho, rd, w) {
+        const h = PL.h, root = PL.A - (h * rd * h * rd) / (PL.E * PL.A) - (rho * h * w) * (rho * h * w);
+        return PL.A / Math.sqrt(root > 1e-4 ? root : 1e-4);   // (a hole thrown in by hand at more than c: no worse than this)
+    }
+    // Sets PLF: the pair's relative acceleration as A n + B v, less Newton's pull (added in the pair sums). (In the step
+    // before they merge they can be closer than they touch, or put there by hand: PLUNGE_R keeps A above zero.)
+    const PLUNGE_R = 1.5;
+    function plungeForce(r, rd, w, gm, eta) {
+        plungeFit(eta);
+        const L = gm / C2, R = r / L, Rd = rd / C_LIGHT, W = (w * L) / C_LIGHT;
+        const rho = Math.max(R, PLUNGE_R) + PL.b, h = PL.h;
+        plungeMetric(rho);
+        const A = PL.A, Ap = PL.Ap, E = PL.E, Ep = PL.Ep;
+        const Fw = gwOn ? -6.4 * eta * Math.abs(W) * Math.cbrt(Math.abs(W)) : 0;   // (dp_phi/dt, over omega)
+        const he = plungeHeff(rho, Rd, W);
+        // (a kick to p_phi moves H_eff by h omega dp_phi, which also slows rho' a little)
+        const rdd = -A * Ap * E / (2 * h * h) + rho * A * E * W * W + Rd * Rd * (1.5 * Ap / A + 0.5 * Ep / E) - Rd * h * W * W * Fw / he;
+        const Q = Rd * (Ap / A - 2 / rho) + Fw * (A / (rho * rho) - h * h * W * W) / (he * h) + 2 * Rd / R;
+        PLF.A = ((rdd - R * W * W - Q * Rd) * C2) / L + gm / (r * r);
+        PLF.B = (Q * C_LIGHT) / L;
+    }
+    // The pair's energy: the real energy less its rest energy, M c^2 (sqrt(1 + 2 eta (H_eff - 1)) - 1)
+    function plungeEnergy(r, rd, w, gm, eta) {
+        plungeFit(eta);
+        const L = gm / C2, rho = Math.max(r / L, PLUNGE_R) + PL.b;
+        plungeMetric(rho);
+        return ((gm / G) * C2) * (Math.sqrt(1 + 2 * eta * (plungeHeff(rho, rd / C_LIGHT, (w * L) / C_LIGHT) - 1)) - 1);
+    }
+    // Crossing 6 GM/c^2 the pair's energy changes from the PN terms' to this one (about 40% apart by then, the PN terms
+    // being out of their depth, this one the better measure): the difference, worked out at that moment, goes in a book
+    function holesCross(i, j) {
+        const gm = G * (i.m + j.m), near = ISCO_C2 * hyp(j.x - i.x, j.y - i.y) < gm;
+        if (near === (ISCO_C2 * hyp(j.px - i.px, j.py - i.py) < gm) || !holePair(i, j)) return;
+        const d = plungeBookEnergy(i, j) - pnEnergy(i, j);
+        groupEnergy.set(HOLES_BOOK, (groupEnergy.get(HOLES_BOOK) || 0) + (near ? d : -d));
+    }
+    function plungeBookEnergy(i, j) {
+        const rx = i.x - j.x, ry = i.y - j.y, r = Math.hypot(rx, ry), vx = i.vx - j.vx, vy = i.vy - j.vy, M = i.m + j.m;
+        return plungeEnergy(r, (rx * vx + ry * vy) / r, (rx * vy - ry * vx) / (r * r), G * M, (i.m * j.m) / (M * M));
+    }
+    // What the waves carry off per unit time: the kick above, at omega
+    function plungePower(r, gm, mu, eta) {
+        const W = (Math.abs(RR_X * RR_VY - RR_Y * RR_VX) * gm) / (r * r * C2 * C_LIGHT);
+        return (6.4 * eta * Math.pow(W, 10 / 3) * mu * C2 * C_LIGHT * C2) / gm;
+    }
+
+    // A pair's own energy, as systemEnergy has it
     function pairEnergy(i, j) {
+        return G * (i.m + j.m) > ISCO_C2 * Math.hypot(j.x - i.x, j.y - i.y) && holePair(i, j) ? plungeBookEnergy(i, j) : pnEnergy(i, j);
+    }
+    // ...with its 1PN terms
+    function pnEnergy(i, j) {
         const M = i.m + j.m, mu = (i.m * j.m) / M, eta = mu / M, gm = G * M;
         const rx = i.x - j.x, ry = i.y - j.y, r = Math.hypot(rx, ry);
         const vx = i.vx - j.vx, vy = i.vy - j.vy, v2 = vx * vx + vy * vy, rd = (rx * vx + ry * vy) / r;
@@ -3311,6 +4030,7 @@
     // a merger of the radiating pair, and the wave sketch
     function relativityStep(dt) {
         relSteps++;
+        if (gw.retaken) { gw.retaken = false; dt = 0; }   // (that step's waves went with the copy: dt was the step after the merger)
         const pair = gw.a && gw.b ? [gw.a, gw.b] : null;
         let P = 0;
         gw.found = false;
@@ -3379,7 +4099,11 @@
                 const w0 = lenzAngle(tr.x, tr.y, tr.vx, tr.vy, mu), w1 = lenzAngle(rx, ry, vx, vy, mu);
                 let dw = w1 - w0;
                 dw -= TAU * Math.round(dw / TAU);
-                notePericentre(tr, b, p, tr.t + s * h, w0 + s * dw, rp, rx * vy - ry * vx);
+                const at = Math.atan2(HY, HX);
+                let w = w0 + s * dw;
+                if (Math.abs(dw) > Math.abs(d)) w = at;   // (it turned further in this step than the body went round)
+                else if (Math.cos(w - at) < 0) w += Math.PI;
+                notePericentre(tr, b, p, tr.t + s * h, w, rp, rx * vy - ry * vx);
             }
             if (r > tr.apo) tr.apo = r;
         }
@@ -3491,7 +4215,7 @@
     function sampleWave() {
         if (gw.frozen && gw.a) { gw.frozen = false; gw.waveN = 0; gw.ring = null; }   // (a new pair)
         if (gw.frozen) return;
-        if (!gw.waveDt) gw.waveDt = (2.5 * scene.Tref) / WAVE_N;
+        if (!gw.waveDt) { gw.waveDt = (2.5 * scene.Tref) / WAVE_N; gw.waveT = simTime; }
         if (!gw.a && !gw.ring && !gw.waveN) { gw.waveT = simTime; return; }
         while (gw.waveT + gw.waveDt <= simTime) {
             gw.waveT += gw.waveDt;
@@ -3533,7 +4257,7 @@
             // (switched back on in such a scene, it is the scene's again, and goes when the scene does)
             const needed = !!(scene && scene.realistic);
             realisticByScene = needed && ui.realistic.checked;
-            if (needed && !ui.realistic.checked) showHint('note', '<strong>Realistic physics off:</strong> just Newton, so a plain ellipse.', { ms: 6000 });
+            if (needed && !ui.realistic.checked) showHint('note', `<strong>Realistic physics off:</strong> ${scene.offNote || 'just Newton, so a plain ellipse.'}`, { ms: 6000 });
             else if (needed) clearHint('note');
         });
     }
@@ -3636,8 +4360,8 @@
             : `${fmtTurn(perOrbit)}${unit ? (compact ? ' a turn' : ' each time round') : ''}`);
         const lines = [];
         if (!done) {
-            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, false)}`]]];
-            return [[title('The orbit turns (precession)')], [['Measured: after a full orbit']], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
+            if (compact) return [[title('Orbit turns: '), [`Einstein ${say(eNow, eNow / T, true)}`]]];
+            return [[title('The orbit turns (precession)')], [[`Einstein: ${say(eNow, eNow / T, true)}`]]];
         }
         const einstein = say(r.einstein, r.others ? r.rateE : r.einstein / r.T, false);
         const measured = say(r.perOrbit, r.rate, true);
@@ -3686,11 +4410,13 @@
         const km = shrink === null ? '' : shrink >= 1 ? `${fmtKm(shrink)} km` : `${fmtSig(shrink * 1000)} m`;
         const freq = `${fmtSig(2 / (T * YEAR_S))} Hz`;   // (twice a turn)
         const mine = b === a || b === c;
+        // (in its last orbit the distance a turn has stopped meaning much)
+        const falling = G * M > ISCO_C2 * r && holePair(a, c);
         if (compact) {
-            lines.push([title('Waves: '), [shrink === null ? `${freq}, orbit shrinking` : `${freq}, orbit shrinks ${km} a turn`]]);
+            lines.push([title('Waves: '), [falling ? `${freq}, falling together` : shrink === null ? `${freq}, orbit shrinking` : `${freq}, orbit shrinks ${km} a turn`]]);
         } else {
             lines.push([title(mine ? 'Gravitational waves' : `Gravitational waves: ${a.name} and ${c.name}`)]);
-            lines.push([[shrink === null ? 'Orbit shrinking' : `Orbit shrinks ${km} each time round`]]);
+            lines.push([[falling ? 'Falling together' : shrink === null ? 'Orbit shrinking' : `Orbit shrinks ${km} each time round`]]);
             lines.push([[`Period ${fmtDuration(T, true)} · waves ${freq}`]]);
         }
         return { lines, wave: gw.waveN > 1 };
@@ -3760,13 +4486,37 @@
         return [[title(`${who} runs slow`)], [[`Loses ${lost}${clock.swings ? ' on average' : ''}`]]];
     }
 
+    // Is the turning of the orbit and the clock worth a card? Where relativity is the point: a scene about it (relCard),
+    // or a clock losing over a minute a year. Not a scene that's about something else (noClock). The small effects
+    // everywhere else, Earth's 0.47 s a year, are in the body's Gravity tab (relativityNote). Waves are rare enough to be
+    // an event wherever they come.
+    const CLOCK_LOUD = 60 / YEAR_S;       // fraction: a minute a year
+    function relativityOnCard(b) {
+        if (!b || scene.noClock) return false;
+        if (scene.relCard || (clock.id === b.id && clock.loss >= CLOCK_LOUD)) return true;
+        // (a black hole has no clock to go by: what an orbit like its own would cost one, 3GM/(2ac^2))
+        if (b.kind !== 'blackhole' || !orbitingBody(b)) return false;
+        const el = elementsOf(b, b.primary);
+        return el.bound && (1.5 * G * (b.m + b.primary.m)) / (C2 * el.a) >= CLOCK_LOUD;
+    }
+
+    // The Gravity tab's line on relativity, while it is on: the clock and the turning, card or no card
+    function relativityNote(b, C) {
+        if (!ui.popPullRel) return;
+        const plain = (t) => [t];
+        const lines = !settings.realistic ? [] : (clockLines(b, true, plain) || []).concat(precessionLines(b, true, plain, C) || []);
+        ui.popPullRel.hidden = !lines.length;
+        if (lines.length) setText(ui.popPullRel, `Relativity: ${lines.map((line) => line.map((seg) => seg[0]).join('')).join('. ')}.`);
+    }
+
     function drawRelativityCard(C, subj, y, fs, compact) {
         if (!settings.realistic || cleanRender) return y;
         const title = (t) => [t, true, C.kepler];
-        const pl = precessionLines(subj, compact, title, C);
+        const on = relativityOnCard(subj);
+        const pl = on ? precessionLines(subj, compact, title, C) : null;
         const wl = waveLines(subj, compact, title, C);
-        // (a flyby's card says what the moment is about: the clock would only stack under it. Nor in a scene that's about something else: noClock)
-        const cl = flybyLines(true) || scene.noClock ? null : clockLines(subj, compact, title);
+        // (a flyby's card says what the moment is about: the clock would only stack under it. A scene about relativity keeps to its subject)
+        const cl = on && !scene.relCard && !flybyLines(true) ? clockLines(subj, compact, title) : null;
         if (!pl && !wl && !cl) return y;
         const lines = (pl || []).concat(cl || [], wl ? wl.lines : []);
         const lh = Math.round(fs * 1.4);
@@ -3814,6 +4564,11 @@
         ctx.stroke();
     }
 
+    // In the two scenes about them, or a pair of your own that loses a real share of its energy to them.
+    // (Elsewhere they are nothing on the graph: 3e-13 of its height for the star and black hole.)
+    const WAVE_SCENES = new Set(['blackhole', 'inspiral']);
+    const wavesMatter = (E) => WAVE_SCENES.has(settings.scene) || 100 * Math.abs(gw.radiated) > Math.abs(E.total);
+
     // Energy chart: the energy carried off by gravitational waves, and the total with it (which stays
     // level), shown while the graph's span holds any (dashed, so they don't rely on colour)
     function chartWaves(ce, E, k) {
@@ -3824,7 +4579,7 @@
             const labels = ce.options.plugins.legend.labels;
             labels.filter = (item, data) => !(ce.$waves.includes(data.datasets[item.datasetIndex]) && data.datasets[item.datasetIndex].hidden);
         }
-        const n = ce.data.labels.length, on = gw.radiated !== 0;
+        const n = ce.data.labels.length, on = gw.radiated !== 0 && wavesMatter(E);
         let show = on;
         for (const d of ce.$waves) {
             while (d.data.length < n - 1) d.data.unshift(null);
@@ -3858,11 +4613,12 @@
                 const used = performance.now() - t0;
                 if (used + 0.5 * used / steps > budget) { timedOut = true; break; }
             }
-            if (past.replay && timeDir < 0) tideBack(past.head - 1);
+            if (past.replay && timeDir < 0) { tideBack(past.head - 1); envelopeBack(past.head - 1); }
             step(timeDir * dt);
             simTime += timeDir * dt;
             acc -= dt;
             steps++;
+            if (scene.cannon) cannonStep();   // (see "Newton's cannon")
             if (checkMerges()) { refreshBodyLists(); }
             if (checkTides()) {
                 // (every one that passed its limit in this step: a body going round its host may not be near it by the next)
@@ -3870,7 +4626,7 @@
                 refreshBodyLists();
                 announceTear();
             }
-            if (settings.realistic && timeDir > 0 && !past.replay) tidalPasses(dt);
+            if (settings.realistic && timeDir > 0 && !past.replay) { tidalPasses(dt); envelopeDrag(dt); }
             if (gasRows >= 0 && settings.realistic && !past.replay) gasThin();
             afterStep(dt);
             // (the clock these measure by runs forwards whichever way time goes)
@@ -3975,6 +4731,30 @@
                 const c = order[i];
                 if (c.primary === top && c.bound && c.m >= 0.1 * top.m) { top.primary = c; top.bound = true; break; }
             }
+        }
+        fastOrbits();
+    }
+
+    // Two bodies close enough for relativity to matter are no close pair (PN_PAIR_MAX), so their steps are fine, but
+    // they go round just as fast between trail samples: their trails come from their orbits too (see orbitTrail). Unless
+    // the orbit won't last (ORBIT_STEADY turns, by Peters' time for waves to close it): a final inspiral keeps its samples.
+    const ORBIT_STEADY = 100;
+    function fastOrbits() {
+        for (const b of bodies) {
+            const p = b.primary, was = b.fastOrbit;
+            b.fastOrbit = null;
+            if (!settings.realistic || b.kep || b.hosts || b.minor || b.grp || b.held || !p || !b.bound || p.held) continue;
+            const r = hyp(b.x - p.x, b.y - p.y), gm = G * (b.m + p.m);
+            if (!(gm > PN_PAIR_MAX * C2 * r)) continue;
+            const el = elementsOf(b, p);
+            if (!(el.bound && el.T < (was ? ORBIT_TRAIL_OFF : ORBIT_TRAIL) * sampleDt)) continue;
+            const a2 = el.a * el.a;
+            if (!((5 / 256) * C5 * a2 * a2 / (G * G * gm * b.m * p.m) > ORBIT_STEADY * el.T)) continue;
+            // (going round something far heavier, as round a host. Otherwise only if each goes round the other)
+            const hosted = p.m >= HOST_MIN * b.m;
+            if (!hosted && (p.primary !== b || !p.bound)) continue;
+            const A = hosted || b.id < p.id ? b : p, H = A === b ? p : b;
+            b.fastOrbit = was && was.a === A && was.b === H ? was : { a: A, b: H, hosted };
         }
     }
 
@@ -4244,7 +5024,7 @@
         const k = sampleCount - 1;
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || b.minor || (b.grp && b.id !== selectedId) || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
+            if (!p || b.minor || (b.grp && b.id !== selectedId) || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k || trailOrbit(b)) continue;
             const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
             const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
@@ -4272,10 +5052,12 @@
     // ------------------------------------------------------------------
     // Scenes
     // ------------------------------------------------------------------
-    function loadScene(key) {
+    // seed: a marked scene's roll (see "A touch of chance"); without one, the scene's exact start
+    function loadScene(key, seed) {
         restoreSpeed();   // (a zoom's slower time ends with it)
         missionKeepHome(key);   // (going into a mission: what to come back to)
         noteSceneLoad(key);   // (edit history: loading or restarting a scene can be undone)
+        skySceneDate(key);   // (a scene that opens on a date of its own)
         setReverse(false, true);   // (a new or restarted scene runs forwards)
         const def = SCENES[key] || SCENES['sun-earth'];
         settings.scene = SCENES[key] ? key : 'sun-earth';
@@ -4291,7 +5073,7 @@
         flashes.length = 0;
         closePopover();
         endAllDrags();
-        for (const s of def.bodies) {
+        for (const s of seed && def.vary ? variedBodies(def, seed) : def.bodies) {
             const k = KINDS[s.kind] || KINDS.custom;
             const b = newBody({
                 name: s.name || k.name, kind: s.kind,
@@ -4321,7 +5103,7 @@
         // read as medium-length arrows
         const subj = bodies[def.forceBody !== undefined ? def.forceBody : def.subject] || null;
         const fs = subj ? Math.hypot(subj.fx, subj.fy) : 0;
-        forceRef = fs > 0 ? fs : 1;
+        forceRef = fs > 0 ? fs : def.fref || 1;
         const vs = bodies[def.subject];
         const el = vs && orbitingBody(vs) ? elementsOf(vs, vs.primary) : null;
         vRef = def.vref || (el ? (el.bound ? Math.sqrt(el.mu / el.a) : el.v) : TAU);
@@ -4335,6 +5117,8 @@
         recordSample();
         nextSampleT = sampleDt;
         fitBox(def.box, false);
+        skySceneLoaded(def);
+        cannonSceneLoaded(def);
         refreshBodyLists();
         updateTrailLabel();
         resetCharts();
@@ -4347,6 +5131,7 @@
         showHint('tip', def.tip || null);
         missionSceneLoaded();   // (a mission's scene starts the mission; any other ends one)
         stabilitySceneLoaded(settings.scene);   // (the timer a random system switched on goes with it)
+        syncRestartTitle();
     }
 
     // ------------------------------------------------------------------
@@ -4373,14 +5158,67 @@
         return { x: c.vx, y: c.vy };
     }
 
+    // How fast the force on b is changing, from where the bodies were at the last step's end: the derivative
+    // of Newton's pull, G m M (v / r^3 - 3 (r.v) r / r^5), softened between pieces as in pullAcross. Into JX, JY
+    let JX = 0, JY = 0;
+    function forceRate(b) {
+        JX = 0; JY = 0;
+        for (const q of bodies) {
+            if (q === b) continue;
+            const rx = q.x - b.x, ry = q.y - b.y, vx = q.vx - b.vx, vy = q.vy - b.vy;
+            let s2 = rx * rx + ry * ry;
+            if (b.grp && q.grp) {
+                if (b.grp !== q.grp) continue;
+                const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
+            }
+            if (!(s2 > 0)) continue;
+            const k = (G * b.m * q.m) / (s2 * Math.sqrt(s2)), c = (3 * (rx * vx + ry * vy)) / s2;
+            JX += k * (vx - c * rx); JY += k * (vy - c * ry);
+        }
+    }
+
+    // A close pair can turn further in a step than a Taylor series can follow (a step can take one many times
+    // round), and in slow motion that step is on the screen for seconds. So past a turn of KEP_TURN (which no ordinary
+    // pair's step goes beyond) a pair is drawn from its exact orbit, as the step itself will move it, frame by frame.
+    // For drawing only, so slowing time changes nothing that happens. True if b has been placed.
+    const DRAW_TURN2 = KEP_TURN * KEP_TURN;
+    function drawFromOrbit(b, q, t) {
+        const A = q.a, H = q.b, gm = G * (A.m + H.m);
+        const rx = A.x - H.x, ry = A.y - H.y, r2 = rx * rx + ry * ry, r3 = r2 * Math.sqrt(r2);
+        if (!(t * t * gm > DRAW_TURN2 * r3)) return false;
+        const vx = A.vx - H.vx, vy = A.vy - H.vy;
+        keplerDrift(rx, ry, vx, vy, gm, t, 4 * t * t * gm < r3);
+        if (q.hosted && settings.realistic) relativityTurn(rx, ry, vx, vy, gm, t);
+        // (what carries it along: the host, or the pair's centre of mass, which feels only the others' pull)
+        const M = A.m + H.m, fa = q.hosted ? 0 : A.m / M, fh = 1 - fa, part = b === A ? fh : -fa;
+        const ax = q.hosted ? H.fx / H.m : (A.fx + H.fx) / M, ay = q.hosted ? H.fy / H.m : (A.fy + H.fy) / M;
+        const cx = fa * A.x + fh * H.x, cy = fa * A.y + fh * H.y, cvx = fa * A.vx + fh * H.vx, cvy = fa * A.vy + fh * H.vy;
+        b.dx = cx + (cvx + 0.5 * ax * t) * t + part * KX; b.dy = cy + (cvy + 0.5 * ay * t) * t + part * KY;
+        b.dvx = cvx + ax * t + part * KVX; b.dvy = cvy + ay * t + part * KVY;
+        // (its arrow: the same force, with the pair's own pull as it is at this separation)
+        const r1 = Math.hypot(KX, KY), f0 = G * A.m * H.m / r3, f1 = G * A.m * H.m / (r1 * r1 * r1), s = b === A ? 1 : -1;
+        b.dfx = b.fx + s * (f0 * rx - f1 * KX); b.dfy = b.fy + s * (f0 * ry - f1 * KY);
+        return true;
+    }
+
+    // A body is drawn lag years on from the end of the last step: its place, velocity and force carried on
+    // from there by a Taylor series, so the arrows turn as smoothly as the bodies move, however many frames a
+    // step spans. For drawing only. What is left to land on at the next step's end is about (turn per step)^2 / 2
+    // of an arrow's length: a few hundredths of a px.
     function updateDrawnPositions() {
+        const t = lag;
         for (const b of bodies) {
+            b.dvx = b.vx; b.dvy = b.vy; b.dfx = b.fx; b.dfy = b.fy;
             if (b.held) { b.dx = b.x; b.dy = b.y; continue; }
-            // (a close pair going round faster than one step is drawn moving with its centre of mass)
-            const p = b.kep && b.kep.fast ? b.kep : null;
-            const M = p ? p.a.m + p.b.m : 0;
-            const vx = p ? (p.a.m * p.a.vx + p.b.m * p.b.vx) / M : b.vx, vy = p ? (p.a.m * p.a.vy + p.b.m * p.b.vy) / M : b.vy;
-            b.dx = b.x + vx * lag; b.dy = b.y + vy * lag;
+            if (b.kep && t && drawFromOrbit(b, b.kep, t)) continue;
+            const ax = b.m > 0 ? (t * b.fx) / b.m : 0, ay = b.m > 0 ? (t * b.fy) / b.m : 0;
+            b.dx = b.x + (b.vx + 0.5 * ax) * t; b.dy = b.y + (b.vy + 0.5 * ay) * t;
+            b.dvx = b.vx + ax; b.dvy = b.vy + ay;
+            // (only for what has a force arrow or a name to place: see drawArrows, drawLabels)
+            if (t && (!(b.grp || b.minor) || isChosen(b))) {
+                forceRate(b);
+                b.dfx = b.fx + JX * t; b.dfy = b.fy + JY * t;
+            }
         }
         F = freeze ? frozenOrigin(simTime + lag) : liveFrameOrigin();
         turnDrawnPositions();   // (a rotating frame turns them about F: see "Rotating frame")
@@ -4415,8 +5253,15 @@
     const wx = (px) => F.x + view.panX + (px - midX) / scale;
     const wy = (py) => F.y + view.panY - (py - viewH / 2) / scale;
 
+    // The side of the canvas the view's scale goes by. Where the page lets the canvas grow taller than 16:10 to
+    // fill the screen (--orb-view-wide, in orbits_styles.css), it goes by the 16:10 part: a scene keeps the size
+    // it would have had, with more room round it, and comes back just as it was when the canvas does.
+    function viewSide() {
+        return Math.max(1, view.wide ? Math.min(viewW / 1.6, viewH) : Math.min(viewW, viewH));
+    }
+
     function updateScale() {
-        const m = Math.max(1, Math.min(viewW, viewH));
+        const m = viewSide();
         scale = view.zoom * m;
         sizeScale = clamp(m / 560, 0.62, 1.1);
         midX = viewW / 2 + view.shift;
@@ -4430,12 +5275,13 @@
     // Star remnants are far too small for that: a black hole is drawn the size of a planet (a little
     // larger as it grows), a white dwarf or neutron star as a bright spark.
     function symbolicSize(kind, m, Rkm) {
-        if (kind === 'blackhole') return clamp(13 * Math.pow(m / 10, 1 / 6), 9, 19);
+        if (kind === 'blackhole' || kind === 'sgra') return clamp(13 * Math.pow(m / 10, 1 / 6), 9, 19);
         if (kind === 'neutron') return 4.5;
         if (kind === 'whitedwarf') return 5.5;
         return symbolicRadius(Rkm);
     }
     const MARKER_R = 7;   // px: the ring that marks a body drawn at its true (tiny) size
+    const HOLE_LARGER = 1.5;   // with realistic physics off, a black hole zoomed in on still looks larger than life
 
     // The radius that arrows, names and clicks keep clear of (the disc, or the marker ring around it)
     function drawRadius(b) {
@@ -4467,7 +5313,7 @@
             }
             return;
         }
-        for (const b of bodies) b.rmax = bodySize(b) * sizeScale;
+        for (const b of bodies) b.rmax = b.kind === 'blackhole' ? Math.max(bodySize(b) * sizeScale, HOLE_LARGER * (b.R / AU_KM) * scale) : bodySize(b) * sizeScale;
         for (const b of bodies) {
             const p = b.primary;
             if (!p || !b.bound || b.m >= p.m || b.minor) continue;
@@ -4476,14 +5322,15 @@
             b.rmax = Math.min(b.rmax, 0.3 * d);
         }
         for (const b of bodies) b.rd = b.rh = Math.max(b.minor ? 1.2 : b.grp ? 1.8 : 3, b.rmax, (b.R / AU_KM) * scale);
+        if (mission.def && mission.def.goal.type === 'dive') sunDrawSize();
     }
 
     // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
     // (at no more than the zoom most, if given).
     function fitBox(box, animate, most) {
-        const m = Math.max(1, Math.min(viewW, viewH));
+        const m = viewSide();
         const w = Math.max(box[1] - box[0], 1e-9), h = Math.max(box[3] - box[2], 1e-9);
-        const W = visR - visL || 800, H = viewH || 500;
+        const W = visR - visL || 800, H = view.wide ? m : viewH || 500;
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
         const target = { zoom: Math.min(pxPerAu / m, most || Infinity), panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
@@ -4502,10 +5349,24 @@
         // (a lone body has no extent to fit: it would fill the screen, so the scene's own size instead)
         if (bodies.length === 1) {
             const b = bodies[0], w = 0.5 * (scene.box[1] - scene.box[0]), h = 0.5 * (scene.box[3] - scene.box[2]);
-            fitBox([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h], true);
+            fitBox(withHorizons([b.dx - F.x - w, b.dx - F.x + w, b.dy - F.y - h, b.dy - F.y + h]), true);
             return;
         }
-        fitBox(paddedBox(sceneBox(true)), true);
+        fitBox(paddedBox(withHorizons(sceneBox(true))), true);
+    }
+
+    // The box q (relative to the frame origin), grown to hold the horizon of any black hole wider than it.
+    // (A very heavy one can be: then "Fit view" must show its edge, not just more of its inside. So must a giant of a
+    // good part of its size, as a supergiant can be.)
+    function withHorizons(q) {
+        const size = Math.max(q[1] - q[0], q[3] - q[2]);
+        for (const b of bodies) {
+            if (b.R / AU_KM <= (b.kind === 'blackhole' ? size : b.kind === 'redgiant' ? 0.2 * size : Infinity)) continue;
+            const R = b.R / AU_KM, x = b.dx - F.x, y = b.dy - F.y;
+            q[0] = Math.min(q[0], x - R); q[1] = Math.max(q[1], x + R);
+            q[2] = Math.min(q[2], y - R); q[3] = Math.max(q[3], y + R);
+        }
+        return q;
     }
 
     const paddedBox = (q) => {
@@ -4617,6 +5478,284 @@
     }
 
     // ------------------------------------------------------------------
+    // The sky from a planet ("Planets seen from Earth")
+    //   Seen from above, every planet goes round the Sun the same way and never turns back. Seen from
+    //   another planet it can: while one overtakes the other, the line of sight between them swings
+    //   backwards against the far-off stars. That is retrograde motion, and the scene shows it three ways:
+    //   the planet's path as seen from Earth (the trail, in the plain view from Earth: a loop each time),
+    //   the line of sight, and a thin strip for the sky itself along the top of the canvas: ecliptic
+    //   longitude 0 to 360 degrees (the world's x axis is longitude 0, see "The Solar System on a date"),
+    //   with the planet's marker on it and the bright stars near the ecliptic where they really are.
+    //   It all comes from the bodies' true positions, so it holds in any view, even a rotating one.
+    //   East is to the right, so a planet normally moves to the right; from the northern hemisphere,
+    //   facing south, the real sky is the mirror image of this.
+    //   Flat: with every orbit in one plane the marker only runs back and forth along a line. In the real
+    //   sky a planet's small tilt out of that plane opens the reversal into a narrow loop or zigzag.
+    //   The scene draws one planet's trail at a time, as several would tangle: the others' trails are kept
+    //   empty (from skyFollow, every frame). Choosing another planet starts its trail.
+    // ------------------------------------------------------------------
+    const SKY_PLANETS = new Set(['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn']);
+    const SKY_BAND = 14;                  // px: the band's height
+    const SKY_WIDE = 680;                 // px: a canvas this wide has room for the strip beside the "Viewed from" chip
+    const SKY_KEEP = 100 / DAYS_PER_YEAR; // how long after a reversal its arc and its numbers stay
+    const SKY_SCAN = 1500;                // trail samples looked back through for a reversal
+    const SKY_DASH = [2, 5];
+    const SKY_CHIP_ROW = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 52 : 44;
+    // Bright stars within about 12 degrees of the ecliptic: longitude, latitude (degrees) and magnitude, worked
+    // out from their usual J2000 right ascensions and declinations (obliquity 23.4393 degrees)
+    const SKY_STARS = [[9.2, 12.6, 2.8], [34, 8.5, 2.6], [37.7, 10, 2], [60, 4.1, 2.9], [69.8, -5.5, 0.9], [82.6, 5.4, 1.7], [99.1, -6.7, 1.9], [110.2, 10.1, 1.6],
+        [113.2, 6.7, 1.1], [149.6, 8.8, 2], [149.8, 0.5, 1.4], [171.6, 12.3, 2.1], [190.1, 2.8, 2.7], [203.8, -2.1, 1], [225.1, 0.3, 2.8], [229.4, 8.5, 2.6],
+        [242.6, -2, 2.3], [249.8, -4.6, 1.1], [275.1, -11.1, 1.9], [282.4, -3.4, 2.1], [323.4, 8.6, 2.9], [323.5, -2.6, 2.8], [333.4, 10.7, 2.9], [338.9, -8.2, 3.3]];
+    const sky = {
+        V: null, T: null,         // who is looking, and at what
+        pick: null,               // the planet last chosen
+        R: 0,                     // how far out the view was last fitted for (AU)
+        kept: 0,                  // the date the Solar System scene goes back to on leaving this one
+        x0: 0, x1: 0, top: 0, bottom: 0, under: 0,   // the strip (bottom 0: none), and where what's on its left goes
+        lon: 0, rate: 0,          // the direction now (degrees) and how fast it changes (degrees a day; below zero: retrograde)
+        scanAt: -1, scanT: 0, scanV: 0,              // the samples and pair the reversal below was found for
+        from: NaN, to: NaN, days: 0, endT: 0, whole: false,  // the reversal: its directions, how long it took, when it ended
+        k0: 0, k1: 0              // ...and its trail samples
+    };
+    const skyLon = (rx, ry) => { const a = Math.atan2(ry, rx) / TO_RAD; return a < 0 ? a + 360 : a; };
+
+    // This scene opens on its own date; the Solar System's goes back as it was on the way out
+    function skySceneDate(key) {
+        const to = SCENES[key] ? SCENES[key].openJd : 0, from = scene ? scene.openJd : 0;
+        if (to && !from) { sky.kept = startDate.chosen; startDate.chosen = to; }
+        else if (from && !to) startDate.chosen = sky.kept || todayJd();
+    }
+
+    // After a scene is loaded: viewed from Earth, with the view fitted to the planet followed
+    function skySceneLoaded(def) {
+        sky.scanAt = -1;
+        sky.pick = null;
+        if (!def.sky) return;
+        leaveTurning();
+        turn.easeAmt = 0;
+        for (const b of bodies) if (b.kind === 'earth') frameId = b.id;
+        skyFollow();
+        skyFit(false);
+    }
+
+    // Once a frame: who is looking at what, where the strip goes, and the other planets' trails kept empty
+    function skyFollow() {
+        sky.V = sky.T = null;
+        sky.bottom = sky.under = 0;
+        if (!scene.sky) return;
+        // (the body viewed from; in a view from no body, Earth)
+        let V = frameId !== null ? bodyById(frameId) : null, T = bodyById(selectedId);
+        if (!V) for (const b of bodies) if (b.kind === 'earth') V = b;
+        if (!V) return;
+        if (T && T !== V && SKY_PLANETS.has(T.kind)) sky.pick = T.id;
+        T = bodyById(sky.pick);
+        if (!T || T === V) {
+            T = null;
+            for (const b of bodies) if (b !== V && SKY_PLANETS.has(b.kind) && (!T || b.kind === (V.kind === 'earth' ? 'mars' : 'earth'))) T = b;
+        }
+        if (!T) return;
+        sky.V = V; sky.T = T;
+        for (const b of bodies) if (b !== T && b !== V && SKY_PLANETS.has(b.kind)) b.trailStart = sampleCount;
+        const rx = T.x - V.x, ry = T.y - V.y, r2 = rx * rx + ry * ry;
+        sky.lon = skyLon(rx, ry);
+        sky.rate = r2 > 0 ? ((rx * (T.vy - V.vy) - ry * (T.vx - V.vx)) / r2) / (TO_RAD * DAYS_PER_YEAR) : 0;
+        if (cleanRender) return;
+        const wide = visR - visL >= SKY_WIDE, lh = Math.round(clamp(Math.min(viewW, viewH) / 44, 10.5, 13) * 1.4);
+        sky.x0 = visL + (wide ? 248 : 8);
+        sky.x1 = visR - 8;
+        sky.top = !wide && frameId !== null ? SKY_CHIP_ROW : 8;
+        sky.bottom = sky.top + 4 + lh + SKY_BAND + 6;
+        sky.under = wide ? 0 : sky.bottom + 6;
+    }
+
+    // The farthest a body gets from what it orbits
+    function skyFar(b) {
+        const el = b.primary && b.bound ? elementsOf(b, b.primary) : null;
+        return el && el.bound ? el.a * (1 + el.e) : 0;
+    }
+    // How far out the view must reach from its origin (AU)
+    function skyReach() {
+        const O = frameId !== null ? bodyById(frameId) : null;
+        return 1.05 * (O ? skyFar(sky.T) + skyFar(O) : Math.max(skyFar(sky.T), skyFar(sky.V)));
+    }
+    // Fit the view to the planet followed, its origin in the middle of what the strip leaves free
+    function skyFit(glide) {
+        if (!sky.T) return;
+        const R = sky.R = skyReach() || 2.8, u = Math.max(0, sky.bottom - 20), k = ((viewH || 500) - 40 - u) / (2 * R);
+        fitBox([-R, R, -R, R + u / k], glide);
+    }
+    // A body was chosen (from selectBody): the view reaches out for a far planet, and back in for a near one
+    function skyPicked() {
+        skyFollow();
+        if (sky.T && Math.abs(skyReach() - sky.R) > 0.05 * sky.R) skyFit(true);
+    }
+    // The tip's buttons: the next planet out (from the farthest, the nearest), and the view from Earth or from above
+    function skyNext() {
+        const list = bodies.filter((b) => b !== sky.V && SKY_PLANETS.has(b.kind));
+        if (list.length) selectBody(list[(list.indexOf(sky.T) + 1) % list.length].id);
+    }
+    function skyView() {
+        const home = bodies.find((b) => b.kind === 'earth');
+        setFrame(home && frameId !== home.id ? home.id : null);
+        skyFollow();
+        skyFit(true);
+    }
+    function skyTip() {
+        skyFollow();
+        const V = sky.V, T = sky.T;
+        if (!V || !T) return '';
+        const view = V.kind === 'earth' && frameId !== null ? '<button type="button" class="orb-hint-btn orb-hint-sky" title="Watch from above the orbits as one overtakes the other">See from above</button>'
+            : '<button type="button" class="orb-hint-btn orb-hint-sky" title="View from Earth">Back to Earth</button>';
+        const next = '<button type="button" class="orb-hint-btn orb-hint-skynext" title="Follow another planet (or choose one on the canvas)">Next planet</button>';
+        const fast = skyFar(T) < skyFar(V) ? T : V;
+        const t = escapeHtml(sentenceCase(theName(T))), v = escapeHtml(theName(V));
+        const say = !skyFar(V) ? `From ${v}, no planet ever backs up.` : fast === T ? `${t} seems to back up passing ${v}.` : `${t} seems to back up as ${v} passes.`;
+        return `${say} ${view} ${next}`;
+    }
+
+    // The planet's last reversal, from its trail and the viewer's (a sample's direction against the one before).
+    // Worked out from the samples each time they change, so an undo or a Run again can't leave it out of date.
+    function skyScan() {
+        const T = sky.T, V = sky.V;
+        if (sky.scanAt === sampleCount && sky.scanT === T.id && sky.scanV === V.id) return;
+        sky.scanAt = sampleCount; sky.scanT = T.id; sky.scanV = V.id;
+        sky.from = NaN;
+        if (trailDir < 0 || !T.trail || !V.trail) return;   // (run backwards, the marker says all there is to say)
+        const lo = Math.max(trailFirst(T), trailFirst(V), sampleCount - SKY_SCAN);
+        let end = -1, k = sampleCount - 1;
+        if (k <= lo) return;
+        let i = trailIndex(T.trail, k), j = trailIndex(V.trail, k);
+        let x1 = T.trail[i] - V.trail[j], y1 = T.trail[i + 1] - V.trail[j + 1];
+        for (; k > lo; k--) {
+            i = trailIndex(T.trail, k - 1); j = trailIndex(V.trail, k - 1);
+            const x0 = T.trail[i] - V.trail[j], y0 = T.trail[i + 1] - V.trail[j + 1];
+            if (x0 * y1 - y0 * x1 < 0) {
+                if (end < 0) end = k;
+            } else if (end >= 0) break;
+            else if (simTime - sampleTimes[k % TRAIL_CAP] > SKY_KEEP) return;
+            x1 = x0; y1 = y0;
+        }
+        if (end < 0) return;
+        i = trailIndex(T.trail, end); j = trailIndex(V.trail, end);
+        sky.to = skyLon(T.trail[i] - V.trail[j], T.trail[i + 1] - V.trail[j + 1]);
+        sky.from = skyLon(x1, y1);
+        sky.days = (sampleTimes[end % TRAIL_CAP] - sampleTimes[k % TRAIL_CAP]) * DAYS_PER_YEAR;
+        sky.endT = sampleTimes[end % TRAIL_CAP];
+        sky.whole = k > lo;   // (else it began before this planet's trail did)
+        sky.k0 = k; sky.k1 = end;
+    }
+    // How far gone the reversal found is, from 0 (still going on) to 1 (time to forget it); 1 if there is none
+    const skyAge = () => (isNaN(sky.from) ? 1 : sky.rate < 0 ? 0 : Math.max(0, simTime - sky.endT) / SKY_KEEP);
+
+    // The line of sight, under the bodies and on past the planet
+    function drawSkyLine(C) {
+        const V = sky.V, T = sky.T;
+        if (!V || !T || cleanRender) return;
+        const x = sx(V.dx), y = sy(V.dy), dx = sx(T.dx) - x, dy = sy(T.dy) - y, d = hyp(dx, dy);
+        if (!(d > 0)) return;
+        const far = (viewW + viewH + hyp(x, y)) / d;
+        ctx.strokeStyle = sky.rate < 0 ? hexA(C.force, 0.55) : C.faint;
+        ctx.lineWidth = 1;
+        ctx.setLineDash(SKY_DASH);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + dx * far, y + dy * far);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        skyScan();
+        const age = skyAge();
+        if (age >= 1 || turn.on || turn.phi) return;
+        // Where it backed up, on its trail (the same colour as the word on the strip): the loop itself. Not in a
+        // turned view, where a trail takes the pair's angle at each sample, and there's no loop to pick out.
+        const O = frameId !== null ? bodyById(frameId) : null, oT = O ? O.trail : comTrail, capT = T.trail.length >> 1, capO = oT.length >> 1;
+        const live = freeze ? liveFrameOrigin() : F;   // (as drawTrails: the origin has drifted while a body is held)
+        const ox = (live.x - F.x - view.panX) * scale + midX, oy = viewH / 2 - (live.y - F.y - view.panY) * scale;
+        ctx.strokeStyle = hexA(C.force, 0.9 * (1 - age));
+        ctx.lineWidth = clamp(2.4 * sizeScale, 2, 3);
+        ctx.beginPath();
+        for (let k = sky.k0; k <= sky.k1; k++) {
+            const i = 2 * (k % capT), j = 2 * (k % capO);
+            const px = ox + (T.trail[i] - oT[j]) * scale, py = oy - (T.trail[i + 1] - oT[j + 1]) * scale;
+            if (k > sky.k0) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        }
+        ctx.stroke();
+    }
+
+    // The strip: the band of the sky with its stars, the other bodies as dots, the planet followed as an arrowhead
+    // that points the way it is moving, and while it backs up, the word and the stretch of sky it has covered
+    function drawSkyStrip(C, fs) {
+        const T = sky.T, V = sky.V;
+        if (!T || !V || !sky.bottom) return;
+        const x0 = sky.x0, w = sky.x1 - x0, top = sky.top, lh = Math.round(fs * 1.4);
+        roundRect(x0, top, w, sky.bottom - top, 5);
+        ctx.fillStyle = C.card;
+        ctx.fill();
+        ctx.strokeStyle = C.cardLine;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        const bx = x0 + 10, bw = w - 20, by = top + 4 + lh, mid = by + SKY_BAND / 2;
+        const lonX = (lon) => bx + (bw * lon) / 360;
+        ctx.fillStyle = C.dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+        ctx.fillRect(bx, by, bw, SKY_BAND);
+        // The stretch of sky it went back over, fading once it is moving on again
+        skyScan();
+        const retro = sky.rate < 0, age = skyAge();
+        if (age < 1 && Math.abs(sky.from - sky.to) < 90) {
+            ctx.fillStyle = hexA(C.force, 0.45 * (1 - age));
+            const a = lonX(sky.to), b = lonX(sky.from);
+            ctx.fillRect(Math.min(a, b), by, Math.abs(b - a), SKY_BAND);
+        }
+        // The stars, the brightest a little bigger
+        ctx.fillStyle = C.subtle;
+        ctx.beginPath();
+        for (const q of SKY_STARS) {
+            const sx0 = lonX(q[0]), sy0 = mid - (q[1] / 13) * (SKY_BAND / 2 - 1), r = q[2] < 1.5 ? 1.3 : 0.8;
+            ctx.moveTo(sx0 + r, sy0);
+            ctx.arc(sx0, sy0, r, 0, TAU);
+        }
+        ctx.fill();
+        for (const b of bodies) {
+            if (b === T || b === V || b.grp || b.minor) continue;
+            ctx.fillStyle = bodyStroke(b.color, C.dark);
+            ctx.beginPath();
+            ctx.arc(lonX(skyLon(b.x - V.x, b.y - V.y)), mid, b.kind === 'sun' ? 3.5 : 2.2, 0, TAU);
+            ctx.fill();
+        }
+        const mx = lonX(sky.lon), s = retro ? -1 : 1, col = retro ? C.force : bodyStroke(T.color, C.dark);
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(mx + 6 * s, mid);
+        ctx.lineTo(mx - 4 * s, mid - 5.5);
+        ctx.lineTo(mx - 4 * s, mid + 5.5);
+        ctx.closePath();
+        ctx.fill();
+        // The words: the marker's first; the others give way to it where there isn't room
+        const ty = top + 4 + lh / 2 + 0.5;
+        ctx.textBaseline = 'middle';
+        ctx.font = font(fs, retro);
+        const word = retro ? 'Retrograde' : T.name, ww = ctx.measureText(word).width;
+        const wx = clamp(mx - ww / 2, bx, bx + bw - ww);
+        ctx.fillStyle = col;
+        ctx.textAlign = 'left';
+        ctx.fillText(word, wx, ty);
+        ctx.font = font(fs);
+        ctx.fillStyle = C.subtle;
+        const title = `Sky from ${theName(V)}`, tw = ctx.measureText(title).width;
+        let right = bx + bw;
+        if (bx + tw + 8 < wx) ctx.fillText(title, bx, ty);
+        else if (wx + ww + 8 < right - tw) { ctx.textAlign = 'right'; ctx.fillText(title, right, ty); right -= tw + 12; }
+        if (sky.whole && age < 1) {
+            let back = sky.from - (retro ? sky.lon : sky.to);
+            back = Math.round(back < -180 ? back + 360 : back);
+            const note = retro ? `${back}° back so far` : `${back}° back in ${Math.round(sky.days)} days`;
+            if (back > 0 && wx + ww + 8 < right - ctx.measureText(note).width) {
+                ctx.textAlign = 'right';
+                ctx.fillText(note, right, ty);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Rotating frame
     //   "View from: Rotating with Jupiter and the Sun": the view turns with a body B and the body A it
     //   orbits, so both stand still. Their centre of mass is the frame's origin, and the line from A to B
@@ -4649,9 +5788,10 @@
         phi: 0, c: 1, s: 0,       // the view's turn this frame, and its cosine and sine
         alpha: 0,                 // phi + theta: turns coordinates along the pair (A to B along +x) into the view
         omega: 0,                 // how fast the pair turns (radians a year; negative: clockwise)
+        vx: 0, vy: 0, cx: 0, cy: 0, w: 0,   // the frame at the moment drawn (see turnFrameDrawn)
         options: '', optionsAt: 0 // the rotating frames last offered in "View from" (see syncTurnOptions)
     };
-    Object.assign(ui, { turnNote: byId('turnNote') });
+    Object.assign(ui, { turnNote: byId('turnNote'), popTurn: byId('popTurn'), popTurnText: byId('popTurnText'), chipIcon: ui.frameChip ? ui.frameChip.querySelector('.icon') : null });
 
     const wrapAngle = (a) => a - TAU * Math.round(a / TAU);
 
@@ -4706,6 +5846,13 @@
         return { x: vx - w * (y - c.y), y: vy + w * (x - c.x) };
     }
 
+    // The view's own velocity as the arrows are drawn: an ordinary frame's, at the moment drawn (the centre
+    // of mass's doesn't change). A rotating frame's depends on the place: see viewVelocity
+    function drawnFrameVelocity() {
+        const L = !turn.on && frameId !== null ? bodyById(frameId) : null;
+        return L ? { x: L.dvx, y: L.dvy } : frameVelocity();
+    }
+
     // From updateDrawnPositions, once the drawn positions (still world positions, extrapolated) and the
     // origin F are known: this frame's turn, and every drawn position turned by it about F
     function turnDrawnPositions() {
@@ -4718,6 +5865,7 @@
             } else {
                 turn.theta = Math.atan2(P.B.dy - P.A.dy, P.B.dx - P.A.dx);
                 turn.omega = pairOmega(P);
+                turnFrameDrawn(P);
                 phi += turn.up - turn.theta;
             }
         }
@@ -4732,6 +5880,15 @@
             b.dx = F.x + c * x - s * y;
             b.dy = F.y + s * x + c * y;
         }
+    }
+
+    // The rotating frame at the moment drawn, for the arrows (see viewVelocity): as turnVelocityAt, from the
+    // drawn places and velocities. (cx, cy): the pair's centre from F, which is F unless the frame is frozen
+    function turnFrameDrawn(P) {
+        const A = P.A, B = P.B, M = A.m + B.m, rx = B.dx - A.dx, ry = B.dy - A.dy, r2 = rx * rx + ry * ry;
+        turn.vx = (A.m * A.dvx + B.m * B.dvx) / M; turn.vy = (A.m * A.dvy + B.m * B.dvy) / M;
+        turn.cx = (A.m * A.dx + B.m * B.dx) / M - F.x; turn.cy = (A.m * A.dy + B.m * B.dy) / M - F.y;
+        turn.w = r2 > 0 ? (rx * (B.dvy - A.dvy) - ry * (B.dvx - A.dvx)) / r2 : 0;
     }
 
     // World vectors and points into the drawn view and back
@@ -4819,6 +5976,19 @@
         syncFrameUi();
     }
 
+    // "Rotate with it", in a body's menu and its row in the list: starts the frame, or ends the one it's in
+    function toggleTurning(b) {
+        if (turnPair() && turnUses(b)) setFrame(null);
+        else startTurning(b);
+    }
+    // Those buttons' tooltip, for body b
+    const turnTitle = (b) => {
+        const P = turnPair();
+        if (P && turnUses(b)) return 'Stop rotating: back to the centre-of-mass view';
+        const p = turnPartner(b);
+        return p ? `Turn the view with ${theName(b)} and ${theName(p)}, so both stand still` : `${sentenceCase(theName(b))} isn't orbiting anything to rotate with`;
+    };
+
     // "View from": a rotating frame's option is turn:<id of B>
     function pickTurning(value) {
         const m = /^turn:(\d+)$/.exec(value || '');
@@ -4841,19 +6011,25 @@
     }
     const turnLabel = (B, A) => `Rotating with ${theName(B)} and ${theName(A)}`;
 
-    // The rotating frames in "View from" (after the bodies): the one in use, and the chosen body's
+    // The rotating frames in "View from" (after the bodies): every body that orbits a heavier one (a pair
+    // going round each other once, and in a crowd only the heaviest few), the chosen body's, and the one in use
+    const TURN_LIST = 12;
     function turnOptions() {
-        const out = [];
-        const P = turnPair();
-        if (P) out.push([`turn:${P.B.id}`, turnLabel(P.B, P.A)]);
-        const c = turnCandidate();
-        if (c && !(P && c === P.B)) out.push([`turn:${c.id}`, turnLabel(c, turnPartner(c))]);
-        return out;
+        const P = turnPair(), s = bodyById(selectedId), list = [];
+        for (const b of bodies) {
+            const p = turnPartner(b);
+            if (p && !b.minor && b.m <= p.m && !(b.m === p.m && turnPartner(p) === b && p.id < b.id)) list.push(b);
+        }
+        if (list.length > TURN_LIST) { list.sort((x, y) => y.m - x.m); list.length = TURN_LIST; }
+        const c = turnPartner(s);
+        if (c && !list.includes(s) && !(turnPartner(c) === s && list.includes(c))) list.push(s);
+        if (P && !list.includes(P.B)) list.push(P.B);
+        return list.map((b) => [`turn:${b.id}`, turnLabel(b, P && b === P.B ? P.A : turnPartner(b))]);
     }
     // Choosing another body changes what is offered (checked a few times a second while drawing)
     function syncTurnOptions() {
         const now = performance.now();
-        if (now < turn.optionsAt) return;
+        if (now < turn.optionsAt || document.activeElement === ui.frame) return;   // (not under the hand of someone choosing)
         turn.optionsAt = now + 300;
         const sig = turnOptions().map((o) => o.join('=')).join('|');
         if (sig !== turn.options) { turn.options = sig; refreshBodyLists(); }
@@ -4868,6 +6044,8 @@
             const text = P ? 'Rotating with ' : 'Viewed from ';
             if (lead && lead.nodeType === 3 && lead.nodeValue !== text) lead.nodeValue = text;
             if (P) ui.frameChipName.textContent = theName(P.B);   // (short: the list names the pair)
+            ui.frameChip.title = P ? 'Stop rotating: back to the centre-of-mass view' : 'Go back to the centre-of-mass view';
+            if (ui.chipIcon) { ui.chipIcon.classList.toggle('fa-sync-alt', !!P); ui.chipIcon.classList.toggle('fa-crosshairs', !P); }
         }
         if (ui.turnNote) {
             ui.turnNote.hidden = !P;
@@ -4883,8 +6061,9 @@
     // A body's velocity as drawn: relative to the turning view (minus the frame's own velocity where the
     // body is), or in an ordinary frame relative to fv; turned as the view is
     function viewVelocity(b, fv) {
-        const u = turn.on ? frameVelocity(b.x, b.y) : fv;
-        return turnVec(b.vx - u.x, b.vy - u.y);
+        if (!turn.on) return turnVec(b.dvx - fv.x, b.dvy - fv.y);
+        const r = unturnVec(b.dx - F.x, b.dy - F.y), rx = r.x - turn.cx, ry = r.y - turn.cy;
+        return turnVec(b.dvx - turn.vx + turn.w * ry, b.dvy - turn.vy - turn.w * rx);
     }
 
     // An arrow grabbed in a turned view is aimed as drawn (its numbers are along the view's directions,
@@ -5886,12 +7065,18 @@
         if (act.hidden) act.hidden = false;
         const top = navRowTop(sel, sel) + NAV_ROW_H - y;
         if (act.navTop !== top) { act.navTop = top; act.style.transform = `translateY(${top}px)`; }
-        const w = `${ui.bodiesTree.clientWidth}px`;
-        if (act.style.width !== w) act.style.width = w;
+        const cw = ui.bodiesTree.clientWidth, w = `${cw}px`;
+        if (act.style.width !== w) { act.style.width = w; act.classList.toggle('is-tight', cw < 300); }
         setAttr(act, 'aria-label', b.name);
-        const view = act.querySelector('[data-act="view"]'), del = act.querySelector('[data-act="delete"]');
-        setAttr(view, 'aria-pressed', frameId === b.id ? 'true' : 'false');
-        view.title = frameId === b.id ? 'Go back to the centre-of-mass view (double-click)' : 'View the motion from it (double-click)';
+        const view = act.querySelector('[data-act="view"]'), del = act.querySelector('[data-act="delete"]'), rot = act.querySelector('[data-act="rotate"]');
+        const fromIt = frameId === b.id && !turn.on;
+        setAttr(view, 'aria-pressed', fromIt ? 'true' : 'false');
+        view.title = fromIt ? 'Go back to the centre-of-mass view (double-click)' : 'View the motion from it (double-click)';
+        const rotating = turnUses(b) && !!turnPair();
+        setAttr(rot, 'aria-pressed', rotating ? 'true' : 'false');
+        rot.title = turnTitle(b);
+        const noPair = !rotating && !turnPartner(b);
+        if (rot.disabled !== noPair) rot.disabled = noPair;
         if (del.disabled !== bodies.length < 2) del.disabled = bodies.length < 2;
     }
 
@@ -6276,8 +7461,11 @@
         if (!b) return;
         if (act === 'zoom') zoomChosen();
         else if (act === 'view') {
-            setFrame(frameId === b.id ? null : b.id);
+            setFrame(frameId === b.id && !turn.on ? null : b.id);
             announce(frameId === b.id ? `Viewing from ${theName(b)}` : 'Viewing from the centre of mass');
+        } else if (act === 'rotate') {
+            toggleTurning(b);
+            announce(turn.on ? `Rotating with ${theName(b)}` : 'Viewing from the centre of mass');
         } else if (act === 'edit') navEdit(btn);
         else if (act === 'delete') deleteChosen();
         navRender(false);
@@ -6399,6 +7587,7 @@
         resetOrbitChart();
         syncEccentricity(true);
         clearHint('note', 'chosen');   // (about the last one: its Lagrange point, or a Zoom in that would now zoom elsewhere)
+        if (scene.sky) skyPicked();
         refreshHint();   // (a note naming the chosen body follows the choice)
     }
 
@@ -6469,7 +7658,7 @@
         if (bodies.length >= MAX_BODIES || missionRefuse('add')) return null;
         noteEdit();   // (edit history: an undo step, taken before the new body's colour is chosen)
         const k = KINDS[kind] || KINDS.custom;
-        const b = newBody({ name: uniqueName(k.name), kind, m: k.m, R: k.R, color: kind === 'custom' ? nextCustomColour() : k.color });
+        const b = newBody({ name: uniqueName(k.name), kind: k.as || kind, m: k.m, R: k.R, color: kind === 'custom' ? nextCustomColour() : k.color });
         let added = null;
         keepView(() => {
             b.x = x; b.y = y;
@@ -6486,12 +7675,21 @@
         refreshBodyLists();
         selectBody(b.id);
         clearHint('note');   // (whatever it said before this)
+        // (a star far wider than the view: all there would be to see is its inside)
+        if (added && kind === 'supergiant' && (k.R / AU_KM) * scale > 0.45 * Math.min(visR - visL, viewH)) fitAll();
+        // (Sagittarius A*, with something close enough to go round it faster than can be watched)
+        if (added && kind === 'sgra') {
+            let near = Infinity;
+            for (const q of bodies) if (q !== b) near = Math.min(near, hyp(q.x - b.x, q.y - b.y));
+            if (TAU * Math.sqrt((near * near * near) / (G * b.m)) < sampleDt) showHint('tip', '<strong>4.3 million Suns:</strong> orbits this close are a blur. Slow time right down to watch one go round.');
+        }
         return added;
     }
 
     let customCount = 0;
+    const peekCustomColour = () => ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
     function nextCustomColour() {
-        const c = ['#ae85ca', '#e0b48a', '#c75b9b', '#8499e7', '#ff9a52'][customCount % 5];
+        const c = peekCustomColour();
         customCount++;
         return c;
     }
@@ -6578,6 +7776,12 @@
                 // (zoomed in close it may land out of view, rather than inside the body and merge with it)
                 R = Math.max(0.7 * Math.min(spaceX, spaceY) / scale, 4 * (top.R + k.R) / AU_KM);
             }
+        }
+        // (a star as wide as this goes clear of everything, rather than swallowing it all at a tap. See addBody for the view)
+        if (kind === 'supergiant') {
+            let far = 0;
+            for (const b of bodies) far = Math.max(far, Math.hypot(b.dx - cx, b.dy - cy) + b.R / AU_KM);
+            R = far + 1.3 * k.R / AU_KM;
         }
         let best = null, bestD = -1;
         for (let i = 0; i < 24; i++) {
@@ -6720,11 +7924,12 @@
         computeDrawRadii();
         placeCloseUp();
         drawGravityWell(C);   // (underneath everything: see "Gravity well")
-        drawLensedStars(C);   // (see "Bent starlight")
         const subj = bodyById(selectedId);
         if (settings.k2) drawSectors(C, subj);
         drawPast(C);
+        skyFollow();   // (see "The sky from a planet")
         drawTrails(C);
+        drawSkyLine(C);
         drawMissionMarks(C);
         drawFlybyGhost(C);
         if (settings.k1) drawEllipseLaw(C, subj);
@@ -6733,6 +7938,7 @@
         drawCometTails(C);
         drawGravityUnder(C, subj);   // (Hill sphere, Roche limit and pull lines: see "Mutual gravity made visible")
         drawBodies(C);
+        if (scene.cannon) drawCannon(C);   // (see "Newton's cannon")
         drawLagrangePoints(C);
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
@@ -6753,41 +7959,161 @@
     // extra ones) is read every few samples. The minor bodies of a crowded scene, and the pieces of torn-apart bodies, are drawn together, a path per colour and shade.
     const TRAIL_CHUNKS = 8, MINOR_CHUNKS = 3, PIECE_CHUNKS = 5, TRAIL_POINTS = 1500;
     const minorGroups = new Map(), pieceGroups = new Map(), gasGroups = new Map();
+    // A swarm's dots make a pattern that hundreds of trails would smear, so theirs wait until someone asks: the Trails
+    // slider set longer than the scene's own. (It lives in the slider, so share links, undo and autosave keep it. A
+    // chosen dot has its trail either way, and the planets among the dots theirs.)
+    const swarmTrails = () => !scene.swarm || settings.trailIndex > scene.trail;
+
+    // ---- An orbit too fast for its samples ----
+    // A close pair that goes round in under ORBIT_TRAIL trail samples has moved on by anything up to many turns from
+    // one sample to the next, so lines between them cut across the orbit and draw a pattern it never made. Its path is
+    // known exactly, though: so each body's trail is its orbit, worked out afresh each frame, and it spends no samples,
+    // which keeps the other bodies' trails long. What the pair does as a whole goes on as a trail too: the samples of
+    // its centre of mass (a body going round a far heavier host needs none of its own: the host's trail is that).
+    const PAIR_ORIGIN = new Float64Array(TRAIL_CAP * 2), PAIR_TRAIL = new Float64Array(TRAIL_CAP * 2);
+    const trailOrbit = (b) => (b.kep && b.kep.orbit ? b.kep : b.fastOrbit);
+    const orbitPair = (b) => { const q = trailOrbit(b); return q && q.a.trail && q.b.trail ? q : null; };
+    const orbitPairFirst = (q) => (q.hosted ? trailFirst(q.b) : Math.max(trailFirst(q.a), trailFirst(q.b)));
+    // Where the pair's centre is drawn (a host is drawn where it goes)
+    function orbitPairCentre(q) {
+        if (q.hosted) return { x: q.b.dx, y: q.b.dy };
+        const A = q.a, H = q.b, fa = A.m / (A.m + H.m), fh = 1 - fa;
+        return { x: fa * A.dx + fh * H.dx, y: fa * A.dy + fh * H.dy };
+    }
+    // Samples k0 on of the pair's centre, in a ring like a whole body's
+    function orbitPairSamples(q, k0, out) {
+        if (q.hosted) return q.b.trail;
+        const A = q.a, H = q.b, TA = A.trail, TH = H.trail, fa = A.m / (A.m + H.m), fh = 1 - fa;
+        for (let k = k0; k < sampleCount; k++) {
+            const ia = trailIndex(TA, k), ih = trailIndex(TH, k), j = 2 * (k % TRAIL_CAP);
+            out[j] = fa * TA[ia] + fh * TH[ih];
+            out[j + 1] = fa * TA[ia + 1] + fh * TH[ih + 1];
+        }
+        return out;
+    }
+
+    // b's orbit, drawn. Back from where it is by one turn, or as far as its trail goes if that's less. It keeps its
+    // place by its eccentric anomaly E, which puts points on an ellipse closest where it bends most. Relativity turns
+    // an orbit going round a host (see driftHosted), which can be by a good part of a turn each time, so then it goes
+    // back over as many turns as make the whole rosette. With time slow enough to watch it go round, the far end fades
+    // as a trail's does, to show the way it is going. Any faster and that would only flicker.
+    const ORBIT_ROSETTE = 24;             // turns at most
+    const ORBIT_SHADES = 8;               // shades for each turn, and three times that at most
+    const ORBIT_POINTS = 3000;            // points at most (close up, only a few are on the screen)
+    function orbitTrail(b, q, k0, L, tr) {
+        const A = q.a, H = q.b, gm = G * (A.m + H.m);
+        const el = turnedElements(relElements(A.x - H.x, A.y - H.y, A.vx - H.vx, A.vy - H.vy, gm));
+        if (!el.bound || b === L) return;
+        // Seen from the other of the pair it goes round that body itself, not their centre
+        const seenFrom = L === A || L === H, fa = q.hosted ? 0 : A.m / (A.m + H.m);
+        const part = seenFrom ? (b === A ? 1 : -1) : b === A ? 1 - fa : -fa;
+        const a = el.a, e = el.e, bb = a * Math.sqrt(Math.max(0, 1 - e * e));
+        const Rpx = a * (1 + e) * Math.abs(part) * scale;
+        if (Rpx < 1.5) return;   // (a dot on the body: nothing to see)
+        const c = seenFrom ? { x: L.dx, y: L.dy } : orbitPairCentre(q);
+        const ox = sx(c.x), oy = sy(c.y), way = el.h < 0 ? -1 : 1, cw = Math.cos(el.w), sw = Math.sin(el.w);
+        // Where it is now along the orbit, and how far back in time its trail goes
+        const nx = A.dx - H.dx, ny = A.dy - H.dy, u = nx * cw + ny * sw, v = way * (ny * cw - nx * sw);
+        const E0 = Math.atan2(v / (bb || 1), u / a + e), M0 = E0 - e * Math.sin(E0);
+        const oldest = Math.min(k0, sampleCount - 1);
+        const reach = oldest >= 0 ? (TAU / el.T) * Math.abs(simTime + lag - sampleTimes[oldest % TRAIL_CAP]) : 0;
+        // Relativity's turn for each radian round, and whether that shows
+        const kw = settings.realistic && el.h !== 0 ? 3 * gm * gm / (C2 * el.h * el.h) : 0;
+        const turns = kw * TAU * Rpx * e > 1 ? Math.min(ORBIT_ROSETTE, Math.ceil(1 / kw)) : 1;
+        const perTurn = clamp(Math.ceil(Math.PI * Math.sqrt(2.5 * Rpx * perf.quality)), 16, Math.floor(ORBIT_POINTS / turns));
+        const n = perTurn * turns, beta = e / (1 + Math.sqrt(Math.max(0, 1 - e * e)));
+        const anomaly = (E) => E + 2 * Math.atan2(beta * Math.sin(E), 1 - beta * Math.cos(E));
+        const nu0 = anomaly(E0);
+        // (frames for one turn at this speed: at 4 it is too quick to see, and by 12 it has its fade)
+        const frames = el.T / (settings.speed * rate() * STEP_FRAME), fade = 0.55 * clamp((frames - 4) / 8, 0, 1);
+        const at = (E) => {
+            const X = a * (Math.cos(E) - e), Y = way * bb * Math.sin(E);
+            let wx1 = X * cw - Y * sw, wy1 = X * sw + Y * cw;
+            if (kw) {
+                const back = way * kw * (nu0 - anomaly(E)), cb = Math.cos(back), sb = Math.sin(back), x1 = cb * wx1 + sb * wy1;
+                wy1 = cb * wy1 - sb * wx1; wx1 = x1;
+            }
+            TP[0] = ox + part * wx1 * scale; TP[1] = oy - part * wy1 * scale;
+        };
+        const shades = Math.min(3, turns) * ORBIT_SHADES, each = Math.ceil(n / shades);
+        let i = 0, done = false;
+        for (let s = 0; s < shades && !done && i < n; s++) {
+            ctx.globalAlpha = 0.8 - (fade * s) / Math.max(1, shades - 1);
+            ctx.beginPath();
+            at(E0 - (i * TAU) / perTurn);
+            let px = TP[0], py = TP[1];
+            tr.out = outcode(px, py);
+            tr.pen = true;
+            ctx.moveTo(px, py);
+            for (let j = 0; j < each && i < n; j++) {
+                i++;
+                const E = E0 - (i * TAU) / perTurn;
+                if (M0 - (E - e * Math.sin(E)) > reach) { done = true; break; }
+                at(E);
+                trailLine(tr, px, py, TP[0], TP[1]);
+                px = TP[0]; py = TP[1];
+            }
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+    }
+
     function drawTrails(C) {
         const years = trailYears();
-        if (years <= 0) return;
+        if (years <= 0) { layerAfterFrame(false); return; }
         const first = sampleAtTime(simTime - trailDir * years);
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L && !L.trail) return;
+        // (seen from a body in such a pair: from the pair's centre, whose samples are a path. Its own aren't)
+        const Lq = L ? orbitPair(L) : null;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
-        const live = freeze ? liveFrameOrigin() : F;
+        const live = Lq ? orbitPairCentre(Lq) : freeze ? liveFrameOrigin() : F;
         const offX = (live.x - F.x - view.panX) * scale + midX, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const lw = clamp(1.6 * sizeScale, 1.2, 2);
         // (a turned view: each sample turned by the angle at its own time, from the turning pair's own
         // samples; see turnedTrails)
         const turned = turnedTrails(first);
-        const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
-        const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
+        const oFirst = turned && turned.oT ? turned.first : Lq ? Math.max(orbitPairFirst(Lq), first) : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
+        const oT = turned && turned.oT ? turned.oT : Lq ? orbitPairSamples(Lq, oFirst, PAIR_ORIGIN) : L ? L.trail : comTrail;
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true, g: ctx, curves: false, lo: 0 };
         for (const g of minorGroups.values()) g.length = 0;
         for (const g of pieceGroups.values()) g.length = 0;
         for (const g of gasGroups.values()) g.length = 0;
         for (const b of bodies) {
+            const q = orbitPair(b);
+            // (out of such a pair its samples are no use: its trail starts again)
+            if (b.orbitDrawn && !q) b.trailStart = sampleCount;
+            b.orbitDrawn = !!q;
             if (b.held || !b.trail) continue;
+            // (a host, seen from a body going round it, goes round that body)
+            if (Lq && Lq.hosted && b === Lq.b) {
+                ctx.strokeStyle = bodyStroke(b.color, C.dark);
+                ctx.lineWidth = lw;
+                orbitTrail(b, Lq, Math.max(trailFirst(b), first, oFirst), L, tr);
+                continue;
+            }
             if ((b.minor || b.grp) && !isChosen(b)) {
+                if (q) continue;   // (a dot in a swarm: only its orbit would say anything, and hundreds of those say nothing)
                 const groups = b.grp < 0 ? gasGroups : b.minor ? minorGroups : pieceGroups;
                 let g = groups.get(b.color);
                 if (!g) { g = []; groups.set(b.color, g); }
                 g.push(b);
                 continue;
             }
-            const k0 = Math.max(trailFirst(b), first, oFirst);
+            const k0 = Math.max(q ? orbitPairFirst(q) : trailFirst(b), first, oFirst);
             const count = sampleCount - k0;
-            if (count < 1) continue;
+            if (count < 1 && !q) continue;
             ctx.strokeStyle = bodyStroke(b.color, C.dark);
             ctx.lineWidth = lw;
-            tr.T = b.trail;
+            if (q) {
+                orbitTrail(b, q, k0, L, tr);
+                // (the path of the pair as a whole goes with the heavier of two)
+                if (q.hosted || count < 1 || b !== (q.a.m > q.b.m ? q.a : q.b)) continue;
+            }
+            tr.T = q ? orbitPairSamples(q, k0, PAIR_TRAIL) : b.trail;
             tr.stride = Math.max(1, Math.floor(count / (TRAIL_POINTS * perf.quality)));
+            tr.curves = perf.quality > 0.5;
+            tr.lo = k0;
             const chunk = Math.max(1, Math.ceil(count / TRAIL_CHUNKS));
             for (let c = 0; c < TRAIL_CHUNKS; c++) {
                 const ks = k0 + c * chunk;
@@ -6797,9 +8123,13 @@
                 ctx.globalAlpha = 0.08 + 0.72 * f;
                 ctx.beginPath();
                 traceTrail(tr, ks, ke, (1.2 + 2 * (1 - f)) / perf.quality);
-                if (ke === sampleCount && !b.ghost) ctx.lineTo(sx(b.dx), sy(b.dy));   // (b.ghost: see drawPast)
+                if (ke === sampleCount && !b.ghost) {   // (b.ghost: see drawPast)
+                    const end = q ? orbitPairCentre(q) : null;
+                    trailEnd(tr, sx(end ? end.x : b.dx), sy(end ? end.y : b.dy));
+                }
                 ctx.stroke();
             }
+            tr.curves = false;
         }
         // The swarm: one path per colour for each of a few shades, in thinner lines with plain ends and
         // corners (round ones take far longer to paint); when drawing runs slow, only their newest part
@@ -6811,10 +8141,11 @@
         trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
         // (gas: short and faint, a sign of how it moves. Its glow is the thing to see)
         trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
-        if (!low) {
+        if (!low && swarmTrails()) {
             ctx.lineJoin = 'miter';
-            trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
+            if (!swarmFromLayer(tr, first, oFirst, C, lw)) trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
         }
+        layerAfterFrame(low);
         ctx.globalAlpha = 1;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -6851,6 +8182,220 @@
         }
     }
 
+    // ---- The swarm's trails, kept on canvases ----
+    // Stroking all the trails of a crowded scene again each frame is what its drawing spends most on, yet
+    // only their new ends have changed: a sample stays at one place on the screen until the view moves
+    // (in a view from a body too, as each is drawn from where that body was then). So while the view holds
+    // still they are kept drawn on a few canvases the size of the view, a block of samples on each. Each
+    // frame only the new stretches go on, and the canvases are laid over the frame, fainter the older what
+    // is on them. Fading by how they are laid leaves nothing behind (fading a canvas in place, in 8 bits,
+    // leaves a smear that never goes), and a canvas is wiped when its block has left the trail. Each body
+    // starts its blocks at a sample of its own, so a block's end shows as no edge across a dense band of
+    // trails. Until a body has come a little way its newest stretch is drawn on the frame itself.
+    // They are all drawn afresh from the samples when the view or the trails change, and as trailGroups
+    // draws them, on the frame, while the view is on the move, for a few bodies or short trails, in a
+    // turned view (where the samples are on the move too), while a backward run takes samples away, or if
+    // time is running so fast that the trails are all new each frame.
+    const LAYER_TILES = 4, LAYER_SPANS = 3;   // canvases, and blocks in a whole trail (the other is the one just starting)
+    const LAYER_MIN = 40000;              // bodies x samples of trail: with fewer, laying the canvases over costs more than it saves
+    const LAYER_ALPHA = 0.56;             // the newest block (as the newest shade of trailGroups)
+    const LAYER_PEN_PX = 6, LAYER_PEN_SAMPLES = 16;   // a body's new stretch goes on the canvases when this long
+    const LAYER_WAIT = 60;                // frames at least between redrawing them all because bodies have gone
+    // (frames of trails drawn the old way before the canvases again, after drawing was too slow for any: on
+    // the edge, drawing them all afresh again and again would only make it slower)
+    const LAYER_SLOW = 120;
+    const swarmLayer = {
+        off: false, tiles: [], built: false, stale: false, asked: false, T: 0, span: 1, k: 0, sig: 0, wait: 0, slow: 0, reach: 0, builds: 0,
+        w: 0, h: 0, dpr: 0, scale: 0, offX: 0, offY: 0, dark: false, lw: 0, oT: null, list: null, epoch: 0, dir: 0, sel: null, pop: null, frame: null
+    };
+
+    // (their picture can go while the page is out of sight, and with the graphics context)
+    const layerLost = () => { swarmLayer.built = false; };
+    document.addEventListener('visibilitychange', layerLost);
+    const layerOffset = (b, span) => Math.floor(((b.id * 0.618034) % 1) * span);
+
+    function layerSameView(tr, C, lw) {
+        const q = swarmLayer, w = canvas.width, h = canvas.height;
+        if (q.w === w && q.h === h && q.dpr === dpr && q.scale === scale && q.offX === tr.offX && q.offY === tr.offY && q.dark === C.dark && q.lw === lw
+            && q.oT === tr.oT && q.list === bodies && q.epoch === hist.epoch && q.dir === trailDir && q.sel === selectedId && q.pop === popBody && q.frame === frameId) return true;
+        q.w = w; q.h = h; q.dpr = dpr; q.scale = scale; q.offX = tr.offX; q.offY = tr.offY; q.dark = C.dark; q.lw = lw;
+        q.oT = tr.oT; q.list = bodies; q.epoch = hist.epoch; q.dir = trailDir; q.sel = selectedId; q.pop = popBody; q.frame = frameId;
+        return false;
+    }
+
+    // The canvases go when not in use (a phone's memory: four the size of the view)
+    function layerFree() {
+        for (const t of swarmLayer.tiles) t.c.width = t.c.height = 0;
+        swarmLayer.tiles.length = 0;
+        swarmLayer.built = false;
+        swarmLayer.wait = 0;
+    }
+
+    // After the frame's trails: if the swarm's weren't asked for, for whatever reason, the canvases aren't needed
+    function layerAfterFrame(low) {
+        const q = swarmLayer;
+        if (low) q.slow = LAYER_SLOW;
+        if (!q.asked && q.tiles.length) layerFree();
+        q.asked = false;
+    }
+
+    function layerClear(t, lw) {
+        const q = swarmLayer;
+        if (t.c.width !== q.w || t.c.height !== q.h) { t.c.width = q.w; t.c.height = q.h; }
+        t.g.setTransform(1, 0, 0, 1, 0, 0);
+        t.g.clearRect(0, 0, q.w, q.h);
+        t.g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        t.g.lineWidth = Math.max(1, 0.6 * lw);
+        t.g.lineCap = 'butt';
+        t.g.lineJoin = 'miter';
+    }
+
+    // All of the kept trails, from their samples, a block on each canvas (as trailGroups draws them)
+    function layerBuild(tr, C, T, oFirst, lw, sig) {
+        const q = swarmLayer, N = LAYER_TILES;
+        while (q.tiles.length < N) {
+            const c = document.createElement('canvas'), g = c.getContext('2d');
+            if (!g) return false;
+            c.addEventListener('contextrestored', layerLost);
+            q.tiles.push({ c, g, block: -1 });
+        }
+        q.T = T; q.span = Math.ceil(T / LAYER_SPANS); q.sig = sig; q.wait = LAYER_WAIT; q.k = sampleCount; q.built = true; q.stale = false; q.builds++;
+        for (const t of q.tiles) { layerClear(t, lw); t.block = -1; }
+        const last = Math.floor((sampleCount - 1) / q.span) + 1, reach = Math.max(1, T * perf.quality);
+        q.reach = Infinity;
+        for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
+            if (sampleCount - blk * q.span >= reach) { q.reach = reach; continue; }   // (only what will show: see layerCompose)
+            const t = q.tiles[blk % N];
+            t.block = blk;
+            tr.g = t.g;
+            for (const [color, g] of minorGroups) {
+                if (!g.length) continue;
+                t.g.strokeStyle = bodyStroke(color, C.dark);
+                t.g.beginPath();
+                for (const b of g) {
+                    const off = layerOffset(b, q.span), ks = Math.max(blk * q.span - off, trailFirst(b), oFirst), ke = Math.min(sampleCount, (blk + 1) * q.span - off + 1);
+                    if (ks >= ke - 1) continue;
+                    tr.T = b.trail;
+                    tr.stride = 1;
+                    traceTrail(tr, ks, ke, 2 / perf.quality);
+                }
+                t.g.stroke();
+            }
+        }
+        tr.g = ctx;
+        for (const g of minorGroups.values()) for (const b of g) b.layerPen = trailFirst(b) < sampleCount - 1 ? sampleCount - 1 : -1;
+        return true;
+    }
+
+    // Each body's new stretch, once it has come far enough, onto the newest canvas
+    function layerAdd(tr, C, oFirst, lw) {
+        const q = swarmLayer, now = sampleCount - 1;
+        if (q.k === sampleCount) return;
+        const m = Math.floor(now / q.span), t0 = q.tiles[m % LAYER_TILES], t1 = q.tiles[(m + 1) % LAYER_TILES];
+        if (t0.block !== m) { layerClear(t0, lw); t0.block = m; }
+        if (t1.block !== m + 1) { layerClear(t1, lw); t1.block = m + 1; }
+        q.k = sampleCount;
+        tr.capO = tr.oT.length >> 1;
+        for (const [color, g] of minorGroups) {
+            if (!g.length) continue;
+            let begun0 = false, begun1 = false;
+            for (const b of g) {
+                const p = Math.max(b.layerPen, trailFirst(b), oFirst);
+                if (p >= now) continue;
+                tr.T = b.trail;
+                tr.capT = b.trail.length >> 1;
+                trailAt(tr, now);
+                const bx = TP[0], by = TP[1];
+                trailAt(tr, p);
+                const ax = TP[0], ay = TP[1];
+                if (Math.abs(bx - ax) + Math.abs(by - ay) < LAYER_PEN_PX && now - p < LAYER_PEN_SAMPLES) continue;
+                b.layerPen = now;
+                if (outcode(ax, ay) & outcode(bx, by)) continue;
+                const later = Math.floor((now + layerOffset(b, q.span)) / q.span) > m, G = later ? t1.g : t0.g;
+                if (later ? !begun1 : !begun0) {
+                    G.strokeStyle = bodyStroke(color, C.dark);
+                    G.beginPath();
+                    if (later) begun1 = true; else begun0 = true;
+                }
+                G.moveTo(ax, ay);
+                for (let k = p + 1; k < now; k++) { trailAt(tr, k); G.lineTo(TP[0], TP[1]); }
+                G.lineTo(bx, by);
+            }
+            if (begun0) t0.g.stroke();
+            if (begun1) t1.g.stroke();
+        }
+    }
+
+    function layerCompose(tr, C, oFirst) {
+        const q = swarmLayer, N = LAYER_TILES, span = q.span, last = Math.floor((sampleCount - 1) / span) + 1, reach = Math.max(1, q.T * perf.quality);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
+            const t = q.tiles[blk % N];
+            if (t.block !== blk) continue;
+            const u = Math.max(0, sampleCount - blk * span) / reach;   // (how old what's on it is, on average over the bodies)
+            if (u >= 1) continue;
+            ctx.globalAlpha = Math.min(LAYER_ALPHA, 0.74 - 0.45 * u) * Math.min(1, (1 - u) / 0.15);   // (as bright overall as trailGroups's shades, and gone by the end)
+            ctx.drawImage(t.c, 0, 0);
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // (the ends that aren't on the canvases yet, on up to each body as it is drawn now)
+        ctx.globalAlpha = LAYER_ALPHA;
+        tr.capO = tr.oT.length >> 1;
+        for (const [color, g] of minorGroups) {
+            if (!g.length) continue;
+            ctx.strokeStyle = bodyStroke(color, C.dark);
+            ctx.beginPath();
+            for (const b of g) {
+                const p = Math.max(b.layerPen, trailFirst(b), oFirst);
+                if (p >= sampleCount) continue;
+                tr.T = b.trail;
+                tr.capT = b.trail.length >> 1;
+                trailAt(tr, p);
+                const ax = TP[0], ay = TP[1], bx = sx(b.dx), by = sy(b.dy);
+                if (outcode(ax, ay) & outcode(bx, by)) continue;
+                ctx.moveTo(ax, ay);
+                for (let k = p + 1; k < sampleCount; k++) { trailAt(tr, k); ctx.lineTo(TP[0], TP[1]); }
+                ctx.lineTo(bx, by);
+            }
+            ctx.stroke();
+        }
+    }
+
+    // The swarm's trails from the canvases. False if they aren't to be drawn that way this frame.
+    function swarmFromLayer(tr, first, oFirst, C, lw) {
+        const q = swarmLayer;
+        q.asked = true;
+        let n = 0, sig = 0;
+        for (const g of minorGroups.values()) {
+            n += g.length;
+            for (const b of g) {
+                sig += b.id;
+                // (a trail cut short that has some of it on the canvases. One kept empty has none there, and is no change: see skyFollow)
+                if (b.layerPen >= 0 && b.trailStart > b.layerPen) { b.layerPen = -1; q.stale = true; }
+            }
+        }
+        const count = sampleCount - Math.max(first, oFirst, sampleCount - SWARM_TRAIL + 1);
+        const T = Math.min(SWARM_TRAIL - 1, Math.max(Math.ceil(trailYears() / sampleDt), count));
+        if (q.off || n * T < LAYER_MIN || tr.turn || freeze || trailDir !== timeDir) { if (q.tiles.length) layerFree(); return false; }
+        if (q.slow > 0) { q.slow--; return false; }
+        for (const t of q.tiles) if (t.g.isContextLost && t.g.isContextLost()) { q.built = false; return false; }
+        // (the view on the move: not worth keeping them until it stops)
+        if (!layerSameView(tr, C, lw)) { q.built = false; q.wait = 0; return false; }
+        if (count < 1) return false;
+        if (q.built && (T > 1.25 * q.T || 1.5 * T < q.T || sampleCount < q.k)) q.built = false;
+        if (q.built && sampleCount - q.k >= q.span) { q.built = false; q.wait = LAYER_WAIT; }
+        if (q.T * perf.quality > 1.5 * q.reach) q.stale = true;   // (drawing is quicker now: they reach further back than was drawn)
+        if (!q.built && q.wait > 0) { q.wait--; return false; }
+        if (!q.built || ((sig !== q.sig || q.stale) && (paused || q.wait <= 0))) {
+            if (!layerBuild(tr, C, T, oFirst, lw, sig)) { q.off = true; return false; }
+        } else {
+            layerAdd(tr, C, oFirst, lw);
+            q.wait--;
+        }
+        layerCompose(tr, C, oFirst);
+        return true;
+    }
+
     // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT) to the current path,
     // leaving out stretches wholly off one side of the canvas. Painting a stroke takes far longer than
     // anything else in a frame and goes by its corners, so a run of samples goes as one straight line
@@ -6871,7 +8416,7 @@
         let a = ks, ax = TP[0], ay = TP[1];
         tr.out = outcode(ax, ay);
         tr.pen = true;
-        ctx.moveTo(ax, ay);
+        tr.g.moveTo(ax, ay);
         while (a < last) {
             let b = Math.min(last, a - a % s0 + s0);
             trailAt(tr, b);
@@ -6896,10 +8441,79 @@
                 }
                 b = c; bx = cx; by = cy;
             }
-            trailLine(tr, ax, ay, bx, by);
+            if (!tr.curves || !trailCurve(tr, a, ax, ay, b, bx, by)) trailLine(tr, ax, ay, bx, by);
             a = b; ax = bx; ay = by;
         }
-        if (!tr.pen) ctx.moveTo(ax, ay);
+        if (!tr.pen) tr.g.moveTo(ax, ay);
+    }
+
+    // Samples can be far apart on the screen: a body going round a heavy host at a good many degrees a step, or any
+    // orbit from close up. Where the corner would show (the line's middle over CURVE_SHOW px from the true path), a
+    // line goes as a curve instead, leaving each end along the way through it and its neighbours (as a circle through
+    // them would: a sample with no neighbour on one side has the same bend as at its other end). A turn of over
+    // CURVE_MAX at either end isn't a curve the samples have followed, so it stays as it is. It takes no more samples.
+    const CURVE_SHOW = 0.4, CURVE_MAX = 0.8;
+    const CURVE_SIN = Math.sin(CURVE_MAX), CURVE_MIN = (4 * CURVE_SHOW) / CURVE_SIN;   // (lines shorter than that can't show one)
+    // The way a circle goes through the point joining a line (ax, ay) of length A to the next, (bx, by) of length B,
+    // into TP as a unit vector: each line's direction counts for as much as the other is long
+    function trailTangent(ax, ay, A, bx, by, B) {
+        const tx = (ax / A) * B + (bx / B) * A, ty = (ay / A) * B + (by / B) * A, t = hyp(tx, ty) || 1;
+        TP[0] = tx / t; TP[1] = ty / t;
+    }
+    function trailCurve(tr, a, ax, ay, b, bx, by) {
+        const ex = bx - ax, ey = by - ay, L = hyp(ex, ey), o = outcode(bx, by);
+        if (L < CURVE_MIN || (o & tr.out)) return false;
+        const s = b - a;
+        let in1 = NaN, in2 = NaN, u1x = 0, u1y = 0, u2x = 0, u2y = 0;
+        if (a - s >= tr.lo) {
+            trailAt(tr, a - s);
+            const dx = ax - TP[0], dy = ay - TP[1], D = hyp(dx, dy);
+            if (D > 0) {
+                trailTangent(dx, dy, D, ex, ey, L);
+                u1x = TP[0]; u1y = TP[1];
+                in1 = (ex * u1y - ey * u1x) / L;
+            }
+        }
+        if (b + s < sampleCount) {
+            trailAt(tr, b + s);
+            const dx = TP[0] - bx, dy = TP[1] - by, D = hyp(dx, dy);
+            if (D > 0) {
+                trailTangent(ex, ey, L, dx, dy, D);
+                u2x = TP[0]; u2y = TP[1];
+                in2 = (ex * u2y - ey * u2x) / L;
+            }
+        }
+        if (in1 !== in1 && in2 !== in2) return false;
+        // (no neighbour: the mirror of the other end)
+        if (in1 !== in1) { in1 = -in2; u1x = (2 * ex * (ex * u2x + ey * u2y)) / (L * L) - u2x; u1y = (2 * ey * (ex * u2x + ey * u2y)) / (L * L) - u2y; }
+        if (in2 !== in2) { in2 = -in1; u2x = (2 * ex * (ex * u1x + ey * u1y)) / (L * L) - u1x; u2y = (2 * ey * (ex * u1x + ey * u1y)) / (L * L) - u1y; }
+        const turn = Math.abs(in1) + Math.abs(in2);
+        if (Math.abs(in1) > CURVE_SIN || Math.abs(in2) > CURVE_SIN || (L * turn) / 8 <= CURVE_SHOW) return false;
+        if (!tr.pen) { tr.g.moveTo(ax, ay); tr.pen = true; }
+        const c = L / 3;
+        tr.g.bezierCurveTo(ax + c * u1x, ay + c * u1y, bx - c * u2x, by - c * u2y, bx, by);
+        tr.out = o;
+        return true;
+    }
+
+    // On from the newest sample to the body, as it is now: the same, with only its last line to go by
+    function trailEnd(tr, x, y) {
+        const k = sampleCount - 1;
+        if (tr.curves && k - 1 >= tr.lo) {
+            trailAt(tr, k);
+            const ax = TP[0], ay = TP[1];
+            trailAt(tr, k - 1);
+            const dx = ax - TP[0], dy = ay - TP[1], D = hyp(dx, dy), ex = x - ax, ey = y - ay, L = hyp(ex, ey);
+            if (D > 0 && L > CURVE_MIN) {
+                trailTangent(dx, dy, D, ex, ey, L);
+                const ux = TP[0], uy = TP[1], side = (ex * uy - ey * ux) / L;
+                if (Math.abs(side) <= CURVE_SIN && (L * Math.abs(side)) / 4 > CURVE_SHOW) {
+                    tr.g.quadraticCurveTo(ax + 0.5 * L * ux, ay + 0.5 * L * uy, x, y);
+                    return;
+                }
+            }
+        }
+        tr.g.lineTo(x, y);
     }
 
     // Where sample k of the trail is drawn, into TP (turned, in a turned view: see turnedTrails)
@@ -6922,8 +8536,8 @@
         if (o & tr.out) {
             tr.pen = false;
         } else {
-            if (!tr.pen) { ctx.moveTo(ax, ay); tr.pen = true; }
-            ctx.lineTo(x, y);
+            if (!tr.pen) { tr.g.moveTo(ax, ay); tr.pen = true; }
+            tr.g.lineTo(x, y);
         }
         tr.out = o;
     }
@@ -7060,206 +8674,6 @@
         ctx.fill();
     }
 
-    // ---- Bent starlight round a black hole (realistic physics) ----
-    // The canvas looks straight down on a flat system, so the bodies in it are not behind a black hole
-    // along the line of sight, and their pictures aren't bent. What a black hole does bend is the light of
-    // stars far behind the plane. Each star here goes where the point-lens equation puts it. A star in
-    // direction beta from the hole has two images, on the line through the hole, at
-    //   theta = (beta +- sqrt(beta^2 + 4 thetaE^2)) / 2      with thetaE^2 = 4GM/c^2 / D
-    // for stars far behind the hole, seen from distance D (Einstein 1936; Refsdal 1964). In the plane of the
-    // canvas, where lengths are angles times D, the Einstein radius is E = sqrt(4GM/c^2 D): the one number
-    // not given by the scene is D, as nothing says where the viewer is. It is chosen once, so that the ring
-    // of the heaviest hole is about a tenth of the canvas across as it first shows, and said on the canvas:
-    // the strength of the bending is real for a viewer that far away. (A real telescope, light years away,
-    // sees a ring far wider than this canvas and far too small on its sky to make out.) Every point of the
-    // edge of a star's disc is sent through the equation, so its images are the true shapes, and painted
-    // evenly: lensing keeps a star's surface brightness, so an image is brighter as a whole by just the
-    // magnification, in its area. A star right behind the hole becomes the ring itself. The dots' own size
-    // is a symbol, as real stars would be far smaller, and their rings thinner and brighter.
-    // The stars are fixed in the world, so what counts is how the hole moves against them: its own orbit,
-    // and a slow drift of at most 30 km/s, about what stars near each other have, slower if that would be
-    // too fast to follow at the scene's rate. The first star is put to pass right behind the hole in the
-    // first few seconds. The sky is a tile repeated, so there are always the same few stars near a hole, and
-    // they fade out where the bending gets small. It is a picture and nothing else: no physics reads it.
-    // Two holes well apart each bend the stars nearest them. With their rings overlapping, the light is
-    // bent by both at once, which this equation can't say, so they show no stars: nor does a hole whose
-    // ring is too close to it for weak bending (the equation is 15% out at 10 horizon radii and 30% at 5).
-    const LENS_N = 30, LENS_TILE = 7, LENS_K = 64, LENS_HOLES = 3;
-    const LENS_FILL = 0.1;                // the ring's radius over the shorter side of the canvas, when D is chosen
-    const LENS_KMS = 30;                  // km/s: the fastest drift of the stars past the hole
-    const LENS_CROSS_S = 10;              // s: and the shortest time to cross the ring at 1x
-    const LENS_PASS_S = 7;                // s: when the first star passes behind the hole, at 1x
-    const LENS_MIN_E = 8;                 // Einstein radius in horizon radii: closer in, light isn't weakly bent (no ring drawn)
-    const LENS_SHADOW = 1.5 * Math.sqrt(3);   // horizon radii: light aimed closer than this falls in
-    const lens = { D: 0, E0: 0, ox: 0, oy: 0, t0: 0, vx: 0, vy: 0, scene: null, n: 0, drawn: false, note: '' };
-    const LENS_U = new Float64Array(2 * LENS_N), LENS_R = new Float64Array(LENS_N);
-    const LENS_COS = new Float64Array(LENS_K), LENS_SIN = new Float64Array(LENS_K);
-    const LH = { x: new Float64Array(LENS_HOLES), y: new Float64Array(LENS_HOLES), X: new Float64Array(LENS_HOLES), Y: new Float64Array(LENS_HOLES), m: new Float64Array(LENS_HOLES), a: new Float64Array(LENS_HOLES), E: new Float64Array(LENS_HOLES), b: new Array(LENS_HOLES).fill(null) };
-    for (let i = 0; i < LENS_N; i++) {
-        // (evenly scattered, with no clumps or gaps: the R2 sequence)
-        const f = (x) => x - Math.floor(x);
-        LENS_U[2 * i] = f(0.5 + i * 0.7548776662) - 0.5;
-        LENS_U[2 * i + 1] = f(0.5 + i * 0.5698402910) - 0.5;
-        LENS_R[i] = 1.05 + 1.05 * f(i * 0.6180339887);
-    }
-    for (let k = 0; k < LENS_K; k++) { LENS_COS[k] = Math.cos((TAU * k) / LENS_K); LENS_SIN[k] = Math.sin((TAU * k) / LENS_K); }
-
-    // The viewer's distance, the stars' start and their drift: once a scene has a hole to show
-    function chooseLens(m, x, y) {
-        const rs = (2 * G * m) / C2;
-        const want = (LENS_FILL * Math.min(visR - visL, viewH)) / scale;
-        lens.D = +Math.max((want * want) / (2 * rs), 0.5 * LENS_MIN_E * LENS_MIN_E * rs).toPrecision(2);
-        lens.E0 = Math.sqrt(2 * rs * lens.D);
-        const v = Math.min(LENS_KMS / AUYR_KMS, (2 * lens.E0) / (LENS_CROSS_S * rate()));
-        lens.vx = v * 0.9563; lens.vy = v * 0.2924;   // (17 degrees off the x axis, so each pass differs from the last)
-        lens.ox = x; lens.oy = y; lens.t0 = simTime; lens.scene = scene;
-        // The first star, and it the largest: a pass almost dead behind the hole
-        const L = LENS_TILE * lens.E0, tp = LENS_PASS_S * rate();
-        LENS_U[0] = (-lens.vx * tp - 0.012 * lens.E0 * 0.2924) / L;
-        LENS_U[1] = (-lens.vy * tp + 0.012 * lens.E0 * 0.9563) / L;
-        LENS_R[0] = 2.4;
-        const au = lens.D, ly = au / C_LIGHT;   // (a light year is C_LIGHT AU)
-        lens.note = `Bent starlight, as seen from ${au < 0.1 ? `${fig2(au * AU_KM)} km` : ly < 0.1 ? `${fig2(au)} AU` : `${fig2(ly)} light years`} away`;
-    }
-
-    // The holes to draw this frame, into LH (heaviest first; where they are in the world, unturned):
-    // how many. Each has its alpha, for how far it is off the canvas, how small its ring looks and how fast
-    // the stars rush past it on screen.
-    function lensHoles() {
-        let n = 0;
-        for (const b of bodies) {
-            if (b.kind !== 'blackhole' || (n === LENS_HOLES && b.m <= LH.m[n - 1])) continue;
-            let i = n < LENS_HOLES ? n++ : n - 1;
-            while (i > 0 && LH.m[i - 1] < b.m) { LH.m[i] = LH.m[i - 1]; LH.b[i] = LH.b[i - 1]; i--; }
-            LH.m[i] = b.m; LH.b[i] = b;
-        }
-        if (!n) { lens.D = 0; return 0; }
-        const c = turn.c, sn = turn.s;
-        for (let i = 0; i < n; i++) {
-            const b = LH.b[i], x = b.dx - F.x, y = b.dy - F.y;
-            LH.x[i] = F.x + c * x + sn * y;
-            LH.y[i] = F.y - sn * x + c * y;
-            LH.X[i] = sx(b.dx);
-            LH.Y[i] = sy(b.dy);
-        }
-        if (!lens.D || lens.scene !== scene) {
-            if (view.anim) return 0;   // (the view is still settling)
-            chooseLens(LH.m[0], LH.x[0], LH.y[0]);
-        }
-        for (let i = 0; i < n; i++) LH.E[i] = Math.sqrt(((4 * G * LH.m[i]) / C2) * lens.D);
-        for (let i = 0; i < n; i++) {
-            const b = LH.b[i], X = LH.X[i], Y = LH.Y[i];
-            const off = Math.max(visL - X, X - visR, -Y, Y - viewH, 0);
-            const Epx = LH.E[i] * scale;
-            const short = Math.min(visR - visL, viewH);
-            let a = clamp(1 - off / 40, 0, 1) * clamp((Epx - 14) / 14, 0, 1) * clamp((0.7 * short - Epx) / (0.25 * short), 0, 1);
-            if (LH.E[i] < LENS_MIN_E * ((2 * G * LH.m[i]) / C2)) a = 0;
-            for (let j = 0; j < n; j++) {
-                if (j !== i) a *= clamp((hyp(LH.x[i] - LH.x[j], LH.y[i] - LH.y[j]) / (LH.E[i] + LH.E[j]) - 1.5) / 0.5, 0, 1);
-            }
-            if (!paused && a > 0) {
-                let v = hyp(b.vx - lens.vx, b.vy - lens.vy) * scale;
-                if (turn.on) v += Math.abs(turn.omega) * 3 * Epx;
-                a *= clamp(2 - (v * settings.speed * rate()) / 500, 0, 1);
-            }
-            LH.a[i] = a;
-        }
-        return n;
-    }
-
-    // Drawn from the frame, under everything but the gravity well
-    function drawLensedStars(C) {
-        lens.drawn = false;
-        if (!settings.realistic || cleanRender) return;
-        const n = lensHoles();
-        if (!n) return;
-        let E = 0;
-        for (let i = 0; i < n; i++) E = Math.max(E, LH.E[i]);
-        const L = LENS_TILE * Math.max(lens.E0, E / 1.5), half = L / 2;
-        const t = simTime + lag - lens.t0, ax = lens.ox + lens.vx * t, ay = lens.oy + lens.vy * t;
-        const base = C.dark ? 0.8 : 0.6;
-        ctx.fillStyle = C.dark ? '#dde7ff' : '#3f4c68';
-        for (let h = 0; h < n; h++) {
-            if (!(LH.a[h] > 0.01)) continue;
-            const hx = LH.x[h], hy = LH.y[h], Eh = LH.E[h];
-            for (let i = 0; i < LENS_N; i++) {
-                let rx = ax + LENS_U[2 * i] * L - hx, ry = ay + LENS_U[2 * i + 1] * L - hy;
-                rx -= L * Math.round(rx / L);
-                ry -= L * Math.round(ry / L);
-                const beta = hyp(rx, ry);
-                if (beta >= half) continue;
-                let a = LH.a[h] * Math.min(1, (half - beta) / (0.4 * half));
-                // (each star is bent by the hole it is nearest, in rings; midway it fades, so it never jumps)
-                for (let o = 0; o < n; o++) {
-                    if (o === h) continue;
-                    let qx = ax + LENS_U[2 * i] * L - LH.x[o], qy = ay + LENS_U[2 * i + 1] * L - LH.y[o];
-                    qx -= L * Math.round(qx / L);
-                    qy -= L * Math.round(qy / L);
-                    a *= clamp((hyp(qx, qy) / LH.E[o] - beta / Eh) / 0.7, 0, 1);
-                }
-                if (a < 0.02) continue;
-                ctx.globalAlpha = a * base;
-                lensedStar(rx * scale, ry * scale, LENS_R[i], Eh * scale, h);
-                lens.drawn = true;
-            }
-        }
-        ctx.globalAlpha = 1;
-    }
-
-    // One star's images: its centre at (bx, by) px from hole h, in the world's directions, radius rho px
-    function lensedStar(bx, by, rho, E, h) {
-        const c = turn.c, sn = turn.s, X = LH.X[h], Y = LH.Y[h];
-        const beta = hyp(bx, by), root = Math.sqrt(beta * beta + 4 * E * E);
-        const out = (beta + root) / 2, inn = (root - beta) / 2;   // the two images' distances from the hole
-        const shadow = (LENS_SHADOW * ((2 * G * LH.m[h]) / C2)) * scale;
-        ctx.beginPath();
-        // Hardly bent: a dot, its centre moved out
-        const stretch = beta > 0 ? out / beta : Infinity;
-        if ((stretch - 1) * rho < 0.4) {
-            const px = X + (c * bx - sn * by) * stretch, py = Y - (sn * bx + c * by) * stretch;
-            if (px < -5 || px > viewW + 5 || py < -5 || py > viewH + 5) return;
-            ctx.arc(px, py, rho, 0, TAU);
-        } else {
-            lensedOutline(X, Y, bx, by, rho, E, 1, stretch < 3 ? 4 : stretch < 10 ? 2 : 1);
-        }
-        // The second image, inside the ring and across from the star: small and faint unless the star is
-        // close behind, and lost if its light came too close to the hole
-        const s2 = beta > 0 ? inn / beta : Infinity;
-        if (inn >= shadow && s2 * rho >= 0.35) lensedOutline(X, Y, bx, by, rho, E, -1, s2 < 3 ? 4 : s2 < 10 ? 2 : 1);
-        ctx.fill('evenodd');
-    }
-
-    // The edge of a star's disc sent through the lens equation, on the outer side (sign 1) or inner (-1):
-    // every step-th point. The points are spaced by their direction as seen from the hole, so no two
-    // neighbours are far apart in direction. (Spaced round the star, the two either side of the hole, when
-    // the star's edge passes close by, go to opposite sides of the ring: a straight edge right across it,
-    // and half the ring filled in.)
-    function lensedOutline(X, Y, bx, by, rho, E, sign, step) {
-        const c = turn.c, sn = turn.s, E4 = 4 * E * E, beta = hyp(bx, by);
-        const ux = beta > 0 ? bx / beta : 1, uy = beta > 0 ? by / beta : 0;
-        for (let k = 0; k < LENS_K; k += step) {
-            // The point's direction from the hole, against the star's (cosine ca, sine sa), and its distance q.
-            // With the hole outside the star, directions reach only so far to either side and each comes
-            // twice, so k stands for the angle at the point between the hole and the star's centre.
-            let ca, sa, q;
-            if (beta > rho) {
-                sa = (rho / beta) * LENS_SIN[k];
-                ca = Math.sqrt(1 - sa * sa);
-                q = beta * ca + rho * LENS_COS[k];
-            } else {
-                sa = LENS_SIN[k];
-                ca = LENS_COS[k];
-                const h = beta * sa;
-                q = beta * ca + Math.sqrt(rho * rho - h * h);
-            }
-            const r = (q + sign * Math.sqrt(q * q + E4)) / 2;
-            const ix = r * (ux * ca - uy * sa), iy = r * (uy * ca + ux * sa);
-            const px = X + c * ix - sn * iy, py = Y - sn * ix - c * iy;
-            if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-    }
-
     const pieceColour = (color, C) => (C.dark ? color : bodyStroke(bodyStroke(color, false), false));
 
     function drawBody(b, x, y, r, C) {
@@ -7344,16 +8758,26 @@
             } else {
                 drawBody(b, x, y, r, C);
             }
-            if ((b.id === selectedId || b === popBody) && !cleanRender) {
+            if ((b.id === selectedId || b === popBody) && !cleanRender && !(scene.cannon && b.id === cannon.quiet && b !== popBody)) {
                 ctx.strokeStyle = b === popBody ? colours().text : C.subtle;
                 ctx.lineWidth = 1.2;
                 ctx.setLineDash([3, 3]);
                 ctx.beginPath();
-                ctx.arc(x, y, r + 5, 0, TAU);
+                arcInView(x, y, r + 5);
                 ctx.stroke();
                 ctx.setLineDash([]);
             }
         }
+    }
+
+    // A circle added to the path. One far wider than the canvas is just the stretch in view: dashed all
+    // the way round, a very heavy black hole's took a quarter of a second a frame.
+    function arcInView(x, y, R) {
+        const cx = viewW / 2, cy = viewH / 2, h = hyp(cx, cy), d = hyp(x - cx, y - cy);
+        if (R < 2 * h) { ctx.arc(x, y, R, 0, TAU); return; }
+        if (d + h < R || R + h < d) return;   // (the canvas is all inside it, or all outside)
+        const a = Math.atan2(cy - y, cx - x), w = Math.acos(clamp((R * R + d * d - h * h) / (2 * R * d), -1, 1));
+        ctx.arc(x, y, R, a - w, a + w);
     }
 
     // Names go on top of the arrows and trails, with a halo in the background colour so lines
@@ -7362,8 +8786,32 @@
     // and trail) unless that would cover another name or body; then the next free side round. A name
     // with no free side is left out (the chosen body's never is). Pieces of a torn-apart body aren't
     // named unless chosen.
+    // "A moon forming" (scene.progress) marks only Earth, the biggest piece and the chosen body: not every moonlet
+    // that has grown a little. (primOrder: heaviest first. See moonProgress for the same two.)
+    const moonUnmarked = (b) => !!scene.progress && b !== primOrder[0] && b !== primOrder[1] && !isChosen(b);
+    // A knot, zoomed out: a body whose whole orbit round something heavier fits inside about the width of its name.
+    // Its name is left out, and the heavier body's kept. It goes by the far end of the orbit, not where the body is
+    // now, so that a name doesn't blink as an elliptical orbit swings in and out, or as bodies pass each other; and a
+    // body that's only passing, on no orbit round what it's near, isn't in a knot at all. Once in, it takes a wider
+    // orbit to come out (KNOT_OUT), so that the wobble of a body's orbit in a crowd doesn't blink it either.
+    const KNOT_IN = 0.8, KNOT_OUT = 1;
+    const knotted = new Set();   // (body ids)
+    function inKnot(b, w) {
+        const p = b.primary;
+        let knot = false;
+        if (p && b.bound && p.m > b.m) {
+            const rx = b.x - p.x, ry = b.y - p.y, vx = b.vx - p.vx, vy = b.vy - p.vy, mu = G * (b.m + p.m);
+            const E = 0.5 * (vx * vx + vy * vy) - mu / hyp(rx, ry), h = rx * vy - ry * vx;
+            if (E < 0) {
+                const far = (-mu / (2 * E)) * (1 + Math.sqrt(Math.max(0, 1 + (2 * E * h * h) / (mu * mu))));
+                knot = far * scale < (knotted.has(b.id) ? KNOT_OUT : KNOT_IN) * w;
+            }
+        }
+        if (knot) knotted.add(b.id); else knotted.delete(b.id);
+        return knot;
+    }
     function drawLabels(C) {
-        if (!settings.labels) return;
+        if (!settings.labels || scene.cannon) return;   // (Newton's cannon names its own paths)
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
         // What the canvas's edges carry (the cards, the arrow key, the scale bar, the "Viewed from" chip):
         // a name goes there only if it has nowhere else to go (and the chosen body's, never if it can help it)
@@ -7382,15 +8830,18 @@
             const chosen = b.id === selectedId || b === popBody;
             if ((b.grp || b.minor) && !chosen) continue;
             const w = ctx.measureText(b.name).width;
+            // (what's left out is named under the mouse, or once chosen. A mission's few bodies keep theirs: one may be the goal)
+            if (b.id !== hoverName && !isChosen(b) && !mission.def && (moonUnmarked(b) || inKnot(b, w))) continue;
             const gap = r + (chosen ? 9 : 5);
             const u0 = labelDirection(b), a0 = Math.atan2(u0.y, u0.x);
             let best = null, offEdge = null, offOthers = null, first = null;
             for (const da of [0, 0.9, -0.9, 1.8, -1.8, Math.PI]) {
                 const ux = Math.cos(a0 + da), uy = Math.sin(a0 + da);
                 const box = labelBox(x + ux * gap, y + uy * gap, ux, uy, w, fs);
-                // (its own disc too: kept inside the canvas, a name can be pushed back onto it)
+                // (its own disc too: kept inside the canvas, a name can be pushed back onto it. Not a knot's little discs,
+                // which would otherwise leave the star in the middle with no free side, on and off, as they go round it)
                 const hit = placed.some((q) => box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t)
-                    || discs.some((d) => { const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
+                    || discs.some((d) => { if (d.b !== b && knotted.has(d.b.id)) return false; const rr = d.b === b ? d.r - 2 : d.r; return d.x + rr > box.l && d.x - rr < box.r && d.y + rr > box.t && d.y - rr < box.b; });
                 const edge = zones.some((z) => box.l < z[2] && box.r > z[0] && box.t < z[3] && box.b > z[1]);
                 const at = { box, ux, uy };
                 if (!hit && !edge) { best = at; break; }
@@ -7458,6 +8909,7 @@
         const out = [], fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13);
         let top = 0;
         if (frameId !== null && ui.frameChip && !ui.frameChip.hidden) { top = 44; out.push([visL, 0, Math.min(visR, visL + 240), top]); }
+        if (sky.bottom) { out.push([sky.x0, 0, sky.x1, sky.bottom + 4]); top = Math.max(top, sky.under); }
         const t = timeNotice();
         if (t) {
             ctx.font = font(fs, true);
@@ -7509,24 +8961,57 @@
 
     const named = (l, t, r, b, zones) => zones.some((z) => l < z[2] && r > z[0] && t < z[3] && b > z[1]);
 
-    // Bodies outside the view: a small pointer at the edge of the canvas, in their direction.
+    // Does this body have a pointer at the edge?
+    function hasPointer(b) {
+        if (b.grp || (b.minor && !isChosen(b)) || moonUnmarked(b)) return false;
+        const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
+        return !(x > visL - r && x < visR + r && y > -r && y < viewH + r);
+    }
+
+    // Where this frame's pointers are, for the mouse and a tap: a pointer doesn't say whose it is unless it's the chosen
+    // or the heaviest body's, so hovering names it, and a tap or click chooses its body, which names it too.
+    const offMarks = { n: 0, id: [], x: [], y: [] };
+    function offMarkAt(x, y, tol) {
+        let best = null, bestD = tol;
+        for (let i = 0; i < offMarks.n; i++) {
+            const d = hyp(offMarks.x[i] - x, offMarks.y[i] - y);
+            if (d < bestD) { bestD = d; best = offMarks.id[i]; }
+        }
+        return best;
+    }
+    function pickOffMark(d) {
+        const id = offMarkAt(d.x0, d.y0, d.type === 'mouse' ? 10 : 22);
+        if (id === null) return false;
+        if (popBody && popBody.id !== id) closePopover();
+        selectBody(id);
+        return true;
+    }
+
+    // Bodies outside the view: a small pointer at the edge of the canvas, in their direction. Only the
+    // chosen body's and the heaviest of them are named, or the names would ring the view (see offMarks for the rest).
     function drawOffscreen(C) {
         const fs = clamp(Math.min(viewW, viewH) / 46, 10, 12);
         const cx = (visL + visR) / 2, cy = viewH / 2;
         const inset = 12;
-        let zones = null;
+        let zones = null, top = null;
+        for (const b of bodies) if (hasPointer(b) && (!top || b.m > top.m)) top = b;
+        offMarks.n = 0;
+        if (!top) return;
         for (const b of bodies) {
-            const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-            if (b.grp || (b.minor && !isChosen(b)) || (x > visL - r && x < visR + r && y > -r && y < viewH + r)) continue;
-            const dx = x - cx, dy = y - cy;
+            if (!hasPointer(b)) continue;
+            const dx = sx(b.dx) - cx, dy = sy(b.dy) - cy;
             const k = Math.min(((visR - visL) / 2 - inset) / Math.max(Math.abs(dx), 1e-9), (cy - inset) / Math.max(Math.abs(dy), 1e-9));
             if (!zones) zones = cleanRender ? [] : edgeKeepOut();
             const len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
-            // (along a side, the name is a line tall; along the top or bottom, as wide as it is)
+            // (along a side, the name is a line tall; along the top or bottom, as wide as it is. A name shown only
+            // under the mouse keeps no room: the pointer doesn't move for it)
             ctx.font = font(fs);
-            const nw = settings.labels ? nameWidth(b.name, fs) : 0;
-            const h = Math.abs(ux) > 0.5 || !settings.labels ? fs / 2 + 8 : nw / 2 + 6;
+            // (a mission has only a few bodies, and the goal may be one of them)
+            const say = settings.labels && (b === top || isChosen(b) || !!mission.def), hover = b.id === hoverName;
+            const nw = say || hover ? nameWidth(b.name, fs) : 0;
+            const h = Math.abs(ux) > 0.5 || !say ? fs / 2 + 8 : nw / 2 + 6;
             const [ex, ey, clear] = clearOfEdges(cx + dx * k, cy + dy * k, zones, inset, h);
+            offMarks.id[offMarks.n] = b.id; offMarks.x[offMarks.n] = ex; offMarks.y[offMarks.n] = ey; offMarks.n++;
             ctx.fillStyle = bodyStroke(b.color, C.dark);
             ctx.globalAlpha = 0.85;
             ctx.beginPath();
@@ -7537,18 +9022,20 @@
             ctx.fill();
             ctx.globalAlpha = 1;
             let half = 10;
-            if (settings.labels && clear) {
+            if ((say && clear) || hover) {
                 // (where its name would go: left out if another pointer's is there)
                 const tx = ex - ux * 12, ty = ey - uy * 12;
                 const nl = ux > 0.5 ? tx - nw : ux < -0.5 ? tx : tx - nw / 2, nt = uy > 0.5 ? ty - fs : uy < -0.5 ? ty : ty - fs / 2;
-                if (!named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
+                if (hover || !named(nl, nt, nl + nw, nt + fs, zones) || isChosen(b)) {
                     ctx.font = font(fs);
                     ctx.fillStyle = C.subtle;
                     ctx.textAlign = ux > 0.5 ? 'right' : ux < -0.5 ? 'left' : 'center';
                     ctx.textBaseline = uy > 0.5 ? 'bottom' : uy < -0.5 ? 'top' : 'middle';
                     ctx.fillText(b.name, tx, ty);
-                    half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
-                    zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                    if (say) {
+                        half = Math.max(half, nw / (Math.abs(ux) > 0.5 ? 1 : 2) + 6);
+                        zones.push([nl - 3, nt - 2, nl + nw + 3, nt + fs + 2]);
+                    }
                 }
             }
             // (the next pointer along this edge keeps clear of this one and its name)
@@ -7590,11 +9077,110 @@
     // Force arrows: px length from the force, compressed for very strong pulls (equal forces always
     // get equal arrows, so the Sun's arrow matches Earth's).
     function forceLength(f) {
-        const Lmax = 100 * sizeScale;
+        const Lmax = 100 * sizeScale * arrowK;
         return Lmax * (1 - Math.exp(-Math.LN2 * f / forceRef));   // the reference force is half the maximum
     }
 
-    // Velocity arrows have a length in px that doesn't depend on the zoom, like the force arrows: the
+    // Arrow size (More options). Every arrow is multiplied by arrowK, the same for all of them, so equal
+    // speeds and forces keep equal arrows and the arrow key (which is drawn with the same lengths) stays
+    // true. It follows the zoom through the typical orbit on the screen: the middle one of the named bodies'
+    // (semi-major axis, or distance if unbound), which holds still as they go round.
+    //   Fixed: 1. Scale with zoom: a reference arrow is ARROW_ORBIT of that orbit, within limits. Automatic: 1
+    // until a reference arrow would be over ARROW_ROOM of it, or the fastest orbit's arrow over ARROW_TIGHT of
+    // its own radius (that ratio is the orbit's mean motion n times px per speed over px per AU, as v / a = n: in
+    // the Inner planets as they open, Mercury's arrow reaches past Venus's orbit), or a force arrow over ARROW_PULL
+    // of its orbit's radius (at the steady pull G m M / a^2: with its star's, it would span the gap between them).
+    // Then it shrinks with the view, to ARROW_K_MIN. Under that (ARROW_K_ALONE) the bodies crowd too closely for arrows to tell apart, so all but
+    // the chosen body's fade out; the arrows of bodies not chosen are drawn fainter (ARROW_BACK) if there are
+    // many; and a moon and its planet share an arrow's worth of room: see quietMoons.
+    const ARROW_ORBIT = 0.27, ARROW_ROOM = 0.36, ARROW_TIGHT = 0.75, ARROW_PULL = 0.35, ARROW_K_MIN = 0.35, ARROW_K_ALONE = 0.22, ARROW_BACK = 0.6;
+    const ARROW_NOTES = {
+        auto: 'They shrink to fit the orbits on screen. When crowded, only the chosen body\'s show.',
+        fixed: 'The same length at any zoom.',
+        zoom: 'They grow and shrink with the view, like the orbits.'
+    };
+    Object.assign(settings, { arrowSize: 'auto' });
+    Object.assign(ui, { arrowSize: byId('arrowSizeSelect') });
+    let arrowK = 1, arrowBack = 1;
+    const arrowSpan = { au: 0, want: 0, n: 0, nWant: 0, pull: 0, pullWant: 0, t: -Infinity, scene: null, list: [] };
+
+    // A moon: going round a heavier body that is itself going round something
+    const isMoon = (b) => { const p = b.primary; return !!p && b.bound && !!p.primary && p.primary !== b && b.m < p.m; };
+
+    // The typical orbit (AU; 0 if nothing orbits anything) and, of the bodies with arrows to show (only: just
+    // that one, in a busy scene), the fastest mean motion (radians a year; a moon's arrow mostly shows its planet's
+    // speed) and the longest force arrow for its orbit (px per AU)
+    function measureArrowSpan(only) {
+        const a = arrowSpan.list;
+        a.length = 0;
+        let n = 0, pull = 0;
+        for (const b of bodies) {
+            if (b.grp || b.minor || !b.primary || isMoon(b)) continue;
+            // (a is steady as an orbit goes round, but no use to a pair that has barely stayed together)
+            const r = hyp(b.x - b.primary.x, b.y - b.primary.y), el = b.bound ? elementsOf(b, b.primary) : null;
+            const au = el && el.a > 0 ? Math.min(el.a, 3 * r) : r;
+            a.push(au);
+            if (el && (!only || b === only)) {
+                n = Math.max(n, Math.sqrt(el.mu / au) / au);
+                pull = Math.max(pull, forceLength((G * b.m * b.primary.m) / (au * au)) / (arrowK * au));
+            }
+        }
+        arrowSpan.nWant = n; arrowSpan.pullWant = pull;
+        if (!a.length) return 0;
+        a.sort((p, q) => p - q);
+        return a[a.length >> 1];
+    }
+
+    // A moon's velocity is mostly its planet's, from all but the same place, so while its orbit on the screen is
+    // shorter than its arrow, the two arrows only lie across each other. Only the chosen one's velocity is then
+    // drawn (the planet's, if neither), and a moon not chosen has no force arrow either; a planet keeps its own,
+    // which is half of the pair with its star. They come back as the view zooms in, or where the planet's arrow is
+    // short beside the moon's, as in a view from the planet. (A mission's probe always keeps its arrows.)
+    function quietMoons(subj) {
+        for (const b of bodies) {
+            if (b.grp || b.minor || !isMoon(b) || b.id === mission.craftId) continue;
+            const p = b.primary, L = velocityTip(b).len, r = hyp(sx(b.dx) - sx(p.dx), sy(b.dy) - sy(p.dy));
+            const a = L > 0 ? Math.max(clamp((r / L - 0.7) / 0.3, 0, 1), clamp((0.5 - velocityTip(p).len / L) / 0.2, 0, 1)) : 1;
+            if (b === subj) p.arrowV = a;
+            else if (p !== subj || a < 1) { b.arrowV = a; b.arrowF = a; }
+        }
+    }
+
+    // From countArrows, each frame (n: the named bodies). The typical orbit is measured ten times a second, and
+    // a change of it glides (the arrows mustn't jump with a close passing), but the zoom counts at once.
+    function sizeArrows(n) {
+        const now = performance.now(), S = arrowSpan, subj = bodyById(selectedId);
+        if (S.scene !== scene || now - S.t >= 100) {
+            const au = measureArrowSpan(n > ARROWS_ALL_MAX ? subj : null);
+            if (au > 0 || S.scene !== scene) S.want = au;
+            if (S.scene !== scene || !(S.au > 0)) { S.au = S.want; S.n = S.nWant; S.pull = S.pullWant; }
+            S.scene = scene; S.t = now;
+        }
+        S.au += 0.01 * (S.want - S.au);
+        S.n += 0.01 * (S.nWant - S.n);
+        S.pull += 0.01 * (S.pullWant - S.pull);
+        arrowK = 1; arrowBack = 1;
+        for (const b of bodies) { b.arrowV = 1; b.arrowF = 1; }
+        if (settings.arrowSize === 'fixed' || !(S.au > 0)) return;
+        const room = (S.au * scale) / arrowUnit();
+        if (settings.arrowSize === 'zoom') { arrowK = clamp(ARROW_ORBIT * room, 0.1, 4); return; }
+        const fit = S.n > 0 ? Math.min((ARROW_TIGHT * scale) / (S.n * pxPerSpeed()), (ARROW_PULL * scale) / S.pull) : 1;
+        arrowK = clamp(Math.min(ARROW_ROOM * room, fit), ARROW_K_MIN, 1);
+        arrowBack = clamp((ARROW_ROOM * room - ARROW_K_ALONE) / (ARROW_K_MIN - ARROW_K_ALONE), 0, 1) * (n > 2 && selectedId !== null ? ARROW_BACK : 1);
+        quietMoons(subj);
+    }
+
+    function syncArrowSize() {
+        if (ui.arrowSize) ui.arrowSize.value = settings.arrowSize;
+        setText(byId('arrowSizeNote'), ARROW_NOTES[settings.arrowSize] || ARROW_NOTES.auto);
+    }
+    function bindArrowSize() {
+        if (!ui.arrowSize) return;
+        syncArrowSize();
+        ui.arrowSize.addEventListener('change', () => { settings.arrowSize = ui.arrowSize.value; syncArrowSize(); });
+    }
+
+    // Velocity arrows have a length in px that doesn't depend on the zoom (but for arrowK), like the force arrows: the
     // same speed always looks the same, and it can be set as finely zoomed out (watching the whole
     // predicted orbit) as zoomed in. The scene's reference speed (its main body's circular speed) is
     // ARROW_PX long; arrows over twice that are squeezed, to at most two and a half times (a body swung
@@ -7605,7 +9191,7 @@
     const pxPerSpeed = () => arrowUnit() / vRef;
     function arrowLength(v) {
         const L = v * pxPerSpeed(), L0 = arrowUnit();
-        return L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0)));
+        return arrowK * (L <= 2 * L0 ? L : 2 * L0 + 0.5 * L0 * (1 - Math.exp(-(L - 2 * L0) / (0.5 * L0))));
     }
 
     // The tip of a body's velocity arrow (screen px; the arrow starts at the edge of its disc) and the
@@ -7619,8 +9205,8 @@
             if (turn.phi && !b.aim.turn) ({ x: vx, y: vy } = turnVec(vx, vy));   // (a world aim, drawn turned)
             L = Math.hypot(vx, vy) * b.aim.k;
         } else {
-            const fv = frameV || frameVelocity();
-            vx = b.vx - fv.x; vy = b.vy - fv.y;
+            const fv = frameV || drawnFrameVelocity();
+            vx = b.dvx - fv.x; vy = b.dvy - fv.y;
             if (turn.on || turn.phi) ({ x: vx, y: vy } = viewVelocity(b, fv));   // (as seen in a turned view)
             L = arrowLength(Math.hypot(vx, vy));
         }
@@ -7649,9 +9235,9 @@
 
     // Which way a body's name goes (screen direction): away from the pull on it
     function labelDirection(b) {
-        const Fm = Math.hypot(b.fx, b.fy);
+        const Fm = Math.hypot(b.dfx, b.dfy);
         // (turn.c, turn.s: the world turned as the view is)
-        return Fm > 0 ? { x: -(turn.c * b.fx - turn.s * b.fy) / Fm, y: (turn.s * b.fx + turn.c * b.fy) / Fm } : { x: 0.6, y: 0.8 };
+        return Fm > 0 ? { x: -(turn.c * b.dfx - turn.s * b.dfy) / Fm, y: (turn.s * b.dfx + turn.c * b.dfy) / Fm } : { x: 0.6, y: 0.8 };
     }
 
     // Text kept inside the canvas whatever its alignment
@@ -7668,49 +9254,60 @@
     }
 
     // Above this many named bodies only the chosen body's arrows are drawn: the rest would swamp the view
+    // (and when they crowd too closely: see sizeArrows)
     const ARROWS_ALL_MAX = 8;
     let arrowsBusy = false;
     function countArrows() {
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
-        arrowsBusy = n > ARROWS_ALL_MAX;
+        sizeArrows(n);
+        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0 || !!scene.sky || !!scene.progress || !!scene.cannon;   // (the sky scene: only the planet it follows, or its loops are lost among them. A moon forming: the chosen body only)
     }
 
     const gasHeld = new Set();
     function drawArrows(C) {
         const w = clamp(2 * sizeScale, 1.5, 2.4);
         const subj = bodyById(selectedId);
+        let drewF = false, drewV = false;
         countArrows();
+        if (scene.cannon && selectedId === cannon.quiet) return;   // (see "Newton's cannon")
         // (a torn-apart body's pieces only get arrows when one is chosen. What gas goes round gets none: the gas's
         // pull on it, unevenly spread, only swings a long arrow about and draws the eye from the gas)
         if (settings.forces) {
             gasHeld.clear();
             for (const b of bodies) if (b.grp < 0 && b.primary) gasHeld.add(b.primary);
             for (const b of bodies) {
-                const Fm = Math.hypot(b.fx, b.fy);
+                const Fm = Math.hypot(b.dfx, b.dfy);
                 if (!(Fm > 0) || ((b.grp || b.minor || arrowsBusy) && b !== subj) || gasHeld.has(b)) continue;
                 const L = forceLength(Fm * 1);
-                if (L < 3) continue;
+                if (L < 3 || !b.arrowF) continue;
                 const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
-                const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;   // (turned with the view)
+                const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;   // (turned with the view)
+                ctx.globalAlpha = (b === subj ? 1 : arrowBack) * b.arrowF;
                 arrow(x + ux * r, y + uy * r, x + ux * (r + L), y + uy * (r + L), C.force, w);
+                drewF = true;
             }
+            ctx.globalAlpha = 1;
         }
         // Velocities only when they are switched on (or while one is being aimed): plain arrows, like
         // the forces. An arrow's tip is dragged to aim it (an invisible grab area round the tip); the
         // arrow under the pointer, or being aimed, is drawn thicker and brighter. A body hardly moving
         // has no arrow to grab, so hovering just off its disc shows a faint stub that can be pulled out.
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
-        const fv = frameVelocity();
+        const fv = drawnFrameVelocity();
         for (const b of bodies) {
+            if (missionHidesTeal(b)) continue;
             if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
             const dx = tip.x - x, dy = tip.y - y;
             const len = Math.hypot(dx, dy);
             const hot = !cleanRender && (!!b.aim || b.id === hoverAim);
-            if (tip.len > 2.5) {
+            if (tip.len > 2.5 && (b.arrowV || b.aim)) {
+                ctx.globalAlpha = hot ? 1 : (b === subj ? 1 : arrowBack) * b.arrowV;
                 arrow(x + (dx / len) * r, y + (dy / len) * r, tip.x, tip.y, hot ? hotColour : C.velocity, hot ? w * 1.5 : w);
+                ctx.globalAlpha = 1;
+                drewV = true;
                 // (the chosen body's tip wears a ring: this end can be dragged, as a pink arrow can't)
                 if (b === subj && !b.aim && !cleanRender && settings.velocities) {
                     ctx.strokeStyle = hot ? hotColour : C.velocity;
@@ -7728,6 +9325,7 @@
             }
             if (b.aim && b.aim.burn) drawBurn(C, b, w);
         }
+        noteArrowsDrawn(drewF, drewV);
     }
 
     // A burn being aimed in a mission (see beginAim): an arrow from where the velocity arrow's tip was
@@ -7773,9 +9371,10 @@
     // ------------------------------------------------------------------
     // Mutual gravity made visible. Every body pulls on every other: the chosen body's menu has a
     // Gravity tab listing the strongest pulls on it (the info bar's Gravity tooltip names them too);
-    // pull lines split its force arrow into one arrow per body pulling on it, joined tip to tail so
-    // that they add up to the force arrow (vector addition), with a faint dashed line to each of those
-    // bodies; its Hill sphere and Roche limit can be drawn; and a small legend gives the arrows' scales.
+    // pull lines draw one arrow per body pulling on it, each on the way to its puller, with a faint dashed
+    // line to each of those bodies, and can be joined tip to tail so that they add up to the force arrow
+    // (vector addition); its Hill sphere and Roche limit can be drawn; and a small legend gives the
+    // arrows' scales.
     //   Each pull is Newton's F = G m1 m2 / r^2 along the line between the pair (softened between pieces
     //   of one torn-apart body, as in the physics). A pull's share of the net force is its part along
     //   the net force, (F_i . F) / |F|^2: the shares add up to exactly 100%, and one that pulls partly
@@ -7805,7 +9404,7 @@
     const PULL_EVERY_MS = 100;            // the strongest pullers are picked again ten times a second
     const HILL_MAX = 0.1;                 // Hill spheres only for bodies under this fraction of their primary's mass
     const LIMITS_EVERY_MS = 100;
-    Object.assign(settings, { pulls: false, limits: false });
+    Object.assign(settings, { pulls: false, pullSum: false, limits: false });
     const pulls = {
         bid: null, list: null, n: -1, t: -Infinity,   // whose pulls, the bodies array and its length then, and when
         k: 0, rest: 0,                                // how many are named, and how many others there are
@@ -7822,7 +9421,7 @@
     // AU / yr^2), and what chainLink needs (the body's centre, line width, font size, names placed)
     const chainOut = {
         drawn: false, x0: 0, y0: 0, ex: 0, ey: 0, tipX: 0, tipY: 0, k: 0, squeezed: false, links: 0,
-        named: 0, bx: 0, by: 0, w: 1, fs: 11
+        named: 0, bx: 0, by: 0, r: 0, w: 1, fs: 11
     };
     const chainLabels = [{ x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }, { x: 0, y: 0, w: 0 }];
     const lim = {
@@ -7837,12 +9436,17 @@
     const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // The pull of q on b (M_sun AU / yr^2) into pp; returns its size
-    function pairPull(b, q) {
-        const dx = q.x - b.x, dy = q.y - b.y;
+    function pairPull(b, q) { return pullAcross(b, q, q.x - b.x, q.y - b.y); }
+    // ...as drawn (turned back into the world): the parts of the force arrow, which moves between steps
+    function pairPullDrawn(b, q) {
+        const u = unturnVec(q.dx - b.dx, q.dy - b.dy);
+        return pullAcross(b, q, u.x, u.y);
+    }
+    function pullAcross(b, q, dx, dy) {
         const r2 = dx * dx + dy * dy;
         let s2 = r2;
         if (b.grp && q.grp) {
-            if (b.grp !== q.grp) { pp.x = 0; pp.y = 0; return 0; }
+            if (b.grp !== q.grp || b.grp % 1) { pp.x = 0; pp.y = 0; return 0; }
             const e = 0.5 * (softLength(b) + softLength(q)); s2 += e * e;
         }
         if (!(s2 > 0)) { pp.x = 0; pp.y = 0; return 0; }
@@ -7982,6 +9586,7 @@
             if (against) note = `A minus share pulls against the others. ${note}`;
         }
         setText(ui.popPullNote, note);
+        relativityNote(b, colours());
     }
 
     // ---- Pull lines ----
@@ -8014,28 +9619,29 @@
         ctx.globalAlpha = 1;
     }
 
-    // Each strongest pull as an arrow in its puller's colour, then the others in grey, tip to tail from
-    // the base of the force arrow: they end at its tip. Long enough arrows are named.
+    // Each strongest pull as an arrow in its puller's colour, then the others in grey. Long enough arrows
+    // are named. Apart, each leaves the body towards its puller. Added up (settings.pullSum), they go tip
+    // to tail from the base of the force arrow, and end at its tip.
     function drawPullChain(C, b) {
         chainOut.drawn = false;
         if (bodies.length < 2) return;
-        const Fm = Math.hypot(b.fx, b.fy);
+        const Fm = Math.hypot(b.dfx, b.dfy);
         if (!(Fm > 0)) return;
         const L = forceLength(Fm);
         const P = gatherPulls(b);
         const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
         // (forces are world vectors: on the screen they are turned as the view is, by turn.c and turn.s)
         const tc = turn.c, ts = turn.s;
-        const ux = (tc * b.fx - ts * b.fy) / Fm, uy = -(ts * b.fx + tc * b.fy) / Fm;
+        const ux = (tc * b.dfx - ts * b.dfy) / Fm, uy = -(ts * b.dfx + tc * b.dfy) / Fm;
         const x0 = x + ux * r, y0 = y + uy * r;
         let sumX = 0, sumY = 0, big = 0;
         for (let i = 0; i < P.k; i++) {
-            const m = pairPull(b, P.who[i]);
+            const m = pairPullDrawn(b, P.who[i]);
             P.cx[i] = pp.x; P.cy[i] = pp.y;
             sumX += pp.x; sumY += pp.y;
             if (m > big) big = m;
         }
-        const ox = b.fx - sumX, oy = b.fy - sumY;
+        const ox = b.dfx - sumX, oy = b.dfy - sumY;
         big = Math.max(big, Math.hypot(ox, oy));
         let k = L / Fm;
         const cap = 160 * sizeScale;   // (1.6 times the longest force arrow)
@@ -8048,22 +9654,23 @@
         const wNet = clamp(2 * sizeScale, 1.5, 2.4), w = 0.55 * wNet;
         // The sum first (under the pulls): the force arrow itself, unless that is hidden, or the chain is
         // drawn at a scale of its own (then dashed and thin)
-        const ex = x0 + (tc * b.fx - ts * b.fy) * k, ey = y0 - (ts * b.fx + tc * b.fy) * k;
-        if (squeezed) {
+        const ex = x0 + (tc * b.dfx - ts * b.dfy) * k, ey = y0 - (ts * b.dfx + tc * b.dfy) * k;
+        if (settings.pullSum && squeezed) {
             ctx.setLineDash([4, 3]);
             arrow(x0, y0, ex, ey, C.force, w);
             ctx.setLineDash([]);
-        } else if (!settings.forces) {
+        } else if (settings.pullSum && !settings.forces) {
             arrow(x0, y0, ex, ey, C.force, wNet);
         }
         const c = chainOut;
         c.x0 = x0; c.y0 = y0; c.ex = x0; c.ey = y0; c.links = 0; c.named = 0;
-        c.bx = x; c.by = y; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
+        c.bx = x; c.by = y; c.r = r; c.w = w; c.fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         ctx.font = font(c.fs);
         for (let i = 0; i < P.k; i++) {
             chainLink(C, (tc * P.cx[i] - ts * P.cy[i]) * k, -(ts * P.cx[i] + tc * P.cy[i]) * k, bodyStroke(P.who[i].color, C.dark), P.who[i].name, P.who[i]);
         }
-        chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
+        // (with no other bodies, what is left over only closes the chain: relativity's part, say)
+        if (settings.pullSum || P.rest) chainLink(C, (tc * ox - ts * oy) * k, -(ts * ox + tc * oy) * k, C.subtle, P.rest ? 'others' : '', null);
         c.drawn = true; c.tipX = x0 + ux * L; c.tipY = y0 + uy * L; c.k = k; c.squeezed = squeezed;
     }
 
@@ -8072,6 +9679,8 @@
     function chainLink(C, lx, ly, color, label, q) {
         const c = chainOut;
         const len = Math.hypot(lx, ly);
+        // (apart, each starts afresh at the edge of the body)
+        if (!settings.pullSum && len > 0) { c.ex = c.bx + (lx / len) * c.r; c.ey = c.by + (ly / len) * c.r; }
         const px = c.ex, py = c.ey;
         c.ex += lx; c.ey += ly;
         if (len < 2) return;
@@ -8259,31 +9868,51 @@
         return `${(+kms.toPrecision(2)).toLocaleString('en-US')} km/s`;
     }
 
-    // On a small canvas the key keeps out of the way: there for a few seconds as a scene opens or an
-    // arrow is switched on, then only while paused (in a mission the clock stops for each burn, so not
-    // there) or dragging
-    const KEY_MS = 6000;
-    const keyWake = { scene: null, v: false, f: false, until: 0 };
+    // The key keeps out of the way: there for a few seconds (as "Sizes not to scale" is) as a scene opens,
+    // an arrow is switched on or the arrows change size, then only while paused (in a mission the clock
+    // stops for each burn, so not there) or dragging
+    const KEY_MS = 8000;
+    const keyWake = { scene: null, v: false, f: false, k: 1, until: 0 };
+    // Its rows are for the arrows there are (a lone star has none, a body coasting alone no force arrow). One gone
+    // for a moment doesn't count, or a row would flicker; when none are left it fades as it stands.
+    const KEY_HOLD_MS = 1000;
+    const keyDrawn = { v: false, f: false, tv: -Infinity, tf: -Infinity };
+    function noteArrowsDrawn(f, v) {
+        const now = performance.now();
+        keyDrawn.f = f; keyDrawn.v = v;
+        if (f) keyDrawn.tf = now;
+        if (v) keyDrawn.tv = now;
+    }
     function drawArrowLegend(C) {
         legend.shown = false;
-        const showV = settings.velocities, showF = settings.forces;
-        if (cleanRender || !bodies.length || !(showV || showF)) return;
-        const now = performance.now();
+        if (scene.cannon) return;   // (no numbers beside what is hardly ever drawn there)
+        if (cleanRender || !bodies.length || !(settings.velocities || settings.forces)) return;
+        const now = performance.now(), same = keyWake.scene === scene;
+        // (a new scene's arrows are its own: the last one's don't count for the moment)
+        if (!same) { keyDrawn.tv = keyDrawn.v ? now : -Infinity; keyDrawn.tf = keyDrawn.f ? now : -Infinity; }
+        const drawnV = settings.velocities && now - keyDrawn.tv < KEY_HOLD_MS;
+        const drawnF = settings.forces && now - keyDrawn.tf < KEY_HOLD_MS;
+        const none = !drawnV && !drawnF;
+        const showV = none ? settings.velocities && keyWake.v : drawnV, showF = none ? settings.forces && keyWake.f : drawnF;
+        if (none && (!same || !(showV || showF))) { Object.assign(keyWake, { scene, v: false, f: false }); legend.alpha = 0; return; }
         if (keyWake.scene !== scene || (showV && !keyWake.v) || (showF && !keyWake.f)) keyWake.until = now + KEY_MS;
         Object.assign(keyWake, { scene, v: showV, f: showF });
+        if (Math.abs(arrowK - keyWake.k) > 0.05 * keyWake.k) { keyWake.k = arrowK; keyWake.until = now + KEY_MS; }
         const tight = viewW < 560 || viewH < 320;
-        const away = tight && now >= keyWake.until && !drags.size && !(paused && !mission.def);
-        if (away && legend.alpha < 0.02) { legend.alpha = 0; return; }
+        const away = none || (now >= keyWake.until && !drags.size && !(paused && !mission.def));
+        if (away && legend.alpha < 0.02) { legend.alpha = 0; if (none) keyWake.v = keyWake.f = false; return; }
         const fs = clamp(Math.min(viewW, viewH) / 50, 10, 11.5);
         const lh = Math.round(fs * (viewW < 560 ? 1.35 : 1.55));
-        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths
+        // Round values near the scene's medium arrows, at exactly the drawn arrows' lengths (scaled with
+        // the zoom far enough for that to be too long or too short to read, other round values: see sizeArrows)
+        const nk = arrowK > 1 ? arrowK : arrowK < ARROW_K_MIN ? Math.max(arrowK / ARROW_K_MIN, 0.36) : 1;
         if (showV) {
-            const kms = niceNearest(0.7 * vRef * AUYR_KMS);
+            const kms = niceNearest((0.7 * vRef * AUYR_KMS) / nk);
             if (kms !== legend.kms) { legend.kms = kms; legend.vText = legendSpeedText(kms); }
             legend.vPx = arrowLength(kms / AUYR_KMS);
         }
         if (showF) {
-            const N = niceNearest(0.8 * forceToNewtons(forceRef));
+            const N = niceNearest((0.8 * forceToNewtons(forceRef)) / nk);
             if (N !== legend.N) { legend.N = N; legend.fText = `${fmtSci(N, 0)} N`; }
             legend.fPx = forceLength(N / forceToNewtons(1));
         }
@@ -8344,6 +9973,7 @@
     // ---- Switching them on and off: the settings, the menu's buttons and G ----
     function syncGravityControls() {
         if (ui.pullsToggle) ui.pullsToggle.checked = settings.pulls;
+        if (ui.pullSumToggle) { ui.pullSumToggle.checked = settings.pullSum; ui.pullSumToggle.hidden = !settings.pulls; }
         if (ui.limitsToggle) ui.limitsToggle.checked = settings.limits;
         if (ui.popPullLines) ui.popPullLines.setAttribute('aria-pressed', settings.pulls ? 'true' : 'false');
         if (ui.popPullLimits) ui.popPullLimits.setAttribute('aria-pressed', settings.limits ? 'true' : 'false');
@@ -8358,7 +9988,19 @@
         showHint('note', () => {
             const b = bodyById(selectedId);
             if (!b) return '<strong>Pull lines:</strong> choose a body to see who pulls on it.';
-            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}, joined tip to tail.`;
+            return `<strong>Pull lines:</strong> one arrow for each body pulling on ${escapeHtml(theName(b))}${settings.pullSum ? ', joined tip to tail' : ''}.`;
+        }, { ms: 9000, tag: 'pulls' });
+    }
+
+    // Tip to tail, or apart (it shows only while pull lines are on)
+    function setPullSum(on) {
+        settings.pullSum = !!on;
+        syncGravityControls();
+        if (!settings.pullSum) { clearHint('note', 'pulls'); return; }
+        showHint('note', () => {
+            const b = bodyById(selectedId);
+            if (!b) return '<strong>Added up:</strong> choose a body to see its pulls joined tip to tail.';
+            return `<strong>Added up:</strong> the pulls on ${escapeHtml(theName(b))}, tip to tail, make its force arrow.`;
         }, { ms: 9000, tag: 'pulls' });
     }
 
@@ -8387,13 +10029,14 @@
 
     function bindGravity() {
         Object.assign(ui, {
-            pullsToggle: byId('pullsToggle'), limitsToggle: byId('limitsToggle'),
+            pullsToggle: byId('pullsToggle'), pullSumToggle: byId('pullSumToggle'), limitsToggle: byId('limitsToggle'),
             popPullHead: byId('popPullHead'), popPullRows: byId('popPullRows'), popPullNet: byId('popPullNet'),
-            popPullNote: byId('popPullNote'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
+            popPullNote: byId('popPullNote'), popPullRel: byId('popPullRel'), popPullLines: byId('popPullLines'), popPullLimits: byId('popPullLimits')
         });
         TAB_OF.popTabPull = 'pull';
         buildPullRows();
         if (ui.pullsToggle) ui.pullsToggle.addEventListener('change', () => setPullLines(ui.pullsToggle.checked));
+        if (ui.pullSumToggle) ui.pullSumToggle.addEventListener('change', () => setPullSum(ui.pullSumToggle.checked));
         if (ui.limitsToggle) ui.limitsToggle.addEventListener('change', () => setLimits(ui.limitsToggle.checked));
         if (ui.popPullLines) ui.popPullLines.addEventListener('click', () => setPullLines(!settings.pulls));
         if (ui.popPullLimits) ui.popPullLimits.addEventListener('click', () => setLimits(!settings.limits));
@@ -8498,6 +10141,22 @@
         fillTextInside(text, q.x + px * gap * s, q.y + py * gap * s + 4 * s);
     }
 
+    // Which sectors carry their area: the fastest and the slowest, the two that look least alike but measure the same,
+    // which is the point of the law (the card has the rest). Speed is the length of orbit swept. On a nearly round orbit
+    // all look alike: then two opposite ones, by number, which stay put from one orbit to the next.
+    const k2Marks = { fast: null, slow: null, round: false };
+    function markSectors() {
+        let hi = 0, lo = Infinity;
+        k2Marks.fast = k2Marks.slow = null;
+        for (const s of k2.sectors) {
+            const n = s.pts.length, L = hyp(s.pts[n - 2] - s.pts[0], s.pts[n - 1] - s.pts[1]);
+            if (L > hi) { hi = L; k2Marks.fast = s; }
+            if (L < lo) { lo = L; k2Marks.slow = s; }
+        }
+        k2Marks.round = lo > 0.9 * hi;
+    }
+    const sectorMarked = (s) => (k2Marks.round ? s.n % (K2_SECTORS / 2) === 0 : s === k2Marks.fast || s === k2Marks.slow);
+
     function drawSectors(C, b) {
         if (!b || k2.bid !== b.id) return;
         const p = bodyById(k2.pid);
@@ -8505,6 +10164,7 @@
         const cx = sx(p.dx), cy = sy(p.dy);
         const fs = clamp(Math.min(viewW, viewH) / 48, 10, 12);
         const list = k2.sectors.concat(k2.cur ? [k2.cur] : []);
+        markSectors();
         list.forEach((s) => {
             const n = s.pts.length / 2;
             if (n < 2) return;
@@ -8523,8 +10183,8 @@
             ctx.moveTo(cx, cy);
             ctx.lineTo(cx + pts[0] * scale, cy - pts[1] * scale);
             ctx.stroke();
-            // Area label inside finished sectors that are big enough on screen
-            if (!live && k2.bound && !cleanRender) {
+            // Area label inside the marked finished sectors, if big enough on screen
+            if (!live && k2.bound && !cleanRender && sectorMarked(s)) {
                 const m = Math.floor(n / 2);
                 const mx = pts[2 * m] * scale, my = -pts[2 * m + 1] * scale;
                 const rpx = Math.hypot(mx, my);
@@ -8595,11 +10255,8 @@
             Object.assign(sizeNote, { scene, realistic: settings.realistic, until: now + SIZE_NOTE_MS });
         }
         edges.noteLeft = Infinity;
-        const lensNote = lens.drawn ? lens.note : '';
-        if (now < sizeNote.until || lensNote) {
-            let note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
-            // (bent starlight stays said while it shows; "Sizes to scale" beside it if there is room)
-            if (lensNote) note = now < sizeNote.until && ctx.measureText(`${note}. ${lensNote}`).width < visR - edges.scaleRight - 20 ? `${note}. ${lensNote}` : lensNote;
+        if (now < sizeNote.until) {
+            const note = scene.cannon ? 'Earth to scale, cannon not' : settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
             ctx.textAlign = 'right';
             ctx.fillText(note, visR - pad - 2, y0 + 2);
             edges.noteLeft = visR - pad - 2 - ctx.measureText(note).width;
@@ -8607,13 +10264,14 @@
         edges.strip = y0 - fs - 4;
 
         drawFlybyCloseUp(C);
+        drawSkyStrip(C, fs);
 
         // Pause / slow-down notice: top left, under the "Viewed from" chip if it is showing
         const t = timeNotice();
         if (t) {
             ctx.font = font(fs, true);
             const w = ctx.measureText(t).width + 18;
-            const x = visL + pad, y = frameId !== null ? pad + 40 : pad;
+            const x = visL + pad, y = Math.max(frameId !== null ? pad + 40 : pad, sky.under);
             roundRect(x, y, w, fs + 10, 4);
             ctx.fillStyle = C.card;
             ctx.fill();
@@ -8644,7 +10302,7 @@
         const one = wb + wr + 20 <= R - L, w = one ? wb + wr + 20 : Math.max(wb, wr) + 20;
         if (w > R - L) { n.canvas = null; refreshHint(); return; }   // (it goes back to being said in the line)
         const lh = Math.round(fs * 1.4), h = (one ? lh : 2 * lh) + 10;
-        const x = clamp((visL + visR - w) / 2, L, R - w), y = pad;
+        const x = clamp((visL + visR - w) / 2, L, R - w), y = sky.bottom ? sky.bottom + 6 : pad;
         roundRect(x, y, w, h, 5);
         ctx.fillStyle = C.card;
         ctx.fill();
@@ -8736,7 +10394,7 @@
     function drawCardStack(C, subj, fs, pad) {
         const small = visR - visL < 560;
         const cfs = small ? clamp(fs - 0.5, 10, 12) : fs;
-        const y0 = frameId !== null && visR - visL < 520 ? 48 : pad;
+        const y0 = sky.bottom ? sky.bottom + 6 : frameId !== null && visR - visL < 520 ? 48 : pad;
         const cap = Math.min(viewH * (viewH < 420 ? 0.55 : 0.6), viewH - y0 - 40);
         const now = performance.now();
         const sig = `${visR - visL}x${viewH}|${small}|${settings.k1}${settings.k2}${settings.k3}${settings.limits}${settings.stability}${settings.realistic}|${selectedId}|${C.dark}`;
@@ -8992,6 +10650,20 @@
         return { P, rows };
     }
 
+    // The rows worth a line: those measured and, of those yet to go once round, the one due next (the
+    // time left goes with a^1.5). Neptune takes 16 minutes at 1×, so the rest are only counted. (Up to
+    // two waiting are both listed: the second takes no more room than a line that would count it.)
+    function kepler3Listed(rows) {
+        let next = null, soonest = Infinity, waiting = 0;
+        for (const r of rows) {
+            if (r.measured) continue;
+            waiting++;
+            const left = (1 - r.progress) * Math.pow(r.aEst, 1.5);
+            if (left < soonest) { soonest = left; next = r; }
+        }
+        return waiting < 3 ? rows : rows.filter((r) => r.measured || r === next);
+    }
+
     // A table: one row per orbiting body, the same T^2/a^3 for all of them, and Newton's value.
     function drawKepler3Card(C, subj, y, fs, compact) {
         const { P, rows } = kepler3Rows(subj);
@@ -9004,9 +10676,10 @@
         const head = [compact ? '' : '', km ? 'a (km)' : 'a (AU)', `T (${tu === 'd' ? 'days' : tu})`, 'T²/a³'];
         const maxName = compact ? 8 : 11;
         // Up to 10 rows (5 compact); past that, the last row says how many more there are
-        const most = compact ? 5 : 10, shown = rows.length > most ? most - 1 : rows.length;
-        const more = rows.length - shown;
-        const cells = rows.slice(0, shown).map((r) => {
+        const most = compact ? 5 : 10, list = kepler3Listed(rows);
+        const listed = list.length + (list.length < rows.length ? 1 : 0) > most ? list.slice(0, most - 1) : list;
+        const more = rows.length - listed.length;
+        const cells = listed.map((r) => {
             const nm = r.body.name.length > maxName ? `${r.body.name.slice(0, maxName - 1)}…` : r.body.name;
             if (!r.measured) return { name: nm, body: r.body, measuring: `measuring… ${Math.round(r.progress * 100)}%` };
             const Tv = r.T * tf;
@@ -9015,7 +10688,7 @@
             const ratio = plain ? r.ratio.toFixed(3) : fmtSci((Tv * Tv) / Math.pow(r.a * af, 3), 2);
             return { name: nm, body: r.body, cols: [a, T, ratio] };
         });
-        if (more > 0) cells.push({ name: `+${more} more`, body: null, cols: ['', '', ''] });
+        if (more > 0) cells.push({ name: `+${more} ${rows.every((r) => !r.measured || listed.includes(r)) ? 'still going round' : 'more'}`, body: null });
         let note = '';
         if (!rows.length) note = compact ? 'Add orbiting bodies' : 'Add bodies that orbit it to compare.';
         else {
@@ -9029,14 +10702,15 @@
         ctx.font = font(fs, true);
         head.forEach((t, i) => { colW[i] = Math.max(colW[i], ctx.measureText(t).width); });
         ctx.font = font(fs);
-        let measW = 0;
+        let measW = 0, moreW = 0;
         for (const c of cells) {
+            if (!c.body) { moreW = ctx.measureText(c.name).width + dot; continue; }   // (it runs across the columns)
             colW[0] = Math.max(colW[0], ctx.measureText(c.name).width + dot);
             if (c.cols) c.cols.forEach((t, i) => { colW[i + 1] = Math.max(colW[i + 1], ctx.measureText(t).width); });
             else measW = Math.max(measW, ctx.measureText(c.measuring).width);
         }
         const numW = Math.max(colW[1] + gap + colW[2] + gap + colW[3], measW);
-        const tableW = rows.length ? colW[0] + gap + numW : 0;
+        const tableW = rows.length ? Math.max(colW[0] + gap + numW, moreW) : 0;
         ctx.font = font(fs, true);
         let w = ctx.measureText(title).width;
         ctx.font = font(fs);
@@ -9076,7 +10750,7 @@
                     ctx.textAlign = 'right';
                     let nx = numX;
                     for (let i = 1; i < 4; i++) { nx += colW[i]; ctx.fillText(c.cols[i - 1], nx, ly); nx += gap; }
-                } else {
+                } else if (c.measuring) {
                     ctx.fillStyle = C.subtle;
                     ctx.fillText(c.measuring, numX, ly);
                 }
@@ -9176,7 +10850,7 @@
         pred.refId = ref ? ref.id : turn.on ? TURN_REF : null;
         // The copy
         const src = predictionBodies(b, rel.p, ref);
-        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
+        const list = src.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy, m: q.m, R: q.R, grp: q.grp, kind: q.kind, ax: 0, ay: 0, hx: 0, hy: 0, slot: -1, stamp: -1, held: null }));
         const me = list[src.indexOf(b)];
         me.vx = rel.v[0]; me.vy = rel.v[1];
         if (rel.p) { const pc = list[src.indexOf(rel.p)]; pc.vx = rel.pv[0]; pc.vy = rel.pv[1]; }
@@ -9226,7 +10900,7 @@
             for (const q of list) {
                 if (!settings.merge) break;
                 if (q === me) continue;
-                const reach = (q.R + me.R) / AU_KM;
+                const reach = contactReach(q, me);
                 const ex = me.x - x0, ey = me.y - y0;
                 const ee = ex * ex + ey * ey;
                 const qx = q.x - x0, qy = q.y - y0;
@@ -9395,16 +11069,72 @@
         ctx.stroke();
     }
 
+    // Would a body of mass m, added now, be one of a swarm's dots? (as computePrimaries has it)
+    function ghostMinor(m) {
+        let others = 0, at = 0;
+        for (const q of bodies) if (!(q.grp < 0)) others++;
+        if (others + 1 <= SWARM_N && !scene.swarm) return false;
+        const order = primOrder, n = order.length;
+        while (at < n && order[at].m >= m) at++;
+        const mid = (n + 1) >> 1, median = mid < at ? order[mid].m : mid === at ? m : order[mid - 1].m;
+        return at >= NAMED_MAX || (m < 30 * median && m < 1e-3 * Math.max(m, n ? order[0].m : 0));
+    }
+
+    // The radius a body dropped at canvas point (x, y) will be drawn with: computeDrawRadii's, for a body not there yet.
+    // With realistic physics its true size, however big, and a marker ring if that is too small to see (see the
+    // marker in the caller). Otherwise its usual drawn size, kept off what it will orbit if that is close.
+    function ghostRadius(b, x, y) {
+        const trueR = (b.R / AU_KM) * scale, minor = ghostMinor(b.m);
+        if (settings.realistic) return minor ? Math.max(trueR, 1.2) : trueR;
+        let rmax = (minor ? MINOR_SIZE : symbolicSize(b.kind, b.m, b.R)) * sizeScale;
+        if (!minor && settings.placement === 'circular') {
+            const w = unturnPoint(wx(x), wy(y));
+            const host = dropHost, p = host || placementPrimary(w.x, w.y, b.m, null);
+            if (p && p.m > b.m) {
+                const at = host ? moonSpot(host, w.x, w.y, bodies.filter((q) => q.primary === host && q.bound).length) : w;
+                rmax = Math.min(rmax, 0.3 * Math.hypot(at.x - p.x, at.y - p.y) * scale);
+            }
+        }
+        return Math.max(minor ? 1.2 : 3, rmax, trueR);
+    }
+    const GHOST_BIG = 0.3;                // over this much of the view across, in radius
+
     // A body being dragged from the palette, drawn where it would land.
     function drawPaletteGhost() {
         drawDropHost(colours());
         if (!paletteDrag || !paletteDrag.over) return;
         const k = KINDS[paletteDrag.kind] || KINDS.custom;
-        const x = paletteDrag.cx, y = paletteDrag.cy;
-        const r = Math.max(symbolicSize(paletteDrag.kind, k.m, k.R) * sizeScale, 4);
-        ctx.globalAlpha = 0.85;
-        drawBody({ kind: paletteDrag.kind, m: k.m, color: k.color }, x, y, r, colours());
-        ctx.globalAlpha = 1;
+        const x = paletteDrag.cx, y = paletteDrag.cy, C = colours();
+        // (just as it will be when it lands: what is drawn takes the sizes computeDrawRadii will give it)
+        const b = { kind: k.as || paletteDrag.kind, m: k.m, R: k.R, grp: null, color: paletteDrag.kind === 'custom' ? peekCustomColour() : k.color };
+        const r = ghostRadius(b, x, y), minor = ghostMinor(k.m);
+        if (r > GHOST_BIG * Math.min(visR - visL, viewH)) {
+            // (filling much of the view, a blaze of light would hide what it is being placed among: its edge will do)
+            ctx.fillStyle = hexA(b.color, 0.1);
+            ctx.strokeStyle = C.dark ? b.color : bodyStroke(b.color, false);
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+            disc(x, y, 3, b.color, 0, C);   // (where it is, should its edge be out of sight)
+        } else {
+            ctx.globalAlpha = 0.85;
+            if (minor) disc(x, y, r, b.color, 0, C);
+            else if (settings.realistic) {
+                // (as in drawBodies)
+                if (isStar(b) && r < 4) glow(x, y, 0, 5, b.color, C.dark ? 0.6 : 0.5);
+                drawBody(b, x, y, r, C);
+                if (r < MARKER_R) {
+                    ctx.strokeStyle = C.dark ? hexA(b.color, 0.6) : bodyStroke(b.color, false);
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.arc(x, y, MARKER_R, 0, TAU);
+                    ctx.stroke();
+                }
+            } else drawBody(b, x, y, r, C);
+            ctx.globalAlpha = 1;
+        }
         if (settings.placement === 'circular' && settings.preview && !dropHost) {
             const X = wx(x), Y = wy(y);
             const w = unturnPoint(X, Y), p = placementPrimary(w.x, w.y, k.m, null);
@@ -9434,6 +11164,7 @@
         setText(ui.statTimeUnit, tm.u);
         updateTimeControls();
         updateOrbitReadouts();
+        settleReadouts();
         const b = bodyById(selectedId);
         if (!b) {
             setText(ui.subjectName, '–'); setText(ui.subjectAround, '');
@@ -9463,7 +11194,7 @@
             dist = Math.hypot(b.x - c.x, b.y - c.y);
             speed = Math.hypot(vx - c.vx, vy - c.vy);
             force = Math.hypot(b.fx, b.fy);
-            setText(ui.subjectAround, 'around the centre of mass');
+            setText(ui.subjectAround, p ? 'around the centre of mass' : 'the heaviest body');
         } else if (pr) {
             // Being moved or aimed: the orbit it would have if let go now, as the hint and preview show
             dist = pr.el.r;
@@ -9495,7 +11226,7 @@
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
     // A body's name as it goes in a sentence. (Names with a number or letter on the end, "Star A", stay as they are)
-    const COMMON_NAMES = new Set(['Black hole', 'Neutron star', 'White dwarf', 'Red dwarf', 'Red giant', 'Blue giant', 'Brown dwarf', 'Star', 'Planet', 'Giant planet', 'Comet', 'Asteroid', 'Probe', 'Fragment', 'Gas', 'Debris']);
+    const COMMON_NAMES = new Set(['Black hole', 'Neutron star', 'White dwarf', 'Red dwarf', 'Red giant', 'Red supergiant', 'Helium star', 'Blue giant', 'Brown dwarf', 'Star', 'Planet', 'Giant planet', 'Comet', 'Asteroid', 'Probe', 'Fragment', 'Gas', 'Debris']);
     function theName(b) {
         if (b.name === 'Sun' || b.name === 'Moon') return `the ${b.name}`;
         return COMMON_NAMES.has(b.name) ? `the ${b.name.toLowerCase()}` : b.name;
@@ -9568,6 +11299,62 @@
     }
 
     // ------------------------------------------------------------------
+    // Boxes with nothing to say leave the bar: a body on its own, or the heaviest, which orbits nothing,
+    // shows only the time, and a body with no one orbit has no period. A new scene or a new choice sets
+    // the bar afresh, as a moment when it may as well move. After that a value that goes only blanks its
+    // box, so nothing moves, and one that comes has to last first (a star in the figure of eight has a
+    // period for moments at a time): half the scene's reference period, and at least a second and a half.
+    // So the bar moves at most once for each choice, and the page is written only when something changes.
+    // (What leaves is still in the body's menu: the speed on its Velocity tab, the net force on Gravity.)
+    // ------------------------------------------------------------------
+    const BAR_SETTLE_MS = 1500;
+    const barBox = (...els) => ({ els, state: 'on', since: -1, t: 0 });
+    const barBoxes = {
+        key: '',
+        orbit: barBox(statBox(ui.statDist), statBox(ui.statSpeed), statBox(ui.statForce)),
+        period: barBox(ui.statPeriodBox),
+        ecc: barBox(statBox(ui.statEcc))
+    };
+
+    function settleBox(g, has, fresh, now) {
+        if (!has) g.since = -1;
+        else if (g.since < 0) { g.since = now; g.t = simTime; }
+        let state = g.state;
+        if (fresh) state = has ? 'on' : 'off';
+        else if (!has) { if (state === 'on') state = 'blank'; }
+        else if (state !== 'on' && now - g.since > BAR_SETTLE_MS && (paused || Math.abs(simTime - g.t) > 0.5 * scene.Tref)) state = 'on';
+        if (state === g.state) return;
+        g.state = state;
+        for (const el of g.els) {
+            if (!el) continue;
+            el.hidden = state === 'off';
+            el.classList.toggle('is-blank', state === 'blank');
+        }
+    }
+
+    function settleReadouts() {
+        const b = bodyById(selectedId), alone = bodies.length < 2;
+        const key = `${settings.scene}|${hist.epoch}|${selectedId}|${alone}`;
+        const fresh = key !== barBoxes.key, now = performance.now();
+        barBoxes.key = key;
+        const orbits = !!(b && b.primary) && !alone;
+        settleBox(barBoxes.orbit, orbits, fresh, now);
+        settleBox(barBoxes.period, !!ui.statPeriod && ui.statPeriod.textContent !== '–', fresh, now);
+        settleBox(barBoxes.ecc, !!ui.statEcc && ui.statEcc.textContent !== '–', fresh, now);
+        setTitle(ui.subjectAround, b && !orbits && !alone ? 'It orbits nothing, and only wobbles round the centre of mass. Choose another body for its orbit' : '');
+        if (chartsVisible()) syncOrbitChart();
+    }
+
+    // The distance and speed graph goes when it would be empty, and the energy graph takes the row: a body
+    // that orbits nothing has none to draw. (While the graph's span holds any of it, it stays.)
+    function syncOrbitChart() {
+        if (!charts) return;
+        const box = charts.orbit.canvas.closest('.chart-box'), b = bodyById(selectedId);
+        const has = !!(b && b.primary) || charts.orbit.data.datasets[0].data.some((v) => v !== null);
+        if (box && box.hidden === has) box.hidden = !has;
+    }
+
+    // ------------------------------------------------------------------
     // Time controls. The speed slider steps through friendly speeds on a log scale, from a hundredth of
     // normal (to watch a close pass) to a hundred times (to see thousands of years of a three-star
     // dance), and a caption says what the speed means in the scene's own time. When the computer
@@ -9590,6 +11377,7 @@
         const perSecond = speed * rate();   // simulated years per real second
         if (timeInSeconds()) {
             const s = perSecond * YEAR_S;
+            if (scene.minutes) return `${fig2(s / 60)} min a second`;
             return s >= 0.01 ? `${fig2(s)} s a second` : `${fig2(s * 1000)} ms a second`;
         }
         const days = timeUnit() === 'd';
@@ -9714,7 +11502,7 @@
     function bindTimeControls() {
         if (ui.step) {
             ui.step.addEventListener('click', () => {
-                if (paused) stepForward(); else setPaused(true);
+                if (paused) stepForward(); else pressPause(true);
             });
         }
         window.addEventListener('keydown', (e) => {
@@ -9728,7 +11516,7 @@
                 stepSpeed(e.key === ']' ? 1 : -1);
                 e.preventDefault();
             } else if (e.key === '.') {
-                if (paused) stepForward(); else setPaused(true);
+                if (paused) stepForward(); else pressPause(true);
                 e.preventDefault();
             }
         });
@@ -9844,6 +11632,7 @@
             }
             return;
         }
+        if (popMoved.on) { placePopover(popMoved.x, popMoved.y); return; }
         const wrap = ui.pop.parentElement;
         const wr = wrap.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
         const ox = cr.left - wr.left, oy = cr.top - wr.top;
@@ -9866,6 +11655,63 @@
         ui.pop.style.top = `${Math.round(oy + top)}px`;
     }
 
+    // ---- Moving the menu out of the way ----
+    // Dragged by its title row (not its name or the close button), or its grip and the arrow keys. It then
+    // stays where it was put, for other bodies too, until the page is reloaded: positionPopover no longer
+    // sets it beside a body, and only keeps it on the page. (x, y: in its parent's coordinates, so it scrolls
+    // with the canvas as it always has.) As a sheet, on a phone, it fills the width or height of the screen,
+    // so it has nowhere useful to go, and doesn't move.
+    const popMoved = { on: false, x: 0, y: 0 };
+
+    function popFloats() {
+        return !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side');
+    }
+
+    function placePopover(x, y) {
+        const wr = ui.pop.parentElement.getBoundingClientRect(), gap = 6;
+        const minX = gap - wr.left, minY = gap - wr.top;
+        const maxX = document.documentElement.clientWidth - gap - ui.pop.offsetWidth - wr.left;
+        const maxY = window.innerHeight - gap - ui.pop.offsetHeight - wr.top;
+        ui.pop.style.left = `${Math.round(clamp(x, minX, Math.max(minX, maxX)))}px`;
+        ui.pop.style.top = `${Math.round(clamp(y, minY, Math.max(minY, maxY)))}px`;
+    }
+
+    function movePopover(x, y) {
+        placePopover(x, y);
+        popMoved.on = true;
+        popMoved.x = ui.pop.offsetLeft;
+        popMoved.y = ui.pop.offsetTop;
+    }
+
+    function bindPopoverMove() {
+        if (!ui.popHead) return;
+        let d = null;
+        ui.popHead.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || !popFloats() || e.target.closest('input, .orb-pop-close')) return;
+            e.preventDefault();
+            ui.popHead.setPointerCapture(e.pointerId);
+            d = { id: e.pointerId, x0: e.clientX, y0: e.clientY, left: ui.pop.offsetLeft, top: ui.pop.offsetTop, moved: false };
+        });
+        ui.popHead.addEventListener('pointermove', (e) => {
+            if (!d || e.pointerId !== d.id) return;
+            const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+            if (!d.moved && Math.hypot(dx, dy) < 3) return;   // (a press that wobbles isn't a move)
+            d.moved = true;
+            ui.pop.classList.add('is-moving');
+            movePopover(d.left + dx, d.top + dy);
+        });
+        const end = () => { d = null; ui.pop.classList.remove('is-moving'); };
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => ui.popHead.addEventListener(t, end));
+        // (takesArrows keeps these from pushing the body)
+        ui.popGrip.addEventListener('keydown', (e) => {
+            const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0, dy = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+            if (!(dx || dy) || !popFloats()) return;
+            e.preventDefault();
+            const step = e.shiftKey ? 4 : 24;
+            movePopover(ui.pop.offsetLeft + dx * step, ui.pop.offsetTop + dy * step);
+        });
+    }
+
     function speedRelative(b) {
         const p = b.primary && !(b.primary.primary === b && b.m > b.primary.m) ? b.primary : null;
         if (p) return { p, vx: b.vx - p.vx, vy: b.vy - p.vy };
@@ -9882,10 +11728,19 @@
         const typing = document.activeElement === ui.popName;
         if (ui.popDot) ui.popDot.style.background = b.color;
         if (!typing && ui.popName.value !== b.name) ui.popName.value = b.name;
-        const locked = frameId === b.id;
+        const nameSize = Math.max(4, ui.popName.value.length + 1);   // (the rest of the title row is for dragging)
+        if (ui.popName.size !== nameSize) ui.popName.size = nameSize;
+        const locked = frameId === b.id && !turn.on;
         ui.popLock.setAttribute('aria-pressed', locked ? 'true' : 'false');
         setText(ui.popLockText, locked ? 'Viewing from here' : 'View from here');
         ui.popLock.title = locked ? 'Go back to the centre-of-mass view' : `Lock the view on ${b.name}: everything is shown relative to it`;
+        if (ui.popTurn) {
+            const rotating = turnUses(b) && !!turnPair();
+            ui.popTurn.setAttribute('aria-pressed', rotating ? 'true' : 'false');
+            setText(ui.popTurnText, rotating ? 'Rotating with it' : 'Rotate with it');
+            ui.popTurn.title = turnTitle(b);
+            ui.popTurn.disabled = !rotating && !turnPartner(b);
+        }
         const recent = now - popLastInput < 600;
         if (!recent || force) {
             ui.popMass.value = String(Math.log10(b.m / MEARTH));
@@ -9952,8 +11807,9 @@
         ui.popClose.addEventListener('click', closePopover);
         ui.popLock.addEventListener('click', () => {
             if (!popBody) return;
-            setFrame(frameId === popBody.id ? null : popBody.id);
+            setFrame(frameId === popBody.id && !turn.on ? null : popBody.id);
         });
+        if (ui.popTurn) ui.popTurn.addEventListener('click', () => { if (popBody) toggleTurning(popBody); });
         ui.popCircular.addEventListener('click', () => {
             const b = popBody;
             if (!b || !b.primary) return;
@@ -9980,17 +11836,18 @@
             el.addEventListener('keydown', () => { keyed = true; });
             el.addEventListener('pointerdown', () => { keyed = false; });
         }
-        const snapLog = (v, snaps) => {
+        const snapLog = (v, snaps, near = 0.04) => {
             if (keyed) return v;
-            for (const s of snaps) if (Math.abs(v - Math.log10(s)) < 0.04) return Math.log10(s);
+            for (const s of snaps) if (Math.abs(v - Math.log10(s)) < near) return Math.log10(s);
             return v;
         };
         ui.popMass.addEventListener('input', () => {
             const b = popBody;
             if (!b) return;
             popLastInput = performance.now();
-            const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH));
-            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); }));
+            // (30 powers of ten across about 270 px: a pixel is a ninth of one, so a narrower snap could be missed)
+            const lg = snapLog(parseFloat(ui.popMass.value), MASS_SNAPS.map((m) => m / MEARTH), 0.065);
+            keepView(() => withStarColour(b, () => { b.m = Math.pow(10, lg) * MEARTH; collapseIfTooHeavy(b); collapseIfInsideHorizon(b); }));
             resetTracking(b);
             computeForces();
             computePrimaries();
@@ -10032,6 +11889,7 @@
         // Keep clicks and drags in the popover away from the canvas handlers and the page
         ['pointerdown', 'dblclick', 'wheel'].forEach((t) => ui.pop.addEventListener(t, (e) => e.stopPropagation()));
         bindEditor();
+        bindPopoverMove();
     }
 
     // ------------------------------------------------------------------
@@ -10060,6 +11918,7 @@
         popApoIn: byId('popApoIn'), popApoUnit: byId('popApoUnit'), popApoName: byId('popApoName'),
         popOrbitShape: byId('popOrbitShape'),
         popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
+        popVelMore: byId('popVelMore'), popMoreState: byId('popMoreState'),
         subjectEdit: byId('statSubjectEdit'),
     });
 
@@ -10275,6 +12134,7 @@
     const speedUnit = (v) => (v * AUYR_KMS < 0.1 ? { label: 'm/s', f: SPEED_UNITS['m/s'] } : { label: 'km/s', f: SPEED_UNITS['km/s'] });
     const distUnit = (au) => (scene.units === 'km' || au < 0.01 ? { label: 'km', f: DIST_UNITS.km } : { label: 'AU', f: 1 });
     function periodUnit(yr) {
+        if (scene.minutes) return { label: 'min', f: TIME_UNITS.min };
         if (timeInSeconds() || yr * YEAR_S < 600) return { label: 's', f: TIME_UNITS.s };
         if (timeUnit() === 'd' || yr < 0.1) return { label: 'days', f: TIME_UNITS.d };
         return { label: 'yr', f: 1 };
@@ -10395,6 +12255,8 @@
         if (!(step > 0)) return;
         edit.step = step;
         if (ui.pop) ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.setAttribute('aria-pressed', parseFloat(btn.dataset.step) === step ? 'true' : 'false'));
+        // (folded, the line says what is in the fold, or a step that isn't the usual 1%, as it changes what - and + do)
+        setText(ui.popMoreState, step === 0.01 ? 'Goes round, push, step' : `Step ${+(step * 100).toPrecision(3)}%`);
     }
 
     // The fields follow the body as it moves (from updatePopover, a few times a second)
@@ -10456,11 +12318,13 @@
             if (panel) panel.hidden = !on;
             if (on && focus) t.focus();
         }
-        // (the steps don't apply to the Body and Gravity tabs)
-        if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
+        // (one row of steps: under More on the Velocity tab, at the foot of the Orbit tab; the Body and Gravity
+        // tabs have nothing to step)
+        if (ui.popStep) (name === 'orbit' ? byId('popPanelOrbit') : ui.popVelMore).appendChild(ui.popStep);
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
         if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
+            if (popMoved.on) { placePopover(popMoved.x, popMoved.y); return; }
             const cr = canvas.getBoundingClientRect(), wr = ui.pop.parentElement.getBoundingClientRect();
             const oy = cr.top - wr.top, ph = ui.pop.offsetHeight, top = parseFloat(ui.pop.style.top) - oy;
             const fits = ph <= cr.height - 12;
@@ -10508,7 +12372,7 @@
         if (!t || !t.tagName) return false;
         if (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
         if (t.tagName === 'INPUT' && !['button', 'checkbox', 'submit', 'reset'].includes(t.type)) return true;
-        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette'));
+        return !!(t.closest && t.closest('[role="tablist"], [role="radiogroup"], [role="tree"], .orb-palette, .orb-pop-grip'));
     }
 
     function onEditorKey(e) {
@@ -10640,12 +12504,13 @@
         const list = ui.popTabs.length ? ui.popTabs[0].parentElement : null;
         if (list) {
             list.addEventListener('keydown', (e) => {
-                const i = ui.popTabs.indexOf(document.activeElement), n = ui.popTabs.length;
+                const tabs = ui.popTabs.filter((t) => t.offsetParent !== null);   // (a mission hides some)
+                const i = tabs.indexOf(document.activeElement), n = tabs.length;
                 if (i < 0) return;
                 const j = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
                 if (j < 0) return;
                 e.preventDefault();
-                selectTab(TAB_OF[ui.popTabs[j].id], true);
+                selectTab(TAB_OF[tabs[j].id], true);
             });
         }
         // Typed fields: Enter or leaving the field applies; up and down step it
@@ -10685,6 +12550,12 @@
         }));
         ui.pop.querySelectorAll('[data-push]').forEach((btn) => holdRepeat(btn, (e) => { if (popBody) nudge(popBody, btn.dataset.push, stepFor(e)); }));
         ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.addEventListener('click', () => setStep(parseFloat(btn.dataset.step))));
+        // More: as tall as a tab that grows (selectTab keeps the menu on the page), and its rows in sight. It stays
+        // as it was left when the menu next opens, until the page is reloaded
+        ui.popVelMore.addEventListener('toggle', () => {
+            selectTab(edit.tab);
+            if (ui.popVelMore.open && !ui.pop.hidden) ui.popStep.scrollIntoView({ block: 'nearest' });
+        });
         // The stats bar's Edit button opens (or closes) the menu of the chosen body
         if (ui.subjectEdit) {
             ui.subjectEdit.addEventListener('click', () => {
@@ -10736,6 +12607,16 @@
         paletteRove(ui.palette.querySelector('.orb-chip'));
         if (!ui.palette.dataset.keys) {
             ui.palette.dataset.keys = '1';
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'orb-palette-more';
+            more.hidden = true;
+            more.title = 'More bodies below';
+            more.setAttribute('aria-label', more.title);
+            more.innerHTML = '<span class="icon solid fa-chevron-down" aria-hidden="true"></span>';
+            more.addEventListener('click', morePalette);
+            ui.palette.after(more);
+            ui.paletteMore = more;
             ui.palette.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('.orb-chip'); if (c) paletteRove(c); });
             ui.palette.addEventListener('keydown', onPaletteKey);
             ui.palette.addEventListener('scroll', paletteEdges, { passive: true });
@@ -10752,21 +12633,38 @@
     // Beside the canvas, a column too short for all the chips ends at the edge of a row, not halfway
     // through one. (When its room changes, not while drawing.)
     function paletteCut() {
-        const p = ui.palette;
+        const p = ui.palette, more = ui.paletteMore;
         if (!p) return;
         p.style.maxHeight = p.style.overflowY = '';
-        const room = p.clientHeight;
+        if (more) { more.hidden = true; more.parentElement.classList.remove('has-more'); }
+        const chips = p.querySelectorAll('.orb-chip');
+        let room = p.clientHeight;
         if (!room || p.scrollHeight <= room + 1) return;
         const top = p.getBoundingClientRect().top - p.scrollTop;
         let edge = 0, end = 0;
-        for (const c of p.querySelectorAll('.orb-chip')) {
+        for (const c of chips) end = Math.max(end, c.getBoundingClientRect().bottom - top);
+        // (every chip in sight, short of the padding under them: nothing to scroll to)
+        if (end <= room) { p.style.overflowY = 'hidden'; return; }
+        // More than there is room for: a button says so, which takes a little of the room (a shadow behind the chips can't say
+        // it). (Not on a phone held sideways, whose one column of slim chips is plainly a list.)
+        if (more && window.matchMedia && window.matchMedia('(min-height: 541px)').matches) {
+            more.hidden = false;
+            more.parentElement.classList.add('has-more');
+            room = p.clientHeight;
+        }
+        for (const c of chips) {
             const b = c.getBoundingClientRect().bottom - top;
-            if (b > end) end = b;
             if (b <= room && b > edge) edge = b;
         }
-        // (every chip in sight, short of the padding under them: nothing to scroll to)
-        if (end <= room) p.style.overflowY = 'hidden';
-        else if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
+        if (edge) p.style.maxHeight = `${Math.ceil(edge)}px`;
+        paletteEdges();
+    }
+
+    // Under a column cut short: on to the chips below, and from the end back to the top
+    function morePalette() {
+        const p = ui.palette, atEnd = p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+        const behavior = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+        p.scrollBy({ top: atEnd ? -p.scrollHeight : 0.8 * p.clientHeight, behavior });
     }
 
     // On a phone held upright the chips are one row that scrolls sideways (see orbits_styles.css): it
@@ -10777,6 +12675,15 @@
         const max = p.scrollWidth - p.clientWidth;
         p.classList.toggle('at-start', p.scrollLeft <= 2);
         p.classList.toggle('at-end', p.scrollLeft >= max - 2);
+        const more = ui.paletteMore;
+        if (more && !more.hidden) {
+            const atEnd = p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+            if (more.classList.contains('is-back') !== atEnd) {
+                more.classList.toggle('is-back', atEnd);
+                more.title = atEnd ? 'Back to the first bodies' : 'More bodies below';
+                more.setAttribute('aria-label', more.title);
+            }
+        }
     }
 
     // The keyboard: the palette is one stop of the Tab key (as in a toolbar), not fifteen. The arrow
@@ -10817,20 +12724,21 @@
         btn.type = 'button';
         btn.className = 'orb-chip';
         btn.dataset.kind = kind;
-        const label = kind === 'custom' ? 'Custom' : k.name;
+        const label = kind === 'custom' ? 'Custom' : k.chip || k.name;
+        const look = k.as || kind;
         btn.dataset.title = kind === 'custom' ? 'Your own body: drop it, then set its mass, speed and colour'
             : kind === 'moon' ? `${k.name}, ${k.info} (${fmtMass(k.m)}). Drop it on a planet, or click for a moon of the chosen planet`
                 : `${k.name}, ${k.info} (${fmtMass(k.m)})`;
         btn.title = btn.dataset.title;
         const common = k.name.toLowerCase();
-        const proper = ['sun', 'earth', 'jupiter', 'mars', 'moon'].includes(kind);
+        const proper = ['sun', 'earth', 'jupiter', 'neptune', 'sgra', 'mars', 'moon'].includes(kind);
         btn.setAttribute('aria-label', kind === 'custom' ? 'Add a custom body' : proper ? `Add ${k.name}` : `Add ${/^[aeiou]/.test(common) ? 'an' : 'a'} ${common}`);
         const disc = document.createElement('span');
         disc.className = 'orb-chip-disc' + (kind === 'custom' ? ' is-custom' : '');
-        const d = kind === 'custom' ? 18 : Math.round(clamp(6 + symbolicSize(kind, k.m, k.R) * 0.6, 9, 22));
+        const d = kind === 'custom' ? 18 : Math.round(clamp(6 + symbolicSize(look, k.m, k.R) * 0.6, 9, 22));
         disc.style.width = `${d}px`;
         disc.style.height = `${d}px`;
-        if (kind === 'blackhole') {
+        if (look === 'blackhole') {
             disc.classList.add('is-hole');
             disc.style.background = `radial-gradient(circle, #000 0 54%, #fff3e2 60%, ${k.color} 66%, ${hexA(k.color, 0)} 74%)`;
             disc.style.boxShadow = `0 0 7px ${hexA(k.color, 0.55)}`;
@@ -10915,6 +12823,7 @@
             chipThrow = null;
             if (b && host) moonNote(b);
             if (b && d.kind === 'custom') openPopover(b);
+            if (b) noteLearnt('d');
         }
         dropHost = null;
         clearHint('drag');
@@ -10992,17 +12901,32 @@
 
     const hintHtml = (h) => (h ? (typeof h.html === 'function' ? h.html() : h.html) : '');
 
+    // What the usual help has taught, remembered in this browser: d, a body dragged; a, an arrow aimed. Once
+    // done it isn't said again, and with both done only its buttons are left (Help has every gesture).
+    const LEARNT_KEY = 'orbitsHintLearnt';
+    let learnt = storeGet(LEARNT_KEY) || '';
+    function noteLearnt(what) {
+        if (learnt.includes(what)) return;
+        learnt += what;
+        storeSet(LEARNT_KEY, learnt);
+        refreshHint();
+    }
+
     function usualHint() {
-        const v = settings.velocities;
-        let h;
-        if (coarse()) {
-            h = v ? '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to aim or Edit it.'
-                : '<strong>Drag</strong> a body into space. <strong>Tap</strong> one to Edit it.';
-        } else {
-            h = `<strong>Drag</strong> a body into space.${v ? ' Drag a <strong>teal tip</strong> to aim.' : ''} <span class="orb-hint-links"><button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button>`;
+        if (scene && scene.cannon) return cannonPrompt();
+        const v = settings.velocities, tap = coarse(), dragged = learnt.includes('d');
+        let h = dragged ? '' : '<strong>Drag</strong> a body into space. ';
+        if (!learnt.includes('a')) {
+            if (tap) h += `<strong>Tap</strong> ${dragged ? 'a body' : 'one'} to ${v ? 'aim or ' : ''}Edit it. `;
+            else if (v) h += 'Drag a <strong>teal tip</strong> to aim. ';
         }
-        h += ` <button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button>${coarse() ? '' : '</span>'}`;
-        return h;
+        // (on a touch screen Help waits for the room: it is in the settings too)
+        const help = tap && h ? '' : '<button type="button" class="orb-hint-btn orb-hint-help" title="Keys and gestures (?)">Help</button> ';
+        const random = isRandomKey(settings.scene);
+        if (random) h += `${NEW_SYSTEM_BTN} `;
+        // (and there, Missions too: it is at the end of the scene list)
+        if (random && tap && !help) return h;
+        return `${h}<span class="orb-hint-links">${help}<button type="button" class="orb-hint-btn orb-hint-missions" title="Fly a probe to a goal on a fuel budget (M)">Missions</button></span>`;
     }
 
     // "A moon forming": how far it has got, in place of the usual help
@@ -11020,7 +12944,8 @@
         // (an event note drawn on the canvas isn't said twice on screen: here it is for screen readers alone)
         const onCanvas = hints.note && hints.note.canvas && !mission.def;
         const said = onCanvas ? `<span class="orb-sr-only">${hintHtml(hints.note)}</span>` : '';
-        const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
+        // (a mission's line is its own: a drag's feedback, its notes, and its hints if they are on, or nothing)
+        const h = mission.def ? hintHtml(hints.drag) || hintHtml(hints.missionNote) || missionHint() || '' : hintHtml(hints.drag)
             || (onCanvas ? '' : hintHtml(hints.note))
             || said + (hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint());
         if (h === hintKey) return;
@@ -11215,6 +13140,7 @@
     const NEAR_MOUSE = 24, NEAR_TOUCH = 30;
     const HAND_LAG_S = 0.12;   // by the time a hand has pressed, a moving target has moved on this long
     let hoverAim = null;   // id of the body whose arrow tip the mouse is over
+    let hoverName = null;   // id of the body named because the mouse is over it, or its pointer at the edge
 
     function canvasPoint(e) {
         const r = canvas.getBoundingClientRect();
@@ -11233,7 +13159,7 @@
     // The tip of the chosen body's velocity arrow at (x, y)? (Only when velocities are shown.)
     function onHandle(x, y, tol) {
         const b = bodyById(selectedId);
-        if (!settings.velocities || !b || b.held || bodies.length < 2) return null;
+        if (!settings.velocities || !b || b.held || bodies.length < 2 || missionHidesTeal(b)) return null;
         const h = handlePos(b);
         if (Math.hypot(h.x - x, h.y - y) > tol) return null;
         // the body itself wins inside its disc
@@ -11246,9 +13172,9 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy || missionHidesTeal(b)) continue;
             const tip = velocityTip(b);
-            if (tip.len < 14) continue;
+            if (tip.len < 14 || !b.arrowV) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
             if (dd < bestD) { bestD = dd; best = b; }
         }
@@ -11275,12 +13201,12 @@
     // shaft is under it, or whose tip is close to it now or was a moment ago
     function nearArrow(x, y, shaft, tip) {
         if (!settings.velocities || bodies.length < 2 || mission.def) return null;
-        const fv = frameVelocity();
+        const fv = drawnFrameVelocity();
         let best = null, bestD = Infinity;
         for (const b of bodies) {
             if (b.held || ((b.grp || b.minor || arrowsBusy) && b.id !== selectedId)) continue;
             const t = velocityTip(b, fv);
-            if (t.len < 14) continue;
+            if (t.len < 14 || !b.arrowV) continue;
             const bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b), n = Math.hypot(t.x - bx, t.y - by) || 1;
             const lag = handLag(t.vx, t.vy);
             const ds = distToSegment(x, y, bx + ((t.x - bx) / n) * r, by + ((t.y - by) / n) * r, t.x, t.y);
@@ -11293,11 +13219,11 @@
 
     // A named body close to a press at (x, y), now or a moment ago
     function bodyNear(x, y, tol) {
-        const fv = frameVelocity();
+        const fv = drawnFrameVelocity();
         let best = null, bestD = tol;
         for (const b of bodies) {
             if (b.minor || b.grp || mission.def) continue;
-            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.vx - fv.x, y: b.vy - fv.y }, lag = handLag(v.x, v.y);
+            const bx = sx(b.dx), by = sy(b.dy), v = turn.on || turn.phi ? viewVelocity(b, fv) : { x: b.dvx - fv.x, y: b.dvy - fv.y }, lag = handLag(v.x, v.y);
             const d = distToSegment(x, y, bx, by, bx + lag.x, by + lag.y) - drawRadius(b);
             if (d < bestD) { bestD = d; best = b; }
         }
@@ -11308,11 +13234,11 @@
     function onForceArrow(x, y, tol) {
         if (!settings.forces) return null;
         for (const b of bodies) {
-            const Fm = Math.hypot(b.fx, b.fy);
+            const Fm = Math.hypot(b.dfx, b.dfy);
             if (!(Fm > 0) || b.grp || b.minor || (arrowsBusy && b.id !== selectedId)) continue;
             const L = forceLength(Fm), bx = sx(b.dx), by = sy(b.dy), r = drawRadius(b);
-            const ux = (turn.c * b.fx - turn.s * b.fy) / Fm, uy = -(turn.s * b.fx + turn.c * b.fy) / Fm;
-            if (L >= 3 && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
+            const ux = (turn.c * b.dfx - turn.s * b.dfy) / Fm, uy = -(turn.s * b.dfx + turn.c * b.dfy) / Fm;
+            if (L >= 3 && b.arrowF && distToSegment(x, y, bx + ux * r, by + uy * r, bx + ux * (r + L), by + uy * (r + L)) <= tol) return b;
         }
         return null;
     }
@@ -11480,6 +13406,7 @@
         b.aim = null;
         b.held = null;
         missionEnd(burn);   // (missions: an aimed arrow is a burn)
+        if (apply && d.moved) noteLearnt(d.mode === 'aim' ? 'a' : 'd');
         if (d.mode === 'move' && d.moved) clearTrail(b);
         if ((frameId === b.id || turnUses(b)) && d.moved) clearAllTrails();
         forcesDirty = true;
@@ -11652,6 +13579,7 @@
     // merges and break-ups: copy the system before a new one, or undo the newest when back at its moment
     function afterStep(dt) {
         const wasReplay = past.replay;
+        let last = dt;
         if (past.replay) {
             past.head--; past.count--; past.replay = false;
         } else {
@@ -11669,12 +13597,13 @@
             let ev = past.events[past.events.length - 1];
             while (ev && ev.dir === -timeDir && ev.dir * (simTime - ev.t) <= RETRACE_NEAR * ev.dt) {
                 undoEvent(ev);
+                if (settings.realistic) last = ev.dt;   // (the step it retraced: the one after the event may be far longer)
                 ev = past.events[past.events.length - 1];
             }
         }
         if (!wasReplay && settings.realistic && hostGroups.length) gasStep(dt);
         // (rewound to the start: it stops there, ready to run forwards, as a tape does)
-        if (timeDir < 0 && simTime + dt >= 0.5 * dt && simTime < 0.5 * dt) {
+        if (timeDir < 0 && simTime + last >= 0.5 * last && simTime < 0.5 * last) {
             setPaused(true);
             setReverse(false, true);
             // (off, and looking it, though the pointer that pressed it may still be on it)
@@ -11756,6 +13685,7 @@
         syncHosts();
         groupEnergy.clear();
         for (const [id, u] of s.groupE) groupEnergy.set(id, u);
+        gw.radiated = s.gwE || 0; gw.power = s.gwP || 0; gw.retaken = true;   // (a plunge's final burst goes back too)
         // The choice of body (and the view) passes back to the one it came from
         if (selectedId === ev.selAfter) selectedId = ev.sel;
         if (frameId === ev.frameAfter) frameId = ev.frame;
@@ -11789,6 +13719,11 @@
         updateHistoryUi();
     }
 
+    // How soon a sharp bend may add a trail sample after the last one. In slow motion that shrinks with the speed, so
+    // a curve gets as many samples for each frame it is on the screen as at TRAIL_SLOW, ready for a close view.
+    const TRAIL_SLOW = 0.1;
+    const bendGap = () => (sampleDt / 32) * Math.min(1, settings.speed / TRAIL_SLOW);
+
     // The trails after a step, either way in time. The kept samples always run one way (trailDir).
     // Going that way, one is added every sampleDt (and on a sharp bend). Going the other way, the
     // bodies go back over their trails, so the samples they pass are dropped (their numbers stay in
@@ -11807,7 +13742,7 @@
             nextSampleT = simTime + timeDir * sampleDt;
             return;
         }
-        if (timeDir * (simTime - nextSampleT) >= 0 || (timeDir * (simTime - lastSampleT) > sampleDt / 32 && trailBending())) {
+        if (timeDir * (simTime - nextSampleT) >= 0 || (timeDir * (simTime - lastSampleT) > bendGap() && trailBending())) {
             recordSample();
             past.dropped = false;
             while (timeDir * (nextSampleT - simTime) <= 0) nextSampleT += timeDir * sampleDt;
@@ -11878,7 +13813,7 @@
             return { x: offX + (rc * rx - rs * ry) * scale, y: offY - (rs * rx + rc * ry) * scale };
         };
         // (not pieces of a torn-apart body: their samples are too far apart at a swing past the host to say where they were)
-        const usable = (b) => !b.held && !b.grp && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
+        const usable = (b) => !b.held && !b.grp && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k && !trailOrbit(b);
         for (const b of bodies) {
             if (!usable(b)) continue;
             const g = where(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -11953,6 +13888,10 @@
     function setReverse(on, quiet) {
         if (on && mission.def) {
             missionNote('<strong>Mission rules:</strong> time only runs forwards. Undo takes a burn back.');
+            on = false;
+        }
+        if (on && scene.cannon) {
+            historyNote('<strong>Time runs forwards here,</strong> so the paths stay drawn. Undo takes a shot back.');
             on = false;
         }
         const dir = on ? -1 : 1;
@@ -12310,7 +14249,10 @@
             if (b) {
                 if (popBody && popBody !== b) closePopover();
                 selectBody(b.id);
+                cannon.quiet = null;   // (pressed: Newton's cannon shows its arrows)
                 if (dbl) setFrame(frameId === b.id ? null : b.id);
+            } else if (pickOffMark(d)) {
+                lastTap.quick = false;   // (a pointer is chosen, not viewed from)
             } else if (dbl) {
                 closePopover();
                 if (frameId !== null) setFrame(null);
@@ -12322,8 +14264,9 @@
 
     // The cursor shows what a press would do; an arrow tip under the mouse is also drawn highlighted.
     function updateCursor(x, y) {
-        canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim');
+        canvas.classList.remove('orb-can-grab', 'orb-grabbing', 'orb-can-aim', 'orb-can-pick');
         hoverAim = null;
+        hoverName = null;
         if (drags.size) {
             const d = [...drags.values()][0];
             canvas.classList.add(d.mode === 'aim' ? 'orb-can-aim' : 'orb-grabbing');
@@ -12331,9 +14274,12 @@
         }
         updateDrawnPositions();
         let tipOf = onHandle(x, y, GRAB_MOUSE);
-        if (!tipOf && bodyAt(x, y, 5)) { canvas.classList.add('orb-can-grab'); return; }
+        const over = tipOf ? null : bodyAt(x, y, 5);
+        if (over) { canvas.classList.add('orb-can-grab'); hoverName = over.id; return; }
         if (!tipOf) tipOf = onArrowTip(x, y, GRAB_MOUSE - 1) || nearArrow(x, y, 7, NEAR_MOUSE);
-        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; }
+        if (tipOf) { canvas.classList.add('orb-can-aim'); hoverAim = tipOf.id; return; }
+        hoverName = offMarkAt(x, y, 10);
+        if (hoverName !== null) canvas.classList.add('orb-can-pick');
     }
 
     function onWheel(e) {
@@ -12433,11 +14379,20 @@
         if (document.body.classList.contains('sim-fullscreen-active')) return;
         if (visible) {
             chartsFrom = window.scrollY;
-            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
+            revealCharts();
         } else if (chartsFrom !== null) {
             window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
             chartsFrom = null;
         }
+    }
+
+    // Into view, if they are under the canvas (beside it they already are). In a window wider than tall, not so far
+    // that the canvas's top goes out of view: the last of them may wait for a scroll.
+    function revealCharts() {
+        if (window.innerWidth > window.innerHeight && window.innerHeight > 540) {
+            const over = ui.chartsContainer.getBoundingClientRect().bottom - window.innerHeight;
+            if (over > 0) window.scrollBy({ top: Math.max(0, Math.min(over + 8, canvas.getBoundingClientRect().top - 8)), behavior: quickMotion() });
+        } else ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
     }
 
     function resetCharts() {
@@ -12464,6 +14419,7 @@
         ch.data.datasets[0].label = b ? `${b.name}: distance` : 'Distance';
         ch.data.datasets[1].label = b ? `${b.name}: speed` : 'Speed';
         ch.update('none');
+        syncOrbitChart();
     }
 
     // Kinetic, potential and total energy. With realistic physics the first post-Newtonian terms of
@@ -12478,7 +14434,7 @@
         if (bi.grp && bj.grp) {
             // pieces of one torn-apart body: the softened potential of their softened pull
             // (and pieces of different bodies don't pull on each other)
-            if (bi.grp !== bj.grp || bi.grp < 0) return;   // (nor do pieces of gas: see "Gas round a compact body")
+            if (bi.grp !== bj.grp || bi.grp < 0 || bi.grp % 1) return;   // (nor do pieces of gas: see "Gas round a compact body"; nor debris: see throwDebris)
             const e = 0.5 * (softLength(bi) + softLength(bj));
             sumPE -= (G * bi.m * bj.m) / Math.sqrt(rx * rx + ry * ry + e * e);
             return;
@@ -12492,6 +14448,8 @@
             const vx = bi.vx - bj.vx, vy = bi.vy - bj.vy, v2 = vx * vx + vy * vy;
             const rd = (rx * vx + ry * vy) / r;
             sumKE += (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2;
+            // (in their plunge the rest of it, whatever makes it up to the plunge's energy, goes in the potential energy's column)
+            if (gm > ISCO_C2 * r && holePair(bi, bj)) { sumPE += plungeEnergy(r, rd, (rx * vy - ry * vx) / (r * r), gm, eta) - 0.5 * mu * v2 - (mu * 0.375 * (1 - 3 * eta) * v2 * v2) / C2 + (G * bi.m * bj.m) / r; return; }
             sumPE += (mu * gm / (2 * r * C2)) * ((3 + eta) * v2 + eta * rd * rd + gm / r);
             // (and the 2PN terms for a compact, close pair, which has them in its motion too)
             if (gm > RR_MIN_C2 * r) { const e2 = energy2PN(v2, rd, gm / r, eta); sumKE += mu * e2.k; sumPE += mu * e2.p; }
@@ -12535,6 +14493,7 @@
     function sampleCharts() {
         if (!chartsVisible()) return;
         const now = performance.now();
+        k3GraphTick(now);
         if (chartsDirty && now >= chartsNextDraw) {
             charts.energy.update('none');
             charts.orbit.update('none');
@@ -12573,6 +14532,242 @@
             }
         }
         chartsDirty = true;
+    }
+
+    // ------------------------------------------------------------------
+    // The 3rd law as a graph: T^2 against a^3 for the bodies on the 3rd law card, among the graphs while
+    // that law is on. It keeps nothing of its own: each redraw reads the measurements (kepler3Rows), so an
+    // undo, a restart or a merge can't leave an old point behind.
+    //   The line is the law for a light planet, T^2/a^3 = 4 pi^2/GM, which is 1/M in years, AU and Suns.
+    //   Log axes by default: Pluto's a^3 is a million times Mercury's, so on even axes the inner planets
+    //   are one dot. There the line still has slope 1, and M moves it up or down.
+    //   A body yet to go once round is a ring at its present a, as high as the time so far, squared. So
+    //   it shows what has been measured, not what the law says, and climbs to the line as the orbit ends.
+    // ------------------------------------------------------------------
+    const K3_EVERY_MS = 200, K3_OFF = 0.05;   // (redrawn this often; further than this from the line is "off" it)
+    const k3g = { chart: null, on: false, log: true, next: 0, sig: '', dark: null, note: [], legend: [], aria: '' };
+
+    // (from sampleCharts, so only while the graphs are open)
+    function k3GraphTick(now) {
+        if (settings.k3 !== k3g.on) showK3Graph(settings.k3);
+        if (!k3g.on || now < k3g.next) return;
+        k3g.next = now + K3_EVERY_MS;
+        drawK3Graph();
+    }
+
+    function showK3Graph(on) {
+        const box = byId('k3Box');
+        k3g.on = on;
+        k3g.sig = '';
+        k3g.next = 0;
+        if (!box) return;
+        box.hidden = !on;
+        if (on && !k3g.chart) k3g.chart = makeK3Chart();
+    }
+
+    // An axis's numbers: plain where they are short, a power of ten where they aren't
+    function k3Tick(v) {
+        if (!(v > 0)) return '0';
+        if (k3g.log) {
+            const e = Math.round(Math.log10(v));
+            return e >= -3 && e <= 3 ? String(+v.toPrecision(1)) : `10${supExp(e)}`;
+        }
+        return v >= 1e5 || v < 1e-3 ? fmtSci(v, 1) : String(+v.toPrecision(3));
+    }
+
+    // Names beside the points where there's room, the farthest out first (points on top of one another
+    // share a name: "Saturn +5"), and what the graph is saying in its empty corner
+    const k3Marks = {
+        id: 'k3Marks',
+        afterDatasetsDraw(ch) {
+            const c = ch.ctx, A = ch.chartArea, lh = 14, type = `11px ${Chart.defaults.font.family}`;
+            const els = ch.getDatasetMeta(1).data, pts = ch.data.datasets[1].data, note = k3g.note.slice();
+            c.save();
+            c.textBaseline = 'middle';
+            c.font = type;
+            c.fillStyle = chartColors().text;
+            const taken = note.map((t, i) => ({ x: A.left + 6, y: A.top + 5 + i * lh, w: c.measureText(t).width, h: lh - 4 }));
+            for (const e of els) taken.push({ x: e.x - 4, y: e.y - 4, w: 8, h: 8 });
+            const clash = (x, y, w, h) => taken.some((q) => x < q.x + q.w && q.x < x + w && y < q.y + q.h && q.y < y + h);
+            const near = (p, q) => Math.abs(p.x - q.x) < 7 && Math.abs(p.y - q.y) < 7;
+            for (let i = els.length - 1; i >= 0; i--) {
+                const e = els[i];
+                let n = 0, placed = false;
+                while (i - n > 0 && near(els[i - n], els[i - n - 1])) n++;
+                const name = n ? `${pts[i].name} +${n}` : pts[i].name, w = c.measureText(name).width, h = 12;
+                i -= n;
+                // (below right of the point, clear of a rising line; then above left)
+                for (const [x, y] of [[e.x + 7, e.y + 1], [e.x - 7 - w, e.y - 1 - h], [e.x + 7, e.y - 1 - h], [e.x - 7 - w, e.y + 1]]) {
+                    if (x < A.left || x + w > ch.width - 2 || y < A.top || y + h > A.bottom || clash(x, y, w, h)) continue;
+                    c.fillText(name, x, y + h / 2);
+                    taken.push({ x, y, w, h });
+                    placed = true;
+                    break;
+                }
+                if (!placed && n) note.push(`Bunched up: ${name}.`);
+            }
+            note.forEach((t, i) => {
+                c.font = i === 0 ? `bold ${type}` : type;
+                c.fillText(t, A.left + 6, A.top + 3 + (i + 0.5) * lh);
+            });
+            c.restore();
+        }
+    };
+
+    function makeK3Chart() {
+        const canvas = byId('k3Chart'), btn = byId('k3Axes');
+        if (!canvas || typeof Chart === 'undefined') return null;
+        const c = chartColors();
+        const spot = (key) => (q) => (q.raw && q.raw[key]) || 'transparent';
+        // (on log axes, a tick only at each power of ten: the steps the axis titles describe)
+        const tens = (axis) => {
+            if (!k3g.log) return;
+            const lo = Math.ceil(Math.log10(axis.min) - 1e-9), hi = Math.floor(Math.log10(axis.max) + 1e-9);
+            axis.ticks = [];
+            for (let e = lo; e <= hi; e++) axis.ticks.push({ value: Math.pow(10, e) });
+        };
+        const axis = () => ({
+            type: 'logarithmic', afterBuildTicks: tens,
+            ticks: { color: c.text, maxRotation: 0, callback: k3Tick }, grid: { color: c.grid }, title: { display: true, text: '', color: c.text }
+        });
+        if (btn) {
+            btn.addEventListener('click', () => {
+                k3g.log = !k3g.log;
+                btn.setAttribute('aria-pressed', k3g.log ? 'false' : 'true');
+                k3g.sig = '';
+                drawK3Graph();
+            });
+        }
+        return new Chart(canvas, {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    { type: 'line', data: [], borderColor: colours().kepler, borderWidth: 2, pointRadius: 0, pointHitRadius: 0, order: 2 },
+                    { data: [], clip: false, pointRadius: 5, pointHoverRadius: 6, pointBorderWidth: 1, pointBackgroundColor: spot('fill'), pointBorderColor: spot('edge'), order: 1 },
+                    { data: [], clip: false, pointRadius: 4, pointHoverRadius: 5, pointBorderWidth: 1.5, pointBackgroundColor: 'transparent', pointBorderColor: spot('edge'), order: 1 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                // (room on the right for a name, and on a phone for the taller button)
+                layout: { padding: { right: 16, top: window.matchMedia('(pointer: coarse)').matches ? 8 : 0 } },
+                plugins: {
+                    legend: { align: 'start', onClick: () => {}, labels: { color: c.text, boxHeight: 7, pointStyleWidth: 14, usePointStyle: true, generateLabels: () => k3g.legend } },
+                    tooltip: { filter: (q) => q.datasetIndex > 0, callbacks: { label: (q) => q.raw.tip } }
+                },
+                scales: { x: axis(), y: axis() }
+            },
+            plugins: [k3Marks]
+        });
+    }
+
+    // What the graph says: whose orbits, then what to see in them
+    function k3GraphNote(P, rows, pts, rings, slope) {
+        if (!P) return ['Add bodies to compare.'];
+        const who = `Orbits of ${P.name}`;
+        if (!rows.length) return [who, 'Add bodies that orbit it to compare.'];
+        // (half as long again as the law's T^2, and still not round: as for a figure of eight, no one orbit)
+        const late = rings.find((q) => q.y > 1.5 * slope * q.x);
+        if (!pts.length && !late) return [who, 'Each ring lands on the line', 'when it has gone once round.'];
+        let far = null, most = K3_OFF;
+        for (const p of pts) {
+            const off = Math.abs(p.y / (p.x * slope) - 1);
+            if (off > most) { most = off; far = p; }
+        }
+        if (!far && late) return [who, `${late.name} has passed the line without`, 'going round: it has no steady orbit.'];
+        if (!far) return [who, 'Double a³ and T² doubles too.'];
+        // (two bodies go round each other, so its own mass counts: 4 pi^2/G(M + m). Otherwise it's the others' pull)
+        const own = (far.y / (far.x * slope)) * (1 + far.row.body.m / P.m);
+        if (Math.abs(own - 1) < K3_OFF) return [who, `${far.name} is heavy too, and the law`, 'needs M + m: it sits below the line.'];
+        return [who, 'Off the line: the simple law', "doesn't hold here."];   // (others' pull, or relativity: it doesn't say which)
+    }
+
+    function drawK3Graph() {
+        const ch = k3g.chart;
+        if (!ch) return;
+        const { P, rows } = kepler3Rows(bodyById(selectedId));
+        // In the scene's own units, as on the card
+        const km = scene.units === 'km', tu = timeUnit();
+        const tf = tu === 's' ? YEAR_S : tu === 'd' ? DAYS_PER_YEAR : 1, af = km ? AU_KM : 1;
+        const plain = !km && tu === 'yr';
+        const num = (v) => (plain && v >= 0.001 && v < 1000 ? v.toFixed(3) : fmtSci(v, 2));
+        const slope = P ? ((4 * Math.PI * Math.PI) / (G * P.m)) * (tf * tf) / (af * af * af) : 1;
+        const dark = isDark();
+        const pts = [], rings = [];
+        let xLo = Infinity, xHi = 0, yLo = Infinity, yHi = 0;
+        let sig = `${k3g.log}|${dark}|${P ? P.id : ''}|${slope}|${km}|${tu}`;
+        for (const r of rows) {
+            const a = (r.measured ? r.a : r.aEst) * af, x = a * a * a;
+            if (!(x > 0) || !Number.isFinite(x)) continue;
+            xLo = Math.min(xLo, x);
+            xHi = Math.max(xHi, x);
+            const name = r.body.name, edge = bodyStroke(r.body.color, dark), tr = r.body.track;
+            const t = r.measured ? r.T * tf : tr ? (tr.tPrev - tr.t0) * tf : 0, y = t * t;
+            if (r.measured) {
+                yLo = Math.min(yLo, y);
+                yHi = Math.max(yHi, y);
+                pts.push({ x, y, name, row: r, fill: r.body.color, edge, tip: `${name}: T²/a³ = ${num(y / x)}` });
+            } else {
+                if (y > slope * x) yHi = Math.max(yHi, y);   // (one that has passed the line stays on the scale)
+                rings.push({ x, y, name, edge, tip: `${name}: going round, ${Math.round(r.progress * 100)}%` });
+            }
+            sig += `|${name},${r.body.color},${r.measured},${x},${y}`;
+        }
+        if (sig === k3g.sig) return;   // (nothing has changed, as while paused)
+        k3g.sig = sig;
+        if (!(xHi > 0)) { xLo = xHi = af * af * af; }
+        pts.sort((p, q) => p.x - q.x);
+        // The axes reach all the bodies, those still going round too, so they stay put as points arrive
+        yLo = Math.min(yLo, slope * xLo);
+        yHi = Math.max(yHi, slope * xHi);
+        const X = ch.options.scales.x, Y = ch.options.scales.y;
+        let line;
+        if (k3g.log) {
+            // (ending on half powers of ten, so they keep still as a point moves a little, with room round
+            // the points and more above them for a name; never less than a step each side of a lone point)
+            const span = (l, h) => {
+                let lo = Math.floor(2 * (Math.log10(l) - 0.15)) / 2, hi = Math.ceil(2 * (Math.log10(h) + 0.3)) / 2;
+                if (hi - lo < 2) { lo -= 0.5; hi += 0.5; }
+                return [Math.pow(10, lo), Math.pow(10, hi)];
+            };
+            X.type = Y.type = 'logarithmic';
+            [X.min, X.max] = span(xLo, xHi);
+            [Y.min, Y.max] = span(yLo, yHi);
+            line = [{ x: X.min, y: slope * X.min }, { x: X.max, y: slope * X.max }];
+        } else {
+            // (ending on a round number, so the last number on the axis is one too)
+            const round = (v) => { const p = Math.pow(10, Math.floor(Math.log10(v))); return (Math.ceil((2.1 * v) / p) * p) / 2; };
+            X.type = Y.type = 'linear';
+            X.min = Y.min = 0;
+            X.max = round(xHi);
+            Y.max = round(yHi);
+            line = [{ x: 0, y: 0 }, { x: X.max, y: slope * X.max }];
+        }
+        // (a ring is at the axis's foot until its time so far is on the scale)
+        for (const q of rings) q.y = Math.max(q.y, Y.min);
+        X.title.text = `a³ (${km ? 'km' : 'AU'}³)${k3g.log ? '. Both axes: each step ×10' : ''}`;
+        Y.title.text = `T² (${tu === 'd' ? 'days' : tu}²)`;
+        const colr = chartColors();
+        const law = colours().kepler;
+        const ds = ch.data.datasets;
+        ds[0].data = P ? line : [];
+        ds[0].borderColor = law;
+        ds[1].data = pts;
+        ds[2].data = rings;
+        for (const fine of [X, Y]) {
+            fine.ticks.color = colr.text;
+            fine.grid.color = colr.grid;
+            fine.title.color = colr.text;
+        }
+        const leg = ch.options.plugins.legend.labels;
+        leg.color = colr.text;
+        const item = (text, pointStyle, fill, stroke, lineWidth) => ({ text, pointStyle, fillStyle: fill, strokeStyle: stroke, lineWidth, hidden: false, fontColor: colr.text });
+        k3g.legend = P ? [item(`T²/a³ = ${plain ? '1/M = ' : ''}${num(slope)}`, 'line', law, law, 2)] : [];
+        if (rings.length) k3g.legend.push(item('Going round', 'circle', 'transparent', colr.text, 1.5));
+        k3g.note = k3GraphNote(P, rows, pts, rings, slope);
+        ch.update('none');
+        const aria = P ? `T squared against a cubed for the orbits of ${P.name}: ${pts.length} measured, ${rings.length} still going round.` : 'T squared against a cubed: no bodies yet.';
+        if (aria !== k3g.aria) { k3g.aria = aria; ch.canvas.setAttribute('aria-label', aria); }
     }
 
     // ------------------------------------------------------------------
@@ -12727,13 +14922,15 @@
     function settingsSignature() {
         const s = settings;
         return [s.speed, s.realistic, s.merge, s.k1, s.k2, s.k3, s.forces, s.velocities, s.labels, s.stability,
-            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits].join(',');
+            s.placement, s.trailIndex, s.com, selectedId, frameId, turn.on ? turn.aId : '', s.pulls, s.well, s.lagrange, s.limits, s.pullSum, s.arrowSize].join(',');
     }
 
     // ------------------------------------------------------------------
     // Random systems
     // ------------------------------------------------------------------
     const isRandomKey = (key) => typeof key === 'string' && /^random-[1-9]\d{0,9}$/.test(key);
+    // The hint line's way to another random system, as the scene list can't pick the one it is on
+    const NEW_SYSTEM_BTN = '<button type="button" class="orb-hint-btn orb-hint-newsys" title="A new star with planets: how long will they last?">New system</button>';
     function randomSeed(key) {
         if (!isRandomKey(key)) return 0;
         const n = +key.slice(7);
@@ -12848,13 +15045,10 @@
             const c = totals(list), far = (b) => Math.hypot(b.x - c.x, b.y - c.y);
             half = 1.15 * Math.max(far(list[0]) + half / 1.15, far(list[list.length - 1]));
         }
-        const extra = [];
-        if (moons) extra.push(moons === 1 ? 'a moon' : `${moons} moons`);
-        if (companion) extra.push('a second star');
-        const desc = `${star.what} with ${planets.length} planets${extra.length === 2 ? `, ${extra[0]} and ${extra[1]}` : extra.length ? ` and ${extra[0]}` : ''}`;
+        const desc = `${star.what} with ${planets.length} planets`;   // (any moons or second star are there to see)
         return {
             units: 'au', Tref: T1, subject: 1, trail: 6, seed, box: [-half, half, -half, half],
-            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years?`,
+            tip: `${sentenceCase(desc)}. Will they last ${STAB_GOAL.toLocaleString('en-US')} years? ${NEW_SYSTEM_BTN}`,
             bodies: list.map((b) => ({ kind: b.kind, name: b.name, m: b.m, R: b.R, color: b.color, at: [b.x, b.y], v: [b.vx, b.vy] }))
         };
     }
@@ -12930,11 +15124,71 @@
     }
 
     // ------------------------------------------------------------------
+    // A touch of chance. A scene marked with vary starts a little differently each time it is opened from
+    // the scene list or restarted, where a slightly different start gives an ending worth watching again.
+    // Math.random picks the seed and does nothing else; the seed alone decides the start, and the start
+    // alone decides what follows. Undo steps, "run again", the autosave and links all keep the bodies
+    // themselves, so each brings back that very start, and an older link opens as it always did. Anything
+    // else that loads a scene gets its one exact start: missions, the test API, and with Deterministic
+    // on (in More options, remembered in this browser) the scene list and Restart too.
+    // ------------------------------------------------------------------
+    const CHANCE_KEY = 'orbitsDeterministic';
+    const chance = { exact: storeGet(CHANCE_KEY) === '1', last: 0 };
+    Object.assign(ui, { deterministic: byId('deterministicToggle') });
+    if (ui.deterministic) {
+        ui.deterministic.checked = chance.exact;
+        ui.deterministic.addEventListener('change', () => {
+            chance.exact = ui.deterministic.checked;
+            storeSet(CHANCE_KEY, chance.exact ? '1' : '');
+            syncRestartTitle();
+            updateHistoryUi();   // (Run again shows from the start only while Restart would start it differently)
+        });
+    }
+
+    // A marked scene's entries, moved within their spreads
+    function variedBodies(def, seed) {
+        if (typeof def.vary === 'function') return def.vary(seed);
+        const rnd = seeded(seed);
+        rnd(); rnd();   // (the first numbers from a small seed are much alike)
+        const shift = (half) => half * (2 * rnd() - 1);
+        return def.bodies.map((s, i) => {
+            const spread = def.vary[i], c = Object.assign({}, s);
+            if (!spread) return c;
+            if (s.orbit) c.orbit = Object.assign({}, s.orbit);
+            for (const f of Object.keys(spread)) {
+                if (f === 'at' || f === 'v') c[f] = (s[f] || [0, 0]).map((x) => x + shift(spread[f]));
+                else if (f === 'm' || f === 'R') c[f] = (s[f] !== undefined ? s[f] : KINDS[s.kind][f]) * (1 + shift(spread[f]));
+                else c.orbit[f] = (s.orbit[f] || 0) + shift(spread[f]);
+            }
+            return c;
+        });
+    }
+
+    // The person's own ways into a scene, the scene list and Restart: a marked scene gets a new roll
+    function openScene(key) {
+        const def = SCENES[key];
+        let seed = 0;
+        if (def && def.vary && !chance.exact) {
+            do {
+                seed = def.rolls ? def.rolls[Math.floor(Math.random() * def.rolls.length)] : 1 + Math.floor(Math.random() * SEED_MAX);
+            } while (seed === chance.last);
+            chance.last = seed;
+            hist.cleanLoad = false;   // (so it is an undo step: noteSceneLoad makes none for a scene restarted untouched)
+        }
+        loadScene(key, seed);
+    }
+
+    // (Restart's tooltip says what it will do, and where to change that)
+    function syncRestartTitle() {
+        setTitle(ui.reset, scene.vary && !chance.exact ? 'Restart with a slightly different start. Deterministic, in More options, keeps it the same' : 'Restart the scene from its original setup');
+    }
+
+    // ------------------------------------------------------------------
     // Setups as JSON, and as links
     // ------------------------------------------------------------------
     // Everything but the bodies (s: a snapshot)
     function setupHead(s) {
-        const st = settings;
+        const st = settingsForSetup();
         return {
             v: SETUP_VERSION, sc: s.scene, t: s.t, acc, sel: s.sel, fr: s.frame,
             vw: [s.zoom, s.panX, s.panY],
@@ -12943,10 +15197,14 @@
             // (sh: what is shown; the last four came later, so an older link reads them as off)
             set: {
                 sp: st.speed, re: +st.realistic, me: +st.merge, k: [+st.k1, +st.k2, +st.k3],
-                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement
+                sh: [+st.forces, +st.velocities, +st.labels, +st.pulls, +st.well, +st.lagrange, +st.limits], st: +st.stability, pl: st.placement, as: st.arrowSize,
+                ps: +st.pullSum
             },
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
-            ro: turnSetup()
+            ro: turnSetup(),
+            // (a scene with a start date: that date, so its calendar comes back with it)
+            jd: SCENES[s.scene] && SCENES[s.scene].dated ? s.startJD : undefined,
+            cn: cannonSetup(s)   // (Newton's cannon: the shots' paths)
         };
     }
 
@@ -12979,8 +15237,9 @@
         try { d = JSON.parse(json); } catch (e) { throw setupError('broken'); }
         if (!d || typeof d !== 'object') throw setupError('broken');
         if (d.v !== SETUP_VERSION) throw setupError(typeof d.v === 'number' && d.v > SETUP_VERSION ? 'newer' : 'broken');
-        const rows = d.b;
-        if (!Array.isArray(rows) || !rows.length) throw setupError('broken');
+        // (for a few hours a body could have a disc of real pieces, rows of this kind: a link or an autosave from then opens without them)
+        const rows = Array.isArray(d.b) ? d.b.filter((r) => !(Array.isArray(r) && r[2] === 'ring')) : null;
+        if (!rows || !rows.length) throw setupError('broken');
         if (rows.length > MAX_BODIES) throw setupError('many');
         const n = rows.length;
         const num = new Float64Array(n * SNAP_W), names = new Array(n), kinds = new Array(n), colors = new Array(n);
@@ -12997,8 +15256,8 @@
             if (Number.isInteger(id) && id > 0 && id <= 1e9 && !ids.has(id)) { ids.add(id); num[o] = id; maxId = Math.max(maxId, id); } else renumber.push(o);
             for (let k = 0; k < 6; k++) num[o + 1 + k] = vals[k];
             const grp = r.length > 10 ? r[10] : 0;
-            num[o + 7] = Number.isInteger(grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas)
-            maxGrp = Math.max(maxGrp, Math.abs(num[o + 7]));
+            num[o + 7] = Number.isInteger(2 * grp) && grp !== 0 && Math.abs(grp) <= 1e9 ? grp : 0;   // (below zero: gas; half a number: debris)
+            maxGrp = Math.max(maxGrp, Math.ceil(Math.abs(num[o + 7])));
             names[i] = typeof r[1] === 'string' && r[1].trim() ? r[1].trim().slice(0, 40) : KINDS[kind].name;
             kinds[i] = kind;
             colors[i] = typeof r[3] === 'string' && /^#[0-9a-f]{6}$/i.test(r[3]) ? r[3] : (KINDS[kind].color || KINDS.custom.color);
@@ -13014,13 +15273,14 @@
         for (let i = 0; i < n; i++) if (num[i * SNAP_W + 7]) pieces.add(num[i * SNAP_W]);
         for (const q of Array.isArray(d.pr) ? d.pr : []) {
             if (!Array.isArray(q) || !ids.has(q[0]) || !ids.has(q[1]) || q[0] === q[1] || paired.has(q[0])) continue;
-            // (many pieces of a torn-apart body can share a host)
-            if (!pieces.has(q[0]) && paired.has(q[1])) continue;
+            // (many pieces of a torn-apart body can share a host, and so can whole bodies going round it)
+            const many = pieces.has(q[0]) || q[3];
+            if (!many && paired.has(q[1])) continue;
             paired.add(q[0]);
-            if (!pieces.has(q[0])) paired.add(q[1]);
-            pairs.push([q[0], q[1], q[2] ? 1 : 0]);
+            if (!many) paired.add(q[1]);
+            pairs.push([q[0], q[1], q[2] ? 1 : 0, q[3] ? 1 : 0]);
         }
-        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
+        const groupE = (Array.isArray(d.ge) ? d.ge : []).filter((q) => Array.isArray(q) && Number.isInteger(2 * q[0]) && Number.isFinite(q[1])).map((q) => [q[0], q[1]]);
         const vw = Array.isArray(d.vw) ? d.vw : [], sca = Array.isArray(d.sca) ? d.sca : [];
         const raw = d.set && typeof d.set === 'object' ? d.set : {};
         const flag = (v, dflt) => (v === 0 || v === 1 || typeof v === 'boolean' ? !!v : dflt);
@@ -13030,11 +15290,13 @@
             customCount: Number.isInteger(d.cc) && d.cc >= 0 ? d.cc : 0,
             scene: key, sel: idOf(d.sel), frame: idOf(d.fr), pairs, groupE,
             turn: Array.isArray(d.ro) && idOf(d.ro[0]) !== null && idOf(d.fr) !== null && d.ro[0] !== d.fr ? { a: d.ro[0], up: fin(d.ro[1], 0) } : null,
-            forceRef: fin(sca[0], 0) > 0 ? sca[0] : 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,
+            forceRef: fin(sca[0], 0) > 0 && !(def.fref && sca[0] === 1) ? sca[0] : def.fref || 1, vRef: fin(sca[1], 0) > 0 ? sca[1] : TAU,   // (an older link from a scene with fref says 1: no arrow would show)
             energyExp: Number.isInteger(sca[2]) && Math.abs(sca[2]) < 400 ? sca[2] : 30,
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
             com: !!sca[4],
-            zoom: fin(vw[0], 0) > 0 ? clamp(vw[0], 1e-7, 1e7) : 0.4, panX: fin(vw[1], 0), panY: fin(vw[2], 0)
+            zoom: fin(vw[0], 0) > 0 ? clamp(vw[0], 1e-7, 1e7) : 0.4, panX: fin(vw[1], 0), panY: fin(vw[2], 0),
+            startJD: fin(d.jd, 0) > 0 ? clamp(d.jd, JD_MIN, JD_MAX) : 0,
+            cannon: def.cannon ? readCannon(d.cn, ids) : null
         };
         const set = {
             sp: fin(raw.sp, 0) > 0 ? clamp(raw.sp, SPEED_STOPS[0], SPEED_STOPS[SPEED_STOPS.length - 1]) : settings.speed,
@@ -13043,7 +15305,9 @@
             sh: [flagAt(raw.sh, 0, true), flagAt(raw.sh, 1, true), flagAt(raw.sh, 2, true),
                 flagAt(raw.sh, 3, false), flagAt(raw.sh, 4, false), flagAt(raw.sh, 5, false), flagAt(raw.sh, 6, false)],
             st: flag(raw.st, false),
-            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular'
+            pl: ['circular', 'keep', 'rest', 'throw'].includes(raw.pl) ? raw.pl : 'circular',
+            ps: flag(raw.ps, false),
+            as: ['auto', 'fixed', 'zoom'].includes(raw.as) ? raw.as : 'auto'
         };
         return { s, set, acc: clamp(fin(d.acc, 0), 0, def.Tref), maxGrp };
     }
@@ -13159,6 +15423,7 @@
 
     function applySettings(set) {
         const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        if (mission.home) mission.home.arrows = null;   // (what these set is what leaving a mission now comes back to)
         paceZoom.was = 0;
         setSpeedValue(set.sp);
         check(ui.realistic, 'realistic', set.re);
@@ -13166,7 +15431,7 @@
         check(ui.k1, 'k1', set.k[0]); check(ui.k2, 'k2', set.k[1]); check(ui.k3, 'k3', set.k[2]);
         check(ui.forces, 'forces', set.sh[0]); check(ui.velocities, 'velocities', set.sh[1]); check(ui.labels, 'labels', set.sh[2]);
         // (quietly: the note that the setup opened is what the hint line says)
-        settings.pulls = set.sh[3]; settings.limits = set.sh[6]; lim.bid = null;
+        settings.pulls = set.sh[3]; settings.pullSum = set.ps; settings.limits = set.sh[6]; lim.bid = null;
         syncGravityControls();
         setWell(set.sh[4]);
         setLagrange(set.sh[5]);
@@ -13174,6 +15439,8 @@
         settings.placement = set.pl;
         if (ui.placement) ui.placement.value = set.pl;
         syncPlacementNote();
+        settings.arrowSize = set.as;
+        syncArrowSize();
         forcesDirty = true;
         pred.key = '';
     }
@@ -13344,6 +15611,11 @@
             if (st) applySetup(st, 'carry on where you left off', OPEN_NOTE('Carried on where you left off'));
         } else if (t.closest('.orb-carry-x')) {
             endOffer();
+        } else if (t.closest('.orb-hint-newsys')) {
+            loadRandomSystem(newRandomSeed());
+            // (from the keyboard, the focus stays on the button, for another)
+            const again = e.detail ? null : ui.hint.querySelector('.orb-hint-newsys');
+            if (again) again.focus({ preventScroll: true });
         } else if (t.closest('.orb-hint-zoom')) {
             clearHint('note');
             zoomChosen();
@@ -13358,6 +15630,10 @@
             if (b) setFrame(b.id);
         } else if (t.closest('.orb-hint-turn')) {
             startTurning(bodies.find((q) => q.name === 'Jupiter'));
+        } else if (t.closest('.orb-hint-sky')) {
+            skyView();
+        } else if (t.closest('.orb-hint-skynext')) {
+            skyNext();
         }
     }
 
@@ -13516,10 +15792,11 @@
         let note;
         if (performance.now() - stab.restartedAt < 4000) note = 'Restarted: you changed the system';
         else if (!stab.counts) note = 'A best needs three bodies or more';
+        else if (seed && hints.tip) note = null;   // (a random system's tip is asking just that)
         else if (!(before.yr > 0)) note = compact ? `Goal: ${fmtYears(STAB_GOAL)}` : `Can you build one that lasts ${fmtYears(STAB_GOAL)}?`;
         else if (stab.best.yr > before.yr) note = `A new best (was ${fmtYears(before.yr)})${goal}`;
         else note = `Your best: ${fmtYears(before.yr)}${!compact && before.label ? ` (${before.label})` : ''}${goal}`;
-        lines.push([[note, false, C.subtle]]);
+        if (note) lines.push([[note, false, C.subtle]]);
         return lines;
     }
 
@@ -13640,7 +15917,7 @@
         const on = [[ui.k1, '1st'], [ui.k2, '2nd'], [ui.k3, '3rd']].filter((k) => k[0] && k[0].checked).map((k) => k[1]);
         setText(ui.foldKepler, on.join(', '));
         const opt = ui.frame && ui.frame.options[ui.frame.selectedIndex];
-        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '') : '');
+        setText(ui.foldFrame, opt ? opt.textContent.replace(' (no body)', '').replace('Rotating with ', '') : '');
     }
 
     // Everything panned or zoomed out of view: Fit view stands out, and says why once
@@ -13734,13 +16011,12 @@
         bindPageFolds();
         Object.assign(ui, {
             foldKepler: byId('foldKepler'), foldFrame: byId('foldFrame'),
-            shareBtn: byId('shareLinkBtn'), randomBtn: byId('randomSystemBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
+            shareBtn: byId('shareLinkBtn'), shareNote: byId('shareNote'), shareField: byId('shareLinkField'),
             csvNote: byId('csvNote'), chartCsvBtn: byId('chartCsvBtn'), chartCsvNote: byId('chartCsvNote'), stability: byId('stabilityToggle')
         });
         for (const el of [ui.shareNote, ui.csvNote, ui.chartCsvNote]) if (el) el.dataset.text = el.textContent;
         const onClick = (btn, action) => { if (btn) btn.addEventListener('click', action); };
         onClick(ui.shareBtn, copyShareLink);
-        onClick(ui.randomBtn, () => loadRandomSystem(newRandomSeed()));
         document.querySelectorAll('button[data-csv]').forEach((btn) => onClick(btn, () => downloadCsv(btn.dataset.csv, ui.csvNote)));
         onClick(ui.chartCsvBtn, () => downloadCsv('graphs', ui.chartCsvNote));
         if (ui.stability) {
@@ -13835,7 +16111,8 @@
             forceRef, vRef, energyExp, trail: settings.trailIndex, com: settings.com,
             zoom: view.zoom, panX: view.panX, panY: view.panY,
             startJD: startDate.jd,   // (the start date of a scene that has one)
-            mission: missionSnapshot()   // (the fuel used and the burns, so undo gives fuel back)
+            mission: missionSnapshot(),   // (the fuel used and the burns, so undo gives fuel back)
+            cannon: cannonSnapshot()   // (Newton's cannon: the shots' paths)
         });
     }
 
@@ -13854,6 +16131,7 @@
         // The trails are still good if no time has passed since the snapshot (an edit undone while paused)
         const keepTrails = sameScene && !jump && s.epoch === hist.epoch && s.samples === sampleCount;
         if (!sameScene) sceneFromSnapshot(s);
+        else { forceRef = s.forceRef; vRef = s.vRef; energyExp = s.energyExp; }   // (each roll of a scene has its own)
         restoreStartDate(s);
         const old = new Map(bodies.map((b) => [b.id, b]));
         const list = [];
@@ -13930,6 +16208,7 @@
         syncEccentricity(true);
         updateTrailLabel();
         missionRestore(s.mission, how);
+        cannonRestore(s.cannon);
         hist.restoring = false;
     }
 
@@ -13944,6 +16223,7 @@
         if (ui.trail) ui.trail.value = String(s.trail);
         settings.com = s.com;
         if (ui.com) ui.com.checked = s.com;
+        syncRestartTitle();
     }
 
     // Time has jumped: the trail samples start again from now, as when a scene is loaded (the samples'
@@ -14210,7 +16490,14 @@
         historyButton(ui.redoBtn, 'Redo', r, KEYS_MOD === '⌘' ? '⇧⌘Z' : 'Ctrl+Y');
         if (ui.rewindBtn) {
             const t = `Run again from ${hist.rwFromStart ? 'the start' : 'your last change'}`;
-            ui.rewindBtn.disabled = !canRunAgain();
+            // (just pressed, with the first step still to come, it stays as it is: it would only blink)
+            const can = canRunAgain() || (hist.rwFresh && !paused);
+            // It shows once it has something to do. From the start of a scene it is only Restart, which R
+            // still does, unless Restart would start it differently (see "A touch of chance").
+            const idle = !can || (hist.rwFromStart && !(scene && scene.vary && !chance.exact));
+            if (idle) barFocusFrom(ui.rewindBtn);
+            ui.rewindBtn.classList.toggle('is-idle', idle);
+            ui.rewindBtn.disabled = !can;
             ui.rewindBtn.title = `${t} (R)`;
             ui.rewindBtn.setAttribute('aria-label', t);
         }
@@ -14273,8 +16560,8 @@
 
     // ------------------------------------------------------------------
     // Missions: goals a student meets by firing a probe's engine within a fuel (delta-v) budget.
-    //   Each mission is a scene of its own (the scene list's "Missions" group, or the Missions button
-    //   under it): the bodies, the probe, the body its burns are measured from, a time limit and a
+    //   Each mission is a scene of its own (the scene list's "Missions" group, or the hint line's
+    //   Missions button): the bodies, the probe, the body its burns are measured from, a time limit and a
     //   view. It starts at once, paused: the mission console takes the palette's place (the goal in a
     //   line, how it is going, the fuel, the engine, Play or a skip to the next moment that matters),
     //   and the goal is drawn on the canvas. "How it works" gives the physics idea and the par: the
@@ -14289,7 +16576,7 @@
     //   probe's velocity alone is a burn and is charged (cut short if the tank runs dry); anything else
     //   is put back, with a friendly note. Edits that would pass as burns but aren't (the Orbit tab,
     //   the eccentricity slider) and those keepView never sees (adding, deleting, dragging) are refused
-    //   where they start (missionRefuse), and their controls are greyed out (missionLockMenu,
+    //   where they start (missionRefuse), and their controls aren't shown (missionLockMenu,
     //   missionLockSidebar). Pushes are measured from the mission's reference body (Jupiter when being
     //   captured by it), whatever the probe's primary is.
     //   The fuel used and the burn log are part of the edit history's snapshots (missionSnapshot,
@@ -14310,6 +16597,7 @@
     const ENGINE_TAP = 0.015, ENGINE_HOLD = 0.12, ENGINE_FINE = 0.1;
     const ENGINE_WAIT_MS = 220, ENGINE_EVERY_MS = 50;
     const SKIP_S = 1.5;                      // a skip to the next moment that matters takes about this long to watch
+    const SUN_RING_PX = 11;                  // the ring close to the Sun is drawn no smaller than this
     const MISSION_SPEED_MAX = 2;             // the fastest the clock runs by choice: much faster and time runs out before you can fly (a skip goes faster)
     const PROMISE = 0.98;                    // a tick needs the coming pass inside this share of the goal
     const FINE_FROM = 0.08;                  // share of the tank still to burn at which the hint turns to Fine
@@ -14343,7 +16631,10 @@
     //   target's Hill sphere, zone) and meet (within D of the target, moving within V of it; a tick also
     //   needs the path to arrive within arrive of its speed, as a burn to match any faster pass costs a
     //   star; l4: within D of the point 60 degrees ahead of the target, on an orbit of its size a to within
-    //   da and with an eccentricity under eMax: a passing moment of slow relative motion isn't parking).
+    //   da and with an eccentricity under eMax: a passing moment of slow relative motion isn't parking);
+    //   and four with functions of their own (see "Missions with goals of their own"): miss (keep the
+    //   craft out of the ring of D round the target), dive (inside r of the reference body), free (behind the
+    //   target inside zone, then back inside ring of the reference body) and sling (unbound once past the target).
     const MISSIONS = (function () {
         const up = hohmann(1, 1.5), down = hohmann(1, 0.723), mars = hohmann(1, 1.524);
         // Escape from a 0.3 x 3 AU ellipse: escape speed sqrt(2GM/r) less the speed there
@@ -14370,6 +16661,27 @@
         // L4: one lap of an orbit 1/12 longer than Jupiter's, so 30 degrees are lost
         const TJ = TAU * Math.sqrt(Math.pow(5.2, 3) / (G * (1 + MJUP))), lT = TJ * 13 / 12;
         const lA = Math.cbrt(G * lT * lT / (TAU * TAU)), lDv = toKms(Math.sqrt(G * (2 / 5.2 - 1 / lA)) - Math.sqrt(G / 5.2));
+        // Deflect: an orbit crossing Earth's, met there on its way in after dL years. Earth starts where that
+        // puts it at the crossing then. Par and the later figures in the words were found by flying it. (Its
+        // arrival shifts by about 3 dv t, Ahrens & Harris 1992: over ten years 1 cm/s is 9,500 km, as the win card says.)
+        const dA = 1.5, dE = 0.4, dL = 1.2, dP = dA * (1 - dE * dE);
+        const dCross = Math.acos((dP - 1) / dE), dEcc = 2 * Math.atan(Math.sqrt((1 - dE) / (1 + dE)) * Math.tan(dCross / 2));
+        const dNu = trueAnomaly(-(dEcc - dE * Math.sin(dEcc)) - TAU * dL / Math.pow(dA, 1.5), dE) / DEG;
+        const dEarth = -dCross / DEG - 360 * dL * Math.sqrt(1 + MEARTH);
+        // Reach the Sun: straight down, or out to 5.2 AU first, where you move slowly (vis-viva at each end)
+        const sR = 0.05, sOut = hohmann(1, 5.2), sVa = Math.sqrt(G * (2 / 5.2 - 1 / sOut.a));
+        const sBack = toKms(sVa - Math.sqrt(G * (2 / 5.2 - 1 / (0.5 * (5.2 + sR)))));
+        const sDirect = toKms(Math.sqrt(G) - Math.sqrt(G * (2 - 1 / (0.5 * (1 + sR))))), sLeave = toKms((Math.SQRT2 - 1) * Math.sqrt(G));
+        // Free return from a 40,000 km orbit (Apollo's was 185 km up, too small to see here): a path that
+        // crosses the Earth-Moon line square on 8,000 km behind the Moon is its own mirror image there, so it
+        // comes back as it went (the restricted three-body problem's symmetry, y to -y and t to -t). Following
+        // that crossing back to its perigee gives where to start (the Moon this far ahead) and the burn: 1.115
+        // km/s, here the least that comes back inside the ring. Found by flying it, up to 1.29 still does.
+        const fR = 40000 / AU_KM, fLead = 111.2, fBurn = 1.12;
+        // Slingshot: the probe of the Slingshot scene a year on, with 1 km/s less speed than it had (its orbit
+        // then, read off by flying that scene). What it would take to leave the Sun from there: sqrt(2GM/r) less its speed
+        const fA = 3.151426, fE = 0.725994, fNu = 146.0887, fRs = fA * (1 - fE * fE) / (1 + fE * Math.cos(fNu * DEG));
+        const fDirect = toKms(Math.sqrt(2 * G / fRs) - Math.sqrt(G * (2 / fRs - 1 / fA)));
         const sun = { kind: 'sun' }, probe = (orbit) => ({ kind: 'probe', orbit });
         return [
             {
@@ -14409,6 +16721,23 @@
                 fail: { fuel: 'Burn at the closest point to the Sun: there the same burn adds far more energy.', time: 'Skip to the closest point to the Sun, then burn forwards.', crash: 'Burning backwards sends you into the Sun.' }
             },
             {
+                id: 'deflect', title: 'Nudge the asteroid',
+                scene: {
+                    units: 'au', Tref: 0.6, subject: 2, forceBody: 1, trail: 7, box: [-2.3, 2.3, -2.3, 2.3],
+                    bodies: [sun, { kind: 'earth', orbit: { around: 0, a: 1, e: 0, nu: dEarth } },
+                        { kind: 'asteroid', m: 5e-19, R: 1, orbit: { around: 0, a: dA, e: dE, w: 0, nu: dNu } }]
+                },
+                craft: 2, ref: 0, target: 1, own: 'the asteroid', budget: 2, limit: dL + 0.6, par: 0.28, aim: 0.28,
+                goal: { type: 'miss', D: 0.2, safe: 0.204, T: dL },
+                goalText: 'Push the asteroid so it misses the ring round Earth.',
+                idea: 'Your rocket is on an asteroid heading for Earth. A small push changes its orbit a little, and the change adds up. So the sooner you push, the less it takes. NASA\'s DART probe tested this in 2022.',
+                parText: 'a push now. Wait 6 months and it takes 1.0 km/s, and after 9 months your fuel can\'t do it. Watch the line above the fuel gauge as the clock runs.',
+                teach: 'The sooner you push, the smaller the push: ten years ahead, 1 cm/s moves an asteroid farther than Earth\'s radius.',
+                predict: () => predictApproach(Math.max(mission.def.limit - simTime, 0.02)),
+                check: deflectCheck, status: deflectStatus, skip: deflectSkip, coast: () => deflectCoast(), hint: deflectHint,
+                fail: { hit: 'Push sooner: every month you wait makes the push bigger.', fuel: 'Too late for the fuel you have. Push at the very start, and only a little.', crash: 'You pushed it into the Sun! A far smaller push will do.', time: 'Push at the very start, and only a little.' }
+            },
+            {
                 id: 'capture', title: 'Captured by Jupiter',
                 scene: {
                     units: 'au', time: 'd', Tref: 0.1, subject: 2, forceBody: 1, vref: 1.5, trail: 5, box: [-0.24, 0.24, -0.24, 0.24],
@@ -14425,6 +16754,18 @@
                 fail: { fuel: 'Brake at the closest point to Jupiter, where it counts most.', missed: 'Skip to the closest point, then hold Back until Jupiter keeps you.', crash: 'You hit Jupiter! Try a gentler burn.' }
             },
             {
+                id: 'sun', title: 'Reach the Sun',
+                scene: { units: 'au', Tref: 2, subject: 1, box: [-1.75, 1.75, -1.75, 1.75], bodies: [sun, probe({ around: 0, a: 1, e: 0, nu: 0 })] },
+                craft: 1, ref: 0, target: null, budget: 22, limit: 12, par: sOut.dv1 + sBack,
+                goal: { type: 'dive', r: sR, far: 3 },
+                goalText: 'Get inside the small ring round the Sun.',
+                idea: 'You move round the Sun at 30 km/s, and falling in means losing nearly all of it. Far from the Sun you move slowly, so a small burn there drops you in. So fly away first. The Parker Solar Probe uses Venus to shed its speed.',
+                parText: `${f1(sOut.dv1)} km/s forwards, out to 5.2 AU, then ${f1(sBack)} km/s backwards at the far point. Straight down from here takes ${f1(sDirect)} km/s, from v² = GM(2/r − 1/a).`,
+                teach: `To reach the Sun, first fly away from it. Straight down costs more than leaving the Solar System, which takes only ${f1(sLeave)} km/s.`,
+                check: sunCheck, status: sunStatus, skip: sunSkip, coast: () => sunOn(missionContext()), hint: sunHint,
+                fail: { fuel: 'Burn forwards first, out past Mars. Then slow down at the far point, where you move slowly.', time: 'Burn forwards, skip to the far point, then burn backwards until your orbit dips into the ring.', crash: 'You hit the Sun: you only need to get inside the ring.' }
+            },
+            {
                 id: 'mars', title: 'Get to Mars',
                 scene: {
                     units: 'au', Tref: 1, subject: 2, forceBody: 1, box: [-1.75, 1.75, -1.75, 1.75],
@@ -14438,6 +16779,38 @@
                 teach: 'Launch windows: Mars has to be in the right place when you set off. For real missions to Mars that happens every 26 months.',
                 hint: marsHint,
                 fail: { fuel: 'One burn of about 3 km/s, at the launch window, is nearly all it takes. Fine burns then tune it.', time: 'Skip to the launch window, burn until your closest approach is inside the goal, then skip to Mars.' }
+            },
+            {
+                id: 'free', title: 'Round the Moon',
+                scene: {
+                    units: 'km', time: 'd', Tref: 8 / DAYS_PER_YEAR, subject: 2, forceBody: 1, trail: 6, box: [-90000 / AU_KM, 450000 / AU_KM, -125000 / AU_KM, 125000 / AU_KM],
+                    bodies: [{ kind: 'earth' }, { kind: 'moon', orbit: { around: 0, a: 384400 / AU_KM, e: 0, nu: 0 } }, probe({ around: 0, a: fR, e: 0, nu: -fLead })]
+                },
+                craft: 2, ref: 0, target: 1, lock: 1, spin: 0, budget: 2, limit: 18 / DAYS_PER_YEAR, par: fBurn, aim: fBurn, lead: fLead, noGhost: true,
+                goal: { type: 'free', D: 40000 / AU_KM, ring: 60000 / AU_KM },
+                goalText: 'One burn: loop round the Moon and back inside the ring.',
+                idea: 'Aim to pass just behind the Moon. Its pull swings you round and sends you home with no second burn, on a figure of eight. Apollo 13\'s crew got home this way in 1970.',
+                parText: `the one burn. A little less hits the Moon, and much more loses you. The figure of eight takes about 8 days.`,
+                teach: 'That was a free return: even with a dead engine, the Moon sends you home.',
+                predict: () => freePredict(0),
+                check: freeCheck, status: freeStatus, skip: freeSkip, coast: () => freeOn(mission.pred), hint: freeHint,
+                fail: { fuel: 'One burn of about 1.1 km/s is all it takes: fine burns then tune it.', time: 'Hold Forward until your dashed path loops round the Moon and back inside the ring.', crash: 'Close! A little more burn passes just behind the Moon instead.' }
+            },
+            {
+                id: 'slingshot', title: 'Jupiter slingshot',
+                scene: {
+                    units: 'au', Tref: 1, subject: 2, forceBody: 1, trail: 7, vref: 2.75, box: [-8, 1.6, -4, 4.6],
+                    bodies: [sun, { kind: 'jupiter', orbit: { around: 0, a: 5.2, e: 0, nu: 0, w: 133.5024 } }, probe({ around: 0, a: fA, e: fE, w: -6.678, nu: fNu })]
+                },
+                craft: 2, ref: 0, target: 1, budget: 3, limit: 2, par: 0.96, aim: 0.98,
+                goal: { type: 'sling', far: 0.5, spare: 0.1 },
+                goalText: 'Pass just behind Jupiter to leave the Sun for good.',
+                idea: `Your fuel can't leave the Sun: that takes ${f1(fDirect)} km/s from here. But Jupiter is moving. Pass just behind it and its pull drags you along, so you leave faster than you came. The two Voyager probes left the Solar System this way.`,
+                parText: 'the burn that moves your pass to just behind Jupiter. Pass in front of it and you lose speed instead. Use Fine for the last of it.',
+                teach: 'That was a gravity assist: Jupiter lost a tiny bit of speed and you gained it.',
+                predict: () => slingPredict(0),
+                check: slingCheck, status: slingStatus, skip: slingSkip, coast: () => slingOn(mission.pred), hint: slingHint,
+                fail: { fuel: 'A small burn is all it takes. Fine burns then tune it.', time: 'Burn until the line says you leave the Sun, then skip to Jupiter.', crash: 'A little less burn passes just behind it.' }
             },
             {
                 id: 'station', title: 'Catch the station',
@@ -14497,9 +16870,11 @@
         fine: false,           // the Fine switch
         skip: null,            // a skip going on: { kind, t, late, out, speed }
         arrived: false,        // the clock has stopped for this pass of the target, or a burn has been made in it
+        rounded: false,        // free return: it has been behind the target
         gap2: Infinity, gapWas: Infinity,   // the distance to the target squared, this step and the last
         ahead: false,          // the target is short of the launch window (as of the last step)
         home: null,            // what to go back to on leaving (see missionKeepHome)
+        arrowsFor: null,       // the mission whose arrows are set up (see missionArrows)
         burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
         hintShown: '',         // the mission hint last put in the hint line
@@ -14510,7 +16885,7 @@
     };
 
     // ---- Words ----
-    const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter' };
+    const LOST_TITLE = { crash: 'Crashed', fuel: 'Out of fuel', time: 'Out of time', missed: 'You flew past Jupiter', hit: 'Too close to Earth' };
 
     // A hint asking for a full-sized burn, while Fine is still on: a Fine burn would take a long hold
     const unFine = (html, big = true) => (mission.fine && big ? `Turn off <strong>Fine</strong>. ${html}` : html);
@@ -14722,6 +17097,219 @@
         return planWorthIt(x, q) ? planHint(x, q) : 'This path misses L4. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
     }
 
+    // ---- Missions with goals of their own ----
+    // Each has check (every step: the goal, which ends the mission itself and says so), status, skip, coast
+    // (with the tank empty, does the path still get there?) and hint; those that look ahead have predict.
+    //
+    // The smallest burn along the motion, either way, that works(km/s) says does the job, as burnPlan does
+    // for a pass of a target: { kms, speed }, or null if the fuel can't pay for one. Checked at a few burns,
+    // more closely near the textbook one, then narrowed down, so what a hint asks for has been flown ahead.
+    function goalPlan(x, works) {
+        const q = mission.plan, now = performance.now(), v = x.el.v;
+        const same = !!q && q.t === simTime && Math.abs(x.vx * q.vy - x.vy * q.vx) < 1e-9 * v * v;
+        if (q && same) return q.none ? null : Object.assign(q, { kms: toKms(q.speed - v) });
+        if (q && now - q.at < PLAN_EVERY_MS) return q.none ? null : q;   // (running, the speed itself changes along the orbit)
+        const left = x.left, back = Math.min(left, 0.98 * toKms(v)), at = [], aim = x.d.aim - mission.used;
+        for (let k = 1; k <= PLAN_GRID; k++) at.push(left * (k / PLAN_GRID) * (k / PLAN_GRID));
+        for (const f of [-0.1, -0.05, -0.02, 0, 0.02, 0.05, 0.1]) if (aim > 0) at.push(aim * (1 + f));
+        at.sort((a, b) => a - b);
+        let found = null;
+        for (const sign of [1, -1]) {
+            let lo = 0;
+            for (const a of at) {
+                if (a > (sign > 0 ? left : back) || (found !== null && a >= Math.abs(found))) break;
+                if (works(sign * a)) {
+                    let hi = a;
+                    for (let it = 0; it < 8; it++) { const m = 0.5 * (lo + hi); if (works(sign * m)) hi = m; else lo = m; }
+                    found = sign * hi;
+                    break;
+                }
+                lo = a;
+            }
+        }
+        mission.plan = { t: simTime, at: now, vx: x.vx, vy: x.vy, none: found === null, speed: v + (found || 0) / AUYR_KMS, kms: found };
+        return found === null ? null : mission.plan;
+    }
+    // (a line that says a skip or Play will do)
+    const orWatch = () => (mission.skip ? '' : ', or press play and watch');
+    // (a distance of tens of thousands of km, to the nearest thousand)
+    const kmText = (au) => `${(Math.round(au * AU_KM / 1000) * 1000).toLocaleString('en-GB')} km`;
+    // (after predictApproach, its arrays hold where it stopped) Has the craft hit something there?
+    function predTouching(ci) {
+        for (let i = 0; i < bodies.length; i++) if (i !== ci && Math.hypot(PRX[i] - PRX[ci], PRY[i] - PRY[ci]) < (bodies[i].R + bodies[ci].R) / AU_KM) return i;
+        return -1;
+    }
+
+    // Nudge the asteroid: it must stay out of the ring until it has gone past, which it has once the gap
+    // grows near the time it would have hit
+    function deflectCheck(c) {
+        const g = mission.def.goal, T = bodyById(mission.targetId);
+        if (!T) return false;
+        const dx = c.x - T.x, dy = c.y - T.y, d2 = dx * dx + dy * dy, was = mission.gapWas;
+        mission.gapWas = d2;
+        if (d2 < g.D * g.D) { missionOver('lost', 'hit'); return true; }
+        if (simTime > g.T - 0.25 && d2 > was) { missionOver('won'); return true; }
+        return false;
+    }
+    const deflectOn = (x) => !!mission.pred && mission.pred.d >= x.d.goal.safe;
+    function deflectPlan(x) {
+        const g = x.d.goal, H = Math.max(x.d.limit - simTime, 0.02);
+        return goalPlan(x, (kms) => { const p = predictApproach(H, kms / AUYR_KMS); return !!p && p.d >= g.safe; });
+    }
+    // (the burn it would take, from here and now: the figure that climbs as the clock runs is the lesson)
+    function deflectStatus(x) {
+        if (deflectOn(x)) return { text: `Misses Earth by ${auText(mission.pred.d)}, goal ${auText(x.d.goal.D)}`, ok: true };
+        const q = deflectPlan(x);
+        return { text: q ? `Burn ${f2Up(Math.abs(q.kms))} km/s now to make it miss` : 'Too late: not enough fuel to make it miss', ok: false };
+    }
+    function deflectSkip(x) {
+        return deflectOn(x) ? { kind: 'pass', word: 'the pass', dt: mission.pred.t - simTime + 0.02 } : null;
+    }
+    const deflectCoast = () => !!mission.pred && mission.pred.d >= mission.def.goal.D;
+    function deflectHint(x) {
+        if (deflectOn(x)) return `Earth is safe. <strong>Skip to the pass</strong>${orWatch()}.`;
+        const q = deflectPlan(x);
+        return q ? planHint(x, q, x.burns ? null : ['', ': a small push now moves it a long way.']) : 'Too late: your fuel can\'t make it miss now. <strong>Retry</strong>, and push sooner.';
+    }
+
+    // Reach the Sun: it is won on getting there. The burn out goes to the far point; then down from there.
+    function sunCheck(c) {
+        const g = mission.def.goal, R = bodyById(mission.refId);
+        if (!R) return false;
+        const dx = c.x - R.x, dy = c.y - R.y;
+        if (dx * dx + dy * dy >= g.r * g.r) return false;
+        missionOver('won');
+        return true;
+    }
+    const sunOn = (x) => !!x && x.el.bound && x.rp <= PROMISE * x.d.goal.r;
+    function sunStatus(x) {
+        if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
+        const on = sunOn(x);
+        return { text: `Far ${f2(x.ra)}, near ${f2(x.rp)} AU, goal near ${f2(x.d.goal.r)}`, ok: on };
+    }
+    function sunSkip(x) {
+        if (!x.burns || !x.el.bound) return null;
+        if (sunOn(x)) { const dt = apsisIn(x, false); return dt ? { kind: 'pass', word: 'the Sun', dt: dt + 0.05 } : null; }
+        return x.ra >= x.d.goal.far && x.nu < 170 ? { kind: 'apo', word: 'far point', dt: apsisIn(x, true) } : null;
+    }
+    function sunHint(x) {
+        const g = x.d.goal;
+        if (!x.el.bound) return 'You are escaping the Sun! <strong>Undo</strong>, and try a smaller burn.';
+        if (sunOn(x)) return `On course! <strong>Skip to the Sun</strong>${orWatch()}.`;
+        if (!x.burns) return unFine('Hold <strong>Forward</strong> until your far point is past 5 AU: far out, you move slowly.');
+        if (x.el.a < 0.995) return 'That is the hard way down. <strong>Undo</strong>, then burn forwards first, away from the Sun.';
+        // (close to where it burned, it can still go on; farther round, a far point past g.far will do)
+        if (x.ra < 5 && x.nu < 15) return unFine('Keep going: hold <strong>Forward</strong> until your far point is past 5 AU.');
+        if (x.ra < g.far) return 'Not far enough out to save fuel. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
+        if (x.nu > 165) return unFine('<strong>Now:</strong> hold <strong>Back</strong> until your orbit dips into the ring.');
+        return skipTarget(x) ? '<strong>Skip to far point</strong>, then burn backwards: out there, you move slowly.' : 'That far point takes too long to reach. <strong>Undo</strong> your last burn.';
+    }
+    // (a small ring beside a big Sun: drawn smaller, inside its ring)
+    function sunDrawSize() {
+        const g = mission.def.goal, S = bodies[mission.def.ref];
+        S.rd = S.rh = Math.max(3, Math.min(S.rd, 0.7 * Math.max(g.r * scale, SUN_RING_PX)));
+    }
+
+    // Free return: behind the target (farther from the reference body than it is, and inside its ring),
+    // and then back inside the ring. Worked out each step, so it is the same every run.
+    function freeCheck(c) {
+        const g = mission.def.goal, R = bodyById(mission.refId), T = bodyById(mission.targetId);
+        if (!R || !T) return false;
+        const ex = c.x - R.x, ey = c.y - R.y, e2 = ex * ex + ey * ey;
+        if (!mission.rounded) {
+            const mx = c.x - T.x, my = c.y - T.y, tx = T.x - R.x, ty = T.y - R.y;
+            if (mx * mx + my * my < g.D * g.D && e2 > tx * tx + ty * ty) mission.rounded = true;
+        }
+        if (mission.rounded && e2 < g.ring * g.ring) { missionOver('won'); return true; }
+        return false;
+    }
+    // The same, looking ahead: the closest pass of the target (d), then from behind it the closest to home
+    // (back) and when it comes inside the ring (t)
+    function freePredict(kick) {
+        const d = mission.def, g = d.goal, ci = d.craft, ri = d.ref, ti = d.target;
+        let behind = mission.rounded, back = Infinity, tIn = 0;
+        const H = Math.max(d.limit - simTime, 1e-3);
+        const p = predictApproach(H, kick, (t) => {
+            const ex = PRX[ci] - PRX[ri], ey = PRY[ci] - PRY[ri], e2 = ex * ex + ey * ey;
+            if (!behind) {
+                const mx = PRX[ci] - PRX[ti], my = PRY[ci] - PRY[ti], tx = PRX[ti] - PRX[ri], ty = PRY[ti] - PRY[ri];
+                if (mx * mx + my * my < g.D * g.D && e2 > tx * tx + ty * ty) behind = true;
+            }
+            if (!behind) return false;
+            if (!tIn && e2 < g.ring * g.ring) tIn = t;
+            if (e2 < back) back = e2;
+            return tIn > 0 && e2 > 1.01 * back;   // (past the closest point: that is all it is asked)
+        });
+        if (!p) return null;
+        const hit = predTouching(ci);
+        return Object.assign(p, { behind, back: Math.sqrt(back), home: tIn > 0, t: simTime + (tIn || H), hit: hit < 0 || tIn ? '' : theName(bodies[hit]) });
+    }
+    const freeOn = (p) => !!p && !p.hit && p.home && p.back < PROMISE * mission.def.goal.ring;
+    function freeStatus(x) {
+        const g = x.d.goal, p = mission.pred;
+        if (!p) return { text: '', ok: false };
+        if (p.hit) return { text: `This path hits ${p.hit}`, ok: false };
+        if (!p.behind) return { text: `Closest to the Moon: ${kmText(p.d)}`, ok: false };
+        return { text: `Round the Moon, back to ${kmText(p.back)}, goal ${kmText(g.ring)}`, ok: freeOn(p) };
+    }
+    function freeSkip(x) {
+        if (freeOn(mission.pred)) return { kind: 'pass', word: 'Earth', dt: mission.pred.t - simTime + 1e-3 };
+        // (it comes round each lap, so the clock stops there, on the step after: see missionArrival)
+        const off = x.phase - x.d.lead;
+        if (x.burns || (off < 1.5 && off > -6)) return null;
+        const rate = x.el.h / (x.el.r * x.el.r) - Math.sqrt(x.el.mu / Math.pow(x.tr, 3));
+        return { kind: 'pass', word: 'launch window', dt: 1.02 * ((off + 360) % 360) * DEG / rate };
+    }
+    function freeHint(x) {
+        if (freeOn(mission.pred)) return `On course! <strong>Skip to Earth</strong>${orWatch()}.`;
+        const wait = '<strong>Skip to launch window</strong>: the Moon has to be in the right place.';
+        if (!paused) return x.burns ? 'This path won\'t come home. <strong>Pause</strong> for what to do next.' : wait;
+        const q = goalPlan(x, (kms) => freeOn(freePredict(kms / AUYR_KMS)));
+        if (x.burns) return q ? planHint(x, q) : 'This path won\'t come home. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.';
+        // (a burn from anywhere else on the way round would cost more than the window's)
+        return q && Math.abs(q.kms) <= STARS_AT[0] * x.d.par ? planHint(x, q, ['', ': your dashed path loops round the Moon.']) : wait;
+    }
+
+    // Slingshot: bound or not is worth asking only well clear of the target, moving away from it. The
+    // pull of the planet there is a few hundredths of the energies in question.
+    function slingCheck(c) {
+        const g = mission.def.goal, R = bodyById(mission.refId), T = bodyById(mission.targetId);
+        if (!R || !T) return false;
+        const dx = c.x - T.x, dy = c.y - T.y, ux = c.vx - T.vx, uy = c.vy - T.vy;
+        if (dx * dx + dy * dy < g.far * g.far || dx * ux + dy * uy < 0) return false;
+        const rx = c.x - R.x, ry = c.y - R.y, vx = c.vx - R.vx, vy = c.vy - R.vy;
+        if (0.5 * (vx * vx + vy * vy) - G * (R.m + c.m) / hyp(rx, ry) < 0) return false;
+        missionOver('won');
+        return true;
+    }
+    // The coming pass (predictApproach), and how the path stands at the end of the time, well past the target:
+    // how many km/s it is short of the speed to leave (under 0: to spare)
+    function slingPredict(kick) {
+        const d = mission.def, ci = d.craft, ri = d.ref;
+        const p = predictApproach(Math.max(d.limit - simTime, 0.02), kick);
+        if (!p) return null;
+        const r = Math.hypot(PRX[ci] - PRX[ri], PRY[ci] - PRY[ri]), v = Math.hypot(PRVX[ci] - PRVX[ri], PRVY[ci] - PRVY[ri]), esc = 2 * G * (PRM[ri] + PRM[ci]) / r;
+        return Object.assign(p, { short: toKms(v * v >= esc ? -Math.sqrt(v * v - esc) : Math.sqrt(esc) - v), hit: predTouching(ci) >= 0 });
+    }
+    const slingOn = (p) => !!p && !p.hit && p.short <= -mission.def.goal.spare;
+    function slingStatus() {
+        const p = mission.pred;
+        if (!p) return { text: '', ok: false };
+        if (p.hit) return { text: 'This path hits Jupiter', ok: false };
+        return slingOn(p) ? { text: `You leave the Sun, ${f1(-p.short)} km/s to spare`, ok: true } : { text: `Falls back after Jupiter, ${f1Up(Math.max(p.short, 0))} km/s short`, ok: false };
+    }
+    function slingSkip() {
+        const p = mission.pred;
+        return slingOn(p) ? { kind: 'pass', word: 'Jupiter', dt: p.t - simTime + 0.4 } : null;
+    }
+    function slingHint(x) {
+        if (slingOn(mission.pred)) return `On course! <strong>Skip to Jupiter</strong>${orWatch()}.`;
+        if (!paused) return 'This path falls back. <strong>Pause</strong> for what to do next.';
+        const q = goalPlan(x, (kms) => slingOn(slingPredict(kms / AUYR_KMS)));
+        if (q) return planHint(x, q, x.burns ? null : ['', ': it moves your pass to just behind Jupiter.']);
+        return x.burns ? 'This path falls back. <strong>Undo</strong> your last burn, or <strong>Retry</strong>.' : 'Too late from here. <strong>Retry</strong>.';
+    }
+
     // ---- The state the console, hints and checks read ----
     // The target as seen from the reference body (rotated 60 degrees ahead for L4)
     function targetNow(R, T, l4) {
@@ -14768,6 +17356,7 @@
         if (mission.status === 'lost') return { text: LOST_TITLE[mission.reason] || 'Mission over', ok: false };
         if (!x) return { text: '', ok: false };
         const d = x.d, g = d.goal;
+        if (d.status) return d.status(x);
         switch (g.type) {
             case 'orbit': {
                 if (!x.el.bound) return { text: 'Escaping the Sun!', ok: false };
@@ -14808,13 +17397,13 @@
     function missionHintText() {
         const x = missionContext();
         mission.tell = null;
+        // (hints off, it says nothing: the switch is by the clock, and a failure's card has a hint of its own.
+        // A win's card says it all.)
+        if (!mission.hints || mission.status === 'won') return '';
         const orUndo = mission.log.length ? ', or undo your last burn' : '';
         if (!x) return mission.status === 'lost' ? `<strong>Retry</strong>${orUndo}.` : '';
-        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
         if (mission.status === 'lost') return `<strong>Retry</strong>${orUndo}${orUndo && ' and fly it differently'}.`;
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
-        // (one line, whatever the clock is doing: a held burn stops it, and the words mustn't flicker)
-        if (!mission.hints) return 'Burn, watch the dashed path, and play on. Stuck? Turn on <strong>Hints</strong>.';
         return x.d.hint(x);
     }
     // (setHint's default during a mission: the mission's own hint)
@@ -14840,8 +17429,8 @@
     // Is this edit off limits in a mission? Shows a friendly note if so. Aiming the probe's own arrow is
     // allowed, and stops the clock while it is aimed (a held body stays put while time runs).
     function missionRefuse(what, b) {
-        if (!mission.def) return false;
-        const craft = !!b && b.id === mission.craftId;
+        if (!mission.def) return cannonRefuse(what, b);
+        const craft = !!b && b.id === mission.craftId, own = mission.def.own || 'your probe';
         if (what === 'aim' && craft && !missionIsOver()) {
             if (!paused) { setPaused(true); mission.aimPaused = true; }
             return false;
@@ -14849,11 +17438,11 @@
         const notes = {
             add: 'no new bodies. Leave the mission to build your own.',
             delete: 'nothing can be removed.',
-            move: craft ? 'your probe changes course by burns, not by dragging.'
-                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only your probe can change course.`,
-            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : 'only your probe has an engine.',
-            orbit: 'orbits change only by your probe\'s burns.',
-            other: 'only your probe\'s engine can change anything.'
+            move: craft ? `${own} changes course by burns, not by dragging.`
+                : `${b ? escapeHtml(b.name) : 'it'} keeps to its path. Only ${own} can change course.`,
+            aim: craft ? 'the mission is over. Retry, or undo your last burn.' : `only ${own} has an engine.`,
+            orbit: `orbits change only by ${own}'s burns.`,
+            other: `only ${own}'s engine can change anything.`
         };
         missionNote(`<strong>Mission rules:</strong> ${notes[what] || notes.orbit}`);
         return true;
@@ -15039,7 +17628,7 @@
         clearTimeout(f.timer);
         mission.firing = null;
         // (an orbit stretched past the view: the view makes room for it)
-        if (mission.def && mission.def.goal.type === 'orbit') keepOrbitInView(missionCraft());
+        if (mission.def && (mission.def.goal.type === 'orbit' || mission.def.goal.type === 'dive')) keepOrbitInView(missionCraft());
         resumeAfterAim();
         updateMissionConsole();
     }
@@ -15081,7 +17670,8 @@
         if (!x || missionIsOver()) return null;
         const d = x.d, g = d.goal;
         let s = null;
-        if (g.type === 'orbit') {
+        if (d.skip) s = d.skip(x);
+        else if (g.type === 'orbit') {
             const apo = g.r > 1;
             // (once the orbit touches the ring: short of it or past it, the second burn won't round it off there)
             if (x.burns && x.el.bound && Math.abs((apo ? x.ra : x.rp) / g.r - 1) <= g.tol && (apo ? x.nu < 170 : x.nu > 10)) s = { kind: apo ? 'apo' : 'peri', word: apo ? 'far point' : 'closest point', dt: apsisIn(x, apo) };
@@ -15192,7 +17782,9 @@
         if (near) mission.nearId = near.id;
         if (nearK < 1) { missionOver('lost', 'crash'); return; }
         const d = mission.def, g = d.goal;
-        if (g.type === 'reach' || g.type === 'meet') {
+        if (d.check) {
+            if (d.check(c)) return;
+        } else if (g.type === 'reach' || g.type === 'meet') {
             if (missionMet(c)) { missionOver('won'); return; }
         } else if (++mission.steps % ORBIT_CHECK_EVERY === 0) {
             const out = missionCheckNow(c);
@@ -15255,6 +17847,7 @@
     // The tank is empty: lost, unless coasting still gets there (a target ahead on the path)
     function missionFuelCheck() {
         const g = mission.def.goal;
+        if (mission.def.coast) { refreshPrediction(true); if (mission.def.coast()) return; }
         if (g.type === 'reach' || g.type === 'meet') {
             refreshPrediction(true);
             const p = mission.pred;
@@ -15318,7 +17911,7 @@
         return Math.sqrt(tmin);
     }
 
-    function predictApproach(H, kick) {
+    function predictApproach(H, kick, watch) {
         const n = bodies.length, g = mission.def.goal, reach = g.zone;
         const ci = bodies.findIndex((q) => q.id === mission.craftId), ri = bodies.findIndex((q) => q.id === mission.refId), ti = bodies.findIndex((q) => q.id === mission.targetId);
         if (ci < 0 || ri < 0 || ti < 0 || n > PRX.length) return null;
@@ -15349,6 +17942,7 @@
                 for (let i = 0; i < n; i++) { PRVX[i] += 0.5 * h * PRAX[i]; PRVY[i] += 0.5 * h * PRAY[i]; }
             }
             read(b);
+            if (watch && watch(t + dt)) break;
             // The closest point of this step, the gap moving in a straight line over so short a time
             const ex = b.gx - a.gx, ey = b.gy - a.gy, ee = ex * ex + ey * ey;
             const f = ee > 0 ? clamp(-(a.gx * ex + a.gy * ey) / ee, 0, 1) : 0, gd = Math.hypot(a.gx + f * ex, a.gy + f * ey);
@@ -15369,11 +17963,11 @@
 
     function refreshPrediction(force) {
         const d = mission.def;
-        if (!d || (d.goal.type !== 'reach' && d.goal.type !== 'meet')) { mission.pred = null; return; }
+        if (!d || (d.goal.type !== 'reach' && d.goal.type !== 'meet' && !d.predict)) { mission.pred = null; return; }
         const p = mission.pred;
         if (!force && !mission.predDirty && p && simTime < p.t && simTime - p.t0 < 0.1 * p.h && simTime >= p.t0) return;
         mission.predDirty = false;
-        mission.pred = predictApproach(Math.max(d.limit - simTime, 0.02));
+        mission.pred = d.predict ? d.predict() : predictApproach(Math.max(d.limit - simTime, 0.02));
     }
 
     // ---- Starting, leaving, undo ----
@@ -15385,7 +17979,7 @@
             def, status: 'ready', reason: '', crashedInto: '', used: 0, log: [], steps: 0, result: null, resultShown: false,
             craftId: bodies[def.craft].id, refId: bodies[def.ref].id, targetId: def.target !== null ? bodies[def.target].id : null,
             nearId: null, pred: null, predDirty: true, plan: null, tell: null, aimPaused: false, burst: 0,
-            arrived: false, gapWas: Infinity, ahead: false
+            arrived: false, gapWas: Infinity, ahead: false, rounded: false
         });
         clearTimeout(mission.burstTimer);
         endSkip();
@@ -15393,9 +17987,11 @@
         if (def.lock !== undefined) {
             // (the view follows the body it is about, and the box is round it)
             frameId = bodies[def.lock].id;
+            missionSpin(def);
             syncFrameUi();
             fitBox(def.scene.box, false);
         }
+        missionArrows(def);
         // Every mission starts at the same pace, and the arrow keys are for the engine from now on
         // (not for the scene list, if it was picked there with the mouse)
         missionSpeedRange(true);
@@ -15413,12 +18009,19 @@
         setHint();
     }
 
+    // A mission that turns with a pair (lock and spin, bodies in the scene) has them stand still, as a
+    // rotating view would, no glide and no note; the line between them always across the canvas
+    function missionSpin(def) {
+        if (def.spin !== undefined) restoreTurning({ a: bodies[def.spin].id, up: 0 });
+    }
+
     function endMission() {
         clearTimeout(mission.burstTimer);
         endSkip();
         engineStop();
         missionSpeedRange(false);
         if (mission.home) setSpeedValue(mission.home.speed);
+        missionArrowsBack();
         Object.assign(mission, { def: null, status: 'off', pred: null, plan: null, tell: null, aimPaused: false, result: null, home: null });
         hideMissionPanel();
         missionUi(false);
@@ -15439,6 +18042,35 @@
         mission.home = missionByKey(settings.scene) ? { speed: settings.speed } : {
             snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup(), stability: settings.stability, stabAuto: stab.auto
         };
+    }
+
+    // The arrows in a mission show only what the player can change. The pull arrows start off (the switch
+    // in the settings brings them back, for this mission and any retry of it) and only the probe has a teal
+    // arrow. The player's own settings wait in mission.home, and aren't what a link made meanwhile says.
+    function showArrows(forces, velocities) {
+        settings.forces = forces;
+        settings.velocities = velocities;
+        if (ui.forces) ui.forces.checked = forces;
+        if (ui.velocities) ui.velocities.checked = velocities;
+    }
+    function missionArrows(def) {
+        if (mission.arrowsFor === def) return;
+        mission.arrowsFor = def;
+        const h = mission.home;
+        if (h && !h.arrows) h.arrows = { forces: settings.forces, velocities: settings.velocities };
+        showArrows(false, true);
+    }
+    function missionArrowsBack() {
+        const a = mission.home && mission.home.arrows;
+        if (a) showArrows(a.forces, a.velocities);
+        mission.arrowsFor = null;
+    }
+    function missionHidesTeal(b) {
+        return mission.def !== null && b.id !== mission.craftId;
+    }
+    function settingsForSetup() {
+        const a = mission.def && mission.home && mission.home.arrows;
+        return a ? Object.assign({}, settings, a) : settings;
     }
 
     // Back to free play: the system as it was, its speed, its view, its way of time, running or paused.
@@ -15477,7 +18109,7 @@
         return {
             id: mission.def.id, craftId: mission.craftId, refId: mission.refId, targetId: mission.targetId,
             used: mission.used, log: mission.log.slice(), status: mission.status,
-            reason: mission.reason, crashedInto: mission.crashedInto, result: mission.result
+            reason: mission.reason, crashedInto: mission.crashedInto, result: mission.result, rounded: mission.rounded
         };
     }
 
@@ -15491,7 +18123,7 @@
             def, craftId: m.craftId, refId: m.refId, targetId: m.targetId, used: m.used, log: m.log.slice(), status: m.status,
             reason: over ? m.reason : '', crashedInto: over ? m.crashedInto : '', result: over ? m.result : null,
             resultShown: false, aimPaused: false, predDirty: true, plan: null, tell: null, steps: 0,
-            arrived: true, gapWas: Infinity, ahead: false   // (back in the ring by undo: no second stop for it)
+            arrived: true, gapWas: Infinity, ahead: false, rounded: !!m.rounded   // (back in the ring by undo: no second stop for it)
         });
         clearTimeout(mission.burstTimer);
         mission.burst = 0;
@@ -15502,6 +18134,8 @@
         if (over) setPaused(true);
         if (was !== def) {
             if (!was) { mission.home = { speed: settings.speed }; missionSpeedRange(true); setSpeedValue(1); }
+            if (!turn.on) missionSpin(def);
+            missionArrows(def);
             missionUi(true);
             syncEccentricity(true);
         }
@@ -15531,33 +18165,35 @@
     }
 
     // ---- Locks on the menu and the sidebar ----
-    // (the end of updateEditor) In a mission the Orbit tab, mass, radius, Circular and Delete are greyed
-    // out, and for any body but the probe the Velocity tab too
+    // (the end of updateEditor) In a mission the menu shows only what can be changed (see orbits_styles.css):
+    // no Orbit tab, sliders for mass and radius, Circular or Delete, and for any body but the probe no
+    // Velocity tab. They are disabled too, so no key reaches them.
     function missionLockMenu(b) {
         const on = !!mission.def;
         if (!on && !mission.menuLocked) return;
         mission.menuLocked = on;
+        const craft = on && b.id === mission.craftId;
+        ui.pop.classList.toggle('is-mission', on);
+        ui.pop.classList.toggle('is-other', on && !craft);
         if (ui.popMass) ui.popMass.disabled = on;
         if (ui.popDelete) ui.popDelete.disabled = on;
         if (!on) return;
-        const craft = b.id === mission.craftId;
         for (const el of edit.orbitEls) el.disabled = true;
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only your probe has an engine: ${theName(b)} keeps to its path.`;
-        setText(ui.popOrbitShape, why);
-        if (!craft) setText(ui.popAngleNote, why);
+        // (the tab it was on has gone: the Velocity tab for the probe, as it opens, or Body)
+        if (edit.tab === 'orbit' || (edit.tab === 'vel' && !craft)) selectTab(craft ? 'vel' : 'body');
     }
     // (syncEccentricity) the eccentricity slider
     function missionLockSidebar() {
         if (!mission.def) return;
         if (ui.ecc) ui.ecc.disabled = true;
-        setText(ui.eccNote, 'In a mission, orbits change only by burns of your probe\'s engine.');
+        setText(ui.eccNote, `In a mission, orbits change only by burns of ${mission.def.own || 'your probe'}'s engine.`);
     }
 
-    // ---- The console, the card over the canvas, the Missions button, the scene list ----
-    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, missionsBtn: null, mc: null });
+    // ---- The console, the card over the canvas, the hint's Missions button, the scene list ----
+    Object.assign(ui, { simWrap: document.querySelector('.orbits-sim'), toolbar: byId('orbToolbar'), missionPanel: null, mc: null });
     const toolIcon = (name) => `<span class="icon solid fa-${name}" aria-hidden="true"></span>`;
 
     function buildMissionUi() {
@@ -15586,29 +18222,8 @@
             ['pointerdown', 'dblclick', 'wheel'].forEach((t) => P.addEventListener(t, (e) => e.stopPropagation()));
         }
         if (ui.toolbar) buildMissionConsole();
-        // In the settings, under the scene list: a button into the missions (beside "Random system"),
-        // and the line saying what they are
+        // The missions' group, at the end of the scene list
         if (ui.scene) {
-            const group = ui.scene.closest('.sim-control-group') || ui.scene.parentElement;
-            const row = byId('sceneButtons');
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'orb-mission-btn';
-            btn.id = 'missionsBtn';
-            btn.setAttribute('aria-describedby', 'missionsNote');
-            btn.title = `${MISSIONS.length} missions, easy to hard (M)`;
-            btn.innerHTML = `${toolIcon('rocket')}Missions`;
-            let note = byId('missionsNote');
-            if (!note) {
-                note = document.createElement('p');
-                note.className = 'orb-note';
-                note.id = 'missionsNote';
-                note.textContent = `Fly a probe to a goal on a fuel budget: ${MISSIONS.length} missions, easy to hard, also at the end of the scene list.`;
-                group.append(note);
-            }
-            if (row) row.prepend(btn); else group.insertBefore(btn, note);
-            ui.missionsBtn = btn;
-            btn.addEventListener('click', openMissions);
             const og = document.createElement('optgroup');
             og.label = 'Missions';
             for (const m of MISSIONS) {
@@ -15692,7 +18307,7 @@
                 return;
             }
             if (mission.status === 'ready') startFlying();
-            setPaused(!paused);
+            pressPause(!paused);
             updateMissionConsole();
         });
         E.skip.addEventListener('click', startSkip);
@@ -15719,7 +18334,7 @@
         if (panel && toggle && panel.classList.contains('panel-open') && (any || document.body.classList.contains('sim-panel-sheet'))) toggle.click();
     }
 
-    // The Missions button (and M): straight into the first mission the first time, afterwards the list.
+    // The hint's Missions button (and M): straight into the first mission the first time, afterwards the list.
     // (From the keyboard, a key press or a button's click with no pointer, the focus goes along.)
     function openMissions(e) {
         closeSettingsSheet(true);
@@ -15793,7 +18408,8 @@
         E.playIcon.hidden = won;
         E.playIcon.classList.toggle('fa-play', !running);
         E.playIcon.classList.toggle('fa-pause', running);
-        E.play.hidden = st === 'lost';
+        // (the way on after a win is the card's while the card is up, this one's when it has been closed)
+        E.play.hidden = st === 'lost' || (won && (mission.panel === 'result' || !mission.resultShown));
         const s = over ? null : skipTarget(x);
         E.skip.hidden = !s && !mission.skip;
         E.skip.disabled = !!mission.skip;
@@ -15898,6 +18514,7 @@
         // (if the focus was in it, it goes back to the page rather than to nowhere)
         const had = P.contains(document.activeElement);
         P.hidden = true;
+        updateMissionConsole();
         if (had && byUser) document.activeElement.blur();
         if (byUser) resumeAfterAim();
     }
@@ -15968,6 +18585,12 @@
             ring(cx, cy, g.r * scale, `goal: ${g.r} AU`);
         } else if (g.type === 'capture') {
             ring(cx, cy, g.lim * scale, 'goal: orbit inside');
+        } else if (g.type === 'dive') {
+            const r = Math.max(g.r * scale, SUN_RING_PX);
+            ring(cx, cy, r, null);
+            labels.push(markName(`goal: ${g.r} AU`, cx, cy, r));
+        } else if (g.type === 'free') {
+            ring(cx, cy, g.ring * scale, 'goal: back inside');
         }
         const T = mission.targetId !== null ? bodyById(mission.targetId) : null;
         if (g.l4 && T) {
@@ -15983,13 +18606,13 @@
             labels.push(markName('L4', lx, ly, Math.max(7, g.D * scale) + 1, true));
         } else if (T) {
             // The ring to get inside, round the target; and Mars's path, to fly out to
-            ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), null);
+            if (g.type !== 'sling') ring(sx(T.dx), sy(T.dy), Math.max((g.type === 'reach' ? g.zone : g.D) * scale, 6), g.type === 'miss' ? 'keep out' : null);
             if (g.type === 'reach') ring(cx, cy, Math.hypot(T.dx - R.dx, T.dy - R.dy) * scale, null);
         }
         const p = mission.pred, c = bodyById(mission.craftId);
         // Where the next burn goes: a world offset from R, turned as the view is turned
         const x = c && mission.hints && !missionIsOver() ? missionContext() : null, next = skipTarget(x);
-        if (next && next.kind !== 'meet') {
+        if (next && next.kind !== 'meet' && next.kind !== 'pass') {
             const ang = turn.on ? turnAngleIn(0) : 0;
             const at = (wx, wy) => [cx + (Math.cos(ang) * wx - Math.sin(ang) * wy) * scale, cy - (Math.sin(ang) * wx + Math.cos(ang) * wy) * scale];
             let spot, label = 'burn here';
@@ -16010,7 +18633,8 @@
             ctx.stroke();
             labels.push(markName(label, spot[0], spot[1], 9));
         }
-        const ghost = p && T && c && mission.log.length && mission.status === 'flying' && p.t > simTime;
+        // (those that look ahead for themselves show it from the start, when it is what the mission is about)
+        const ghost = p && T && c && !d.noGhost && (d.predict ? !missionIsOver() : mission.log.length && mission.status === 'flying') && p.t > simTime;
         // (the places predicted are world offsets from R at that time: turned as the view will be turned
         // then, so in a rotating frame they are seen from the pair as it will be)
         const ga = ghost ? turnAngleIn(p.t - simTime) : 0, gc = Math.cos(ga), gs = Math.sin(ga);
@@ -16118,7 +18742,7 @@
             burns: mission.log.length / 2, log: mission.log.slice(), time: simTime, paused,
             result: mission.result ? Object.assign({}, mission.result) : null, best: bestOf(d.id),
             goal: Object.assign({ type: g.type }, g, g.V ? { V: toKms(g.V) } : {}), now,
-            closest: p && (g.type === 'reach' || g.type === 'meet') ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
+            closest: p && (g.type === 'reach' || g.type === 'meet' || d.predict) ? { d: p.d, dv: toKms(p.dv), inYears: p.t - simTime, px: mission.ghostPx } : null,
             panel: mission.panel, hint: mission.hintShown, craft: x ? x.c.name : null,
             skip: mission.skip ? mission.skip.kind : null, offers: skipTarget(x), speed: settings.speed, firing: !!mission.firing,
             tell: mission.tell ? Object.assign({}, mission.tell) : null
@@ -16138,6 +18762,12 @@
         if (w === viewW && h === viewH && newDpr === dpr) { syncDrawer(rect); return; }
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        const wasWide = view.wide;
+        view.wide = getComputedStyle(canvas).getPropertyValue('--orb-view-wide').trim() === '1';
+        // (Settings moves the graphs from beside the canvas to under it and back: the page follows them)
+        if (wasWide !== view.wide && chartsVisible() && !document.body.classList.contains('sim-fullscreen-active')) {
+            if (wasWide) revealCharts(); else if (chartsFrom !== null) window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
+        }
         syncDrawer(rect);
         if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);
@@ -16233,11 +18863,46 @@
     function updateTrailLabel() {
         const n = TRAIL_STEPS[settings.trailIndex];
         setText(ui.trailVal, n === 0 ? 'off' : fmtDuration(n * scene.Tref));
+        if (ui.trail) ui.trail.title = scene.swarm ? 'Longer adds a trail to every dot' : '';   // (see swarmTrails)
+    }
+
+    // Running, a body is drawn up to a step on from the physics (lag); paused, exactly at it. So that pressing Pause
+    // or Play doesn't make everything jump by that much, the drawn moment glides there, for drawing only. Anything else
+    // pressed, or asked of the simulation, means the real place at once (settleLag), so Step, drags and clicks start
+    // from it. Pauses that nobody pressed (a rewind reaching the start, a mission's) don't glide.
+    const PAUSE_EASE_MS = 180;
+    const lagEase = { d: 0, t: 0 };   // how far the drawn moment was from where it should be (years), and when
+    const lagWanted = () => (paused ? 0 : timeDir * clamp(acc, 0, nextDt));   // (drawn a moment back if time runs backwards)
+    function pressPause(p) {
+        setPaused(p);
+        lagEase.d = lag - lagWanted();
+        lagEase.t = performance.now();
+    }
+    function easedLag() {
+        const want = lagWanted(), E = lagEase;
+        if (!E.d) return want;
+        const u = (performance.now() - E.t) / PAUSE_EASE_MS;
+        if (u >= 1) { E.d = 0; return want; }
+        return want + E.d * (1 - u) * (1 - u);
+    }
+    function settleLag() {
+        if (!lagEase.d) return;
+        lagEase.d = 0;
+        lag = lagWanted();
+        updateDrawnPositions();
+    }
+
+    // A bar button about to go hands the keyboard's focus on, or it would be lost: to Pause, or a mission's Play
+    function barFocusFrom(btn) {
+        if (!btn || document.activeElement !== btn) return;
+        const heir = mission.def && ui.mc ? ui.mc.play : ui.pause;
+        if (heir) heir.focus({ preventScroll: true });
     }
 
     function setPaused(p) {
         paused = !!p;
         if (!ui.pause) return;
+        if (!paused) barFocusFrom(ui.step);   // (it shows while paused: see the styles)
         ui.pause.setAttribute('aria-pressed', paused ? 'true' : 'false');
         ui.pause.setAttribute('aria-label', paused ? 'Play' : 'Pause');
         ui.pause.title = paused ? 'Play (Space)' : 'Pause (Space)';
@@ -16248,6 +18913,8 @@
     let focusByPointer = false;
 
     function bindControls() {
+        // (first, so that a press is settled before anything that listens for it looks for a body or starts to glide)
+        for (const t of ['pointerdown', 'keydown', 'click', 'input', 'change']) window.addEventListener(t, settleLag, { capture: true, passive: true });
         const bindCheck = (el, key, after) => {
             if (!el) return;
             el.checked = settings[key];
@@ -16274,7 +18941,7 @@
         }
         if (ui.scene) {
             ui.scene.value = settings.scene;
-            ui.scene.addEventListener('change', () => loadScene(ui.scene.value));
+            ui.scene.addEventListener('change', () => openScene(ui.scene.value));
         }
         if (ui.ecc) {
             ui.ecc.addEventListener('input', () => {
@@ -16303,8 +18970,8 @@
             syncPlacementNote();
         }
         if (ui.fit) ui.fit.addEventListener('click', fitAll);
-        if (ui.pause) ui.pause.addEventListener('click', () => setPaused(!paused));
-        if (ui.reset) ui.reset.addEventListener('click', () => window.orbitsSimulation.reset());
+        if (ui.pause) ui.pause.addEventListener('click', () => pressPause(!paused));
+        if (ui.reset) ui.reset.addEventListener('click', () => window.orbitsSimulation.reset(true));
         if (ui.showCharts) {
             ui.showCharts.addEventListener('change', () => setChartsVisible(ui.showCharts.checked));
             setChartsVisible(ui.showCharts.checked);
@@ -16315,7 +18982,7 @@
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
         canvas.addEventListener('pointerleave', (e) => {
-            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim'); hoverAim = null; }
+            if (!drags.has(e.pointerId)) { canvas.classList.remove('orb-can-grab', 'orb-can-aim', 'orb-can-pick'); hoverAim = null; hoverName = null; }
         });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -16342,7 +19009,7 @@
             const presses = (t.tagName === 'INPUT' && t.type !== 'range') || ['SELECT', 'BUTTON', 'SUMMARY', 'A', 'LABEL'].includes(t.tagName);
             if (types || (presses && !focusByPointer)) return;
             if (presses) t.blur();
-            setPaused(!paused);
+            pressPause(!paused);
             e.preventDefault();
         }, true);
         // (how the focus last moved: within a moment of a press or a click, it was the pointer's doing)
@@ -16369,6 +19036,7 @@
         window.addEventListener('pointercancel', hintLetGo, true);
         window.addEventListener('click', () => { hintPressed = false; setTimeout(refreshHint, 0); }, true);
         bindHint();
+        bindArrowSize();
         bindTurn();
     }
 
@@ -16390,7 +19058,7 @@
     function resting(now) {
         if (!paused || now < wakeUntil || now >= restNext) return false;
         if (pred.job || (pred.shown && now - pred.shown.t < PATH_BLEND_MS)) return false;
-        return !drags.size && !paletteDrag && !view.anim && view.shift === view.shiftTo && !flashes.length && !well.next && !forcesDirty && !turnEase() && now >= speedFlash && !mission.def;
+        return !drags.size && !paletteDrag && !view.anim && view.shift === view.shiftTo && !flashes.length && !well.next && !forcesDirty && !turnEase() && !lagEase.d && now >= speedFlash && !mission.def;
     }
     function bindRest() {
         for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize']) {
@@ -16399,7 +19067,7 @@
         const api = window.orbitsSimulation;
         for (const k of Object.keys(api)) {
             const fn = api[k];
-            if (typeof fn === 'function') api[k] = function (...args) { wake(); return fn.apply(this, args); };
+            if (typeof fn === 'function') api[k] = function (...args) { wake(); settleLag(); return fn.apply(this, args); };
         }
         if (typeof IntersectionObserver !== 'undefined') {
             new IntersectionObserver((es) => { canvasInView = es[es.length - 1].isIntersecting; }).observe(canvas);
@@ -16436,7 +19104,7 @@
             if (forcesDirty) computeForces();
         }
         const t1 = performance.now();
-        lag = paused ? 0 : timeDir * clamp(acc, 0, nextDt);   // (drawn a moment back if time runs backwards)
+        lag = easedLag();
         if (bodies.length <= SWARM_N || ts >= primNext) { computePrimaries(); primNext = ts + 100; }
         stepViewAnimation(dtReal);
         updateScale();
@@ -16498,8 +19166,9 @@
     }
 
     window.orbitsSimulation = {
-        reset() { loadScene(settings.scene); if (!mission.def) setPaused(false); },
-        loadScene(key) { if (ui.scene) ui.scene.value = key; loadScene(key); },
+        // (roll: as the Restart button does. Otherwise the scene's exact start, or a given seed's: see "A touch of chance")
+        reset(roll) { if (roll) openScene(settings.scene); else loadScene(settings.scene); if (!mission.def) setPaused(false); },
+        loadScene(key, seed) { if (ui.scene) ui.scene.value = key; loadScene(key, seed); },
         scenes: () => Object.keys(SCENES),
         getState() {
             const E = systemEnergy();
@@ -16548,16 +19217,20 @@
         // (world positions: a rotating frame turns them, see turnPoint)
         toScreen(x, y) { updateDrawnPositions(); const d = turnPoint(x, y); return { x: sx(d.x), y: sy(d.y) }; },
         toWorld(px, py) { updateDrawnPositions(); return unturnPoint(wx(px), wy(py)); },
+        // The swarm's trails on canvases (see "kept on canvases"), for tests: true turns that off
+        trailLayer(off) {
+            if (off !== undefined) swarmLayer.off = !!off;
+            return { off: swarmLayer.off, built: swarmLayer.built, tiles: swarmLayer.tiles.length, T: swarmLayer.T, span: swarmLayer.span, k: swarmLayer.k, builds: swarmLayer.builds, samples: sampleCount };
+        },
         fit: fitAll,
         fitBox(box) { fitBox(box, false); },
         setCleanRender(v) { cleanRender = !!v; },
-        // What the relativity card and the bent starlight are showing, for tests
+        // What the relativity card is showing, for tests
         clockInfo() {
             updateClock();
             const b = bodyById(clock.id);
             return b ? { name: b.name, x: clock.x, loss: clock.loss, lostPerYear: clockLost(clock.loss) } : null;
         },
-        lensInfo: () => ({ drawn: lens.drawn, D: lens.D, E0: lens.E0, note: lens.note, Epx: lens.E0 * scale }),
         setRealistic(v) { if (ui.realistic) ui.realistic.checked = !!v; settings.realistic = !!v; forcesDirty = true; },
         flyby() { return Object.assign({}, flyby, { pts: flyby.pts.length / 2 }); },
         // The path predicted for a body if it were launched now with world velocity (vx, vy): points
@@ -16573,6 +19246,8 @@
             const ref = pp.refId !== null ? bodyById(pp.refId) : null;
             return { ref: ref ? ref.name : null, end: pp.end, pts: pp.pts.slice() };
         },
+        // The arrows' size as drawn last (see sizeArrows)
+        arrowSizing: () => ({ k: arrowK, back: arrowBack, busy: arrowsBusy, au: arrowSpan.au, mode: settings.arrowSize, vPx: legend.vPx, vKms: legend.kms, fPx: legend.fPx, N: legend.N }),
         // Where the velocity handle of a body is on the canvas (CSS px), and its arrow's length
         handle(name) {
             const b = bodies.find((q) => q.name === name);
@@ -16704,6 +19379,11 @@
         });
     })();
 
+    // The drag preview's size (for testing)
+    Object.assign(window.orbitsSimulation, {
+        ghostSize(kind, x, y) { const k = KINDS[kind]; return ghostRadius({ kind: k.as || kind, m: k.m, R: k.R, grp: null }, x, y); }
+    });
+
     // Edit history (undo, redo, run again): each returns whether it did anything
     Object.assign(window.orbitsSimulation, {
         undo: () => undoStep(),
@@ -16725,7 +19405,9 @@
     // Many bodies and close pairs: what the integrator is doing (for testing)
     Object.assign(window.orbitsSimulation, {
         // The close pairs followed by the exact two-body drift
-        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast, hosted: p.hosted })),
+        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast, orbit: p.orbit, hosted: p.hosted })),
+        // The bodies whose trails are drawn from their orbits (see orbitTrail)
+        orbitTrails: () => bodies.filter(trailOrbit).map((b) => b.name),
         // The gas round compact bodies: how much of it, its mean eccentricity, the energy it has lost, goes logged
         gas() {
             const r = [];
@@ -16779,13 +19461,14 @@
             },
             setOverlays(o) {
                 if (o && o.pulls !== undefined) setPullLines(o.pulls);
+                if (o && o.pullSum !== undefined) setPullSum(o.pullSum);
                 if (o && o.limits !== undefined) setLimits(o.limits);
                 return api.overlays();
             },
             // What the overlays and the Gravity tab show now (sizes in km, lengths in CSS px)
             overlays() {
                 const b = bodyById(selectedId);
-                const out = { pulls: settings.pulls, limits: settings.limits, body: b ? b.name : null };
+                const out = { pulls: settings.pulls, pullSum: settings.pullSum, limits: settings.limits, body: b ? b.name : null };
                 if (b && bodies.length > 1) {
                     const P = gatherPulls(b, true);
                     out.net = {
@@ -17015,7 +19698,7 @@
             settings.placement = was;
             // (relative to the view where it is, along the screen's directions: see viewVelocity)
             updateDrawnPositions();
-            const rel = viewVelocity(b, frameVelocity()), v = Math.hypot(rel.x, rel.y);
+            const rel = viewVelocity(b, drawnFrameVelocity()), v = Math.hypot(rel.x, rel.y);
             const want = Math.hypot(dx, dy) / (ms / 1000) / (scale * settings.speed * rate());
             return { v, kms: v * AUYR_KMS, expected: want, expectedKms: want * AUYR_KMS, vx: rel.x, vy: rel.y };
         },
@@ -17062,6 +19745,21 @@
         }
     });
     bindPlayControls();
+
+    // The sky strip: who is looking at what, the direction (degrees), how fast it changes (degrees a day), the
+    // last reversal found in the trails and where the strip is drawn
+    Object.assign(window.orbitsSimulation, {
+        skyInfo() {
+            skyFollow();
+            if (!sky.T) return null;
+            skyScan();
+            return {
+                viewer: sky.V.name, target: sky.T.name, lon: sky.lon, rate: sky.rate, retro: sky.rate < 0,
+                from: isNaN(sky.from) ? null : sky.from, to: isNaN(sky.from) ? null : sky.to, days: isNaN(sky.from) ? null : sky.days, whole: sky.whole,
+                strip: sky.bottom ? { x0: sky.x0, x1: sky.x1, top: sky.top, bottom: sky.bottom } : null
+            };
+        }
+    });
 
     // Rotating frame, gravity well and Lagrange points (see "Rotating frame" after syncFrameUi)
     Object.assign(window.orbitsSimulation, {
@@ -17114,6 +19812,509 @@
         wellInfo: () => Object.assign({ on: settings.well, cost: well.cost, count: well.count, wait: well.wait }, well.info || {})
     });
     bindWell();
+
+    // ------------------------------------------------------------------
+    // Newton's cannon, his own thought experiment (A Treatise of the System of the World, 1728): a cannon on a
+    //   mountain so tall that it is above the air. The faster the shot, the farther it falls before it lands, until
+    //   the ground curves away as fast as it falls: it is always falling, but it keeps missing. Faster still, it
+    //   swings out on a wider ellipse, and past the escape speed it never comes back.
+    //   A true-size Earth in km, and the cannon 100 km up (the Karman line, the usual edge of space. This simulation
+    //   has no air anyway; in the real thin air up there, an orbit this low would soon come down). The speeds are worked
+    //   out for that height from the file's G and Earth's mass: sqrt(GM/r) = 7.85 km/s to go round, sqrt(2GM/r) = 11.10
+    //   km/s to escape, a lap in 86.3 minutes. (The textbook's 7.9 and 11.2 km/s are the same formulas at the ground.)
+    //   The mountain and the cannon are a mark, larger than life whenever 100 km is only a few px; the muzzle is at the
+    //   true height.
+    //   Each shot is a real body, a probe's mass (800 kg), moved by the same gravity and the same steps as everything
+    //   else. They can't touch each other (see touching); their pull on Earth, and on each other, is some 22 orders
+    //   of magnitude too small to matter. A swarm scene, so they are plain dots with no names or arrows unless chosen.
+    //   A shot that reaches the ground stops there with a small mark (cannonStep): not through mergeBodies or collide, so
+    //   Earth stays exactly as it was, whatever Merge and Realistic physics are set to.
+    //   Its path is kept here, not in the trails: the points it really went through, relative to Earth, until it lands,
+    //   leaves, or has gone once round (cannon.shots, drawn by drawCannon). They are part of the edit history's snapshots,
+    //   so Undo takes a shot back and Run again fires the last one again, and of a link and the autosave, as at most
+    //   CANNON_LINK_PTS points of each path in whole km. Restart clears them. Run backwards is off in this scene: paths that
+    //   stay drawn have no way to un-draw themselves, and Undo does the same job.
+    // ------------------------------------------------------------------
+    const CANNON_H = 100;                 // km: how high the cannon is
+    const CANNON_LAP = TAU * Math.sqrt(Math.pow((KINDS.earth.R + CANNON_H) / AU_KM, 3) / (G * KINDS.earth.m));   // yr: once round from there (8 s on screen at 1x: a Tref of 0.75 of it)
+    const CANNON_MAX = 12;                // paths kept (past this, the oldest goes)
+    const CANNON_FAR = 30000 / AU_KM;     // well out of the view: what has become of a shot is said by here, and one not coming back stops being followed
+    const CANNON_STEP = 0.02;             // a new path point after moving this share of its distance from Earth (about a degree)
+    const CANNON_LINK_PTS = 90;
+    const CANNON_FIRST = 6;               // km/s: the speed the slider starts on
+    // The slider's stops, km/s (with the graze, circular and escape speeds among them). Nearly every stop draws something
+    // new, so they are closest where the range changes fastest: 7 km/s lands 2,240 km away, and 7.8 km/s 11,660 km.
+    const CANNON_LANDS = [3, 4, 5, 6, 6.5, 7, 7.25, 7.5, 7.7, 7.8], CANNON_ROUND = [8, 8.25, 8.5, 9, 9.5, 10, 10.5, 11], CANNON_OUT = [11.5, 12, 13, 15, 20];
+    const cannon = {
+        on: false,
+        shots: [],                        // { id (its body, while it flies; else 0), v (km/s), color, text, pts, n, swept (radians round Earth), full (gone once round), end (1 landed, 2 left), said, t0 }
+        stops: [], stop: 0,               // the slider's speeds, and which
+        m: 0, R: 0, vg: 0, vc: 0, ve: 0,  // Earth as they were worked out for, and the speeds that grazes, goes round, escapes
+        quiet: null,                      // the body chosen by the scene, for the readouts: no arrows or ring for it, until pressed (a ring round Earth would look like a path)
+        boxes: new Float64Array(4 * (CANNON_MAX + 2))
+    };
+    // (minutes: the clock and periods read in minutes, as a low orbit's do; underneath, its time is in seconds)
+    SCENES.cannon = {
+        units: 'km', time: 's', minutes: true, Tref: 0.75 * CANNON_LAP, cannon: true, swarm: true, noClock: true, subject: 0, trail: 0, vref: 7.85 / AUYR_KMS,
+        box: [-9500, 9500, -13000, 9000].map((v) => v / AU_KM),
+        tip: () => cannonPrompt(),
+        bodies: [{ kind: 'earth' }]
+    };
+
+    const cannonEarth = () => { for (const b of bodies) if (b.kind === 'earth') return b; return null; };
+    const cannonSpeedText = (v) => `${+v.toFixed(2)} km/s`;
+    function cannonMix(c1, c2, t) {
+        const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+        const ch = (s) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t).toString(16).padStart(2, '0');
+        return `#${ch(16)}${ch(8)}${ch(0)}`;
+    }
+    // A path's colour says what kind it is: warm, it lands; green to blue, it goes round; violet to pink, it leaves
+    function cannonColour(i) {
+        const S = cannon.stops, g = S.findIndex((v) => v >= cannon.vg), e = S.findIndex((v) => v >= cannon.ve);
+        if (i < g) return cannonMix('#ff5f52', '#ffd166', i / Math.max(1, g - 1));
+        if (i < e) return cannonMix('#9be35f', '#38bdf8', (i - g) / Math.max(1, e - g - 1));
+        return cannonMix('#b68cff', '#ff7ad9', (i - e) / Math.max(1, S.length - e - 1));
+    }
+
+    // The speeds and the slider's stops for Earth as it is (its menu can change it; for the true one, round numbers)
+    function cannonSync(E) {
+        if (E.m === cannon.m && E.R === cannon.R) return;
+        const was = cannon.stops.length ? cannon.stops[cannon.stop] / (cannon.vc / cannonVc0()) : CANNON_FIRST;
+        cannon.m = E.m; cannon.R = E.R;
+        const R = E.R / AU_KM, r = (E.R + CANNON_H) / AU_KM, mu = G * (E.m + KINDS.probe.m);
+        const vc = Math.sqrt(mu / r) * AUYR_KMS, ve = Math.SQRT2 * vc, k = vc / cannonVc0();
+        const vg = Math.sqrt(mu * (2 / r - 2 / (r + R))) * AUYR_KMS, g = Math.ceil(vg * 100) / 100;   // (going round, closest at the ground: a = (r + R) / 2)
+        cannon.vg = vg; cannon.vc = vc; cannon.ve = ve;
+        const scaled = (list) => list.map((v) => v * (Math.abs(k - 1) < 1e-9 ? 1 : k));
+        cannon.stops = scaled(CANNON_LANDS).filter((v) => v < vg).concat(g < vc ? [g] : [], [vc], scaled(CANNON_ROUND).filter((v) => v > vc && v < ve), [ve], scaled(CANNON_OUT));
+        let best = 0;
+        cannon.stops.forEach((v, i) => { if (Math.abs(v - was * k) < Math.abs(cannon.stops[best] - was * k)) best = i; });
+        cannon.stop = best;
+        cannonSyncUi(true);
+    }
+    const cannonVc0 = () => Math.sqrt(G * (KINDS.earth.m + KINDS.probe.m) / ((KINDS.earth.R + CANNON_H) / AU_KM)) * AUYR_KMS;
+
+    // (from loadScene) A new start clears the shots, in this scene or leaving it
+    function cannonSceneLoaded(def) {
+        cannon.shots = [];
+        cannonUi(!!def.cannon);
+        if (!def.cannon) return;
+        cannon.quiet = selectedId;
+        const E = cannonEarth(), r = (E.R + CANNON_H) / AU_KM, f = (G * KINDS.probe.m * E.m) / r;
+        forceRef = f / r;
+        energyExp = Math.floor(Math.log10(f * ENERGY_J));
+        cannonSync(E);
+        cannonSyncUi(false);
+    }
+
+    function cannonUi(on) {
+        if (cannon.on === on || !ui.cn) return;
+        cannon.on = on;
+        if (ui.simWrap) ui.simWrap.classList.toggle('orb-cannon-on', on);
+        if (ui.toolbar && !mission.def) ui.toolbar.setAttribute('aria-label', on ? 'The cannon' : 'Add bodies');
+        ui.cn.box.hidden = !on;
+    }
+
+    // ---- Firing ----
+    function cannonPoint(q, x, y) {
+        if (2 * q.n + 2 > q.pts.length) { const a = new Float64Array(2 * q.pts.length); a.set(q.pts); q.pts = a; }
+        q.pts[2 * q.n] = x; q.pts[2 * q.n + 1] = y;
+        q.n++;
+    }
+
+    function cannonFire() {
+        const E = cannonEarth();
+        if (!E || !scene.cannon || dragging()) return null;
+        flushEdit();
+        commitStep(snapshot(), { label: 'fire the cannon', target: null, key: 'fire' }, false);
+        // (at the escape speed, a billionth over, so that rounding can't leave it bound for ever on a far-off ellipse)
+        const v = cannon.stops[cannon.stop] * (cannon.stops[cannon.stop] === cannon.ve ? 1 + 1e-9 : 1), text = cannonSpeedText(v), r = (E.R + CANNON_H) / AU_KM;
+        // A path at this speed is drawn again, not drawn twice; and the oldest goes once there are too many
+        const same = cannon.shots.find((q) => q.text === text);
+        if (same) cannonForget(same);
+        if (cannon.shots.length >= CANNON_MAX) cannonForget(cannon.shots[0]);
+        const color = cannonColour(cannon.stop);
+        const b = newBody({ name: `${text} shot`, kind: 'probe', m: KINDS.probe.m, R: KINDS.probe.R, color });
+        // (fired in the same moment, a metre apart: in one place, their pull on each other would have no size)
+        let x0 = 0;
+        for (const q of cannon.shots) if (q.id && q.t0 === simTime) x0 += 1e-3 / AU_KM;
+        b.x = b.px = b.dx = E.x + x0; b.y = b.py = b.dy = E.y + r;
+        b.vx = b.pvx = E.vx + v / AUYR_KMS; b.vy = b.pvy = E.vy;
+        bodies.push(b);
+        clearTrail(b);
+        const q = { id: b.id, v, color, text, pts: new Float64Array(256), n: 0, swept: 0, full: false, end: 0, said: false, t0: simTime };
+        cannonPoint(q, x0, r);
+        cannon.shots.push(q);
+        computeForces();
+        computePrimaries();
+        refreshBodyLists();
+        selectBody(b.id);
+        cannon.quiet = b.id;
+        flashes.push({ x: E.x, y: E.y + r, t: performance.now(), color, r0: 1.5, grow: 9 });
+        clearHint('note');
+        if (paused) setPaused(false);
+        cannonSyncUi(false);
+        return b;
+    }
+
+    // A shot and its path, gone (its flight, if it is still flying)
+    function cannonForget(q) {
+        const i = cannon.shots.indexOf(q);
+        if (i >= 0) cannon.shots.splice(i, 1);
+        const b = q.id ? bodyById(q.id) : null;
+        if (b) cannonDrop(b);
+    }
+
+    // A flight over: if it was the chosen body, the choice passes to the newest still flying, if any
+    function cannonDrop(b) {
+        if (selectedId === b.id) {
+            const E = cannonEarth();
+            let next = E ? E.id : null;
+            for (const q of cannon.shots) if (q.id && q.id !== b.id) next = q.id;
+            selectBody(next);
+            cannon.quiet = next;
+        }
+        removeBody(b, null);
+        computeForces();
+    }
+
+    // ---- In flight ----
+    // After each step, before any merging. The ground is reached along the ball's own orbit: where it ended the step
+    // inside Earth, or where it passed its closest point during the step (a lone ball's exact drift covers about a degree).
+    function cannonStep() {
+        const E = cannonEarth();
+        if (!E) return;
+        for (const q of cannon.shots) {
+            if (!q.id) continue;
+            const b = bodyById(q.id);
+            if (!b) { q.id = 0; continue; }   // (deleted from its menu: the path stays as far as it got)
+            if (b.held) continue;
+            if (b.kep) b.kep.touch = false;   // (the ground is seen to here)
+            const x0 = b.px - E.px, y0 = b.py - E.py, x = b.x - E.x, y = b.y - E.y, r = hyp(x, y);
+            const reach = (E.R + b.R) / AU_KM;
+            let hit = r < reach ? elementsOf(b, E) : null;
+            if (!hit && x0 * (b.pvx - E.pvx) + y0 * (b.pvy - E.pvy) < 0 && x * (b.vx - E.vx) + y * (b.vy - E.vy) >= 0) {
+                const el = elementsOf(b, E);
+                if (el.p / (1 + el.e) < reach) hit = el;
+            }
+            if (hit) { cannonLand(q, b, E, hit, x0, y0, reach); continue; }
+            q.swept += Math.abs(Math.atan2(x0 * y - y0 * x, x0 * x + y0 * y));
+            if (!q.full) {
+                const k = 2 * q.n - 2;
+                if (hyp(x - q.pts[k], y - q.pts[k + 1]) > CANNON_STEP * r) cannonPoint(q, x, y);
+                if (q.swept >= TAU) { cannonPoint(q, x, y); q.full = true; }
+            }
+            if (!q.said && (q.swept >= Math.PI || r > CANNON_FAR)) cannonSayOrbit(q, b, E);
+            if (r > CANNON_FAR && elementsOf(b, E).energy >= 0) {
+                cannonPoint(q, x, y);
+                q.id = 0; q.end = 2;
+                cannonDrop(b);
+                cannonSyncUi(false);
+            }
+        }
+    }
+
+    // Where its orbit crosses the ground on the way in (relElements: w points to the closest point, h the way round)
+    function cannonLand(q, b, E, el, x0, y0, reach) {
+        const nu = Math.acos(clamp((el.p / reach - 1) / Math.max(el.e, 1e-12), -1, 1));
+        const a = el.w + (el.h < 0 ? nu : -nu), lx = reach * Math.cos(a), ly = reach * Math.sin(a);
+        q.swept += Math.abs(Math.atan2(x0 * ly - y0 * lx, x0 * lx + y0 * ly));
+        cannonPoint(q, lx, ly);
+        q.id = 0; q.end = 1;
+        cannonDrop(b);
+        flashes.push({ x: E.x + lx, y: E.y + ly, t: performance.now(), color: q.color, r0: 1.5, grow: 9 });
+        const km = q.swept * E.R, far = (Math.round(km / 10) * 10).toLocaleString('en-US');
+        if (km > 0.25 * TAU * E.R) cannonSay(q, 'So close:', ` it lands ${far} km away.`);
+        else cannonSay(q, 'Too slow:', ` it hits the ground, ${far} km away.`);
+        cannonSyncUi(false);
+    }
+
+    // Half way round without landing (past its closest point, so it never will), or far out of the view
+    function cannonSayOrbit(q, b, E) {
+        const el = elementsOf(b, E), above = (el.p / (1 + el.e)) * AU_KM - E.R;
+        if (el.energy >= 0) cannonSay(q, 'Gone:', ' fast enough to escape.');
+        else if (el.a * (1 + el.e) > CANNON_FAR) cannonSay(q, 'Not quite gone:', ` it comes back in ${fmtDuration(el.T)}.`);
+        else if (above < 50) cannonSay(q, 'Just missed:', ` it skims ${Math.round(above)} km above the ground, and keeps going.`);
+        else if (el.e < 0.01) cannonSay(q, 'It keeps falling, and keeps missing.', ` Once round takes ${fmtDuration(el.T)}.`);
+        else cannonSay(q, 'Still falling, still missing.', ` A wider orbit, once round in ${fmtDuration(el.T)}.`);
+        refreshHint();
+    }
+
+    // What became of a shot. (If another has been fired since, which one this is about)
+    function cannonSay(q, bold, rest) {
+        q.said = true;
+        const newest = q === cannon.shots[cannon.shots.length - 1];
+        eventNote(newest ? bold : `${q.text}, ${bold.charAt(0).toLowerCase()}${bold.slice(1)}`, rest, 7000);
+    }
+
+    // What to try next: the tip and the usual hint in this scene
+    function cannonPrompt() {
+        if (!cannonEarth()) return 'No Earth, no cannon. Restart brings it back.';
+        let round = false, out = false;
+        for (const q of cannon.shots) { if (q.v >= cannon.ve) out = true; else if (q.v >= cannon.vg) round = true; }
+        if (!cannon.shots.length) return 'Choose a speed and fire. Can you make a shot that never lands?';
+        if (!round && !out) return 'Faster! Can you make a shot that never lands?';
+        if (!out) return 'It never lands. Now, how fast before it never comes back?';
+        return round ? 'Try the speeds in between, and compare the paths.' : 'Too fast to come back. Try a slower shot that stays.';
+    }
+
+    // ---- Undo, redo, run again, links ----
+    // (Paths only grow, past the end a copy knows about, so finished or not they can be shared until put back)
+    const cannonSnapshot = () => (scene.cannon ? cannon.shots.map((q) => Object.assign({}, q)) : null);
+
+    function cannonRestore(list) {
+        cannon.shots = (list || []).map((q) => {
+            const c = Object.assign({}, q);
+            if (c.id) { c.pts = new Float64Array(Math.max(256, 4 * q.n)); c.pts.set(q.pts.subarray(0, 2 * q.n)); }
+            return c;
+        });
+        cannonUi(!!scene.cannon);
+        if (!scene.cannon) return;
+        if (timeDir < 0) setReverse(false, true);
+        cannon.quiet = selectedId;
+        clearHint('note');
+        const E = cannonEarth();
+        if (E) cannonSync(E);
+        cannonSyncUi(false);
+    }
+
+    // In a link: [body id or 0, km/s, colour, end, how far round, said, [x, y, then each next point's step from the last, in km]]
+    function cannonSetup(s) {
+        if (!s.cannon) return undefined;
+        return s.cannon.map((q) => {
+            const every = Math.max(1, Math.ceil(q.n / CANNON_LINK_PTS)), pts = [];
+            let px = 0, py = 0;
+            const add = (i) => { const x = Math.round(q.pts[2 * i] * AU_KM), y = Math.round(q.pts[2 * i + 1] * AU_KM); pts.push(x - px, y - py); px = x; py = y; };
+            for (let i = 0; i < q.n - 1; i += every) add(i);
+            add(q.n - 1);
+            return [q.id, q.v, q.color, q.end, +q.swept.toFixed(5), q.said ? 1 : 0, pts];
+        });
+    }
+
+    // Read back and checked, like the rest of a setup (ids: the bodies it has)
+    function readCannon(rows, ids) {
+        if (!Array.isArray(rows)) return [];
+        const out = [];
+        for (const r of rows.slice(-CANNON_MAX)) {
+            if (!Array.isArray(r) || r.length !== 7 || !Array.isArray(r[6]) || r[6].length < 2 || r[6].length % 2 || r[6].length > 4 * CANNON_LINK_PTS) continue;
+            if (!(r[1] > 0 && r[1] < 1e6) || !Number.isFinite(r[4]) || !r[6].every(Number.isFinite) || typeof r[2] !== 'string' || !/^#[0-9a-f]{6}$/i.test(r[2])) continue;
+            const n = r[6].length / 2, pts = new Float64Array(Math.max(256, 4 * n));
+            let x = 0, y = 0;
+            for (let i = 0; i < n; i++) { x += r[6][2 * i]; y += r[6][2 * i + 1]; pts[2 * i] = x / AU_KM; pts[2 * i + 1] = y / AU_KM; }
+            const id = ids.has(r[0]) ? r[0] : 0;
+            out.push({ id, v: r[1], color: r[2], text: cannonSpeedText(r[1]), pts, n, swept: Math.abs(r[4]), full: Math.abs(r[4]) >= TAU, end: id ? 0 : r[3] === 1 ? 1 : r[3] === 2 ? 2 : 0, said: !!r[5], t0: -1 });
+        }
+        return out;
+    }
+
+    // In this scene a drag moves the view, not Earth or a ball, and Earth stays
+    function cannonRefuse(what, b) {
+        if (!scene.cannon) return false;
+        if (what === 'move' || (what === 'aim' && b && b.id === cannon.quiet)) return true;
+        if (what === 'delete' && b && b.kind === 'earth') { historyNote('<strong>The cannon needs its Earth.</strong> Restart clears the shots.'); return true; }
+        return false;
+    }
+
+    // ---- Drawing ----
+    // Over Earth: the paths, the landing marks, the balls, the cannon on its mountain, and each path's speed
+    function drawCannon(C) {
+        const E = cannonEarth();
+        if (!E) return;
+        cannonSync(E);
+        const c = turn.c, s = turn.s, ox = sx(E.dx), oy = sy(E.dy);   // (a rotating view turns them too)
+        const shots = cannon.shots;
+        ctx.lineWidth = clamp(1.7 * sizeScale, 1.3, 2.2);
+        for (const q of shots) {
+            const P = q.pts;
+            ctx.strokeStyle = bodyStroke(q.color, C.dark);
+            ctx.beginPath();
+            ctx.moveTo(ox + (c * P[0] - s * P[1]) * scale, oy - (s * P[0] + c * P[1]) * scale);
+            for (let i = 1; i < q.n; i++) {
+                const x = P[2 * i], y = P[2 * i + 1];
+                ctx.lineTo(ox + (c * x - s * y) * scale, oy - (s * x + c * y) * scale);
+            }
+            const b = q.id && !q.full ? bodyById(q.id) : null;
+            if (b) ctx.lineTo(sx(b.dx), sy(b.dy));
+            ctx.stroke();
+            if (q.end === 2) cannonGoneMark(q, ox, oy, c, s);
+        }
+        // Landing marks and the balls: dots with a thin edge in the background's colour, to stand out where paths meet
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = C.bg;
+        for (const q of shots) {
+            const b = q.id ? bodyById(q.id) : null;
+            if (!b && q.end !== 1) continue;
+            const k = 2 * q.n - 2;
+            const x = b ? sx(b.dx) : ox + (c * q.pts[k] - s * q.pts[k + 1]) * scale, y = b ? sy(b.dy) : oy - (s * q.pts[k] + c * q.pts[k + 1]) * scale;
+            ctx.fillStyle = bodyStroke(q.color, C.dark);
+            ctx.beginPath();
+            ctx.arc(x, y, (b ? 3.4 : 2.4) * clamp(sizeScale, 0.8, 1.1), 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+        }
+        cannonMark(C, E, ox, oy, c, s);
+        if (settings.labels && !cleanRender) cannonLabels(C, E, ox, oy, c, s);
+    }
+
+    // A shot no longer followed is still going: its path, seen by zooming out, ends in an arrowhead
+    function cannonGoneMark(q, ox, oy, c, s) {
+        const P = q.pts, k = 2 * q.n - 2, x = P[k], y = P[k + 1], ax = P[k - 2], ay = P[k - 1];
+        const X = ox + (c * x - s * y) * scale, Y = oy - (s * x + c * y) * scale;
+        if (X < visL - 12 || X > visR + 12 || Y < -12 || Y > viewH + 12) return;
+        const a = Math.atan2(-(s * (x - ax) + c * (y - ay)), c * (x - ax) - s * (y - ay)), L = 7;
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.moveTo(X, Y);
+        ctx.lineTo(X - L * Math.cos(a - 0.45), Y - L * Math.sin(a - 0.45));
+        ctx.lineTo(X - L * Math.cos(a + 0.45), Y - L * Math.sin(a + 0.45));
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // The mountain, its peak where the muzzle is, 100 km up: at least a few px of it, so at most zooms larger than life
+    // (it stands in Earth's disc then, and the true height still shows above the ground). Its gun points along the shots.
+    function cannonMark(C, E, ox, oy, c, s) {
+        const r = (E.R + CANNON_H) / AU_KM, z = 1.25 * clamp(sizeScale, 0.8, 1.1);
+        const h = Math.max((CANNON_H / AU_KM) * scale, 10 * z), w = Math.max(1.2 * h, 11 * z);
+        ctx.save();
+        ctx.translate(ox - s * r * scale, oy - c * r * scale);
+        ctx.rotate(-turn.phi);
+        ctx.fillStyle = C.dark ? '#8f8778' : '#7a7263';
+        ctx.beginPath();
+        ctx.moveTo(-w, h); ctx.lineTo(0, 0); ctx.lineTo(w, h);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = C.dark ? '#f2f2ee' : '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(-0.3 * w, 0.3 * h); ctx.lineTo(0, 0); ctx.lineTo(0.3 * w, 0.3 * h);
+        ctx.closePath();
+        ctx.fill();
+        // The gun: a barrel with its muzzle at the point the shots start from, on a wheel
+        ctx.fillStyle = C.dark ? '#d5dae2' : '#3d434d';
+        ctx.strokeStyle = C.bg;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, -1.6 * z); ctx.lineTo(-11 * z, -2.6 * z); ctx.lineTo(-11 * z, 2.2 * z); ctx.lineTo(0, 1.6 * z);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(-6.5 * z, 2.6 * z, 2.6 * z, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Each path's speed, at the visible point of it farthest round from the cannon (so a lander's at its end, an orbit's on
+    // the far side, and one that leaves where it goes off the canvas), outwards from Earth and clear of the others
+    function cannonLabels(C, E, ox, oy, c, s) {
+        const fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13), B = cannon.boxes;
+        ctx.font = font(fs);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = hexA(C.bg, 0.8);
+        // Left of the gun (the shots go right), up and away from Earth
+        const r = (E.R + CANNON_H) / AU_KM, mx = ox - s * r * scale, my = oy - c * r * scale, name = `Cannon, ${CANNON_H} km up`, nw = nameWidth(name, fs);
+        const nl = mx - 20 - nw, nt = my - fs - 6;
+        B[0] = nl; B[1] = nt; B[2] = nl + nw; B[3] = nt + fs;
+        ctx.fillStyle = C.label;
+        ctx.strokeText(name, nl, nt);
+        ctx.fillText(name, nl, nt);
+        let placed = 1;
+        // (those that have settled first: one still moving keeps clear of them, not the other way round)
+        for (let k = 2 * cannon.shots.length - 1; k >= 0; k--) {
+            const q = cannon.shots[k % cannon.shots.length], P = q.pts;
+            if ((q.id !== 0 && !q.full) !== (k < cannon.shots.length)) continue;
+            let best = 2, ax = 0, ay = 0;
+            for (let i = 0; i < q.n; i++) {
+                const x = P[2 * i], y = P[2 * i + 1];
+                const X = ox + (c * x - s * y) * scale, Y = oy - (s * x + c * y) * scale;
+                if (X < visL + 6 || X > visR - 6 || Y < 6 || Y > viewH - 6) continue;
+                const round = y / hyp(x, y);   // (the cannon is straight up: 1 beside it, -1 on the far side)
+                if (round < best) { best = round; ax = X; ay = Y; }
+            }
+            if (best > 0.9999) continue;   // (none of it in view, or only just out of the muzzle)
+            const dx = ax - ox, dy = ay - oy, d = hyp(dx, dy) || 1, ux = dx / d, uy = dy / d, w = nameWidth(q.text, fs);
+            let box = null;
+            for (let t = 0; t < 8; t++) {
+                box = labelBox(ax + ux * (6 + t * (fs + 3)), ay + uy * (6 + t * (fs + 3)), ux, uy, w, fs);
+                let free = true;
+                for (let i = 0; i < placed && free; i++) free = !(box.l < B[4 * i + 2] && box.r > B[4 * i] && box.t < B[4 * i + 3] && box.b > B[4 * i + 1]);
+                if (free) break;
+            }
+            B[4 * placed] = box.l; B[4 * placed + 1] = box.t; B[4 * placed + 2] = box.r; B[4 * placed + 3] = box.b;
+            placed++;
+            // (words need more contrast than lines on a light background)
+            ctx.fillStyle = C.dark ? q.color : bodyStroke(bodyStroke(q.color, false), false);
+            ctx.strokeText(q.text, box.l, box.t);
+            ctx.fillText(q.text, box.l, box.t);
+        }
+    }
+
+    // ---- The console: in the palette's place in this scene ----
+    function buildCannonConsole() {
+        if (!ui.toolbar) return;
+        const B = document.createElement('section');
+        B.className = 'orb-cannon';
+        B.id = 'cannonConsole';
+        B.hidden = true;
+        B.setAttribute('aria-label', 'The cannon');
+        B.innerHTML = '<label class="orb-cn-read" for="cannonSpeed"><span>Speed</span><strong id="cannonVal"></strong></label>'
+            + '<input type="range" id="cannonSpeed" min="0" max="1" step="1" value="0" aria-label="Speed of the shot">'
+            + '<div class="orb-cn-zones" id="cannonZones" aria-hidden="true"><span>Lands</span><span>Goes round</span><span>Gone</span></div>'
+            + '<div class="orb-cn-btns"><button type="button" class="orb-cn-fire" id="cannonFire" title="Fire the cannon (or Enter on the slider)">Fire</button>'
+            + '<button type="button" class="orb-cn-clear" id="cannonClear" title="Clear the paths: the same as Restart">Clear</button></div>';
+        ui.toolbar.prepend(B);
+        ui.cn = { box: B, val: byId('cannonVal'), speed: byId('cannonSpeed'), zones: byId('cannonZones'), fire: byId('cannonFire'), clear: byId('cannonClear') };
+        // (a button pressed with the pointer leaves the focus where it was, so Space still plays and pauses)
+        B.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button')) e.preventDefault(); });
+        ui.cn.speed.addEventListener('input', () => { cannon.stop = clamp(+ui.cn.speed.value | 0, 0, cannon.stops.length - 1); cannonSyncUi(false); });
+        ui.cn.speed.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!e.repeat) cannonFire(); } });
+        ui.cn.fire.addEventListener('click', cannonFire);
+        ui.cn.clear.addEventListener('click', () => { if (ui.reset) ui.reset.click(); });
+    }
+
+    // whole: the slider's stops have changed too
+    function cannonSyncUi(whole) {
+        const N = ui.cn;
+        if (!N) return;
+        N.fire.disabled = !cannonEarth();
+        if (!cannon.stops.length) return;
+        if (whole) {
+            const S = cannon.stops, last = S.length - 1;
+            N.speed.max = String(last);
+            const a = S.findIndex((v) => v >= cannon.vg) / last, b = S.findIndex((v) => v >= cannon.ve) / last;
+            N.box.style.setProperty('--orb-cn-a', `calc(8px + (100% - 16px) * ${a.toFixed(4)})`);
+            N.box.style.setProperty('--orb-cn-b', `calc(8px + (100% - 16px) * ${b.toFixed(4)})`);
+            N.zones.style.gridTemplateColumns = `${(100 * a).toFixed(2)}% ${(100 * (b - a)).toFixed(2)}% minmax(0, 1fr)`;
+            N.speed.title = `From ${CANNON_H} km up, above the air: ${cannon.vc.toFixed(2)} km/s to go round, ${cannon.ve.toFixed(2)} km/s to escape`;
+        }
+        if (+N.speed.value !== cannon.stop) N.speed.value = String(cannon.stop);
+        const v = cannon.stops[cannon.stop], text = v === cannon.vc ? `${v.toFixed(2)} km/s, a circle` : v === cannon.ve ? `${v.toFixed(2)} km/s, escape` : cannonSpeedText(v);
+        setText(N.val, text);
+        N.speed.setAttribute('aria-valuetext', text);
+        N.clear.classList.toggle('is-unused', !cannon.shots.length);   // (its place is kept, so Fire doesn't move under a finger)
+        refreshHint();
+    }
+
+    Object.assign(window.orbitsSimulation, {
+        // Fire at the slider's stop nearest v km/s (the speed is its own stop, so vc and ve can be asked for exactly)
+        cannonFire(v) {
+            let best = 0;
+            cannon.stops.forEach((s, i) => { if (Math.abs(s - v) < Math.abs(cannon.stops[best] - v)) best = i; });
+            cannon.stop = best;
+            cannonSyncUi(false);
+            const b = cannonFire();
+            return b ? b.name : null;
+        },
+        cannonInfo: () => ({
+            vg: cannon.vg, vc: cannon.vc, ve: cannon.ve, h: CANNON_H, lap: CANNON_LAP, stops: cannon.stops.slice(), stop: cannon.stop,
+            shots: cannon.shots.map((q) => ({ id: q.id, v: q.v, text: q.text, color: q.color, n: q.n, swept: q.swept, end: q.end, said: q.said, full: q.full, last: [q.pts[2 * q.n - 2] * AU_KM, q.pts[2 * q.n - 1] * AU_KM] })),
+            kms: cannon.shots.map((q) => Array.from(q.pts.subarray(0, 2 * q.n)).map((v) => v * AU_KM))
+        })
+    });
+    buildCannonConsole();
 
     // ------------------------------------------------------------------
     // Start

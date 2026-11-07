@@ -69,13 +69,14 @@
     const MIN_DIST = 10, MAX_DIST = 50;                 // cm, heater centre to block face
 
     // --- Visual / numerical parameters ---
-    const PACKET_SPEED = 40;         // cm per real second (light slowed down enormously)
-    const PACKETS_PER_WATT = 0.3;    // packets per real second per watt radiated
+    const PACKET_SPEED = 2;          // cm per simulated second (light slowed down enormously)
+    const PACKETS_PER_WATT = 0.015;  // packets per simulated second per watt radiated
     const PACKET_BUDGET_W = 28000;   // W radiated in all that the packet pool can show (heater near 2250 K)
     const MAX_PACKETS = 2600;
     const MAX_FLASHES = 240;
-    const FLASH_LIFE = 0.28;         // s
+    const FLASH_LIFE = 0.28;         // s (real: a flash stays visible at any simulation speed)
     const MAX_SUBSTEP = 0.2;         // s simulated per thermal integration step
+    const MAX_PACKET_STEP = 1;       // cm a packet moves between collision checks
     const THERMO_MAX_C = 200;        // thermometer full scale (degC)
     const CHART_MAX_POINTS = 600;
 
@@ -368,7 +369,7 @@
     }
 
     // Radiation from the room-temperature chamber walls (only drawn when enabled).
-    const WALL_FLUX = SIGMA * Math.pow(T_AMB, 4) * 1e-4 * PACKETS_PER_WATT; // packets per cm^2 per s
+    const WALL_FLUX = SIGMA * Math.pow(T_AMB, 4) * 1e-4 * PACKETS_PER_WATT; // packets per cm^2 per simulated s
     const WALL_RATE_FACES = 2 * WORLD_W * WORLD_H * WALL_FLUX;              // through the front/back of the slice
     const WALL_RATE_EDGES = 2 * (WORLD_W + WORLD_H) * 2 * SLAB_HALF * WALL_FLUX;
     function spawnFromWalls() {
@@ -399,14 +400,14 @@
     const emitAcc = { src: 0, b0: 0, b1: 0, walls: 0 };
     const WALL_RATE = WALL_RATE_FACES + WALL_RATE_EDGES;
     let packetScale = 1; // share of PACKETS_PER_WATT drawn: below 1 when there is more radiation than the pool holds
-    function emitPackets(dtReal) {
+    function emitPackets(simDt) {
         const b0 = state.blocks[0], b1 = state.blocks[1];
         // Above PACKET_BUDGET_W in all, every source gets the same, smaller number of packets per watt, so each
         // packet still carries the same energy. (Otherwise the heater fills the pool first and the blocks' own
         // radiation stops being drawn.)
         const totalW = flux.srcEmit + b0.emitted + b1.emitted + (state.showWalls ? WALL_RATE / PACKETS_PER_WATT : 0);
         packetScale = Math.min(1, PACKET_BUDGET_W / totalW);
-        const k = PACKETS_PER_WATT * packetScale * dtReal;
+        const k = PACKETS_PER_WATT * packetScale * simDt;
         let n;
         emitAcc.src += flux.srcEmit * k;
         n = Math.floor(emitAcc.src); emitAcc.src -= n;
@@ -421,7 +422,7 @@
         for (let i = 0; i < Math.min(n, 200); i++) spawnFromBlock(b1);
 
         if (state.showWalls) {
-            emitAcc.walls += WALL_RATE * packetScale * dtReal;
+            emitAcc.walls += WALL_RATE * packetScale * simDt;
             n = Math.floor(emitAcc.walls); emitAcc.walls -= n;
             for (let i = 0; i < Math.min(n, 100); i++) spawnFromWalls();
         } else {
@@ -429,8 +430,8 @@
         }
     }
 
-    function stepPackets(dtReal) {
-        const s = PACKET_SPEED * dtReal;
+    function stepPackets(simDt) {
+        const s = PACKET_SPEED * simDt;
         const blocks = state.blocks;
         let i = 0;
         while (i < packetCount) {
@@ -494,6 +495,17 @@
             if (handled) continue;
             pX[i] = x; pY[i] = y; pZ[i] = z;
             i++;
+        }
+    }
+
+    // Emit and move in short steps, however far the packets travel this frame: at high speed a packet
+    // must not jump a block, and those emitted in one frame must not leave the surface as a single shell.
+    function advancePackets(simDt) {
+        const steps = Math.max(1, Math.ceil(PACKET_SPEED * simDt / MAX_PACKET_STEP));
+        const h = simDt / steps;
+        for (let i = 0; i < steps; i++) {
+            emitPackets(h);
+            stepPackets(h);
         }
     }
 
@@ -1816,9 +1828,9 @@
         lastTimestamp = timestamp;
         const t0 = performance.now();
 
-        advanceThermal(dtReal * state.speed);
-        emitPackets(dtReal);
-        stepPackets(dtReal);
+        const simDt = dtReal * state.speed;
+        advanceThermal(simDt);
+        advancePackets(simDt);
         stepFlashes(dtReal);
         render();
 

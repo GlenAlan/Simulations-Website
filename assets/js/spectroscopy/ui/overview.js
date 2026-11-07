@@ -1,51 +1,80 @@
-// The Overview tab that every object opens on. It leads with what can be observed; the true values sit behind the
-// "Catalogue values" expander, so a student can check themselves without having the answer in front of them.
+// The Overview tab that every object opens on: one sentence on what it is, a few facts at most, which bands to look in,
+// and the obvious next thing to do. It must fit the drawer without scrolling, for every kind of object. Everything else
+// there is to read, including the true values, is in the Info tab (ui/info_tab.js): that's where new words belong.
 // The code, kind and copy buttons are in the drawer's title, where they stay in view on every tab.
 
-import { app, bus, select, setBand } from '../core/state.js';
-import { BANDS, BAND_INFO } from '../core/bands.js';
+import { app, bus, setBand } from '../core/state.js';
+import { BANDS, BAND_INFO, BAND_HIDDEN_AT } from '../core/bands.js';
 import { sig } from '../core/format.js';
-import { glossaryHtml } from '../content/glossary.js';
+import { limitingMag, MIN_FOV } from '../core/sky.js';
+import { bandMagnitudes, NOT_SEEN } from '../data/band_table.js';
+import { codeHtml, tipHtml } from '../content/glossary.js';
+import { MIN_GLOW } from '../render/engine.js';
 import { announce, kindLabelOf, safeInfo } from './drawer.js';
+import { nextButton, richHtml } from './info_tab.js';
 
-// Apparent magnitude in plain words. The limits line up with what shows at each zoom: see limitingMag in core/sky.js.
-const BRIGHTNESS_WORDS = [
-    [0, 'Dazzling: one of the brightest things in the sky'],
-    [2, 'Very bright: it stands out straight away'],
-    [4, 'Bright: easy to spot'],
-    [6, 'Faint, but you can see it without zooming'],
-    [10, 'Faint: zoom in to see it'],
-    [14, 'Very faint: zoom in a long way'],
-    [Infinity, 'Extremely faint: it only shows at the highest zoom']
-];
+// ---------- Which bands it shines in ----------
+// The row compares an object with itself, from one band's sky to the next, so it says where to look. Band magnitudes
+// are what the sky draws, so "most" here is where the object really does stand out when the band is switched.
 
-export function brightnessWords(resolved) {
-    const { entity, body, path } = resolved;
-    if (path === 'planet') return 'Too faint to see from here: enter its system to find it';
-    const own = entity.brightness || body.brightness;
-    const visible = (entity.bands || body.bands || {}).visible;
-    if (!own || own.mag >= 90 || visible <= 0.01) return 'Cannot be seen in visible light';
-    const words = BRIGHTNESS_WORDS.find(([limit]) => own.mag <= limit)[1];
-    return path === 'component' ? `Seen as one point with its companions. ${words}` : words;
+const MOST_WITHIN_MAG = 1;      // Within a factor of 2.5 of its best band
+const SOME_WITHIN_MAG = 3.5;    // Within a factor of 25
+const FAINTEST_DRAWN_MAG = limitingMag(MIN_FOV) - 2.5 * Math.log10(MIN_GLOW); // Nothing fainter shows even at full zoom
+
+const BAND_WORDS = ['None', 'A little', 'Some', 'Most'];
+
+// { levels: { band: 0..3 }, most: [bands], best: band or null }
+function bandProfile(resolved) {
+    const { entity, body } = resolved;
+    const strengths = entity.bands || body.bands || {};
+    const mags = bandMagnitudes(entity);
+    const shows = (band) => strengths[band] > BAND_HIDDEN_AT && mags[band] < NOT_SEEN && mags[band] <= FAINTEST_DRAWN_MAG;
+    let best = null;
+    BANDS.forEach((band) => { if (shows(band) && (best === null || mags[band] < mags[best])) best = band; });
+    const levels = {};
+    BANDS.forEach((band) => {
+        if (!shows(band)) levels[band] = 0;
+        else if (mags[band] - mags[best] <= MOST_WITHIN_MAG) levels[band] = 3;
+        else if (mags[band] - mags[best] <= SOME_WITHIN_MAG) levels[band] = 2;
+        else levels[band] = 1;
+    });
+    return { levels, best, most: BANDS.filter((band) => levels[band] === 3) };
 }
 
-function bandWord(strength) {
-    if (!(strength > 0.01)) return 'None';
-    if (strength < 0.15) return 'Faint';
-    if (strength < 0.55) return 'Medium';
-    return 'Bright';
+function listWords(words) {
+    if (words.length < 2) return words.join('');
+    return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
-function bandLevel(strength) {
-    if (!(strength > 0.01)) return 0;
-    if (strength < 0.15) return 1;
-    if (strength < 0.55) return 2;
-    return 3;
+// ---------- Whether it can be seen right now ----------
+// Says something only when it can't: what is on screen speaks for itself, and words about brightness can only disagree
+// with the band and zoom in use.
+
+const STATUS = { NONE: 0, PLANET: 1, LAYER_OFF: 2, HIDDEN: 3, TOO_FAINT: 4 };
+
+function statusOf(resolved, profile) {
+    const { body, path } = resolved;
+    if (app.view !== 'sky') return STATUS.NONE;
+    if (path === 'planet') return STATUS.PLANET;
+    if (body.kind === 'home_planet' && !app.layers.homePlanets) return STATUS.LAYER_OFF;
+    if (profile.levels[app.band] === 0) return STATUS.HIDDEN;
+    return app.engine.bodyShows(body) ? STATUS.NONE : STATUS.TOO_FAINT;
 }
 
-function bandsOf(resolved) {
-    return resolved.entity.bands || resolved.body.bands || {};
+function statusWords(status, profile) {
+    switch (status) {
+        case STATUS.PLANET: return 'Too faint to see from the sky. Enter its system to find it.';
+        case STATUS.LAYER_OFF: return 'Home planets are switched off in Layers.';
+        case STATUS.HIDDEN: {
+            const hidden = `Hidden in ${BAND_INFO[app.band].short}.`;
+            return profile.best ? `${hidden} Try ${BAND_INFO[profile.best].short}.` : hidden;
+        }
+        case STATUS.TOO_FAINT: return 'Too faint to see at this zoom. Zoom in to find it.';
+        default: return '';
+    }
 }
+
+// ---------- Facts ----------
 
 // A planet's numbers are open: Module 5 needs them. A home planet keeps its in a planet block.
 function planetData(resolved) {
@@ -67,6 +96,19 @@ function planetFacts(planet) {
     return facts;
 }
 
+// The code this object leads to, in words: [label, code]. It is the same link as any other code in the drawer.
+function relationOf({ entity, body, path }) {
+    if (path === 'planet') return ['Orbits', entity.host || body.code];
+    if (path === 'component') return ['Part of', entity.parent || body.code];
+    if (path === 'member') return ['Member of', entity.parent || body.code];
+    if (entity.kind === 'black_hole' && entity.black_hole?.companion?.code) return ['Companion', entity.black_hole.companion.code];
+    return null;
+}
+
+function planetsHere({ entity }) {
+    return Array.isArray(entity.planets) ? entity.planets.length : 0;
+}
+
 function element(tag, className, text) {
     const el = document.createElement(tag);
     if (className) el.className = className;
@@ -74,76 +116,64 @@ function element(tag, className, text) {
     return el;
 }
 
-// Technical terms in the notes get a tooltip from the glossary, each one once per object. glossaryHtml escapes the text.
-function fillWords(el, text, seen) {
-    el.innerHTML = glossaryHtml(text, { seen });
-    return el;
+function factRow(label, html) {
+    const row = element('div', 'spectro-fact');
+    const dd = element('dd');
+    dd.innerHTML = html;
+    row.append(element('dt', '', label), dd);
+    return row;
 }
 
-// A code that takes you to its object: a planet's "orbits", a star's "part of"
-function codeLink(code) {
-    const b = element('button', 'spectro-link', code);
-    b.type = 'button';
-    b.setAttribute('aria-label', `Select ${code}`);
-    b.addEventListener('click', () => select(code));
-    return b;
-}
-
-function relationLine(resolved) {
-    const { entity, body, path } = resolved;
-    let words = null;
-    let code = null;
-    if (path === 'planet') {
-        words = 'Orbits';
-        code = entity.host || body.code;
-    } else if (path === 'component') {
-        words = 'Part of';
-        code = entity.parent || body.code;
-    } else if (path === 'member') {
-        words = 'Member of';
-        code = entity.parent || body.code;
-    }
-    if (!code) return null;
-    const line = element('p', 'spectro-relation', `${words} `);
-    line.appendChild(codeLink(code));
-    return line;
-}
-
-function factList(rows, seen) {
-    const list = element('dl', 'spectro-facts');
-    rows.forEach(([label, value, tip]) => {
-        const row = element('div', 'spectro-fact');
-        const dt = seen ? fillWords(element('dt'), label, seen) : element('dt', '', label);
-        if (tip) dt.title = tip;
-        row.append(dt, element('dd', '', value));
-        list.appendChild(row);
-    });
-    return list;
+function planetStat([label, value, tip]) {
+    const stat = element('div', 'spectro-ov-stat');
+    const dt = element('dt', '', label);
+    if (tip) dt.innerHTML = tipHtml(label, tip);
+    stat.append(dt, element('dd', '', value));
+    return stat;
 }
 
 // What a screen reader hears when an object is selected
 export function describe(resolved) {
-    const { entity } = resolved;
-    const parts = [`${kindLabelOf(resolved)} ${entity.name || entity.code}.`, `${brightnessWords(resolved)}.`];
-    const bands = bandsOf(resolved);
-    const shows = BANDS.filter((b) => bands[b] > 0.01).map((b) => BAND_INFO[b].label);
-    parts.push(shows.length ? `Shows in ${shows.join(', ')}.` : 'Does not show in any band.');
+    const { entity, body, path } = resolved;
+    const parts = [`${kindLabelOf(resolved)} ${entity.name || entity.code}.`];
+    const profile = path === 'planet' ? null : bandProfile(resolved);
+    const status = statusWords(statusOf(resolved, profile), profile);
+    if (status) parts.push(status);
+    if (profile) {
+        const others = BANDS.filter((band) => profile.levels[band] === 1 || profile.levels[band] === 2);
+        const named = (bands) => listWords(bands.map((band) => BAND_INFO[band].label));
+        parts.push(profile.most.length ? `Shines most in ${named(profile.most)}.` : 'Does not show in any band.');
+        if (others.length) parts.push(`Also shows in ${named(others)}.`);
+    }
+    const count = planetsHere(resolved);
+    if (count) parts.push(`${count === 1 ? 'One planet orbits' : `${count} planets orbit`} here.`);
+    if (path !== 'planet' && app.view === 'sky' && app.system && app.system.hasSystemView && app.system.hasSystemView(body)) {
+        parts.push('Its system can be entered, with Enter system.');
+    }
     const planet = planetData(resolved);
     if (planet) planetFacts(planet).forEach(([label, value]) => parts.push(`${label} ${value}.`));
-    if (resolved.path === 'planet') parts.push(`Orbits ${entity.host || resolved.body.code}.`);
+    if (path === 'planet') parts.push(`Orbits ${entity.host || body.code}.`);
     return parts.join(' ');
 }
 
 function mountOverview(container) {
-    const top = element('div', 'spectro-ov-top');
-    const chipsWrap = element('div', 'spectro-ov-bands');
-    const chipsLabel = element('p', 'spectro-ov-label', 'How it shows in each band');
+    const lead = element('p', 'spectro-ov-lead');
+    const status = element('p', 'spectro-ov-status');
+    const facts = element('dl', 'spectro-facts');
+    const stats = element('dl', 'spectro-ov-stats');
+
+    const bandsWrap = element('div', 'spectro-ov-bands');
+    const bandsLabel = element('p', 'spectro-ov-label');
+    bandsLabel.innerHTML = `${tipHtml('Shines most in', "Compares this object with itself from band to band, so it says where to look, not how bright it will look. Choose a band to switch the sky to it.")} `;
+    const bandsMost = element('strong');
+    bandsLabel.appendChild(bandsMost);
     const chips = element('div', 'spectro-band-chips');
     chips.setAttribute('role', 'group');
-    chips.setAttribute('aria-label', 'How it shows in each band. Choose one to switch the sky to that band.');
-    chipsWrap.append(chipsLabel, chips);
-    const words = element('div', 'spectro-ov-words');
-    container.append(top, chipsWrap, words);
+    chips.setAttribute('aria-label', 'How it shines in each band, compared with itself. Choose one to switch the sky to that band.');
+    bandsWrap.append(bandsLabel, chips);
+
+    const nextHolder = element('div', 'spectro-ov-next');
+    container.append(lead, status, facts, stats, bandsWrap, nextHolder);
 
     const chipByBand = {};
     BANDS.forEach((band) => {
@@ -160,60 +190,84 @@ function mountOverview(container) {
         chipByBand[band] = { chip, meter, value };
     });
 
-    function paintChips(resolved) {
-        const bands = bandsOf(resolved);
+    let current = null;
+    let profile = null;
+    let shownStatus = -1;
+    let shownBand = '';
+    let onScreen = false;
+    let lastFov = 0;
+
+    // Often called, as the zoom changes: the words are only made when they would read differently
+    function paintStatus() {
+        const next = statusOf(current, profile);
+        if (next === shownStatus && app.band === shownBand) return;
+        shownStatus = next;
+        shownBand = app.band;
+        status.textContent = statusWords(next, profile);
+        status.hidden = next === STATUS.NONE;
+    }
+
+    function paintChips() {
+        // A planet can't be picked out from the sky, and the sky's band means nothing inside a system
+        bandsWrap.hidden = current.path === 'planet' || app.view !== 'sky';
+        if (bandsWrap.hidden) return;
+        bandsMost.textContent = profile.most.length ? listWords(profile.most.map((band) => BAND_INFO[band].short)) : 'no band';
         BANDS.forEach((band) => {
             const { chip, meter, value } = chipByBand[band];
-            const word = bandWord(bands[band]);
+            const word = BAND_WORDS[profile.levels[band]];
             value.textContent = word;
-            meter.dataset.level = String(bandLevel(bands[band]));
+            meter.dataset.level = String(profile.levels[band]);
             const { short, label } = BAND_INFO[band];
             chip.setAttribute('aria-label', `${short === label ? label : `${short}, ${label}`}: ${word}`);
+            chip.setAttribute('aria-pressed', band === app.band ? 'true' : 'false');
         });
     }
 
-    function paintCurrentBand(band) {
-        BANDS.forEach((b) => chipByBand[b].chip.setAttribute('aria-pressed', b === band ? 'true' : 'false'));
+    function paint() {
+        if (!current) return;
+        shownStatus = -1;
+        paintStatus();
+        paintChips();
     }
 
-    bus.on('band', ({ band }) => paintCurrentBand(band));
+    bus.on('band', paint);
+    bus.on('view', paint);
+    bus.on('layer', paint);
+    // The status follows the zoom. The engine calls this every frame, so it compares one number and goes.
+    app.engine.addLayer({
+        id: 'overview-status',
+        update(frame) {
+            if (!onScreen || !current || frame.fov === lastFov) return;
+            lastFov = frame.fov;
+            paintStatus();
+        }
+    });
 
     return {
         setEntity(resolved) {
+            current = resolved;
+            profile = resolved.path === 'planet' ? { levels: {}, most: [], best: null } : bandProfile(resolved);
             const info = safeInfo(resolved);
-            paintCurrentBand(app.band);
-
-            const relation = relationLine(resolved);
-            const rows = [['Brightness', brightnessWords(resolved), 'How bright it looks from here, which depends on how much light it gives out and how far away it is.']];
+            lead.innerHTML = richHtml(info.lead || '');
+            const rows = [];
+            const relation = relationOf(resolved);
+            if (relation) rows.push(factRow(relation[0], codeHtml(relation[1])));
+            const count = planetsHere(resolved);
+            if (count) rows.push(factRow('Planets', String(count)));
+            facts.replaceChildren(...rows);
+            facts.hidden = !rows.length;
             const planet = planetData(resolved);
-            if (planet) rows.push(...planetFacts(planet));
-            top.replaceChildren(...(relation ? [relation] : []), factList(rows));
-            paintChips(resolved);
-
-            const seen = new Set();
-            words.replaceChildren();
-            if (info.summary) words.appendChild(fillWords(element('p', 'spectro-ov-summary'), info.summary, seen));
-            (info.notes || []).forEach((note) => {
-                const block = element('section', 'spectro-ov-note');
-                if (note.heading) block.appendChild(element('h4', '', note.heading));
-                if (note.text) block.appendChild(fillWords(element('p'), note.text, seen));
-                words.appendChild(block);
-            });
-            if (info.rarity) {
-                const rarity = element('p', 'spectro-ov-rarity');
-                const text = element('span');
-                rarity.append(element('strong', '', 'How rare? '), fillWords(text, info.rarity, seen));
-                words.appendChild(rarity);
-            }
-
-            // Built afresh for each object, so it always starts closed
-            if (info.catalogue && info.catalogue.length) {
-                const details = element('details', 'sim-controls-more spectro-catalogue');
-                details.appendChild(element('summary', '', 'Catalogue values'));
-                details.appendChild(element('p', 'spectro-catalogue-hint', 'The true values. Work them out from the light first, then check yourself here.'));
-                details.appendChild(factList(info.catalogue.map((row) => [row.label, row.value]), seen));
-                words.appendChild(details);
-            }
+            stats.replaceChildren(...(planet ? planetFacts(planet).map(planetStat) : []));
+            stats.hidden = !planet;
+            nextHolder.replaceChildren(...(info.next ? [nextButton(info.next)] : []));
+            paint();
+        },
+        onShow() {
+            onScreen = true;
+            paintStatus();
+        },
+        onHide() {
+            onScreen = false;
         }
     };
 }

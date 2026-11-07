@@ -187,17 +187,17 @@
 										<button type="button" class="orb-keys-btn" id="keysHelpBtn" aria-haspopup="dialog" title="Keys and gestures (?)"><span class="orb-keys-q" aria-hidden="true">?</span>Help</button>
 									</div>
 									<div class="sim-controls-content">
+										<div class="sim-control-group orb-date" id="startDateRow" hidden>
+											<label for="startDateInput">Start date</label>
+											<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
+											<p class="orb-note" id="startDateNote">1800 to 2050.</p>
+										</div>
 										<div class="sim-control-group">
-											<p class="sim-control-group-label">Other ways to start</p>
-											<div class="orb-date" id="startDateRow" hidden>
-												<label for="startDateInput">Start date</label>
-												<input type="date" id="startDateInput" class="orb-date-input" min="1800-01-01" max="2050-12-31" required aria-describedby="startDateNote">
-												<p class="orb-note" id="startDateNote">1800 to 2050.</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
+												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
-											<div class="orb-scene-row" id="sceneButtons" role="group" aria-label="Other ways to start">
-												<button type="button" id="randomSystemBtn" aria-describedby="missionsNote" title="A new star with planets each time: how long will they last?"><span class="icon solid fa-dice" aria-hidden="true"></span>Random system</button>
-											</div>
-											<p class="orb-note" id="missionsNote" hidden>Missions: fly a probe to a goal on a fuel budget. Random system: a new star with planets; how long will they last?</p>
+											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 										</div>
 										<div class="sim-control-group">
 											<p class="sim-control-group-label">Show</p>
@@ -209,23 +209,22 @@
 												<input type="checkbox" id="labelsToggle" checked>
 												<label for="labelsToggle">Names</label>
 												<input type="checkbox" id="pullsToggle" aria-describedby="pullsNote">
-												<label for="pullsToggle" title="Split the chosen body's force into one arrow for each body pulling on it (G)"><span class="orb-key orb-key-pulls" aria-hidden="true"></span>Pull lines</label>
+												<label for="pullsToggle" title="One arrow for each body pulling on the chosen body (G)"><span class="orb-key orb-key-pulls" aria-hidden="true"></span>Pull lines</label>
+												<input type="checkbox" id="pullSumToggle" hidden>
+												<label for="pullSumToggle" class="orb-subswitch" title="Join the pulls tip to tail: they end at the tip of the pink force arrow">Add up to the total force</label>
 												<input type="checkbox" id="wellToggle" aria-describedby="wellNote">
 												<label for="wellToggle" title="How deep each body's pull reaches, as shading and contour lines (W)">Gravity well</label>
-												<input type="checkbox" id="realisticToggle" aria-describedby="realisticNote">
-												<label for="realisticToggle" title="Einstein's relativity: orbits slowly turn and black holes spiral together">Realistic physics</label>
 											</div>
-											<p class="orb-note" id="pullsNote" hidden>Pull lines split the chosen body's force into one arrow for each body pulling on it<span class="orb-keys-note"> (G)</span>.</p>
+											<p class="orb-note" id="pullsNote" hidden>Pull lines draw one arrow for each body pulling on the chosen body<span class="orb-keys-note"> (G)</span>.</p>
 											<p class="orb-note" id="wellNote" hidden>Gravity well: how deep each body's pull reaches, as shading and contour lines<span class="orb-keys-note"> (W)</span>.</p>
-											<p class="orb-note orb-realistic-note" id="realisticNote">True sizes, relativity and tides that tear stars apart.</p>
 											<label>Trails: <span id="trailVal" class="sim-value" style="--chars: 6">1 yr</span>
 												<input type="range" id="trailSlider" min="0" max="8" step="1" value="4">
 											</label>
 										</div>
 										<details class="sim-controls-more orb-fold" id="frameGroup">
-											<summary><span id="frameLabel">View from</span><span class="orb-fold-state" id="foldFrame"></span></summary>
+											<summary><span id="frameLabel">View from or rotate</span><span class="orb-fold-state" id="foldFrame"></span></summary>
 											<div class="sim-control-group">
-												<select id="frameSelect" aria-labelledby="frameLabel" aria-describedby="turnNote" title="Watch the motion from any body, or turn with one as it orbits">
+												<select id="frameSelect" aria-labelledby="frameLabel" aria-describedby="turnNote" title="Watch the motion from any body, or turn the view with one as it orbits">
 													<option value="com" selected>Centre of mass (no body)</option>
 												</select>
 												<p class="orb-note" id="turnNote" aria-live="polite" hidden></p>
@@ -261,8 +260,9 @@
 													<div class="orb-bodies-sizer" id="bodiesSizer" role="none"></div>
 												</div>
 												<div class="orb-bodies-actions" id="bodiesActions" role="group" aria-label="Chosen body" hidden>
-													<button type="button" data-act="zoom" title="Zoom to its orbit (Z)"><span class="icon solid fa-search-plus" aria-hidden="true"></span>Zoom</button>
+													<button type="button" data-act="zoom" aria-label="Zoom to its orbit" title="Zoom to its orbit (Z)"><span class="icon solid fa-search-plus" aria-hidden="true"></span><span class="orb-act-word">Zoom</span></button>
 													<button type="button" data-act="view" aria-pressed="false" title="View the motion from it (double-click)"><span class="icon solid fa-crosshairs" aria-hidden="true"></span>View from</button>
+													<button type="button" data-act="rotate" aria-pressed="false"><span class="icon solid fa-sync-alt" aria-hidden="true"></span>Rotate</button>
 													<button type="button" data-act="edit" aria-haspopup="dialog" title="Its mass, colour, velocity and orbit (Enter)"><span class="icon solid fa-sliders-h" aria-hidden="true"></span>Edit</button>
 													<button type="button" data-act="delete" aria-label="Delete" title="Delete this body (Delete)"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
 												</div>
@@ -283,6 +283,15 @@
 												<p class="orb-note" id="placementNote" aria-live="polite">Round the body it would orbit there.</p>
 											</div>
 											<div class="sim-control-group">
+												<p class="sim-control-group-label" id="arrowSizeLabel">Arrow size</p>
+												<select id="arrowSizeSelect" aria-labelledby="arrowSizeLabel" aria-describedby="arrowSizeNote">
+													<option value="auto" selected>Automatic</option>
+													<option value="fixed">Fixed on screen</option>
+													<option value="zoom">Scale with zoom</option>
+												</select>
+												<p class="orb-note" id="arrowSizeNote" aria-live="polite">They shrink to fit the orbits on screen. When crowded, only the chosen body's show.</p>
+											</div>
+											<div class="sim-control-group">
 												<p class="sim-control-group-label">Also show</p>
 												<div class="sim-checkbox-group">
 													<input type="checkbox" id="comToggle">
@@ -298,6 +307,13 @@
 													<input type="checkbox" id="mergeToggle" checked>
 													<label for="mergeToggle">Bodies merge when their surfaces touch</label>
 												</div>
+											</div>
+											<div class="sim-control-group">
+												<div class="sim-checkbox-group">
+													<input type="checkbox" id="deterministicToggle" aria-describedby="deterministicNote">
+													<label for="deterministicToggle" title="Some scenes, like A moon forming, start a little differently each time. This keeps them the same">Deterministic</label>
+												</div>
+												<p class="orb-note" id="deterministicNote">Same start every time.</p>
 											</div>
 											<div class="sim-control-group">
 												<p class="sim-control-group-label" id="csvLabel">Download data (CSV)</p>
@@ -331,13 +347,15 @@
 												<span class="icon solid fa-crosshairs" aria-hidden="true"></span><span>Viewed from <strong id="frameChipName">Earth</strong></span><span class="icon solid fa-times orb-frame-chip-x" aria-hidden="true"></span>
 											</button>
 											<div class="orb-popover" id="bodyPopover" role="dialog" aria-labelledby="popName" hidden>
-												<div class="orb-pop-head">
+												<div class="orb-pop-head" id="popHead">
 													<span class="orb-pop-dot" id="popDot" aria-hidden="true"></span>
 													<input type="text" id="popName" class="orb-pop-name" maxlength="18" aria-label="Name" spellcheck="false" autocomplete="off">
+													<button type="button" class="orb-pop-grip" id="popGrip" aria-label="Move this menu with the arrow keys" title="Drag to move it out of the way"><span class="icon solid fa-grip-lines" aria-hidden="true"></span></button>
 													<button type="button" class="orb-pop-close" id="popClose" aria-label="Close" title="Close (Esc)"><span class="icon solid fa-times" aria-hidden="true"></span></button>
 												</div>
 												<div class="orb-pop-actions">
 													<button type="button" id="popLock" aria-pressed="false"><span class="icon solid fa-crosshairs" aria-hidden="true"></span><span id="popLockText">View from here</span></button>
+													<button type="button" id="popTurn" aria-pressed="false"><span class="icon solid fa-sync-alt" aria-hidden="true"></span><span id="popTurnText">Rotate with it</span></button>
 													<button type="button" id="popCircular" title="Give it the speed for a circular orbit"><span class="icon fa-circle" aria-hidden="true"></span>Circular</button>
 														<button type="button" id="popZoom" class="orb-pop-zoom" title="Zoom to its orbit (Z)" aria-label="Zoom to its orbit"><span class="icon solid fa-search-plus" aria-hidden="true"></span></button>
 													<button type="button" id="popDelete" class="orb-pop-delete" title="Delete this body" aria-label="Delete this body"><span class="icon solid fa-trash-alt" aria-hidden="true"></span></button>
@@ -371,6 +389,8 @@
 															</div>
 														</div>
 														<p class="orb-pop-note" id="popAngleNote">0° is sideways, + outward, − inward.</p>
+														<details class="orb-pop-more" id="popVelMore">
+															<summary><span>More</span><span class="orb-pop-more-state" id="popMoreState"></span></summary>
 														<div class="orb-field">
 															<span class="orb-field-label" id="popSenseLabel">Goes round<span class="orb-field-sub" id="popSenseSub"></span></span>
 															<div class="orb-seg" role="group" aria-labelledby="popSenseLabel">
@@ -387,6 +407,15 @@
 																<button type="button" data-push="out" title="Push it outward, away from what it orbits (→)">Out<span class="icon solid fa-caret-right" aria-hidden="true"></span></button>
 															</div>
 														</div>
+														<div class="orb-pop-step">
+															<span class="orb-field-label" id="popStepLabel">Step</span>
+															<div class="orb-seg" role="group" aria-labelledby="popStepLabel">
+																<button type="button" data-step="0.1" aria-pressed="false" title="Steps of 10% (10° for the direction)">10%</button>
+																<button type="button" data-step="0.01" aria-pressed="true" title="Steps of 1% (1° for the direction)">1%</button>
+																<button type="button" data-step="0.001" aria-pressed="false" title="Steps of 0.1% (0.1° for the direction)">0.1%</button>
+															</div>
+														</div>
+														</details>
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelOrbit" aria-labelledby="popTabOrbit" hidden>
 														<div class="orb-pop-fields">
@@ -428,7 +457,7 @@
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelBody" aria-labelledby="popTabBody">
 														<div class="orb-pop-fields">
 															<label>Mass: <span class="orb-pop-val" id="popMassVal">1.00 M⊕</span>
-																<input type="range" id="popMass" min="-14" max="7" step="0.01" value="0">
+																<input type="range" id="popMass" min="-14" max="16" step="0.01" value="0">
 															</label>
 															<label><span id="popRadiusLabel">Radius</span>: <span class="orb-pop-val" id="popRadiusVal">6,371 km</span>
 																<input type="range" id="popRadius" min="0" max="8" step="0.01" value="3.8">
@@ -444,24 +473,17 @@
 															<tfoot><tr><th scope="row">Net force</th><td id="popPullNet">&ndash;</td><td>100%</td></tr></tfoot>
 														</table>
 														<p class="orb-pop-note orb-pull-note" id="popPullNote">&nbsp;</p>
+														<p class="orb-pop-note orb-pull-note" id="popPullRel" hidden></p>
 														<div class="orb-field">
 															<span class="orb-field-label" id="popPullShowLabel">Show</span>
 															<div class="orb-seg" role="group" aria-labelledby="popPullShowLabel">
-																<button type="button" id="popPullLines" aria-pressed="false" title="One arrow for each body's pull, joined tip to tail (G)">Pull lines</button>
+																<button type="button" id="popPullLines" aria-pressed="false" title="One arrow for each body's pull (G)">Pull lines</button>
 																<button type="button" id="popPullLimits" aria-pressed="false" title="How far out its moons can orbit, and how close before tides tear it apart">Hill &amp; Roche</button>
 															</div>
 														</div>
 													</div>
 												</div>
 												<p class="orb-pop-note orb-pop-why" id="popFieldWhy" role="status" hidden></p>
-												<div class="orb-pop-step">
-													<span class="orb-field-label" id="popStepLabel">Step</span>
-													<div class="orb-seg" role="group" aria-labelledby="popStepLabel">
-														<button type="button" data-step="0.1" aria-pressed="false" title="Steps of 10% (10° for the direction)">10%</button>
-														<button type="button" data-step="0.01" aria-pressed="true" title="Steps of 1% (1° for the direction)">1%</button>
-														<button type="button" data-step="0.001" aria-pressed="false" title="Steps of 0.1% (0.1° for the direction)">0.1%</button>
-													</div>
-												</div>
 											</div>
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
@@ -504,27 +526,39 @@
 												<div class="orb-scene-pick">
 													<label for="sceneSelect">Scene</label>
 													<select id="sceneSelect" title="Choose what to watch">
-													<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
-													<option value="ellipse">Elliptical orbit</option>
-													<option value="inner">Inner planets</option>
-													<option value="solar">The Solar System on a date</option>
-													<option value="comet">Comet and Earth</option>
-													<option value="earth-moon">Earth &amp; Moon</option>
-													<option value="moon">Planet with a moon</option>
-													<option value="binary">Binary stars</option>
-													<option value="figure8">Three stars: figure of eight</option>
-													<option value="pythagorean">Three stars: chaos</option>
-													<option value="slingshot">Slingshot (gravity assist)</option>
-													<option value="blackhole">Neutron star and black hole</option>
-													<option value="tde">Star and black hole</option>
-													<option value="collide">Two planets collide</option>
-													<option value="tidalgiant">Giant star squeezed by tides</option>
-													<option value="mercury">Mercury's orbit turns</option>
-													<option value="inspiral">Black holes spiral together</option>
-													<option value="trojans">Jupiter's Trojans and Hildas</option>
-													<option value="moondisc">A moon forming</option>
-													<option value="random">Random system</option>
-													<option value="empty">A lone star (build your own)</option>
+													<optgroup label="Planets and moons">
+														<option value="sun-earth" selected>Sun &amp; Earth (circular orbit)</option>
+														<option value="ellipse">Elliptical orbit</option>
+														<option value="inner">Inner planets</option>
+														<option value="solar">The Solar System on a date</option>
+														<option value="sky">Planets seen from Earth</option>
+														<option value="comet">Comet and Earth</option>
+														<option value="earth-moon">Earth &amp; Moon</option>
+														<option value="moon">Planet with a moon</option>
+														<option value="moondisc">A moon forming</option>
+														<option value="trojans">Jupiter's Trojans and Hildas</option>
+													</optgroup>
+													<optgroup label="Stars">
+														<option value="binary">Binary stars</option>
+														<option value="figure8">Three stars: figure of eight</option>
+														<option value="pythagorean">Three stars: chaos</option>
+														<option value="tidalgiant">Giant star squeezed by tides</option>
+													</optgroup>
+													<optgroup label="Black holes and relativity">
+														<option value="mercury">Mercury's orbit turns</option>
+														<option value="blackhole">Neutron star and black hole</option>
+														<option value="tde">Star and black hole</option>
+														<option value="inspiral">Black holes spiral together</option>
+													</optgroup>
+													<optgroup label="Flights and crashes">
+														<option value="cannon">Newton's cannon</option>
+														<option value="slingshot">Slingshot (gravity assist)</option>
+														<option value="collide">Two planets collide</option>
+													</optgroup>
+													<optgroup label="New systems">
+														<option value="empty">A lone star (build your own)</option>
+														<option value="random">Random system</option>
+													</optgroup>
 												</select>
 												</div>
 												<button type="button" id="reverseBtn" class="sim-icon-button orb-cap orb-reverse" data-cap="Reverse" aria-label="Run time backwards" title="Run time backwards (B)" aria-pressed="false">
@@ -541,16 +575,16 @@
 													<span class="orb-speed-cap">Speed <span id="speedVal" class="sim-value">1</span>&times;</span>
 													<span class="orb-sr-only" id="speedNote">1 yr every 6 s</span>
 												</label>
-												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
-													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
-													<span class="icon solid fa-chart-bar"></span>
-												</label>
-												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
+												<button type="button" id="rewindBtn" class="sim-icon-button orb-rewind orb-cap is-idle" data-cap="Run again" aria-label="Run again from your last change" title="Run again from your last change (R)" disabled>
 													<span class="icon solid fa-history"></span>
 												</button>
 												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button orb-cap" data-cap="Restart" aria-label="Restart the scene" title="Restart the scene from its original setup">
 													<span class="icon solid fa-sync-alt"></span>
 												</button>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label orb-cap" data-cap="Graphs" title="Energy, distance and speed over time">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
 											</div>
 										</div>
 									</div>
@@ -561,6 +595,10 @@
 											</div>
 											<div class="chart-box">
 												<canvas id="orbitChart" role="img" aria-label="Distance and speed of the chosen body over time"></canvas>
+											</div>
+											<div class="chart-box orb-k3-box" id="k3Box" hidden>
+												<canvas id="k3Chart" role="img" aria-label="T squared against a cubed for each orbiting body"></canvas>
+												<button type="button" class="orb-k3-axes" id="k3Axes" aria-pressed="false" aria-label="Linear axes" title="Even steps from zero, not steps of ×10. Small orbits bunch up at zero.">Linear</button>
 											</div>
 										</div>
 										<div class="orb-chart-actions">
@@ -586,9 +624,10 @@
 											<h4>What you're seeing</h4>
 											<ul>
 												<li><strong>Pink arrows:</strong> the gravitational force on each body. The Sun pulls Earth exactly as hard as Earth pulls the Sun.</li>
-												<li><strong>Teal arrows:</strong> velocities. The key in the bottom corner gives each arrow's scale (on a small screen, while paused or dragging); longer arrows are squeezed to fit.</li>
-												<li><strong>Pull lines</strong> split the chosen body's pink arrow into one arrow for each body pulling on it, joined tip to tail.</li>
-												<li><strong>Trails</strong> show recent paths. Bodies are drawn larger than life, or the planets would be invisible dots (unless Realistic physics is on).</li>
+												<li><strong>Teal arrows:</strong> velocities. The key in the bottom corner gives each arrow's scale while paused or dragging, and for a few seconds as a scene opens; longer arrows are squeezed to fit. Arrows shrink to fit the orbits on screen: see <em>Arrow size</em> in <em>More options</em>.</li>
+												<li><strong>Pull lines</strong> draw one arrow for each body pulling on the chosen body. Beneath them, <em>Add up to the total force</em> joins the arrows tip to tail, ending at the tip of its pink arrow.</li>
+												<li><strong>Trails</strong> show recent paths. In a swarm of dots, only a longer setting draws theirs. Bodies are drawn larger than life, or the planets would be invisible dots (unless Realistic physics is on).</li>
+												<li><strong>Names</strong> leave out what would crowd the view, such as a planet close round its star when zoomed out. A triangle at the edge points to a body out of view. Hover over either, or tap it to choose it, to see its name.</li>
 												<li><strong>Cards</strong>, top right, measure what you have switched on. If they would cover too much of the canvas, the lowest shrink, then fold into a "+2 more" line.</li>
 												<li><strong>Flat, in 2D:</strong> everything moves in one plane, as if seen from straight above. Real orbits tilt a few degrees, so in space bodies usually pass above or below one another. The tilt hardly changes an orbit's size, shape or period, and gravity still falls off as 1/<em>r</em><sup>2</sup>. But here nothing can pass over anything else, so close passes and collisions happen more often.</li>
 											</ul>
@@ -604,26 +643,29 @@
 											<h4>How to use it</h4>
 											<ul>
 												<li><strong>Aim a velocity:</strong> drag the tip of a teal arrow (time waits while you do). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go. Shift gives fine control; on a touch screen, hold the tip still for a moment first.</li>
-												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, or a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
-												<li><strong>View from a body:</strong> double-click or double-tap it. <em>Rotating</em> views are in the settings, under <em>View from</em>.</li>
+												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. Drag its title to move it out of the way. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, and under <em>More</em> the way round and a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
+												<li><strong>View from a body:</strong> double-click or double-tap it.</li>
+												<li><strong>Rotate with a body:</strong> press <em>Rotate with it</em> in its menu. The view turns with the body and whatever it orbits, so both stand still. Press the chip at the top of the canvas to stop. Every body that orbits another is also in the settings, under <em>View from or rotate</em>.</li>
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>
 												<li><strong>Throw a body:</strong> in <em>More options</em> choose <em>Throw it</em>, then flick a body as you let go.</li>
 												<li><strong>Try again:</strong> <span class="icon solid fa-undo"></span> Undo takes back a whole drag or slider sweep, even Restart or a change of scene. <span class="icon solid fa-history"></span> Run again replays from your last change, so you can tweak, watch and try again.</li>
-												<li><strong>Random systems:</strong> <span class="icon solid fa-dice"></span> Random system, in the settings, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years?</li>
+												<li><strong>Random systems:</strong> Random system, in the scene list, makes a star with 2 to 8 planets, and the stability timer counts how long they last. Will they reach 10,000 years? <em>New system</em>, in the hint by the canvas, makes another.</li>
 												<li><strong>Save and share:</strong> <span class="icon solid fa-link"></span> Copy a link, at the end of the settings, copies a link that opens this exact setup, paused. Your work is also saved in this browser: next time, "Carry on where you left off" appears for a while.</li>
 												<li><strong>Download data (CSV):</strong> in <em>More options</em> or under the graphs, for Kepler's 3rd law, the graphs or every body.</li>
-												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step, the scene and the speed, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-history"></span> run again, <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
+												<li><strong>Buttons under the canvas:</strong> <span class="icon solid fa-backward"></span> reverse, <span class="icon solid fa-pause"></span> pause, <span class="icon solid fa-step-forward"></span> step (while paused), the scene and the speed, <span class="icon solid fa-history"></span> run again (once you have changed something), <span class="icon solid fa-sync-alt"></span> restart, <span class="icon solid fa-chart-bar"></span> graphs, <span class="icon solid fa-expand"></span> fullscreen, <span class="icon solid fa-cog"></span> settings. <em>Help</em>, in the settings, lists every key and gesture.</li>
 											</ul>
 
 											<h4>Things to try</h4>
 											<ul>
 												<li>Press Edit, raise the eccentricity on the Orbit tab and turn on the 2nd law: the planet speeds up near the Sun but the shaded areas stay equal.</li>
 												<li>On the Orbit tab, give Earth a period of 2 years: Kepler's 3rd law moves its orbit out to 1.59 AU.</li>
-												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Download the table and plot <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>: a straight line through the origin.</li>
+												<li>In "The Solar System on a date", turn on the 3rd law and speed it up: <em>T</em><sup>2</sup>/<em>a</em><sup>3</sup> comes out close to 1.00 for every planet, out to Pluto. Open <em>Graphs</em> to watch each planet land on the straight line of <em>T</em><sup>2</sup> against <em>a</em><sup>3</sup>. For the numbers, download <em>Kepler's 3rd law</em> in <em>More options</em>.</li>
 												<li>Set the Solar System's start date to your birthday and see where the planets were.</li>
+												<li>Open "Planets seen from Earth" and watch the strip at the top: as Earth passes Mars, Mars backs up against the stars. Press See from above to find out why.</li>
+												<li>In "Newton's cannon", fire faster and faster: a shot falls all the way round and keeps missing, with no air here to slow it. From 100 km up that takes 7.85 km/s, and escaping 11.1 km/s (at the ground, 7.9 and 11.2).</li>
 												<li>Aim a velocity at the escape speed (it snaps there): the body only just gets away.</li>
-												<li>In "Slingshot", turn on Pull lines as the probe passes Jupiter: Jupiter's pull and the Sun's add up, tip to tail. Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
-												<li>In "Jupiter's Trojans and Hildas", set View from to "Rotating with Jupiter and the Sun": the Trojans swing slowly round L4 and L5, and the Hildas' triangle stands still.</li>
+												<li>In "Slingshot", turn on Pull lines and <em>Add up to the total force</em> as the probe passes Jupiter: Jupiter's pull and the Sun's add up, tip to tail. Jupiter only turns the probe, yet its speed relative to the Sun doubles.</li>
+												<li>In "Jupiter's Trojans and Hildas", open Jupiter's menu and press Rotate with it: the Trojans swing slowly round L4 and L5, and the Hildas' triangle stands still.</li>
 												<li>In "Three stars: chaos", nudge one star a hair: the dance ends differently. Once a star is flung out, run it backwards: rounding errors grow until the stars miss their true past.</li>
 												<li>In the mission "Escape the Sun", burn at the far end of your orbit, then Undo and burn at the closest point: the same push does far more when you're moving fast.</li>
 												<li>Open "Mercury's orbit turns" and speed it up: the card measures the 43&Prime; a century by which relativity turns Mercury's orbit.</li>
@@ -637,16 +679,21 @@
 												<li><strong>Tides:</strong> a star or planet inside the Roche limit of a much denser body is torn apart, as in "Star and black hole". Its pieces still pull on each other, so some may gather into clumps again. In "A moon forming", tides tear apart clumps that stray too close to Earth. Just outside that limit, a star or gas giant stays whole, drawn stretched to its true shape. Each close pass takes energy from its orbit, so the orbit shrinks, and a slow fly-by can be captured.</li>
 											</ul>
 											<p>Either way, bodies merge when their real surfaces touch, and a black hole swallows anything that crosses its event horizon.</p>
-											<p>A card measures how far the chosen body's orbit turns each time round, against Einstein's formula, 6&pi;<em>GM</em>/(<em>c</em><sup>2</sup><em>a</em>(1&nbsp;&minus;&nbsp;<em>e</em><sup>2</sup>)). Where other planets pull on it too, it shows how much of the turn is Einstein's.</p>
-											<p>Two black holes or neutron stars close together also give off gravitational waves (with relativity's next, smaller terms as well). The waves carry off energy, so their orbit shrinks and becomes rounder, and they go round faster and faster, a rising &ldquo;chirp&rdquo;. They plunge together at their innermost stable orbit, about 6<em>GM</em>/<em>c</em><sup>2</sup>. Two black holes become one a little lighter than the two: some of their mass leaves as waves (<em>E</em>&nbsp;=&nbsp;<em>mc</em><sup>2</sup>). The energy graph shows the energy carried off.</p>
+											<p>A body's Gravity tab says how slow its clock runs and how far its orbit turns each time round, against Einstein's formula, 6&pi;<em>GM</em>/(<em>c</em><sup>2</sup><em>a</em>(1&nbsp;&minus;&nbsp;<em>e</em><sup>2</sup>)). Where other planets pull on it too, it shows how much of the turn is Einstein's. Where gravity is strong enough, and in the scenes about it, a card on the canvas says so too.</p>
+											<p>Two black holes or neutron stars close together also give off gravitational waves (with relativity's next, smaller terms as well). The waves carry off energy, so their orbit shrinks and becomes rounder, and they go round faster and faster, a rising &ldquo;chirp&rdquo;. At their innermost stable orbit, about 6<em>GM</em>/<em>c</em><sup>2</sup>, a neutron star falls in. Two black holes go on for about one more orbit, closing fast, and merge as their horizons meet. They become one a little lighter than the two: some of their mass leaves as waves (<em>E</em>&nbsp;=&nbsp;<em>mc</em><sup>2</sup>). The energy graph shows the energy carried off.</p>
 
 											<h4>The Solar System on a date</h4>
 											<p>The planets start where they really were, or will be, on the start date, from NASA JPL's table of the planets' orbits for 1800 to 2050 (E. M. Standish's &ldquo;Keplerian Elements for Approximate Positions of the Major Planets&rdquo;), with masses from the International Astronomical Union. From then on, the simulation's own gravity moves them.</p>
 											<p>The real orbits are tilted a few degrees to Earth's (Pluto's 17&deg;). Here each is laid flat, keeping its size, shape and period.</p>
 
+											<h4>Planets seen from Earth</h4>
+											<p>Night by night a planet drifts one way against the stars, but now and then it seems to turn back for a while. This is <strong>retrograde</strong> motion. Nothing really reverses: Earth is overtaking the planet (or an inner planet is overtaking Earth), so the line of sight between them swings backwards.</p>
+											<p>The scene uses the same real orbits as "The Solar System on a date", and the view from Earth shows each planet's true path around us, with a loop for every reversal. The strip is the whole sky around the plane of the orbits, with east on the right and the bright stars near that plane where they really are. It stays true in any view, even a rotating one. Choose a planet to follow it, or view from another to see Earth back up.</p>
+											<p>It comes out as in the real sky: Mars backs up about 10 to 20&deg; over 60 to 80 days, every 780 days, Jupiter 10&deg; over 4 months every 399 days and Mercury about 13&deg; over 3 weeks every 116 days. In this flat simulation a planet only runs back and forth along the strip. The real orbits' small tilts open that into a narrow loop or zigzag in the sky.</p>
+
 											<h4>Missions</h4>
-											<p>Seven missions, easy to hard. Press <span class="icon solid fa-rocket"></span> Missions, in the hint by the canvas or in the settings, or M, or pick one at the end of the scene list.</p>
-											<p>Each gives your probe a goal, such as reaching Mars or parking at Jupiter's L4 point, and a fuel budget: the change of speed (&Delta;<em>v</em>) its engine can give. Only burns can change anything. Hold Forward, Back, In or Out, or the arrow keys, to burn: the clock waits while you do. Skip jumps to the next moment that matters. Every burn uses fuel, and Undo gives it back. Turn on Hints for what to do next and where to burn.</p>
+											<p>Eleven missions, easy to hard. Press Missions, in the hint by the canvas, or M, or pick one at the end of the scene list.</p>
+											<p>Each gives your probe a goal, such as reaching Mars or swinging round the Moon and home, and a fuel budget: the change of speed (&Delta;<em>v</em>) its engine can give. Only burns can change anything. Hold Forward, Back, In or Out, or the arrow keys, to burn: the clock waits while you do. Skip jumps to the next moment that matters. Every burn uses fuel, and Undo gives it back. Turn on Hints for what to do next and where to burn.</p>
 											<p>Par, the &Delta;<em>v</em> of the classic route, comes from <em>v</em><sup>2</sup> = <em>GM</em>(2/<em>r</em> &minus; 1/<em>a</em>). The closer you get to it, the more stars you earn.</p>
 
 											<h4>Running time backwards</h4>
@@ -656,7 +703,7 @@
 
 											<h4>Gravity wells and rotating views</h4>
 											<p><strong>Gravity well</strong> (or W) maps each body's well: darker is deeper, and each line joins points at the same depth, like the contour lines of a map of hills. Where the lines crowd together, the slope is steep and the pull is strong.</p>
-											<p>In <strong>View from</strong>, a <strong>rotating</strong> view turns with a body and the body it orbits, so both stand still. Velocity arrows then show motion as seen in that turning view, and the well includes the outward push you feel on a roundabout. For an elliptical orbit the view keeps the pair on one line, so the body slides in and out along it.</p>
+											<p>A <strong>rotating</strong> view (<em>Rotate with it</em>, in a body's menu) turns with a body and the body it orbits, so both stand still. Velocity arrows then show motion as seen in that turning view, and the well includes the outward push you feel on a roundabout. For an elliptical orbit the view keeps the pair on one line, so the body slides in and out along it.</p>
 											<p>The well gains hilltops 60&deg; ahead of and behind the body, and passes on the line through the pair: the five <strong>Lagrange points</strong> (under <em>More options</em>; hover over or tap one to read about it), where a small body can keep pace with the pair. Surprisingly, the hilltops L4 and L5 are the stable ones: a body that starts to roll off is steered round by the turning (the Coriolis effect), which is why Jupiter's Trojan asteroids gather there.</p>
 										</div>
 									</details>

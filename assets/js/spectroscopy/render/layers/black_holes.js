@@ -11,6 +11,7 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
+import { bandMagnitude } from '../../data/band_table.js';
 import { sharedUniforms, skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep, exoticNoise } from './exotic_common.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from './bh_geodesic.js';
@@ -210,9 +211,10 @@ const LENS_FRAGMENT = /* glsl */`
         float w = smoothstep(uEdge, uEdge * 0.35, b);
         float beta = b - uK * bend * w;
         // The companion's sprite in stars.js sits at the lens centre, and the lens would turn it into a ring. So read
-        // the sky no closer to the centre than the sprite reaches: what's there is the same diffuse glow, with no star
+        // the sky no closer to the centre than the sprite reaches: what's there is the same diffuse glow, with no star.
+        // Reflected at that radius, not held at it, or a star crossing the circle is smeared into a block
         float reach = uMaskPx / uPxPerM;
-        float read = (beta < 0.0 ? -1.0 : 1.0) * max(abs(beta), reach);
+        float read = (beta < 0.0 ? -1.0 : 1.0) * (abs(beta) < reach ? 2.0 * reach - abs(beta) : abs(beta));
         vec3 sky = texture2D(tInput, mirrored((uCentrePx + dir * read * uPxPerM) / uRes)).rgb;
 
         // Everything captured is black
@@ -640,7 +642,8 @@ function createGlows(engine, holes) {
         centres.set([bh.world.x, bh.world.y, bh.world.z], i * 3);
         // The disc is the detection, so it's the X-ray and UV strengths that matter. Not in visible or IR
         bandA.set([bh.body.bands.radio * 0.25, 0, 0, bh.body.bands.uv * 0.55], i * 4);
-        bandB[i] = bh.body.bands.xray;
+        // A brighter source has the bigger glow, so that the sky has a few great beacons and many small ones
+        bandB[i] = bh.body.bands.xray * Math.min(1, 10 ** (-0.2 * (bandMagnitude(bh.body, 'xray') - 0.5)));
         params.set([bh.discDeg, bh.seed], i * 2);
     });
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
@@ -668,7 +671,7 @@ function createGlows(engine, holes) {
                 vP = position.xy;
                 vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
                 c.xy *= depthP(aDepth);
-                float sizePx = (vAmount > 0.002 ? 1.0 : 0.0) * uViewport.y * (0.02 + 0.035 * vAmount);
+                float sizePx = (vAmount > 0.002 ? 1.0 : 0.0) * uViewport.y * (0.02 + 0.035 * vAmount) * mix(1.0, 0.7, uBandW[4]);
                 c.xy += position.xy * sizePx * length(c.xyz) / uPxPerRad;
                 gl_Position = projectionMatrix * c;
             }`,
@@ -678,7 +681,7 @@ function createGlows(engine, holes) {
             varying float vAmount;
             void main() {
                 float r = length(vP);
-                float glow = 2.6 * exp(-r * r * 90.0) + 0.55 * exp(-r * r * 14.0) + 0.14 / (1.0 + r * r * 30.0);
+                float glow = 2.6 * exp(-r * r * 90.0) + mix(0.55, 0.2, uBandW[4]) * exp(-r * r * 14.0) + mix(0.14, 0.05, uBandW[4]) / (1.0 + r * r * 30.0);
                 glow *= smoothstep(1.0, 0.6, r);
                 gl_FragColor = vec4(bandColour(vec3(1.0)) * glow * vAmount, 1.0);
             }`

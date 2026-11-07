@@ -293,6 +293,10 @@ function mountHR(container, app) {
     const top = el('div', { class: 'spectro-fig-top' });
     root.appendChild(top);
 
+    // Until there's a star on the diagram: how to find the kind of star a task asks for
+    const findHint = el('p', { class: 'spectro-fig-hintline', text: 'To find a kind of star, go by colour: pale yellow is about G, orange about K. Of two orange stars, the much brighter is probably a giant.' });
+    top.appendChild(findHint);
+
     const figure = createFigure(root, {
         label: 'H-R diagram',
         height: (w) => {
@@ -684,6 +688,7 @@ function mountHR(container, app) {
         caption.textContent = bits.length ? `Plotted: ${bits.join(' and ')}.` : '';
         caption.hidden = !bits.length;
         legend.hidden = !bits.length;
+        findHint.hidden = !isStar || !!bits.length;
 
         list.update(studentPoints().map((p) => ({
             key: p.code,
