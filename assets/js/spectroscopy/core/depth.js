@@ -36,7 +36,9 @@ export const DEPTH_TABLE = {
     comet: { near: 0, far: 0.4, kSize: 0.7, kDim: 2.5, byMag: true },  // Only two now, both our own: not far apart
     nebula: { near: 0, far: 1, kSize: 0.5, kDim: 1.5 },
     cluster: { near: 0, far: 1, kSize: 0.5, kDim: 1.5 },
-    galaxy: { near: 0.2, far: 1, kSize: 0.45, kDim: 1.5 },
+    // Galaxies are the faintest things there are: any dimmer and the furthest would stay below the deepest zoom's limit, a
+    // core with no shape
+    galaxy: { near: 0.2, far: 1, kSize: 0.35, kDim: 1 },
     supernova: { near: 0, far: 0.8, kSize: 0.4, kDim: 1 },
     star: { near: 0, far: 1, kSize: 0, kDim: 0 },
     binary: { near: 0, far: 1, kSize: 0, kDim: 0 },
