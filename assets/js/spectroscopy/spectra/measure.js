@@ -501,8 +501,9 @@ const RESOLVED_SHARE = 0.8;
 // Past this share of the speed, or of the limit if it reads below that, the line is too noisy to give any answer
 const NOISY_SHARE = 0.45;
 const NOISY_LIMIT_SHARE = 0.6;
-// No star spins faster than this. A wider "at most" says the dip isn't one star's line, or is all pressure.
-export const FASTEST_SPIN_KMS = 500;
+// Past about this a star would fly apart (the fastest in this sky turns at 300). A wider "at most" says the dip isn't one star's
+// line, or is all pressure.
+export const FASTEST_SPIN_KMS = 400;
 
 // The smallest rotation a resolving power can show: a good part of its resolution, and never under 5 km/s
 export function rotationLimitKms(R) {
@@ -753,8 +754,8 @@ function typicalWidthKms(spectrum, thin) {
 }
 
 const BAND_HEAD_CLEAR_KMS = 1300;   // The step at a molecular band's head throws off a line this close to it, at overview resolution
-const FAST_SHARPENS = 1.25;         // About 55 km/s: thin lines this wide are all rotation, and their neighbours matter more
-const VERY_FAST_SHARPENS = 1.12;    // About 80 km/s: rotation now outweighs pressure in stronger lines too
+const FAST_SHARPENS = 0.92;         // About 50 km/s: thin lines this wide are all rotation, and their neighbours matter more
+const VERY_FAST_SHARPENS = 0.84;    // About 65 km/s: rotation now outweighs pressure in stronger lines too
 const FAST_WINGED_LINES_KMS = 200;  // With only stronger lines to go by: a dense star's pressure alone takes them to about 150
 const WIDTH_PER_SPIN = 2.5;
 const BIN_FROM_R = 50000;
@@ -825,7 +826,12 @@ export function suggestRotationLines(spectrum, count = 3) {
         scored.push({ line, score: (signal / (signal + ROTATION_LINE_SIGNAL)) * roomy * roomy * handy });
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, count).map((s) => s.line);
+    // The stars of a multiple system each list the same line
+    const unique = [];
+    scored.forEach(({ line }) => {
+        if (!unique.some((u) => Math.abs(u.rest_nm - line.rest_nm) < 0.05)) unique.push(line);
+    });
+    return unique.slice(0, count);
 }
 
 // The lines best for following through time, given the overview spectrum of each star to be followed. Sharp, deep lines with

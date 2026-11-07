@@ -89,7 +89,7 @@ function rotationCell(w, reading) {
 function workingText(w, reading) {
     if (reading.kind !== 'value') return null;
     const { width, base, spread, spin } = spinSum(w);
-    return `With no spin, the instrument, hot gas and pressure would make this line about ${sumText(base)} km/s wide. Take that off: √(${sumText(width)}² − ${sumText(base)}²) = ${sumText(spread)} km/s. Spin makes a line ${ROTATION_FWHM} × v sin i wide, not 2 ×, because little of a star's light comes from its fast-moving edges. So v sin i ≈ ${sumText(spread)} ÷ ${ROTATION_FWHM} = ${kmsText(spin)} km/s. (v sin i is the part of the spin along your line of sight.)`;
+    return `Without spin it would be about ${sumText(base)} km/s wide, from the instrument, hot gas and pressure: √(${sumText(width)}² − ${sumText(base)}²) = ${sumText(spread)} km/s. Spin makes a line ${ROTATION_FWHM} × v sin i wide, not 2 ×, as little of a star's light comes from its fast-moving edges: ${sumText(spread)} ÷ ${ROTATION_FWHM} = ${kmsText(spin)} km/s.`;
 }
 
 // Rotation and pressure are readings of a star's lines. Anywhere else, a line's width is gas or stars moving at many speeds.
@@ -110,31 +110,29 @@ function meaning(w, winged, reading) {
     const pressure = kmsText(w.pressure_kms);
     const spinWidth = ROTATION_FWHM * w.velocity_kms;
     if (reading.kind === 'noisy') {
-        return 'There is too much noise here to split this width into rotation and pressure. A deeper line, in a brighter part of the spectrum, or a brighter star would settle it.';
+        return 'Too much noise here to split this width into spin and pressure. A deeper line or a brighter star would settle it.';
     }
     if (reading.kind === 'too wide') {
-        return `At ${width} km/s this is far wider than any star could spin, so it is pressure, or several lines run together. A thin metal line is better for rotation.`;
+        return `At ${width} km/s this is far wider than any star could spin: it is pressure, or several lines run together.`;
     }
     if (winged) {
-        const compare = 'Set this line beside the same line in another star: the wider one is the denser star, the dwarf. A thin metal line is better for rotation.';
         if (w.pressure_kms <= THIN_GAS_PRESSURE_KMS) {
-            return `Pressure adds only about ${pressure} km/s to this line, so either the gas here is thin or there is little of this element. ${compare}`;
+            return `Pressure adds only about ${pressure} km/s here, so the gas is thin or this element is scarce.`;
         }
         if (w.pressure_kms >= spinWidth || w.fwhm_kms >= 150) {
-            return `Most of this ${width} km/s is long wings around a narrow core, and those come from pressure: the denser the gas, the wider they spread. ${compare}`;
+            return `Most of this ${width} km/s is long wings around a narrow core, from pressure. Denser gas spreads them wider.`;
         }
-        return `Spin and pressure both widen this line, with about ${pressure} km/s of it from pressure. ${compare}`;
+        return `Spin and pressure both widen this line, about ${pressure} km/s of it from pressure.`;
     }
     if (reading.kind === 'unresolved') {
-        return `Too narrow to show rotation. This line is ${width} km/s wide, and the instrument, hot gas and pressure alone make about ${kmsText(w.base_kms)} km/s of that, so a slower spin can't be told apart. That is a real limit, not a fault.`;
+        return `Too narrow to show rotation: the instrument, hot gas and pressure alone make about ${kmsText(w.base_kms)} of these ${width} km/s. That is a real limit, not a fault.`;
     }
     if (spinWidth >= 0.7 * w.fwhm_kms) {
-        if (w.shape === 'steep' && w.fwhm_kms >= 25) {
-            return 'Steep sides and a flat bottom, the shape that rotation gives. One side of the star is coming towards you and the other going away, which spreads every line evenly.';
-        }
-        return 'Most of this width is rotation. One side of the star is coming towards you and the other going away, which spreads every line evenly.';
+        return w.shape === 'steep' && w.fwhm_kms >= 25
+            ? 'Steep sides and a flat bottom, the shape that spin gives.'
+            : 'Most of this width is spin.';
     }
-    return 'Part of this width is rotation. The rest is the instrument, the hot gas and pressure.';
+    return 'Part of this width is spin. The rest is the instrument, hot gas and pressure.';
 }
 
 function mount(container, api) {
@@ -327,8 +325,8 @@ function mount(container, api) {
         const rotation = suggestRotationLines(overview || {}, ROTATION_PICKS).filter((line) => !pressure.some((p) => same(p, line)));
         if (last && !pressure.concat(rotation).some((l) => same(l, last))) (hasLongWings(last) ? pressure : rotation).unshift(last);
         chips.replaceChildren(
-            ...pickRow('Giant or dwarf? Compare one of these on both stars: pressure widens them, so a dense dwarf\'s are wider.', 'Lines that show density', pressure),
-            ...pickRow('Rotation: the lines that show this star\'s spin best.', 'Lines that show rotation', rotation)
+            ...pickRow('Giant or dwarf? Compare one of these on both stars: pressure widens them, so the wider one is the denser star, the dwarf.', 'Lines that show density', pressure),
+            ...pickRow('Rotation: the lines that show this star\'s spin best. One side of a star comes towards you as the other goes away, which spreads every line evenly. v sin i is the part of the spin along your line of sight.', 'Lines that show rotation', rotation)
         );
         chips.hidden = !pressure.length && !rotation.length;
     }

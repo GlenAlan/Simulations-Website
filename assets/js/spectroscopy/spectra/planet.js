@@ -48,6 +48,18 @@ function groundReflectance(rock, lam) {
     return 0.24;
 }
 
+// Sky-blue scattering, which grows as the fourth power of the frequency. It can't go on growing for ever: once the air is opaque to a
+// colour, it can scatter back at most a little over half of that light. In the visible this is the plain power law.
+const AIR_MOST = 0.6;
+
+function scatteredByAir(rayleigh, lam) {
+    const thin = rayleigh * (450 / lam) ** 4;
+    return thin / (1 + (thin / AIR_MOST) ** 4) ** 0.25;
+}
+
+// A planet can't return more light than falls on it
+const MOST_RETURNED = 0.98;
+
 // Reflectance of the surface and clouds together, before scaling to the planet's albedo
 function reflectanceModel(planet) {
     const surface = planet.surface || {};
@@ -84,8 +96,7 @@ function reflectanceModel(planet) {
         let deck = 0.8;
         if (blueDim) deck = 0.85 * Math.min(1, Math.max(0.25, (lam - 300) / 200));
         if (dusty) deck = groundReflectance('iron_oxide', lam) * 1.3;
-        const air = rayleigh * (450 / lam) ** 4;
-        return cover * deck + (1 - cover) * below + air;
+        return Math.min(MOST_RETURNED, cover * deck + (1 - cover) * below + scatteredByAir(rayleigh, lam));
     };
 }
 
@@ -99,7 +110,7 @@ function albedoFunction(planet) {
         count++;
     }
     const scale = (planet.albedo ?? 0.3) / (sum / count);
-    return (lam) => scale * model(lam);
+    return (lam) => Math.min(MOST_RETURNED, scale * model(lam));
 }
 
 // Absorption by the planet's own gases and ices, written into A, and the features that are there to be seen
@@ -150,6 +161,8 @@ function withObservedWavelengths(features, grid, factor) {
 // Planets are very faint next to their stars, but a student has to be able to find their bands, so these spectra are as
 // if from a telescope built for the job. Only the brightest get better than this.
 const PLANET_MIN_SNR = 150;
+// A star's light has to be at least this share of its brightest before a planet's share of it means anything
+const NOTHING_TO_MEASURE = 1e-3;
 
 // hostEntity is the planet's host, or null for a home planet, which reflects a Sun-like star
 export function planetSpectrum(planet, grid, opts, hostEntity, ownBody) {
@@ -198,12 +211,22 @@ export function planetSpectrum(planet, grid, opts, hostEntity, ownBody) {
     if (opts.subtractHost) {
         // Reflectance: 0.3 here means the planet returns 30% of the starlight. The host's lines cancel exactly.
         note = 'The host star\'s light has been divided out, so only the planet\'s own features remain. Flux here is the fraction of starlight the planet returns. Its own heat lifts the far right.';
+        // Where the star gives next to no light, there's nothing to divide by and nothing for the planet to return
+        let hostPeak = 0;
+        for (let i = 0; i < n; i++) if (host.continuum[i] > hostPeak) hostPeak = host.continuum[i];
+        const dark = hostPeak * NOTHING_TO_MEASURE;
+        let darkTo = 0;
         for (let i = 0; i < n; i++) {
+            if (host.continuum[i] < dark) {
+                darkTo = wl[i];
+                continue;
+            }
             const hostLight = Math.max(1e-300, hostScale * host.flux[i]);
             const hostCont = Math.max(1e-300, hostScale * host.continuum[i]);
             flux[i] = albedo(wl[i] / factor) * A[i] + Math.min(1e3, (thermal[i] * A[i]) / hostLight);
             continuum[i] = baseAlbedo + Math.min(1e3, thermal[i] / hostCont);
         }
+        if (darkTo > grid.lo && darkTo < grid.hi) note += ` Below about ${Math.round(darkTo)} nm the star gives almost no light, so there is nothing to measure.`;
     } else {
         for (let i = 0; i < n; i++) {
             flux[i] = (reflected[i] + thermal[i] * A[i]) / norm;
