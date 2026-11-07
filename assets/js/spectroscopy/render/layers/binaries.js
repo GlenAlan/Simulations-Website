@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
+import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
@@ -178,7 +179,7 @@ export function createBinariesLayer(engine, app) {
 
     function nodeMagnitude(system, node) {
         const lum = (group) => group.reduce((sum, i) => sum + system.body.stars[i].star.luminosity_Lsun, 0);
-        return system.body.brightness.mag - 2.5 * Math.log10(lum(node.stars) / lum(system.tree.stars));
+        return drawMag(system.body) - 2.5 * Math.log10(lum(node.stars) / lum(system.tree.stars));
     }
 
     function nodeColour(system, node) {
@@ -228,8 +229,10 @@ export function createBinariesLayer(engine, app) {
         const colours = new Float32Array(n * 3);
         const bandA = new Float32Array(n * 4);
         const bandB = new Float32Array(n);
+        const depths = new Float32Array(n);
         flat.forEach(({ system, node }, i) => {
             const b = system.body.bands;
+            depths[i] = system.body.depth;
             position.set(worldOf(system, node.x, node.y), i * 3);
             seps.set([node.sepParent, node.sepSelf], i * 2);
             mags[i] = nodeMagnitude(system, node);
@@ -244,6 +247,7 @@ export function createBinariesLayer(engine, app) {
         geometry.setAttribute('aColour', new THREE.InstancedBufferAttribute(colours, 3));
         geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
         geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
+        geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
 
         const material = skyMaterial({
             vertexShader: /* glsl */`
@@ -254,10 +258,11 @@ export function createBinariesLayer(engine, app) {
                 attribute vec3 aColour;
                 attribute vec4 aBandA;
                 attribute float aBandB;
+                attribute float aDepth;
                 varying vec3 vLight;
                 varying vec2 vP;
                 float resolved(float deg) {
-                    return smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(deg) * uPxPerRad);
+                    return smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(deg) * uPxPerRad * depthP(aDepth));
                 }
                 void main() {
                     // In view once its parent has split, gone again once it has split itself
@@ -272,6 +277,7 @@ export function createBinariesLayer(engine, app) {
                     vLight = bandColour(aColour) * brightness * strength;
                     vP = position.xy;
                     vec4 c = modelViewMatrix * vec4(aPosition, 1.0);
+                    c.xy *= depthP(aDepth);
                     float halfPx = radiusPx * 3.6 * (strength > 0.002 ? 1.0 : 0.0);
                     c.xy += position.xy * halfPx * length(c.xyz) / uPxPerRad;
                     gl_Position = projectionMatrix * c;
@@ -304,12 +310,15 @@ export function createBinariesLayer(engine, app) {
         const geometry = instancedQuad(n);
         const centres = new Float32Array(n * 3);
         const seps = new Float32Array(n);
+        const depths = new Float32Array(n);
         systems.forEach((system, i) => {
             centres.set(worldOf(system, 0, 0), i * 3);
             seps[i] = system.tree.sepSelf;
+            depths[i] = system.body.depth;
         });
         geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
         geometry.setAttribute('aSepDeg', new THREE.InstancedBufferAttribute(seps, 1));
+        geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
         const material = skyMaterial({
             blending: THREE.CustomBlending,
             blendEquation: THREE.AddEquation,
@@ -319,12 +328,14 @@ export function createBinariesLayer(engine, app) {
                 ${BAND_GLSL}
                 attribute vec3 aCentre;
                 attribute float aSepDeg;
+                attribute float aDepth;
                 varying vec2 vP;
                 varying float vDim;
                 void main() {
                     vP = position.xy;
-                    vDim = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aSepDeg) * uPxPerRad) * uSkyFade;
+                    vDim = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aSepDeg) * uPxPerRad * depthP(aDepth)) * uSkyFade;
                     vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                    c.xy *= depthP(aDepth);
                     float halfPx = uViewport.y * 0.036 * (vDim > 0.002 ? 1.0 : 0.0);
                     c.xy += position.xy * halfPx * length(c.xyz) / uPxPerRad;
                     gl_Position = projectionMatrix * c;
@@ -356,7 +367,9 @@ export function createBinariesLayer(engine, app) {
         const info = new Float32Array(n * 4);
         const bandA = new Float32Array(n * 4);
         const bandB = new Float32Array(n);
+        const pairDepths = new Float32Array(n);
         pairs.forEach(({ system, node }, i) => {
+            pairDepths[i] = system.body.depth;
             const [donor, gainer] = bridgeEnds(system, node);
             from.set(worldOf(system, donor.x, donor.y), i * 3);
             to.set(worldOf(system, gainer.x, gainer.y), i * 3);
@@ -370,6 +383,7 @@ export function createBinariesLayer(engine, app) {
         bridgeGeometry.setAttribute('aInfo', new THREE.InstancedBufferAttribute(info, 4));
         bridgeGeometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
         bridgeGeometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
+        bridgeGeometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(pairDepths, 1));
         const bridgeMaterial = skyMaterial({
             vertexShader: /* glsl */`
                 ${BAND_GLSL}
@@ -378,16 +392,19 @@ export function createBinariesLayer(engine, app) {
                 attribute vec4 aInfo;
                 attribute vec4 aBandA;
                 attribute float aBandB;
+                attribute float aDepth;
                 varying vec2 vP;
                 varying vec4 vWeights;
                 varying float vSeed;
                 void main() {
-                    float shows = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aInfo.x) * uPxPerRad);
+                    float shows = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aInfo.x) * uPxPerRad * depthP(aDepth));
                     vWeights = vec4(aBandA.z * uBandW[2] * 0.5, aBandA.w * uBandW[3], aBandB * uBandW[4], shows) * uSkyFade;
                     vSeed = aInfo.y;
                     vP = position.xy;
                     vec4 a = modelViewMatrix * vec4(aFrom, 1.0);
                     vec4 b = modelViewMatrix * vec4(aTo, 1.0);
+                    a.xy *= depthP(aDepth);
+                    b.xy *= depthP(aDepth);
                     vec2 along = b.xy - a.xy;
                     float len = max(length(along), 0.0001);
                     vec2 axis = along / len;
@@ -441,6 +458,7 @@ export function createBinariesLayer(engine, app) {
         auraGeometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(auraBandA, 4));
         auraGeometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(auraBandB, 1));
         auraGeometry.setAttribute('aSepDeg', new THREE.InstancedBufferAttribute(sep, 1));
+        auraGeometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(pairDepths, 1));
         const auraMaterial = skyMaterial({
             vertexShader: /* glsl */`
                 ${BAND_GLSL}
@@ -448,13 +466,15 @@ export function createBinariesLayer(engine, app) {
                 attribute vec4 aBandA;
                 attribute float aBandB;
                 attribute float aSepDeg;
+                attribute float aDepth;
                 varying vec2 vP;
                 varying float vAmount;
                 void main() {
                     vP = position.xy;
-                    float apart = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aSepDeg) * uPxPerRad);
+                    float apart = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aSepDeg) * uPxPerRad * depthP(aDepth));
                     vAmount = (aBandA.w * uBandW[3] * 0.4 + aBandB * uBandW[4]) * (1.0 - 0.7 * apart) * uSkyFade;
                     vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                    c.xy *= depthP(aDepth);
                     float halfPx = uViewport.y * (0.012 + 0.024 * vAmount) * (vAmount > 0.002 ? 1.0 : 0.0);
                     c.xy += position.xy * halfPx * length(c.xyz) / uPxPerRad;
                     gl_Position = projectionMatrix * c;
@@ -544,15 +564,17 @@ export function createBinariesLayer(engine, app) {
             const lim = limitingMag(frame.fov);
             for (let i = 0; i < flat.length; i++) {
                 const { system, node } = flat[i];
-                const parentPx = node.sepParent * DEG * frame.pxPerRad;
+                const { depth } = system.body;
+                const pxPerRad = frame.pxPerRad * parallaxFactor(depth, frame.fov);
+                const parentPx = node.sepParent * DEG * pxPerRad;
                 if (parentPx < SPLIT_LO + 2) continue;
-                const shown = smoothstep(SPLIT_LO, SPLIT_HI, parentPx) * (1 - smoothstep(SPLIT_LO, SPLIT_HI, node.sepSelf * DEG * frame.pxPerRad));
+                const shown = smoothstep(SPLIT_LO, SPLIT_HI, parentPx) * (1 - smoothstep(SPLIT_LO, SPLIT_HI, node.sepSelf * DEG * pxPerRad));
                 if (shown < 0.5 || !node.code) continue;
-                if (frame.band === 'visible' && system.body.brightness.mag > lim) continue;
+                if (frame.band === 'visible' && drawMag(system.body) > lim) continue;
                 if ((system.body.bands[frame.band] || 0) <= 0.01) continue;
                 const world = worldOf(system, node.x, node.y);
                 const sky = vec3ToAzAlt(world[0], world[1], world[2]);
-                pickList.push({ code: node.code, az: sky.az, alt: sky.alt, radiusPx: 7 });
+                pickList.push({ code: node.code, az: sky.az, alt: sky.alt, radiusPx: 7, depth });
             }
             return pickList;
         },

@@ -117,6 +117,7 @@ function initBandBar(app) {
 // ---------- Layers menu ----------
 const LAYER_ROWS = [
     { name: 'homePlanets', label: 'Home planets', tip: 'Mercury, Venus, Mars, Jupiter, Saturn, Uranus and Neptune, as bright points.' },
+    { name: 'backgroundStars', label: 'Background stars', tip: 'Thousands of faint stars, as scenery. They can\'t be selected: everything else you see can.' },
     { name: 'galacticBand', label: 'Galactic band highlight', tip: 'Marks the edges of the band of stars and dust that crosses the sky.' },
     { name: 'grid', label: 'Grid', tip: 'Lines of altitude (height above the horizon) and azimuth (bearing around the horizon), in degrees.' },
     { name: 'labels', label: 'Labels', tip: 'Shows each object\'s code. Zoom in to see more of them.' },
@@ -420,7 +421,7 @@ function keepSelectionInView(app) {
             const engine = app.engine;
             if (!app.selected || app.view !== 'sky' || engine.isSlewing()) return;
             const { az, alt } = app.selected.body.sky;
-            const p = engine.project(az, alt);
+            const p = engine.projectBody(app.selected.body);
             const frame = engine.currentFrame();
             const onSky = p && p.x > CLEARANCE && p.x < frame.width - CLEARANCE && p.y > CLEARANCE && p.y < frame.height - CLEARANCE;
             if (onSky) {

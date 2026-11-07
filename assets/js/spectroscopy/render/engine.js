@@ -3,7 +3,7 @@
 // A layer is any object with these members, added with engine.addLayer():
 //   id                  a short name
 //   update(frame)       called once a frame before drawing; add your Object3Ds to engine.scene when created
-//   picks(frame)?       extra pick candidates: [{ code, az, alt, radiusPx }]; see engine.pick
+//   picks(frame)?       extra pick candidates: [{ code, az, alt, radiusPx, depth }]; see engine.pick and core/depth.js
 //   dispose()?          free GPU resources
 //
 // frame = { serial, t, dt, fov, pxPerRad, width, height, dpr, camera, band, bandW, quality, reduceMotion, view }
@@ -25,6 +25,7 @@ import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
 import { BANDS, bandIndex } from '../core/bands.js';
 import { azAltToVec3, DEFAULT_VIEW, MIN_FOV, MAX_FOV, limitingMag } from '../core/sky.js';
+import { parallaxFactor, parallaxLog } from '../core/depth.js';
 import { bandSkyBrightness } from '../data/band_table.js';
 import { sharedUniforms } from './shared.js';
 
@@ -42,6 +43,8 @@ const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
 const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
+const ANCHOR_HOLD_PX = 8;       // A zoom keeps the depth it found under the pointer until the pointer moves this far...
+const ANCHOR_HOLD_MS = 300;     // ...or the wheel has been still this long
 
 // What each graphics level spends. dpr caps the pixel ratio; bloom levels are halvings of the screen.
 const LEVELS = ['low', 'medium', 'high'];
@@ -768,10 +771,11 @@ export function createEngine(canvas) {
         }
     }
 
-    // The ray through a screen point, in camera space at a field of view: x right, y up, f forward, length 1
+    // The ray through a screen point for a thing at this depth, in camera space at a field of view: x right, y up, f
+    // forward, length 1. Further things are drawn nearer the centre than the camera alone puts them (core/depth.js).
     const ray = { x: 0, y: 0, f: 1 };
-    function rayThrough(px, py, fov) {
-        const t = Math.tan(fov * RAD * 0.5);
+    function rayThrough(px, py, fov, depth = 0) {
+        const t = Math.tan(fov * RAD * 0.5) / parallaxFactor(depth, fov);
         const x = ((px / width) * 2 - 1) * t * (width / height);
         const y = (1 - (py / height) * 2) * t;
         const length = Math.hypot(x, y, 1);
@@ -781,9 +785,27 @@ export function createEngine(canvas) {
         return ray;
     }
 
-    // The zoom's anchor: a screen point, and the direction in the sky under it when the zoom began
+    // The depth of whatever is under a screen point, or the dome's over empty sky. Asking is a sweep through every layer's
+    // picks, too much for each event of a wheel, so one gesture asks once. And it stays with the thing it found first.
+    const anchorHeld = { x: 0, y: 0, at: -Infinity, depth: 1 };
+    function depthUnder(px, py) {
+        const now = performance.now();
+        const held = now - anchorHeld.at < ANCHOR_HOLD_MS && Math.hypot(px - anchorHeld.x, py - anchorHeld.y) < ANCHOR_HOLD_PX;
+        anchorHeld.at = now;
+        if (held) return anchorHeld.depth;
+        const code = pick(px, py, 12);
+        const found = code ? app.universe.resolve(code) : null;
+        anchorHeld.x = px;
+        anchorHeld.y = py;
+        anchorHeld.depth = found ? found.body.depth || 0 : 1;
+        return anchorHeld.depth;
+    }
+
+    // The zoom's anchor: a screen point, and the direction in the sky under it when the zoom began. What you point at is
+    // what you zoom into: it's the depth of the thing under the pointer that stays still.
     function anchorZoomAt(px, py) {
-        const r = rayThrough(px, py, view.fov);
+        const depth = depthUnder(px, py);
+        const r = rayThrough(px, py, view.fov, depth);
         const p = view.alt * RAD;
         const a = view.az * RAD;
         const up = r.y * Math.cos(p) + r.f * Math.sin(p);
@@ -791,6 +813,7 @@ export function createEngine(canvas) {
         zoomAnchor = {
             x: px,
             y: py,
+            depth,
             skyX: r.x * Math.cos(a) - back * Math.sin(a),
             skyY: up,
             skyZ: r.x * Math.sin(a) + back * Math.cos(a)
@@ -802,7 +825,7 @@ export function createEngine(canvas) {
     function setFovAnchored(next) {
         let { az, alt } = view;
         if (zoomAnchor) {
-            const r = rayThrough(zoomAnchor.x, zoomAnchor.y, next);
+            const r = rayThrough(zoomAnchor.x, zoomAnchor.y, next, zoomAnchor.depth);
             const tilt = Math.atan2(r.y, r.f);
             const reach = Math.asin(Math.max(-1, Math.min(1, zoomAnchor.skyY / Math.hypot(r.y, r.f))));
             // Two pitches put the anchor at the right height: the one nearer the view, past the zenith or not
@@ -844,13 +867,22 @@ export function createEngine(canvas) {
         }
     }
 
-    // Screen position (CSS pixels from the canvas's top-left) of a sky direction; null when behind the camera.
+    // Screen position (CSS pixels from the canvas's top-left) of a sky direction at a depth; null when behind the camera.
+    // Without a depth this is where a thing as near as can be is drawn: see core/depth.js.
     const tmp = new THREE.Vector3();
-    function project(az, alt) {
+    function project(az, alt, depth = 0) {
         const v = azAltToVec3(az, alt);
         tmp.set(v[0] * 1000, v[1] * 1000, v[2] * 1000).project(camera);
         if (tmp.z > 1 || tmp.z < -1) return null;
-        return { x: (tmp.x * 0.5 + 0.5) * width, y: (-tmp.y * 0.5 + 0.5) * height, onScreen: Math.abs(tmp.x) <= 1 && Math.abs(tmp.y) <= 1 };
+        const p = parallaxFactor(depth, view.fov);
+        const x = tmp.x * p;
+        const y = tmp.y * p;
+        return { x: (x * 0.5 + 0.5) * width, y: (-y * 0.5 + 0.5) * height, onScreen: Math.abs(x) <= 1 && Math.abs(y) <= 1 };
+    }
+
+    // Where a body is drawn
+    function projectBody(body) {
+        return project(body.sky.az, body.sky.alt, body.depth || 0);
     }
 
     // ---------- Picking ----------
@@ -905,9 +937,10 @@ export function createEngine(canvas) {
         let bestScore = Infinity;
         const lim = limitingMag(view.fov);
         const pxPerDeg = (height * 0.5 * RAD) / Math.tan(view.fov * RAD * 0.5);
-        const consider = (code, az, alt, radiusPx, bonusPx) => {
-            const p = project(az, alt);
-            if (!p || !p.onScreen) return;
+        const consider = (code, az, alt, radiusPx, bonusPx, depth) => {
+            const p = project(az, alt, depth);
+            // Something with a size can be on show while its middle is off the edge of the view
+            if (!p || (!p.onScreen && !radiusPx)) return;
             const dist = Math.hypot(p.x - x, p.y - y);
             if (dist > maxPx + radiusPx) return;
             const score = pickScore(dist, radiusPx, bonusPx);
@@ -921,14 +954,16 @@ export function createEngine(canvas) {
             for (let i = 0; i < bodies.length; i++) {
                 const body = bodies[i];
                 if (bodyShows(body, lim)) {
-                    consider(body.code, body.sky.az, body.sky.alt, extendedRadiusDeg(body) * pxPerDeg, brightnessBonusPx(body, lim));
+                    const depth = body.depth || 0;
+                    const radiusPx = extendedRadiusDeg(body) * pxPerDeg * parallaxFactor(depth, view.fov);
+                    consider(body.code, body.sky.az, body.sky.alt, radiusPx, brightnessBonusPx(body, lim), depth);
                 }
             }
         }
         const frame = currentFrame();
         layers.forEach((layer) => {
             if (!layer.picks) return;
-            (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.radiusPx || 0, 0));
+            (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.radiusPx || 0, 0, c.depth || 0));
         });
         return best;
     }
@@ -1006,6 +1041,7 @@ export function createEngine(canvas) {
         sharedUniforms.uFov.value = view.fov;
         sharedUniforms.uPxPerRad.value = frame.pxPerRad;
         sharedUniforms.uLimitMag.value = limitingMag(view.fov);
+        sharedUniforms.uParallaxLog.value = parallaxLog(view.fov);
         sharedUniforms.uViewport.value.set(bufferW, bufferH);
 
         renderer.info.reset();
@@ -1318,7 +1354,8 @@ export function createEngine(canvas) {
         getView: () => ({ ...view }),
         slewTo,                     // slewTo({ az, alt, fov }, { duration, pullBack, onDone })
         isSlewing: () => !!slew,
-        project,
+        project,                    // project(az, alt, depth = 0): where something at that depth is drawn. See core/depth.js
+        projectBody,                // projectBody(body): the same, for a body at its own depth
         pick,
         bodyShows,
         addLayer(layer) { layers.push(layer); return layer; },

@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { limitingMag } from '../../core/sky.js';
+import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
 import { bandMagnitudes } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
@@ -33,6 +34,7 @@ const VERT = /* glsl */`
     attribute vec4 aMagA;
     attribute float aMagB;
     attribute float aFade;
+    attribute float aDepth;
     varying vec2 vUv;
     varying vec2 vQ;
     varying vec4 vBand;
@@ -46,9 +48,10 @@ const VERT = /* glsl */`
         vBand = vec4(aBandA.x * revealGain(aMagA.x), aBandA.y * revealGain(aMagA.y), aBandA.z * revealGain(aMagA.z), aBandA.w * revealGain(aMagA.w)) * aFade;
         vXray = aBandB * revealGain(aMagB) * aFade;
         // Size on screen, in device pixels: the smaller it is, the harder it has to work to read as more than a blob
-        float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * 2.0;
+        float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth) * 2.0;
         vJewel = fall(46.0, 10.0, px);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
+        gl_Position.xy *= depthP(aDepth);
         if (aFade <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     }`;
 
@@ -101,6 +104,7 @@ function quadGeometry(count) {
     add('aMagA', 4);
     add('aMagB', 1);
     add('aFade', 1);
+    add('aDepth', 1);
     geometry.instanceCount = count;
     return geometry;
 }
@@ -114,7 +118,8 @@ function writeInstance(geometry, i, g, rect) {
     geometry.attributes.aBandB.array[i] = g.bandB;
     geometry.attributes.aMagA.array.set(g.magA, i * 4);
     geometry.attributes.aMagB.array[i] = g.magB;
-    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
+    geometry.attributes.aDepth.array[i] = g.body.depth;
+    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB', 'aDepth'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
 }
 
 export function createGalaxiesLayer(engine, app) {
@@ -140,6 +145,7 @@ export function createGalaxiesLayer(engine, app) {
         const basis = tangentBasis(body.sky.az, body.sky.alt);
         const halfDeg = (body.galaxy.size_deg * IMAGE_R) / 2;
         const mags = bandMagnitudes(body);
+        const light = depthLight(body);
         const { u, v } = quadAxes(basis, body.galaxy.position_angle_deg, worldHalfSize(body.galaxy.size_deg * IMAGE_R));
         return {
             body,
@@ -150,12 +156,13 @@ export function createGalaxiesLayer(engine, app) {
             u,
             v,
             halfDeg,
-            mag: body.brightness.mag,
+            mag: drawMag(body),
             mags,
             magA: [mags.radio, mags.ir, mags.visible, mags.uv],
             magB: mags.xray,
-            bandA: [body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv],
-            bandB: body.bands.xray,
+            light,
+            bandA: [body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light],
+            bandB: body.bands.xray * light,
             recipe: galaxyRecipe(body),
             tileX: (i % cols) * TILE,
             tileY: Math.floor(i / cols) * TILE,
@@ -204,18 +211,20 @@ export function createGalaxiesLayer(engine, app) {
     const nucleusBandB = new Float32Array(n);
     const nucleusMag = new Float32Array(n);
     const nucleusColour = new Float32Array(n * 3);
+    const nucleusDepth = new Float32Array(n);
     galaxies.forEach((g, i) => {
         const { body } = g;
+        nucleusDepth[i] = body.depth;
         const active = !!body.galaxy.active_nucleus;
         const lobed = !!body.galaxy.radio_lobes;
         nucleusPositions.set(g.centre, i * 3);
         nucleusBandA.set([
-            lobed ? body.bands.radio : 0,
-            (g.recipe.starburst ? 0.5 : 0.15) * body.bands.ir,
-            body.bands.visible,
-            active ? 0.6 * body.bands.uv : 0
+            lobed ? body.bands.radio * g.light : 0,
+            (g.recipe.starburst ? 0.5 : 0.15) * body.bands.ir * g.light,
+            body.bands.visible * g.light,
+            active ? 0.6 * body.bands.uv * g.light : 0
         ], i * 4);
-        nucleusBandB[i] = active ? Math.max(0.5, body.bands.xray) : 0;
+        nucleusBandB[i] = active ? Math.max(0.5, body.bands.xray) * g.light : 0;
         nucleusMag[i] = g.mag;
         nucleusColour.set(g.recipe.kind === 2 ? [0.75, 0.85, 1] : [1, 0.82, 0.58], i * 3);
     });
@@ -225,6 +234,7 @@ export function createGalaxiesLayer(engine, app) {
     nucleusGeometry.setAttribute('aBandB', new THREE.BufferAttribute(nucleusBandB, 1));
     nucleusGeometry.setAttribute('aMag', new THREE.BufferAttribute(nucleusMag, 1));
     nucleusGeometry.setAttribute('aColour', new THREE.BufferAttribute(nucleusColour, 3));
+    nucleusGeometry.setAttribute('aDepth', new THREE.BufferAttribute(nucleusDepth, 1));
     const nucleusMaterial = skyMaterial({
         vertexShader: /* glsl */`
             ${BAND_GLSL}
@@ -234,11 +244,12 @@ export function createGalaxiesLayer(engine, app) {
             attribute float aBandB;
             attribute float aMag;
             attribute vec3 aColour;
+            attribute float aDepth;
             varying vec3 vColour;
             void main() {
                 float gain = revealGain(aMag);
                 // A pinprick in visible only while the galaxy is too small to show its own nucleus
-                float small = fall(4000.0, 1500.0, uPxPerRad);
+                float small = fall(4000.0, 1500.0, uPxPerRad * depthP(aDepth));
                 vec3 c = aColour * aBandA.z * gain * uBandW[2] * 0.9 * small
                     + uBandTint[0] * uBandW[0] * aBandA.x * 2.0
                     + uBandTint[1] * uBandW[1] * aBandA.y * 1.2
@@ -246,6 +257,7 @@ export function createGalaxiesLayer(engine, app) {
                     + uBandTint[4] * uBandW[4] * aBandB * 7.0;
                 vColour = c;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(aDepth);
                 float strongest = max(c.r, max(c.g, c.b));
                 float px = uViewport.y / 800.0;
                 gl_PointSize = strongest < 0.004 ? 0.0 : (2.0 + 4.5 * min(1.0, sqrt(strongest) * 0.6)) * clamp(px, 1.0, 1.5);
@@ -272,8 +284,9 @@ export function createGalaxiesLayer(engine, app) {
         // The jets leave along the galaxy's spin axis, more or less: square to the disc as we see it
         positionAngleDeg: g.body.galaxy.position_angle_deg + 90 + (g.recipe.off[0] - 45) * 0.3,
         spanDeg: g.body.galaxy.size_deg * (2.2 + (g.recipe.off[1] / 90) * 1.6),
-        strength: Math.max(0.35, g.body.bands.radio),
-        seed: g.body.visual_seed
+        strength: Math.max(0.35, g.body.bands.radio) * g.light,
+        seed: g.body.visual_seed,
+        depth: g.body.depth
     }));
     const lobes = createRadioLobes(engine, lobeSources);
 
@@ -370,10 +383,11 @@ export function createGalaxiesLayer(engine, app) {
             for (let i = 0; i < n; i++) {
                 const g = galaxies[i];
                 if (!g.baked || (g.hero && g.hero.wanted)) continue;
-                const px = g.halfDeg * 2 * pxPerDeg;
+                const parallax = parallaxFactor(g.body.depth, frame.fov);
+                const px = g.halfDeg * 2 * pxPerDeg * parallax;
                 if (px <= bestPx) continue;
                 const off = Math.acos(Math.max(-1, Math.min(1, angularDot(g)))) / RAD;
-                if (off > halfView + g.halfDeg) continue;
+                if ((off - g.halfDeg) * parallax > halfView) continue;
                 best = g;
                 bestPx = px;
             }
@@ -478,24 +492,25 @@ export function createGalaxiesLayer(engine, app) {
             const out = [];
             const pxPerDeg = (frame.pxPerRad * RAD) / frame.dpr;
             const lim = limitingMag(frame.fov);
-            const stepDeg = 30 / pxPerDeg;
             for (let i = 0; i < n; i++) {
                 const g = galaxies[i];
                 const { body } = g;
                 if ((body.bands[app.band] || 0) <= 0.01) continue;
                 if (revealGain(g.mags[app.band], lim) < 0.03) continue;
+                const pxPerDegHere = pxPerDeg * parallaxFactor(body.depth, frame.fov);
                 const major = body.galaxy.size_deg / 2;
-                if (major * pxPerDeg < 14) {
-                    out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0 });
+                if (major * pxPerDegHere < 14) {
+                    out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth: body.depth });
                     continue;
                 }
                 const flat = g.recipe.kind === 1 ? 0.85 : Math.max(0.22, Math.cos(g.recipe.incl));
-                scatterPicks(out, body.code, g.basis, body.galaxy.position_angle_deg, major, major * flat, stepDeg);
+                scatterPicks(out, body.code, g.basis, body.galaxy.position_angle_deg, major, major * flat, 30 / pxPerDegHere, body.depth);
             }
             if (app.band === 'radio') {
                 // A click on a lobe finds its galaxy
                 lobeSources.forEach((src, i) => {
-                    scatterPicks(out, lobed[i].body.code, lobed[i].basis, src.positionAngleDeg, src.spanDeg / 2, src.spanDeg * 0.1, stepDeg);
+                    const stepDeg = 30 / (pxPerDeg * parallaxFactor(src.depth, frame.fov));
+                    scatterPicks(out, lobed[i].body.code, lobed[i].basis, src.positionAngleDeg, src.spanDeg / 2, src.spanDeg * 0.1, stepDeg, src.depth);
                 });
             }
             return out;
