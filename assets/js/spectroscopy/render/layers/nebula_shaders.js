@@ -293,7 +293,10 @@ void main() {
         // Each layer has its own veils, so that they cross one another rather than stacking into parallel lines
         float s = noiseAt(qc * 2.37 + vec3(0.19, 0.83, 0.47) + layer * vec3(0.37, 0.11, 0.53)).b;
 
-        float env = envelope(P + wob * uA.y);
+        vec3 Pu = vec3(xy, z);
+        // The stars ionise whatever is round them, so there is gas at the heart wherever the lumps happened to fall
+        vec3 toMain = Pu - uStar[0].xyz;
+        float env = envelope(P + wob * uA.y) + 1.1 * exp(-dot(toMain, toMain) / 0.035);
         float e = 1.0 - exp(-env * 1.3);
         // The density of turbulent gas is log-normal, and emission goes as its square. With no threshold anywhere there
         // is no outline: bright wisps, and the gas just gets fainter, all the way out.
@@ -304,7 +307,6 @@ void main() {
         sheet *= sheet;
         sheet *= sheet;
 
-        vec3 Pu = vec3(xy, z);
         float U = ionisation(Pu);
         // Falls away steeply from the stars, so that only a small heart is near white and most of the gas is red
         float lit = U / (U + 13.0);

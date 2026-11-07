@@ -252,10 +252,12 @@ function emissionShape(body, palette) {
     // Teal is where the oxygen lines beat hydrogen, so how much of it there is comes from the nebula's own spectrum
     const excitation = Math.min(1, palette.excitation);
     const gasX = 0.95 * gasGain * exposure;
-    const gasY = gasX * (0.3 + excitation) * 1.6;
-    // How far from the main star the oxygen zone starts, in sprite units: a small heart, larger round a hotter star and in
-    // gas with stronger oxygen lines. The bake's zone is U * reach reaching a quarter, and U falls as w / (d * d + 0.012).
-    const oxygenRadius = (0.06 + 0.15 * excitation) * rng.range(0.75, 1.25) * (0.6 + 0.6 * heat);
+    const gasY = gasX * (0.12 + 1.1 * excitation) * 2.2;
+    // How far from the main star the oxygen zone starts, in sprite units: larger round a hotter star and in gas with stronger
+    // oxygen lines. The bake's zone is U * reach reaching a quarter, and U falls as w / (d * d + 0.012), which levels off so
+    // soon near the star that a much smaller zone would never reach full strength anywhere. How much teal shows is left to
+    // gasY, the line ratio. A bubble has no gas near its star, so there the zone has to reach the inner wall.
+    const oxygenRadius = (0.12 + 0.1 * excitation) * rng.range(0.8, 1.2) * (0.75 + 0.5 * heat) + cavity * excitation * 1.2;
     const oxygenReach = (0.25 * (oxygenRadius * oxygenRadius + 0.012)) / stars[0].w;
 
     const off = new THREE.Vector3(rng.next(), rng.next(), rng.next());
@@ -754,7 +756,7 @@ export function createNebulaeLayer(engine, app) {
                     float ratio = (oxy / (1.02 - oxy)) / (gasX + 0.015);
                     float close = smoothstep(0.62, 1.0, vFlatten);
                     float teal = smoothstep(0.1, 0.95, ratio) * (0.25 + 0.75 * close) * smoothstep(0.05, 0.3, hf);
-                    visible = mix(h, vColB * hf * 0.62, teal * 0.75);
+                    visible = mix(h, vColB * hf * 0.6, teal * 0.88);
                     // Bright gas is pressed together by the bake's shoulder. Dividing by the soft copy brings its filaments
                     // back, as an astrophotographer's local contrast does, so a nebula's heart has as much in it as its edge
                     float local = pow((gasX + 0.02) / (broad / (1.02 - broad) + 0.02), 0.4);
