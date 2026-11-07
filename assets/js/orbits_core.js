@@ -1000,7 +1000,7 @@
     const sampleTimes = new Float64Array(TRAIL_CAP);
 
     // View: px per AU = zoom * min(canvas width, height), so the scene scales with the canvas
-    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0 };
+    const view = { zoom: 0.4, panX: 0, panY: 0, anim: null, shift: 0, shiftTo: 0, wide: false };
     let viewW = 0, viewH = 0, dpr = 1;
     // What can be seen of the canvas (its px): all of it, but for the Settings drawer over one side;
     // and where the middle of the view goes on it (see syncDrawer)
@@ -5221,8 +5221,15 @@
     const wx = (px) => F.x + view.panX + (px - midX) / scale;
     const wy = (py) => F.y + view.panY - (py - viewH / 2) / scale;
 
+    // The side of the canvas the view's scale goes by. Where the page lets the canvas grow taller than 16:10 to
+    // fill the screen (--orb-view-wide, in orbits_styles.css), it goes by the 16:10 part: a scene keeps the size
+    // it would have had, with more room round it, and comes back just as it was when the canvas does.
+    function viewSide() {
+        return Math.max(1, view.wide ? Math.min(viewW / 1.6, viewH) : Math.min(viewW, viewH));
+    }
+
     function updateScale() {
-        const m = Math.max(1, Math.min(viewW, viewH));
+        const m = viewSide();
         scale = view.zoom * m;
         sizeScale = clamp(m / 560, 0.62, 1.1);
         midX = viewW / 2 + view.shift;
@@ -5290,9 +5297,9 @@
     // Change the view so a world box (relative to the frame origin) fits what can be seen of the canvas
     // (at no more than the zoom most, if given).
     function fitBox(box, animate, most) {
-        const m = Math.max(1, Math.min(viewW, viewH));
+        const m = viewSide();
         const w = Math.max(box[1] - box[0], 1e-9), h = Math.max(box[3] - box[2], 1e-9);
-        const W = visR - visL || 800, H = viewH || 500;
+        const W = visR - visL || 800, H = view.wide ? m : viewH || 500;
         const pxPerAu = Math.min((W - 40) / w, (H - 40) / h);
         const target = { zoom: Math.min(pxPerAu / m, most || Infinity), panX: 0.5 * (box[0] + box[1]), panY: 0.5 * (box[2] + box[3]) };
         if (!viewW || !viewH) { view.pendingBox = box; }
@@ -11765,6 +11772,7 @@
         popApoIn: byId('popApoIn'), popApoUnit: byId('popApoUnit'), popApoName: byId('popApoName'),
         popOrbitShape: byId('popOrbitShape'),
         popStep: ui.pop ? ui.pop.querySelector('.orb-pop-step') : null,
+        popVelMore: byId('popVelMore'), popMoreState: byId('popMoreState'),
         subjectEdit: byId('statSubjectEdit'),
     });
 
@@ -12101,6 +12109,8 @@
         if (!(step > 0)) return;
         edit.step = step;
         if (ui.pop) ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.setAttribute('aria-pressed', parseFloat(btn.dataset.step) === step ? 'true' : 'false'));
+        // (folded, the line says what is in the fold, or a step that isn't the usual 1%, as it changes what - and + do)
+        setText(ui.popMoreState, step === 0.01 ? 'Goes round, push, step' : `Step ${+(step * 100).toPrecision(3)}%`);
     }
 
     // The fields follow the body as it moves (from updatePopover, a few times a second)
@@ -12162,8 +12172,9 @@
             if (panel) panel.hidden = !on;
             if (on && focus) t.focus();
         }
-        // (the steps don't apply to the Body and Gravity tabs)
-        if (ui.popStep) ui.popStep.classList.toggle('is-idle', name === 'body' || name === 'pull');
+        // (one row of steps: under More on the Velocity tab, at the foot of the Orbit tab; the Body and Gravity
+        // tabs have nothing to step)
+        if (ui.popStep) (name === 'orbit' ? byId('popPanelOrbit') : ui.popVelMore).appendChild(ui.popStep);
         // Each tab is as tall as it needs: beside a body, a taller one keeps the menu's top where it was
         // unless that would take it past the bottom
         if (popBody && ui.pop && !ui.pop.hidden && !ui.pop.classList.contains('is-sheet') && !ui.pop.classList.contains('is-side')) {
@@ -12393,6 +12404,12 @@
         }));
         ui.pop.querySelectorAll('[data-push]').forEach((btn) => holdRepeat(btn, (e) => { if (popBody) nudge(popBody, btn.dataset.push, stepFor(e)); }));
         ui.pop.querySelectorAll('[data-step]').forEach((btn) => btn.addEventListener('click', () => setStep(parseFloat(btn.dataset.step))));
+        // More: as tall as a tab that grows (selectTab keeps the menu on the page), and its rows in sight. It stays
+        // as it was left when the menu next opens, until the page is reloaded
+        ui.popVelMore.addEventListener('toggle', () => {
+            selectTab(edit.tab);
+            if (ui.popVelMore.open && !ui.pop.hidden) ui.popStep.scrollIntoView({ block: 'nearest' });
+        });
         // The stats bar's Edit button opens (or closes) the menu of the chosen body
         if (ui.subjectEdit) {
             ui.subjectEdit.addEventListener('click', () => {
@@ -12474,9 +12491,14 @@
         if (!p) return;
         p.style.maxHeight = p.style.overflowY = '';
         if (more) { more.hidden = true; more.parentElement.classList.remove('has-more'); }
+        // (with a mouse, as a last resort, chips one line tall, then no "Add a body": see orbits_styles.css)
+        const box = ui.toolbar || p, chips = p.querySelectorAll('.orb-chip');
+        const over = () => chips.length && chips[chips.length - 1].getBoundingClientRect().bottom - p.getBoundingClientRect().top + p.scrollTop > p.clientHeight;
+        box.classList.remove('is-slim', 'is-slimmer');
+        for (const q of ['is-slim', 'is-slimmer']) if (over()) box.classList.add(q);
         let room = p.clientHeight;
         if (!room || p.scrollHeight <= room + 1) return;
-        const top = p.getBoundingClientRect().top - p.scrollTop, chips = p.querySelectorAll('.orb-chip');
+        const top = p.getBoundingClientRect().top - p.scrollTop;
         let edge = 0, end = 0;
         for (const c of chips) end = Math.max(end, c.getBoundingClientRect().bottom - top);
         // (every chip in sight, short of the padding under them: nothing to scroll to)
@@ -14216,11 +14238,20 @@
         if (document.body.classList.contains('sim-fullscreen-active')) return;
         if (visible) {
             chartsFrom = window.scrollY;
-            ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
+            revealCharts();
         } else if (chartsFrom !== null) {
             window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
             chartsFrom = null;
         }
+    }
+
+    // Into view, if they are under the canvas (beside it they already are). In a window wider than tall, not so far
+    // that the canvas's top goes out of view: the last of them may wait for a scroll.
+    function revealCharts() {
+        if (window.innerWidth > window.innerHeight && window.innerHeight > 540) {
+            const over = ui.chartsContainer.getBoundingClientRect().bottom - window.innerHeight;
+            if (over > 0) window.scrollBy({ top: Math.max(0, Math.min(over + 8, canvas.getBoundingClientRect().top - 8)), behavior: quickMotion() });
+        } else ui.chartsContainer.scrollIntoView({ block: 'nearest', behavior: quickMotion() });
     }
 
     function resetCharts() {
@@ -18593,6 +18624,12 @@
         if (w === viewW && h === viewH && newDpr === dpr) { syncDrawer(rect); return; }
         const first = !viewW || !viewH;
         viewW = w; viewH = h; dpr = newDpr;
+        const wasWide = view.wide;
+        view.wide = getComputedStyle(canvas).getPropertyValue('--orb-view-wide').trim() === '1';
+        // (Settings moves the graphs from beside the canvas to under it and back: the page follows them)
+        if (wasWide !== view.wide && chartsVisible() && !document.body.classList.contains('sim-fullscreen-active')) {
+            if (wasWide) revealCharts(); else if (chartsFrom !== null) window.scrollTo({ top: chartsFrom, behavior: quickMotion() });
+        }
         syncDrawer(rect);
         if (ui.simWrap) ui.simWrap.style.setProperty('--orb-canvas-h', `${h}px`);   // (the settings stay as tall as the canvas)
         canvas.width = Math.round(w * dpr);

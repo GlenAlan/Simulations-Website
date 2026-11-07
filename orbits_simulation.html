@@ -389,6 +389,8 @@
 															</div>
 														</div>
 														<p class="orb-pop-note" id="popAngleNote">0° is sideways, + outward, − inward.</p>
+														<details class="orb-pop-more" id="popVelMore">
+															<summary><span>More</span><span class="orb-pop-more-state" id="popMoreState"></span></summary>
 														<div class="orb-field">
 															<span class="orb-field-label" id="popSenseLabel">Goes round<span class="orb-field-sub" id="popSenseSub"></span></span>
 															<div class="orb-seg" role="group" aria-labelledby="popSenseLabel">
@@ -405,6 +407,15 @@
 																<button type="button" data-push="out" title="Push it outward, away from what it orbits (→)">Out<span class="icon solid fa-caret-right" aria-hidden="true"></span></button>
 															</div>
 														</div>
+														<div class="orb-pop-step">
+															<span class="orb-field-label" id="popStepLabel">Step</span>
+															<div class="orb-seg" role="group" aria-labelledby="popStepLabel">
+																<button type="button" data-step="0.1" aria-pressed="false" title="Steps of 10% (10° for the direction)">10%</button>
+																<button type="button" data-step="0.01" aria-pressed="true" title="Steps of 1% (1° for the direction)">1%</button>
+																<button type="button" data-step="0.001" aria-pressed="false" title="Steps of 0.1% (0.1° for the direction)">0.1%</button>
+															</div>
+														</div>
+														</details>
 													</div>
 													<div class="orb-pop-panel" role="tabpanel" id="popPanelOrbit" aria-labelledby="popTabOrbit" hidden>
 														<div class="orb-pop-fields">
@@ -488,14 +499,6 @@
 													</div>
 												</div>
 												<p class="orb-pop-note orb-pop-why" id="popFieldWhy" role="status" hidden></p>
-												<div class="orb-pop-step">
-													<span class="orb-field-label" id="popStepLabel">Step</span>
-													<div class="orb-seg" role="group" aria-labelledby="popStepLabel">
-														<button type="button" data-step="0.1" aria-pressed="false" title="Steps of 10% (10° for the direction)">10%</button>
-														<button type="button" data-step="0.01" aria-pressed="true" title="Steps of 1% (1° for the direction)">1%</button>
-														<button type="button" data-step="0.001" aria-pressed="false" title="Steps of 0.1% (0.1° for the direction)">0.1%</button>
-													</div>
-												</div>
 											</div>
 											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
 										</div>
@@ -656,7 +659,7 @@
 											<h4>How to use it</h4>
 											<ul>
 												<li><strong>Aim a velocity:</strong> drag the tip of a teal arrow (time waits while you do). It snaps to the exact circular and escape speeds, and a dashed line shows where the body will go. Shift gives fine control; on a touch screen, hold the tip still for a moment first.</li>
-												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. Drag its title to move it out of the way. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, or a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
+												<li><strong>A body's menu:</strong> press <span class="icon solid fa-sliders-h"></span> Edit, or right-click or long-press the body. Drag its title to move it out of the way. <em>Body</em> sets its mass, size and colour. <em>Velocity</em> takes a typed speed and direction, and under <em>More</em> the way round and a push. <em>Orbit</em> sets its eccentricity, its period (which scales the whole orbit), or its closest and farthest distances (which keep it where it is). <em>Gravity</em> lists who pulls on it.</li>
 												<li><strong>View from a body:</strong> double-click or double-tap it.</li>
 												<li><strong>Rotate with a body:</strong> press <em>Rotate with it</em> in its menu. The view turns with the body and whatever it orbits, so both stand still. Press the chip at the top of the canvas to stop. Every body that orbits another is also in the settings, under <em>View from or rotate</em>.</li>
 												<li><strong>Find a body:</strong> in the settings, <em>Bodies</em> lists them all, to search and sort. Crowded scenes show small bodies as dots: click one to follow it.</li>

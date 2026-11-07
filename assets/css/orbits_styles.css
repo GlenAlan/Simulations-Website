@@ -1397,11 +1397,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     border-top: 1px solid var(--color-border);
 }
 
-/* (the Body and Gravity tabs have nothing to step) */
-.orb-pop-step.is-idle {
-    display: none;
-}
-
 /* The arrow keys only matter with a keyboard */
 @media (hover: none), (pointer: coarse) {
     .orb-keys-note {
@@ -1823,16 +1818,19 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 @media screen and (min-width: 1000px) and (min-height: 541px) and (pointer: fine) {
     .orbits-sim .stats-container {
         flex-wrap: nowrap;
+        min-width: 0;
     }
 
     .orbits-sim .stats-container > .orb-subject {
         flex: 1 1 15em;
     }
 
-    /* (Settings docked beside the bar can leave it too narrow for one row. The canvas's size doesn't
-       depend on the bar's height, so here the readouts may wrap.) */
-    body.sim-panel-active.sim-panel-side .orbits-sim .stats-container {
-        flex-wrap: wrap;
+    /* (Settings docked beside the bar can leave it too narrow for one row: only in a window held upright,
+       as the bar has its own layout in a narrow one held sideways, at the end of this file.) */
+    @media (max-width: 1279px) {
+        body.sim-panel-active.sim-panel-side .orbits-sim .stats-container {
+            flex-wrap: wrap;
+        }
     }
 
     /* (and in a narrower window the scene takes a row of its own, above the buttons) */
@@ -4842,5 +4840,302 @@ html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
 
     .orb-cn-btns {
         margin-top: 4px;
+    }
+}
+
+/* ---------- The help on a screen no finger can touch: no gestures ----------
+   They are no use there, and they made the help scroll. (any-pointer, so a laptop with a touch screen,
+   whose main pointer is its mouse, keeps them; a browser that can't tell keeps them too.) */
+@media not all and (any-pointer: coarse) {
+    .orb-help-touch {
+        display: none;
+    }
+}
+
+/* (and in a shorter window, slimmer rows, so the keys alone fit in it too) */
+@media (max-height: 760px) {
+    .orb-help dl > div {
+        padding: 3px 0;
+    }
+}
+
+/* ---------- The body's menu: Goes round, Push it and Step folded under one line ----------
+   The Velocity tab's speed and direction stay open; these are less often wanted and took half a phone.
+   Styled like the settings' folds, with what it holds on the line. */
+.orb-pop-more {
+    margin-top: 6px;
+    border-top: 1px solid var(--color-border);
+}
+
+/* (nothing in it can be used: alone in space, or another body than the probe in a mission) */
+.orb-pop-more:not(:has(button:enabled)) {
+    display: none;
+}
+
+.orb-pop-more > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-height: 34px;
+    padding: 0 2px;
+    font-size: 0.9em;
+    list-style: none;
+    cursor: pointer;
+    border-radius: 4px;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-pop-more > summary::-webkit-details-marker {
+    display: none;
+}
+
+.orb-pop-more > summary::after {
+    content: '\f078';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    font-size: 0.8em;
+    line-height: 1;
+    transition: transform 0.2s ease;
+}
+
+.orb-pop-more[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.orb-pop-more > summary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (hover: hover) {
+    .orb-pop-more > summary:hover {
+        color: var(--color-accent);
+    }
+}
+
+.orb-pop-more-state {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.9em;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.75;
+}
+
+.orb-pop-more[open] .orb-pop-more-state {
+    visibility: hidden;
+}
+
+/* (open, its rows follow the line as the fields above do; the first one has the line above it) */
+.orb-pop-more > .orb-field:first-of-type {
+    margin-top: 0;
+}
+
+.orb-pop-more .orb-pop-step {
+    padding-top: 0;
+    margin-top: 6px;
+    border-top: 0;
+}
+
+.orb-pop-more[open] {
+    padding-bottom: 2px;
+}
+
+.orb-popover.is-sheet .orb-pop-more > summary,
+.orb-popover.is-side .orb-pop-more > summary {
+    font-size: 1em;
+}
+
+@media (pointer: coarse) {
+    .orb-pop-more > summary {
+        min-height: 42px;
+    }
+}
+
+/* ---------- Settings, or the graphs, docked in a narrower window ----------
+   The width is then what limits the canvas, so the readouts' rows under it did nothing but squeeze the
+   palette and leave the screen half used. The readouts go (shutting Settings or the graphs brings them back,
+   and the body's menu and the Bodies list say much of it). The scene, the body's Edit and the speed share a
+   row, the buttons have the next, and the palette's column runs the height of the canvas and the bar. The
+   canvas may be taller than 16:10, up to about square, so all three columns end level at the foot of the
+   screen: the view goes by its 16:10 part (--orb-view-wide: viewSide in orbits_core.js). With both open the
+   graphs go under a 16:10 canvas, which leaves them in view. */
+@media (orientation: landscape) and (min-width: 1000px) and (max-width: 1279px) and (min-height: 541px) {
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .simulation-display-container {
+        grid-template-rows: auto auto;
+        grid-template-areas: "tools canvas" "tools info";
+        width: 100%;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-canvas-wrapper {
+        max-width: none;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        max-width: none;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        --orb-view-wide: 1;
+        height: min(var(--sim-canvas-max-h), 0.95 * (100vw - 2 * var(--sim-page-gutter) - var(--sim-panel-width) - 1em - var(--orb-side-w) - var(--orb-side-gap)));
+        aspect-ratio: auto;
+    }
+
+    /* (eight buttons, each three of these wide, under the scene, the body and the speed) */
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-bar {
+        display: grid;
+        grid-template-columns: repeat(24, minmax(0, 1fr));
+        gap: 4px 2px;
+        padding: 4px;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .stats-container,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-action-buttons-overlay {
+        display: contents;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .stats-container > .stats-box,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .orb-subject-around {
+        display: none;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .orb-scene-pick {
+        grid-area: 1 / 1 / auto / span 12;
+        margin: 0;
+        min-width: 0;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .stats-container > .orb-subject {
+        grid-area: 1 / 13 / auto / span 7;
+        justify-content: center;
+        max-width: none;
+        padding: 0 2px;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .orb-subject-name {
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .orb-speed {
+        grid-area: 1 / 20 / auto / span 5;
+        margin: 0 4px;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-icon-button,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-reset-button,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-show-charts-label,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-fullscreen-toggle,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-panel-toggle-button {
+        grid-row: 2;
+        grid-column: span 3;
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* (a mission has only four of them) */
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-icon-button,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-show-charts-label,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-fullscreen-toggle,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-panel-toggle-button {
+        grid-column: span 6;
+    }
+}
+
+/* ---------- A column still too short for the chips, with a mouse ----------
+   (paletteCut in orbits_core.js sets these only if it helps, so more chips will simply bring them on sooner.)
+   Each chip's disc goes beside its name, on one line; then "Add a body", which the headings and the hint say
+   well enough. */
+@media (pointer: fine) and (orientation: landscape) and (min-width: 640px) and (min-height: 541px) {
+    .orb-toolbar.is-slim .orb-palette {
+        --orb-chip-h: 24px;
+    }
+
+    .orb-toolbar.is-slim .orb-chip {
+        flex-direction: row;
+        gap: 3px;
+        padding: 0 2px;
+    }
+
+    .orb-toolbar.is-slim .orb-chip-disc {
+        flex: 0 0 auto;
+        max-width: 10px;
+        max-height: 10px;
+    }
+
+    .orb-toolbar.is-slimmer .orb-toolbar-label {
+        display: none;
+    }
+}
+
+/* ---------- The graphs beside the canvas ----------
+   Under it they scrolled the page, and the canvas's top with its cards went out of view. In a column beside
+   it (the canvas gives up width, as for Settings, and keeps its height, so nothing moves up or down) canvas
+   and graphs fit on the screen together. However many graphs there are, they share the column's height, which
+   is that of the canvas and the bar. With Settings open too there is no room for the column: the graphs stay
+   under the canvas, and the page scrolls only as far as keeps the canvas's top in view (setChartsVisible). */
+@media (orientation: landscape) and (min-width: 1000px) and (min-height: 541px) {
+    .orbits-sim {
+        --orb-graphs-w: clamp(280px, 24vw, 420px);
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .simulation-main-content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) var(--orb-graphs-w);
+        column-gap: var(--orb-side-gap);
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .simulation-display-container {
+        grid-area: 1 / 1;
+        width: 100%;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .sim-canvas-wrapper {
+        max-width: none;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        --orb-view-wide: 1;
+        max-width: none;
+        height: min(var(--sim-canvas-max-h), 0.95 * (100vw - 2 * var(--sim-page-gutter) - var(--orb-graphs-w) - 2 * var(--orb-side-gap) - var(--orb-side-w)));
+        aspect-ratio: auto;
+    }
+
+    /* (its size comes from the row, never the other way round, whatever a graph draws) */
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim #charts-container {
+        grid-area: 1 / 2;
+        display: flex !important;
+        flex-direction: column;
+        gap: var(--orb-side-gap);
+        width: auto;
+        margin: 0;
+        contain: size;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .sim-charts-row {
+        display: contents;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim #charts-container .chart-box {
+        flex: 1 1 0;
+        min-height: 0;
+        height: auto;
+        overflow: hidden;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .orb-chart-actions {
+        flex: 0 0 auto;
+        margin: 0;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .description-area {
+        grid-column: 1 / -1;
     }
 }
