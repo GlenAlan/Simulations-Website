@@ -13,6 +13,10 @@ import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, instancedQuad, exoticNoise } from './exotic_common.js';
 
 const PARTICLES_EACH = 420;
+// No comet is drawn bigger or brighter than the brightest one the sky has ever had: whatever the data says, the depth rule
+// (nothing nearer than it was) holds for comets too. Tails as long as this, heads as bright as this magnitude.
+const TAIL_MOST_DEG = 5.4;
+const BRIGHTEST_MAG = 3.55;
 
 // The unseen Sun below the horizon, as the data has it (universe.cometSun): tails point up and away from it, and the coma's
 // hood and X-ray crescent face it
@@ -94,8 +98,8 @@ function createGlow(engine, comets) {
         a.centre.set(basis.c.map((v) => v * SKY_RADIUS), i * 3);
         a.tail.set(basis.t, i * 3);
         a.normal.set(basis.n, i * 3);
-        a.shape.set([body.comet.coma_deg, body.comet.tail_deg, body.comet.dust_ratio, comet.seed], i * 4);
-        a.extra.set([comet.curve, drawMag(body), 0, 0], i * 4);
+        a.shape.set([body.comet.coma_deg, comet.tailDeg, body.comet.dust_ratio, comet.seed], i * 4);
+        a.extra.set([comet.curve, comet.mag, 0, 0], i * 4);
         a.depth[i] = body.depth;
         a.pc[i] = travelPc(body);
         a.mags.set(comet.mags, i * 4);
@@ -317,7 +321,7 @@ function createParticles(engine, comets) {
             a.centre.set(basis.c.map((v) => v * SKY_RADIUS), k * 3);
             a.tail.set(basis.t, k * 3);
             a.normal.set(basis.n, k * 3);
-            a.shape.set([body.comet.coma_deg, body.comet.tail_deg, comet.curve, drawMag(body)], k * 4);
+            a.shape.set([body.comet.coma_deg, comet.tailDeg, comet.curve, comet.mag], k * 4);
             a.depth[k] = body.depth;
             a.pc[k] = travelPc(body);
             a.mags.set([comet.mags[1], comet.mags[2]], k * 2);
@@ -410,7 +414,9 @@ export function createCometsLayer(engine, app) {
         const rng = bodyRng(body, 'comet');
         const curve = (rng.next() < 0.5 ? -1 : 1) * rng.range(0.55, 1);
         const m = bandMagnitudes(body);
-        return { body, rng, basis: tailBasis(body, sunDir), seed: rng.next(), curve, gas: gasColour(body.comet.emission_lines), mags: [m.radio, m.ir, m.uv, m.xray] };
+        const tailDeg = Math.min(body.comet.tail_deg, TAIL_MOST_DEG);
+        const mag = Math.max(drawMag(body), BRIGHTEST_MAG);
+        return { body, rng, basis: tailBasis(body, sunDir), seed: rng.next(), curve, tailDeg, mag, gas: gasColour(body.comet.emission_lines), mags: [m.radio, m.ir, m.uv, m.xray] };
     });
     const glow = createGlow(engine, comets);
     const particles = createParticles(engine, comets);
@@ -433,12 +439,12 @@ export function createCometsLayer(engine, app) {
         // grains look like stars when zoomed right in. Only called on a click or a hover
         picks(frame) {
             const list = [];
-            comets.forEach(({ body, basis, curve }) => {
+            comets.forEach(({ body, basis, curve, tailDeg, mag }) => {
                 if (!engine.bodyShows(body)) return;
                 // In visible light a comet is seen only from a little before the zoom's limit: no clicking on empty sky
-                if (frame.band === 'visible' && drawMag(body) > limitingMag(frame.fov) + 0.6) return;
+                if (frame.band === 'visible' && mag > limitingMag(frame.fov) + 0.6) return;
                 const { c, t, n } = basis;
-                const tail = body.comet.tail_deg;
+                const tail = tailDeg;
                 const pxPerDeg = (frame.pxPerRad * DEG * parallaxFactor(body.depth, frame.fov)) / frame.dpr;
                 const step = 30 / pxPerDeg;
                 const push = (x, y, radiusPx = 0) => {
@@ -463,7 +469,7 @@ export function createCometsLayer(engine, app) {
                     for (let x = along; x <= tail * 1.1; x += along) push(x, 0);
                 }
                 // In ultraviolet the hydrogen cloud is far bigger than the rest, and plainly part of the comet
-                if (frame.band === 'uv') push(0, 0, Math.max(body.comet.tail_deg * 0.85, 2.4) * 0.85 * pxPerDeg);
+                if (frame.band === 'uv') push(0, 0, Math.max(tailDeg * 0.85, 2.4) * 0.85 * pxPerDeg);
             });
             return list;
         },
