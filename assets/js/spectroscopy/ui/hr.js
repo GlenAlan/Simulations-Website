@@ -766,7 +766,15 @@ function mountHR(container, app) {
     function bandLayer(rect, sx, sy, frame) {
         const key = [frame.width, frame.height, frame.dpr, axisMode, frame.theme.isDark].join();
         if (bandCache.key === key) return bandCache.canvas;
-        const layer = bandCache.canvas || document.createElement('canvas');
+        let layer = bandCache.canvas;
+        if (!layer) {
+            layer = document.createElement('canvas');
+            // Given back empty after a graphics restart: paint it again
+            layer.addEventListener('contextrestored', () => {
+                bandCache.key = '';
+                figure.redraw();
+            });
+        }
         layer.width = Math.round(frame.width * frame.dpr);
         layer.height = Math.round(frame.height * frame.dpr);
         const g = layer.getContext('2d');

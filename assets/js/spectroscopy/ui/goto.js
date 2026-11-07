@@ -555,7 +555,7 @@ export function initGoto(app) {
             await leaveSystem();
             if (!stillCurrent()) return false;
         }
-        if ((path === 'planet' || pressedEnter) && systemCode && engine.renderer) {
+        if ((path === 'planet' || pressedEnter) && systemCode && engine.renderer && !engine.isContextLost()) {
             await goIntoSystem();
             if (!stillCurrent()) return false;
             if (!inItsSystem()) return false; // Esc on the way in called the whole thing off

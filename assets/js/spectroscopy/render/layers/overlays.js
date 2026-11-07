@@ -444,6 +444,7 @@ export function createOverlaysLayer(engine, app) {
     }
 
     let lastKey = '';
+    canvas.addEventListener('contextrestored', () => { lastKey = ''; }); // Given back empty after a graphics restart
 
     return {
         id: 'overlays',
