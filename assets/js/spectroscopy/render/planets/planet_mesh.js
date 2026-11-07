@@ -61,8 +61,8 @@ const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 // Bakes share a budget of pixels per frame, so that entering a system does not stall on several at once. A small
 // planet's cube takes a frame or two; a large one's is spread over twelve.
 let bakeFrame = null;
-let bakeTime = 0;
 let bakedPixelsThisFrame = 0;
+let budgetResetQueued = false;
 const BAKE_PIXELS_PER_FRAME = 131072;
 
 function jetIndex(lat, bandN, phase) {
@@ -367,12 +367,18 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
                 toneMapped: false
             });
         }
-        // A new frame resets the budget; so does time passing, in case a caller reuses one frame object
-        const now = performance.now();
-        if (frame !== bakeFrame || now - bakeTime > 10) {
+        // A new frame resets the budget; so does the browser's next frame, in case a caller reuses one frame object.
+        // Going by elapsed time would not do: on a slow machine a single bake outlasts any limit, and nothing would hold.
+        if (frame !== bakeFrame) {
             bakeFrame = frame;
-            bakeTime = now;
             bakedPixelsThisFrame = 0;
+        }
+        if (!budgetResetQueued) {
+            budgetResetQueued = true;
+            requestAnimationFrame(() => {
+                budgetResetQueued = false;
+                bakedPixelsThisFrame = 0;
+            });
         }
         const previous = glRenderer.getRenderTarget();
         const previousFace = glRenderer.getActiveCubeFace();
