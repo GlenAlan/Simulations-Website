@@ -171,8 +171,9 @@
 								<div class="simulation-main-content">
 									<div class="simulation-display-container">
 										<div class="sim-canvas-wrapper">
-											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/9; --aspect-ratio-portrait: 3/4;">
-												<canvas id="simulationCanvas" class="sim-canvas" role="img" tabindex="0" aria-label="A night sky full of stars, galaxies and nebulae. Drag to look around, scroll to zoom, and select an object to study its light."></canvas>
+											<!-- ui/shell.js replaces this ratio with one that fills the column, and keeps it up to date -->
+												<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/9;">
+												<canvas id="simulationCanvas" class="sim-canvas" role="application" tabindex="0" aria-label="A night sky full of stars, galaxies and nebulae. Drag or use the arrow keys to look around, scroll or press plus and minus to zoom. Click an object, or press Enter for what is at the centre of the view, to study its light. Square brackets move to the next nearest object."></canvas>
 												<!-- Controls over the sky: thin bars at the edges, never over the centre -->
 												<div id="spectroOverlay">
 													<div id="spectroTopLeft"></div>
