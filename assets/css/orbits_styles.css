@@ -2588,7 +2588,7 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 
 /* Under the canvas (portrait): as few rows as it will go in, as the canvas gets what is left of the
    screen. The fuel and the time share one, the engine's four buttons another, the way the arrow keys
-   lie ("Engine: hold to fire" is for screen readers here: the hint line says it). */
+   lie ("Engine: hold to fire" is for screen readers here: with hints on, the hint line says it). */
 @media not all and (orientation: landscape) and (min-width: 640px) {
     .orb-console {
         display: grid;
