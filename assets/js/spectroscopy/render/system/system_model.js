@@ -45,6 +45,7 @@ function memberSystem(member, cluster) {
         system = {
             ...member,
             sky: memberDirection(cluster, member),
+            depth: cluster.depth,
             bands: member.bands || cluster.bands,
             planets: member.planets || []
         };
