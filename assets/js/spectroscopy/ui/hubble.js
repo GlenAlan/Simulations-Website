@@ -8,7 +8,7 @@ import { C_KMS, H0 } from '../core/phys.js';
 import { plusMinus, sig, withCommas } from '../core/format.js';
 import { toolWords } from './spectrum/tools/index.js';
 import {
-    createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
+    createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
     drawFrame, drawMarker, el, fitThroughOrigin, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint,
     niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved
 } from './plot2d.js';
@@ -166,50 +166,42 @@ function mountHubble(container, app) {
     const root = el('div', { class: 'spectro-fig-tab' });
     container.appendChild(root);
 
-    // What to do next comes first, directly over the plot it acts on
+    // The galaxy in hand, as one thin strip, then the answer the plot gives, on one line, then the plot
     const top = el('div', { class: 'spectro-fig-top' });
     const readout = el('p', { class: 'spectro-fig-readout', tabindex: '-1' });
-    const readoutNote = el('p', { class: 'spectro-fig-card-status', role: 'status' });
-    root.append(top, readout, readoutNote);
+    const readoutNote = el('span', { class: 'spectro-fig-readout-note', role: 'status' });
+    root.append(top, el('div', { class: 'spectro-fig-answer' }, readout, readoutNote));
 
     const figure = createFigure(root, {
         label: 'Hubble plot',
         height: (w) => {
             const scroller = root.closest('.sim-controls-content');
             const room = scroller && scroller.clientHeight
-                ? scroller.clientHeight - top.offsetHeight - readout.offsetHeight - readoutNote.offsetHeight - 52
+                ? scroller.clientHeight - top.offsetHeight - readout.offsetHeight - 64
                 : window.innerHeight * 0.5;
-            const main = Math.max(220, Math.min(w * 0.82, 380, room));
+            const main = Math.max(220, Math.min(w * 0.95, 480, room));
             return showResiduals ? main + RESIDUALS_HEIGHT : main;
         },
         draw
     });
 
+    // Under the plot, on one quiet line: its two switches, and what the points mean once there are some
+    const options = el('div', { class: 'spectro-fig-options' });
+    createToggle(options, 'Log scales', (on) => {
+        useLog = on;
+        refresh();
+    }, 'Both axes on log scales, so near and far galaxies spread out');
+    createToggle(options, 'Residuals', (on) => {
+        showResiduals = on;
+        figure.redraw();
+    }, 'How far each point sits above or below the line');
+    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `|z| above ${Z_LIMIT}: v = cz only roughly`);
     const legend = el('div', { class: 'spectro-fig-legend', hidden: true },
-        el('span', {}, markerIcon('circle'), `Galaxy, |z| up to ${Z_LIMIT}`),
-        el('span', {}, markerIcon('circle', { hollow: true }), `Galaxy, |z| above ${Z_LIMIT}`));
-    root.appendChild(legend);
-
-    const zNote = el('p', {
-        class: 'spectro-fig-hintline',
-        hidden: true,
-        text: `For the hollow points, |z| is above ${Z_LIMIT}, so v = cz is only an approximation.`
-    });
-    root.appendChild(zNote);
+        el('span', {}, markerIcon('circle'), 'Galaxy'), hollowKey);
+    root.append(options, legend);
 
     const advice = el('div', { class: 'spectro-fig-advice', hidden: true });
     root.appendChild(advice);
-
-    const chips = el('div', { class: 'sim-checkbox-group sim-chips spectro-fig-chips' });
-    root.appendChild(chips);
-    createChip(chips, 'spectroHubbleLog', 'Log scales', (on) => {
-        useLog = on;
-        refresh();
-    });
-    createChip(chips, 'spectroHubbleResiduals', 'Residuals', (on) => {
-        showResiduals = on;
-        figure.redraw();
-    });
 
     const card = createMeasureCard(top, {
         addLabel: 'Plot on Hubble',
@@ -228,6 +220,7 @@ function mountHubble(container, app) {
                 max: 1e6,
                 rangeText: 'a speed of up to 1,000,000 km/s',
                 extra: { v_err_kms: undefined, z: undefined, v_source: undefined },
+                brief: (m) => `${m.v_err_kms > 0 ? plusMinus(m.v_kms, m.v_err_kms) : withCommas(m.v_kms)} km/s`,
                 show: (m) => `${m.v_err_kms > 0 ? plusMinus(m.v_kms, m.v_err_kms) : withCommas(m.v_kms)} km/s, from ${m.v_source === 'slide' ? 'your slide' : 'a measured line'}`
             },
             {
@@ -237,16 +230,20 @@ function mountHubble(container, app) {
                 scale: 1e6,
                 placeholder: '100',
                 tool: 'photometer',
-                toolName: 'Photometer',
+                toolName: toolWords({ id: 'photometer' }).short,
                 min: 1e-3,
                 max: 1e6,
                 rangeText: 'a distance from 0.001 to 1,000,000 Mpc',
-                show: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc, from the Photometer`
+                brief: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc`,
+                show: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc, from the photometer`
             }
         ],
-        status(code) {
-            return plotted.has(code) ? `On your plot as point ${plotted.get(code)}.` : '';
+        summary(code) {
+            const point = galaxyPoint(code);
+            return point ? `Point ${plotted.get(code)}: ${sig(point.dMpc, 3)} Mpc, ${withCommas(point.v)} km/s` : '';
         },
+        workingLabel: 'How v ÷ d is worked out',
+        status: () => '',
         working(code, m) {
             const v = velocityOf(m);
             if (v === null || !(m.distance_pc > 0)) return null;
@@ -368,20 +365,18 @@ function mountHubble(container, app) {
         const n = points.length;
         if (!fit) {
             readout.textContent = 'H₀ = ?';
-            readoutNote.textContent = 'Add galaxies to draw the line. Its gradient is H₀.';
+            readoutNote.textContent = 'The line\'s gradient, once there are galaxies';
         } else if (fit.err === null) {
             readout.textContent = `H₀ ≈ ${sig(fit.slope, 3)} km/s/Mpc`;
-            readoutNote.textContent = `From one galaxy, so no uncertainty yet. Aim for at least ${SUGGESTED_GALAXIES} galaxies.`;
+            readoutNote.textContent = `1 galaxy of ${SUGGESTED_GALAXIES}`;
         } else {
             readout.textContent = `H₀ = ${plusMinus(fit.slope, fit.err)} km/s/Mpc`;
-            const more = SUGGESTED_GALAXIES - n;
-            readoutNote.textContent = more > 0
-                ? `Best-fit line through the origin, from ${n} galaxies. Aim for at least ${SUGGESTED_GALAXIES}: ${more} more to go.`
-                : `Best-fit line through the origin, from ${n} galaxies.`;
+            readoutNote.textContent = n < SUGGESTED_GALAXIES ? `${n} galaxies of ${SUGGESTED_GALAXIES}` : `${n} galaxies`;
         }
+        readoutNote.title = 'The best-fit line through the origin. Aim for at least ' + SUGGESTED_GALAXIES + ' galaxies.';
 
         legend.hidden = n === 0;
-        zNote.hidden = !points.some((p) => Math.abs(p.z) > Z_LIMIT);
+        hollowKey.hidden = !points.some((p) => Math.abs(p.z) > Z_LIMIT);
         const words = hubbleAdvice(points, useLog);
         advice.hidden = words.length === 0;
         advice.replaceChildren(...words.map((text) => el('p', { text })));

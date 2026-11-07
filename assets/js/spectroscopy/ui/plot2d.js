@@ -395,52 +395,46 @@ export function nearestPoint(points, pos) {
     return best;
 }
 
-// ---------- The card that plots the current object, asking for whatever hasn't been measured yet ----------
+// ---------- The strip that plots the current object, asking for whatever hasn't been measured yet ----------
 
+// A thin strip over the diagram, so the diagram stays the biggest thing on the tab. Its name and its button share a line.
+// Under them, one short cell for each value: the value once it's measured, or a link to the tool that measures it. Once the
+// object is plotted the cells fold away into one line: where it sits on the diagram.
+//
 // fields: [{ key (in the measurement store), label, unit, scale (typed unit to stored unit), placeholder, tool (its id),
 //            toolName (its button's words), min, max, rangeText (what can be typed, as words), allowNegative,
-//            extra (cleared alongside a typed value, as a tool's uncertainty no longer applies), show(m) -> text of a measured value }]
-// options: status(code, m), working(code, m) -> lines or null, isPlotted(code), onAdd(code), onRemove(code),
-//          onTool(toolId), addLabel, removeLabel, workingParent (where the working goes, away from the buttons)
+//            extra (cleared alongside a typed value, as a tool's uncertainty no longer applies),
+//            brief(m) -> the value, short, and show(m) -> the value with where it came from, as the cell's tooltip }]
+// options: status(code, m), summary(code, m) -> the plotted object's line, working(code, m) -> lines or null, workingLabel,
+//          isPlotted(code), onAdd(code), onRemove(code), onTool(toolId), addLabel, removeLabel,
+//          workingParent (where the working goes: closed, under the diagram)
 //
 // What a student typed is kept with the measurement, under typed, so a reload can tell it from a tool's reading.
-//
-// The Plot button comes before everything that can appear or vanish while values are being typed, so that it stays under
-// a pointer already on its way to it when the box being typed in loses focus.
 export function createMeasureCard(parent, options) {
     const { fields } = options;
     const title = el('p', { class: 'spectro-fig-card-title', tabindex: '-1' });
-    const status = el('p', { class: 'spectro-fig-card-status' });
-    const rows = el('div', { class: 'spectro-fig-rows' });
-    const working = el('p', { class: 'spectro-fig-working', hidden: true });
-    const message = el('p', { class: 'spectro-fig-message', role: 'status', hidden: true });
+    const summary = el('span', { class: 'spectro-fig-summary', hidden: true });
     const button = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main', hidden: true });
-
-    const toolButtons = new Map();
-    fields.forEach((field) => {
-        if (!field.tool || toolButtons.has(field.tool)) return;
-        const asks = fields.filter((f) => f.tool === field.tool).map((f) => f.label.toLowerCase()).join(' and ');
-        toolButtons.set(field.tool, el('button', {
-            type: 'button',
-            class: 'spectro-fig-tool',
-            text: field.toolName,
-            'aria-label': `Measure ${asks} with ${field.toolName}, in the Spectrum tab`,
-            onclick: () => options.onTool(field.tool)
-        }));
-    });
-    const measureWord = el('span', { class: 'spectro-fig-measure-word', text: 'Measure with' });
-    const typeButton = el('button', { type: 'button', class: 'spectro-fig-hint', text: 'or type them' });
-    const measure = el('div', { class: 'spectro-fig-measure' }, measureWord, ...toolButtons.values(), typeButton);
-
-    const heading = el('div', { class: 'spectro-fig-card-head' }, title, status);
-    const root = el('div', { class: 'spectro-fig-card' }, heading, rows, el('div', { class: 'spectro-fig-actions' }, button, measure), message);
+    const head = el('div', { class: 'spectro-fig-card-head' }, title, summary, button);
+    const cells = el('div', { class: 'spectro-fig-cells' });
+    const rows = el('div', { class: 'spectro-fig-rows', hidden: true });
+    const typeButton = el('button', { type: 'button', class: 'spectro-fig-hint', text: 'or type the values' });
+    const status = el('p', { class: 'spectro-fig-card-status', hidden: true });
+    const message = el('p', { class: 'spectro-fig-message', role: 'status', hidden: true });
+    const root = el('div', { class: 'spectro-fig-card spectro-fig-strip' }, head, cells, rows, typeButton, status, message);
     parent.appendChild(root);
-    (options.workingParent || root).appendChild(working);
+
+    const working = el('div', { class: 'spectro-fig-working' });
+    const workingBox = el('details', { class: 'sim-controls-more spectro-fig-more', hidden: true },
+        el('summary', { text: options.workingLabel || 'How it is worked out' }), working);
+    (options.workingParent || root).appendChild(workingBox);
 
     const inputs = new Map();
     let code = null;
     let formOpen = false;
     let committing = false;
+    let links = [];
+    let hasWorking = false;
 
     const stored = () => getMeasurement(code) || {};
     const has = (m, field) => Number.isFinite(m[field.key]);
@@ -526,27 +520,47 @@ export function createMeasureCard(parent, options) {
             errorLine);
     }
 
-    function measuredRow(field, m) {
-        return el('div', { class: 'spectro-fig-row' },
-            el('span', { class: 'spectro-fig-rowlabel', text: field.label }),
-            el('span', { class: 'spectro-fig-rowvalue' }, el('span', { class: 'spectro-fig-tick', text: '✓' }), ` ${field.show(m)}`));
+    function briefOf(field, m) {
+        if (field.brief) return field.brief(m);
+        return field.show(m).split(', from ')[0];
     }
 
-    function missingRow(field) {
-        return el('div', { class: 'spectro-fig-row' },
-            el('span', { class: 'spectro-fig-rowlabel', text: field.label }),
-            el('span', { class: 'spectro-fig-rowvalue', text: 'Not measured yet' }));
+    // A value, short, with where it came from on hover; or a link to the tool that measures it
+    function cell(field, m) {
+        let value;
+        if (has(m, field)) {
+            const full = isTyped(m, field) ? `${briefOf(field, m)}, typed in` : field.show(m);
+            value = el('span', { class: 'spectro-fig-cell-value', title: full }, briefOf(field, m));
+        } else {
+            value = el('button', {
+                type: 'button',
+                class: 'spectro-fig-link',
+                text: 'Measure',
+                title: `Measure with ${field.toolName}, in the Spectrum tab`,
+                'aria-label': `Measure ${field.label.toLowerCase()} with ${field.toolName}, in the Spectrum tab`,
+                onclick: () => options.onTool(field.tool)
+            });
+            links.push(value);
+        }
+        return el('div', { class: 'spectro-fig-cell' }, el('span', { class: 'spectro-fig-cell-label', text: field.label }), value);
     }
 
     function renderRows() {
         const m = stored();
+        cells.replaceChildren();
         rows.replaceChildren();
         inputs.clear();
-        fields.forEach((field) => {
-            if (has(m, field) && !isTyped(m, field)) rows.appendChild(measuredRow(field, m));
-            else if (formOpen || has(m, field)) rows.appendChild(inputRow(field, m));
-            else rows.appendChild(missingRow(field));
-        });
+        links = [];
+        if (formOpen) {
+            fields.forEach((field) => {
+                if (has(m, field) && !isTyped(m, field)) rows.appendChild(el('div', { class: 'spectro-fig-row' },
+                    el('span', { class: 'spectro-fig-rowlabel', text: field.label }),
+                    el('span', { class: 'spectro-fig-rowvalue', text: field.show(m) })));
+                else rows.appendChild(inputRow(field, m));
+            });
+        } else {
+            fields.forEach((field) => cells.appendChild(cell(field, m)));
+        }
     }
 
     function missingFields() {
@@ -556,24 +570,26 @@ export function createMeasureCard(parent, options) {
 
     function renderOutcome() {
         const m = stored();
-        status.textContent = options.status(code, m);
-        status.hidden = !status.textContent;
-        const lines = options.working(code, m);
-        working.hidden = !lines;
-        working.replaceChildren(...(lines || []).map((line) => el('span', { text: line })));
         const plotted = options.isPlotted(code);
         const missing = missingFields();
+        status.textContent = options.status(code, m) || '';
+        status.hidden = !status.textContent;
+        summary.textContent = plotted && options.summary ? options.summary(code, m) : '';
+        summary.hidden = !summary.textContent;
+        cells.hidden = plotted || formOpen;
+        rows.hidden = plotted || !formOpen;
+        const lines = options.working(code, m);
+        hasWorking = !!lines;
+        workingBox.hidden = !lines || root.hidden;
+        working.replaceChildren(...(lines || []).map((line) => el('span', { text: line })));
         const label = plotted ? options.removeLabel : options.addLabel;
-        button.textContent = label;
+        button.textContent = plotted ? 'Remove' : label;
+        button.title = label;
         button.setAttribute('aria-label', `${label}: ${code}`);
         button.hidden = !plotted && !formOpen && missing.length > 0;
         button.classList.toggle('spectro-fig-button-main', !plotted);
-        toolButtons.forEach((toolButton, tool) => {
-            toolButton.hidden = plotted || !missing.some((f) => f.tool === tool);
-        });
-        const measuring = !plotted && missing.length > 0;
-        measure.hidden = !measuring;
-        typeButton.hidden = formOpen;
+        button.classList.toggle('spectro-fig-quiet', plotted);
+        typeButton.hidden = plotted || formOpen || missing.length === 0;
         // The "still needed" line stays true as values arrive
         if (plotted || missing.length === 0) message.hidden = true;
         else message.textContent = stillNeeded(missing);
@@ -603,6 +619,7 @@ export function createMeasureCard(parent, options) {
         if (!allGood) return;
         const missing = missingFields();
         if (missing.length === 0) {
+            formOpen = false;
             options.onAdd(code);
             return;
         }
@@ -632,14 +649,30 @@ export function createMeasureCard(parent, options) {
         },
         // Where focus goes on arriving at this card: the next thing to press, unless all that's left is taking it off again
         focusNext() {
-            const next = options.isPlotted(code) ? null : [...toolButtons.values(), button].find((b) => !b.hidden);
+            const next = options.isPlotted(code) ? null : [...links, button].find((b) => !b.hidden && b.isConnected);
             (next || title).focus();
         },
         focusTitle(focusOptions) {
             title.focus(focusOptions);
         },
-        setHidden(hidden) { root.hidden = hidden; }
+        // The working goes with the card, wherever it is shown
+        setHidden(hidden) {
+            root.hidden = hidden;
+            workingBox.hidden = hidden || !hasWorking;
+        }
     };
+}
+
+// A switch for a diagram, as a word marked by a line under it when on
+export function createToggle(parent, label, onChange, title) {
+    const button = el('button', { type: 'button', class: 'spectro-fig-toggle', text: label, title: title || null, 'aria-pressed': 'false' });
+    button.addEventListener('click', () => {
+        const on = button.getAttribute('aria-pressed') !== 'true';
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        onChange(on);
+    });
+    parent.appendChild(button);
+    return button;
 }
 
 // Just arrived with a new point, on a screen too short to hold both the card and the figure: show the figure

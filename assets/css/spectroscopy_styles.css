@@ -2759,10 +2759,12 @@ body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-p
 
 
 /* === HR: the H-R and Hubble tabs === */
+/* The diagram is the tab: a thin strip for the object in hand over it, one quiet line of switches under it, and the rest
+   further down */
 .spectro-fig-tab {
     display: flex;
     flex-direction: column;
-    gap: 0.75em;
+    gap: 0.5em;
     min-width: 0;
 }
 
@@ -2784,12 +2786,139 @@ body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-p
     outline: none;
 }
 
-/* The name and where it stands, on one line when they fit */
+/* The name, where it went, and its one button, on one line */
 .spectro-fig-card-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    align-items: center;
     gap: 0.1em 0.6em;
+    min-height: 36px;
+}
+
+.spectro-fig-tab .spectro-fig-card .spectro-fig-card-head > button.spectro-fig-button,
+.spectro-fig-tab .spectro-fig-card .spectro-fig-card-head > .spectro-fig-actions {
+    margin-left: auto;
+}
+
+.spectro-fig-card-head .spectro-fig-actions {
+    gap: 1em;
+}
+
+.spectro-fig-summary {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The object in hand: no box, a hairline under it */
+.spectro-fig-tab .spectro-fig-strip,
+.spectro-fig-tab .spectro-fig-card {
+    gap: 0.3em;
+    padding: 0 0 0.5em;
+    background: none;
+    border: 0;
+    border-bottom: 1px solid var(--color-border);
+    border-radius: 0;
+}
+
+/* One short cell for each value: its name, then the value or a link to measure it */
+.spectro-fig-cells {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(6.5em, 1fr));
+    gap: 0.1em 0.9em;
+}
+
+.spectro-fig-cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.spectro-fig-cell-label {
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.spectro-fig-cell-value {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.5;
+    color: var(--sim-value-color);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Words that act: a link to a tool, a switch, a button that undoes */
+.spectro-fig-tab button.spectro-fig-link,
+.spectro-fig-tab button.spectro-fig-toggle,
+.spectro-fig-tab .spectro-fig-card button.spectro-fig-quiet {
+    align-self: center;
+    height: 26px;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    color: var(--sim-value-color) !important;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+}
+
+.spectro-fig-tab button.spectro-fig-link {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.spectro-fig-tab button.spectro-fig-toggle[aria-pressed="true"] {
+    border-bottom-color: var(--spectro-on);
+    font-weight: 700;
+}
+
+@media (hover: hover) {
+    .spectro-fig-tab button.spectro-fig-link:hover,
+    .spectro-fig-tab button.spectro-fig-toggle:hover,
+    .spectro-fig-tab button.spectro-fig-quiet:hover {
+        background: none;
+        border-bottom-color: var(--spectro-control-line);
+    }
+
+    .spectro-fig-tab button.spectro-fig-toggle[aria-pressed="true"]:hover {
+        border-bottom-color: var(--spectro-on);
+    }
+}
+
+@media (pointer: coarse) {
+    .spectro-fig-tab button.spectro-fig-link,
+    .spectro-fig-tab button.spectro-fig-toggle,
+    .spectro-fig-tab .spectro-fig-card button.spectro-fig-quiet {
+        height: 44px;
+        min-width: 44px;
+    }
+}
+
+/* The diagram's switches, and what its points mean, under it */
+.spectro-fig-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 1.2em;
+}
+
+/* Hubble's answer, on one line over the plot */
+.spectro-fig-answer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 0.8em;
+}
+
+.spectro-fig-readout-note {
+    font-size: 12px;
 }
 
 /* What the diagram still needs, as buttons with the same names as the tools in the Spectrum tab */
@@ -3012,10 +3141,12 @@ body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-p
     display: flex;
     flex-direction: column;
     gap: 0.5em;
-    padding: 0.75em;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: var(--sim-radius);
+}
+
+/* What powers a region: set apart by a line down its side */
+.spectro-fig-note {
+    padding: 0.1em 0 0.1em 0.75em;
+    border-left: 3px solid var(--spectro-on);
 }
 
 .spectro-fig-note p,
@@ -3155,8 +3286,8 @@ body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-p
 .spectro-fig-tab button.spectro-fig-button {
     align-self: flex-start;
     height: auto;
-    min-height: 44px;
-    padding: 0.4em 1em;
+    min-height: 36px;
+    padding: 0.3em 0.9em;
     font-size: 0.85em;
     font-weight: 700;
     letter-spacing: 0.02em;
@@ -3167,6 +3298,12 @@ body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-p
 
 .spectro-fig-tab button.spectro-fig-button-main {
     box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+@media (pointer: coarse) {
+    .spectro-fig-tab button.spectro-fig-button {
+        min-height: 44px;
+    }
 }
 
 .spectro-fig-tab button:focus-visible,

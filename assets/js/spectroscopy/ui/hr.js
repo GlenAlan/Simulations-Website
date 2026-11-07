@@ -11,7 +11,7 @@ import { distance, plusMinus, sci, sig, withCommas } from '../core/format.js';
 import * as synth from '../spectra/synth.js';
 import { toolWords } from './spectrum/tools/index.js';
 import {
-    blackBodyCss, createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
+    blackBodyCss, createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
     drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel,
     readSaved, showFigure, writeSaved
 } from './plot2d.js';
@@ -288,32 +288,27 @@ function mountHR(container, app) {
     let activeRegion = null;
     let hoverRegion = null;
     let closingNote = false;
+    let regionSeen = false;
     let view = null;               // The last draw's geometry and points, for hit tests
     const bandCache = { key: '', canvas: null };
 
     const root = el('div', { class: 'spectro-fig-tab' });
     container.appendChild(root);
 
-    // What to do next comes first, directly over the diagram it acts on, so the two are on screen together
+    // The star in hand, as one thin strip over the diagram, so the two are on screen together and the diagram is the bigger
     const top = el('div', { class: 'spectro-fig-top' });
     root.appendChild(top);
-
-    // Until there's a star on the diagram: how to find the kind of star a task asks for
-    const findHint = el('p', { class: 'spectro-fig-hintline', text: 'To find a kind of star, go by colour: pale yellow is about G, orange about K. Of two orange stars, the much brighter is probably a giant.' });
-    top.appendChild(findHint);
 
     const figure = createFigure(root, {
         label: 'H-R diagram',
         height: (w) => {
             const scroller = root.closest('.sim-controls-content');
-            const room = scroller && scroller.clientHeight ? scroller.clientHeight - top.offsetHeight - 24 : window.innerHeight * 0.62;
-            return Math.max(270, Math.min(w * 1.04, 460, room));
+            const room = scroller && scroller.clientHeight ? scroller.clientHeight - top.offsetHeight - 64 : window.innerHeight * 0.62;
+            return Math.max(270, Math.min(w * 1.1, 560, room));
         },
         draw
     });
 
-    const caption = el('p', { class: 'spectro-fig-caption', hidden: true });
-    root.appendChild(caption);
 
     // Keyboard targets for the regions. A pointer reaches the regions through the canvas itself, so these let
     // clicks pass through them; see the CSS.
@@ -346,25 +341,26 @@ function mountHR(container, app) {
     });
     figure.wrap.appendChild(handle);
 
-    const legend = el('div', { class: 'spectro-fig-legend', hidden: true },
-        ...Object.keys(SHAPES).map((id) => el('span', {}, markerIcon(SHAPES[id], { hollow: true }), REGION_NAMES[id])),
-        el('span', { class: 'spectro-fig-legend-note', text: 'Colour follows temperature, as in the strip along the top.' }));
-    root.appendChild(legend);
-
-    const chips = el('div', { class: 'sim-checkbox-group sim-chips spectro-fig-chips' });
-    root.appendChild(chips);
-    createChip(chips, 'spectroHrClassAxis', 'Spectral class axis', (on) => {
+    // Under the diagram, on one quiet line: its two switches, and once there are points, what their shapes mean. A point's
+    // colour follows its temperature, as the strip along the top does.
+    const options = el('div', { class: 'spectro-fig-options' });
+    createToggle(options, 'Spectral class axis', (on) => {
         axisMode = on ? 'class' : 'temperature';
         figure.redraw();
-    });
-    createChip(chips, 'spectroHrRadii', 'Radius lines', (on) => {
+    }, 'Label the temperature axis with spectral classes, O to M');
+    createToggle(options, 'Radius lines', (on) => {
         showRadii = on;
         figure.redraw();
-    });
+    }, 'Lines of equal radius, in solar radii');
+    const legend = el('div', { class: 'spectro-fig-legend', hidden: true, title: 'A point\'s colour follows its temperature, as in the strip along the top' },
+        ...Object.keys(SHAPES).map((id) => el('span', {}, markerIcon(SHAPES[id], { hollow: true }), REGION_NAMES[id])));
+    root.append(options, legend);
 
+    // Until there's a star on the diagram: how to find the kind of star a task asks for, and that the regions say more
+    const findHint = el('p', { class: 'spectro-fig-hintline', text: 'To find a kind of star, go by colour: pale yellow is about G, orange about K. Of two orange stars, the much brighter is probably a giant.' });
     const regionHint = el('p', { class: 'spectro-fig-hintline', text: 'Click or tap a region to see what powers its stars.' });
     const regionNote = el('div', { class: 'spectro-fig-note', role: 'status', hidden: true });
-    root.append(regionHint, regionNote);
+    root.append(findHint, regionHint, regionNote);
 
     function showRegion(id, focusTarget) {
         activeRegion = id;
@@ -372,6 +368,7 @@ function mountHR(container, app) {
         regionNote.replaceChildren();
         regionNote.hidden = !id;
         if (id) {
+            regionSeen = true;
             regionHint.hidden = true;
             const region = REGIONS.find((r) => r.id === id);
             regionNote.append(
@@ -414,6 +411,7 @@ function mountHR(container, app) {
                 max: 1e7,
                 rangeText: 'a temperature from 100 to 10,000,000 K',
                 extra: { T_source: 'typed', T_err_K: undefined },
+                brief: (m) => `${m.T_err_K > 0 ? plusMinus(m.T_K, m.T_err_K) : withCommas(m.T_K)} K`,
                 show: (m) => `${m.T_err_K > 0 ? plusMinus(m.T_K, m.T_err_K) : withCommas(m.T_K)} K, from ${SOURCES[m.T_source] || 'your measurement'}`
             },
             {
@@ -422,12 +420,13 @@ function mountHR(container, app) {
                 unit: 'W/m²',
                 placeholder: '3.2e-9',
                 tool: 'photometer',
-                toolName: 'Photometer',
+                toolName: toolWords({ id: 'photometer' }).short,
                 min: 1e-30,
                 max: 1e6,
                 rangeText: 'a brightness from 1e-30 to 1e6 W/m²',
                 extra: { flux_err: undefined, L_Lsun: undefined, L_err_Lsun: undefined },
-                show: (m) => `${sci(m.flux_Wm2, 3)} W/m², from the Photometer`
+                brief: (m) => `${sci(m.flux_Wm2, 2)} W/m²`,
+                show: (m) => `${sci(m.flux_Wm2, 3)} W/m², from the photometer`
             },
             {
                 key: 'distance_pc',
@@ -435,23 +434,30 @@ function mountHR(container, app) {
                 unit: 'pc',
                 placeholder: '35',
                 tool: 'photometer',
-                toolName: 'Photometer',
+                toolName: toolWords({ id: 'photometer' }).short,
                 min: 1e-6,
                 max: 1e10,
                 rangeText: 'a distance from 1e-6 to 1e10 pc',
                 extra: { L_Lsun: undefined, L_err_Lsun: undefined },
-                show: (m) => `${distance(m.distance_pc)}, from the Photometer`
+                brief: (m) => distance(m.distance_pc),
+                show: (m) => `${distance(m.distance_pc)}, from the photometer`
             }
         ],
+        // Where it went, once it's on: the point's number and the two values it is plotted at
+        summary(code) {
+            const point = starPoint(code);
+            return point ? `Point ${plotted.get(code)}: ${sig(point.T, 3)} K, ${sig(point.L, 3)} L☉` : '';
+        },
+        workingLabel: 'How the luminosity is worked out',
         status(code) {
             if (plotted.has(code)) {
                 const point = starPoint(code);
                 const offScale = point && (point.T > T_MAX || point.T < T_MIN || Math.log10(point.L) > LOG_L_MAX || Math.log10(point.L) < LOG_L_MIN);
-                return `On your diagram as point ${plotted.get(code)}.${offScale ? ' Its value is off the scale, so the point sits at the edge.' : ''}`;
+                return offScale ? 'Off the scale, so the point sits at the edge.' : '';
             }
             const body = current && current.body;
             if (current && current.path === 'body' && body && body.kind !== 'star') {
-                return 'A point for this system stands for the combined light of its stars. Select one star to plot it alone.';
+                return 'This point is the combined light of its stars. Select one star to plot it alone.';
             }
             return '';
         },
@@ -513,7 +519,7 @@ function mountHR(container, app) {
     const clusterButton = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main', onclick: toggleCluster });
     const suggestButton = el('button', {
         type: 'button',
-        class: 'spectro-fig-button',
+        class: 'spectro-fig-button spectro-fig-quiet',
         text: 'Suggest a turn-off',
         hidden: true,
         onclick: () => {
@@ -522,7 +528,8 @@ function mountHR(container, app) {
             refresh();
         }
     });
-    clusterCard.append(clusterTitle, clusterStatus, ageLine, turnOffLine, el('div', { class: 'spectro-fig-actions' }, suggestButton, clusterButton));
+    clusterCard.append(el('div', { class: 'spectro-fig-card-head' }, clusterTitle, el('div', { class: 'spectro-fig-actions' }, suggestButton, clusterButton)),
+        clusterStatus, ageLine, turnOffLine);
 
     // How the age comes out, under the diagram and out of the way until asked for
     const turnOffBox = el('div', { class: 'spectro-fig-working' });
@@ -559,8 +566,11 @@ function mountHR(container, app) {
         const typeName = body.cluster.type === 'globular' ? 'Globular cluster' : 'Open cluster';
         clusterTitle.textContent = `${typeName} ${body.code}`;
         const showing = cluster && cluster.code === body.code;
-        clusterButton.textContent = showing ? 'Remove cluster' : 'Plot all members';
-        clusterStatus.textContent = `${body.cluster.n_stars} stars at about the same distance, born at about the same time.`;
+        clusterButton.textContent = showing ? 'Remove' : 'Plot all members';
+        clusterButton.setAttribute('aria-label', showing ? `Remove cluster ${body.code} from the diagram` : `Plot all members of ${body.code}`);
+        clusterButton.classList.toggle('spectro-fig-button-main', !showing);
+        clusterButton.classList.toggle('spectro-fig-quiet', !!showing);
+        clusterStatus.textContent = `${body.cluster.n_stars} stars, all about as far away and as old as each other.`;
         clusterStatus.hidden = !!showing;
         suggestButton.hidden = !showing;
         ageLine.hidden = !showing;
@@ -628,6 +638,7 @@ function mountHR(container, app) {
     // ---------- The list and the table ----------
 
     const list = createPlottedList(root, 'Your stars', focusAtTop, clearStars);
+    // The working and the table come after the list, closed
     const table = createDataTable(root, {
         label: 'Plotted stars',
         columns: ['Point', 'Code', 'Temperature (K)', 'Luminosity (L☉)', 'Region', 'Temperature from'],
@@ -691,13 +702,10 @@ function mountHR(container, app) {
         if (isStar) card.setCode(code, `Star ${code}`);
         renderClusterCard();
 
-        const bits = [];
-        if (plotted.size) bits.push(`${plotted.size} of your own star${plotted.size === 1 ? '' : 's'}`);
-        if (cluster) bits.push(`${cluster.type === 'globular' ? 'globular' : 'open'} cluster ${cluster.code}, ${cluster.points.length} stars`);
-        caption.textContent = bits.length ? `Plotted: ${bits.join(' and ')}.` : '';
-        caption.hidden = !bits.length;
-        legend.hidden = !bits.length;
-        findHint.hidden = !isStar || !!bits.length;
+        const any = plotted.size > 0 || !!cluster;
+        legend.hidden = !any;
+        findHint.hidden = !isStar || any;
+        regionHint.hidden = any || regionSeen || !!activeRegion;
 
         list.update(studentPoints().map((p) => ({
             key: p.code,
