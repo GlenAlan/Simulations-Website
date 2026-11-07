@@ -332,9 +332,57 @@ function darkShape(body) {
     return { program: 'dust', params };
 }
 
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const smooth = (lo, hi, x) => {
+    const t = clamp01((x - lo) / (hi - lo));
+    return t * t * (3 - 2 * t);
+};
+const lum = (c) => 0.3 * c[0] + 0.55 * c[1] + 0.15 * c[2];
+// Another colour with the same brightness as the first, so that a new hue never makes anything brighter than it was
+const asBright = (c, like) => c.map((v) => (v * lum(like)) / Math.max(1e-6, lum(c)));
+const mixRGB = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+
+// What an emission nebula's own data does to its colour, so that each looks like itself:
+//   rose       dust reddens. With little of it, H-beta's blue-green beside H-alpha makes a rose pink; with much, a deep red
+//   warmth     strong [N II] beside H-alpha warms the red towards orange
+//   teal       only gas with strong [O III] lines has a pale blue-green heart, and the stronger the lines the more of it
+//   reflection dust near the hot stars scatters their blue light, as in the Trifid: a few, the dusty ones round hot stars
+//              most often, have a blue lobe on one side (side, an angle)
+function emissionLook(body, palette) {
+    const rng = new Rng(hashString(`${body.visual_seed}:look`));
+    const dust = body.nebula.dust ?? 0.5;
+    const central = body.nebula.central_star;
+    const hot = central ? smooth(14000, 34000, central.teff_K) : 0.5;
+    const reflects = rng.next() < 0.05 + 0.4 * smooth(0.42, 0.66, dust) * hot;
+    return {
+        rose: 1 - smooth(0.3, 0.6, dust),
+        warmth: clamp01((palette.nitrogen - 0.15) / 0.35),
+        teal: smooth(0.36, 1.0, palette.excitation),
+        reflection: reflects ? rng.range(0.6, 1) : 0,
+        side: rng.range(0, TAU)
+    };
+}
+
+// A planetary's character, from its lines: nitrogen-rich ones ([N II] strong beside H-alpha) are mostly red and most often
+// bipolar, as real ones are; oxygen-rich ones ([O III] far stronger than H-beta) glow blue-green almost all over, with
+// little red; the rest are the classic ring, red outside and blue-green within.
+function planetaryLook(palette) {
+    const nitrogen = smooth(0.25, 0.52, palette.nitrogen);
+    const oxygen = smooth(1.5, 2.6, palette.excitation);
+    return { red: nitrogen * (1 - 0.5 * oxygen), blue: oxygen * (1 - 0.6 * nitrogen), nitrogen, oxygen };
+}
+
 function planetaryShape(body, palette) {
     const rng = new Rng(hashString(`${body.visual_seed}:shell`));
-    const shape = rng.weighted([[0, 3], [1, 3], [2, 2], [3, 2], [4, 1]]);
+    const look = planetaryLook(palette);
+    // Nitrogen-rich ones are most often bipolar, and the most highly ionised most often nested shells, as real ones are
+    const shape = rng.weighted([
+        [0, 3 * (1 - 0.6 * look.nitrogen) * (1 - 0.4 * look.oxygen)],
+        [1, 1 + 6 * look.nitrogen],
+        [2, 1.5 + 3 * look.oxygen],
+        [3, 2 * (1 - 0.5 * look.nitrogen)],
+        [4, 1]
+    ]);
     // Tilt and turn: the object's axis is what the shape is built around. A ring or a helix is seen near end-on, or it
     // would not read as one; a bipolar nebula lies across the view
     const ringLike = shape === 0 || shape === 3;
@@ -347,7 +395,14 @@ function planetaryShape(body, palette) {
         rot,
         off: new THREE.Vector3(rng.next(), rng.next(), rng.next()),
         P: new THREE.Vector4(shape, size, rng.range(0.45, 0.95), rng.range(0.78, 1.0)),
-        C: new THREE.Vector4(0.8, 1.3, 0.8 + (body.nebula.dust ?? 0.1) * 6, Math.min(0.5, 0.1 * palette.excitation))
+        // A red one has less oxygen, in a smaller zone; a blue-green one less hydrogen, and its oxygen reaches its rim. No gain
+        // is ever raised, so that none is brighter than it was
+        C: new THREE.Vector4(
+            0.8 * (1 - 0.5 * look.blue),
+            1.3 * (1 - 0.45 * look.red - 0.2 * look.blue),
+            0.8 + (body.nebula.dust ?? 0.1) * 6,
+            Math.max(0, Math.min(0.5, 0.1 * palette.excitation) + 0.35 * look.blue - 0.25 * look.red)
+        )
     };
     return { program: 'planetary', params };
 }
@@ -400,16 +455,28 @@ function spriteColours(body, palette) {
         return { a: [0.085, 0.066, 0.054], b: [0.135, 0.155, 0.225] };
     }
     if (type === 'emission') {
-        // Strong [N II] beside H-alpha makes for warmer gas. The oxygen zone's colour is kept at full strength here: the bake
-        // holds how bright it is, which comes from the nebula's own line ratio.
-        const warmth = Math.max(0, Math.min(1, (palette.nitrogen - 0.15) / 0.35));
+        // From a deep, dusty red, warmer where [N II] is strong, to a clear rose pink (emissionLook), each as bright as the
+        // colour the lines alone gave. The oxygen zone's colour is kept at full strength here: the bake holds how bright it
+        // is, which comes from the nebula's own line ratio.
+        const look = emissionLook(body, palette);
         const h = palette.hydrogen;
         const o = palette.oxygen;
         const top = Math.max(o[0], o[1], o[2], 1e-6);
-        return {
-            a: [h[0], h[1] * (0.9 + 0.32 * warmth), h[2] * (1.2 - 0.55 * warmth)],
-            b: [o[0] / top, o[1] / top, o[2] / top]
-        };
+        const lines = [h[0], h[1] * (0.9 + 0.32 * look.warmth), h[2] * (1.2 - 0.55 * look.warmth)];
+        const deep = mixRGB([1.0, 0.07, 0.09], [1.0, 0.13, 0.07], look.warmth);
+        const hue = mixRGB(deep, [1.0, 0.25, 0.44], look.rose);
+        return { a: asBright(hue, lines), b: [o[0] / top, o[1] / top, o[2] / top] };
+    }
+    if (type === 'planetary') {
+        // A red one's hydrogen and [N II] glow a deep orange red; a blue-green one's little hydrogen is pinker, and its
+        // oxygen a purer blue-green (planetaryLook)
+        const look = planetaryLook(palette);
+        const h = palette.hydrogen;
+        const o = palette.oxygen;
+        const red = asBright(mixRGB(h, [1.0, 0.08, 0.05], look.red * 0.8), h);
+        const a = asBright(mixRGB(red, [1.0, 0.32, 0.7], look.blue * 0.7), h);
+        const b = asBright(mixRGB(o, [0.12, 0.78, 0.86], look.blue * 0.6), o);
+        return { a, b };
     }
     return { a: palette.hydrogen, b: palette.oxygen };
 }
@@ -517,6 +584,7 @@ const SPRITE_VERTEX = /* glsl */`
     attribute float aBandB;
     attribute float aReady;
     attribute float aDepth;
+    attribute vec4 aLook;
     varying vec2 vQ;
     varying vec2 vCell;
     varying vec3 vColA;
@@ -530,11 +598,13 @@ const SPRITE_VERTEX = /* glsl */`
     varying float vBlur;
     varying float vLod;
     varying float vFlatten;
+    varying vec4 vLook;
     void main() {
         vQ = position.xy;
         vCell = aRect.xy + (position.xy * 0.5 + 0.5) * aRect.zw;
         vColA = aColA;
         vColB = aColB;
+        vLook = vec4(aLook.x, aLook.y, cos(aLook.z), sin(aLook.z));
         vReady = aReady;
         float aKind = aPack.w;
         float aMag = aPack.z;
@@ -594,6 +664,7 @@ const SPRITE_VARYINGS = /* glsl */`
     varying float vBlur;
     varying float vLod;
     varying float vFlatten;
+    varying vec4 vLook;         // Emission only: blue reflection, share of teal, the reflection's side (cos, sin)
 `;
 
 export function createNebulaeLayer(engine, app) {
@@ -615,6 +686,7 @@ export function createNebulaeLayer(engine, app) {
     const aBandB = stride(1);
     const aReady = stride(1);
     const aDepth = stride(1);
+    const aLook = stride(4);
 
     const items = [];
     const starList = [];
@@ -657,6 +729,8 @@ export function createNebulaeLayer(engine, app) {
         aBandA.set([body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light], i * 4);
         aBandB[i] = body.bands.xray * light;
         aDepth[i] = body.depth;
+        const look = type === 'emission' ? emissionLook(body, palette) : null;
+        aLook.set(look ? [look.reflection, look.teal, look.side, 0] : [0, 1, 0, 0], i * 4);
         const stars = [];
         items.push({ body, job, frame, tanHalf, shown: 0, stars, pickTan: tanHalf * PICK_SHARE[type] });
         embeddedStars(body, shape, frame, tanHalf, job.rect, starList, stars);
@@ -676,6 +750,7 @@ export function createNebulaeLayer(engine, app) {
     inst('aBandA', aBandA, 4);
     inst('aBandB', aBandB, 1);
     inst('aDepth', aDepth, 1);
+    inst('aLook', aLook, 4);
     const readyAttr = new THREE.InstancedBufferAttribute(aReady, 1);
     readyAttr.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('aReady', readyAttr);
@@ -750,20 +825,38 @@ export function createNebulaeLayer(engine, app) {
                     float dense = smoothstep(0.1, 0.45, broad) * (1.0 - nearDust);
                     h.g *= 1.0 + 0.38 * dense - 0.15 * nearDust;
                     h.b *= 1.0 - 0.4 * dense + 0.42 * nearDust;
+                    // Hydrogen's glow is never more yellow than an orange red, however warm and dense, and pales towards a
+                    // salmon pink: the tone curve would turn a bright orange to gold
+                    h.g = min(h.g, h.r * 0.38);
+                    h.b = max(h.b, h.g * 0.8);
                     // Where oxygen's lines beat hydrogen's, which is only close to the hottest stars, the heart turns a
                     // pale blue green. The bake's encoding undone gives the real ratio of the two.
                     float gasX = hyd / (1.02 - hyd);
                     float ratio = (oxy / (1.02 - oxy)) / (gasX + 0.015);
                     float close = smoothstep(0.62, 1.0, vFlatten);
-                    float teal = smoothstep(0.1, 0.95, ratio) * (0.25 + 0.75 * close) * smoothstep(0.05, 0.3, hf);
-                    visible = mix(h, vColB * hf * 0.6, teal * 0.88);
+                    float tealFull = smoothstep(0.1, 0.95, ratio) * (0.25 + 0.75 * close) * smoothstep(0.05, 0.3, hf);
+                    vec3 tealGlow = vColB * hf * 0.6;
+                    visible = mix(h, tealGlow, tealFull * vLook.y * 0.88);
+                    // Less teal than the oxygen zone alone would give is no brighter for it
+                    const vec3 LUM = vec3(0.3, 0.55, 0.15);
+                    visible *= min(1.0, dot(mix(h, tealGlow, tealFull * 0.88), LUM) / max(dot(visible, LUM), 1e-5));
+                    // Blue starlight scattered off the dust beside the stars, on one side, in the few that have it: where the
+                    // warm dust is, and not where dust in front hides it. It takes the place of some of the red, so it adds
+                    // a colour and not more light
+                    if (vLook.x > 0.0) {
+                        float side = smoothstep(-0.3, 0.55, dot(vQ, vLook.zw) / (length(vQ) + 0.15));
+                        float lit = smoothstep(0.02, 0.3, dust) * (1.0 - 0.7 * opacity) * (0.4 + 0.6 * smoothstep(0.05, 0.4, broad));
+                        float blue = lit * side * vLook.x;
+                        visible = visible * (1.0 - 0.3 * blue) + vec3(0.22, 0.42, 1.0) * blue * 0.45;
+                    }
                     // Bright gas is pressed together by the bake's shoulder. Dividing by the soft copy brings its filaments
                     // back, as an astrophotographer's local contrast does, so a nebula's heart has as much in it as its edge
                     float local = pow((gasX + 0.02) / (broad / (1.02 - broad) + 0.02), 0.4);
                     visible *= mix(1.0, clamp(local, 0.55, 1.7), smoothstep(0.15, 0.7, hf) * close);
                     // The faint glow it fades out through, stronger while small
                     visible += vColA * broad * (0.16 + (1.0 - vFlatten) * 1.3);
-                    visible *= 1.3;
+                    // A touch under what it was, so that none has more light than the sky had before depth
+                    visible *= 1.22;
                     // And a little less colour, to sit with the muted band, which is mostly unresolved starlight
                     visible = mix(vec3(dot(visible, vec3(0.3, 0.55, 0.15))), visible, 1.0 - (1.0 - vFlatten) * 0.75);
                 } else if (vKind > 2.5) {
@@ -774,7 +867,7 @@ export function createNebulaeLayer(engine, app) {
                     h.b *= 0.55;
                     h.g *= 1.12;
                     vec3 o = mix(vec3(0.20, 0.46, 1.0) * max(vColB.g, 0.2) * oxy * 1.3, vColB * oxy, smoothstep(0.02, 0.26, oxy));
-                    visible = (h + o) * (1.0 + 0.5 * hyd * hyd) * 1.3;
+                    visible = (h + o) * (1.0 + 0.5 * hyd * hyd) * 1.12;
                 } else if (vKind < 1.5) {
                     // Where oxygen dominates the eye sees teal, not teal plus the red of whatever lies in front of it
                     float hydSeen = hyd * mix(1.0, 0.3, smoothstep(0.06, 0.42, oxy));
