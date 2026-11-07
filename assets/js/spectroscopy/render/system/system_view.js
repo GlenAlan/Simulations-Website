@@ -2120,8 +2120,9 @@ export function initSystemView(app) {
             notify();
         },
         systemOf: systemBodyOf,
-        // entryFov(code): the widest view at which a zoom pointing at it would carry on into its system, or null
-        entryFov: (code) => zoomInto.entryFov(code),
+        // entryFov(code, widest?): the widest view (no wider than widest) at which a zoom pointing at it would carry on into
+        // its system, or null
+        entryFov: (code, widest) => zoomInto.entryFov(code, widest),
         setClock({ speed, playing, read }) {
             if (speed !== undefined) clock.speed = speed;
             if (playing !== undefined) clock.playing = playing;

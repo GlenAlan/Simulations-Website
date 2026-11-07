@@ -8,7 +8,7 @@
 //   goto(code, { band }) sets the band if given, then flies. Its promise gives true when the flight is over and the
 //   object selected, and false if the code is unknown or the flight was called off or replaced by a newer one.
 //   flyNear(code) is a double-click's flight (the engine's 'skydoubleclick'): to just outside where zooming in on it would
-//   carry on into its system, or framed as Go to frames it if it has none. It never goes in.
+//   carry on into its system (never back out from closer in), or framed as Go to frames it if it has none. It never goes in.
 // Bus events sent: 'goto' { code } as a flight sets off, 'highlight' { code } when a cluster member is reached.
 
 import { bus, select, setBand, setLayer } from '../core/state.js';
@@ -668,13 +668,15 @@ export function initGoto(app) {
     // no system to go into is framed as Go to frames it, and so is a star that no zoom could take them into from here.
     function nearView(resolved) {
         const { entity, body, path } = resolved;
-        const entry = systemCodeOf(resolved) && app.system.entryFov ? app.system.entryFov(entity.code) : null;
+        // Never back out: already in closer, it's where the zoom would next carry on in from here
+        const now = engine.getView().fov;
+        const entry = systemCodeOf(resolved) && app.system.entryFov ? app.system.entryFov(entity.code, now) : null;
         if (!entry) {
             if (path !== 'member') return frameFor(resolved);
             const at = drawnSky(engine, resolved);
             return { az: at.az, alt: at.alt, fov: memberFov(body, entity) };
         }
-        const fov = Math.min(MAX_FOV, entry * NEAR_MARGIN);
+        const fov = Math.min(MAX_FOV, entry * NEAR_MARGIN, now);
         const at = (path === 'component' && componentSkyAt(entity.code, fov)) || drawnSky(engine, resolved);
         return { az: at.az, alt: at.alt, fov };
     }

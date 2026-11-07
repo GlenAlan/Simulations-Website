@@ -52,6 +52,7 @@ const REDUCED_FORGET_S = 0.6;
 const SAY_WAITING_S = 0.6;      // A wait as long as this gets a word in the context bar
 const ENTRY_SCAN_STEP = 0.6;    // entryFov: the steps it looks down in...
 const ENTRY_SPLITS = 3;         // ...and how many times the last of them is halved, to within about half a wheel's notch
+const ENTRY_BUDGET_MS = 60;     // ...in about this long, as it holds up the frame a double-click is in
 
 // Where the gesture has got to. It moves seen progress (see transition.js), so that every notch shows, and eases to it at the
 // speed the sky's own zoom eases to the wheel's goal. A short pause holds it there, so a slow, deliberate student still gets
@@ -322,32 +323,37 @@ export function createZoomInto(app, view) {
                 const seen = system.kind === 'nucleus' || engine.glowOf(system) >= SEEN_GLOW;
                 if (!seen || engine.view.fov > CAPTURE_FOV || !isClear(system, frame)) return false;
             }
-            const code = engine.pick(at.x, at.y, POINT_PX.wheel);
-            const found = code ? systemOf(app.universe.resolve(code)) : null;
+            const found = systemAt(at, POINT_PX.wheel);
             return !!found && found.code === system.code;
         });
     }
 
-    // The widest field of view at which a zoom pointing at this object carries on into its system, or null if none would:
-    // a double-click's flight stops a little short of it (ui/goto.js). The way down is scanned from the widest it could be,
-    // then the last step is split a few times.
-    function entryFov(code) {
+    // The widest field of view, no wider than `widest`, at which a zoom pointing at this object carries on into its system,
+    // or null if none would: a double-click's flight stops a little short of it (ui/goto.js). The way down is scanned from
+    // the widest it could be, then the last step is split a few times.
+    function entryFov(code, widest = Infinity) {
         const system = systemOf(app.universe.resolve(code));
         if (!system || app.view !== 'sky') return null;
         const frame = engine.currentFrame();
-        let fov = Math.max(LIMIT_FOV, Math.min(handOverFov(system, frame), CAPTURE_FOV));
+        let fov = Math.max(LIMIT_FOV, Math.min(handOverFov(system, frame), CAPTURE_FOV, widest));
         // A faint star isn't offered until it shows well enough, and its glow goes as the square of the zoom
         if (system.kind !== 'nucleus') {
             const glow = engine.glowOf(system);
             if (glow > 0) fov = Math.max(LIMIT_FOV, Math.min(fov, engine.view.fov * Math.sqrt(glow / SEEN_GLOW) * 0.999));
         }
         let wider = null;
+        const started = performance.now();
         while (!wouldEnter(system, fov)) {
             if (fov <= LIMIT_FOV) return null;
             wider = fov;
             fov = Math.max(LIMIT_FOV, fov * ENTRY_SCAN_STEP);
+            // Deep in a globular every look is a sweep through thousands of stars: past the budget, only the deepest zoom is
+            // asked about, where whatever is pointed at goes in
+            if (performance.now() - started > ENTRY_BUDGET_MS && fov > LIMIT_FOV) {
+                return wouldEnter(system, LIMIT_FOV) ? LIMIT_FOV : null;
+            }
         }
-        for (let i = 0; wider && i < ENTRY_SPLITS; i++) {
+        for (let i = 0; wider && i < ENTRY_SPLITS && performance.now() - started <= ENTRY_BUDGET_MS; i++) {
             const mid = Math.sqrt(fov * wider);
             if (wouldEnter(system, mid)) fov = mid;
             else wider = mid;
