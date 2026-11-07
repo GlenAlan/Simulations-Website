@@ -366,7 +366,11 @@ function findLine(spectrum, nearNm, opts = {}) {
         let type = 'abs';
         let centreIndex = i0;
         let bestSign = -1;
+        // A caller that knows the line is broad says how finely it may be smoothed at least (smoothPx), so that a dip in the noise
+        // along a wide, flat bottom isn't taken for the line itself
+        const finest = Math.min(opts.smoothPx || 0, LINE_SCALES[LINE_SCALES.length - 1]);
         for (const s of LINE_SCALES) {
+            if (s < finest) continue;
             if (s * 5 > half && profile) break;
             const trial = smoothed(flux, a, b, s);
             const list = Array.from(trial).sort((x, y) => x - y);
