@@ -144,8 +144,12 @@ export function initSystemTab(app) {
 
         const summary = el('p', 'spectro-system-lead');
 
+        // Zooming in on the sky is the way in; this is the same thing for a keyboard, or a click, so it's words, not a big button
         const action = el('button', 'spectro-system-btn spectro-system-primary', 'Enter system');
         action.type = 'button';
+        const arrow = el('span', 'icon solid fa-arrow-right');
+        arrow.setAttribute('aria-hidden', 'true');
+        action.appendChild(arrow);
         action.addEventListener('click', () => {
             if (!resolved) return;
             // Selected a planet? Then that's what the flight is for.
