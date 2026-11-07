@@ -60,9 +60,15 @@ export function createPlayback(container, opts) {
         }
     };
 
+    // The word changes with the icon, so the button's name always says what it will do
+    const playIcon = document.createElement('span');
+    playIcon.setAttribute('aria-hidden', 'true');
+    const playWord = document.createElement('span');
+    playBtn.append(playIcon, playWord);
+
     function paint() {
-        playBtn.textContent = playing ? 'Pause' : 'Play';
-        playBtn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+        playIcon.className = `icon solid ${playing ? 'fa-pause' : 'fa-play'}`;
+        playWord.textContent = playing ? 'Pause' : 'Play';
     }
 
     function tick(now) {
