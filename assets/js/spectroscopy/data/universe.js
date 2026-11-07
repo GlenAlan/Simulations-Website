@@ -56,6 +56,7 @@ const DEEP_SLOPE = 0.05;
 const DEEP_FAINTEST = { O: 13, B: 13, A: 13.5, F: 14.5, G: 15, K: 16, M: 17.2, WD: 17.2, GIANT: 13 };
 const DEEP_MULTI_FAINTEST = 15;
 const DEEP_FARTHEST_PC = 12000;
+const TARGET_ALT_MIN = 20;      // In a sky other than the standard one, the target's host still sits well clear of the horizon
 
 function deepTargetMag(rng, faintest) {
     const top = 10 ** (DEEP_SLOPE * (faintest - DEEP_BRIGHTEST_MAG));
@@ -270,7 +271,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
             addToTally(tally, spec.type);
             return planetFromSpec(r, spec, ctx);
         });
-        add(body, 'even', { fixed: target.host.sky, clear_deg: target.host.clear_deg });
+        // Its place is chosen for the standard sky. In any other, it is placed like everything else, so that no star sits
+        // still while the rest move when the seed is changed: that would give it away.
+        const where = seed === DEFAULT_SEED ? { fixed: target.host.sky } : { altMin: TARGET_ALT_MIN };
+        add(body, 'even', { ...where, clear_deg: target.host.clear_deg });
     }
     sealed.decoys.forEach((decoy, i) => {
         const r = fixedStream.fork(`decoy:${i}`);
