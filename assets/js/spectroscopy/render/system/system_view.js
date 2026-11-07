@@ -1029,11 +1029,14 @@ export function initSystemView(app) {
             const fov = from.fov * Math.exp(-handSkyLog(tNorm, path.skyLog));
             // What the star's distance from the centre of the screen comes to as an angle, at this field of view
             const centre = 1 - handOffCentre(tNorm) * skyScale(fov);
+            if (engine.setLensShare) engine.setLensShare(handOffCentre(tNorm));
             engine.flyView(from.az + path.dAz * centre, from.alt + (path.star.alt - from.alt) * centre, fov);
         } else {
             const alt = from.alt + (path.star.alt - from.alt) * stage.skyCentre;
             const az = from.az + path.dAz * stage.skyCentre;
             const fov = Math.exp(Math.log(from.fov) + (Math.log(path.fovEnd) - Math.log(from.fov)) * stage.skyZoom);
+            // The star comes to the middle of the canvas, wherever the drawer had left the sky's axis
+            if (engine.setLensShare) engine.setLensShare(1 - stage.skyCentre);
             engine.setView({ az, alt, fov });
         }
         const sky = engine.camera;
@@ -1055,6 +1058,7 @@ export function initSystemView(app) {
     }
 
     function restoreSky() {
+        if (engine.setLensShare) engine.setLensShare(1);
         engine.setView(savedView);
         // setView normalises the azimuth; keep the digits as they were
         engine.view.az = savedView.az;

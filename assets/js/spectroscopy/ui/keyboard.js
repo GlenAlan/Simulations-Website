@@ -21,6 +21,7 @@ const SINGLE_KEYS_STORE = 'spectroscopy.singleKeys';
 const LOOK_RATE = 0.45;  // Fields of view a second, so a key moves the sky at the same speed at any zoom
 const ZOOM_RATE = 1.3;   // Natural-log change of the field of view a second
 const NUDGE = 0.02;      // A quick tap moves this many fields of view, even if it lasted under a frame
+const ZOOM_NUDGE = 0.04; // And zooms by this, as a natural-log change of the field of view
 const CENTRE_PICK_PX = 40;
 const WALK_MARGIN_MAG = 1;  // The walk only stops at what can be made out: nearer the zoom's limit than this, it can't
 
@@ -101,9 +102,18 @@ export function initKeyboard(app) {
             if (dz && engine.offerZoom(dz * ZOOM_RATE * frame.dt, null, 'key')) return;
             const step = v.fov * LOOK_RATE * frame.dt;
             const stretch = 1 / Math.max(0.2, Math.cos(v.alt * Math.PI / 180)); // Azimuth lines bunch up towards the zenith
-            engine.setView({ az: v.az + dx * step * stretch, alt: v.alt + dy * step, fov: v.fov * Math.exp(dz * ZOOM_RATE * frame.dt) });
+            if (dx || dy) engine.setView({ az: v.az + dx * step * stretch, alt: v.alt + dy * step });
+            // About the middle of the canvas, where the reticle is, even with the drawer's offset (see the engine's lens)
+            if (dz) engine.zoomAt(dz * ZOOM_RATE * frame.dt);
         }
     });
+
+    // A tap too short for a frame still zooms a little, as a tap of an arrow key still looks
+    function nudgeZoom(direction) {
+        const step = direction * ZOOM_NUDGE;
+        if (engine.offerZoom(step, null, 'key')) return;
+        engine.zoomAt(step);
+    }
 
     function announceZoom() {
         const fov = engine.getView().fov;
@@ -237,6 +247,7 @@ export function initKeyboard(app) {
 
         if (ZOOM_IN.has(key) || ZOOM_OUT.has(key)) {
             e.preventDefault();
+            if (!e.repeat && !engine.isSlewing()) nudgeZoom(ZOOM_IN.has(key) ? -1 : 1);
             held.add(ZOOM_IN.has(key) ? 'in' : 'out');
             setReticle(true);
             return;
@@ -249,10 +260,11 @@ export function initKeyboard(app) {
         }
     });
 
+    // Only on the sky: a hold that carried on into a system has had its arrival told, and the sky's field isn't on show
     document.addEventListener('keyup', (e) => {
         if (LOOK[e.key]) held.delete(e.key);
-        if (ZOOM_IN.has(e.key) && held.delete('in')) announceZoom();
-        if (ZOOM_OUT.has(e.key) && held.delete('out')) announceZoom();
+        const zoomed = (ZOOM_IN.has(e.key) && held.delete('in')) || (ZOOM_OUT.has(e.key) && held.delete('out'));
+        if (zoomed && app.view === 'sky') announceZoom();
     });
     window.addEventListener('blur', () => held.clear());
 

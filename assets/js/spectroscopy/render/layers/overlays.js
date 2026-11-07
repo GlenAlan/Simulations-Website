@@ -317,7 +317,7 @@ export function createOverlaysLayer(engine, app) {
     function drawObjectMarks(frame, view, inset, showLabels, showShift) {
         const forward = azAltToVec3(view.az, view.alt);
         // Wide enough for the furthest things, which are drawn nearer the middle than the camera has them
-        const halfDiagonal = Math.min(89, Math.atan(Math.tan(view.fov * RAD / 2) / parallaxFactor(1, view.fov) * Math.hypot(1, frame.width / frame.height)) / RAD + 1);
+        const halfDiagonal = Math.min(89, engine.reachDeg(view.fov));
         const cosLimit = Math.cos(halfDiagonal * RAD);
         const budget = Math.max(5, Math.round((frame.width * frame.height) / AREA_PER_LABEL));
         const firstOwn = taken.length;

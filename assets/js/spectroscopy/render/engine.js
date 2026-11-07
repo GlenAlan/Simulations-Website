@@ -46,6 +46,7 @@ const CLUSTER_INSIDE = 0.45;    // A cluster's radius, as a share of the view's 
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
 const ANCHOR_HOLD_PX = 8;       // A zoom keeps the depth it found under the pointer until the pointer moves this far...
 const ANCHOR_HOLD_MS = 300;     // ...or the wheel has been still this long
+const DRAWER_RESIZE_MS = 700;   // A change of size this soon after the drawer opens or closes is the drawer's doing
 
 // What each graphics level spends. dpr caps the pixel ratio; bloom levels are halvings of the screen.
 const LEVELS = ['low', 'medium', 'high'];
@@ -171,6 +172,18 @@ export function createEngine(canvas) {
     let skipSkyDraw = false;
     let dipToBlack = 1;       // 1 is the full picture; Reduce motion's slews dip this to 0 and back
     let lastCameraFov = 0;
+    let projectionDirty = true;
+
+    // The sky stays where it is on the page when the drawer opens or closes. The canvas changes size, and a camera kept in
+    // the middle of it would shift everything by half the change, so instead the camera's axis stays where it was: it's drawn
+    // lens.x, lens.y CSS px from the canvas's centre (down is positive), and lens.zoom keeps the scale when the height changes.
+    // So the part of the sky still in view doesn't move. Further things are drawn nearer the axis (core/depth.js), so below a
+    // field of view of 80 degrees one depth stays exactly still, the selected object's, and the rest within a few pixels.
+    // Nothing else changes: a slew still puts its target in the middle of the canvas, and closing the drawer undoes it.
+    // A flight into a system eases the offset away by share, and brings it back on the way out.
+    const lens = { x: 0, y: 0, zoom: 1, share: 1 };
+    let placed = null;          // Where the canvas was on the page at the last resize
+    let drawerChangedAt = -Infinity;
 
     // Camera motion
     const velocity = { az: 0, alt: 0 };     // Degrees a second, from a flick
@@ -553,12 +566,28 @@ export function createEngine(canvas) {
 
     // ---------- Size and graphics level ----------
 
-    function resize() {
+    // keepStill: the drawer has changed the canvas's size, and what's on screen should stay where it is on the page
+    function resize(keepStill = false) {
         const rect = canvas.getBoundingClientRect();
-        width = Math.max(1, Math.round(rect.width));
-        height = Math.max(1, Math.round(rect.height));
+        const next = {
+            left: rect.left + window.scrollX,
+            top: rect.top + window.scrollY,
+            w: Math.max(1, Math.round(rect.width)),
+            h: Math.max(1, Math.round(rect.height))
+        };
+        if (placed && (next.w !== width || next.h !== height || next.left !== placed.left || next.top !== placed.top)) {
+            if (keepStill) holdStill(next);
+            else {
+                // The window itself changed: the sky scales with it, and the axis keeps its place in proportion
+                lens.x *= next.w / width;
+                lens.y *= next.h / height;
+            }
+        }
+        placed = next;
+        width = next.w;
+        height = next.h;
         camera.aspect = width / height;
-        camera.updateProjectionMatrix();
+        applyProjection();
         if (!renderer) return;
         const cap = QUALITY[app.qualityLevel].dpr;
         dpr = Math.min(window.devicePixelRatio || 1, cap);
@@ -573,6 +602,57 @@ export function createEngine(canvas) {
         targetA.setSize(bufferW, bufferH);
         if (targetB) targetB.setSize(bufferW, bufferH);
         buildBloom();
+    }
+
+    // Moves the camera's axis to where it was on the page before the drawer moved the canvas. Exact for the selected
+    // object's depth while it's on screen, which is what the student is looking at; for the middle depth otherwise.
+    function holdStill(next) {
+        let depth = 0.5;
+        const resolved = app.selected;
+        if (resolved && app.view === 'sky') {
+            const d = resolved.entity.depth ?? resolved.body.depth ?? 0;
+            const at = project(resolved.body.sky.az, resolved.body.sky.alt, d);
+            if (at && at.onScreen) depth = d;
+        }
+        const p = app.view === 'sky' ? parallaxFactor(depth, view.fov) : 1;
+        lens.x += (placed.left - next.left + (width - next.w) / 2) / p;
+        lens.y += (placed.top - next.top + (height - next.h) / 2) / p;
+        lens.zoom *= height / next.h;
+        // Back to where it started, give or take a rounding error: no need to keep the error
+        if (Math.abs(lens.x) < 0.01) lens.x = 0;
+        if (Math.abs(lens.y) < 0.01) lens.y = 0;
+        if (Math.abs(lens.zoom - 1) < 1e-9) lens.zoom = 1;
+    }
+
+    // The camera's projection, with the axis drawn where the lens says
+    function applyProjection() {
+        camera.zoom = lens.zoom;
+        camera.updateProjectionMatrix();
+        const e = camera.projectionMatrix.elements;
+        e[8] = (-2 * lens.x * lens.share) / width;
+        e[9] = (2 * lens.y * lens.share) / height;
+        camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+        projectionDirty = false;
+    }
+
+    // A flight into a system turns the camera onto its star, and the star has to end in the middle of the canvas: so the
+    // offset goes as the flight goes (share 0), and comes back as it returns (share 1)
+    function setLensShare(k) {
+        const share = Math.max(0, Math.min(1, k));
+        if (share === lens.share) return;
+        lens.share = share;
+        projectionDirty = true;
+    }
+
+    // A system is drawn as the eye would see it, at a scale it works out from the field of view, so before a flight into one
+    // a changed scale becomes the field of view itself. The picture doesn't change.
+    function foldLensZoom() {
+        if (lens.zoom === 1) return;
+        view.fov = (2 * Math.atan(Math.tan(view.fov * RAD * 0.5) / lens.zoom)) / RAD;
+        zoomGoal = view.fov;
+        lens.zoom = 1;
+        projectionDirty = true;
+        applyView();
     }
 
     function setLevel(level) {
@@ -686,10 +766,10 @@ export function createEngine(canvas) {
     function applyView() {
         camera.rotation.y = -view.az * RAD;
         camera.rotation.x = view.alt * RAD;
-        if (view.fov !== lastCameraFov) {
+        if (view.fov !== lastCameraFov || projectionDirty) {
             lastCameraFov = view.fov;
             camera.fov = view.fov;
-            camera.updateProjectionMatrix();
+            applyProjection();
         }
         camera.updateMatrixWorld();
     }
@@ -735,9 +815,16 @@ export function createEngine(canvas) {
         velocity.alt = 0;
         zoomAnchor = null;
         const duration = renderer ? opts.duration ?? 1.5 : 0; // With no frames to fly through, it only has to get there
-        const toAz = target.az ?? view.az;
-        const toAlt = target.alt ?? view.alt;
         const toFov = target.fov ?? view.fov;
+        let toAz = target.az ?? view.az;
+        let toAlt = target.alt ?? view.alt;
+        // The target goes in the middle of the canvas, wherever the lens has the camera's axis. opts.axis: it's the axis's own.
+        if (lensOffset() && !opts.axis) {
+            const centre = centreDir();
+            const axis = axisPutting(target.az ?? centre.az, target.alt ?? centre.alt, width / 2, height / 2, toFov);
+            toAz = axis.az;
+            toAlt = axis.alt;
+        }
         if (duration <= 0) {
             placeView(toAz, toAlt, toFov);
             zoomGoal = view.fov;
@@ -797,14 +884,63 @@ export function createEngine(canvas) {
     // forward, length 1. Further things are drawn nearer the centre than the camera alone puts them (core/depth.js).
     const ray = { x: 0, y: 0, f: 1 };
     function rayThrough(px, py, fov, depth = 0) {
-        const t = Math.tan(fov * RAD * 0.5) / parallaxFactor(depth, fov);
-        const x = ((px / width) * 2 - 1) * t * (width / height);
-        const y = (1 - (py / height) * 2) * t;
+        const p = parallaxFactor(depth, fov);
+        const t = Math.tan(fov * RAD * 0.5) / lens.zoom;
+        const x = (((px / width) * 2 - 1) / p - (2 * lens.x * lens.share) / width) * t * (width / height);
+        const y = ((1 - (py / height) * 2) / p + (2 * lens.y * lens.share) / height) * t;
         const length = Math.hypot(x, y, 1);
         ray.x = x / length;
         ray.y = y / length;
         ray.f = 1 / length;
         return ray;
+    }
+
+    function lensOffset() {
+        return lens.share > 0 && (lens.x !== 0 || lens.y !== 0);
+    }
+
+    // The camera's axis that puts a direction on the sky (x, y, z as azAltToVec3 has it) under a screen point, solved from
+    // scratch so that errors can't build up over the steps of a zoom
+    function solveAxis(skyX, skyY, skyZ, px, py, fov, depth, altNow) {
+        const r = rayThrough(px, py, fov, depth);
+        const tilt = Math.atan2(r.y, r.f);
+        const reach = Math.asin(Math.max(-1, Math.min(1, skyY / Math.hypot(r.y, r.f))));
+        // Two pitches put the direction at the right height: the one nearer the view, past the zenith or not
+        const near = reach - tilt;
+        const far = Math.PI - reach - tilt;
+        const p = Math.abs(far - altNow * RAD) < Math.abs(near - altNow * RAD) ? far : near;
+        const back = r.y * Math.sin(p) - r.f * Math.cos(p);
+        return { az: (Math.atan2(skyX, -skyZ) - Math.atan2(r.x, -back)) / RAD, alt: p / RAD };
+    }
+
+    // The same for an az and alt: what to slew to so that they end up at that point
+    function axisPutting(az, alt, px, py, fov = view.fov, depth = 0) {
+        const v = azAltToVec3(az, alt);
+        const axis = solveAxis(v[0], v[1], v[2], px, py, fov, depth, alt);
+        return { az: ((axis.az % 360) + 360) % 360, alt: axis.alt };
+    }
+
+    // The direction in the middle of the canvas, which is where the view looks as far as anyone else is concerned
+    function centreDir() {
+        if (!lensOffset()) return { az: view.az, alt: view.alt };
+        const r = rayThrough(width / 2, height / 2, view.fov);
+        const p = view.alt * RAD;
+        const a = view.az * RAD;
+        const back = r.y * Math.sin(p) - r.f * Math.cos(p);
+        const x = r.x * Math.cos(a) - back * Math.sin(a);
+        const z = r.x * Math.sin(a) + back * Math.cos(a);
+        const up = r.y * Math.cos(p) + r.f * Math.sin(p);
+        let az = Math.atan2(x, -z) / RAD;
+        if (az < 0) az += 360;
+        return { az, alt: Math.asin(Math.max(-1, Math.min(1, up))) / RAD };
+    }
+
+    // How far from the axis, in degrees, the canvas reaches for the furthest things: a corner, with the lens's offset
+    function reachDeg(fov = view.fov) {
+        const offX = Math.abs(lens.x * lens.share);
+        const offY = Math.abs(lens.y * lens.share);
+        const tanPerPx = Math.tan(fov * RAD * 0.5) / (lens.zoom * height * 0.5);
+        return Math.atan((Math.hypot(width / 2 + offX, height / 2 + offY) * tanPerPx) / parallaxFactor(1, fov)) / RAD + 1;
     }
 
     // The depth of whatever is under a screen point, or the dome's over empty sky. Asking is a sweep through every layer's
@@ -825,8 +961,7 @@ export function createEngine(canvas) {
 
     // The zoom's anchor: a screen point, and the direction in the sky under it when the zoom began. What you point at is
     // what you zoom into: it's the depth of the thing under the pointer that stays still.
-    function anchorZoomAt(px, py) {
-        const depth = depthUnder(px, py);
+    function anchorZoomAt(px, py, depth = depthUnder(px, py)) {
         const r = rayThrough(px, py, view.fov, depth);
         const p = view.alt * RAD;
         const a = view.az * RAD;
@@ -847,16 +982,8 @@ export function createEngine(canvas) {
     function setFovAnchored(next) {
         let { az, alt } = view;
         if (zoomAnchor) {
-            const r = rayThrough(zoomAnchor.x, zoomAnchor.y, next, zoomAnchor.depth);
-            const tilt = Math.atan2(r.y, r.f);
-            const reach = Math.asin(Math.max(-1, Math.min(1, zoomAnchor.skyY / Math.hypot(r.y, r.f))));
-            // Two pitches put the anchor at the right height: the one nearer the view, past the zenith or not
-            const near = reach - tilt;
-            const far = Math.PI - reach - tilt;
-            const p = Math.abs(far - alt * RAD) < Math.abs(near - alt * RAD) ? far : near;
-            const back = r.y * Math.sin(p) - r.f * Math.cos(p);
-            alt = p / RAD;
-            az = (Math.atan2(zoomAnchor.skyX, -zoomAnchor.skyZ) - Math.atan2(r.x, -back)) / RAD;
+            const a = zoomAnchor;
+            ({ az, alt } = solveAxis(a.skyX, a.skyY, a.skyZ, a.x, a.y, next, a.depth, alt));
         }
         placeView(az, Math.max(alt, altFloor(next)), next);
     }
@@ -959,7 +1086,7 @@ export function createEngine(canvas) {
         let best = null;
         let bestScore = Infinity;
         const lim = limitingMag(view.fov);
-        const pxPerDeg = (height * 0.5 * RAD) / Math.tan(view.fov * RAD * 0.5);
+        const pxPerDeg = (height * 0.5 * RAD * lens.zoom) / Math.tan(view.fov * RAD * 0.5);
         const consider = (code, az, alt, radiusPx, bonusPx, depth) => {
             const p = project(az, alt, depth);
             // Something with a size can be on show while its middle is off the edge of the view
@@ -1029,9 +1156,14 @@ export function createEngine(canvas) {
         frame.t = elapsed;
         frame.dt = dt;
         frame.fov = view.fov;
-        frame.pxPerRad = (height * dpr * 0.5) / Math.tan(view.fov * RAD * 0.5);
+        frame.pxPerRad = (height * dpr * 0.5 * lens.zoom) / Math.tan(view.fov * RAD * 0.5);
         frame.width = width;
         frame.height = height;
+        // Where the camera's axis is drawn, in NDC before depth (see the lens), and how much the scale is changed from the
+        // field of view's. Only a layer that works out rays from the screen itself needs these.
+        frame.shiftX = (2 * lens.x * lens.share) / width;
+        frame.shiftY = (-2 * lens.y * lens.share) / height;
+        frame.zoom = lens.zoom;
         frame.dpr = dpr;
         frame.camera = camera;
         frame.band = app.band;
@@ -1054,6 +1186,8 @@ export function createEngine(canvas) {
         frameSerial += 1;
         stepSlew(dt);
         stepCameraMotion(dt);
+        // Before the system view takes the view it will come back to
+        if (app.view !== 'sky' && lens.zoom !== 1) foldLensZoom();
         if (bandFade < 1) {
             bandFade = Math.min(1, bandFade + dt / BAND_FADE_S);
             updateBandWeights();
@@ -1140,11 +1274,18 @@ export function createEngine(canvas) {
         const dt = Math.min(0.1, realDt);
         lastNow = now;
         elapsed += dt;
-        if (resizePending && now - lastResizeAt > 120) {
-            // The drawer animates the canvas's size: reallocating every frame of that would thrash the GPU.
+        // Just after the drawer opens or closes, look every frame: the size changes in one step, and the frame it changes in
+        // should already be drawn at the new size, or the old picture shows stretched for a moment
+        const drawerResize = now - drawerChangedAt < DRAWER_RESIZE_MS;
+        if (drawerResize && !resizePending) {
+            const rect = canvas.getBoundingClientRect();
+            if (Math.round(rect.width) !== width || Math.round(rect.height) !== height) resizePending = true;
+        }
+        if (resizePending && (drawerResize || now - lastResizeAt > 120)) {
+            // Dragging a window's edge resizes many times over: reallocating every frame of that would thrash the GPU
             resizePending = false;
             lastResizeAt = now;
-            resize();
+            resize(drawerResize);
         }
         if (!chainReady) return;
         nextBakeFrame();
@@ -1189,7 +1330,7 @@ export function createEngine(canvas) {
 
     // Degrees of sky per CSS pixel at the centre of the view, so the sky stays under the pointer at any zoom
     function degPerPx() {
-        return (2 * Math.tan(view.fov * RAD * 0.5)) / height / RAD;
+        return (2 * Math.tan(view.fov * RAD * 0.5)) / (height * lens.zoom) / RAD;
     }
 
     function moveByPixels(dx, dy) {
@@ -1325,6 +1466,7 @@ export function createEngine(canvas) {
     // ---------- Events ----------
 
     bus.on('band', ({ band }) => setBandTarget(band));
+    bus.on('drawer', () => { drawerChangedAt = performance.now(); });
     bus.on('settings', ({ key }) => {
         if (key === 'quality') applyQualitySetting();
     });
@@ -1397,6 +1539,15 @@ export function createEngine(canvas) {
             return left;
         },
         zoomIsEasing: () => Math.abs(Math.log(zoomGoal / view.fov)) > 1e-4,
+        // Zooms at once by a step (as for the wheel), keeping still what's at a screen point: the middle of the canvas by
+        // default, which is the same at every depth
+        zoomAt(step, x = width / 2, y = height / 2) {
+            if (slew) return;
+            anchorZoomAt(x, y, 0);
+            setFovAnchored(Math.max(MIN_FOV, Math.min(MAX_FOV, view.fov * Math.exp(step))));
+            zoomGoal = view.fov;
+            zoomAnchor = null;
+        },
         // True while one finger or the mouse is on the sky: a drag, or a click still to come
         isPressed: () => dragPointers.size === 1,
         // Two fingers can go from the sky to a system without lifting: whoever has them hands them on.
@@ -1420,6 +1571,14 @@ export function createEngine(canvas) {
         glowOf: (body) => bodyGlow(body, app.band) * zoomGain(limitingMag(view.fov)),
         project,                    // project(az, alt, depth = 0): where something at that depth is drawn. See core/depth.js
         projectBody,                // projectBody(body): the same, for a body at its own depth
+        // The view's own az and alt are the camera's axis, which the drawer can leave off the middle of the canvas (see the
+        // lens). centreDir() is what's in the middle; axisPutting(az, alt, x, y, fov?, depth?) is the view that puts a
+        // direction at a screen point; reachDeg(fov?) is how far from the axis the canvas reaches, for the furthest things.
+        centreDir,
+        axisPutting,
+        reachDeg,
+        setLensShare,
+        lensState: () => ({ ...lens }),
         pick,
         bodyShows,
         addLayer(layer) { layers.push(layer); return layer; },

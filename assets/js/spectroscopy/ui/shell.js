@@ -648,36 +648,61 @@ function initHelpPage(app, topRight) {
 }
 
 // ---------- An object shouldn't vanish under the drawer that opened for it, or sit behind a bar ----------
+// The sky holds still as the drawer opens (see the lens in render/engine.js), so this only has work to do when the object
+// really is out of sight: under the drawer, off an edge, or behind a bar. Then the sky moves only as far as brings it into
+// view, with a little room round it, and slowly enough to follow: never a swing to put it in the middle.
 function keepSelectionInView(app) {
     const BARS = ['spectroTopLeft', 'spectroBandBar', 'spectroTopRight', 'spectroContextBar', 'spectroLegend'];
-    const CLEARANCE = 16;
+    const EDGE = 6;         // Nearer the edge than this, a point can't be made out
+    const ROOM = 64;        // Where it's brought to: this far inside the edge, or clear of the bar
     const BIG_PX = 60;      // Something this wide across still shows with its middle behind a bar, or off the edge
-    bus.on('select', () => {
-        // After the drawer has opened and the canvas has taken its new size
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-            const engine = app.engine;
-            if (!app.selected || app.view !== 'sky' || engine.isSlewing()) return;
-            const { az, alt, depth } = drawnSky(engine, app.selected);
-            const p = engine.project(az, alt, depth);
-            const frame = engine.currentFrame();
-            const reach = p ? angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov) : 0;
-            if (reach > BIG_PX) {
-                const shows = BIG_PX - reach;
-                if (p.x > shows && p.x < frame.width - shows && p.y > shows && p.y < frame.height - shows) return;
-            }
-            const onSky = p && p.x > CLEARANCE && p.x < frame.width - CLEARANCE && p.y > CLEARANCE && p.y < frame.height - CLEARANCE;
-            if (onSky) {
-                const sky = document.getElementById('simulationCanvas').getBoundingClientRect();
-                const behindBar = BARS.some((id) => {
-                    const r = document.getElementById(id).getBoundingClientRect();
-                    return r.width > 0 && p.x > r.left - sky.left - CLEARANCE && p.x < r.right - sky.left + CLEARANCE
-                        && p.y > r.top - sky.top - CLEARANCE && p.y < r.bottom - sky.top + CLEARANCE;
-                });
-                if (!behindBar) return;
-            }
-            engine.slewTo({ az, alt }, { duration: 0.5 });
-        }));
-    });
+    const MOVE_S = 0.8;
+
+    function barRects(sky) {
+        return BARS.map((id) => {
+            const el = document.getElementById(id);
+            const r = el && el.getBoundingClientRect();
+            return r && r.width > 0 && r.height > 0 && getComputedStyle(el).display !== 'none'
+                ? { left: r.left - sky.left, right: r.right - sky.left, top: r.top - sky.top, bottom: r.bottom - sky.top }
+                : null;
+        }).filter(Boolean);
+    }
+
+    function check(tries = 6) {
+        const engine = app.engine;
+        if (!app.selected || app.view !== 'sky' || engine.isSlewing()) return;
+        const frame = engine.currentFrame();
+        const w = frame.width;
+        const h = frame.height;
+        const sky = document.getElementById('simulationCanvas').getBoundingClientRect();
+        // The engine hasn't taken the canvas's new size yet
+        if ((Math.round(sky.width) !== w || Math.round(sky.height) !== h) && tries > 0) {
+            requestAnimationFrame(() => check(tries - 1));
+            return;
+        }
+        const { az, alt, depth } = drawnSky(engine, app.selected);
+        const p = engine.project(az, alt, depth);
+        if (!p) return;
+        const reach = angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov);
+        if (reach > BIG_PX) {
+            const shows = BIG_PX - reach;
+            if (p.x > shows && p.x < w - shows && p.y > shows && p.y < h - shows) return;
+        }
+        const bars = barRects(sky);
+        let x = p.x;
+        let y = p.y;
+        if (x < EDGE || x > w - EDGE) x = Math.max(ROOM, Math.min(w - ROOM, x));
+        if (y < EDGE || y > h - EDGE) y = Math.max(ROOM, Math.min(h - ROOM, y));
+        // Out from behind a bar: up or down, whichever is towards the middle of the sky
+        const bar = bars.find((r) => x > r.left && x < r.right && y > r.top && y < r.bottom);
+        if (bar) y = (bar.top + bar.bottom) / 2 < h / 2 ? bar.bottom + ROOM / 2 : bar.top - ROOM / 2;
+        if (x === p.x && y === p.y) return;
+        const to = engine.axisPutting(az, alt, x, y, frame.fov, depth);
+        engine.slewTo(to, { duration: MOVE_S, axis: true });
+    }
+
+    // After the drawer has opened and the canvas has taken its new size: the engine resizes in the first frame after
+    bus.on('select', () => requestAnimationFrame(() => requestAnimationFrame(() => check())));
 }
 
 // In the browser's own fullscreen Esc would leave at once. Where the browser lets a page keep the key (Chromium, on

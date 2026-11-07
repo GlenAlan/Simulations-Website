@@ -111,7 +111,7 @@ export function initViewAids(app) {
     function somethingInFrame(items, frame, view) {
         const forward = azAltToVec3(view.az, view.alt);
         // Wide enough for the furthest things, which are drawn nearer the middle than the camera has them
-        const half = Math.atan(Math.tan(view.fov * RAD / 2) / parallaxFactor(1, view.fov) * Math.hypot(1, frame.width / frame.height)) / RAD + 1;
+        const half = engine.reachDeg(view.fov);
         const cosHalf = Math.cos(Math.min(89, half) * RAD);
         const pxPerDeg = RAD * (frame.pxPerRad / frame.dpr);
         const seen = limitingMag(view.fov) - IN_VIEW_MARGIN;
@@ -139,10 +139,11 @@ export function initViewAids(app) {
         let best = null;
         let bestDistance = Infinity;
         const seen = limitingMag(view.fov) - WORTH_FLYING_MARGIN;
+        const centre = engine.centreDir();
         for (let i = 0; i < items.length; i++) {
             const { body } = items[i];
             if (!engine.bodyShows(body, seen)) continue;
-            const d = angularSeparation(view.az, view.alt, body.sky.az, body.sky.alt) * parallaxFactor(body.depth || 0, view.fov);
+            const d = angularSeparation(centre.az, centre.alt, body.sky.az, body.sky.alt) * parallaxFactor(body.depth || 0, view.fov);
             if (d < bestDistance) {
                 bestDistance = d;
                 best = body;
