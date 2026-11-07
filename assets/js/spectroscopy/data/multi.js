@@ -18,6 +18,7 @@ import { stable } from '../core/rng.js';
 import { keplerPeriodDays } from '../core/phys.js';
 import { dp, clamp, RSUN_AU, makeClassStar, makeRedGiant, makeWhiteDwarf, starFromMass, makeComposition, fixedStar,
     absoluteVisual, apparentMag, combineMags } from './stellar.js';
+import { settleSystem } from './dynamics.js';
 
 // Primaries of random systems, roughly by how common such systems are in catalogues
 const PRIMARY_CLASSES = [['B', 4], ['A', 8], ['F', 12], ['G', 18], ['K', 22], ['M', 30], ['WD', 3], ['GIANT', 3]];
@@ -70,8 +71,9 @@ function primaryPopulation(rng) {
 }
 
 // A random binary or hierarchical triple, ready for a position and brightness. wantsPlanets keeps the orbits tight
-// enough for planets to circle the whole system at a sensible distance.
-export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets) {
+// enough for planets to circle the whole system at a sensible distance. canPass: false keeps it from being one of the few
+// pairs that pass mass across. Drawn as it always was, then settled by data/dynamics.js so that it could really exist.
+export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets, { canPass = true } = {}) {
     let population = primaryPopulation(rng);
     let composition = makeComposition(rng, population);
     let s0 = drawPrimary(rng, population, composition);
@@ -105,41 +107,42 @@ export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets) {
     }
 
     const stars = parts.map((star) => component(nextCode(), code, star));
-    const donorIndex = s0.radius_Rsun >= s1.radius_Rsun ? 0 : 1;
     const closeEnough = aInner <= TRANSFER_RADII * (s0.radius_Rsun + s1.radius_Rsun) * RSUN_AU || aInner < 0.05;
-    return {
+    const system = {
         kind: triple ? 'multiple' : 'binary',
         architecture: triple ? 'hierarchical_triple' : 'binary',
         stars,
         orbits,
-        interacting: closeEnough,
-        transfer: closeEnough ? { donor: donorIndex, accretor: 1 - donorIndex } : null,
+        interacting: false,
+        transfer: null,
         figure_eight: null,
         pairs: null,
         visual_sep_deg: dp(rng.range(0.02, 0.06), 3),
         planets: []
     };
+    return settleSystem(rng.fork('settle'), system, { passing: closeEnough && canPass, planets: wantsPlanets });
 }
 
 // A pair from two stars that already exist, for a cluster's binary members: the same shape as a random binary
-export function makePairOf(rng, nextCode, code, s0, s1, visualSepDeg) {
+export function makePairOf(rng, nextCode, code, s0, s1, visualSepDeg, { canPass = true } = {}) {
     const floor = smallestSeparation(s0, s1);
     const aInner = stable(rng.logRange(Math.max(0.02, floor * 1.02), Math.max(8, floor * 2)), 5);
     const orbit = makeOrbit(rng, [0], [1], aInner, s0.mass_Msun + s1.mass_Msun, { circular: aInner < 0.2 });
-    const donorIndex = s0.radius_Rsun >= s1.radius_Rsun ? 0 : 1;
     const closeEnough = aInner <= TRANSFER_RADII * (s0.radius_Rsun + s1.radius_Rsun) * RSUN_AU || aInner < 0.05;
-    return {
+    const system = settleSystem(rng.fork(`settle:${code}`), {
         kind: 'binary',
         architecture: 'binary',
         stars: [s0, s1].map((star) => component(nextCode(), code, star)),
         orbits: [orbit],
-        interacting: closeEnough,
-        transfer: closeEnough ? { donor: donorIndex, accretor: 1 - donorIndex } : null,
+        interacting: false,
+        transfer: null,
         figure_eight: null,
         pairs: null,
-        visual_sep_deg: visualSepDeg(orbit.period_days),
+        visual_sep_deg: 0,
         planets: []
-    };
+    }, { passing: closeEnough && canPass });
+    system.visual_sep_deg = visualSepDeg(orbit.period_days);
+    return system;
 }
 
 // Combined light of a system's stars, and how far away it has to be for a target magnitude

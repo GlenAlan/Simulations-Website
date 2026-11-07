@@ -5,7 +5,7 @@
 import { C_KMS, R_OVERVIEW } from '../core/phys.js';
 import { MOLECULES } from '../data/molecules.js';
 import { FWHM_PER_SIGMA, bb, makeProfile, addLine, addBand, planckPeak, snrFromFlux, effectiveFlux } from './kernel.js';
-import { renderStars, SOLAR_STAR } from './stellar.js';
+import { renderStars, SOLAR_STAR, starPartsOf } from './stellar.js';
 
 // Lines every gas cloud of the type has, beyond what its data lists. rel is against Hα = 1; where the data already lists a
 // line, its value wins. Forbidden lines only appear here, in emission.
@@ -187,10 +187,15 @@ function bandFor(line) {
     return molecule.bands.find((band) => band.shape === 'edge' && Math.abs(band.head - line.w) < 1.5) || null;
 }
 
-export function cometSpectrum(body, grid) {
+// A comet of another star (host given) reflects that star's light, not the Sun's, and is seen as well as a planet there is
+const EXOCOMET_MIN_SNR = 150;
+
+export function cometSpectrum(body, grid, host = null) {
     const comet = body.comet || {};
     const factor = 1 + (body.radial_velocity_kms ?? 0) / C_KMS;
-    const { flux, continuum, lines } = renderStars([{ star: SOLAR_STAR, factor, weight: 1, code: body.code }], grid);
+    const own = host ? starPartsOf(host, { parts: null }) : [];
+    const parts = own.length ? own : [{ star: SOLAR_STAR, factor, weight: 1, code: body.code }];
+    const { flux, continuum, lines } = renderStars(parts, grid);
     const { wl, n } = grid;
 
     // A gassy comet shows its emission more strongly against a fainter dust continuum
@@ -222,8 +227,10 @@ export function cometSpectrum(body, grid) {
         continuum,
         lines,
         fRef: 1,
-        snr: snrFromFlux(effectiveFlux(body.brightness)),
+        snr: own.length ? Math.max(EXOCOMET_MIN_SNR, snrFromFlux(effectiveFlux(body.brightness))) : snrFromFlux(effectiveFlux(body.brightness)),
         mode: 'reflection',
-        note: 'Sunlight reflected off dust, with the Sun\'s absorption lines, plus bright emission from gas in the coma: CN, C₂ and sodium.'
+        note: own.length
+            ? 'Light from its own star reflected off dust, with that star\'s absorption lines, plus bright emission from gas in the coma: CN, C₂ and sodium.'
+            : 'Sunlight reflected off dust, with the Sun\'s absorption lines, plus bright emission from gas in the coma: CN, C₂ and sodium.'
     };
 }

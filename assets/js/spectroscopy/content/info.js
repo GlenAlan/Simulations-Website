@@ -521,17 +521,24 @@ function roguePlanetInfo({ entity }) {
 function cometInfo({ entity }) {
     const block = entity.comet || {};
     const lines = Array.isArray(block.emission_lines) ? block.emission_lines : [];
+    // A comet of another star (one with a host) is warmed, lit and blown back by that star, not the Sun
+    const own = !!entity.host;
+    const star = own ? 'its star' : 'the Sun';
     return {
         kindLabel: 'Comet',
-        lead: 'A lump of ice and dust, warmed by the Sun until it grows a glowing head and two tails.',
-        summary: 'A lump of ice and dust, warmed by the Sun until it grows a glowing head and two tails. Every comet here points the same way, away from a Sun that is below the horizon and never shown.',
+        lead: `A lump of ice and dust, warmed by ${star} until it grows a glowing head and two tails.`,
+        summary: own
+            ? 'A lump of ice and dust on a long, stretched orbit round another star. Near its star it warms, and grows a glowing head and two tails that point away from the star; far out it is bare ice. Far too small to see from Earth, it is found by visiting its system.'
+            : 'A lump of ice and dust, warmed by the Sun until it grows a glowing head and two tails. Every comet here points the same way, away from a Sun that is below the horizon and never shown.',
         notes: [
-            { heading: 'Two kinds of light', text: 'Its spectrum mixes sunlight reflected off dust, with the Sun\'s dark lines, and bright emission from gas in the coma. This is a chance to see reflection and emission side by side.' },
+            { heading: 'Two kinds of light', text: `Its spectrum mixes light from ${star} reflected off dust, with ${own ? 'that star' : 'the Sun'}'s dark lines, and bright emission from gas in the coma. This is a chance to see reflection and emission side by side.` },
             { heading: "What's in the coma", text: 'Look for bright features near 388 nm, 470 to 563 nm and 589 nm. Compare them with the molecule and element references to name the gases.' },
-            { heading: 'Two tails', text: 'The dust tail is curved and yellow-white, because dust shines by reflected sunlight and lags behind the comet. The ion tail is straight and blue, as charged gas is blown directly away from the Sun.' },
+            { heading: 'Two tails', text: `The dust tail is curved and yellow-white, because dust shines by reflected light and lags behind the comet. The ion tail is straight and blue, as charged gas is blown directly away from ${star}.` },
             { heading: 'Other bands', text: 'In the ultraviolet a huge halo of hydrogen glows in Lyman-α. In the infrared the dust itself glows.' }
         ],
-        rarity: 'Thousands are known, but a comet bright enough for the naked eye turns up only every few years, and a "great" comet about once a decade.',
+        rarity: own
+            ? 'Comets have been found round a few dozen other stars, from the gas and dust they carry across the face of their star.'
+            : 'Thousands are known, but a comet bright enough for the naked eye turns up only every few years, and a "great" comet about once a decade.',
         catalogue: clean([
             row('Emission lines', lines.map((l) => present(l.label, isNum(l.w) && `${sig(l.w, 4)} nm`).join(' ')).filter(Boolean).join(', ')),
             row('Dust fraction', num(block.dust_ratio, '', 2)),

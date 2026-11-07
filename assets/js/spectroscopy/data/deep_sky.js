@@ -24,6 +24,7 @@ import { dp, luminosityFromRT, absoluteVisual, apparentMag, distanceForMag, flux
     makeClassStar, makeWhiteDwarf } from './stellar.js';
 import { supernovaBandsAt } from './band_table.js';
 import { gasGiantFit, subNeptuneMass } from './planets.js';
+import { placeOne } from './sky_layout.js';
 
 function line(w, rel, label) {
     return { w, rel: dp(rel, 3), label };
@@ -225,6 +226,57 @@ export function makeQuasar(rng, body, z, radioLoud) {
     };
 }
 
+// The same object further away, for the deeper sky: as big in itself, so smaller on the sky, and fainter
+export function pushBack(body, distancePc) {
+    const ratio = distancePc / body.distance_pc;
+    if (!(ratio > 1)) return;
+    body.distance_pc = stable(distancePc, 5);
+    body.brightness = { flux_Wm2: stable(body.brightness.flux_Wm2 / (ratio * ratio), 5), mag: dp(body.brightness.mag + 5 * Math.log10(ratio), 3) };
+    if (body.nebula) body.nebula.size_deg = dp(body.nebula.size_deg / ratio, 4);
+}
+
+// Our own comets, in the evening sky. The Sun has set in the west and is below the horizon. A comet with a tail is within a
+// few AU of the Sun, so it is seen not far from it: low over where it set, its tail pointing up and away from it. The
+// brighter one is nearer the Sun, closer to us and lower, with a long tail; the fainter further out and higher.
+const COMET_SUN = { az: 262, alt: -16 };
+const SKY_COMET_LOOKS = [
+    { r: [0.55, 0.9], elong: [26, 34], alt: [8, 13], mag: [2.4, 3.4], tail: [6.5, 9], near: true },
+    { r: [1.3, 1.9], elong: [44, 56], alt: [20, 30], mag: [5.4, 6.6], tail: [2.5, 3.8], near: false }
+];
+
+// Places the sky's comets by the Sun (placeOne in data/sky_layout.js keeps them clear of everything else), with their distances
+// from the Sun and from us to match. Returns where the Sun is.
+export function placeSkyComets(rng, comets, layout) {
+    const RAD = Math.PI / 180;
+    const hs = COMET_SUN.alt * RAD;
+    comets.forEach((body, i) => {
+        const look = SKY_COMET_LOOKS[i % SKY_COMET_LOOKS.length];
+        const r = rng.range(look.r[0], look.r[1]);
+        let elong = rng.range(look.elong[0], look.elong[1]);
+        if (r < 1) elong = Math.min(elong, Math.asin(r) / RAD - 3);     // Inside our orbit, a comet stays near the Sun
+        const ce = Math.cos(elong * RAD);
+        const candidates = [];
+        for (let k = 0; k < 60; k++) {
+            const h = rng.range(look.alt[0], look.alt[1] + k * 0.25) * RAD;
+            const c = (ce - Math.sin(h) * Math.sin(hs)) / (Math.cos(h) * Math.cos(hs));
+            if (Math.abs(c) > 1) continue;
+            const side = rng.chance(0.5) ? 1 : -1;
+            candidates.push({ az: COMET_SUN.az + side * (Math.acos(c) / RAD), alt: h / RAD });
+        }
+        placeOne(layout, { body, radius_deg: 0 }, candidates);
+        // Its distance from us, from its distance from the Sun and how far from the Sun it looks
+        const s = Math.sin(elong * RAD);
+        const root = Math.sqrt(Math.max(0, r * r - s * s));
+        const delta = look.near && r < 1 ? ce - root : ce + root;
+        const mag = dp(rng.range(look.mag[0], look.mag[1]), 3);
+        body.distance_pc = stable(delta * (AU / PC), 4);
+        body.brightness = { flux_Wm2: fluxFromVisualMag(mag), mag };
+        body.comet.heliocentric_AU = dp(r, 2);
+        body.comet.tail_deg = dp(rng.range(look.tail[0], look.tail[1]), 2);
+    });
+    return { ...COMET_SUN };
+}
+
 export function makeComet(rng, body) {
     const helio = dp(rng.range(0.8, 6), 2);
     const mag = dp(rng.range(2, 8), 3);
@@ -248,7 +300,8 @@ export function makeComet(rng, body) {
 }
 
 // Warm only from its own leftover heat, so it shines in the infrared alone
-export function makeRogue(rng, body, type) {
+// opts.distance: [nearest, furthest] in parsecs, for the deeper sky's
+export function makeRogue(rng, body, type, opts = {}) {
     let teff;
     let radius;
     let mass;
@@ -282,7 +335,8 @@ export function makeRogue(rng, body, type) {
     const T = dp(teff, 1);
     const rMetres = radius * R_EARTH;
     const luminosity = stable((4 * Math.PI * rMetres * rMetres * SIGMA * T * T * T * T) / L_SUN, 4);
-    const distance = stable(rng.logRange(3, 60), 4);
+    const [near, far] = opts.distance || [3, 60];
+    const distance = stable(rng.logRange(near, far), 4);
     body.distance_pc = distance;
     body.radial_velocity_kms = dp(rng.range(-40, 40), 1);
     body.brightness = { flux_Wm2: stable(fluxFromLuminosity(luminosity, distance), 5), mag: 99 };
