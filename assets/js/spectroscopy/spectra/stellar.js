@@ -161,11 +161,15 @@ function starBands(star) {
         const carbon = Math.min(1.1, 0.9 * bell(T, 3200, 0.2, 0.2));
         return [['C2', carbon], ['CN', 0.8 * bell(T, 3500, 0.2, 0.2)], ['CH', 0.8 * bell(T, 4000, 0.2, 0.2)]];
     }
-    const tio = 1 / (1 + Math.exp((T - 3450) / 170));
+    // The thin gas of a giant holds molecules together at a higher temperature than a dwarf's: TiO comes in about 250 K hotter in
+    // a giant, and CN is stronger. MgH and CaH go the other way, since hydrides need a dwarf's pressure: they are strong in a K
+    // dwarf and missing from a K giant, which is the plainest difference between the two in the visible.
+    const giantness = Math.min(1, Math.max(0, (4 - logg) / 1.5));
+    const tio = 1 / (1 + Math.exp((T - 3450 - 250 * giantness) / 170));
     return [
         ['TiO', metal('Ti', 0.9 * tio)],
         ['CH', metal('C', 0.5 * bell(T, 4800, 0.12, 0.08))],
-        ['CN', metal('N', 0.3 * bell(T, 4500, 0.1, 0.1))],
+        ['CN', metal('N', 0.3 * (1 + 0.5 * giantness) * bell(T, 4500, 0.1, 0.1))],
         ['MgH', metal('Mg', 0.4 * bell(T, 4000, 0.08, 0.08) * dwarfness)],
         ['CaH', metal('Ca', 0.45 * bell(T, 3200, 0.07, 0.08) * dwarfness)]
     ];

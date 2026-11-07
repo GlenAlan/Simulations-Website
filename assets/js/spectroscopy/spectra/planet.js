@@ -26,6 +26,9 @@ function bandStrength(gas, ppm, pressureBar) {
 
 const ATOM_SPECIES = { Na: 'Na I', K: 'K I', Li: 'Li I', Ca: 'Ca I', Fe: 'Fe I' };
 
+const RED_EDGE_LAND = 0.45;
+const RED_EDGE_SEA = 0.3;
+
 // What a surface's ice field means, as the molecules that show it
 const ICE_MOLECULES = { water: ['H2O_ice'], methane_nitrogen: ['CH4_ice', 'N2_ice'], H2O: ['H2O_ice'], CH4: ['CH4_ice'] };
 
@@ -75,8 +78,9 @@ function reflectanceModel(planet) {
             ground *= 1 - 0.3 * Math.exp(-0.5 * dip1 * dip1) - 0.14 * Math.exp(-0.5 * dip2 * dip2);
         }
         let below = land * ground + ocean * (0.05 + 0.02 * Math.min(1, 450 / lam));
-        // Life's red edge: a step up where vegetation stops absorbing
-        if (redEdge) below += (land * 0.45) / (1 + Math.exp((redEdge - lam) / 9));
+        // Life's red edge: a step up where plants stop absorbing, on land and in the blooms and mats on the sea. It stays up
+        // across the near infrared, so it shows as a higher level past the edge, not a bump.
+        if (redEdge) below += (land * RED_EDGE_LAND + ocean * RED_EDGE_SEA) / (1 + Math.exp((redEdge - lam) / 9));
         let deck = 0.8;
         if (blueDim) deck = 0.85 * Math.min(1, Math.max(0.25, (lam - 300) / 200));
         if (dusty) deck = groundReflectance('iron_oxide', lam) * 1.3;

@@ -472,7 +472,7 @@ function measureLine(spectrum, line) {
 
 // How far a click may be off and still be on the line it means, as a share of the search: about a pixel on the plot
 const CLICK_SLACK = 1.5 / 7;
-const RIVAL_CLOSE = 4 / 7;       // Two deep dips this close on the plot, about 4 pixels, can't be told apart by clicking
+const RIVAL_CLOSE = 3 / 7;       // Two deep dips this close on the plot, under 3 pixels, can't be told apart by clicking
 
 // A line's centre. moved_nm says how far that is from the click. If the search passed over a smaller dip nearer the click to get
 // here, or another deep dip is too close on the plot to tell from this one (jumped), the student may have meant that one,
