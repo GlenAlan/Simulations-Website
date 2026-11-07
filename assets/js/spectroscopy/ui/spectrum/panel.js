@@ -11,6 +11,9 @@
 //                           is given, and lets the plot zoom further; 'overview' goes back
 //   getResolution()         'overview' or 'zoom'
 //   setBodyOpts(opts)       add t, parts or subtractHost to the body spectrum and refresh; a null value removes an option, no argument clears all
+//   getBodyOpts(), onBodyOpts(fn(changed)) -> remove, onReferenceChange(fn) -> remove
+//   openTool(id), hasTool(id)   open a tool by its id, unfolding the Tools list; false if this object doesn't have it
+//   picker                  the reference picker, see refs.js
 //   toolsEl                 the element the tools are listed in
 
 import { spectrumOf, referenceSpectrum, autoRange } from '../../spectra/synth.js';
@@ -114,6 +117,7 @@ function createSpectrumPanel(app, container) {
         onChange() {
             computeReference();
             describeSoon();
+            referenceFns.forEach((fn) => fn());
         },
         onLabels(on) {
             plot.showLineLabels(on);
@@ -428,6 +432,23 @@ function createSpectrumPanel(app, container) {
     // ---------- Tools ----------
 
     const toolRows = new Map();
+    const bodyOptsFns = new Set();
+    const referenceFns = new Set();
+
+    // Brings an opened tool up under the plot, which stays stuck to the top of the drawer while a tool is open
+    function revealTool(row) {
+        // Only the drawer scrolls: scrollIntoView would move the whole page, and the sky with it
+        let scroller = row.details.parentElement;
+        while (scroller && scroller !== document.body) {
+            const overflow = getComputedStyle(scroller).overflowY;
+            if ((overflow === 'auto' || overflow === 'scroll') && scroller.scrollHeight > scroller.clientHeight) break;
+            scroller = scroller.parentElement;
+        }
+        if (!scroller || scroller === document.body) return;
+        const inside = row.details.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+        const reduce = !!(app.settings && app.settings.reduceMotion);
+        scroller.scrollTo({ top: scroller.scrollTop + inside - plotHost.offsetHeight - 6, behavior: reduce ? 'auto' : 'smooth' });
+    }
 
     function closeTool(row) {
         if (row.instance) {
@@ -459,8 +480,21 @@ function createSpectrumPanel(app, container) {
         const details = make('details', { class: 'spectro-tool' }, [make('summary', { text: tool.label }), body]);
         row = { tool, details, body, instance: null };
         details.addEventListener('toggle', () => {
-            if (details.open) openTool(row);
-            else closeTool(row);
+            if (details.open) {
+                // Only one tool at a time draws: opening one closes the other, and its dispose hands back the plot
+                if (tool.draws) {
+                    toolRows.forEach((other) => {
+                        if (other !== row && other.tool.draws && other.details.open) {
+                            other.details.open = false;
+                            closeTool(other);
+                        }
+                    });
+                }
+                openTool(row);
+                revealTool(row);
+            } else {
+                closeTool(row);
+            }
         });
         toolsEl.appendChild(details);
         toolRows.set(tool.id, row);
@@ -525,8 +559,31 @@ function createSpectrumPanel(app, container) {
                 });
             }
             refresh({ body: true, ref: false });
+            bodyOptsFns.forEach((fn) => fn(opts || {}));
         },
         getBodyOpts: () => ({ ...bodyOpts }),
+        // Called with what changed whenever setBodyOpts is used, so one tool can follow what another asks for
+        onBodyOpts(fn) {
+            bodyOptsFns.add(fn);
+            return () => bodyOptsFns.delete(fn);
+        },
+        onReferenceChange(fn) {
+            referenceFns.add(fn);
+            return () => referenceFns.delete(fn);
+        },
+        hasTool(id) {
+            const row = toolRows.get(id);
+            return !!row && !row.details.hidden;
+        },
+        // Opens a tool by id, unfolding the Tools list if need be. False if this object doesn't have that tool.
+        openTool(id) {
+            const row = toolRows.get(id);
+            if (!row || row.details.hidden) return false;
+            toolsDetails.open = true;
+            if (row.details.open) revealTool(row);
+            else row.details.open = true;
+            return true;
+        },
         // For tests and for tools that need to change the reference
         picker
     };
@@ -547,6 +604,10 @@ function createSpectrumPanel(app, container) {
         },
         onHide() {
             visible = false;
+            // A tool playing through time stops when it can't be seen
+            toolRows.forEach((row) => {
+                if (row.instance && row.instance.onPanelHide) row.instance.onPanelHide();
+            });
         }
     };
 }

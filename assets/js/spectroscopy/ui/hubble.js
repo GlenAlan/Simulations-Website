@@ -122,7 +122,10 @@ function mountHubble(container, app) {
     const card = createMeasureCard(root, {
         addLabel: 'Add to Hubble plot',
         removeLabel: 'Remove from Hubble plot',
-        onHint: () => app.drawer.selectTab('spectrum'),
+        onHint: (field) => {
+            app.drawer.selectTab('spectrum');
+            if (app.spectrumPanel) app.spectrumPanel.openTool(field.tool);
+        },
         fields: [
             {
                 key: 'v_kms',
@@ -130,6 +133,7 @@ function mountHubble(container, app) {
                 unit: 'km/s',
                 placeholder: '7,000',
                 hint: 'Use the Doppler tool in Spectrum',
+                tool: 'doppler',
                 allowNegative: true,
                 extra: { v_err_kms: undefined, z: undefined },
                 show: (m) => `${m.v_err_kms > 0 ? plusMinus(m.v_kms, m.v_err_kms) : withCommas(m.v_kms)} km/s, from the Doppler tool`
@@ -141,6 +145,7 @@ function mountHubble(container, app) {
                 scale: 1e6,
                 placeholder: '100',
                 hint: 'Use the Photometer in Spectrum',
+                tool: 'photometer',
                 show: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc, from the Photometer`
             }
         ],

@@ -331,7 +331,10 @@ function mountHR(container, app) {
     const card = createMeasureCard(root, {
         addLabel: 'Add to H-R',
         removeLabel: 'Remove from H-R',
-        onHint: () => app.drawer.selectTab('spectrum'),
+        onHint: (field) => {
+            app.drawer.selectTab('spectrum');
+            if (app.spectrumPanel) app.spectrumPanel.openTool(field.tool);
+        },
         fields: [
             {
                 key: 'T_K',
@@ -339,6 +342,7 @@ function mountHR(container, app) {
                 unit: 'K',
                 placeholder: '5,800',
                 hint: 'Use the Wien tool in Spectrum',
+                tool: 'wien',
                 extra: { T_source: 'typed', T_err_K: undefined },
                 show: (m) => `${m.T_err_K > 0 ? plusMinus(m.T_K, m.T_err_K) : withCommas(m.T_K)} K, from ${SOURCES[m.T_source] || 'your measurement'}`
             },
@@ -348,6 +352,7 @@ function mountHR(container, app) {
                 unit: 'W/m²',
                 placeholder: '3.2e-9',
                 hint: 'Use the Photometer in Spectrum',
+                tool: 'photometer',
                 extra: { flux_err: undefined, L_Lsun: undefined, L_err_Lsun: undefined },
                 show: (m) => `${sci(m.flux_Wm2, 3)} W/m², from the Photometer`
             },
@@ -357,6 +362,7 @@ function mountHR(container, app) {
                 unit: 'pc',
                 placeholder: '35',
                 hint: 'Use the Photometer in Spectrum',
+                tool: 'photometer',
                 extra: { L_Lsun: undefined, L_err_Lsun: undefined },
                 show: (m) => `${distance(m.distance_pc)}, from the Photometer`
             }

@@ -1705,6 +1705,274 @@ body.sim-panel-sheet #simulationControlsPanel:has(#spectroPanel-spectrum:not([hi
 
 /* === TOOLS: Wien, Doppler, line zoom, time series, photometer, subtract star === */
 
+/* While a tool is open the plot stays on screen above it, a little shorter, so a line can be clicked with the tool in view */
+.spectro-instrument:has(.spectro-tool[open]) .spectro-plot-host {
+    position: sticky;
+    top: -0.75em; /* Up to the drawer's edge, through its padding, so nothing scrolling past shows above the plot */
+    z-index: 3;
+    margin-top: -0.75em;
+    padding: 0.75em 0 0.3em;
+    background-color: var(--color-bg-alt);
+}
+
+.spectro-instrument:has(.spectro-tool[open]) .spectro-plot-stage {
+    height: clamp(170px, 28vh, 250px);
+}
+
+.spectro-tool-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55em;
+}
+
+.spectro-tool-text {
+    margin: 0;
+    line-height: 1.45;
+}
+
+.spectro-tool-line {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+    color: var(--sim-value-color);
+}
+
+/* The drawer sets every p small, so this needs the extra weight to be the biggest thing in a tool */
+.spectro-tool-body p.spectro-tool-answer {
+    margin: 0;
+    font-size: 1.15em;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    color: var(--sim-value-color);
+}
+
+.spectro-tool-result,
+.spectro-tool-choice,
+.spectro-tool-ref,
+.spectro-tool-measured {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.spectro-tool-choice[hidden],
+.spectro-tool-ref[hidden],
+.spectro-tool-measured[hidden],
+.spectro-tool-field[hidden] {
+    display: none;
+}
+
+.spectro-tool-result:empty {
+    display: none;
+}
+
+.spectro-tool-steps {
+    margin: 0;
+    padding-left: 1.45em;
+    font-size: 0.9em;
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-tool-steps > li {
+    margin: 0 0 0.25em;
+    padding-left: 0.15em;
+    overflow-wrap: anywhere;
+}
+
+.spectro-tool-heading {
+    margin: 0.3em 0 0;
+    font-size: 1em;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--sim-value-color);
+}
+
+.spectro-tool-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+}
+
+.spectro-tool-actions:empty {
+    display: none;
+}
+
+.spectro-spectrum button.spectro-tool-go {
+    border-color: var(--spectro-on);
+    font-weight: 700;
+}
+
+.spectro-tool-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35em;
+}
+
+.spectro-spectrum button.spectro-tool-pick {
+    min-width: 44px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-tool-options {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.spectro-tool-options > legend {
+    margin-bottom: 0.2em;
+    padding: 0;
+    font-weight: 600;
+}
+
+/* The site draws its own radio beside the label, so the row is the label: the whole of it is the target */
+.spectro-tool-option {
+    position: relative;
+    min-height: 44px;
+}
+
+.spectro-tool-option input[type="radio"] {
+    position: absolute;
+    float: none;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.spectro-tool-option input[type="radio"] + label {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    padding: 0.2em 0 0.2em 2.1em;
+    box-sizing: border-box;
+    font-size: 1em;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-tool-option input[type="radio"] + label:before {
+    top: 50%;
+    left: 0;
+    width: 1.5em;
+    height: 1.5em;
+    margin: 0;
+    font-size: 1em;
+    line-height: 1.5em;
+    border-radius: 50%;
+    transform: translateY(-50%);
+}
+
+.spectro-tool-option input[type="radio"]:focus-visible + label:before {
+    outline: 2px solid var(--spectro-on);
+    outline-offset: 2px;
+}
+
+.spectro-tool-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15em;
+}
+
+.spectro-tool-field > label,
+.spectro-tool-slider > label {
+    margin: 0;
+    font-size: 1em;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.spectro-tool-select {
+    width: 100%;
+    min-height: 44px;
+}
+
+.spectro-tool-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1em;
+}
+
+.spectro-tool-slider input[type="range"] {
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+}
+
+.spectro-tool-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+}
+
+.spectro-tool-controls .spectro-playback {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+}
+
+.spectro-tool-controls .spectro-playback select {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 44px;
+}
+
+.spectro-spectrum .spectro-tool-controls button.spectro-play {
+    flex: 0 0 auto;
+    min-width: 5em;
+}
+
+.spectro-tool-table {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+    font-size: 0.95em;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-tool-table caption {
+    margin-bottom: 0.2em;
+    text-align: left;
+    font-weight: 600;
+}
+
+.spectro-tool-table th,
+.spectro-tool-table td {
+    padding: 0.28em 0.4em 0.28em 0;
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.spectro-tool-table th {
+    font-weight: 600;
+}
+
+.spectro-tool-table tr.is-current td {
+    font-weight: 700;
+}
+
+.spectro-spectrum button.spectro-tool-remove {
+    width: 44px;
+    padding: 0;
+    font-size: 1.1em;
+    font-weight: 400;
+}
+
+.spectro-tool-check {
+    margin: 0;
+}
+
 /* === end TOOLS === */
 
 
