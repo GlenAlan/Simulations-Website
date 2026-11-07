@@ -310,8 +310,10 @@ export function initSystemView(app) {
         const planetLabels = model.planets.map((e) => makeLabel(e.code));
 
         scene.add(group);
+        const steady = new Map(model.nodes.map((n) => [n, [0, 0, 0]]));
         return {
-            group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo,
+            group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
+            starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
             sizes: createSizes(model),
             smear: createSmear(model),
             parents: new Map(model.nodes.flatMap((n) => (n.children || []).map((c) => [c, n])))
@@ -694,24 +696,33 @@ export function initSystemView(app) {
         return null;
     }
 
-    // Where to hold the camera on one part of the tree: on it, unless its orbit has merged into a smear, in which case the
-    // camera mustn't jump about after it, and holds on what it goes round instead
-    function steadyPosition(node) {
-        const here = positions.nodes.get(node) || [0, 0, 0];
-        const parent = world.parents.get(node);
-        if (!parent) return here;
-        const entry = world.smear.nodes.get(parent);
-        const w = Math.max(entry.own, entry.above);
-        if (w <= 0) return here;
-        const there = steadyPosition(parent);
-        return [here[0] + (there[0] - here[0]) * w, here[1] + (there[1] - here[1]) * w, here[2] + (there[2] - here[2]) * w];
+    // How far each orbit has merged into its smear, from how fast the clock is going. Then where each part of the tree can
+    // be said to be: where it is, unless its orbit has merged, when it's no one place and counts as being at what it goes
+    // round. The camera holds on that, and sizes are worked out from it, as neither must jump about after a blur.
+    function settleOrbits(frame) {
+        const cap = app.settings.reduceMotion ? ORBITS_PER_SECOND_REDUCED : ORBITS_PER_SECOND;
+        clock.otherRate = Math.max(frame.dt > 0 ? clock.otherDays / frame.dt : 0, clock.otherRate * Math.exp(-frame.dt * 6));
+        clock.otherDays = 0;
+        const rate = Math.max(clock.playing ? clock.speed * timeScale() : 0, clock.otherRate);
+        clock.shown = app.settings.reduceMotion ? rate : Math.max(rate, clock.shown * Math.exp(-frame.dt * 8));
+        smearWeights(model, clock.shown, cap, world.smear);
+        // Parents come before their children in this list
+        model.nodes.forEach((node) => {
+            const out = world.steady.get(node);
+            const here = positions.nodes.get(node);
+            const parent = world.parents.get(node);
+            const entry = parent ? world.smear.nodes.get(parent) : null;
+            const w = entry ? Math.max(entry.own, entry.above) : 0;
+            const there = parent ? world.steady.get(parent) : here;
+            for (let k = 0; k < 3; k++) out[k] = here[k] + (there[k] - here[k]) * w;
+        });
     }
 
     function targetPosition(t) {
         if (!t || !positions) return [0, 0, 0];
         if (t.kind === 'planet') return positions.planets[t.index];
-        if (t.kind === 'star') return steadyPosition(model.nodes.find((n) => n.index === t.index));
-        return steadyPosition(t.node);
+        if (t.kind === 'star') return world.starsAt[t.index];
+        return world.steady.get(t.node);
     }
 
     function targetDistance(t) {
@@ -762,7 +773,7 @@ export function initSystemView(app) {
     // that's big beside its orbit, look from further round, so that the star isn't in the way.
     function faceLitSide(target) {
         const p = positions.planets[target.index];
-        const sun = positions.stars[world.brightest];
+        const sun = world.starsAt[world.brightest];
         const towardsSun = Math.atan2(sun[0] - p[0], sun[2] - p[2]);
         const gap = Math.hypot(sun[0] - p[0], sun[2] - p[2]);
         const clear = Math.asin(Math.min(0.95, (1.25 * starRadius(model, world.brightest, mix)) / Math.max(gap, 1e-6)));
@@ -932,15 +943,7 @@ export function initSystemView(app) {
 
         sysFrame = { ...frame, camera, view: 'system' };
 
-        // How fast things are going decides which of them are still discs...
-        const cap = reduce ? ORBITS_PER_SECOND_REDUCED : ORBITS_PER_SECOND;
-        clock.otherRate = Math.max(frame.dt > 0 ? clock.otherDays / frame.dt : 0, clock.otherRate * Math.exp(-frame.dt * 6));
-        clock.otherDays = 0;
-        const rate = Math.max(clock.playing ? clock.speed * timeScale() : 0, clock.otherRate);
-        clock.shown = reduce ? rate : Math.max(rate, clock.shown * Math.exp(-frame.dt * 8));
-        smearWeights(model, clock.shown, cap, smear);
-
-        // ... and the camera decides how big they're drawn
+        // Where the camera is decides how big everything is drawn
         const e = camera.matrixWorld.elements;
         sizeView.cam[0] = camPos.x;
         sizeView.cam[1] = camPos.y;
@@ -952,6 +955,8 @@ export function initSystemView(app) {
         sizeView.minSize = stage.minSize;
         sizeView.planets = stage.planets;
         sizeView.focus = focusIndex();
+        sizeView.starsAt = world.starsAt;
+        sizeView.gone = smear.planets;
         drawnSizes(model, positions, mix, sizeView, sizes);
 
         // Stars
@@ -1007,7 +1012,7 @@ export function initSystemView(app) {
             focusY = (-tmp.y * 0.5 + 0.5) * frame.height;
             focusPx = (sizes.planets[focus] * f) / Math.max(sizes.planetZ[focus], 1e-6);
         }
-        const sun = positions.stars[world.brightest];
+        const sun = world.starsAt[world.brightest];
         world.planets.forEach((item, i) => {
             const p = positions.planets[i];
             const obj = item.handle.object3d;
@@ -1051,12 +1056,14 @@ export function initSystemView(app) {
             const ring = ringRadius(model, item.entry.planet.orbit_AU, mix);
             item.line.object.position.set(c[0], c[1], c[2]);
             item.line.object.scale.setScalar(ring);
+            // A line carried on a blur would jump about with it, so it goes too
+            item.line.object.visible = above < 0.999;
             item.line.set({
                 draw: stage.orbits,
                 // No bright trail on a blur: it would race round the ring
                 head: own > 0 ? 0 : planetPhase(item.entry.planet, tDays),
                 trail: 0.8 * (1 - own),
-                opacity: (focus >= 0 ? 0.6 : 1) * (cam.target && cam.target.code === item.entry.code ? 0.3 : isSel ? 0.7 : 0.25),
+                opacity: (1 - above) * (focus >= 0 ? 0.6 : 1) * (cam.target && cam.target.code === item.entry.code ? 0.3 : isSel ? 0.7 : 0.25),
                 width: (isSel ? 2.2 : 1.4) * frame.dpr
             });
             const smearOpacity = own * (1 - above) * stage.orbits * standBack * 0.42;
@@ -1064,7 +1071,10 @@ export function initSystemView(app) {
             if (item.smear.object.visible) {
                 item.smear.object.position.copy(item.line.object.position);
                 item.smear.object.scale.setScalar(ring);
-                item.smear.set({ opacity: smearOpacity, width: Math.max(4, Math.min(80, pxRadius * 2.4)) * frame.dpr });
+                // Its width goes by the middle of the orbit, not by where on it the planet happens to be this frame
+                const zMiddle = Math.max(tmp2.set(c[0], c[1], c[2]).sub(camPos).dot(tmp.set(sizeView.fwd[0], sizeView.fwd[1], sizeView.fwd[2])), 1e-6);
+                const across = Math.max((planetRadius(model, item.entry.planet, mix) * f) / zMiddle, model.planetFloorPx[i]);
+                item.smear.set({ opacity: smearOpacity, width: Math.min(80, across * 2.4) * frame.dpr });
             }
         });
         if (world.halo) {
@@ -1082,10 +1092,12 @@ export function initSystemView(app) {
             line.object.scale.setScalar(scale);
             const period = node.orbit ? node.orbit.period_days : 0;
             const { own, above } = smear.nodes.get(node);
+            line.object.visible = above < 0.999;
             line.set({
                 draw: stage.orbits,
                 head: period && own <= 0 ? ((tDays / period) % 1 + 1) % 1 : 0,
                 trail: 1.2 * (1 - own),
+                opacity: (1 - above) * (node === model.root && node.a_AU > 10 ? 0.28 : 0.38),
                 width: 1.2 * frame.dpr
             });
             const amount = own * (1 - above) * stage.orbits;
@@ -1097,7 +1109,9 @@ export function initSystemView(app) {
             let widest = 0;
             for (let h = 0; h < child.members.length; h++) widest = Math.max(widest, sizes.stars[child.members[h]]);
             const reach = reachAU * scale;
-            const wide = smoothstep(0.35, 0.6, widest / Math.max(reach, 1e-9));
+            // A ribbon's half-width mustn't pass the tightest bend of the orbit as seen from a low angle, or it fans out there
+            const ratio = widest / Math.max(reach, 1e-9);
+            const wide = smoothstep(0.1, 0.22, ratio);
             if (wide < 1) {
                 ribbon.object.visible = true;
                 ribbon.object.position.copy(line.object.position);
@@ -1105,11 +1119,12 @@ export function initSystemView(app) {
                 ribbon.set({ opacity: amount * (1 - wide) * 0.55, width: Math.max(5, Math.min(220, ((widest * f) / z) * 2.4)) * frame.dpr });
             }
             if (wide > 0) {
-                const count = Math.max(10, Math.ceil((2 * Math.PI * reach) / (0.5 * widest)));
+                // Enough discs that no one of them shows, sharing out enough light to keep a thin ring from fading away
+                const count = Math.min(96, Math.max(10, Math.ceil((2 * Math.PI) / (0.7 * ratio))));
                 glow.object.visible = true;
                 glow.object.position.copy(line.object.position);
                 glow.object.scale.setScalar(scale);
-                glow.set({ radius: widest, amount: (amount * wide * 1.5) / Math.min(96, count), count });
+                glow.set({ radius: widest, amount: (amount * wide * Math.max(1.5, 1.86 / ratio)) / count, count });
             }
         });
         if (world.eight) {
@@ -1300,6 +1315,7 @@ export function initSystemView(app) {
 
         // Before the camera moves, so that what it's following can't be a frame behind
         positions = layout(model, tDays, mix, positions);
+        settleOrbits(frame);
 
         if (useFade) {
             // No flight at all: the sky stays exactly where it is and the system fades up over it
