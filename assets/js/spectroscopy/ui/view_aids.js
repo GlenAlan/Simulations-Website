@@ -18,7 +18,6 @@ const ARROW_STEP_DEG = 4;
 const IN_VIEW_MARGIN = 0.5;
 const WORTH_FLYING_MARGIN = 1;
 
-const SUN_ALT = -70;            // Where the comets' tails point away from: see render/layers/comets.js
 const TAIL_STEPS = 6;
 const TAIL_SPREAD = 0.15;       // How far a tail fans out either side, as a fraction of how far along it is
 
@@ -33,10 +32,12 @@ function reachDeg(body) {
     return body.visual_sep_deg || 0;
 }
 
-// Points along a comet's tail, on the sky: the part of "directly away from the Sun" that lies along the sky at its head
-function tailPoints(body, tailAz) {
+// Points along a comet's tail, on the sky: the part of "directly away from the Sun" that lies along the sky at its head.
+// The Sun is where the data puts it, as render/layers/comets.js has it
+function tailPoints(body, universe) {
     const c = azAltToVec3(body.sky.az, body.sky.alt);
-    const sun = azAltToVec3(tailAz, SUN_ALT);
+    const at = universe.cometSun || { az: universe.cometTailAz, alt: -70 };
+    const sun = azAltToVec3(at.az, at.alt);
     const dot = c[0] * sun[0] + c[1] * sun[1] + c[2] * sun[2];
     const t = [c[0] * dot - sun[0], c[1] * dot - sun[1], c[2] * dot - sun[2]];
     const len = Math.hypot(t[0], t[1], t[2]) || 1;
@@ -102,7 +103,7 @@ export function initViewAids(app) {
                 body,
                 dir: azAltToVec3(body.sky.az, body.sky.alt),
                 reach: reachDeg(body),
-                tail: body.comet ? tailPoints(body, app.universe.cometTailAz) : null
+                tail: body.comet ? tailPoints(body, app.universe) : null
             }));
         }
         return list;

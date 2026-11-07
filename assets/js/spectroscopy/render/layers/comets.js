@@ -12,8 +12,14 @@ import { bandMagnitudes } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, instancedQuad, exoticNoise } from './exotic_common.js';
 
-const SUN_ALT = -70;       // How far below the horizon the unseen Sun is: tails point up and away from it
 const PARTICLES_EACH = 420;
+
+// The unseen Sun below the horizon, as the data has it (universe.cometSun): tails point up and away from it, and the coma's
+// hood and X-ray crescent face it
+export function cometSunDir(universe) {
+    const sun = universe.cometSun || { az: universe.cometTailAz, alt: -70 };
+    return azAltToVec3(sun.az, sun.alt);
+}
 
 // Rough colour of a spectral line, for mixing the coma's gas glow from its emission lines
 function lineColour(nm) {
@@ -384,7 +390,7 @@ function createParticles(engine, comets) {
 }
 
 export function createCometsLayer(engine, app) {
-    const sunDir = azAltToVec3(app.universe.cometTailAz, SUN_ALT);
+    const sunDir = cometSunDir(app.universe);
     const comets = app.universe.bodies.filter((b) => b.kind === 'comet' && b.comet).map((body) => {
         const rng = bodyRng(body, 'comet');
         const curve = (rng.next() < 0.5 ? -1 : 1) * rng.range(0.55, 1);
