@@ -1,11 +1,17 @@
-// Light curve: a supernova's brightness against time, with playback that moves its spectrum and the sky to that time.
+// Light curve: a supernova's brightness against time, with playback that moves its spectrum and the sky to that time. Also the
+// dips of the few star systems that line up closely enough for their stars to pass in front of each other: those run on the
+// system's own clock, and a system that never eclipses doesn't have this tool at all.
 
 import { registerTool } from './index.js';
 import { bus } from '../../../core/state.js';
+import { sig } from '../../../core/format.js';
+import { eclipsingOrbits } from '../../../data/orbits.js';
 import { lightCurve } from '../../../spectra/synth.js';
 import { createPlayback } from '../../playback.js';
 import { el } from '../../plot2d.js';
-import { createTimeFigure, para, timeSlider } from './common.js';
+import { createTimeFigure, niceSpeeds, para, timeSlider } from './common.js';
+import { clockFor } from './orbit_clock.js';
+import { eclipseCurve } from './star_light.js';
 
 const SPEEDS = [5, 10, 20, 40];  // Days per second
 const SPEED = 10;
@@ -15,7 +21,7 @@ function dayText(phase) {
     return days === 0 ? 'at peak' : days < 0 ? `${-days} days before peak` : `${days} days after peak`;
 }
 
-function mount(container, api) {
+function mountSupernova(container, api) {
     const note = para('The spectrum and the sky follow this time. Compare the spectrum near peak with later on.');
     const caveat = para('This curve is the explosion\'s own visible light, and it is held flat 1.64 magnitudes below peak, where the simulation hands over to the glow of the expanding shell. A real supernova goes on fading for years. The shell\'s slow brightening after about 150 days shows in the sky but isn\'t drawn here.');
     const readout = el('p', { class: 'spectro-tool-answer', role: 'status' });
@@ -152,9 +158,183 @@ function mount(container, api) {
     };
 }
 
+// ---------- Eclipses ----------
+
+const ORBITS_SHOWN = 2;
+const LAST_SLIDER_FRACTION = 0.9995;
+
+function shortDuration(days) {
+    return days < 2 ? `${sig(days * 24, 2)} hours` : `${sig(days, 2)} days`;
+}
+
+function percent(share) {
+    return share < 0.1 ? `${sig(share * 100, 2)}%` : `${Math.round(share * 100)}%`;
+}
+
+function mountEclipse(container, api) {
+    const { plot } = api;
+    const summary = el('div', { class: 'spectro-tool-result' });
+    const note = para('Each dip is one star passing in front of the other, and how deep it goes depends on how much of the hidden star\'s light is lost. They come when both stars are moving across your view, which is just when their spectral lines cross. The brightness is for the range on the plot, so try other ranges: the hotter star\'s eclipse goes deeper in the blue.');
+    const controls = el('div', { class: 'spectro-tool-controls' });
+    const below = el('div', { class: 'spectro-tool-controls' });
+    container.append(summary, controls);
+
+    let body = null;
+    let clock = null;
+    let curve = null;
+    let playback = null;
+    let offClock = null;
+    let startT = 0;
+    let queued = 0;
+
+    const levelAt = (t) => {
+        const P = curve.period_days;
+        const phase = (((t / P) % 1) + 1) % 1;
+        return curve.level[Math.min(curve.level.length - 1, Math.floor(phase * curve.level.length))];
+    };
+
+    const figure = createTimeFigure(container, {
+        label: 'Light curve of an eclipsing pair',
+        xTitle: 'Time (days)',
+        yTitle: 'Brightness',
+        range: () => {
+            if (!curve) return { xLo: 0, xHi: 1, yLo: 0, yHi: 1 };
+            const dip = 1 - curve.lowest;
+            return { xLo: 0, xHi: ORBITS_SHOWN * curve.period_days, yLo: curve.lowest - 0.15 * dip, yHi: 1 + 0.15 * dip };
+        },
+        paint(ctx, frame, rect, sx, sy) {
+            if (!curve) return;
+            const { theme } = frame;
+            const span = ORBITS_SHOWN * curve.period_days;
+            ctx.strokeStyle = theme.strong;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            const stepsAcross = Math.max(120, Math.round(rect.w));
+            for (let i = 0; i <= stepsAcross; i++) {
+                const into = (i / stepsAcross) * span;
+                const x = sx(into);
+                const y = sy(levelAt(startT + into));
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            const now = clock.steppedT();
+            const at = sx(now - startT);
+            ctx.strokeStyle = theme.accent;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(at, rect.y);
+            ctx.lineTo(at, rect.y + rect.h);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(at, sy(levelAt(now)), 4.5, 0, Math.PI * 2);
+            ctx.fillStyle = theme.accent;
+            ctx.strokeStyle = theme.paper;
+            ctx.lineWidth = 1.5;
+            ctx.fill();
+            ctx.stroke();
+        }
+    });
+    container.append(below, note);
+
+    const slider = timeSlider('Time', (fraction) => {
+        clock.pause();
+        clock.setTime(startT + Math.min(LAST_SLIDER_FRACTION, fraction) * ORBITS_SHOWN * curve.period_days);
+    });
+    below.append(slider.wrap);
+
+    function apply(t) {
+        if (!curve) return;
+        const span = ORBITS_SHOWN * curve.period_days;
+        if (t < startT || t >= startT + span) startT += Math.floor((t - startT) / span) * span;
+        const into = t - startT;
+        slider.set(into / span, `${sig(into, 3)} days`);
+        figure.redraw();
+    }
+
+    function describe() {
+        const { lo, hi } = plot.getRange();
+        curve = eclipseCurve(body, lo, hi);
+        summary.replaceChildren(...curve.dips.map((dip, i) => el('p', {
+            class: 'spectro-tool-line',
+            text: `${curve.dips.length > 1 ? (i === 0 ? 'Deeper dip' : 'Shallower dip') : 'Dip'}: ${percent(dip.depth)} of the light, about ${shortDuration(dip.duration_days)} long, with ${dip.hidden} behind`
+        })));
+        apply(clock.steppedT());
+    }
+
+    const offRange = plot.onRangeChange(() => {
+        if (queued) return;
+        queued = requestAnimationFrame(() => {
+            queued = 0;
+            if (body) describe();
+        });
+    });
+
+    return {
+        setEntity(resolved) {
+            body = resolved.body;
+            const next = clockFor(body);
+            if (next !== clock) {
+                if (offClock) offClock();
+                if (playback) playback.dispose();
+                clock = next;
+                offClock = clock.onStep(apply);
+                const P = eclipsingOrbits(body)[0].period_days;
+                startT = Math.floor(clock.steppedT() / (ORBITS_SHOWN * P)) * (ORBITS_SHOWN * P);
+                playback = createPlayback(controls, {
+                    clock,
+                    label: 'Light curve playback',
+                    speeds: niceSpeeds([P / 12, P / 6, P / 3, P / 1.5]),
+                    unit: 'days'
+                });
+            }
+            describe();
+        },
+        dispose() {
+            cancelAnimationFrame(queued);
+            offRange();
+            if (offClock) offClock();
+            if (playback) playback.dispose();
+            body = null;
+        }
+    };
+}
+
+// The same tool for two very different objects, so a change of object may mean a change of insides
+function mount(container, api) {
+    let inner = null;
+    let isSupernova = null;
+    return {
+        setEntity(resolved) {
+            const supernova = resolved.entity.kind === 'supernova';
+            if (supernova !== isSupernova) {
+                if (inner) inner.dispose();
+                container.replaceChildren();
+                inner = supernova ? mountSupernova(container, api) : mountEclipse(container, api);
+                isSupernova = supernova;
+            }
+            inner.setEntity(resolved);
+        },
+        onPanelHide() {
+            if (inner && inner.onPanelHide) inner.onPanelHide();
+        },
+        dispose() {
+            if (inner) inner.dispose();
+        }
+    };
+}
+
+function applies(resolved) {
+    if (resolved.entity.kind === 'supernova') return true;
+    const { body } = resolved;
+    return resolved.path !== 'planet' && !!body && !!body.stars && eclipsingOrbits(body).length > 0;
+}
+
 registerTool({
     id: 'light-curve',
     label: 'Light curve',
-    appliesTo: (resolved) => resolved.entity.kind === 'supernova',
+    appliesTo: applies,
     mount
 });

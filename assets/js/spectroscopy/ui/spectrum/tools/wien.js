@@ -116,14 +116,19 @@ function mount(container, api) {
         const answer = plusMinus(peak.T_K, peak.err_K);
         const blended = partCount(api) > 1;
         const reading = keepReferenceResult() ? getMeasurement(api.resolved.entity.code) : null;
+        // A blend's one temperature is true of the blend and of no star in it, so it isn't sent on to the H-R diagram as if it were
+        const blendNote = blended ? [
+            para(`This is the peak of ${partCount(api)} stars' light added together. That one temperature is true of the blend, but of no star in it.`),
+            actionRow(toolLink(api, 'stars-shown', 'Read each star with Stars shown'))
+        ] : [];
         fill(result,
-            resultLine(`T = ${answer} K`, true),
+            resultLine(blended ? `Blend: T = ${answer} K` : `T = ${answer} K`, true),
             steps([
                 `λmax = ${sig(peak.peak_nm, 3)} nm = ${sci(metres, 3)} m`,
                 `T = b ÷ λmax, with b = ${sci(WIEN_B, 4)} m·K`,
                 `T = (${sci(WIEN_B, 4)} m·K) ÷ (${sci(metres, 3)} m) = ${withCommas(peak.T_K)} K`
             ]),
-            blended ? para('This is the combined light of several stars, so it is a blend of their temperatures. Use Stars shown to look at one star at a time.') : null,
+            ...blendNote,
             reading ? para(`Your H-R diagram is using ${withCommas(reading.T_K)} K from the reference.`) : null,
             reading ? actionRow(el('button', {
                 type: 'button',
@@ -134,7 +139,7 @@ function mount(container, api) {
                     renderPeak();
                 }
             })) : null,
-            nextSteps()
+            blended ? null : nextSteps()
         );
     }
 

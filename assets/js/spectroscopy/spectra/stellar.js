@@ -10,7 +10,7 @@ import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, C_KMS, fluxFromLuminosity, wienPeakNm }
 import { app } from '../core/state.js';
 import { LINES, LINE_INFO } from '../data/lines.js';
 import { MOLECULES } from '../data/molecules.js';
-import { componentStates } from '../data/orbits.js';
+import { componentStates, visibleShares } from '../data/orbits.js';
 import { bb, planckPeak, planckPeakInRange, makeProfile, mulLine, mulBand, effectiveFlux, snrFromFlux } from './kernel.js';
 
 // ---- Which lines a star of a given temperature shows ----
@@ -367,7 +367,13 @@ export function starPartsOf(entity, opts = {}) {
     if (entity.stars) {
         const rv = entity.radial_velocity_kms ?? 0;
         const v = velocitiesAt(entity, t);
-        return keep(entity.stars.map((c) => partOf(c.star, rv + (v.get(c.code) ?? 0), c.code)));
+        // A star in eclipse adds only the part of it that shows. Never quite nothing, since each spectrum is scaled by its light.
+        const seen = visibleShares(entity, t);
+        return keep(entity.stars.map((c, i) => {
+            const part = partOf(c.star, rv + (v.get(c.code) ?? 0), c.code);
+            if (seen) part.weight *= Math.max(1e-6, seen[i]);
+            return part;
+        }));
     }
     if (entity.black_hole) {
         const c = entity.black_hole.companion;
