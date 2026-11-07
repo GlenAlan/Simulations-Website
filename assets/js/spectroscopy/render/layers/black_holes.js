@@ -174,7 +174,7 @@ const LENS_FRAGMENT = /* glsl */`
 
         // Visible: the temperature sets the colour and the observed temperature is shifted by g
         float T = max(uDiscT * Tn * g * (1.0 + 0.5 * spot), 2300.0);
-        vec3 bb = pow(texture2D(tBody, vec2(log(clamp(T, 1000.0, 40000.0) / 1000.0) / log(40.0), 0.5)).rgb, vec3(1.2));
+        vec3 bb = pow(textureLod(tBody, vec2(log(clamp(T, 1000.0, 40000.0) / 1000.0) / log(40.0), 0.5), 0.0).rgb, vec3(1.2));
         float g3 = g * g * g;
         vec3 visible = bb * (2.0 * pow(f, 1.3) * g3 * d + 1.2 * spot * inner);
 
@@ -229,7 +229,7 @@ const LENS_FRAGMENT = /* glsl */`
                 if (float(k) >= uOrders) break;
                 float psi = psi0 + float(k) * PI;
                 if (psi >= psiEnd) break;
-                float u = texture2D(tRay, vec2(tx, tableY(psi / psiEnd))).r;
+                float u = textureLod(tRay, vec2(tx, tableY(psi / psiEnd)), 0.0).r;
                 if (u < 1.0 / uROut || u > 1.0 / (uRIn * 0.95)) continue;
                 float r = 1.0 / u;
                 vec3 P = vec3(sin(psi) * dir, cos(psi));
@@ -356,7 +356,7 @@ function createLensPass() {
     lensScene.add(lensMesh);
 
     return {
-        compile: (renderer) => Promise.all([renderer.compileAsync(copyScene, camera), renderer.compileAsync(lensScene, camera)]),
+        compile: (engine) => Promise.all([engine.compileInBackground(copyScene, camera), engine.compileInBackground(lensScene, camera)]),
         copy(renderer, input) {
             copyMaterial.uniforms.tInput.value = input;
             renderer.render(copyScene, camera);
@@ -835,8 +835,7 @@ export function createBlackHolesLayer(engine, app) {
         const run = ++lensRun;
         lensReady = false;
         lensFade = 0;
-        const { renderer, camera } = engine;
-        Promise.all([lens.compile(renderer), renderer.compileAsync(frontScene, camera)]).then(() => {
+        Promise.all([lens.compile(engine), engine.compileInBackground(frontScene)]).then(() => {
             if (run === lensRun) lensReady = true;
         });
     }

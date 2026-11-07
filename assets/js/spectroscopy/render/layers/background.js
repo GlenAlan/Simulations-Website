@@ -306,7 +306,8 @@ const SKY_FRAGMENT = /* glsl */`
     }`;
 
 // The Milky Way bake: a density map first, then the full-size texture over the next frames
-function createSkyBake(renderer) {
+function createSkyBake(engine) {
+    const { renderer } = engine;
     const pole = azAltToVec3(GALACTIC_POLE.az, GALACTIC_POLE.alt);
     // The bulge sits where the band passes the centre's azimuth, the same frame the other bands' skies use (band_sky.js)
     const centreAlt = Math.atan2(
@@ -380,7 +381,7 @@ function createSkyBake(renderer) {
             mesh.frustumCulled = false;
             programs.add(mesh);
         });
-        return renderer.compileAsync(programs, camera);
+        return engine.compileInBackground(programs, camera);
     }
 
     function drawDetail() {
@@ -778,7 +779,7 @@ export function createBackgroundLayer(engine, app) {
     const { renderer, scene } = engine;
     if (!renderer) return { id: 'background', update() {} };
 
-    const bake = createSkyBake(renderer);
+    const bake = createSkyBake(engine);
     const horizon = buildHorizon();
     scene.add(horizon.mesh);
     let field = null;

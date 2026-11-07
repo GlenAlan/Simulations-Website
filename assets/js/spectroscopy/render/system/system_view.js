@@ -1127,10 +1127,7 @@ export function initSystemView(app) {
         camera.position.set(0, 0, FRAME * 3);
         camera.lookAt(0, 0, 0);
         camera.updateMatrixWorld();
-        const renderer = engine.renderer;
-        const compiling = renderer.compileAsync
-            ? Promise.all([renderer.compileAsync(scene, camera), renderer.compileAsync(backScene, camera)])
-            : Promise.resolve();
+        const compiling = Promise.all([engine.compileInBackground(scene, camera), engine.compileInBackground(backScene, camera)]);
         Promise.race([compiling, new Promise((r) => setTimeout(r, COMPILE_WAIT_MS))]).then(go, go);
         return true;
     }
@@ -1192,7 +1189,7 @@ export function initSystemView(app) {
             warmScene.add(star.group);
             return star;
         });
-        renderer.compileAsync(warmScene, camera);
+        engine.compileInBackground(warmScene, camera);
     }
     bus.on('ready', () => {
         if (window.requestIdleCallback) window.requestIdleCallback(warmSmallPrograms, { timeout: 4000 });

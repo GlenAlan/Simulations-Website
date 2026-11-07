@@ -657,7 +657,8 @@ function bakeSettings(res, quality) {
     };
 }
 
-export function createGalaxyBaker(renderer) {
+export function createGalaxyBaker(engine) {
+    const { renderer } = engine;
     const quadGeometry = new THREE.BufferGeometry();
     quadGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -878,7 +879,7 @@ export function createGalaxyBaker(renderer) {
         const dots = new THREE.Points(quadGeometry, particleMaterial);
         dots.frustumCulled = false;
         programs.add(dots);
-        return renderer.compileAsync(programs, camera);
+        return engine.compileInBackground(programs, camera);
     }
 
     return {

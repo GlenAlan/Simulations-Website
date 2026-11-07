@@ -17,7 +17,7 @@
 //
 // Compiling a shader can take seconds on Windows, and drawing with one that isn't finished freezes the page until it is.
 // So anything added to engine.scene waits unseen until its program has compiled, then fades in by its uSkyFade: see
-// "Programs" below. A layer needs to do nothing for that. Its own bakes should use renderer.compileAsync, and
+// "Programs" below. A layer needs to do nothing for that. Its own bakes should use compileInBackground, and
 // bakesAllowed() to keep from swamping a slow GPU.
 
 import * as THREE from 'three';
@@ -58,6 +58,7 @@ const QUALITY_BAKE_FLOOR = 0.7;         // ...unless its rate is below this shar
 const QUALITY_BAKE_FLOOR_LOADING = 0.4; // Lower still while the page is loading
 const QUALITY_LOAD_GRACE_S = 12;
 
+const PROGRAM_QUESTIONS_PER_FRAME = 6;  // How many programs may be asked whether they have compiled yet, each frame
 const JOIN_FADE_S = 0.5;                // How long something takes to fade in once its program is ready
 const WAITING_LAYER = 31;               // The three.js layer things wait in: the camera doesn't look at it
 const GPU_BEHIND_NO_BAKES = 3;          // Frames behind at which bakes wait for the GPU to catch up
@@ -341,6 +342,38 @@ export function createEngine(canvas) {
         return bloomTargets[0].texture;
     }
 
+    // ---------- Programs ----------
+
+    // Compiles everything in a scene or object without blocking, and resolves when it's all ready to draw with. As three's
+    // compileAsync, but asking after a few programs a frame, not after every one of them every 10 ms: each question is a
+    // round trip to the GPU process, which has to get through whatever is queued there before it can answer.
+    const compileJobs = [];
+
+    function compileInBackground(target, targetCamera = camera) {
+        if (!renderer) return Promise.resolve();
+        return new Promise((resolve) => {
+            compileJobs.push({ materials: [...renderer.compile(target, targetCamera)], resolve });
+        });
+    }
+
+    function stepCompileJobs() {
+        let questions = PROGRAM_QUESTIONS_PER_FRAME;
+        for (let i = compileJobs.length - 1; i >= 0; i--) {
+            const job = compileJobs[i];
+            job.materials = job.materials.filter((material) => {
+                if (questions <= 0) return true;
+                const { currentProgram } = renderer.properties.get(material);
+                if (!currentProgram) return false;
+                questions -= 1;
+                return !currentProgram.isReady();
+            });
+            if (!job.materials.length) {
+                compileJobs.splice(i, 1);
+                job.resolve();
+            }
+        }
+    }
+
     // The picture can't be finished without these, so nothing is drawn until they have compiled. They're small.
     let chainReady = false;
 
@@ -353,10 +386,8 @@ export function createEngine(canvas) {
             mesh.frustumCulled = false;
             chain.add(mesh);
         });
-        renderer.compileAsync(chain, fsCamera).then(() => { chainReady = true; });
+        compileInBackground(chain, fsCamera).then(() => { chainReady = true; });
     }
-
-    // ---------- Programs ----------
 
     // Nothing new in the scene draws until its program has compiled, because drawing it sooner blocks the page until the
     // driver has finished, and that can be seconds. Waiting is done with three.js layers, not .visible, which is the
@@ -400,8 +431,11 @@ export function createEngine(canvas) {
     function stepJoining(dt) {
         if (!joining.size) return;
         const reduce = app.settings.reduceMotion;
+        let questions = PROGRAM_QUESTIONS_PER_FRAME;
         joining.forEach((entry, material) => {
             if (!entry.shown) {
+                if (questions <= 0) return;
+                questions -= 1;
                 const { currentProgram } = renderer.properties.get(material);
                 if (currentProgram && !currentProgram.isReady()) return;
                 // Its first use asks the driver a few things, which waits for the GPU's queue: better now, at the top of
@@ -425,6 +459,7 @@ export function createEngine(canvas) {
 
     // After a lost context every program is gone, so everything has to wait and join again
     function readmitAll() {
+        compileJobs.length = 0;
         joining.forEach((entry, material) => {
             if (entry.proxy) material.uniforms.uSkyFade = sharedUniforms.uSkyFade;
         });
@@ -1025,6 +1060,7 @@ export function createEngine(canvas) {
             lastResizeAt = now;
             resize();
         }
+        stepCompileJobs();
         if (!chainReady) return;
         bakedThisFrame = false;
         bakesThisFrame = 0;
@@ -1237,8 +1273,8 @@ export function createEngine(canvas) {
         canvas.addEventListener('webglcontextrestored', () => {
             contextLost = false;
             hideCanvasMessage(canvas);
-            compileChain();
             readmitAll();
+            compileChain();
             resize();
             bus.emit('gl-restored', {});
             wake();
@@ -1274,6 +1310,7 @@ export function createEngine(canvas) {
         resize,
         renderOnce: () => { if (renderer && !contextLost) renderOnce(0.016); }, // For tests: draw one frame now
         firstFrame,                 // A promise: the sky has been drawn once. Never settles if it can't be drawn at all.
+        compileInBackground,        // compileInBackground(sceneOrObject, camera?): see "Programs" above. Resolves when ready.
         // Should a layer's bake go ahead this frame? See "Bakes" above
         bakesAllowed,
         bakePace,

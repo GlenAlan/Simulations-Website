@@ -123,7 +123,8 @@ function keepProgram(renderer, key, params) {
     const mesh = new THREE.Mesh(bakeQuad, new THREE.ShaderMaterial(params));
     mesh.frustumCulled = false;
     scene.add(mesh);
-    renderer.compileAsync(scene, bakeCamera).then(() => {
+    const compiling = app.engine ? app.engine.compileInBackground(scene, bakeCamera) : renderer.compileAsync(scene, bakeCamera);
+    compiling.then(() => {
         kept.ready = true;
     }, () => {
         kept.ready = true;  // Let it be found out when it's drawn, where its error will show

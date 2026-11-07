@@ -124,7 +124,7 @@ export function createGalaxiesLayer(engine, app) {
     const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
     const rows = Math.max(1, Math.ceil(n / cols));
     const atlas = createBakeTarget(cols * TILE, rows * TILE);
-    const baker = createGalaxyBaker(renderer);
+    const baker = createGalaxyBaker(engine);
     let bakerReady = false;
     let compileRun = 0;
     function compileBaker() {

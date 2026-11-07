@@ -260,7 +260,7 @@ export function createClustersLayer(engine, app) {
     function compileHaze() {
         const run = ++hazeStep.run;
         hazeStep.ready = false;
-        renderer.compileAsync(bakeScene, bakeCamera).then(() => {
+        engine.compileInBackground(bakeScene, bakeCamera).then(() => {
             if (run === hazeStep.run) hazeStep.ready = true;
         });
     }

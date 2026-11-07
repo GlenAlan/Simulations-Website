@@ -552,7 +552,7 @@ function createBaker(engine, app) {
             compileScene.add(mesh);
         });
         const run = ++compileRun;
-        renderer.compileAsync(compileScene, bakeCamera).then(() => {
+        engine.compileInBackground(compileScene, bakeCamera).then(() => {
             if (run === compileRun) programsReady = true;
         });
     }

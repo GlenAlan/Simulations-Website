@@ -293,7 +293,7 @@ export function createBandSkyLayer(engine, app) {
 
     function startCompiling() {
         bakeState = 'compiling';
-        renderer.compileAsync(bakeScene, bakeCamera).then(() => {
+        engine.compileInBackground(bakeScene, bakeCamera).then(() => {
             if (bakeState === 'compiling') bakeState = 'baking';
         });
     }
