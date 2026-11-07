@@ -14,6 +14,11 @@
 //
 // If the browser takes the graphics context away and later gives it back, the engine emits bus 'gl-restored'. Whatever
 // a layer baked into a render target is gone by then, so a layer that bakes should listen and bake again.
+//
+// Compiling a shader can take seconds on Windows, and drawing with one that isn't finished freezes the page until it is.
+// So anything added to engine.scene waits unseen until its program has compiled, then fades in by its uSkyFade: see
+// "Programs" below. A layer needs to do nothing for that. Its own bakes should use renderer.compileAsync, and
+// bakesAllowed() to keep from swamping a slow GPU.
 
 import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
@@ -48,6 +53,16 @@ const QUALITY = {
 const QUALITY_DOWN_FPS = { high: 42, medium: 27 };
 const QUALITY_UP_FPS = 55;
 const QUALITY_WINDOW_S = 2;
+const QUALITY_MAX_BAKE_SHARE = 0.25;    // A window with bakes in more of its frames than this says little about the machine...
+const QUALITY_BAKE_FLOOR = 0.7;         // ...unless its rate is below this share of the floor: paced bakes alone don't do that
+const QUALITY_BAKE_FLOOR_LOADING = 0.4; // Lower still while the page is loading
+const QUALITY_LOAD_GRACE_S = 12;
+
+const JOIN_FADE_S = 0.5;                // How long something takes to fade in once its program is ready
+const WAITING_LAYER = 31;               // The three.js layer things wait in: the camera doesn't look at it
+const GPU_BEHIND_NO_BAKES = 3;          // Frames behind at which bakes wait for the GPU to catch up
+const BAKE_STARVE_MS = 500;             // But none waits longer than this
+const BAKE_ONE_ONLY_ABOVE_S = 0.03;     // Frames slower than this have room for only one bake
 
 const BLOOM = {
     threshold: 0.75,            // HDR level where glow starts; the Milky Way sits below it and stays clean
@@ -326,6 +341,152 @@ export function createEngine(canvas) {
         return bloomTargets[0].texture;
     }
 
+    // The picture can't be finished without these, so nothing is drawn until they have compiled. They're small.
+    let chainReady = false;
+
+    function compileChain() {
+        chainReady = false;
+        if (!renderer) return;
+        const chain = new THREE.Scene();
+        [composite, bloomDown, bloomUp].forEach((material) => {
+            const mesh = new THREE.Mesh(fsGeometry, material);
+            mesh.frustumCulled = false;
+            chain.add(mesh);
+        });
+        renderer.compileAsync(chain, fsCamera).then(() => { chainReady = true; });
+    }
+
+    // ---------- Programs ----------
+
+    // Nothing new in the scene draws until its program has compiled, because drawing it sooner blocks the page until the
+    // driver has finished, and that can be seconds. Waiting is done with three.js layers, not .visible, which is the
+    // layers' own to set. Then it fades in, by way of its own copy of uSkyFade, which every sky shader already obeys.
+    const joining = new Map();      // material -> { objects, fade, proxy, shown }
+    const admitted = new WeakSet();
+    let lastSeenChild = null;
+    let lastSeenCount = -1;
+
+    function admitObject(object) {
+        const { material } = object;
+        if (!material || Array.isArray(material) || admitted.has(object)) return;
+        admitted.add(object);
+        if (!material.isShaderMaterial) return;
+        const props = renderer.properties.get(material);
+        const entry = joining.get(material);
+        if (entry) {
+            if (!entry.shown) object.layers.set(WAITING_LAYER);
+            entry.objects.push(object);
+            return;
+        }
+        if (props.currentProgram && props.currentProgram.isReady()) return;
+        object.layers.set(WAITING_LAYER);
+        joining.set(material, { objects: [object], fade: 0, proxy: null, shown: false });
+    }
+
+    function admitNewObjects() {
+        const { children } = scene;
+        const last = children[children.length - 1] || null;
+        if (children.length === lastSeenCount && last === lastSeenChild) return;
+        lastSeenCount = children.length;
+        lastSeenChild = last;
+        for (let i = 0; i < children.length; i++) {
+            const child = children[i];
+            if (admitted.has(child) && !child.children.length) continue;
+            child.traverse(admitObject);
+            renderer.compile(child, camera, scene);
+        }
+    }
+
+    function stepJoining(dt) {
+        if (!joining.size) return;
+        const reduce = app.settings.reduceMotion;
+        joining.forEach((entry, material) => {
+            if (!entry.shown) {
+                const { currentProgram } = renderer.properties.get(material);
+                if (currentProgram && !currentProgram.isReady()) return;
+                // Its first use asks the driver a few things, which waits for the GPU's queue: better now, at the top of
+                // the frame, than later on with this frame's bakes in front of it
+                if (currentProgram) currentProgram.getUniforms();
+                entry.shown = true;
+                entry.objects.forEach((object) => object.layers.set(0));
+                if (material.uniforms && material.uniforms.uSkyFade === sharedUniforms.uSkyFade) {
+                    entry.proxy = { value: 0 };
+                    material.uniforms.uSkyFade = entry.proxy;
+                }
+            }
+            entry.fade = reduce || !entry.proxy ? 1 : Math.min(1, entry.fade + dt / JOIN_FADE_S);
+            if (entry.proxy) entry.proxy.value = sharedUniforms.uSkyFade.value * entry.fade;
+            if (entry.fade >= 1) {
+                if (entry.proxy) material.uniforms.uSkyFade = sharedUniforms.uSkyFade;
+                joining.delete(material);
+            }
+        });
+    }
+
+    // After a lost context every program is gone, so everything has to wait and join again
+    function readmitAll() {
+        joining.forEach((entry, material) => {
+            if (entry.proxy) material.uniforms.uSkyFade = sharedUniforms.uSkyFade;
+        });
+        joining.clear();
+        scene.traverse((object) => {
+            if (object.material) admitted.delete(object);
+        });
+        lastSeenCount = -1;
+    }
+
+    // ---------- How far behind the GPU is ----------
+
+    // Requesting a frame doesn't wait for the GPU to finish the last one, so a slow GPU can fall seconds behind while
+    // the loop runs on at full speed, and everything feels as if it were under water. One fence at a time says how
+    // many frames it took to come back. Bakes hold off when it's slow, which is what keeps that queue from growing.
+    const gpu = { fence: null, waited: 0, behind: 0 };
+
+    function meterGpu() {
+        const gl = renderer.getContext();
+        if (gpu.fence) {
+            gpu.waited += 1;
+            if (gl.getSyncParameter(gpu.fence, gl.SYNC_STATUS) === gl.SIGNALED) {
+                gl.deleteSync(gpu.fence);
+                gpu.fence = null;
+                gpu.behind = gpu.waited;
+            } else if (gpu.waited > gpu.behind) {
+                gpu.behind = gpu.waited;
+            }
+        }
+        if (!gpu.fence) {
+            gpu.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+            gpu.waited = 0;
+        }
+    }
+
+    // ---------- Bakes ----------
+
+    // A layer asks before each piece of baking. Yes while the GPU is keeping up. Being asked marks the frame as one with
+    // baking in it, so that Auto doesn't count the cost of the bake against the machine.
+    let bakedThisFrame = false;
+    let bakesThisFrame = 0;
+    let lastBakeAt = 0;
+    let lastRealDt = 0;
+
+    function bakesAllowed() {
+        bakedThisFrame = true;
+        const now = performance.now();
+        // A GPU that can never catch up still gets there in the end
+        if (gpu.behind >= GPU_BEHIND_NO_BAKES && now - lastBakeAt < BAKE_STARVE_MS) return false;
+        // When frames are already slow, one bake a frame, and whoever asks first goes first: layers ask in draw order
+        if (bakesThisFrame > 0 && lastRealDt > BAKE_ONE_ONLY_ABOVE_S) return false;
+        bakesThisFrame += 1;
+        lastBakeAt = now;
+        return true;
+    }
+
+    // Sizes a piece of baking to what the GPU is getting through: returns the next size, up a little or down a lot
+    function bakePace(size, min, max) {
+        if (gpu.behind >= 2) return Math.max(min, size * 0.7);
+        return Math.min(max, size * 1.08);
+    }
+
     // ---------- Size and graphics level ----------
 
     function resize() {
@@ -366,11 +527,13 @@ export function createEngine(canvas) {
 
     // Auto: measures in windows. It steps down when a window stays low, and only ever climbs to a level that
     // hasn't failed: a level it had to leave becomes the ceiling, which is what stops it oscillating.
-    const auto = { time: 0, frames: 0, skip: 1, lowWindows: 0, goodWindows: 0, stalls: 0, ceiling: 2 };
+    const engineStartedAt = performance.now();
+    const auto = { time: 0, frames: 0, bakeFrames: 0, skip: 1, lowWindows: 0, goodWindows: 0, stalls: 0, ceiling: 2 };
 
     function resetAuto(skip = 1) {
         auto.time = 0;
         auto.frames = 0;
+        auto.bakeFrames = 0;
         auto.skip = skip;
         auto.lowWindows = 0;
         auto.goodWindows = 0;
@@ -380,17 +543,21 @@ export function createEngine(canvas) {
     function measureAuto(realDt) {
         if (app.settings.quality !== 'auto') return;
         if (realDt > 1) {
-            // A single long frame is a stall, not a rate. A run of them is a very slow machine.
+            // A single long frame is a stall, not a rate. A run of them is a very slow machine, unless they're bakes.
+            if (bakedThisFrame) return;
             auto.stalls += 1;
             if (auto.stalls >= 4) stepDown();
             return;
         }
         auto.time += realDt;
         auto.frames += 1;
+        if (bakedThisFrame) auto.bakeFrames += 1;
         if (auto.time < QUALITY_WINDOW_S) return;
         const fps = auto.frames / auto.time;
+        const bakeShare = auto.bakeFrames / auto.frames;
         auto.time = 0;
         auto.frames = 0;
+        auto.bakeFrames = 0;
         auto.stalls = 0;
         if (auto.skip > 0) {
             auto.skip -= 1;
@@ -398,7 +565,22 @@ export function createEngine(canvas) {
         }
         const index = LEVELS.indexOf(app.qualityLevel);
         const floor = QUALITY_DOWN_FPS[app.qualityLevel];
-        if (floor && fps < floor) {
+        // Loading bakes for some seconds, and a new view for a moment. Neither says how the machine will do afterwards, and
+        // a level lost to one would stay lost. Only a rate too low for the paced bakes to explain counts while they run,
+        // and more so once loading should be over: a machine still baking by then is a slow one, and needs the lower level.
+        if (bakeShare > QUALITY_MAX_BAKE_SHARE) {
+            const loading = performance.now() - engineStartedAt < QUALITY_LOAD_GRACE_S * 1000;
+            if (floor && fps < floor * (loading ? QUALITY_BAKE_FLOOR_LOADING : QUALITY_BAKE_FLOOR)) {
+                auto.lowWindows += 1;
+                auto.goodWindows = 0;
+                if (auto.lowWindows >= 2) stepDown();
+            } else {
+                auto.lowWindows = 0;
+            }
+            return;
+        }
+        // A queue at the GPU means it's slower than the rate here shows
+        if (floor && (fps < floor || gpu.behind >= GPU_BEHIND_NO_BAKES + 1)) {
             auto.lowWindows += 1;
             auto.goodWindows = 0;
             if (auto.lowWindows >= 2 || fps < floor * 0.66) stepDown();
@@ -770,9 +952,11 @@ export function createEngine(canvas) {
         sharedUniforms.uViewport.value.set(bufferW, bufferH);
 
         renderer.info.reset();
+        stepJoining(dt);
         for (let i = 0; i < layers.length; i++) {
             if (layers[i].update) layers[i].update(frame);
         }
+        admitNewObjects();
 
         renderer.setRenderTarget(targetA);
         renderer.clear();
@@ -824,6 +1008,9 @@ export function createEngine(canvas) {
         }
     }
 
+    let firstFrameDrawn = null;
+    const firstFrame = new Promise((resolve) => { firstFrameDrawn = resolve; });
+
     function loop(now) {
         rafId = 0;
         if (!running || contextLost || document.hidden) return;
@@ -838,7 +1025,16 @@ export function createEngine(canvas) {
             lastResizeAt = now;
             resize();
         }
+        if (!chainReady) return;
+        bakedThisFrame = false;
+        bakesThisFrame = 0;
+        lastRealDt = realDt;
         renderOnce(dt);
+        if (firstFrameDrawn) {
+            firstFrameDrawn();
+            firstFrameDrawn = null;
+        }
+        meterGpu();
         meterFps(realDt);
         measureAuto(realDt);
         checkHover(now);
@@ -1034,17 +1230,22 @@ export function createEngine(canvas) {
             e.preventDefault(); // Without this the browser never gives the context back
             contextLost = true;
             sleep();
+            gpu.fence = null;   // It went with the context
+            gpu.behind = 0;
             showCanvasMessage(canvas, 'The graphics card needed a moment. The sky will come back on its own if it can; if it stays dark, reload the page.');
         });
         canvas.addEventListener('webglcontextrestored', () => {
             contextLost = false;
             hideCanvasMessage(canvas);
+            compileChain();
+            readmitAll();
             resize();
             bus.emit('gl-restored', {});
             wake();
         });
     }
 
+    compileChain();
     resize();
     applyView();
 
@@ -1072,7 +1273,11 @@ export function createEngine(canvas) {
         currentFrame,
         resize,
         renderOnce: () => { if (renderer && !contextLost) renderOnce(0.016); }, // For tests: draw one frame now
-        stats: () => ({ ...stats, bloomLevels: bloomTargets.length, dpr, bufferW, bufferH, level: app.qualityLevel }),
+        firstFrame,                 // A promise: the sky has been drawn once. Never settles if it can't be drawn at all.
+        // Should a layer's bake go ahead this frame? See "Bakes" above
+        bakesAllowed,
+        bakePace,
+        stats: () => ({ ...stats, bloomLevels: bloomTargets.length, dpr, bufferW, bufferH, level: app.qualityLevel, gpuBehind: gpu.behind, joining: joining.size }),
         start() {
             if (running || !renderer) return;
             running = true;

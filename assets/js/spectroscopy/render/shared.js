@@ -41,6 +41,13 @@ vec3 bandColour(vec3 trueColour) {
 }
 `;
 
+// On most Windows machines WebGL shaders end up in Direct3D's compiler. It unrolls any loop whose count it can work out,
+// and inlines everything inside, so that a shader of nested noise takes seconds to compile. Long loops add this to
+// their bound: it's always 0 (a uniform nobody sets), but the compiler can't know that, and so leaves them as real loops.
+export const LOOP_ZERO_GLSL = /* glsl */`
+uniform int uLoopZero;
+`;
+
 // Sky layers draw in this order with their Object3D.renderOrder. Everything is additive except the horizon.
 export const ORDER = {
     background: 0,

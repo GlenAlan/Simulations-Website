@@ -14,8 +14,9 @@
 
 import * as THREE from 'three';
 import { Rng } from '../../core/rng.js';
+import { LOOP_ZERO_GLSL } from '../shared.js';
 
-export const IMAGE_R = 1.2;                    // The bake covers this far from the centre; the galaxy's edge is at 1
+export const IMAGE_R = 1.2;                   // The bake covers this far from the centre; the galaxy's edge is at 1
 export const BAKE_SCALE = { a: 8, b: 6 };      // Brightest linear values image A and image B hold
 
 const RAD = Math.PI / 180;
@@ -89,6 +90,7 @@ float fall(float a, float b, float x) {
 
 const NOISE_GLSL = /* glsl */`
 ${FALL_GLSL}
+${LOOP_ZERO_GLSL}
 float h21(vec2 p) {
     vec3 q = fract(vec3(p.xyx) * 0.1031);
     q += dot(q, q.yzx + 33.33);
@@ -99,25 +101,35 @@ float h31(vec3 p) {
     p += dot(p, p.zyx + 31.32);
     return fract((p.x + p.y) * p.z);
 }
+// The corners of the cell in loops rather than written out, for the compiler's sake: see LOOP_ZERO_GLSL
 float vn2(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
+    float sum = 0.0;
+    for (int c = 0; c < 4 + uLoopZero; c++) {
+        vec2 o = vec2(float(c & 1), float((c >> 1) & 1));
+        vec2 w = mix(1.0 - f, f, o);
+        sum += w.x * w.y * h21(i + o);
+    }
+    return sum;
 }
 float vn3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    return mix(
-        mix(mix(h31(i), h31(i + vec3(1, 0, 0)), f.x), mix(h31(i + vec3(0, 1, 0)), h31(i + vec3(1, 1, 0)), f.x), f.y),
-        mix(mix(h31(i + vec3(0, 0, 1)), h31(i + vec3(1, 0, 1)), f.x), mix(h31(i + vec3(0, 1, 1)), h31(i + vec3(1, 1, 1)), f.x), f.y),
-        f.z);
+    float sum = 0.0;
+    for (int c = 0; c < 8 + uLoopZero; c++) {
+        vec3 o = vec3(float(c & 1), float((c >> 1) & 1), float((c >> 2) & 1));
+        vec3 w = mix(1.0 - f, f, o);
+        sum += w.x * w.y * w.z * h31(i + o);
+    }
+    return sum;
 }
 const mat2 ROT = mat2(0.8, 0.6, -0.6, 0.8);
 float fbm2(vec2 p, int oct) {
     float a = 0.5, s = 0.0, n = 0.0;
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         s += a * vn2(p);
         n += a;
         a *= 0.5;
@@ -127,7 +139,7 @@ float fbm2(vec2 p, int oct) {
 }
 float fbm3(vec3 p, int oct) {
     float a = 0.5, s = 0.0, n = 0.0;
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         s += a * vn3(p);
         n += a;
         a *= 0.5;
@@ -855,7 +867,22 @@ export function createGalaxyBaker(renderer) {
         resolveUniforms.tB.value = null;
     }
 
+    // Compile the four programs without blocking. Nothing may bake until this has resolved.
+    function compile() {
+        const programs = new THREE.Scene();
+        [mapMaterial, viewMaterial, resolveMaterial].forEach((material) => {
+            const mesh = new THREE.Mesh(quadGeometry, material);
+            mesh.frustumCulled = false;
+            programs.add(mesh);
+        });
+        const dots = new THREE.Points(quadGeometry, particleMaterial);
+        dots.frustumCulled = false;
+        programs.add(dots);
+        return renderer.compileAsync(programs, camera);
+    }
+
     return {
+        compile,
         bake,
         // Free the working textures. The small ones are worth keeping while the atlas fills, the rest of the time none are.
         releaseScratch() {

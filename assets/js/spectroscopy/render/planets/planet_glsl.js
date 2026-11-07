@@ -6,6 +6,12 @@
 //   bake    writes the same surface into a cube map, for a small planet or at Low quality
 //   baked   reads the cube map; much cheaper, and its mipmaps stop small planets shimmering
 // The frame of all the shading is the planet's own, tilted but not spinning, with radius 1: see uCam and uSun.
+//
+// Each planet's programs are also built with only the features it has (see planetFeatures in planet_mesh.js): the P_ defines
+// below take the rest out altogether. A feature it lacks would never run, but the compiler has to get through it all the
+// same, and on Windows the whole solid surface takes it several seconds.
+
+import { LOOP_ZERO_GLSL } from '../shared.js';
 
 const ROT_Y_GLSL = /* glsl */`
 vec3 rotY(vec3 v, float a) {
@@ -16,6 +22,7 @@ vec3 rotY(vec3 v, float a) {
 `;
 
 export const NOISE_GLSL = /* glsl */`
+${LOOP_ZERO_GLSL}
 vec3 mod289(vec3 x) { return x - floor(x / 289.0) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x / 289.0) * 289.0; }
 vec4 permute(vec4 x) { return mod289((x * 34.0 + 10.0) * x); }
@@ -85,7 +92,7 @@ float fbm(vec3 p, int oct, float px) {
     float sum = 0.0;
     float a = 0.5;
     float f = 1.0;
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         float fade = octaveFade(f, px);
         if (fade <= 0.0) break;
         sum += a * fade * snoise(p * f);
@@ -101,7 +108,7 @@ float fbmWispy(vec3 p, int oct, float px) {
     float sum = 0.0;
     float a = 0.5;
     float f = 1.0;
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         float fade = octaveFade(f, px);
         if (fade <= 0.0) break;
         sum += a * fade * snoise(p * f);
@@ -118,7 +125,7 @@ float fbmFlow(vec3 p, int oct, float px) {
     float a = 0.5;
     float f = 1.0;
     float fx = 1.0;
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         float fade = octaveFade(f, px);
         if (fade <= 0.0) break;
         sum += a * fade * snoise(vec3(p.x * fx, p.y * f, p.z * fx));
@@ -137,7 +144,7 @@ float fbmD(vec3 p, int oct, float px, out vec3 grad) {
     float f = 1.0;
     float slope = 1.0;
     grad = vec3(0.0);
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         float fade = octaveFade(f, px);
         if (fade <= 0.0) break;
         vec3 g;
@@ -159,7 +166,7 @@ float ridgedD(vec3 p, int oct, float px, out vec3 grad) {
     float weight = 1.0;
     float slope = 1.0;
     grad = vec3(0.0);
-    for (int i = 0; i < oct; i++) {
+    for (int i = 0; i < oct + uLoopZero; i++) {
         float fade = octaveFade(f, px);
         if (fade <= 0.0) break;
         vec3 g;
@@ -190,9 +197,9 @@ vec2 voronoi(vec3 x) {
     vec3 f = x - n;
     float d1 = 8.0;
     float d2 = 8.0;
-    for (int k = -1; k <= 1; k++) {
-        for (int j = -1; j <= 1; j++) {
-            for (int i = -1; i <= 1; i++) {
+    for (int k = -1; k <= 1 + uLoopZero; k++) {
+        for (int j = -1; j <= 1 + uLoopZero; j++) {
+            for (int i = -1; i <= 1 + uLoopZero; i++) {
                 vec3 c = vec3(float(i), float(j), float(k));
                 vec3 r = c + hash33(n + c) - f;
                 float d = dot(r, r);
@@ -277,7 +284,7 @@ const CRATERS_GLSL = /* glsl */`
 void craterScale(vec3 q, float scale, float amount, float depthK, inout float height, inout vec3 grad, inout vec3 albedo, float rays) {
     vec3 c = q * scale;
     vec3 base = floor(c - 0.5);
-    for (int k = 0; k < 8; k++) {
+    for (int k = 0; k < 8 + uLoopZero; k++) {
         vec3 cell = base + vec3(float(k & 1), float((k >> 1) & 1), float((k >> 2) & 1));
         vec3 r = hash33(cell + 19.1);
         if (r.x > amount) continue;
@@ -341,12 +348,18 @@ uniform float uCap;
 uniform float uFrost;
 ${THIN_LINE_GLSL}
 ${CRATERS_GLSL}
+const float CRATER_SCALE[5] = float[5](2.1, 4.9, 10.3, 22.0, 47.0);
+const float CRATER_SHIFT[5] = float[5](0.0, 5.0, 11.0, 17.0, 29.0);
+const float CRATER_AMOUNT[5] = float[5](0.8, 0.85, 1.0, 1.0, 1.0);
+const float CRATER_DEPTH[5] = float[5](1.05, 0.95, 0.7, 0.65, 0.6);
+const float CRATER_PX[5] = float[5](1e9, 0.05, 0.022, 0.011, 0.005);    // Each size only where a pixel is small enough to show it
+const int CRATER_OCT[5] = int[5](0, 0, 0, 5, 6);                        // And the finest only at the higher levels
 
 // Long arcs that cross one another, as tides crack a shell: circles on the sphere, each shown along part of its length
 float arcLines(vec3 p, float px, float width, out float wide) {
     float best = 0.0;
     wide = 0.0;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 12 + uLoopZero; i++) {
         vec3 h = hash33(uSeed + float(i) * 7.3);
         vec3 axis = normalize(h - 0.5);
         float offset = (fract(h.x * 17.0 + h.y * 31.0) - 0.5) * 1.1;
@@ -387,6 +400,7 @@ void solidSurface(vec3 p, float px, inout Surf s) {
     rock *= 1.0 + 0.16 * fine;
     float craterAmount = uCraters;
 
+#ifdef P_MARIA
     if (uMaria > 0.0) {
         // Old dark lava plains in the low ground, with fewer craters on them
         float plain = smoothstep(-0.02, 0.12, -elev - 0.06 + fine * 0.08) * uMaria;
@@ -395,7 +409,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         craterAmount *= 1.0 - 0.55 * plain;
         grad *= 1.0 - 0.7 * plain;
     }
+#endif
 
+#ifdef P_RIDGES
     if (uRidges > 0.0) {
         vec3 gr;
         float r = ridgedD(q * 3.1 + wv * 0.15, min(uOct, 6), px * 3.1, gr);
@@ -405,7 +421,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         grad += k * gr * 3.1;
         rock = mix(rock, mix(uRockB, uRockC, smoothstep(0.32, 0.62, r)), k * 1.1);
     }
+#endif
 
+#ifdef P_CANYONS
     if (uCanyons > 0.0) {
         // A rift system: fractal ridged lines, narrow and only in one long region
         vec3 gc;
@@ -418,7 +436,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
             grad -= 0.12 * rift * vec3(gc.x * 0.9, gc.y * 3.0, gc.z * 0.9);
         }
     }
+#endif
 
+#ifdef P_DUNES
     if (uDunes > 0.0) {
         // Dune seas: stripes along a wind that wanders, kept to the low basins
         vec3 z = q + wv * 0.75;
@@ -432,7 +452,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         grad += 0.006 * k * vec3(gd.x * 7.0, gd.y * 46.0, gd.z * 7.0);
         rock = mix(rock, uRockC, uSalt * smoothstep(0.05, 0.14, -elev - 0.16 + fine * 0.12) * 0.75);
     }
+#endif
 
+#ifdef P_CRACKS
     if (uCracks > 0.0) {
         // A bright cracked shell: blue-white mottling, long ridged lines over it, and plates split by fractures
         rock = mix(uRockA, uRockB, smoothstep(0.02, 0.42, tone + 0.2 * fine) * 0.8);
@@ -458,7 +480,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         grad = grad * 0.1 + (n2 > 0.0 ? -g2 : g2) * 2.7 * l2 * 0.02;
         s.sheen = 1.0 - lines;
     }
+#endif
 
+#ifdef P_PLAINS
     if (uPlains > 0.0) {
         // A wide smooth basin of bright nitrogen ice, cut into slow convection cells, among dark red tholin uplands
         float lobes = snoise(q * 0.72 + wv * 0.35 + 3.0) + 0.14 * fine;
@@ -476,8 +500,10 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         height = mix(height, elevSmooth, 0.92 * basin);
         s.sheen = basin * 0.5;
     }
+#endif
 
     float heat = 0.0;
+#ifdef P_LAVA
     if (uLava > 0.0) {
         // Dark plates of crust, floating on melt that shows in the cracks and in pools
         vec3 pl = q * 2.3 + wv * 0.5;
@@ -505,7 +531,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         height += 0.08 * plateAge;
         craterAmount = 0.0;
     }
+#endif
 
+#ifdef P_DAY_MELT
     if (uDayMelt > 0.0) {
         float reach = mix(0.985, 0.87, uDayMelt);    // Cosine of how far from the point under the star it has melted
         float towards = p.x + 0.05 * fine + 0.05 * tone;
@@ -519,7 +547,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         craterAmount *= 1.0 - margin;
         grad *= 1.0 - 0.8 * margin;
     }
+#endif
 
+#ifdef P_CRATERS
     if (craterAmount > 0.002) {
         float big = smoothstep(0.0, 0.2, craterAmount);
         float amt = clamp(craterAmount * 1.15, 0.0, 0.95);
@@ -527,28 +557,34 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         float h = 0.0;
         vec3 g = vec3(0.0);
         vec3 tint = vec3(1.0);
-        craterScale(qc, 2.1, amt * 0.8, 1.05, h, g, tint, uMaria > 0.0 || uCraters > 0.8 ? 1.0 : 0.25);
-        if (px < 0.05) craterScale(qc + 5.0, 4.9, amt * 0.85, 0.95, h, g, tint, 0.0);
-        if (px < 0.022) craterScale(qc + 11.0, 10.3, amt, 0.7, h, g, tint, 0.0);
-        if (px < 0.011 && uOct >= 5) craterScale(qc + 17.0, 22.0, amt, 0.65, h, g, tint, 0.0);
-        if (px < 0.005 && uOct >= 6) craterScale(qc + 29.0, 47.0, amt, 0.6, h, g, tint, 0.0);
+        // Five sizes in a loop and not five calls, because each call is compiled in full
+        float rays = uMaria > 0.0 || uCraters > 0.8 ? 1.0 : 0.25;
+        for (int i = 0; i < 5 + uLoopZero; i++) {
+            if (px >= CRATER_PX[i] || uOct < CRATER_OCT[i]) continue;
+            craterScale(qc + CRATER_SHIFT[i], CRATER_SCALE[i], amt * CRATER_AMOUNT[i], CRATER_DEPTH[i], h, g, tint, i == 0 ? rays : 0.0);
+        }
         height += h * big;
         grad += g * big;
         rock = mix(rock, rock * tint, big);
     }
+#endif
 
+#ifdef P_FROST
     if (uFrost > 0.0) {
         float f = smoothstep(0.42, -0.1, fine + elev * 0.8);
         rock = mix(rock, uIce, uFrost * f);
     }
+#endif
 
     s.heat = heat;
 
     float water = 0.0;
     vec3 ground = rock;
+#ifdef P_LIQUID
     if (uLiquid > 0.0) {
         float aa = max(px * 0.6, 0.0025);
         // Dark rock with life on it: leafy land wet near coasts and in storm tracks, thinner in the dry belts
+#ifdef P_VEGETATION
         if (uVegetation > 0.0) {
             float lat = abs(p.y);
             float climate = 0.32 * cos(lat * 9.0) + 0.1;
@@ -559,6 +595,7 @@ void solidSurface(vec3 p, float px, inout Surf s) {
             vec3 leaf = mix(uLeafDry, uLeaf, smoothstep(-0.05, 0.42, wet + fine * 0.3));
             ground = mix(ground, leaf, uVegetation * growth * 0.95);
         }
+#endif
         float land = smoothstep(-aa, aa, e + 0.018 * fine);
         float shelf = smoothstep(-0.05, -0.001, e + 0.01 * fine);
         vec3 sea = mix(uDeep, uShallow, shelf * shelf * shelf * 0.8);
@@ -568,7 +605,9 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         grad *= land;
         height = mix(0.0, max(height - uSea, 0.0), land);
     }
+#endif
 
+#ifdef P_CAP
     if (uCap > 0.0) {
         float cap = smoothstep(0.0, 0.05, abs(p.y) - (1.0 - uCap) + 0.09 * tone + 0.04 * fine);
         ground = mix(ground, uIce * (0.9 + 0.12 * fine), cap);
@@ -576,6 +615,7 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         grad *= 1.0 - 0.75 * cap;
         s.sheen = max(s.sheen, cap * 0.35);
     }
+#endif
 
     s.albedo = ground;
     s.grad = grad;
@@ -615,11 +655,13 @@ vec3 cloudSample(vec3 p, int oct, float px) {
     }
     // Wet tropics and storm tracks, dry subtropics, in proportion to how much the air stirs
     f += 0.1 * uCloudSwirl * cos(p.y * 9.4);
+#ifdef P_VEIL
     if (uCloudVeil > 0.0 && oct > 3) {
         vec3 c = vec3(sp.x * 3.4, sp.y * 13.0, sp.z * 3.4) + uSeed * 0.9 + warp * 0.9;
         float where = smoothstep(0.0, 0.5, snoise(q * 0.45 - 31.0));
         veil = smoothstep(-0.08, 0.5, fbmFlow(c, min(oct, 6), px * 13.0)) * where * uCloudVeil;
     }
+#endif
     return vec3(f, grain, veil);
 }
 
@@ -756,6 +798,7 @@ void envelopeSurface(vec3 p, float px, inout Surf s) {
         col = mix(col, uZone, stormEdge * 0.35 * (1.0 - stormMask));
     }
 
+#ifdef P_CIRRUS
     if (uCirrus > 0.0) {
         // Sparse bright methane cirrus, high above the haze
         vec3 cq = vec3(sp.x * 1.7, sp.y * 12.0, sp.z * 1.7) + uSeed * 1.9;
@@ -764,6 +807,7 @@ void envelopeSurface(vec3 p, float px, inout Surf s) {
         float c = smoothstep(-0.05, 0.42, fbm(cq, min(uOct, 5), px * 12.0));
         col = mix(col, vec3(0.92, 0.96, 1.0), uCirrus * belt * clump * c * 0.6);
     }
+#endif
 
     s.albedo = col;
     float heat = clamp(0.34 + 0.55 * v + 0.28 * n, 0.0, 1.0);
@@ -1000,6 +1044,7 @@ ${RAY_SPHERE_GLSL}
     vec3 extra = vec3(0.0);
     ${solid ? /* glsl */`
     solidSurface(pB, px, s);
+#ifdef P_LIQUID
     if (s.water > 0.002 && px < 0.03) {
         // Ripples break up the glint, more strongly where the wind blows
         vec3 g1;
@@ -1010,7 +1055,10 @@ ${RAY_SPHERE_GLSL}
         extra = rotY(g1 * 0.0009 + g2 * 0.0026, -uSpin) * gust * s.water * (1.0 - smoothstep(0.004, 0.03, px));
         extra /= max(uRelief * 0.12, 1e-3);
     }
+#endif
+#ifdef P_CLOUDS
     if (uCloudOpacity > 0.0) cloudLayer(rotY(P, uCloudSpin), rotY(uSun, uCloudSpin), px, s);
+#endif
     ` : /* glsl */`
     envelopeSurface(pB, px, s);
     `}
@@ -1024,6 +1072,9 @@ ${BODY_HEAD}
 uniform samplerCube tSurface;
 uniform samplerCube tExtras;
 uniform float uBakeTexel;
+uniform float uBakeMix;      // 0 until the planet's bake is done: a flat disc in its average colours, so an orbit is never empty
+uniform vec3 uFlatAlbedo;
+uniform float uFlatCloud;
 uniform float uCloudSpin;
 uniform float uCloudAlt;
 uniform float uCloudOpacity;
@@ -1038,10 +1089,10 @@ ${RAY_SPHERE_GLSL}
     vec3 pB = rotY(P, uSpin);
     vec4 a = textureCube(tSurface, pB);
     vec4 e = textureCube(tExtras, pB);
-    s.albedo = a.rgb;
-    s.heat = e.b;
-    s.water = clamp((e.a - 0.52) / 0.48, 0.0, 1.0);
-    s.sheen = clamp(e.a / 0.48, 0.0, 1.0) * (1.0 - step(0.5, e.a));
+    s.albedo = mix(uFlatAlbedo, a.rgb, uBakeMix);
+    s.heat = e.b * uBakeMix;
+    s.water = clamp((e.a - 0.52) / 0.48, 0.0, 1.0) * uBakeMix;
+    s.sheen = clamp(e.a / 0.48, 0.0, 1.0) * (1.0 - step(0.5, e.a)) * uBakeMix;
     // Relief from the stored height, by finite differences: smooth even when texels are magnified
     vec3 t1 = normalize(cross(abs(pB.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), pB));
     vec3 t2 = cross(pB, t1);
@@ -1049,7 +1100,7 @@ ${RAY_SPHERE_GLSL}
     float lod = log2(reach / uBakeTexel);
     float hx = textureLod(tSurface, pB + t1 * reach, lod).a - textureLod(tSurface, pB - t1 * reach, lod).a;
     float hy = textureLod(tSurface, pB + t2 * reach, lod).a - textureLod(tSurface, pB - t2 * reach, lod).a;
-    s.grad = (t1 * hx + t2 * hy) / (2.0 * reach) * 0.45;
+    s.grad = (t1 * hx + t2 * hy) / (2.0 * reach) * 0.45 * uBakeMix;
     vec3 extra = vec3(0.0);
     if (uCloudOpacity > 0.0) {
         vec3 pC = rotY(P, uCloudSpin);
@@ -1057,9 +1108,9 @@ ${RAY_SPHERE_GLSL}
         vec4 ec = textureCube(tExtras, pC);
         vec3 towards = normalize(pC + (sunC - pC * dot(pC, sunC)) * uCloudAlt * 3.0);
         float d2 = textureCube(tExtras, towards).r;
-        s.cloud = ec.r;
-        s.cloudTop = clamp(ec.g * 1.0, 0.35, 1.0);
-        s.shadow = d2;
+        s.cloud = mix(uFlatCloud, ec.r, uBakeMix);
+        s.cloudTop = mix(1.0, clamp(ec.g * 1.0, 0.35, 1.0), uBakeMix);
+        s.shadow = d2 * uBakeMix;
     }
     gl_FragColor = shadePlanet(s, P, ro, rd, tHit, coverage, extra);
 }
@@ -1086,17 +1137,15 @@ void main() {
     vec3 P = normalize(uFace * vec3(vFace, 1.0));
     Surf s = newSurf();
     ${solid ? /* glsl */`
-    if (uLayer == 0) {
-        solidSurface(P, uBakePx, s);
-    } else {
-        solidSurface(P, uBakePx, s);
-        if (uCloudOpacity > 0.0) {
-            // Lit from straight above: the sun's real angle is applied when it is drawn
-            vec3 c = cloudSample(P, uOct, uBakePx);
-            s.cloud = 1.0 - (1.0 - cloudOpacity(c.x) * uCloudOpacity) * (1.0 - c.z);
-            s.cloudTop = clamp(0.8 + 0.5 * (c.x - uCloudLevel) + 0.42 * c.y, 0.25, 1.0);
-        }
+    solidSurface(P, uBakePx, s);
+#ifdef P_CLOUDS
+    if (uLayer != 0 && uCloudOpacity > 0.0) {
+        // Lit from straight above: the sun's real angle is applied when it is drawn
+        vec3 c = cloudSample(P, uOct, uBakePx);
+        s.cloud = 1.0 - (1.0 - cloudOpacity(c.x) * uCloudOpacity) * (1.0 - c.z);
+        s.cloudTop = clamp(0.8 + 0.5 * (c.x - uCloudLevel) + 0.42 * c.y, 0.25, 1.0);
     }
+#endif
     ` : /* glsl */`
     envelopeSurface(P, uBakePx, s);
     `}

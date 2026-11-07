@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { sharedUniforms } from '../shared.js';
-import { createPlanetMesh, warmPlanetShaders } from '../planets/planet_mesh.js';
+import { createPlanetMesh, warmPlanetShaders, warmPlanetBakes } from '../planets/planet_mesh.js';
 import { initSystemTab } from '../../ui/system_tab.js';
 import {
     FRAME, buildModel, canDraw, hasSystemView, hzStatus, layout, ringRadius, starRadius, planetRadius,
@@ -36,6 +36,8 @@ const HOME_SWING = 24 * RAD;        // How far round the camera drifts during th
 const FADE_S = 0.5;                 // The cross-fade that replaces the flight with Reduce motion
 const FLIGHT_S = 1.15;              // A focus flight to a planet
 const SKY_END_FOV_FACTOR = 34;      // How far the sky camera narrows as it flies in
+const COMPILE_WAIT_MS = 4000;       // The longest a flight waits for its shaders, after which it goes without
+const WARM_AFTER_SELECT_MS = 500;
 
 const HZ_VERTEX = /* glsl */`
 varying vec2 vQ;
@@ -1129,7 +1131,7 @@ export function initSystemView(app) {
         const compiling = renderer.compileAsync
             ? Promise.all([renderer.compileAsync(scene, camera), renderer.compileAsync(backScene, camera)])
             : Promise.resolve();
-        Promise.race([compiling, new Promise((r) => setTimeout(r, 900))]).then(go, go);
+        Promise.race([compiling, new Promise((r) => setTimeout(r, COMPILE_WAIT_MS))]).then(go, go);
         return true;
     }
 
@@ -1172,27 +1174,40 @@ export function initSystemView(app) {
         if (backdrop) backdrop.setQuality(level);
         if (!world) return;
         world.stars.forEach((s) => s.setQuality(level));
-        // A planet fixes its quality when it's made
-        world.planets.forEach((item) => {
-            world.group.remove(item.handle.object3d);
-            item.handle.dispose();
-            item.handle = makePlanet(item.entry, level, world.group);
-        });
+        world.planets.forEach((item) => item.handle.setQuality(level));
     });
 
-    // Compile the shaders while nothing is going on, so that the first flight doesn't start with a stall.
+    // Compile the small shaders while nothing is going on, so that the first flight doesn't have to wait for them.
     // The warm star is never freed: while a material uses a program, three.js keeps it for the next star to share.
+    // One at every level, as Auto can change the level during a visit.
+    let warmStars = [];
+    function warmSmallPrograms() {
+        const renderer = engine.renderer;
+        if (!renderer) return;
+        warmPlanetShaders(renderer);
+        warmStars.forEach((star) => star.dispose());
+        const warmScene = new THREE.Scene();
+        warmStars = ['low', 'medium', 'high'].map((quality) => {
+            const star = createStar({ teff_K: 5800, radius_Rsun: 1, stage: 'main_sequence' }, { seed: 'warm', quality });
+            warmScene.add(star.group);
+            return star;
+        });
+        renderer.compileAsync(warmScene, camera);
+    }
     bus.on('ready', () => {
-        const warm = () => {
-            const renderer = engine.renderer;
-            if (!renderer) return;
-            warmPlanetShaders(renderer, camera);
-            const warmScene = new THREE.Scene();
-            warmScene.add(createStar({ teff_K: 5800, radius_Rsun: 1, stage: 'main_sequence' }, { seed: 'warm', quality: app.qualityLevel }).group);
-            renderer.compileAsync(warmScene, camera);
-        };
-        if (window.requestIdleCallback) window.requestIdleCallback(warm, { timeout: 4000 });
-        else setTimeout(warm, 1500);
+        if (window.requestIdleCallback) window.requestIdleCallback(warmSmallPrograms, { timeout: 4000 });
+        else setTimeout(warmSmallPrograms, 1500);
+    });
+    bus.on('gl-restored', warmSmallPrograms);
+
+    // A star with planets has been picked, so a visit may be coming: start on the costly programs those planets will
+    // need. Not straight away, in case the student is just clicking through the sky.
+    let warmTimer = 0;
+    bus.on('select', ({ resolved }) => {
+        clearTimeout(warmTimer);
+        const planets = resolved && resolved.body && resolved.body.planets;
+        if (!planets || !planets.length || !engine.renderer) return;
+        warmTimer = setTimeout(() => warmPlanetBakes(engine.renderer, planets), WARM_AFTER_SELECT_MS);
     });
 
     app.system = {

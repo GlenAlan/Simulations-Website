@@ -498,7 +498,8 @@ export function createNebulaeLayer(engine, app) {
                     changed = true;
                 }
                 const f = item.frame;
-                baker.considerSprite(item.job, f.c[0], f.c[1], f.c[2], f.r[0], f.r[1], f.r[2], f.n[0], f.n[1], f.n[2], item.tanHalf);
+                item.job.half = item.tanHalf;
+                baker.considerSprite(item.job, f.c, f.r, f.n);
             }
             if (changed) readyAttr.needsUpdate = true;
         },

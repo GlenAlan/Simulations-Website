@@ -21,6 +21,7 @@ const HERO_STEPS = { low: 28, medium: 56, high: 84 };
 const NOISE_SIZE = 64;
 const HERO_FADE_S = 0.35;
 const FETCHES_PER_STEP = { cloud: 9, planetary: 7, remnant: 8 }; // Roughly, so strips can be sized by cost
+const START_BUDGET = 4e6;
 
 // Tiling noise: three fractal channels and one cellular. Built on the CPU from a fixed seed, so it is the same
 // on every load and every GPU, and sampled as a 3D texture because one fetch is far cheaper than computing noise
@@ -162,6 +163,7 @@ function createBaker(engine, app) {
     const noise = createNoiseBuilder();
     let noiseTexture = null;
     let programsReady = false;
+    let compileRun = 0;
 
     const v4s = (n) => Array.from({ length: n }, () => new THREE.Vector4());
     const programs = {
@@ -191,26 +193,39 @@ function createBaker(engine, app) {
     let cellPx = CELL_PX[app.qualityLevel] || 256;
     const atlasUniform = { value: null };
     let atlas = null;
+    let shownAtlas = null;  // Differs from atlas while a larger one is baked: the sprites keep the old one until then
 
-    function createAtlas() {
-        if (atlas) atlas.dispose();
-        atlas = new THREE.WebGLRenderTarget(grid * cellPx, grid * cellPx, {
+    function newAtlas() {
+        const previous = renderer.getRenderTarget();
+        const target = new THREE.WebGLRenderTarget(grid * cellPx, grid * cellPx, {
             type: THREE.UnsignedByteType,
             depthBuffer: false,
             minFilter: THREE.LinearMipmapLinearFilter,
             magFilter: THREE.LinearFilter,
             generateMipmaps: true
         });
-        atlas.texture.colorSpace = THREE.NoColorSpace;
-        renderer.setRenderTarget(atlas);
+        target.texture.colorSpace = THREE.NoColorSpace;
+        renderer.setRenderTarget(target);
         renderer.setClearColor(0x000000, 0);
         renderer.clear();
         renderer.setClearColor(0x000000, 1);
-        renderer.setRenderTarget(null);
+        renderer.setRenderTarget(previous);
         // Three would rebuild the whole mip chain after every strip: off from here, and done once per finished cell
-        atlas.texture.generateMipmaps = false;
-        atlasUniform.value = atlas.texture;
-        heroUniforms.uAtlasPx.value = atlas.width;
+        target.texture.generateMipmaps = false;
+        return target;
+    }
+
+    function showAtlas(target) {
+        if (shownAtlas && shownAtlas !== target) shownAtlas.dispose();
+        shownAtlas = target;
+        atlasUniform.value = target.texture;
+        heroUniforms.uAtlasPx.value = target.width;
+    }
+
+    function createAtlas() {
+        if (atlas && atlas !== shownAtlas) atlas.dispose();
+        atlas = newAtlas();
+        showAtlas(atlas);
     }
 
     const jobs = [];
@@ -226,7 +241,8 @@ function createBaker(engine, app) {
             index,
             rect: [(index % grid) / grid, Math.floor(index / grid) / grid, 1 / grid, 1 / grid],
             ready: false,
-            row: 0
+            row: 0,
+            half: 1.5   // Set by the layer before each considerSprite. Starts as a fraction, so the field holds fractions
         };
         jobs.push(job);
         return job;
@@ -293,17 +309,19 @@ function createBaker(engine, app) {
     let framePxPerRad = 1;
 
     let lastFrame = null;
-    let budget = 4e6;   // Noise fetches per frame; tuned by frame time
+    let budget = START_BUDGET;  // Noise fetches per frame; tuned by frame time
     let flushing = false;
 
-    // A layer calls this once per sprite per frame. (cx..nz) is the sprite's tangent frame, tanHalf its half-size
-    function considerSprite(job, cx, cy, cz, rx, ry, rz, nx, ny, nz, tanHalf) {
-        const d = forward.x * cx + forward.y * cy + forward.z * cz;
+    // A layer calls this once per sprite per frame. c, r and n are the sprite's tangent frame, and job.half its half-size.
+    // By arrays and a field, as a call with a dozen numbers in it allocates them all, every frame, for every sprite.
+    function considerSprite(job, c, r, n) {
+        const d = forward.x * c[0] + forward.y * c[1] + forward.z * c[2];
         if (d < 0.5) return;
+        const tanHalf = job.half;
         const hv = frameTanFov / tanHalf;
         const hh = hv * frameAspect;
-        const vx = (forward.x * rx + forward.y * ry + forward.z * rz) / d / tanHalf;
-        const vy = (forward.x * nx + forward.y * ny + forward.z * nz) / d / tanHalf;
+        const vx = (forward.x * r[0] + forward.y * r[1] + forward.z * r[2]) / d / tanHalf;
+        const vy = (forward.x * n[0] + forward.y * n[1] + forward.z * n[2]) / d / tanHalf;
         if (Math.abs(vx) > 1 + hh || Math.abs(vy) > 1 + hv) return;
         const across = 2 * framePxPerRad * tanHalf;
         const startPx = Math.max(cellPx * 1.5, 340);
@@ -521,8 +539,8 @@ function createBaker(engine, app) {
 
     function tuneBudget(dt) {
         if (dt <= 0) return;
-        if (dt < 0.019) budget = Math.min(32e6, budget * 1.1);
-        else if (dt > 0.027) budget = Math.max(1e6, budget * 0.72);
+        if (dt > 0.027) budget = Math.max(1e6, budget * 0.72);
+        else budget = engine.bakePace(budget, 1e6, dt < 0.019 ? 32e6 : budget);
     }
 
     function compilePrograms() {
@@ -533,7 +551,10 @@ function createBaker(engine, app) {
             mesh.frustumCulled = false;
             compileScene.add(mesh);
         });
-        renderer.compileAsync(compileScene, bakeCamera).then(() => { programsReady = true; });
+        const run = ++compileRun;
+        renderer.compileAsync(compileScene, bakeCamera).then(() => {
+            if (run === compileRun) programsReady = true;
+        });
     }
 
     function buildNoise(budgetMs) {
@@ -582,23 +603,62 @@ function createBaker(engine, app) {
         if (!atlas) createAtlas();
         if (!buildNoise(5)) return;
         if (!programsReady) return;
-        tuneBudget(frame.dt);
         updateHero(frame);
-        doWork(frame);
+        if (heroWork || unbakedLeft()) {
+            tuneBudget(frame.dt);
+            if (engine.bakesAllowed()) doWork(frame);
+        } else {
+            budget = Math.min(budget, START_BUDGET);    // The next piece of work could be large, and the GPU has been idle
+            if (shownAtlas !== atlas) showAtlas(atlas);
+        }
+    }
+
+    function unbakedLeft() {
+        for (let i = 0; i < jobs.length; i++) {
+            if (!jobs[i].ready) return true;
+        }
+        return false;
+    }
+
+    function resetJobs() {
+        jobs.forEach((job) => {
+            job.ready = false;
+            job.row = 0;
+            if (job.onReset) job.onReset();
+        });
     }
 
     const offQuality = bus.on('quality', ({ level }) => {
         // A smaller bake is kept when the level falls, as it's already paid for. Rising from Low bakes larger
         const px = CELL_PX[level] || 256;
-        if (px > cellPx) {
+        if (px > cellPx && atlas) {
+            // Baked alongside: the old picture stays up until the new one is finished, rather than every nebula vanishing
             cellPx = px;
-            createAtlas();
+            if (atlas !== shownAtlas) atlas.dispose();
+            atlas = newAtlas();
             jobs.forEach((job) => {
                 job.ready = false;
                 job.row = 0;
-                if (job.onReset) job.onReset();
             });
+        } else if (px > cellPx) {
+            cellPx = px;
         }
+    });
+
+    // Everything baked went with the context, and the programs with it. The noise is still here, and three uploads it again
+    const offRestored = bus.on('gl-restored', () => {
+        programsReady = false;
+        if (noiseTexture) compilePrograms();
+        if (atlas) createAtlas();
+        resetJobs();
+        heroTargets = null;
+        heroPx = 0;
+        heroWork = null;
+        newest.job = null;
+        newest.k = 0;
+        older.job = null;
+        older.k = 0;
+        syncHeroUniforms();
     });
 
     return {
@@ -636,6 +696,8 @@ function createBaker(engine, app) {
         },
         dispose() {
             offQuality();
+            offRestored();
+            if (shownAtlas && shownAtlas !== atlas) shownAtlas.dispose();
             if (atlas) atlas.dispose();
             if (heroTargets) heroTargets.forEach((t) => t.dispose());
             if (noiseTexture) noiseTexture.dispose();
