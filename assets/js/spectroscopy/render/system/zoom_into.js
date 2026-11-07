@@ -163,11 +163,24 @@ export function createZoomInto(app, view) {
         return !other;
     }
 
+    // The system a zoom pointing here goes into: what the pointer is on, or null if that isn't one; undefined if it's on
+    // nothing. Something big and soft round the selection can win the pick at its middle (deep in a globular, its glow does
+    // at the middle of a pair that has come apart), so the selection counts too, if it's drawn right at the pointer.
+    function systemAt(at, reach) {
+        const code = engine.pick(at.x, at.y, reach);
+        if (!code) return undefined;
+        const system = systemOf(app.universe.resolve(code));
+        if (system) return system;
+        const selected = systemOf(app.selected);
+        const p = selected && engine.projectBody(selected);
+        return p && Math.hypot(p.x - at.x, p.y - at.y) <= reach ? selected : null;
+    }
+
     function findSystem(frame) {
         const at = point || { x: frame.width / 2, y: frame.height / 2 };
-        const code = engine.pick(at.x, at.y, POINT_PX[kind] || POINT_PX.wheel);
+        const found = systemAt(at, POINT_PX[kind] || POINT_PX.wheel);
         // Whatever is being pointed at decides, and if it isn't a system there is nothing to enter
-        if (code) return systemOf(app.universe.resolve(code));
+        if (found !== undefined) return found;
         const selected = systemOf(app.selected);
         if (selected) {
             const p = engine.projectBody(selected);
