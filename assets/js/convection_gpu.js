@@ -22,15 +22,17 @@
     // CPU solver's, which then gives the same flow. At 256x256 they fall well short of converging, which
     // makes the flow up to half as fast again as it should be, so there the pressure solve gets 16
     // over-relaxed sweeps, and the viscous solve of the thick fluids (a > 1, where it converges as slowly
-    // as the pressure one) twice the sweeps, over-relaxed by the factor that suits it best. Both then come
-    // to within a few per cent of a fully converged solve: the same flow as at the smaller sizes.
+    // as the pressure one) four times the sweeps, over-relaxed by the factor that suits it best. Both then
+    // come to within a few per cent of a fully converged solve: the same flow as at the smaller sizes.
+    // (With only twice the sweeps honey's flow picks up, within about 1000 steps, a grid-scale roughness
+    // along the walls that a converged solve doesn't have.)
     const TUNING = {
         pressure: (n) => (n > 128 ? { sweeps: 16, omega: 1.8 } : { sweeps: 4, omega: 1 }),
         // a: the solve's coupling (dt * viscosity * n^2); cpuSweeps: diffusionIterations(a)
         viscous: (n, a, cpuSweeps) => {
             if (n <= 128 || a <= 1) return { sweeps: cpuSweeps, omega: 1 };
             const r = 4 * a / (1 + 4 * a); // how much of the error a Jacobi sweep leaves
-            return { sweeps: 2 * cpuSweeps, omega: Math.min(1.8, 2 / (1 + Math.sqrt(1 - r * r))) };
+            return { sweeps: 4 * cpuSweeps, omega: Math.min(1.8, 2 / (1 + Math.sqrt(1 - r * r))) };
         },
     };
 
