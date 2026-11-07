@@ -25,6 +25,8 @@ const SKY_RADIUS = 1000;
 const SPRITE_MARGIN = { emission: 1.62, dark: 1.62, reflection: 1.38, planetary: 1.38 };
 const DRAW_ORDER = { dark: 0, reflection: 1, emission: 2, planetary: 3 };
 const KIND_CODE = { emission: 0, reflection: 1, dark: 2, planetary: 3 };
+// How much of the sprite answers a click: as far as any gas or dust shows clearly
+const PICK_SHARE = { emission: 0.8, dark: 0.8, reflection: 0.74, planetary: 0.74 };
 
 const RAD = Math.PI / 180;
 const TAU = Math.PI * 2;
@@ -235,6 +237,27 @@ function emissionShape(body, palette) {
         stars.push(new THREE.Vector4(home.x + dir[0] * d, home.y + dir[1] * d, home.z + dir[2] * 0.2, rng.range(0.12, 0.42)));
     }
 
+    // How strongly the gas is lit depends on where the stars happened to fall. Left alone, some would burn out to white
+    // and others barely show, so each one's exposure is set from the same sum the bake makes. Its magnitude still ranks it.
+    let litSum = 0;
+    let litWeight = 0;
+    blobs.forEach((l) => {
+        let U = 0;
+        stars.forEach((s) => { U += s.w / ((s.x - l.x) ** 2 + (s.y - l.y) ** 2 + (s.z - l.z) ** 2 + 0.012); });
+        const w = l.w * l.w;
+        litSum += (0.09 + (U / (U + 13)) ** 1.5) * w;
+        litWeight += w;
+    });
+    const exposure = Math.max(0.55, Math.min(1.7, (0.33 / (litSum / litWeight)) ** 0.9));
+    // Teal is where the oxygen lines beat hydrogen, so how much of it there is comes from the nebula's own spectrum
+    const excitation = Math.min(1, palette.excitation);
+    const gasX = 0.95 * gasGain * exposure;
+    const gasY = gasX * (0.3 + excitation) * 1.6;
+    // How far from the main star the oxygen zone starts, in sprite units: a small heart, larger round a hotter star and in
+    // gas with stronger oxygen lines. The bake's zone is U * reach reaching a quarter, and U falls as w / (d * d + 0.012).
+    const oxygenRadius = (0.06 + 0.15 * excitation) * rng.range(0.75, 1.25) * (0.6 + 0.6 * heat);
+    const oxygenReach = (0.25 * (oxygenRadius * oxygenRadius + 0.012)) / stars[0].w;
+
     const off = new THREE.Vector3(rng.next(), rng.next(), rng.next());
     const rot = flowingRotation(rng, squeeze);
     const params = {
@@ -244,8 +267,8 @@ function emissionShape(body, palette) {
         off,
         rot,
         A: new THREE.Vector4(rng.range(0.2, 0.45), rng.range(0.9, 1.4), 0.3 + dustiness * 1.1, frontDepth),
-        B: new THREE.Vector4(cavity, (0.6 * (0.035 + palette.excitation * 0.09)) * rng.range(0.6, 1.6), rimGain, laneWidth),
-        C: new THREE.Vector4(0.72 * gasGain, 0.55 * gasGain, 0.8, 0.25),
+        B: new THREE.Vector4(cavity, oxygenReach, rimGain, laneWidth),
+        C: new THREE.Vector4(gasX, gasY, 0.62, 0.25),
         D: wall
     };
     return { program: 'emission', params };
@@ -374,9 +397,18 @@ function spriteColours(body, palette) {
         // colour of the band's star clouds behind it, for the haze that gives it something to hide
         return { a: [0.085, 0.066, 0.054], b: [0.135, 0.155, 0.225] };
     }
-    // In an emission nebula hydrogen far outshines oxygen, whatever the line ratio says of the hottest gas alone. A heart
-    // of oxygen as bright as the hydrogen around it would add up to plain white.
-    if (type === 'emission') return { a: palette.hydrogen, b: palette.oxygen.map((v) => v * 0.55) };
+    if (type === 'emission') {
+        // Strong [N II] beside H-alpha makes for warmer gas. The oxygen zone's colour is kept at full strength here: the bake
+        // holds how bright it is, which comes from the nebula's own line ratio.
+        const warmth = Math.max(0, Math.min(1, (palette.nitrogen - 0.15) / 0.35));
+        const h = palette.hydrogen;
+        const o = palette.oxygen;
+        const top = Math.max(o[0], o[1], o[2], 1e-6);
+        return {
+            a: [h[0], h[1] * (0.9 + 0.32 * warmth), h[2] * (1.2 - 0.55 * warmth)],
+            b: [o[0] / top, o[1] / top, o[2] / top]
+        };
+    }
     return { a: palette.hydrogen, b: palette.oxygen };
 }
 
@@ -439,8 +471,13 @@ function embeddedStars(body, shape, frame, half, rect, out, picks) {
             const spread = nearHeart ? 0.13 : home.w * 0.8;
             const a = rng.range(0, TAU);
             const d = spread * Math.sqrt(-2 * Math.log(Math.max(1e-3, rng.next())));
-            const x = Math.max(-0.8, Math.min(0.8, home.x + Math.cos(a) * d));
-            const y = Math.max(-0.8, Math.min(0.8, home.y + Math.sin(a) * d));
+            let x = home.x + Math.cos(a) * d;
+            let y = home.y + Math.sin(a) * d;
+            const far = Math.hypot(x, y);
+            if (far > 0.8) {
+                x *= 0.8 / far;
+                y *= 0.8 / far;
+            }
             const massive = rng.next() ** 3;
             const teff = 3000 + massive * 12000;
             add(x, y, 0, teff, 1.3 + massive * 1.3, 0.2 + massive * 0.7, 0.55 + (1 - massive) * 0.65, massive * 0.7, 0.2 + rng.next() * 0.35, 100, 340);
@@ -510,7 +547,7 @@ const SPRITE_VERTEX = /* glsl */`
         // Small on screen, a nebula is a soft glow in the Milky Way, as in any wide-field photograph. It only earns its
         // full brightness and contrast as it grows. Planetaries are compact and stay jewels at any size.
         float across = 2.0 * aPack.x * uPxPerRad * depthP(aDepth);
-        float small = 1.0 - smoothstep(26.0, 300.0, across);
+        float small = 1.0 - smoothstep(24.0, 240.0, across);
         float tiny = 1.0 - smoothstep(26.0, 200.0, across);
         vGain = 1.0;
         vDim = 1.0;
@@ -519,9 +556,9 @@ const SPRITE_VERTEX = /* glsl */`
         if (aKind < 0.5) {
             // Brighter nebulae stand out from fainter ones, so that the sky has a hierarchy
             float rank = clamp(pow(10.0, -0.2 * (aMag - 4.5)), 0.62, 1.2);
-            vGain = rank * mix(1.0, 0.30, small);
+            vGain = rank * mix(1.0, 0.36, small);
             vDim = mix(1.0, 0.4, small);
-            vBlur = mix(1.0, 3.0, small * small);
+            vBlur = mix(1.0, 4.0, small * small);
             vFlatten = mix(1.0, 0.62, small);
         } else if (aKind < 1.5) {
             vGain = mix(1.0, 0.32, tiny);
@@ -535,6 +572,10 @@ const SPRITE_VERTEX = /* glsl */`
         vec3 world = (aCentre + (aR * position.x + aN * position.y) * aPack.x) * ${SKY_RADIUS.toFixed(1)};
         gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
         gl_Position.xy *= depthP(aDepth);
+        #ifdef DUST_PASS
+        // A planetary's little dust isn't worth a draw of its own: this puts it outside the view
+        if (aKind > 2.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        #endif
     }`;
 
 const SPRITE_VARYINGS = /* glsl */`
@@ -615,7 +656,7 @@ export function createNebulaeLayer(engine, app) {
         aBandB[i] = body.bands.xray * light;
         aDepth[i] = body.depth;
         const stars = [];
-        items.push({ body, job, frame, tanHalf, shown: 0, stars, bodyTan: Math.tan((body.nebula.size_deg * 0.5) * RAD) });
+        items.push({ body, job, frame, tanHalf, shown: 0, stars, pickTan: tanHalf * PICK_SHARE[type] });
         embeddedStars(body, shape, frame, tanHalf, job.rect, starList, stars);
     });
 
@@ -646,6 +687,7 @@ export function createNebulaeLayer(engine, app) {
         blendDst: THREE.SrcColorFactor,
         blendSrcAlpha: THREE.ZeroFactor,
         blendDstAlpha: THREE.OneFactor,
+        defines: { DUST_PASS: 1 },
         uniforms: { tAtlas: baker.atlasUniform, ...baker.heroUniforms },
         vertexShader: SPRITE_VERTEX,
         fragmentShader: /* glsl */`
@@ -653,7 +695,7 @@ export function createNebulaeLayer(engine, app) {
             ${SPRITE_FETCH_GLSL}
             ${SPRITE_VARYINGS}
             void main() {
-                if (dot(vQ, vQ) >= 1.0 || vReady <= 0.0 || vKind > 2.5) discard;
+                if (dot(vQ, vQ) >= 1.0 || vReady <= 0.0) discard;
                 float opacity = fetchBaked(vQ, vCell, vBlur).a;
                 // Dust blocks visible and ultraviolet light, but much less of the infrared, and almost no radio
                 float blocks = uBandW[2] + uBandW[3] + uBandW[1] * 0.14 + uBandW[4] * 0.25;
@@ -692,32 +734,45 @@ export function createNebulaeLayer(engine, app) {
                 float opacity = t.a;
 
                 vec3 visible;
-                if (vKind < 0.5 || vKind > 2.5) {
-                    // As film and sensors record it: faint gas is a deep red, and it pales through rose towards white as
-                    // it brightens. The hottest gas adds oxygen's teal to that, which reads as a paler heart.
+                if (vKind < 0.5) {
+                    // As film and sensors record it: faint gas is a deep red, paling through rose as it brightens.
                     // Small on screen, the range is pressed together: a soft glow, not a hard knot in a faint haze.
                     float hf = pow(hyd, vFlatten);
-                    float of = pow(oxy, vFlatten);
-                    vec3 h = vColA * hf;
-                    h.gb *= mix(0.55, 1.45, smoothstep(0.0, 0.5, hf));
-                    vec3 o = vColB * of;
-                    if (vKind < 0.5) {
-                        // Only where oxygen comes close to matching hydrogen, as it does right beside the hottest stars,
-                        // does it win: a small heart of pale teal
-                        float teal = smoothstep(0.55, 0.95, of / (hf + 0.03));
-                        h *= mix(1.0, 0.6, teal);
-                        o *= mix(1.0, 1.45, teal);
-                    }
-                    if (vKind > 2.5) {
-                        // Nitrogen dominates a planetary's outer edge, which warms it. Its faint inner gas is lit hardest
-                        // of all, and looks bluer than its bright walls.
-                        h.b *= 0.55;
-                        h.g *= 1.12;
-                        o = mix(vec3(0.20, 0.46, 1.0) * max(vColB.g, 0.2) * oxy * 1.3, o, smoothstep(0.02, 0.26, oxy));
-                    }
-                    visible = (h + o) * (1.0 + 0.5 * hf * hf) * 1.3;
+                    float pale = mix(smoothstep(0.0, 0.6, hf), 1.0, (1.0 - vFlatten) * 1.8);
+                    vec3 h = vColA * hf * vec3(1.0, mix(0.55, 1.6, pale), mix(0.55, 1.45, pale));
+                    // What the gas is doing, on the scale of the whole cloud, from a soft copy of the same image.
+                    // Dense gas is warmer, more of an orange red; beside dust, scattered blue light turns it magenta.
+                    vec4 wide = textureLod(tAtlas, vCell, 3.2);
+                    float broad = wide.r * wide.r;
+                    float nearDust = smoothstep(0.05, 0.45, wide.a);
+                    float dense = smoothstep(0.1, 0.45, broad) * (1.0 - nearDust);
+                    h.g *= 1.0 + 0.38 * dense - 0.15 * nearDust;
+                    h.b *= 1.0 - 0.4 * dense + 0.42 * nearDust;
+                    // Where oxygen's lines beat hydrogen's, which is only close to the hottest stars, the heart turns a
+                    // pale blue green. The bake's encoding undone gives the real ratio of the two.
+                    float gasX = hyd / (1.02 - hyd);
+                    float ratio = (oxy / (1.02 - oxy)) / (gasX + 0.015);
+                    float close = smoothstep(0.62, 1.0, vFlatten);
+                    float teal = smoothstep(0.1, 0.95, ratio) * (0.25 + 0.75 * close) * smoothstep(0.05, 0.3, hf);
+                    visible = mix(h, vColB * hf * 0.62, teal * 0.75);
+                    // Bright gas is pressed together by the bake's shoulder. Dividing by the soft copy brings its filaments
+                    // back, as an astrophotographer's local contrast does, so a nebula's heart has as much in it as its edge
+                    float local = pow((gasX + 0.02) / (broad / (1.02 - broad) + 0.02), 0.4);
+                    visible *= mix(1.0, clamp(local, 0.55, 1.7), smoothstep(0.15, 0.7, hf) * close);
+                    // The faint glow it fades out through, stronger while small
+                    visible += vColA * broad * (0.16 + (1.0 - vFlatten) * 1.3);
+                    visible *= 1.3;
                     // And a little less colour, to sit with the muted band, which is mostly unresolved starlight
                     visible = mix(vec3(dot(visible, vec3(0.3, 0.55, 0.15))), visible, 1.0 - (1.0 - vFlatten) * 0.75);
+                } else if (vKind > 2.5) {
+                    vec3 h = vColA * hyd;
+                    h.gb *= mix(0.55, 1.45, smoothstep(0.0, 0.5, hyd));
+                    // Nitrogen dominates a planetary's outer edge, which warms it. Its faint inner gas is lit hardest of
+                    // all, and looks bluer than its bright walls.
+                    h.b *= 0.55;
+                    h.g *= 1.12;
+                    vec3 o = mix(vec3(0.20, 0.46, 1.0) * max(vColB.g, 0.2) * oxy * 1.3, vColB * oxy, smoothstep(0.02, 0.26, oxy));
+                    visible = (h + o) * (1.0 + 0.5 * hyd * hyd) * 1.3;
                 } else if (vKind < 1.5) {
                     // Where oxygen dominates the eye sees teal, not teal plus the red of whatever lies in front of it
                     float hydSeen = hyd * mix(1.0, 0.3, smoothstep(0.06, 0.42, oxy));
@@ -725,7 +780,14 @@ export function createNebulaeLayer(engine, app) {
                 } else {
                     visible = vColA * hyd + vColB * oxy;
                 }
-                vec3 col = visible * vGain * vStrength.z * uBandW[2];
+                vec3 col = visible * vGain * vStrength.z;
+                if (vKind < 0.5 || vKind > 2.5) {
+                    // Keeps glowing gas under the tone curve's shoulder, by scaling all three colours together, so that the
+                    // brightest parts stay coloured and keep their filaments rather than burning out to white
+                    float peak = max(col.r, max(col.g, col.b));
+                    if (peak > 0.55) col *= (0.55 + 0.6 * (1.0 - exp((0.55 - peak) / 0.6))) / peak;
+                }
+                col *= uBandW[2];
                 // The sky's own faint glow is airglow, in front of any dust: nothing out there can be darker than that
                 col += vec3(0.0052, 0.0076, 0.0165) * opacity * vDim * uBandW[2];
 
@@ -750,7 +812,8 @@ export function createNebulaeLayer(engine, app) {
 
                 // A soft stand-in until the bake arrives, then a quick fade across to it
                 float stand = exp(-r2 * 5.0) * smoothstep(1.0, 0.5, sqrt(r2)) * 0.05;
-                vec3 waiting = (vColA + vColB) * stand * vGain * vStrength.z * uBandW[2];
+                // An emission nebula's second colour is its oxygen at full strength, which would turn this grey
+                vec3 waiting = (vKind < 0.5 ? vColA : vColA + vColB) * stand * vGain * vStrength.z * uBandW[2];
                 col = mix(waiting, col, vReady);
 
                 // Tiny grain so faint gradients don't band on an 8-bit screen
@@ -845,6 +908,7 @@ export function createNebulaeLayer(engine, app) {
         id: 'nebulae',
         update(frame) {
             baker.beginFrame(frame);
+            dustMesh.visible = frame.bandW[1] + frame.bandW[2] + frame.bandW[3] + frame.bandW[4] > 0.002;
             let changed = false;
             const step = frame.dt > 0 ? frame.dt / 0.5 : 1;
             for (let i = 0; i < n; i++) {
@@ -870,11 +934,11 @@ export function createNebulaeLayer(engine, app) {
             const pxPerRad = frame.pxPerRad / frame.dpr;
             let viewAt = null;
             for (let i = 0; i < n; i++) {
-                const { body, tanHalf, bodyTan, stars: inside, frame: f } = items[i];
+                const { body, tanHalf, pickTan, stars: inside, frame: f } = items[i];
                 const strength = body.bands[frame.band] || 0;
                 if (strength <= 0.01) continue;
                 const P = parallaxFactor(body.depth, frame.fov);
-                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: bodyTan * pxPerRad * P * 1.05, depth: body.depth });
+                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: pickTan * pxPerRad * P, depth: body.depth });
                 const across = 2 * tanHalf * frame.pxPerRad * P;
                 for (let j = 0; j < inside.length; j++) {
                     const s = inside[j];
@@ -883,9 +947,9 @@ export function createNebulaeLayer(engine, app) {
                 const d = forward.x * f.c[0] + forward.y * f.c[1] + forward.z * f.c[2];
                 if (d <= 0) continue;
                 const off = Math.tan(Math.acos(Math.min(1, d)));
-                if (off < bodyTan * 1.05) {
+                if (off < pickTan) {
                     if (!viewAt) viewAt = vec3ToAzAlt(forward.x, forward.y, forward.z);
-                    out.push({ code: body.code, az: viewAt.az, alt: viewAt.alt, radiusPx: (bodyTan * 1.05 - off) * pxPerRad * P, depth: body.depth });
+                    out.push({ code: body.code, az: viewAt.az, alt: viewAt.alt, radiusPx: (pickTan - off) * pxPerRad * P, depth: body.depth });
                 }
             }
             return out;

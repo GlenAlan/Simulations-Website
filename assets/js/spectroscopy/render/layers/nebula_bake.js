@@ -41,8 +41,8 @@ const START_BUDGET = 4e6;
 function fetchesPerPixel(program, steps, octaves) {
     switch (program) {
         case 'cloud': return steps * 9;
-        case 'emission': return steps * 3 + 2 * octaves + 6;
-        case 'dust': return octaves + 7;
+        case 'emission': return steps * 3 + 2 * octaves + 5;
+        case 'dust': return octaves + 8;
         case 'planetary': return steps * 3 + octaves;
         default: return steps * 4 + octaves + 13;
     }
@@ -362,7 +362,7 @@ function createBaker(engine, app) {
         const vy = (forward.x * n[0] + forward.y * n[1] + forward.z * n[2]) / d / tanHalf;
         if (Math.abs(vx) > 1 + hh || Math.abs(vy) > 1 + hv) return;
         const across = 2 * framePxPerRad * tanHalf * job.parallax;
-        const startPx = Math.max(cellPx * 1.5, 340);
+        const startPx = Math.max(cellPx * 1.15, 280);
         const heldPx = newest.job === job ? startPx * 0.75 : startPx;
         if (across < heldPx) return;
         const ox = Math.min(1, vx + hh) - Math.max(-1, vx - hh);
@@ -881,8 +881,12 @@ export function zonePalette(lines) {
     const zones = { hydrogen: [0, 0, 0], oxygen: [0, 0, 0] };
     let sumH = 0;
     let sumO = 0;
+    let alpha = 0;
+    let nitrogen = 0;
     (lines || []).forEach((line) => {
         const label = line.label || '';
+        if (label.includes('N II')) nitrogen += line.rel;
+        else if (Math.abs(line.w - 656.28) < 1) alpha += line.rel;
         const hot = /III|He|IV|V\b/.test(label) || (!label.includes('H') && line.w < 520);
         const c = lineRGB(line.w);
         const zone = hot ? zones.oxygen : zones.hydrogen;
@@ -896,5 +900,5 @@ export function zonePalette(lines) {
         return zone.map((v) => (v / m) * (sum / peak));
     };
     const oxygen = scale(zones.oxygen, sumO).map((v, i) => v * (1 - OXYGEN_PALING) + OXYGEN_AS_PHOTOGRAPHED[i] * (sumO / peak) * OXYGEN_PALING);
-    return { hydrogen: scale(zones.hydrogen, sumH), oxygen, excitation: sumO / Math.max(sumH, 1e-6) };
+    return { hydrogen: scale(zones.hydrogen, sumH), oxygen, excitation: sumO / Math.max(sumH, 1e-6), nitrogen: nitrogen / Math.max(alpha, 1e-6) };
 }

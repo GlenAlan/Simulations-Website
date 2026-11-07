@@ -116,7 +116,7 @@ export function createSupernovaeLayer(engine, app) {
         );
         // A Type II can be anything from thin, broken arcs to a web of filaments right across it
         const F = new THREE.Vector4(
-            isIa ? rng.range(0.01, 0.04) : rng.chance(0.3) ? rng.range(0.3, 0.6) : rng.range(0.05, 0.18),
+            isIa ? rng.range(0.01, 0.04) : rng.chance(0.3) ? rng.range(0.2, 0.42) : rng.range(0.05, 0.16),
             isIa ? rng.range(0.09, 0.14) : rng.range(0.14, 0.30),
             isIa ? rng.range(0.15, 0.4) : rng.range(0.05, 0.25),
             isIa ? 0 : rng.chance(0.25) ? rng.range(1.0, 2.0) : 0
@@ -148,7 +148,7 @@ export function createSupernovaeLayer(engine, app) {
         // a camera records them, paler than the pure colours of the lines.
         const filament = isIa
             ? [hydrogen[0] * 0.80 + balmerBlue[0] * 0.25, hydrogen[1] * 0.80 + 0.26, hydrogen[2] * 0.80 + balmerBlue[2] * 0.30]
-            : [hydrogen[0] * 0.50 + nitrogenSulphur[0] * 0.50, 0.22 + rng.range(0, 0.08), 0.14];
+            : [hydrogen[0] * 0.50 + nitrogenSulphur[0] * 0.50, 0.18 + rng.range(0, 0.08), 0.17];
         aFilCol.set(filament, i * 3);
         stage.lateSheet.push(isIa ? [0.55, 0.72, 1.0] : [oxygen[0] * 0.5 + 0.34, oxygen[1] * 0.45 + 0.27, oxygen[2] * 0.5 + 0.42]);
         const pointShare = writeStage(stage, i, sn, sn.phase0_days);
@@ -278,7 +278,7 @@ export function createSupernovaeLayer(engine, app) {
                 float age = vShape.y;
 
                 // A young shell is bright and smooth; as it sweeps up gas it fades into threads
-                vec3 col = (vSheetCol * sheet * (1.15 - 0.85 * age) * 2.5 + vFilCol * fil * (0.25 + 1.5 * age) * 1.7) * vSmall * vShell.z * uBandW[2];
+                vec3 col = (vSheetCol * sheet * (1.15 - 0.85 * age) * 2.5 + vFilCol * fil * (0.25 + 1.5 * age) * 1.35) * vSmall * vShell.z * uBandW[2];
                 col += ramp(uBandTint[0], sync * 2.9 * vShell.x) * uBandW[0];
                 col += ramp(uBandTint[1], (sheet * 0.9 + hot * 0.25 + fil * 0.6) * 1.8 * vShell.y) * uBandW[1];
                 col += ramp(uBandTint[3], (sheet * 1.2 + fil * 1.1) * 1.5 * vShell.w) * uBandW[3];

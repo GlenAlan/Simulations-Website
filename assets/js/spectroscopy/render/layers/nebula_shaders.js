@@ -251,14 +251,18 @@ float laneField(vec2 p) {
 // stars are eating away, sampled almost only by angle around the star, so that what is left of it stands in columns
 // pointing back at them.
 float dustFront(vec2 p, vec2 pu, float coarse, float fine) {
-    float m = laneField(p) * 1.15 - 0.60 + (coarse - 0.5) * 1.1 + fine * 1.05;
+    float m = laneField(p) * 1.0 - 0.60 + (coarse - 0.5) * 1.1 + fine * 1.05;
     if (uD.w > 0.0) {
-        vec2 rel = pu - uStar[0].xy;
+        // Through the same warp as the gas, so that the columns only roughly point back at the stars, and short: a noise
+        // that changes little along a column would run it straight across the whole nebula
+        vec2 rel = p - uStar[0].xy;
         float r = length(rel) + 1e-4;
         vec2 dir = rel / r;
         float side = smoothstep(0.05, 0.85, dot(dir, uD.xy));
-        float fingers = noiseAt(vec3(dir * 0.62, r * 0.30) + uOff).r;
-        float wall = min(0.5, (r - uD.z - (fingers - 0.5) * 0.95) * 2.6);
+        float fingers = noiseAt(vec3(dir * 0.62, r * 0.85) + uOff).r;
+        // Kept off the stars themselves, smoothly, where every column would come to the same point
+        float front = uD.z - (fingers - 0.5) * 0.7;
+        float wall = min(0.5, (r - sqrt(front * front + 0.029)) * 2.6);
         m = max(m, (wall + (coarse - 0.5) * 0.7 + fine * 0.9) * side * uD.w);
     }
     return m;
@@ -305,7 +309,6 @@ void main() {
         // Falls away steeply from the stars, so that only a small heart is near white and most of the gas is red
         float lit = U / (U + 13.0);
         lit *= sqrt(lit);
-        float heart = sat(U * 0.022);
 
         // A wind-blown cavity around the brightest star, with a compressed wall
         float wall = 1.0;
@@ -315,9 +318,10 @@ void main() {
             wall = mix(0.10, 1.0, smoothstep(uB.x * 0.58, uB.x * 1.02, r0)) * (1.0 + 1.2 * exp(-wd * wd));
         }
 
-        float g = em * wall * (0.50 + 1.1 * sheet) * (0.09 + lit) * (1.0 + 0.7 * heart);
+        float g = em * wall * (0.50 + 1.1 * sheet) * (0.09 + lit);
         // Close to the stars oxygen is ionised twice and adds its teal to the hydrogen's rose. Together they read pale.
-        float zone = smoothstep(0.25, 1.0, U * uB.y);
+        // The gas's own clumps make the zone's edge irregular: otherwise it would be a perfect circle round the star
+        float zone = smoothstep(0.25, 1.0, U * uB.y * (0.35 + 1.3 * n));
         La += T * g * ds;
         Lo += T * g * zone * ds;
         // Dust in the gas: globules, which hide what is behind them, and glow in the infrared with whatever warms them
@@ -341,7 +345,7 @@ void main() {
     thread *= thread;
     thread *= thread;
     La *= mottle * (1.0 + 1.3 * thread);
-    Lo *= mottle * (1.0 + 0.8 * thread);
+    Lo *= mottle * (1.0 + 0.8 * thread) * exp(grain2 * 2.2);
     Ld *= 0.72 + 0.28 * mottle;
 
     // Dust in front. Its column density is log-normal too: no edge, just dust that thickens and frays at every scale
@@ -349,7 +353,7 @@ void main() {
     float m = dustFront(xw, xy, coarse, grain2);
     // It belongs to the cloud, whose lumps give it an irregular edge. Without this it would dim a disc of the sky
     float within = smoothstep(0.03, 0.55, 1.0 - exp(-envelope(vec3(xw, 0.0)) * 1.6));
-    float tauF = uA.w * 0.24 * exp(m * 3.0) * within;
+    float tauF = uA.w * (0.24 * exp(m * 3.0) + 0.28) * within;
     float Tf = exp(-tauF);
 
     // Where the dust's surface faces the star it is being ionised: a bright rim, the sharpest thing in the picture
@@ -363,12 +367,16 @@ void main() {
 
     float seen = uC.w + (1.0 - uC.w) * Tf;
     La = La * seen + rimLit;
-    Lo = Lo * seen + rimLit * smoothstep(0.25, 1.0, U0 * uB.y) * 0.6;
+    Lo = Lo * seen;
     // In the infrared the lanes that block visible light are the brightest thing there
     Ld += (1.0 - Tf) * 0.55;
 
     float v = smoothstep(1.02, 0.72, length(xy + flow.xy * 0.35));
-    gl_FragColor = packed((1.0 - exp(-La * uC.x)) * v, (1.0 - exp(-Lo * uC.y)) * v, (1.0 - exp(-Ld * uC.z)) * v, (1.0 - T * Tf) * v);
+    // A slow shoulder with no ceiling in sight, so that the brightest gas keeps its filaments, and the sprite can read back
+    // the true ratio of oxygen to hydrogen light, which is what decides the colour of a nebula's heart
+    float X = La * uC.x;
+    float Y = Lo * uC.y;
+    gl_FragColor = packed(X / (1.0 + X) * v, Y / (1.0 + Y) * v, (1.0 - exp(-Ld * uC.z)) * v, (1.0 - T * Tf) * v);
 }`;
 
 // Dark clouds: dust in front of whatever is behind them. Off the bright part of the band there is little to hide, so a
@@ -390,10 +398,6 @@ float envelope(vec2 p) {
     return e;
 }
 
-float dustField(vec2 p, float coarse, float fine) {
-    return (1.0 - exp(-envelope(p) * 1.5)) * 1.08 - 0.56 + (coarse - 0.5) * uA.y + fine * uA.z;
-}
-
 void main() {
     vec2 xy = uRect.xy + uRect.zw * (vUv * 2.0 - 1.0);
     vec3 flow = noiseAt(vec3(xy * 0.21, 0.31) + uOff).rgb - 0.5;
@@ -401,23 +405,31 @@ void main() {
     vec2 xw = xy + (flow.xy + flow2.xy * 0.5) * uA.x;
 
     float coarse = noiseAt(vec3(xw * 0.66, 0.13) + uOff.yzx).g;
+    float middling = noiseAt(vec3(xw * 1.45 + flow2.xy * 0.4, 0.29) + uOff.xzy).r;
     // Only half the flow reaches the finest detail, or it would all be combed the same way like hair
     float fine = detail(vec3((xy + (xw - xy) * 0.45) * 1.9, 0.71) + uOff.zyx);
-    float d = dustField(xw, coarse, fine);
-    // Fine threads reaching out from the cloud
+    float env = envelope(xw);
+    // The column density of dust is log-normal. It varies far more within a cloud than the cloud's own outline does, so
+    // the sky glows through the thin parts, with only the densest knots near black, and there is no edge anywhere.
+    float body = 1.0 - exp(-env * 1.5);
+    float density = exp((coarse - 0.5) * uA.y * 2.8 + (middling - 0.5) * 3.4 + fine * uA.z * 1.6);
+    // A thin veil and fine threads go on far beyond the lumps: env's fourth root is a lump twice as wide
+    float wide = smoothstep(0.05, 0.62, sqrt(sqrt(env)));
     float wn = noiseAt(vec3(xw * 1.15 + flow2.xy * 0.6 + fine * 0.05, 0.57) + uOff).b;
+    float wn2 = noiseAt(vec3(xw * 2.3 - flow2.xy * 0.5 + fine * 0.09, 0.83) + uOff.yzx).r;
     float wisp = ridge(wn);
     wisp *= wisp;
     wisp *= wisp;
-    wisp *= wisp;
-    // The column density of dust is log-normal: no edge anywhere, only dust that thickens and frays at every scale
-    float tau = 0.62 * exp(d * 2.5) * (1.0 + wisp * uB.w);
+    float wisp2 = ridge(wn2);
+    wisp2 *= wisp2;
+    wisp2 *= wisp2;
+    float tau = 0.72 * body * body * density + wide * (0.07 * density + (wisp + 0.6 * wisp2) * 0.26 * uB.w * smoothstep(0.32, 0.62, coarse));
     float T = exp(-tau * uA.w);
 
     // Thin dust shows by the light it scatters; thick dust swallows it, and lets out only enough to show its structure
     float scatter = tau * exp(-tau * 1.1) + 0.05 * (1.0 - exp(-tau));
     float thin = min(scatter, 1.0) * (0.25 + 1.5 * coarse) * exp(fine * 1.3);
-    float cold = (1.0 - exp(-tau * 0.24)) * (0.4 + 0.6 * exp(fine * 1.3));
+    float cold = (1.0 - exp(-tau * 0.5)) * (0.4 + 0.6 * exp(fine * 1.3));
     // Behind it all, a soft patch of star clouds, gone long before the sprite's edge. The dust hides it.
     vec2 hz = xw + uB.xy * 0.16;
     float clouds = noiseAt(vec3(xw * 0.31, 0.47) + uOff.zxy).r;
@@ -535,7 +547,7 @@ void main() {
         } else {
             // An old shell ploughing into the gas around it: a thick bright crescent on one side, almost nothing on the other
             float towards = smoothstep(-0.55, 0.85, dir.x * 0.8 + dir.y * 0.6);
-            float shell = gaussAbout(rw, R0 * 1.12, 0.07 + 0.09 * towards);
+            float shell = gaussAbout(rw, R0 * 1.12, 0.045 + 0.06 * towards);
             ha += shell * towards * towards * knots * 1.05;
             o3 += gaussAbout(rw, R0 * 0.98, 0.06) * towards * knots * 0.26;
             o3 += exp(-pow(rw / (R0 * 1.0), 4.0)) * 0.016;
@@ -595,7 +607,9 @@ float outline(vec3 dir) {
     float lobes = (noiseAt(dir * 0.17 + uOff.zxy).r - 0.5) * 2.0 * uL.x;
     float blow = max(0.0, dot(dir.xy, uL.zw));
     blow *= blow;
-    return lobes + uL.y * blow * blow;
+    float o = lobes + uL.y * blow * blow;
+    // Eased towards a limit, with no flat side where it is reached, so that the shell stays inside its image
+    return o / (1.0 + max(o, 0.0) * 0.9);
 }
 
 void main() {
@@ -657,7 +671,8 @@ void main() {
     float u = rho / (Rs * (1.0 + outline(vec3(dir2, 0.0))));
     vec3 w2 = noiseAt(vec3(xy * 0.55, 0.21) + uOff).rgb - 0.5;
     float fineW = detail(vec3(xy * 2.4, 0.33) + uOff.yzx);
-    float uw = u + w2.x * 0.17 + w2.y * 0.06 + fineW * 0.014;
+    vec3 w3 = noiseAt(vec3(xy * 1.7, 0.47) + uOff.yzx).rgb - 0.5;
+    float uw = u + w2.x * 0.17 + w2.y * 0.06 + w3.x * 0.06 + fineW * 0.022;
 
     float s1 = ridge(noiseAt(vec3(dir2 * 0.20 + w2.xy * 0.05, uw * 2.4) + uOff).r);
     float s2 = ridge(noiseAt(vec3(dir2 * 0.38 - w2.yz * 0.06, uw * 3.8) + uOff.yzx).g);
@@ -666,7 +681,7 @@ void main() {
     s2 = pow(s2, 24.0);
     s3 = pow(s3, 26.0);
     // Threads come and go along their length, and each is a bundle of finer ones
-    float strand = smoothstep(0.30, 0.62, noiseAt(vec3(xy * 1.7, 0.61) + uOff.zxy).b);
+    float strand = smoothstep(0.34, 0.62, noiseAt(vec3(xy * 1.7, 0.61) + uOff.zxy).b);
     float threads = (s1 + 0.7 * s2) * (0.25 + 0.75 * strand) * (1.0 + 2.2 * max(0.0, fineW)) + 0.55 * s3 * strand;
 
     float inward = u < 1.0 ? exp(-sq((1.0 - u) / uF.y)) : exp(-sq((u - 1.0) / 0.028));
@@ -678,7 +693,8 @@ void main() {
     // A fainter web of threads across the middle, seen through the shell's near and far sides
     float web = pow(ridge(noiseAt(vec3(xy * 0.95 + w2.xy * 0.45 + fineW * 0.03, 0.39) + uOff).g), 20.0);
     web += 0.6 * pow(ridge(noiseAt(vec3(xy * 2.1 - w2.yz * 0.4 - fineW * 0.05, 0.83) + uOff.yzx).b), 24.0);
-    fil += web * (0.3 + 0.7 * strand) * (1.0 + 2.0 * max(0.0, fineW)) * smoothstep(1.03, 0.92, u) * uF.x;
+    // Most of it near the limb too: the middle of a shell is what you see through
+    fil += web * (0.3 + 0.7 * strand) * (1.0 + 2.0 * max(0.0, fineW)) * smoothstep(1.03, 0.92, u) * mix(0.22, 1.0, smoothstep(0.3, 0.95, u)) * uF.x;
 
     // Jets along the spin axis, in those that have them
     if (uF.w > 0.0) {
@@ -689,9 +705,9 @@ void main() {
     }
 
     // The shock itself: the thinnest strands of all, right at the outside edge, in bundles that run along the limb
-    float s4 = pow(ridge(noiseAt(vec3(dir2 * 0.28 + w2.xz * 0.04, uw * 5.2) + uOff.zxy).b), 9.0);
-    float s5 = pow(ridge(noiseAt(vec3(dir2 * 0.5 - w2.xy * 0.03, uw * 11.0) + uOff.xzy).r), 12.0);
-    float shock = (s4 + 0.7 * s5) * (0.4 + 0.6 * strand) * (1.0 + 2.0 * max(0.0, fineW)) * exp(-sq((u - 0.975) / 0.06)) * arcs * limbBar;
+    float s4 = pow(ridge(noiseAt(vec3(dir2 * 0.55 + w2.xz * 0.04 + w3.xy * 0.05, uw * 5.2) + uOff.zxy).b), 9.0);
+    float s5 = pow(ridge(noiseAt(vec3(dir2 * 0.95 - w2.xy * 0.03 + w3.yz * 0.07, uw * 11.0) + uOff.xzy).r), 12.0);
+    float shock = (s4 + 0.7 * s5) * (0.15 + 0.85 * strand) * (1.0 + 2.0 * max(0.0, fineW)) * exp(-sq((u - 0.975) / 0.06)) * arcs * limbBar;
 
     // The filled look of the ray's own shell belongs to a young remnant: older ones show only its limb in visible light
     float hollow = mix(0.12, 1.0, smoothstep(0.66, 0.98, u)) * smoothstep(1.12, 1.0, u) * 0.34 * (0.35 + 1.3 * knots) * mix(0.4, 1.0, arcs);
