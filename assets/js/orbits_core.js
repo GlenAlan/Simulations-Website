@@ -1144,6 +1144,7 @@
             held: null,                   // { offX, offY } while dragged: position relative to the frame origin
             trail: null,                  // samples (allocated at the first one: see recordSample)
             trailStart: sampleCount,      // first valid sample
+            layerPen: -1,                 // the newest sample of its trail on the swarm's canvases, -1 with none there
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
@@ -8217,7 +8218,7 @@
     const swarmTrails = () => !scene.swarm || settings.trailIndex > scene.trail;
     function drawTrails(C) {
         const years = trailYears();
-        if (years <= 0) return;
+        if (years <= 0) { layerAfterFrame(false); return; }
         const first = sampleAtTime(simTime - trailDir * years);
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L && !L.trail) return;
@@ -8230,7 +8231,7 @@
         const turned = turnedTrails(first);
         const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
         const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true };
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true, g: ctx };
         for (const g of minorGroups.values()) g.length = 0;
         for (const g of pieceGroups.values()) g.length = 0;
         for (const g of gasGroups.values()) g.length = 0;
@@ -8275,8 +8276,9 @@
         trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
         if (!low && swarmTrails()) {
             ctx.lineJoin = 'miter';
-            trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
+            if (!swarmFromLayer(tr, first, oFirst, C, lw)) trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
         }
+        layerAfterFrame(low);
         ctx.globalAlpha = 1;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -8313,6 +8315,220 @@
         }
     }
 
+    // ---- The swarm's trails, kept on canvases ----
+    // Stroking all the trails of a crowded scene again each frame is what its drawing spends most on, yet
+    // only their new ends have changed: a sample stays at one place on the screen until the view moves
+    // (in a view from a body too, as each is drawn from where that body was then). So while the view holds
+    // still they are kept drawn on a few canvases the size of the view, a block of samples on each. Each
+    // frame only the new stretches go on, and the canvases are laid over the frame, fainter the older what
+    // is on them. Fading by how they are laid leaves nothing behind (fading a canvas in place, in 8 bits,
+    // leaves a smear that never goes), and a canvas is wiped when its block has left the trail. Each body
+    // starts its blocks at a sample of its own, so a block's end shows as no edge across a dense band of
+    // trails. Until a body has come a little way its newest stretch is drawn on the frame itself.
+    // They are all drawn afresh from the samples when the view or the trails change, and as trailGroups
+    // draws them, on the frame, while the view is on the move, for a few bodies or short trails, in a
+    // turned view (where the samples are on the move too), while a backward run takes samples away, or if
+    // time is running so fast that the trails are all new each frame.
+    const LAYER_TILES = 4, LAYER_SPANS = 3;   // canvases, and blocks in a whole trail (the other is the one just starting)
+    const LAYER_MIN = 40000;              // bodies x samples of trail: with fewer, laying the canvases over costs more than it saves
+    const LAYER_ALPHA = 0.56;             // the newest block (as the newest shade of trailGroups)
+    const LAYER_PEN_PX = 6, LAYER_PEN_SAMPLES = 16;   // a body's new stretch goes on the canvases when this long
+    const LAYER_WAIT = 60;                // frames at least between redrawing them all because bodies have gone
+    // (frames of trails drawn the old way before the canvases again, after drawing was too slow for any: on
+    // the edge, drawing them all afresh again and again would only make it slower)
+    const LAYER_SLOW = 120;
+    const swarmLayer = {
+        off: false, tiles: [], built: false, stale: false, asked: false, T: 0, span: 1, k: 0, sig: 0, wait: 0, slow: 0, reach: 0, builds: 0,
+        w: 0, h: 0, dpr: 0, scale: 0, offX: 0, offY: 0, dark: false, lw: 0, oT: null, list: null, epoch: 0, dir: 0, sel: null, pop: null, frame: null
+    };
+
+    // (their picture can go while the page is out of sight, and with the graphics context)
+    const layerLost = () => { swarmLayer.built = false; };
+    document.addEventListener('visibilitychange', layerLost);
+    const layerOffset = (b, span) => Math.floor(((b.id * 0.618034) % 1) * span);
+
+    function layerSameView(tr, C, lw) {
+        const q = swarmLayer, w = canvas.width, h = canvas.height;
+        if (q.w === w && q.h === h && q.dpr === dpr && q.scale === scale && q.offX === tr.offX && q.offY === tr.offY && q.dark === C.dark && q.lw === lw
+            && q.oT === tr.oT && q.list === bodies && q.epoch === hist.epoch && q.dir === trailDir && q.sel === selectedId && q.pop === popBody && q.frame === frameId) return true;
+        q.w = w; q.h = h; q.dpr = dpr; q.scale = scale; q.offX = tr.offX; q.offY = tr.offY; q.dark = C.dark; q.lw = lw;
+        q.oT = tr.oT; q.list = bodies; q.epoch = hist.epoch; q.dir = trailDir; q.sel = selectedId; q.pop = popBody; q.frame = frameId;
+        return false;
+    }
+
+    // The canvases go when not in use (a phone's memory: four the size of the view)
+    function layerFree() {
+        for (const t of swarmLayer.tiles) t.c.width = t.c.height = 0;
+        swarmLayer.tiles.length = 0;
+        swarmLayer.built = false;
+        swarmLayer.wait = 0;
+    }
+
+    // After the frame's trails: if the swarm's weren't asked for, for whatever reason, the canvases aren't needed
+    function layerAfterFrame(low) {
+        const q = swarmLayer;
+        if (low) q.slow = LAYER_SLOW;
+        if (!q.asked && q.tiles.length) layerFree();
+        q.asked = false;
+    }
+
+    function layerClear(t, lw) {
+        const q = swarmLayer;
+        if (t.c.width !== q.w || t.c.height !== q.h) { t.c.width = q.w; t.c.height = q.h; }
+        t.g.setTransform(1, 0, 0, 1, 0, 0);
+        t.g.clearRect(0, 0, q.w, q.h);
+        t.g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        t.g.lineWidth = Math.max(1, 0.6 * lw);
+        t.g.lineCap = 'butt';
+        t.g.lineJoin = 'miter';
+    }
+
+    // All of the kept trails, from their samples, a block on each canvas (as trailGroups draws them)
+    function layerBuild(tr, C, T, oFirst, lw, sig) {
+        const q = swarmLayer, N = LAYER_TILES;
+        while (q.tiles.length < N) {
+            const c = document.createElement('canvas'), g = c.getContext('2d');
+            if (!g) return false;
+            c.addEventListener('contextrestored', layerLost);
+            q.tiles.push({ c, g, block: -1 });
+        }
+        q.T = T; q.span = Math.ceil(T / LAYER_SPANS); q.sig = sig; q.wait = LAYER_WAIT; q.k = sampleCount; q.built = true; q.stale = false; q.builds++;
+        for (const t of q.tiles) { layerClear(t, lw); t.block = -1; }
+        const last = Math.floor((sampleCount - 1) / q.span) + 1, reach = Math.max(1, T * perf.quality);
+        q.reach = Infinity;
+        for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
+            if (sampleCount - blk * q.span >= reach) { q.reach = reach; continue; }   // (only what will show: see layerCompose)
+            const t = q.tiles[blk % N];
+            t.block = blk;
+            tr.g = t.g;
+            for (const [color, g] of minorGroups) {
+                if (!g.length) continue;
+                t.g.strokeStyle = bodyStroke(color, C.dark);
+                t.g.beginPath();
+                for (const b of g) {
+                    const off = layerOffset(b, q.span), ks = Math.max(blk * q.span - off, trailFirst(b), oFirst), ke = Math.min(sampleCount, (blk + 1) * q.span - off + 1);
+                    if (ks >= ke - 1) continue;
+                    tr.T = b.trail;
+                    tr.stride = 1;
+                    traceTrail(tr, ks, ke, 2 / perf.quality);
+                }
+                t.g.stroke();
+            }
+        }
+        tr.g = ctx;
+        for (const g of minorGroups.values()) for (const b of g) b.layerPen = trailFirst(b) < sampleCount - 1 ? sampleCount - 1 : -1;
+        return true;
+    }
+
+    // Each body's new stretch, once it has come far enough, onto the newest canvas
+    function layerAdd(tr, C, oFirst, lw) {
+        const q = swarmLayer, now = sampleCount - 1;
+        if (q.k === sampleCount) return;
+        const m = Math.floor(now / q.span), t0 = q.tiles[m % LAYER_TILES], t1 = q.tiles[(m + 1) % LAYER_TILES];
+        if (t0.block !== m) { layerClear(t0, lw); t0.block = m; }
+        if (t1.block !== m + 1) { layerClear(t1, lw); t1.block = m + 1; }
+        q.k = sampleCount;
+        tr.capO = tr.oT.length >> 1;
+        for (const [color, g] of minorGroups) {
+            if (!g.length) continue;
+            let begun0 = false, begun1 = false;
+            for (const b of g) {
+                const p = Math.max(b.layerPen, trailFirst(b), oFirst);
+                if (p >= now) continue;
+                tr.T = b.trail;
+                tr.capT = b.trail.length >> 1;
+                trailAt(tr, now);
+                const bx = TP[0], by = TP[1];
+                trailAt(tr, p);
+                const ax = TP[0], ay = TP[1];
+                if (Math.abs(bx - ax) + Math.abs(by - ay) < LAYER_PEN_PX && now - p < LAYER_PEN_SAMPLES) continue;
+                b.layerPen = now;
+                if (outcode(ax, ay) & outcode(bx, by)) continue;
+                const later = Math.floor((now + layerOffset(b, q.span)) / q.span) > m, G = later ? t1.g : t0.g;
+                if (later ? !begun1 : !begun0) {
+                    G.strokeStyle = bodyStroke(color, C.dark);
+                    G.beginPath();
+                    if (later) begun1 = true; else begun0 = true;
+                }
+                G.moveTo(ax, ay);
+                for (let k = p + 1; k < now; k++) { trailAt(tr, k); G.lineTo(TP[0], TP[1]); }
+                G.lineTo(bx, by);
+            }
+            if (begun0) t0.g.stroke();
+            if (begun1) t1.g.stroke();
+        }
+    }
+
+    function layerCompose(tr, C, oFirst) {
+        const q = swarmLayer, N = LAYER_TILES, span = q.span, last = Math.floor((sampleCount - 1) / span) + 1, reach = Math.max(1, q.T * perf.quality);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        for (let blk = Math.max(0, last - N + 1); blk <= last; blk++) {
+            const t = q.tiles[blk % N];
+            if (t.block !== blk) continue;
+            const u = Math.max(0, sampleCount - blk * span) / reach;   // (how old what's on it is, on average over the bodies)
+            if (u >= 1) continue;
+            ctx.globalAlpha = Math.min(LAYER_ALPHA, 0.74 - 0.45 * u) * Math.min(1, (1 - u) / 0.15);   // (as bright overall as trailGroups's shades, and gone by the end)
+            ctx.drawImage(t.c, 0, 0);
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // (the ends that aren't on the canvases yet, on up to each body as it is drawn now)
+        ctx.globalAlpha = LAYER_ALPHA;
+        tr.capO = tr.oT.length >> 1;
+        for (const [color, g] of minorGroups) {
+            if (!g.length) continue;
+            ctx.strokeStyle = bodyStroke(color, C.dark);
+            ctx.beginPath();
+            for (const b of g) {
+                const p = Math.max(b.layerPen, trailFirst(b), oFirst);
+                if (p >= sampleCount) continue;
+                tr.T = b.trail;
+                tr.capT = b.trail.length >> 1;
+                trailAt(tr, p);
+                const ax = TP[0], ay = TP[1], bx = sx(b.dx), by = sy(b.dy);
+                if (outcode(ax, ay) & outcode(bx, by)) continue;
+                ctx.moveTo(ax, ay);
+                for (let k = p + 1; k < sampleCount; k++) { trailAt(tr, k); ctx.lineTo(TP[0], TP[1]); }
+                ctx.lineTo(bx, by);
+            }
+            ctx.stroke();
+        }
+    }
+
+    // The swarm's trails from the canvases. False if they aren't to be drawn that way this frame.
+    function swarmFromLayer(tr, first, oFirst, C, lw) {
+        const q = swarmLayer;
+        q.asked = true;
+        let n = 0, sig = 0;
+        for (const g of minorGroups.values()) {
+            n += g.length;
+            for (const b of g) {
+                sig += b.id;
+                // (a trail cut short that has some of it on the canvases. One kept empty has none there, and is no change: see skyFollow)
+                if (b.layerPen >= 0 && b.trailStart > b.layerPen) { b.layerPen = -1; q.stale = true; }
+            }
+        }
+        const count = sampleCount - Math.max(first, oFirst, sampleCount - SWARM_TRAIL + 1);
+        const T = Math.min(SWARM_TRAIL - 1, Math.max(Math.ceil(trailYears() / sampleDt), count));
+        if (q.off || n * T < LAYER_MIN || tr.turn || freeze || trailDir !== timeDir) { if (q.tiles.length) layerFree(); return false; }
+        if (q.slow > 0) { q.slow--; return false; }
+        for (const t of q.tiles) if (t.g.isContextLost && t.g.isContextLost()) { q.built = false; return false; }
+        // (the view on the move: not worth keeping them until it stops)
+        if (!layerSameView(tr, C, lw)) { q.built = false; q.wait = 0; return false; }
+        if (count < 1) return false;
+        if (q.built && (T > 1.25 * q.T || 1.5 * T < q.T || sampleCount < q.k)) q.built = false;
+        if (q.built && sampleCount - q.k >= q.span) { q.built = false; q.wait = LAYER_WAIT; }
+        if (q.T * perf.quality > 1.5 * q.reach) q.stale = true;   // (drawing is quicker now: they reach further back than was drawn)
+        if (!q.built && q.wait > 0) { q.wait--; return false; }
+        if (!q.built || ((sig !== q.sig || q.stale) && (paused || q.wait <= 0))) {
+            if (!layerBuild(tr, C, T, oFirst, lw, sig)) { q.off = true; return false; }
+        } else {
+            layerAdd(tr, C, oFirst, lw);
+            q.wait--;
+        }
+        layerCompose(tr, C, oFirst);
+        return true;
+    }
+
     // Add samples ks..ke-1 of trail tr.T (relative to the origin trail tr.oT) to the current path,
     // leaving out stretches wholly off one side of the canvas. Painting a stroke takes far longer than
     // anything else in a frame and goes by its corners, so a run of samples goes as one straight line
@@ -8333,7 +8549,7 @@
         let a = ks, ax = TP[0], ay = TP[1];
         tr.out = outcode(ax, ay);
         tr.pen = true;
-        ctx.moveTo(ax, ay);
+        tr.g.moveTo(ax, ay);
         while (a < last) {
             let b = Math.min(last, a - a % s0 + s0);
             trailAt(tr, b);
@@ -8361,7 +8577,7 @@
             trailLine(tr, ax, ay, bx, by);
             a = b; ax = bx; ay = by;
         }
-        if (!tr.pen) ctx.moveTo(ax, ay);
+        if (!tr.pen) tr.g.moveTo(ax, ay);
     }
 
     // Where sample k of the trail is drawn, into TP (turned, in a turned view: see turnedTrails)
@@ -8384,8 +8600,8 @@
         if (o & tr.out) {
             tr.pen = false;
         } else {
-            if (!tr.pen) { ctx.moveTo(ax, ay); tr.pen = true; }
-            ctx.lineTo(x, y);
+            if (!tr.pen) { tr.g.moveTo(ax, ay); tr.pen = true; }
+            tr.g.lineTo(x, y);
         }
         tr.out = o;
     }
@@ -19079,6 +19295,11 @@
         // (world positions: a rotating frame turns them, see turnPoint)
         toScreen(x, y) { updateDrawnPositions(); const d = turnPoint(x, y); return { x: sx(d.x), y: sy(d.y) }; },
         toWorld(px, py) { updateDrawnPositions(); return unturnPoint(wx(px), wy(py)); },
+        // The swarm's trails on canvases (see "kept on canvases"), for tests: true turns that off
+        trailLayer(off) {
+            if (off !== undefined) swarmLayer.off = !!off;
+            return { off: swarmLayer.off, built: swarmLayer.built, tiles: swarmLayer.tiles.length, T: swarmLayer.T, span: swarmLayer.span, k: swarmLayer.k, builds: swarmLayer.builds, samples: sampleCount };
+        },
         fit: fitAll,
         fitBox(box) { fitBox(box, false); },
         setCleanRender(v) { cleanRender = !!v; },
