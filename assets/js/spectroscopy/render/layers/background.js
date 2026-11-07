@@ -1,6 +1,7 @@
-// The sky behind everything in visible light: a procedural Milky Way baked once into a texture, a dense field of
-// faint decorative stars, a faint airglow low down, and a dark hilly horizon. The bands track draws the other
-// bands' glow in band_sky.js, so all of this except the horizon fades out with uBandW[2].
+// The sky behind everything in visible light: a procedural Milky Way baked once into a texture, a faint airglow low
+// down, and a dark hilly horizon, with the Background stars layer adding a dense field of faint decorative stars. The
+// bands track draws the other bands' glow in band_sky.js, so all of this except the horizon fades out with uBandW[2].
+// All of it is the dome, at depth 1 (core/depth.js).
 //
 // Only the upper dome is ever seen, so the bake goes in one square texture using a Lambert equal-area map around
 // the zenith (no seams, and none of a cube map's wasted faces). It costs about one texture read a frame.
@@ -11,6 +12,7 @@ import { Rng } from '../../core/rng.js';
 import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
 import { GALACTIC_CENTRE_AZ } from '../../core/bands.js';
 import { blackBodyRGB } from '../../core/phys.js';
+import { parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 
 const RAD = Math.PI / 180;
@@ -22,6 +24,8 @@ const DETAIL_SIZE = 512;
 const TILE_PX = 256;                // The bake is spread over frames, one tile of about this size at a time
 const SKY_GAIN = 1.6;               // The texture stores sqrt(colour / SKY_GAIN)
 const MILKY_WAY_FADE_S = 0.8;       // How long the Milky Way takes to come up once its first bake is there
+const STARS_FADE_S = 0.4;           // How long the Background stars layer takes to come and go
+const SMOOTH_DETAIL_BIAS = 2;       // Mip levels to skip in the detail texture without the stars: soft clouds, not grain
 
 const FIELD_STARS = { low: 12000, medium: 34000, high: 64000 };
 const FIELD_STARS_MAX = FIELD_STARS.high;
@@ -58,6 +62,7 @@ const BAKE_FRAGMENT = /* glsl */`
     uniform vec3 uPole;
     uniform vec3 uCentre;
     uniform vec3 uEast;
+    uniform float uGrain;           // 1 with the Background stars layer. Without it the band is a smooth glow.
     varying vec2 vUv;
 
     vec3 gradient(ivec3 p) {
@@ -136,9 +141,9 @@ const BAKE_FRAGMENT = /* glsl */`
         // Star clouds, large and small, down to a grain about the size of a texel: stars too faint to see singly
         float big = fbm(q * 3.1, 5);
         float middling = fbm(q * 9.5, 5);
-        float fine = fbm(g * 44.0, 4);
         float clouds = smoothstep(-0.34, 0.42, big + middling * 0.45);
-        float grain = clamp(0.92 + 1.05 * fine, 0.35, 1.7);
+        float grain = 0.92;
+        if (uGrain > 0.5) grain = clamp(0.92 + 1.05 * fbm(g * 44.0, 4), 0.35, 1.7);
 
         // The bulge: a squashed, warm swelling, a little peanut-shaped
         float bulgeR = length(vec2(l / 0.36, bw / (0.135 + 0.03 * cos(l * 7.0))));
@@ -236,6 +241,7 @@ const SKY_FRAGMENT = /* glsl */`
     uniform vec3 uDeepFade;
     uniform vec3 uDetailFade;       // Coarse detail, fine detail, and how much glow is left
     uniform float uDpr;
+    uniform float uDetailBias;
     varying vec3 vDir;
 
     // One layer of a star field too fine for points, for the view through a narrow field. Each star keeps to the
@@ -247,7 +253,7 @@ const SKY_FRAGMENT = /* glsl */`
         vec3 r = vec3(h >> 8u) / 16777216.0;
         if (r.z > keep) return vec3(0.0);
         vec3 star = domeDir((fl + 0.28 + r.xy * 0.44) / cells);
-        float dist = length(d - star) * uPxPerRad;
+        float dist = length(d - star) * uPxPerRad * depthP(1.0);
         float rank = 1.0 - r.z / keep;
         float sigma = (0.62 + 0.55 * rank * rank * rank) * uDpr;
         float amp = 0.035 + 0.42 * rank * rank * rank + 2.4 * pow(rank, 8.0);
@@ -267,11 +273,11 @@ const SKY_FRAGMENT = /* glsl */`
         if (uDetailFade.x > 0.0) {
             // Mottle the glow, and fray the edges of the dust, more finely than the bake can
             float edge = 4.0 * tex.a * (1.0 - tex.a);
-            vec2 d1 = texture2D(tDetail, dome * 3.1).rg;
+            vec2 d1 = texture2D(tDetail, dome * 3.1, uDetailBias).rg;
             float mottle = mix(1.0, 0.55 + 0.9 * d1.r, uDetailFade.x);
             float fray = mix(1.0, 1.0 - edge * 0.85 * d1.g, uDetailFade.x);
             if (uDetailFade.y > 0.0) {
-                vec2 d2 = texture2D(tDetail, dome * 17.3).rg;
+                vec2 d2 = texture2D(tDetail, dome * 17.3, uDetailBias).rg;
                 mottle *= mix(1.0, 0.62 + 0.76 * d2.r, uDetailFade.y);
                 fray *= mix(1.0, 1.0 - edge * 0.7 * d2.g, uDetailFade.y);
             }
@@ -330,7 +336,8 @@ function createSkyBake(engine) {
         uniforms: {
             uPole: { value: new THREE.Vector3(...pole) },
             uCentre: { value: new THREE.Vector3(...centre) },
-            uEast: { value: new THREE.Vector3(...east) }
+            uEast: { value: new THREE.Vector3(...east) },
+            uGrain: { value: 0 }
         },
         vertexShader: bakeVertex,
         fragmentShader: BAKE_FRAGMENT
@@ -394,7 +401,7 @@ function createSkyBake(engine) {
         renderer.setRenderTarget(previous);
     }
 
-    // Reading it back doesn't wait for the GPU: resolves with the pixels, or null if the bake was restarted meanwhile
+    // Shown until the full bake is ready
     function drawDensityMap() {
         const previous = renderer.getRenderTarget();
         const target = makeTarget(DENSITY_MAP_SIZE, false);
@@ -404,9 +411,33 @@ function createSkyBake(engine) {
         if (shown) shown.dispose();
         shown = target;
         doneSize = DENSITY_MAP_SIZE;
+    }
+
+    // The band's brightness to place stars by, drawn only when there are stars to place. Reading it back doesn't wait for
+    // the GPU: resolves with the pixels.
+    function readDensity() {
+        const previous = renderer.getRenderTarget();
+        const target = makeTarget(DENSITY_MAP_SIZE, false);
+        renderer.setRenderTarget(target);
+        renderer.render(scene, camera);
+        renderer.setRenderTarget(previous);
         const pixels = new Uint8Array(DENSITY_MAP_SIZE * DENSITY_MAP_SIZE * 4);
         return renderer.readRenderTargetPixelsAsync(target, 0, 0, DENSITY_MAP_SIZE, DENSITY_MAP_SIZE, pixels)
-            .then(() => (shown === target ? pixels : null), () => null);
+            .then(() => pixels, () => null)
+            .finally(() => target.dispose());
+    }
+
+    // The band with its grain of stars too faint to see singly, or without. The picture on show stays until the new one
+    // has been baked, a tile a frame, like any other.
+    function setGrain(on) {
+        const value = on ? 1 : 0;
+        if (material.uniforms.uGrain.value === value) return;
+        material.uniforms.uGrain.value = value;
+        const size = job ? job.size : doneSize;
+        if (job) job.target.dispose();
+        job = null;
+        doneSize = 0;
+        if (size > DENSITY_MAP_SIZE) want(size);
     }
 
     function want(size) {
@@ -451,6 +482,8 @@ function createSkyBake(engine) {
         compile,
         drawDetail,
         drawDensityMap,
+        readDensity,
+        setGrain,
         want,
         step,
         restart,
@@ -581,6 +614,7 @@ function fieldStars(positions, colours, mags, seeds) {
                 gl_PointSize = vRadius * 2.0 + 1.0;
                 vColour = aColour * bright;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(1.0);
             }`,
         fragmentShader: /* glsl */`
             varying vec3 vColour;
@@ -692,7 +726,7 @@ function buildHorizon() {
         bottom: -70
     });
 
-    // Each column has three rows: just above the ridge, just below it, and the foot. vDepth is degrees below the
+    // Each column has three rows: just above the ridge, just below it, and the foot. vBelow is degrees below the
     // ridge line, whose sign the fragment shader turns into a smooth edge at any zoom without multisampling.
     const FEATHER = 1.2;
     let vertexCount = 0;
@@ -704,11 +738,11 @@ function buildHorizon() {
     });
     const positions = new Float32Array(vertexCount * 3);
     const colours = new Float32Array(vertexCount * 3);
-    const depths = new Float32Array(vertexCount);
+    const belows = new Float32Array(vertexCount);
     const indices = new Uint32Array(indexCount);
     let v = 0;
     let ix = 0;
-    const writeVertex = (az, alt, depth, colour) => {
+    const writeVertex = (az, alt, below, colour) => {
         const dir = azAltToVec3(az, alt);
         positions[v * 3] = dir[0] * SKY_RADIUS;
         positions[v * 3 + 1] = dir[1] * SKY_RADIUS;
@@ -716,7 +750,7 @@ function buildHorizon() {
         colours[v * 3] = colour[0];
         colours[v * 3 + 1] = colour[1];
         colours[v * 3 + 2] = colour[2];
-        depths[v] = depth;
+        belows[v] = below;
         v += 1;
     };
     ridges.forEach((ridge) => {
@@ -739,7 +773,7 @@ function buildHorizon() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('aColour', new THREE.BufferAttribute(colours, 3));
-    geometry.setAttribute('aDepth', new THREE.BufferAttribute(depths, 1));
+    geometry.setAttribute('aBelow', new THREE.BufferAttribute(belows, 1));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
     // Not additive: it covers the sky. It has to count as transparent to draw after everything else in the scene.
@@ -748,23 +782,24 @@ function buildHorizon() {
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             attribute vec3 aColour;
-            attribute float aDepth;
+            attribute float aBelow;
             varying vec3 vColour;
-            varying float vDepth;
+            varying float vBelow;
             void main() {
                 vColour = aColour;
-                vDepth = aDepth;
+                vBelow = aBelow;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(1.0);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
             varying vec3 vColour;
-            varying float vDepth;
+            varying float vBelow;
             void main() {
-                float edge = clamp(0.5 + vDepth / max(fwidth(vDepth), 1e-5), 0.0, 1.0);
+                float edge = clamp(0.5 + vBelow / max(fwidth(vBelow), 1e-5), 0.0, 1.0);
                 // Each ridge falls away to darker at its foot. The hills catch only the visible sky's faint airglow,
                 // and must stay darker than the blacker skies of the other bands.
-                float fall = mix(0.6, 1.0, exp(-max(vDepth, 0.0) / 1.4));
+                float fall = mix(0.6, 1.0, exp(-max(vBelow, 0.0) / 1.4));
                 float lit = mix(0.22, 1.0, uBandW[2]);
                 gl_FragColor = vec4(vColour * fall * lit * uSkyFade, edge * uSkyFade);
             }`
@@ -797,7 +832,8 @@ export function createBackgroundLayer(engine, app) {
             uDeepFade: { value: new THREE.Vector3(0, 0, 0) },
             uDetailFade: { value: new THREE.Vector3(0, 0, 1) },
             uTan: { value: new THREE.Vector2(1, 1) },
-            uDpr: { value: 1 }
+            uDpr: { value: 1 },
+            uDetailBias: { value: SMOOTH_DETAIL_BIAS }
         },
         vertexShader: /* glsl */`
             uniform vec2 uTan;
@@ -816,21 +852,41 @@ export function createBackgroundLayer(engine, app) {
     // Until the first bake the dome is a dark sky with no Milky Way in it. The bake's program can take a moment to compile.
     let bakeReady = false;
     let bakeRun = 0;
+    let starsWanted = !!app.layers.backgroundStars;
+    let starsAmount = starsWanted ? 1 : 0;
+    bake.setGrain(starsWanted);
+
+    // Nothing is placed or drawn until the Background stars layer is first turned on
+    let fieldRequested = false;
+    function requestField() {
+        if (field || fieldRequested || !bakeReady) return;
+        fieldRequested = true;
+        bake.readDensity().then((pixels) => {
+            fieldRequested = false;
+            if (pixels && !field) placer = fieldStarPlacer(pixels);
+        });
+    }
+
     function startBake() {
         const run = ++bakeRun;
         bakeReady = false;
         bake.compile().then(() => {
-            if (run !== bakeRun) return null;
+            if (run !== bakeRun) return;
             bake.drawDetail();
-            return bake.drawDensityMap();
-        }).then((pixels) => {
-            if (run !== bakeRun || !pixels) return;
+            bake.drawDensityMap();
             bakeReady = true;
             bake.want(BAKE_SIZE[app.qualityLevel]);
-            if (!field) placer = fieldStarPlacer(pixels);
+            if (starsWanted) requestField();
         });
     }
     startBake();
+
+    const unbindLayer = bus.on('layer', ({ name, on }) => {
+        if (name !== 'backgroundStars') return;
+        starsWanted = on;
+        bake.setGrain(on);
+        if (on) requestField();
+    });
 
     function applyQuality(level) {
         if (field) field.geometry.setDrawRange(0, FIELD_STARS[level]);
@@ -865,8 +921,14 @@ export function createBackgroundLayer(engine, app) {
             const visible = frame.bandW[2];
             const skyFade = material.uniforms.uSkyFade.value;
             const amount = visible * skyFade;
+            const starsGoal = starsWanted ? 1 : 0;
+            if (frame.reduceMotion) starsAmount = starsGoal;
+            else if (starsAmount !== starsGoal) {
+                const step = frame.dt / STARS_FADE_S;
+                starsAmount += Math.max(-step, Math.min(step, starsGoal - starsAmount));
+            }
             dome.visible = amount > 0.002;
-            if (field) field.points.visible = dome.visible;
+            if (field) field.points.visible = dome.visible && starsAmount > 0;
             horizon.mesh.visible = skyFade > 0.002;
             const u = material.uniforms;
             if (bake.texture()) {
@@ -879,25 +941,30 @@ export function createBackgroundLayer(engine, app) {
             if (!dome.visible) return;
             u.uVisibleAmount.value = amount;
             u.uDpr.value = frame.dpr;
-            const tanY = Math.tan(frame.fov * RAD * 0.5);
+            // The dome lags behind the camera as much as anything can: it's the screen that has to come to it
+            const parallax = parallaxFactor(1, frame.fov);
+            const tanY = Math.tan(frame.fov * RAD * 0.5) / parallax;
             u.uTan.value.set(tanY * (frame.width / frame.height), tanY);
-            const cssPerRad = frame.pxPerRad / frame.dpr;
+            const cssPerRad = (frame.pxPerRad * parallax) / frame.dpr;
             const low = frame.quality === 'low';
             // Low draws only the coarsest layer: enough not to feel empty, at almost no cost
             u.uDeepFade.value.set(
-                fadeIn(cssPerRad / 458),
-                low ? 0 : fadeIn(cssPerRad / 1146),
-                low ? 0 : fadeIn(cssPerRad / 2865)
+                fadeIn(cssPerRad / 458) * starsAmount,
+                low ? 0 : fadeIn(cssPerRad / 1146) * starsAmount,
+                low ? 0 : fadeIn(cssPerRad / 2865) * starsAmount
             );
-            // Through a narrow field the glow resolves into stars, so less of it is left as glow
+            u.uDetailBias.value = SMOOTH_DETAIL_BIAS * (1 - starsAmount);
+            // Through a narrow field the glow resolves into stars, so less of it is left as glow. Without the stars,
+            // it stays a glow, at every zoom
+            const resolvedGlow = 0.42 + 0.58 * smooth(1.5, 25, frame.fov);
             u.uDetailFade.value.set(
                 low ? 0 : smooth(36, 14, frame.fov),
                 low ? 0 : smooth(9, 3, frame.fov),
-                0.42 + 0.58 * smooth(1.5, 25, frame.fov)
+                1 + (resolvedGlow - 1) * starsAmount
             );
             if (field) {
                 field.material.uniforms.uDpr.value = frame.dpr;
-                field.material.uniforms.uFieldAmount.value = visible;
+                field.material.uniforms.uFieldAmount.value = visible * starsAmount;
             }
         },
         busy: () => bake.busy(),            // For tests: is the full-size bake still going?
@@ -906,6 +973,7 @@ export function createBackgroundLayer(engine, app) {
             bakeRun += 1;
             unbindQuality();
             unbindRestored();
+            unbindLayer();
             [dome, horizon.mesh].forEach((o) => scene.remove(o));
             [geometry, horizon.geometry].forEach((g) => g.dispose());
             [material, horizon.material].forEach((m) => m.dispose());

@@ -6,6 +6,7 @@
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
+import { parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
 
@@ -36,8 +37,10 @@ export function createNeutronStarsLayer(engine, app) {
     const thermals = new Float32Array(n * 3);
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
+    const depths = new Float32Array(n);
 
     bodies.forEach((body, i) => {
+        depths[i] = body.depth;
         const info = body.neutron_star;
         const rng = bodyRng(body, 'pulsar');
         const v = skyBasis(body.sky.az, body.sky.alt).centre;
@@ -62,6 +65,7 @@ export function createNeutronStarsLayer(engine, app) {
     geometry.setAttribute('aThermal', new THREE.InstancedBufferAttribute(thermals, 3));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
 
     const material = skyMaterial({
         vertexShader: /* glsl */`
@@ -73,6 +77,7 @@ export function createNeutronStarsLayer(engine, app) {
             attribute vec3 aThermal;
             attribute vec4 aBandA;
             attribute float aBandB;
+            attribute float aDepth;
             varying vec2 vP;
             varying vec3 vAxis;
             varying float vPulse;
@@ -97,7 +102,7 @@ export function createNeutronStarsLayer(engine, app) {
                 float shimmer = 1.0 + 0.05 * uTwinkle * aInfo.y * sin(uTime * (7.1 + aInfo.w * 3.0));
                 vPulse = mix(1.0, 0.16 + 1.5 * crossing, swing) * shimmer;
 
-                float angularPx = radians(aInfo.x) * uPxPerRad;
+                float angularPx = radians(aInfo.x) * uPxPerRad * depthP(aDepth);
                 vDetail = smoothstep(26.0, 90.0, angularPx);
 
                 vWeights = vec4(
@@ -116,6 +121,7 @@ export function createNeutronStarsLayer(engine, app) {
                 vHalfPx = max(angularPx, beacon);
                 float gate = shows > 0.002 ? 1.0 : 0.0;
                 vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                c.xy *= depthP(aDepth);
                 c.xy += position.xy * vHalfPx * gate * length(c.xyz) / uPxPerRad;
                 gl_Position = projectionMatrix * c;
             }`,
@@ -193,6 +199,22 @@ export function createNeutronStarsLayer(engine, app) {
     return {
         id: 'neutron_stars',
         update() {},
+        // What this layer draws can be clicked, even where the star's magnitude wouldn't have it show yet. Same rules as the
+        // shader above. Only called on a click or a hover
+        picks(frame) {
+            const out = [];
+            const strengthKey = frame.band;
+            bodies.forEach((body, i) => {
+                const { depth } = body;
+                const strength = body.bands[strengthKey] || 0;
+                if (strength <= 0.001) return;
+                const p = parallaxFactor(depth, frame.fov);
+                const angularPx = infos[i * 4] * DEG * frame.pxPerRad * p;
+                if (strengthKey === 'visible' && angularPx < 26) return;
+                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth });
+            });
+            return out;
+        },
         dispose() {
             engine.scene.remove(mesh);
             geometry.dispose();

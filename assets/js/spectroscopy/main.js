@@ -3,6 +3,7 @@
 
 import { app, bus, select } from './core/state.js';
 import { generateUniverse } from './data/universe.js';
+import { assignDepths } from './core/depth.js';
 import { createEngine } from './render/engine.js';
 import { createDrawer } from './ui/drawer.js';
 
@@ -82,6 +83,7 @@ async function boot() {
     await breathe();    // And that frame has to reach the screen
 
     app.universe = generateUniverse();
+    assignDepths(app.universe);
     await breathe();
 
     const layers = [

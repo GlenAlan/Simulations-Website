@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
+import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
 import { sharedUniforms, skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep, exoticNoise } from './exotic_common.js';
@@ -563,7 +564,9 @@ function createDeepStars(engine, geometry, dprUniform) {
             uEast: { value: new THREE.Vector3() },
             uUp: { value: new THREE.Vector3() },
             uReveal: { value: 0 },
-            uDpr: dprUniform
+            uDpr: dprUniform,
+            uDepth: { value: 0 },
+            uKeepDeg: { value: 99 }
         },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
@@ -572,6 +575,8 @@ function createDeepStars(engine, geometry, dprUniform) {
             uniform vec3 uUp;
             uniform float uReveal;
             uniform float uDpr;
+            uniform float uDepth;
+            uniform float uKeepDeg;
             attribute vec3 aStar;     // Offset in degrees, brightness 0..1
             attribute vec3 aColour;
             varying vec3 vLight;
@@ -579,8 +584,10 @@ function createDeepStars(engine, geometry, dprUniform) {
                 const float RAD = 0.0174533;
                 vec3 dir = uCentre + (uEast * aStar.x + uUp * aStar.y) * RAD;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir * ${SKY_RADIUS}.0, 1.0);
+                gl_Position.xy *= depthP(uDepth);
                 float cut = mix(0.08, 1.05, smoothstep(0.5, 3.0, uFov));
-                float shown = smoothstep(cut - 0.05, cut + 0.1, aStar.z);
+                // Without the background stars, only those the hole is seen to bend: a click on those finds the hole
+                float shown = smoothstep(cut - 0.05, cut + 0.1, aStar.z) * step(dot(aStar.xy, aStar.xy), uKeepDeg * uKeepDeg);
                 float edge = exp(-dot(aStar.xy, aStar.xy) * 1.6);
                 float amount = uBandW[2] + 0.5 * uBandW[1] + 0.35 * uBandW[3] + 0.08 * uBandW[4] + 0.03 * uBandW[0];
                 vLight = bandColour(aColour) * (0.28 + 2.4 * aStar.z * aStar.z) * shown * edge * uReveal * amount * uSkyFade;
@@ -627,7 +634,9 @@ function createGlows(engine, holes) {
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
     const params = new Float32Array(n * 2);
+    const depths = new Float32Array(n);
     holes.forEach((bh, i) => {
+        depths[i] = bh.body.depth;
         centres.set([bh.world.x, bh.world.y, bh.world.z], i * 3);
         // The disc is the detection, so it's the X-ray and UV strengths that matter. Not in visible or IR
         bandA.set([bh.body.bands.radio * 0.25, 0, 0, bh.body.bands.uv * 0.55], i * 4);
@@ -638,6 +647,7 @@ function createGlows(engine, holes) {
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 2));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
 
     const material = skyMaterial({
         vertexShader: /* glsl */`
@@ -646,16 +656,18 @@ function createGlows(engine, holes) {
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute vec2 aParams;
+            attribute float aDepth;
             varying vec2 vP;
             varying float vAmount;
             void main() {
-                float discPx = radians(aParams.x) * 0.5 * uPxPerRad;
+                float discPx = radians(aParams.x) * 0.5 * uPxPerRad * depthP(aDepth);
                 float hide = 1.0 - smoothstep(${REVEAL_LO.toFixed(1)}, ${REVEAL_HI.toFixed(1)}, discPx);
                 // X-ray binaries flicker: slowly, as the inner disc breathes
                 float flicker = 1.0 + 0.12 * uTwinkle * sin(uTime * (0.9 + aParams.y) + aParams.y * 40.0);
                 vAmount = bandAmount(aBandA, aBandB) * hide * flicker * uSkyFade;
                 vP = position.xy;
                 vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                c.xy *= depthP(aDepth);
                 float sizePx = (vAmount > 0.002 ? 1.0 : 0.0) * uViewport.y * (0.02 + 0.035 * vAmount);
                 c.xy += position.xy * sizePx * length(c.xyz) / uPxPerRad;
                 gl_Position = projectionMatrix * c;
@@ -688,6 +700,7 @@ function jetMaterial(pass, noise) {
             attribute vec2 aAxis;
             attribute vec4 aJet;      // half-length (deg), disc diameter (deg), near brightness, far brightness
             attribute vec2 aBandJet;  // radio strength, seed
+            attribute float aDepth;
             varying vec2 vP;
             varying vec2 vDoppler;
             varying float vRadio;
@@ -695,7 +708,7 @@ function jetMaterial(pass, noise) {
             varying float vSeed;
             varying float vLenM;
             void main() {
-                float discPx = radians(aJet.y) * 0.5 * uPxPerRad;
+                float discPx = radians(aJet.y) * 0.5 * uPxPerRad * depthP(aDepth);
                 vReveal = smoothstep(${REVEAL_LO.toFixed(1)}, ${REVEAL_HI.toFixed(1)}, discPx);
                 // Holes in detail have their jets drawn over the bent picture, the rest in the sky as usual
                 float hero = step(0.0001, vReveal);
@@ -711,6 +724,7 @@ function jetMaterial(pass, noise) {
                 float hw = max(hl * 0.09, 5.0 * dist / uPxPerRad);
                 c.xy += (aAxis * position.x * hl + vec2(-aAxis.y, aAxis.x) * position.y * hw) * gate;
                 gl_Position = projectionMatrix * c;
+                gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -759,7 +773,9 @@ function createJets(holes) {
     const axes = new Float32Array(n * 2);
     const jets = new Float32Array(n * 4);
     const bandJet = new Float32Array(n * 2);
+    const jetDepths = new Float32Array(n);
     withJets.forEach((bh, i) => {
+        jetDepths[i] = bh.body.depth;
         const nxy = Math.hypot(bh.n.x, bh.n.y) || 1;
         centres.set([bh.world.x, bh.world.y, bh.world.z], i * 3);
         axes.set([bh.n.x / nxy, bh.n.y / nxy], i * 2);
@@ -775,6 +791,7 @@ function createJets(holes) {
     geometry.setAttribute('aAxis', new THREE.InstancedBufferAttribute(axes, 2));
     geometry.setAttribute('aJet', new THREE.InstancedBufferAttribute(jets, 4));
     geometry.setAttribute('aBandJet', new THREE.InstancedBufferAttribute(bandJet, 2));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(jetDepths, 1));
     const noise = exoticNoise();
     const sky = new THREE.Mesh(geometry, jetMaterial(0, noise));
     const front = new THREE.Mesh(geometry, jetMaterial(1, noise));
@@ -843,12 +860,12 @@ export function createBlackHolesLayer(engine, app) {
         if (lens) compileLens();
     });
 
-    function placeHero(hero, bh, reveal, pxPerM) {
+    function placeHero(hero, bh, reveal, pxPerM, p) {
         hero.bh = bh;
         hero.reveal = reveal;
         hero.pxPerM = pxPerM;
-        hero.ndcX = v.x;
-        hero.ndcY = v.y;
+        hero.ndcX = v.x * p;
+        hero.ndcY = v.y * p;
     }
 
     // Keep the biggest holes on screen, without allocating
@@ -859,20 +876,21 @@ export function createBlackHolesLayer(engine, app) {
         const h = frame.height * frame.dpr;
         for (let i = 0; i < holes.length; i++) {
             const bh = holes[i];
-            const radiusPx = bh.discDeg * DEG * 0.5 * frame.pxPerRad;
+            const p = parallaxFactor(bh.body.depth, frame.fov);
+            const radiusPx = bh.discDeg * DEG * 0.5 * frame.pxPerRad * p;
             if (radiusPx < REVEAL_LO) continue;
             v.copy(bh.world).project(frame.camera);
             if (v.z > 1 || v.z < -1) continue;
             const pxPerM = radiusPx / R_OUT;
             const reach = (LENS_EDGE * pxPerM * 2);
-            if (Math.abs(v.x) > 1 + reach / w || Math.abs(v.y) > 1 + reach / h) continue;
+            if (Math.abs(v.x * p) > 1 + reach / w || Math.abs(v.y * p) > 1 + reach / h) continue;
             const reveal = smoothstep(REVEAL_LO, REVEAL_HI, radiusPx) * sharedUniforms.uSkyFade.value * lensFade;
             if (heroCount < MAX_HEROES) {
-                placeHero(heroes[heroCount++], bh, reveal, pxPerM);
+                placeHero(heroes[heroCount++], bh, reveal, pxPerM, p);
             } else {
                 let smallest = 0;
                 for (let k = 1; k < MAX_HEROES; k++) if (heroes[k].pxPerM < heroes[smallest].pxPerM) smallest = k;
-                if (pxPerM > heroes[smallest].pxPerM) placeHero(heroes[smallest], bh, reveal, pxPerM);
+                if (pxPerM > heroes[smallest].pxPerM) placeHero(heroes[smallest], bh, reveal, pxPerM, p);
             }
         }
     }
@@ -904,7 +922,7 @@ export function createBlackHolesLayer(engine, app) {
         hero.starY = oy;
 
         const lim = limitingMag(frame.fov);
-        const brightness = Math.max(0.55, Math.min(1.5, 0.75 + 0.1 * (lim - bh.body.brightness.mag)));
+        const brightness = Math.max(0.55, Math.min(1.5, 0.75 + 0.1 * (lim - drawMag(bh.body))));
 
         const star = hero.companion.material.uniforms;
         const quad = bh.starR * 4.5 * hero.pxPerM;
@@ -941,6 +959,8 @@ export function createBlackHolesLayer(engine, app) {
         deep.uEast.value.set(basis.east[0], basis.east[1], basis.east[2]);
         deep.uUp.value.set(basis.up[0], basis.up[1], basis.up[2]);
         deep.uReveal.value = hero.reveal;
+        deep.uDepth.value = bh.body.depth;
+        deep.uKeepDeg.value = app.layers.backgroundStars ? 99 : (bh.discDeg * LENS_EDGE) / (2 * R_OUT);
         hero.stars.visible = true;
         hero.stars.geometry.setDrawRange(0, frame.quality === 'low' ? DEEP_STARS >> 1 : DEEP_STARS);
     }
@@ -992,7 +1012,9 @@ export function createBlackHolesLayer(engine, app) {
                 const bh = hero.bh;
                 if (hero.reveal < 0.5 || (bh.body.bands[frame.band] || 0) <= 0.01) continue;
                 const cssPerM = hero.pxPerM / frame.dpr;
-                pickList.push({ code: bh.body.code, az: bh.body.sky.az, alt: bh.body.sky.alt, radiusPx: R_OUT * cssPerM });
+                const { depth } = bh.body;
+                // Out to the edge of the bent sky, with the stars that are drawn there
+                pickList.push({ code: bh.body.code, az: bh.body.sky.az, alt: bh.body.sky.alt, radiusPx: (app.layers.backgroundStars ? R_OUT : LENS_EDGE) * cssPerM, depth });
                 const radPerM = (bh.discDeg * DEG) / (2 * R_OUT);
                 const { centre, east, up } = bh.basis;
                 const dx = hero.starX * radPerM;
@@ -1002,7 +1024,7 @@ export function createBlackHolesLayer(engine, app) {
                     centre[1] + east[1] * dx + up[1] * dy,
                     centre[2] + east[2] * dx + up[2] * dy
                 );
-                pickList.push({ code: bh.info.companion.code, az: sky.az, alt: sky.alt, radiusPx: Math.max(6, bh.starR * cssPerM) });
+                pickList.push({ code: bh.info.companion.code, az: sky.az, alt: sky.alt, radiusPx: Math.max(6, bh.starR * cssPerM), depth });
             }
             return pickList;
         },

@@ -8,6 +8,7 @@ import { bus } from '../../core/state.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB, planck, SIGMA } from '../../core/phys.js';
 import { limitingMag } from '../../core/sky.js';
+import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, memberDirection, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 
@@ -110,6 +111,7 @@ export function createClustersLayer(engine, app) {
     const bandA = new Float32Array(memberCount * 4);
     const bandB = new Float32Array(memberCount);
     const clusterInfo = new Float32Array(memberCount * 2); // The cluster's magnitude, and its sky area per member
+    const memberDepth = new Float32Array(memberCount);
     let w = 0;
     clusters.forEach((c) => {
         const { body } = c;
@@ -134,7 +136,8 @@ export function createClustersLayer(engine, app) {
                 squeeze(L * shares.uv, REF_UV) * body.bands.uv
             ], w * 4);
             bandB[w] = isXray ? Math.max(0.5, body.bands.xray) : (youngCorona ? 0.25 : 0.03) * body.bands.xray;
-            clusterInfo.set([body.brightness.mag, areaPerMember], w * 2);
+            clusterInfo.set([drawMag(body), areaPerMember], w * 2);
+            memberDepth[w] = body.depth;
             w++;
         });
     });
@@ -144,6 +147,7 @@ export function createClustersLayer(engine, app) {
     memberGeometry.setAttribute('aBandA', new THREE.BufferAttribute(bandA, 4));
     memberGeometry.setAttribute('aBandB', new THREE.BufferAttribute(bandB, 1));
     memberGeometry.setAttribute('aInfo', new THREE.BufferAttribute(clusterInfo, 2));
+    memberGeometry.setAttribute('aDepth', new THREE.BufferAttribute(memberDepth, 1));
     const memberMaterial = skyMaterial({
         uniforms: { uDpr },
         vertexShader: /* glsl */`
@@ -154,9 +158,10 @@ export function createClustersLayer(engine, app) {
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute vec2 aInfo;
+            attribute float aDepth;
             varying vec3 vColour;
             void main() {
-                float pxPerDeg = uPxPerRad * 0.0174533;
+                float pxPerDeg = uPxPerRad * depthP(aDepth) * 0.0174533;
                 float gain = revealGain(aInfo.x);
                 // Stars crowded on screen share their light, so a tiny globular glows gold instead of burning white
                 float crowd = clamp(aInfo.y * pxPerDeg * pxPerDeg / (10.0 * uDpr * uDpr), 0.12, 1.0);
@@ -173,6 +178,7 @@ export function createClustersLayer(engine, app) {
                 float peak = max(c.r, max(c.g, c.b));
                 vColour = c;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(aDepth);
                 // Size rises with brightness; points fainter than a pixel dim instead of shrinking, so they don't shimmer
                 float size = (1.3 + 2.6 * sqrt(min(peak, 2.0))) * zoom * uDpr;
                 gl_PointSize = peak < 0.004 ? 0.0 : size;
@@ -303,7 +309,8 @@ export function createClustersLayer(engine, app) {
         aBandB: new Float32Array(n),
         aKind: new Float32Array(n * 2),
         aRect: new Float32Array(n * 4),
-        aHazeAmount: new Float32Array(n)
+        aHazeAmount: new Float32Array(n),
+        aDepth: new Float32Array(n)
     };
     clusters.forEach((c, i) => {
         const { body } = c;
@@ -328,14 +335,15 @@ export function createClustersLayer(engine, app) {
         glowData.aColour.set(golden, i * 3);
         glowData.aBandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
         glowData.aBandB[i] = body.bands.xray;
-        glowData.aKind.set([c.globular ? 1 : 0, body.brightness.mag], i * 2);
+        glowData.aKind.set([c.globular ? 1 : 0, drawMag(body)], i * 2);
+        glowData.aDepth[i] = body.depth;
         if (c.hazeIndex >= 0) {
             const x = (c.hazeIndex % hazeCols) * HAZE_TILE;
             const y = Math.floor(c.hazeIndex / hazeCols) * HAZE_TILE;
             glowData.aRect.set([(x + 1) / hazeAtlas.width, (y + 1) / hazeAtlas.height, (HAZE_TILE - 2) / hazeAtlas.width, (HAZE_TILE - 2) / hazeAtlas.height], i * 4);
         }
     });
-    Object.entries({ aCentre: 3, aU: 3, aV: 3, aColour: 3, aBandA: 4, aBandB: 1, aKind: 2, aRect: 4, aHazeAmount: 1 }).forEach(([name, size]) => {
+    Object.entries({ aCentre: 3, aU: 3, aV: 3, aColour: 3, aBandA: 4, aBandB: 1, aKind: 2, aRect: 4, aHazeAmount: 1, aDepth: 1 }).forEach(([name, size]) => {
         glowGeometry.setAttribute(name, new THREE.InstancedBufferAttribute(glowData[name], size));
     });
     glowGeometry.instanceCount = n;
@@ -353,6 +361,7 @@ export function createClustersLayer(engine, app) {
             attribute vec2 aKind;
             attribute vec4 aRect;
             attribute float aHazeAmount;
+            attribute float aDepth;
             varying vec2 vP;
             varying vec2 vUv;
             varying vec3 vColour;
@@ -369,11 +378,12 @@ export function createClustersLayer(engine, app) {
                 vGlobular = aKind.x;
                 vHaze = aHazeAmount;
                 // Once the stars can be told apart they carry the cluster, and the glow eases back
-                float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad;
+                float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth);
                 vResolved = 1.0 - 0.45 * smoothstep(60.0, 400.0, px);
                 // While tiny, a broader glow is what makes it read as a ball and not a dot
                 vSpread = 1.0 + 3.5 * (1.0 - smoothstep(8.0, 40.0, px));
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(aCentre + position.x * aU + position.y * aV, 1.0);
+                gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -422,11 +432,12 @@ export function createClustersLayer(engine, app) {
 
     // The unresolved stars of a globular, resolved at last when you zoom right in. Built the first time they're needed.
     const decorMaterial = skyMaterial({
-        uniforms: { uFade: { value: 0 }, uDpr },
+        uniforms: { uFade: { value: 0 }, uDpr, uDepth: { value: 0 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             uniform float uFade;
             uniform float uDpr;
+            uniform float uDepth;
             attribute vec3 aColour;
             attribute float aLum;
             varying vec3 vColour;
@@ -434,7 +445,8 @@ export function createClustersLayer(engine, app) {
                 vec3 c = aColour * uBandW[2] + uBandTint[1] * uBandW[1] * aColour.r * 0.5 * (1.0 - aColour.b);
                 vColour = c * aLum * uFade;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                gl_PointSize = (1.1 + 1.6 * sqrt(aLum)) * uDpr * clamp(pow(uPxPerRad / 8000.0, 0.25), 1.0, 1.8);
+                gl_Position.xy *= depthP(uDepth);
+                gl_PointSize = (1.1 + 1.6 * sqrt(aLum)) * uDpr * clamp(pow(uPxPerRad * depthP(uDepth) / 8000.0, 0.25), 1.0, 1.8);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -474,7 +486,7 @@ export function createClustersLayer(engine, app) {
         geometry.setAttribute('aColour', new THREE.BufferAttribute(col, 3));
         geometry.setAttribute('aLum', new THREE.BufferAttribute(lum, 1));
         const material = decorMaterial.clone();
-        material.uniforms = { ...decorMaterial.uniforms, uFade: { value: 0 }, uDpr };
+        material.uniforms = { ...decorMaterial.uniforms, uFade: { value: 0 }, uDpr, uDepth: { value: c.body.depth } };
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false;
         points.renderOrder = ORDER.clusters;
@@ -487,13 +499,15 @@ export function createClustersLayer(engine, app) {
     const ringGeometry = new THREE.BufferGeometry();
     ringGeometry.setAttribute('position', new THREE.BufferAttribute(ringPosition, 3));
     const ringMaterial = skyMaterial({
-        uniforms: { uDpr, uRadius: { value: RING_RADIUS_PX } },
+        uniforms: { uDpr, uRadius: { value: RING_RADIUS_PX }, uDepth: { value: 0 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             uniform float uDpr;
             uniform float uRadius;
+            uniform float uDepth;
             void main() {
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(uDepth);
                 gl_PointSize = (uRadius * 2.0 + 6.0) * uDpr;
             }`,
         fragmentShader: /* glsl */`
@@ -532,6 +546,7 @@ export function createClustersLayer(engine, app) {
         ringPosition[1] = v[1] * SKY_RADIUS;
         ringPosition[2] = v[2] * SKY_RADIUS;
         ringGeometry.attributes.position.needsUpdate = true;
+        ringMaterial.uniforms.uDepth.value = resolved.body.depth;
         ring.visible = true;
         ringCode = resolved.entity.code;
     }
@@ -566,7 +581,7 @@ export function createClustersLayer(engine, app) {
             for (let i = 0; i < n; i++) {
                 const c = clusters[i];
                 if (!c.globular) continue;
-                const radiusPx = c.body.cluster.radius_deg * pxPerDeg;
+                const radiusPx = c.body.cluster.radius_deg * pxPerDeg * parallaxFactor(c.body.depth, frame.fov);
                 const near = radiusPx > 34;
                 if (!near) {
                     if (c.decor) c.decor.points.visible = false;
@@ -574,7 +589,7 @@ export function createClustersLayer(engine, app) {
                 }
                 const dot = c.unit[0] * forward.x + c.unit[1] * forward.y + c.unit[2] * forward.z;
                 const off = Math.acos(Math.max(-1, Math.min(1, dot))) / RAD;
-                if (off > halfView + c.body.cluster.radius_deg) {
+                if (off * parallaxFactor(c.body.depth, frame.fov) > halfView + c.body.cluster.radius_deg) {
                     if (c.decor) c.decor.points.visible = false;
                     continue;
                 }
@@ -588,26 +603,26 @@ export function createClustersLayer(engine, app) {
         // Members only when they're far enough apart to tell one from another; otherwise the cluster as a whole
         picks(frame) {
             const out = [];
-            const pxPerDeg = (frame.pxPerRad * RAD) / frame.dpr;
             const lim = limitingMag(frame.fov);
-            const step = 30 / pxPerDeg;
             clusters.forEach((c) => {
                 const { body } = c;
+                const { depth } = body;
                 const strength = body.bands[app.band] || 0;
                 if (strength <= 0.01) return;
-                if (app.band === 'visible' && revealGain(body.brightness.mag, lim) < 0.03) return;
+                if (app.band === 'visible' && revealGain(drawMag(body), lim) < 0.03) return;
+                const pxPerDeg = (frame.pxPerRad * RAD * parallaxFactor(depth, frame.fov)) / frame.dpr;
                 const radius = body.cluster.radius_deg;
                 if (!c.separationDeg) c.separationDeg = medianNeighbourDeg(body.cluster.members);
                 if (c.separationDeg * pxPerDeg >= MIN_PICK_SEPARATION_PX) {
                     body.cluster.members.forEach((member) => {
                         const { az, alt } = memberSkyDirection(body, member);
-                        out.push({ code: member.code, az, alt, radiusPx: 6 });
+                        out.push({ code: member.code, az, alt, radiusPx: 6, depth });
                     });
                 } else if (radius * pxPerDeg > 14) {
-                    scatterPicks(out, body.code, c.basis, 0, radius, radius, step);
+                    scatterPicks(out, body.code, c.basis, 0, radius, radius, 30 / pxPerDeg, depth);
                 } else {
                     // Drawn even where a star this faint wouldn't be, so it must be clickable too
-                    out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0 });
+                    out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth });
                 }
             });
             return out;

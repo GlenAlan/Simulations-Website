@@ -12,6 +12,7 @@ import { bus } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
+import { parallaxFactor } from '../../core/depth.js';
 import { supernovaBandsAt } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, lineRGB } from './nebula_bake.js';
@@ -70,6 +71,7 @@ export function createSupernovaeLayer(engine, app) {
     const aFilCol = f(3);
     const aPack = f(3); // Half-size, job id, peak magnitude: packed, as WebGL allows only 16 attributes
     const aReady = f(1);
+    const aDepth = f(1);
     const stage = { shape: f(4), flash: f(4), shell: f(4), flashCol: f(3), sheetCol: f(3), lateSheet: [] };
 
     const items = [];
@@ -120,7 +122,8 @@ export function createSupernovaeLayer(engine, app) {
         aR.set(r, i * 3);
         aN.set(nn, i * 3);
         aRect.set(job.rect, i * 4);
-        aPack.set([tanHalf, job.id, sn.peak_mag], i * 3);
+        aPack.set([tanHalf, job.id, sn.peak_mag + (body.depth_dim_mag || 0)], i * 3);
+        aDepth[i] = body.depth;
         // Filaments: Balmer-dominated and pale for Type Ia, deep red with [N II] and [S II] for Type II. The sheet
         // and ejecta: blue-white for a Type Ia's fast shock, oxygen teal for a Type II's oxygen-rich ejecta
         const filament = isIa
@@ -148,6 +151,7 @@ export function createSupernovaeLayer(engine, app) {
     inst('aRect', aRect, 4);
     inst('aFilCol', aFilCol, 3);
     inst('aPack', aPack, 3);
+    inst('aDepth', aDepth, 1);
     const readyAttr = inst('aReady', aReady, 1, true);
     const stageAttrs = [
         inst('aShape', stage.shape, 4, true),
@@ -175,6 +179,7 @@ export function createSupernovaeLayer(engine, app) {
             attribute vec4 aShell;
             attribute vec3 aFlashCol;
             attribute vec3 aSheetCol;
+            attribute float aDepth;
             varying vec2 vQ;
             varying vec2 vPx;
             varying vec4 vRect;
@@ -215,6 +220,7 @@ export function createSupernovaeLayer(engine, app) {
                 vReady = aReady;
                 vec3 world = (aCentre + (aR * position.x + aN * position.y) * half_) * ${SKY_RADIUS.toFixed(1)};
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
+                gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -307,6 +313,7 @@ export function createSupernovaeLayer(engine, app) {
                 const shape = i * 4;
                 if (stage.shape[shape + 2] > 0.02) {
                     item.job.half = item.tanHalf * stage.shape[shape];
+                    item.job.parallax = parallaxFactor(item.body.depth, frame.fov);
                     baker.considerSprite(item.job, item.c, item.r, item.n);
                 }
             }
@@ -320,8 +327,8 @@ export function createSupernovaeLayer(engine, app) {
                 if ((bands[frame.band] || 0) <= 0.01) continue;
                 const shape = i * 4;
                 if (stage.shape[shape + 2] < 0.05) continue;
-                const radiusPx = (tanHalf * stage.shape[shape] * 0.74 * frame.pxPerRad) / frame.dpr;
-                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx });
+                const radiusPx = (tanHalf * stage.shape[shape] * 0.74 * frame.pxPerRad * parallaxFactor(body.depth, frame.fov)) / frame.dpr;
+                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx, depth: body.depth });
             }
             return out;
         },

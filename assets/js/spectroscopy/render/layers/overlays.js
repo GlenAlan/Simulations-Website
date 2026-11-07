@@ -4,7 +4,9 @@
 
 import { bus } from '../../core/state.js';
 import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
+import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { signed, withCommas } from '../../core/format.js';
+import { memberDirection } from './sky_tangent.js';
 
 const RAD = Math.PI / 180;
 const BAND_EDGE_DEG = 14;          // How far either side of the galactic plane the highlight's edges sit
@@ -100,9 +102,9 @@ export function createOverlaysLayer(engine, app) {
         if (band === rankedBand) return ranked;
         rankedBand = band;
         const score = ({ body }) => {
-            if (body.kind === 'home_planet') return 1e6 - body.brightness.mag;
-            if (band === 'visible') return -body.brightness.mag;
-            return (body.bands[band] || 0) * 100 - body.brightness.mag * 0.01;
+            if (body.kind === 'home_planet') return 1e6 - drawMag(body);
+            if (band === 'visible') return -drawMag(body);
+            return (body.bands[band] || 0) * 100 - drawMag(body) * 0.01;
         };
         ranked = bodyDirs().slice().sort((a, b) => score(b) - score(a));
         return ranked;
@@ -112,19 +114,17 @@ export function createOverlaysLayer(engine, app) {
         const sel = app.selected;
         if (!sel) return null;
         const { entity, body, path } = sel;
-        if (path === 'member' && entity.offset_deg) {
-            const cosAlt = Math.max(0.05, Math.cos(body.sky.alt * RAD));
-            return { az: body.sky.az + entity.offset_deg.x / cosAlt, alt: body.sky.alt + entity.offset_deg.y };
-        }
+        if (path === 'member' && entity.offset_deg) return memberDirection(body, entity);
         return body.sky;
     }
 
+    // The grid and the band's edges are drawn on the dome, at depth 1
     function strokeLine(points, style) {
         // Break the line where it goes behind the camera, so it never jumps across the screen
         let drawing = false;
         ctx.beginPath();
         points.forEach(({ az, alt }) => {
-            const p = engine.project(az, alt);
+            const p = engine.project(az, alt, 1);
             if (!p) {
                 drawing = false;
                 return;
@@ -140,7 +140,7 @@ export function createOverlaysLayer(engine, app) {
     // The first spot along a line that's clear of the bars at the edges, for its label
     function labelSpot(points, frame, inset) {
         for (let i = 0; i < points.length; i++) {
-            const p = engine.project(points[i].az, points[i].alt);
+            const p = engine.project(points[i].az, points[i].alt, 1);
             if (p && p.x > 8 && p.x < frame.width - 44 && p.y > inset.top + 10 && p.y < frame.height - inset.bottom) return p;
         }
         return null;
@@ -272,7 +272,7 @@ export function createOverlaysLayer(engine, app) {
             const { body, dir } = list[i];
             if (dir[0] * forward[0] + dir[1] * forward[1] + dir[2] * forward[2] < cosLimit) continue;
             if (!engine.bodyShows(body)) continue;
-            const p = engine.project(body.sky.az, body.sky.alt);
+            const p = engine.projectBody(body);
             if (!p || !p.onScreen) continue;
             if (p.y < inset.top || p.y > frame.height - inset.bottom) continue;
 
@@ -321,10 +321,10 @@ export function createOverlaysLayer(engine, app) {
     function drawSelection(frame) {
         const at = selectedPosition();
         if (!at) return;
-        const p = engine.project(at.az, at.alt);
-        if (!p || !p.onScreen) return;
         const { entity, body } = app.selected;
-        const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr);
+        const p = engine.project(at.az, at.alt, body.depth);
+        if (!p || !p.onScreen) return;
+        const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr) * parallaxFactor(body.depth, frame.fov);
         const r = Math.max(13, Math.min(spread * 1.08, Math.min(frame.width, frame.height) * 0.42));
         const tickFrom = r;
         const tickTo = r + 7;

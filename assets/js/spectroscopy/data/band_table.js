@@ -15,6 +15,7 @@ import { H, C_MS, K_B } from '../core/phys.js';
 
 export const NOT_SEEN = 99;                // A band magnitude meaning "does not show in this band"
 const DEFAULT_LIMIT_MAG = 6;               // limitingMag() at the default field of view (core/sky.js)
+const BAND_KEYS = ['radio', 'ir', 'visible', 'uv', 'xray'];
 
 // Band edges (nm). Everything longer than the visible counts as infrared: a star's Rayleigh-Jeans tail in radio is nothing.
 const UV_RED_EDGE_NM = 380;
@@ -429,16 +430,19 @@ function skyMags(body, s) {
     }
 }
 
-// Apparent magnitudes in all five bands. Visible is just body.brightness.mag, except that a supernova's visible strength
-// says how far its light curve has fallen from peak. NOT_SEEN wherever the object's strength is zero.
+// Apparent magnitudes in all five bands, as drawn. Visible is just body.brightness.mag, except that a supernova's visible
+// strength says how far its light curve has fallen from peak. NOT_SEEN wherever the object's strength is zero. Everything
+// here is for drawing, so it includes the faintness of being further away (core/depth.js), which body.brightness doesn't.
 export function bandMagnitudes(body) {
     const s = bandStrengths(body);
     const out = skyMags(body, s);
     let visible = body.brightness?.mag ?? NOT_SEEN;
     if (body.kind === 'supernova') visible += magOf(s.visible);
     out.visible = s.visible > 0 ? visible : NOT_SEEN;
-    ['radio', 'ir', 'uv', 'xray'].forEach((band) => {
+    const dim = body.depth_dim_mag || 0;
+    BAND_KEYS.forEach((band) => {
         if (!(s[band] > 0) || !(out[band] < NOT_SEEN)) out[band] = NOT_SEEN;
+        else out[band] += dim;
     });
     return out;
 }

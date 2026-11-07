@@ -65,6 +65,7 @@ attribute float aBandB;
 attribute float aSeed;
 attribute float aSoft;
 attribute float aFlux;
+attribute float aDepth;
 uniform float uDpr;
 varying vec2 vUv;
 
@@ -99,6 +100,7 @@ function instancedAttributes(geometry, data) {
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(data.bandB, 1));
     geometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(data.seeds, 1));
     geometry.setAttribute('aSoft', new THREE.InstancedBufferAttribute(data.soft, 1));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(data.depths, 1));
     geometry.setAttribute('aFlux', data.flux);
     geometry.instanceCount = data.count;
 }
@@ -149,6 +151,7 @@ function createSprites(data) {
 
                 vUv = position.xy;
                 vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                clip.xy *= depthP(aDepth);
                 clip.xy += position.xy * quad * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
             }`,
@@ -218,6 +221,7 @@ function createSpikes(data) {
                 vec2 side = vec2(-axis.y, axis.x);
                 vec2 offset = axis * position.x * len + side * position.y * width;
                 vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                clip.xy *= depthP(aDepth);
                 clip.xy += offset * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
             }`,
@@ -251,6 +255,7 @@ export function createStarsLayer(engine, app) {
         bandB: new Float32Array(n),
         seeds: new Float32Array(n),
         soft: new Float32Array(n),
+        depths: new Float32Array(n),
         // One value per star that another layer can change while the sim runs: see setSpriteFlux
         flux: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1)
     };
@@ -267,6 +272,7 @@ export function createStarsLayer(engine, app) {
         data.bandB[i] = glow[4];
         data.seeds[i] = hashString(body.visual_seed || body.code) / 4294967296;
         data.soft[i] = bodySoftness(body);
+        data.depths[i] = body.depth;
     });
 
     const sprites = createSprites(data);

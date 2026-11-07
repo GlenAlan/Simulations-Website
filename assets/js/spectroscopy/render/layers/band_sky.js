@@ -7,7 +7,8 @@
 //
 // All four are baked once, one per channel, into a single texture indexed by galactic longitude and latitude. Each frame is
 // then a texture read on one sphere, skipped entirely in the visible band. Latitudes are squeezed so that the band gets most of
-// the texture's rows. The bake is spread over many frames, sized to the GPU, so it can't stall the page.
+// the texture's rows. The bake is spread over many frames, sized to the GPU, so it can't stall the page. All of it is the
+// dome, at depth 1 (core/depth.js).
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
@@ -191,7 +192,8 @@ function createGlowTarget(size) {
 }
 
 // Faint, unresolved sources: crisp points that give each band's glow a grain of its own when zoomed in. They are scenery, like the
-// decorative star field in visible light. Each band's come from where its real sources are.
+// decorative star field in visible light, and belong to the Background stars layer: they aren't even made until it is first on.
+// Each band's come from where its real sources are.
 function createUnresolvedSources(basis, order) {
     const rng = new Rng('band-sky-sources');
     const positions = [];
@@ -251,6 +253,7 @@ function createUnresolvedSources(basis, order) {
                 w += uBandTint[4] * aWeight.w * uBandW[4];
                 vColour = w * uSkyFade;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(1.0);
                 gl_PointSize = dot(w, w) > 0.00001 ? aSize * clamp(uViewport.y / 720.0, 1.0, 2.0) : 0.0;
             }`,
         fragmentShader: /* glsl */`
@@ -347,10 +350,12 @@ export function createBandSkyLayer(engine, app) {
             uHigh: { value: GLOW_BANDS.map((b) => new THREE.Vector3(...BAND_INFO[b].ramp.high)) }
         },
         vertexShader: /* glsl */`
+            ${BAND_GLSL}
             varying vec3 vDir;
             void main() {
                 vDir = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(1.0);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -390,8 +395,7 @@ export function createBandSkyLayer(engine, app) {
     skyMesh.renderOrder = ORDER.bandSky;
     engine.scene.add(skyMesh);
 
-    const sources = createUnresolvedSources(basis, ORDER.bandSky + 1);
-    engine.scene.add(sources);
+    let sources = null;
 
     return {
         id: 'band_sky',
@@ -405,7 +409,11 @@ export function createBandSkyLayer(engine, app) {
                 skyMesh.material.uniforms.uGlowFade.value = glowFade;
             }
             skyMesh.visible = showing;
-            sources.visible = showing;
+            if (!sources && showing && app.layers.backgroundStars) {
+                sources = createUnresolvedSources(basis, ORDER.bandSky + 1);
+                engine.scene.add(sources);
+            }
+            if (sources) sources.visible = showing && app.layers.backgroundStars;
             const target = app.layers.cmb ? 1 : 0;
             if (frame.reduceMotion) {
                 uCmb.value = target;
@@ -417,11 +425,13 @@ export function createBandSkyLayer(engine, app) {
         dispose() {
             offRestored();
             engine.scene.remove(skyMesh);
-            engine.scene.remove(sources);
             skyGeometry.dispose();
             skyMesh.material.dispose();
-            sources.geometry.dispose();
-            sources.material.dispose();
+            if (sources) {
+                engine.scene.remove(sources);
+                sources.geometry.dispose();
+                sources.material.dispose();
+            }
             disposeBake();
             glow.dispose();
         }

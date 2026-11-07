@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
+import { parallaxFactor } from '../../core/depth.js';
 import { sharedUniforms } from '../shared.js';
 import { createPlanetMesh, warmPlanetShaders, warmPlanetBakes } from '../planets/planet_mesh.js';
 import { initSystemTab } from '../../ui/system_tab.js';
@@ -689,8 +690,9 @@ export function initSystemView(app) {
         tmp.set(path.dir[0] * 1000, path.dir[1] * 1000, path.dir[2] * 1000).project(sky);
         // tmp.z > 1 means the star is behind the sky camera, which project can't express
         const behind = tmp.z > 1;
-        const x = behind ? 3 : tmp.x;
-        const y = behind ? 3 : tmp.y;
+        const parallax = parallaxFactor(model.body.depth || 0, engine.getView().fov);
+        const x = behind ? 3 : tmp.x * parallax;
+        const y = behind ? 3 : tmp.y * parallax;
         // Comes up only as it turns into view
         const edge = Math.max(Math.abs(x), Math.abs(y));
         return { x: Math.max(-2, Math.min(2, x)), y: Math.max(-2, Math.min(2, y)), seen: 1 - smoothstep(1, 1.3, edge) };
