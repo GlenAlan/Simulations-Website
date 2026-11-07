@@ -5,7 +5,8 @@
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { sharedUniforms, BAND_GLSL } from '../shared.js';
-import { NOISE_GLSL, TRUE_COLOUR, getNoiseTexture } from './star_surface.js';
+import { NOISE_GLSL, getNoiseTexture } from './star_surface.js';
+import { STREAM_BANDS, DISC_BANDS, mixBands } from './band_look.js';
 
 const SEGMENTS = 48;
 
@@ -107,7 +108,9 @@ export function createMassStream(model) {
     geometry.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1));
     geometry.setIndex(indices);
 
+    // Brightest in ultraviolet and X-rays: gas heated as it falls, hottest in the disc and where the stream lands
     const fade = { value: 1 };
+    const discFade = { value: 1 };
     const noise = { value: getNoiseTexture() };
     const material = new THREE.ShaderMaterial({
         toneMapped: false,
@@ -119,7 +122,6 @@ export function createMassStream(model) {
         fragmentShader: STREAM_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            ...TRUE_COLOUR,
             tNoise: noise,
             uP0: { value: new THREE.Vector3() },
             uP1: { value: new THREE.Vector3() },
@@ -147,12 +149,11 @@ export function createMassStream(model) {
         fragmentShader: DISC_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            ...TRUE_COLOUR,
             tNoise: noise,
             uColour: { value: new THREE.Color(...blackBodyRGB(Math.max(12000, accretor.teff_K))) },
             uRim: { value: new THREE.Color(1, 0.42, 0.12) },
             uInner: { value: 0.4 },
-            uFade: fade,
+            uFade: discFade,
             uSpin: { value: 0 },
             uSpot: { value: new THREE.Vector2(1, 0) }
         }
@@ -210,7 +211,9 @@ export function createMassStream(model) {
             local.copy(u.uP2.value).sub(disc.position);
             // The disc's plane has its own axes after the quarter turn: (x, -z) in world terms
             du.uSpot.value.set(local.x / discR, -local.z / discR);
-            fade.value = opacity;
+            const w = sharedUniforms.uBandW.value;
+            fade.value = opacity * mixBands(w, STREAM_BANDS);
+            discFade.value = opacity * mixBands(w, DISC_BANDS);
         },
         dispose() {
             geometry.dispose();

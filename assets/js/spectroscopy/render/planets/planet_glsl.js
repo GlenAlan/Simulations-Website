@@ -12,6 +12,7 @@
 // same, and on Windows the whole solid surface takes it several seconds.
 
 import { LOOP_ZERO_GLSL } from '../shared.js';
+import { PLANET_BAND_GLSL } from './planet_bands.js';
 
 const ROT_Y_GLSL = /* glsl */`
 vec3 rotY(vec3 v, float a) {
@@ -896,6 +897,7 @@ uniform float uSpin;
 uniform float uOpacity;
 uniform float uHasRings;
 ${RING_SHADOW_GLSL}
+${PLANET_BAND_GLSL}
 
 vec3 glowOf(float heat) {
     vec3 c = mix(uEmitCool, uEmitWarm, smoothstep(0.0, 0.55, heat));
@@ -997,8 +999,11 @@ vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float coverage, v
         col += uRimCol * (rim * 0.75 + 0.03 * uRim) * smoothstep(-0.12, 0.45, muS);
     }
 
+    // In the sky's band: planet_bands.js
+    col = bandShade(col, s.albedo, s.heat * uHasEmit * (1.0 - s.cloud), P, L, facing);
+
     // Partly covered edge pixels are drawn here: the far half of the atmosphere shows through them
-    return vec4(col * coverage + added * (1.0 - coverage), coverage) * uOpacity;
+    return vec4(col * coverage + bandReflect(added, uBandReflect) * (1.0 - coverage), coverage) * uOpacity;
 }
 `;
 
@@ -1194,6 +1199,7 @@ uniform vec3 uSunCol;
 uniform float uOpacity;
 varying vec3 vLocal;
 ${ATMOSPHERE_GLSL}
+${PLANET_BAND_GLSL}
 
 void main() {
     vec3 ro = uCam;
@@ -1212,7 +1218,7 @@ void main() {
     float column;
     vec3 added = scatterAlong(ro, rd, t0, t1, uSun, uSunCol, through, column);
     float a = 1.0 - dot(through, vec3(0.3333));
-    gl_FragColor = vec4(added, a) * uOpacity;
+    gl_FragColor = vec4(bandReflect(added, uBandReflect), a) * uOpacity;
 }
 `;
 
@@ -1232,6 +1238,7 @@ uniform vec3 uRingCol;
 uniform vec3 uRingDark;
 uniform float uOpacity;
 ${RING_SHADOW_GLSL}
+${PLANET_BAND_GLSL}
 varying vec3 vLocal;
 
 void main() {
@@ -1253,6 +1260,6 @@ void main() {
     float lit = mix((1.0 - op) * 1.3 + 0.08, 0.28 + 0.92 * incidence, sameSide);
     float phase = 0.85 + 0.35 * pow(max(dot(uSun, V), 0.0), 3.0);
     vec3 col = mix(uRingDark, uRingCol, t.g) * uSunCol * shadow * lit * phase;
-    gl_FragColor = vec4(col * op, op) * uOpacity;
+    gl_FragColor = vec4(bandReflect(col, uBandReflect) * op, op) * uOpacity;
 }
 `;

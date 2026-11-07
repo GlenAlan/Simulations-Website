@@ -5,6 +5,7 @@
 //   points are [x, y, z] in the line's own space; scale and place line.object as needed.
 //   line.set({ draw, head, opacity, width, trail }): draw is how much of the loop shows, measured back from head.
 //   line.withGeometry(opts) makes another line over the same points with its own look: a smear under a thin line, say.
+//   line.setColour(rgb) and glow.setColour(rgb): for a smear of light, which takes the band's colours.
 //
 //   const glow = createOrbitGlow(points, colour);
 //   glow.set({ radius, amount, count }): a star's light averaged over its orbit, as many soft discs round it. It's for when
@@ -70,6 +71,7 @@ export function createOrbitGlow(points, colour) {
     object.visible = false;
     return {
         object,
+        setColour(rgb) { material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]); },
         set({ radius, amount, count }) {
             material.uniforms.uRadius.value = radius;
             material.uniforms.uAmount.value = amount;
@@ -208,6 +210,7 @@ function lineOver(geometry, opts, ownsGeometry) {
             if (values.width !== undefined) un.uWidth.value = values.width;
             if (values.trail !== undefined) un.uTrail.value = values.trail;
         },
+        setColour(rgb) { material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]); },
         withGeometry: (nextOpts) => lineOver(geometry, nextOpts, false),
         dispose() {
             if (ownsGeometry) geometry.dispose();

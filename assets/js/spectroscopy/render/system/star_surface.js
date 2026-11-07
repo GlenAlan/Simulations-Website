@@ -441,8 +441,8 @@ function sphereFor(quality) {
 const quadGeometry = new THREE.PlaneGeometry(2, 2);
 const qualityDefine = (q) => (q === 'low' ? 0 : q === 'high' ? 2 : 1);
 
-// A system is always drawn in true colour: bands are for the sky (see the band bar). These shaders share a uniform block
-// with the sky's, so this takes the place of the sky's band weights in each of them.
+// True colour whatever the band, for anything that must not change with it. A system is drawn in the sky's band: these
+// shaders read the engine's band weights, and band_look.js says how strong each part is in each band.
 export const TRUE_COLOUR = { uBandW: { value: [0, 0, 1, 0, 0] } };
 
 // Fine granulation: never fewer than this many granules to the star's radius, and as the view closes in, the finer sizes
@@ -462,7 +462,10 @@ export function createStar(starData, opts = {}) {
     // A hot star's glow is the star's own colour; only a cool star's edge is seen reddened by what's above it
     const coronaColour = starData.teff_K > 5000 ? colour : limbColour;
     const noise = { value: getNoiseTexture() };
+    // How bright the surface and the glow round it are in the current band, against visible light (band_look.js)
     const bandStrength = { value: 1 };
+    const coronaStrength = { value: 1 };
+    let glowStrength = 1;
     const reveal = { value: 1 };
     const anim = { value: 0 };
 
@@ -476,7 +479,6 @@ export function createStar(starData, opts = {}) {
         fragmentShader: SURFACE_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            ...TRUE_COLOUR,
             tNoise: noise,
             uLane: { value: look.lane },
             uJitter: { value: 0.42 - 0.17 * look.lane },
@@ -524,7 +526,6 @@ export function createStar(starData, opts = {}) {
         fragmentShader: CORONA_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            ...TRUE_COLOUR,
             tNoise: noise,
             uCentre: { value: new THREE.Vector3() },
             uRadius: { value: 1 },
@@ -542,7 +543,7 @@ export function createStar(starData, opts = {}) {
             uFreq: { value: c.freq },
             uSpike: { value: c.spike },
             uSeed: { value: seed },
-            uBandStrength: bandStrength,
+            uBandStrength: coronaStrength,
             uReveal: reveal
         }
     });
@@ -562,7 +563,6 @@ export function createStar(starData, opts = {}) {
         fragmentShader: GLOW_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            ...TRUE_COLOUR,
             uPx: { value: 30 },
             uColour: { value: colour },
             uGlow: { value: 0 },
@@ -594,7 +594,11 @@ export function createStar(starData, opts = {}) {
             u.uTide.value = stretch;
             u.uCusp.value = cusp;
         },
-        setBandStrength(k) { bandStrength.value = k; },
+        setBandStrength(surface, corona = surface) {
+            bandStrength.value = surface;
+            coronaStrength.value = corona;
+            glowStrength = Math.max(surface, corona * 0.8);
+        },
         setQuality(q) {
             surfaceMaterial.defines.QUALITY = qualityDefine(q);
             surfaceMaterial.needsUpdate = true;
@@ -641,7 +645,7 @@ export function createStar(starData, opts = {}) {
             const half = reach / Math.sqrt(Math.max(0.03, 1 - (reach / Math.max(d, 1e-6)) ** 2));
             corona.scale.setScalar(half);
             coronaMaterial.uniforms.uQuad.value = half / api.radius;
-            glowMaterial.uniforms.uGlow.value = s.pointGlow * Math.min(6, look.intensity + 1);
+            glowMaterial.uniforms.uGlow.value = s.pointGlow * Math.min(6, look.intensity + 1) * glowStrength;
             glowMaterial.uniforms.uPx.value = s.glowPx;
         },
         dispose() {

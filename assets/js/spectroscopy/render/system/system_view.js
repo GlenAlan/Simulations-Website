@@ -38,6 +38,8 @@ import { createHole, createPulsarBeams } from './remnants.js';
 import { createOrbitLine, createOrbitGlow } from './orbit_lines.js';
 import { createBackdrop } from './backdrop.js';
 import { createMassStream } from './mass_stream.js';
+import { starBandLook, createFlares, FLARE_GAIN, bandRgb } from './band_look.js';
+import { hashString } from '../../core/rng.js';
 
 const RAD = Math.PI / 180;
 const FOV = 36;                     // Vertical field of view of the system camera (degrees)
@@ -202,12 +204,18 @@ export function initSystemView(app) {
     function buildWorld() {
         const quality = app.qualityLevel;
         const group = new THREE.Group();
+        const hole = model.body.black_hole;
         const stars = model.stars.map((s) => {
-            const make = s.star.stage === 'black_hole' ? createHole : createStar;
-            const star = make(s.star, { seed: s.code, quality });
+            const isHole = s.star.stage === 'black_hole';
+            const make = isHole ? createHole : createStar;
+            const star = make(s.star, { seed: s.code, quality, jets: isHole && !!(hole && hole.jets) });
             group.add(star.group);
             return star;
         });
+        // How each star shows in each band, and the flares of an active M dwarf
+        const accretor = model.stream && !model.stream.ontoHole ? model.stream.accretor : -1;
+        const bandLooks = model.stars.map((s, i) => (s.star.stage === 'black_hole' ? null : starBandLook(s, i === accretor)));
+        const flares = bandLooks.map((look, i) => (look && look.flares ? createFlares(hashString(model.stars[i].code)) : null));
         const brightest = model.stars.reduce((best, s, i) => (s.star.luminosity_Lsun > model.stars[best].star.luminosity_Lsun ? i : best), 0);
 
         let beams = null;
@@ -259,7 +267,8 @@ export function initSystemView(app) {
             geometry.setAttribute('position', place);
             geometry.setAttribute('aSize', size);
             geometry.setAttribute('aAlpha', alpha);
-            geometry.setAttribute('aColour', new THREE.BufferAttribute(colours, 3));
+            const colour = new THREE.BufferAttribute(colours, 3);
+            geometry.setAttribute('aColour', colour);
             const material = new THREE.ShaderMaterial({
                 toneMapped: false,
                 transparent: true,
@@ -272,7 +281,7 @@ export function initSystemView(app) {
             object.frustumCulled = false;
             object.renderOrder = 4;
             group.add(object);
-            halo = { object, geometry, material, place, size, alpha };
+            halo = { object, geometry, material, place, size, alpha, colour };
         }
 
         // The figure-eight: a thin line inside a faint glow
@@ -325,6 +334,7 @@ export function initSystemView(app) {
         const steady = new Map(model.nodes.map((n) => [n, [0, 0, 0]]));
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
+            bandLooks, flares, bandSeen: null,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
             lastStars: new Float64Array(model.stars.length * 3),
             lastPlanets: new Float64Array(model.planets.length * 3),
@@ -1089,8 +1099,62 @@ export function initSystemView(app) {
         return smoothstep(1.5, 3, pxPerSecond / (2 * Math.max(pxRadius, 1))) * smoothstep(40, 80, pxRadius);
     }
 
+    // ---------- Bands ----------
+    const HOLE_LIGHT = [0.05, 0.5, 1, 0.6, 1.5];   // A black hole merged into its smear: its disc's light, roughly
+    const bandTmp = [0, 0, 0];
+
+    function childBandColour(child, w) {
+        const out = [0, 0, 0];
+        child.members.forEach((i) => {
+            const look = world.bandLooks[i];
+            const rgb = bandRgb(w, surfaceColour(model.stars[i].star.teff_K), look ? look.surface : HOLE_LIGHT, bandTmp);
+            for (let c = 0; c < 3; c++) out[c] += rgb[c] / child.members.length;
+        });
+        return out;
+    }
+
+    // Everything in the system in the sky's band, cross-fading as the sky does (band_look.js). Strengths every frame, for
+    // the flares; colours set once only when the band changes.
+    function updateBands(frame) {
+        const w = sharedUniforms.uBandW.value;
+        const reduce = app.settings.reduceMotion;
+        world.stars.forEach((star, i) => {
+            const look = world.bandLooks[i];
+            if (!look) {
+                star.setBand(w);
+                return;
+            }
+            const flare = world.flares[i] ? world.flares[i].step(frame.dt, reduce) : 0;
+            let surface = 0;
+            let corona = 0;
+            for (let b = 0; b < 5; b++) {
+                surface += w[b] * look.surface[b] * (1 + flare * FLARE_GAIN.surface[b]);
+                corona += w[b] * look.corona[b] * (1 + flare * FLARE_GAIN.corona[b]);
+            }
+            star.setBandStrength(surface, corona);
+        });
+        if (world.beams) world.beams.setBand(w);
+        const seen = world.bandSeen;
+        let same = !!seen;
+        for (let b = 0; b < 5 && same; b++) same = seen[b] === w[b];
+        if (same) return;
+        world.bandSeen = w.slice();
+        world.planets.forEach((item, j) => {
+            const rgb = bandRgb(w, item.handle.meanColour, item.handle.bandValues, bandTmp);
+            if (world.halo) world.halo.colour.setXYZ(j, rgb[0], rgb[1], rgb[2]);
+            item.smear.setColour(rgb);
+        });
+        if (world.halo) world.halo.colour.needsUpdate = true;
+        world.starLines.forEach((line) => {
+            const rgb = childBandColour(line.child, w);
+            line.smear.setColour(rgb);
+            line.glow.setColour(rgb);
+        });
+    }
+
     function updateWorld(frame, stage, starNdc) {
         const reduce = app.settings.reduceMotion;
+        updateBands(frame);
         const seen = starNdc ? starNdc.seen : 1;
         const showReveal = stage.reveal * seen;
         const camPos = camera.position;
@@ -1396,7 +1460,8 @@ export function initSystemView(app) {
             return;
         }
         const r = (world.sizes.stars[i] * frame.height) / (2 * TAN_V * Math.max(world.sizes.starZ[i], world.sizes.stars[i], 1e-6));
-        placeLabel(el, at.x, at.y - r - 3, frame, cls);
+        // Clear of the bright glow round its edge, which reaches furthest past a small star
+        placeLabel(el, at.x, at.y - r - Math.max(Math.min(0.6 * r, 16), 11) - 3, frame, cls);
     }
 
     function updateLabels(frame, stage) {

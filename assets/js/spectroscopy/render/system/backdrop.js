@@ -1,13 +1,18 @@
-// A faint copy of the sky behind a system: the catalogue's own objects at their real directions, some field stars and
-// the galactic band, on a sphere that turns as the camera orbits. The real sky is switched off in the system view,
-// so it costs almost nothing, and it can't show its horizon. It belongs to the view and never changes the sky.
+// A faint copy of the sky behind a system: the galactic band's glow, in the band the sky is in, on a sphere that turns as
+// the camera orbits. The real sky is switched off in the system view, so it costs almost nothing, and it can't show its
+// horizon. It belongs to the view and never changes the sky.
+//
+// Points of light only with Background stars on: then the catalogue's own objects at their real directions and some field
+// stars, all scenery, as the sky's switch says. With it off nothing here looks like a star, because nothing here can be
+// clicked: the objects of the sky are the sky's, and a click in a system is for what's in the system.
 
 import * as THREE from 'three';
 import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { Rng } from '../../core/rng.js';
 import { sharedUniforms, BAND_GLSL } from '../shared.js';
-import { NOISE_GLSL, TRUE_COLOUR, getNoiseTexture } from './star_surface.js';
+import { NOISE_GLSL, getNoiseTexture } from './star_surface.js';
+import { SKY_GLOW, SKY_LANE, mixBands, nightFloor } from './band_look.js';
 
 function bodyTemperature(body) {
     if (body.star) return body.star.teff_K;
@@ -69,6 +74,7 @@ ${BAND_GLSL}
 ${NOISE_GLSL}
 uniform vec3 uPole;
 uniform float uFade;
+uniform vec2 uGlowLane;     // How bright the band is in this band of light, and how much its dust lanes darken it
 varying vec3 vDir;
 void main() {
     vec3 d = normalize(vDir);
@@ -76,15 +82,16 @@ void main() {
     float a = exp(-s * s * 26.0);
     float dust = fbm3(d * 3.4 + 5.0);
     float lane = smoothstep(0.34, 0.62, dust) * exp(-s * s * 180.0);
-    float glow = a * (0.5 + 0.8 * fbm3(d * 6.0 + 21.0)) * (1.0 - lane * 0.8);
-    gl_FragColor = vec4(bandColour(vec3(0.72, 0.76, 1.0)) * glow * 0.032 * uFade, 1.0);
+    float glow = a * (0.5 + 0.8 * fbm3(d * 6.0 + 21.0)) * max(1.0 - lane * uGlowLane.y, 0.0);
+    gl_FragColor = vec4(bandColour(vec3(0.72, 0.76, 1.0)) * glow * 0.032 * uGlowLane.x * uFade, 1.0);
 }`;
 
 // The same night as the sky's, at half its strength: never a black void, whatever the quality
 const FLOOR_FRAGMENT = /* glsl */`
 uniform float uFade;
+uniform vec3 uNight;
 void main() {
-    gl_FragColor = vec4(vec3(0.0021, 0.0037, 0.0100) * uFade, 1.0);
+    gl_FragColor = vec4(uNight * uFade, 1.0);
 }`;
 const FLOOR_VERTEX = 'void main(){ gl_Position = vec4(position.xy, 0.99999, 1.0); }';
 
@@ -151,15 +158,15 @@ export function createBackdrop(app, quality = 'medium') {
         blending: THREE.AdditiveBlending,
         vertexShader: STAR_VERTEX,
         fragmentShader: STAR_FRAGMENT,
-        uniforms: { ...sharedUniforms, ...TRUE_COLOUR, ...shared }
+        uniforms: { ...sharedUniforms, ...shared }
     });
     const points = new THREE.Points(geometry, material);
     points.frustumCulled = false;
     points.renderOrder = 1;
 
-    // The field stars are scenery, and follow the sky's own switch for scenery. The catalogue's objects always show.
-    const showFieldStars = (on) => geometry.setDrawRange(0, on ? n : bodies.length);
-    showFieldStars(app.layers.backgroundStars !== false);
+    // Points of light are scenery here, so they follow the sky's own switch for scenery
+    const showFieldStars = (on) => { points.visible = !!on; };
+    showFieldStars(app.layers.backgroundStars === true);
 
     const bandGeometry = new THREE.SphereGeometry(1, 40, 24);
     const bandMaterial = new THREE.ShaderMaterial({
@@ -173,10 +180,10 @@ export function createBackdrop(app, quality = 'medium') {
         fragmentShader: BAND_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            ...TRUE_COLOUR,
             ...shared,
             tNoise: { value: getNoiseTexture() },
-            uPole: { value: new THREE.Vector3(...pole) }
+            uPole: { value: new THREE.Vector3(...pole) },
+            uGlowLane: { value: new THREE.Vector2(1, 0.8) }
         }
     });
     const band = new THREE.Mesh(bandGeometry, bandMaterial);
@@ -193,8 +200,9 @@ export function createBackdrop(app, quality = 'medium') {
         blending: THREE.AdditiveBlending,
         vertexShader: FLOOR_VERTEX,
         fragmentShader: FLOOR_FRAGMENT,
-        uniforms: { uFade: shared.uFade }
+        uniforms: { uFade: shared.uFade, uNight: { value: new THREE.Vector3(0.0021, 0.0037, 0.0100) } }
     });
+    const night = [0, 0, 0];
     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.frustumCulled = false;
     floor.renderOrder = -1;
@@ -209,6 +217,10 @@ export function createBackdrop(app, quality = 'medium') {
             shared.uZoom.value = zoom;
             shared.uDpr.value = dpr;
             group.visible = fade > 0.002;
+            // In the sky's band, as the sky is
+            const w = sharedUniforms.uBandW.value;
+            bandMaterial.uniforms.uGlowLane.value.set(mixBands(w, SKY_GLOW), mixBands(w, SKY_LANE));
+            floorMaterial.uniforms.uNight.value.fromArray(nightFloor(w, night));
         },
         // Which way the catalogue's directions point in the system's world
         setOrientation(q) { group.quaternion.copy(q); },
