@@ -117,6 +117,7 @@ export function createZoomInto(app, view) {
     let pressureQuiet = 0;
     let waited = 0;             // Seconds at the point of going in, with the system not ready yet
     let saidWaiting = false;
+    const drawn = { az: 0, alt: 0, fov: 0, ok: false }; // The view the sky was last drawn at
 
     const reduced = () => !!app.settings.reduceMotion;
 
@@ -221,6 +222,23 @@ export function createZoomInto(app, view) {
         aim = null;
     }
 
+    // A notch's easing has already moved the sky this frame by the time this sees the point has been passed. The move starts
+    // from where the sky was last drawn instead, as that is the view the student saw and the one that must come back to
+    // every digit, and the step the easing took goes into the move with the rest of the zoom.
+    function beginInFromDrawn() {
+        const left = engine.takeZoomLeft();
+        let taken = 0;
+        if (drawn.ok) {
+            taken = Math.log(engine.view.fov / drawn.fov);
+            engine.flyView(drawn.az, drawn.alt, drawn.fov);
+            // flyView tidies the azimuth into 0 to 360, which can change its last digit: keep the digits as they were drawn
+            engine.view.az = drawn.az;
+            engine.view.alt = drawn.alt;
+            engine.view.fov = drawn.fov;
+        }
+        beginIn(left + taken);
+    }
+
     function intake(step, at, stepKind) {
         if (app.view !== 'sky') return false;
         const now = performance.now();
@@ -280,6 +298,7 @@ export function createZoomInto(app, view) {
             sayIfWaiting(going, frame.dt);
             if (app.view !== 'sky') {
                 readyIdle = 0;
+                drawn.ok = false;
                 return;
             }
             if (going) {
@@ -290,7 +309,7 @@ export function createZoomInto(app, view) {
                     bus.emit('zoomaim', { code: aim.code });
                 }
                 // A notch's own easing can carry the view past the point, with no new step to notice it
-                if (!reduced() && engine.zoomIsEasing() && canBegin()) beginIn(0);
+                if (!reduced() && engine.zoomIsEasing() && canBegin()) beginInFromDrawn();
             } else if (view.hasReady()) {
                 readyIdle += frame.dt;
                 if (readyIdle > KEEP_READY_S) {
@@ -298,6 +317,12 @@ export function createZoomInto(app, view) {
                     readyIdle = 0;
                 }
             }
+            // The view this frame is drawn at, for the next one to start a move from
+            const v = engine.view;
+            drawn.az = v.az;
+            drawn.alt = v.alt;
+            drawn.fov = v.fov;
+            drawn.ok = app.view === 'sky';
         }
     });
 

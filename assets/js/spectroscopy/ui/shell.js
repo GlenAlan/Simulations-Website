@@ -84,7 +84,11 @@ function initSkyFit() {
     }
 
     fit();
-    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(probe);
+    if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(fit).observe(probe);
+        // A sheet grows while a tool is open in it, and the sky gives way above it. The sheet's height never follows the sky's.
+        if (panel) new ResizeObserver(() => { if (sheetIsOpen()) fit(); }).observe(panel);
+    }
     window.addEventListener('resize', fit);
     bus.on('drawer', fit);
 
@@ -312,15 +316,15 @@ function initLayersMenu(app, topRight) {
     hzNote.id = 'spectroHzNote';
     menu.append(shiftKey, hzNote);
 
-    const radioHeading = element('p', 'sim-control-group-label', 'Radio band');
+    // The heading says when this one shows, so it needs no note of its own
+    const radioHeading = element('p', 'sim-control-group-label', 'Only in the Radio band');
     const radioGroup = element('div', 'sim-checkbox-group');
     inputs.cmb = layerRow(app, radioGroup, {
         name: 'cmb',
         label: 'Cosmic microwave background',
         tip: 'The faint, even glow left over from the Big Bang. Shows only in the Radio band.'
     });
-    const cmbNote = element('p', 'spectro-layer-note', 'Shows only when the sky is in Radio.');
-    menu.append(radioHeading, radioGroup, cmbNote);
+    menu.append(radioHeading, radioGroup);
 
     const fitTips = rowTips(menu);
     root.append(toggle, menu);
@@ -339,7 +343,6 @@ function initLayersMenu(app, topRight) {
         hzNote.hidden = hz.available;
         if (hz.available) inputs.habitableZone.setAttribute('aria-describedby', `${inputs.habitableZone.id}-tip`);
         else inputs.habitableZone.setAttribute('aria-describedby', hzNote.id);
-        cmbNote.hidden = app.band === 'radio';
         const visits = app.visited ? app.visited.count() : 0;
         visitedLine.hidden = !app.layers.visited;
         visitedCount.textContent = visits === 0 ? 'None yet.' : visits === 1 ? '1 system so far.' : `${visits} systems so far.`;
@@ -723,7 +726,7 @@ function keepSelectionInView(app) {
             return;
         }
         const { az, alt, depth } = drawnSky(engine, app.selected);
-        const p = engine.project(az, alt, depth);
+        const p = engine.project(az, alt);
         if (!p) return;
         const reach = angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov);
         if (reach > BIG_PX) {
@@ -739,7 +742,7 @@ function keepSelectionInView(app) {
         const bar = bars.find((r) => x > r.left && x < r.right && y > r.top && y < r.bottom);
         if (bar) y = (bar.top + bar.bottom) / 2 < h / 2 ? bar.bottom + ROOM / 2 : bar.top - ROOM / 2;
         if (x === p.x && y === p.y) return;
-        const to = engine.axisPutting(az, alt, x, y, frame.fov, depth);
+        const to = engine.axisPutting(az, alt, x, y, frame.fov);
         engine.slewTo(to, { duration: MOVE_S, axis: true });
     }
 

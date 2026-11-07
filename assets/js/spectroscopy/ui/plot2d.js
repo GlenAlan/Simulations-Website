@@ -165,6 +165,7 @@ export function createFigure(parent, { label, height, draw }) {
     // no scrollbar...). Should the width ever flip back to where it was a moment ago, keep the size it had and stop there.
     let lastWidths = [];
     new ResizeObserver(() => {
+        settleSoon();
         const w = wrap.clientWidth;
         if (w === width) return;
         const now = performance.now();
@@ -174,6 +175,32 @@ export function createFigure(parent, { label, height, draw }) {
         if (flipping) return;
         redraw();
     }).observe(wrap);
+
+    // Once the window has been still for a moment, one more look: the height follows the room as well as the width, so a
+    // window that only grew taller, or a last step skipped above, would otherwise leave the figure the size it was. While the
+    // window itself stays the same size, a size settled on a moment ago isn't gone back to, so this can't start the flip-flop
+    // again either.
+    let settleTimer = 0;
+    let settled = [];
+    let windowSize = '';
+    function settleSoon() {
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(() => {
+            const w = wrap.clientWidth;
+            if (!w) return;
+            const h = Math.round(height(w));
+            if (w === width && h === cssHeight) return;
+            const now = performance.now();
+            const size = `${window.innerWidth}x${window.innerHeight}`;
+            if (size !== windowSize) settled = [];
+            windowSize = size;
+            settled = settled.filter((entry) => now - entry.t < 3000);
+            if (settled.some((entry) => entry.w === w && entry.h === h)) return;
+            settled.push({ w, h, t: now });
+            redraw();
+        }, 400);
+    }
+    window.addEventListener('resize', settleSoon);
     // If the graphics process restarts, the browser gives the canvas back empty
     canvas.addEventListener('contextrestored', redraw);
     new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });

@@ -139,7 +139,7 @@ export function initViewAids(app) {
             if (!engine.bodyShows(body, seen)) continue;
             const scale = pxPerDeg * parallaxFactor(body.depth || 0, view.fov);
             if (touches(engine.projectBody(body), reach * scale)) return true;
-            if (tail && tail.some((q) => touches(engine.project(q.az, q.alt, body.depth || 0), q.spread * scale))) return true;
+            if (tail && tail.some((q) => touches(engine.project(q.az, q.alt), q.spread * scale))) return true;
         }
         return false;
     }

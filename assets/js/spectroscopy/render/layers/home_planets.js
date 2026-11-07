@@ -1,7 +1,7 @@
 // The seven home planets: bright steady points that don't twinkle, as real planets don't, each with its own colour.
 // They grow into small discs as you zoom in, with bands on the giants and a ring on Saturn. This layer alone draws
 // them (stars.js leaves them out) and it honours the Home planets switch in the Layers menu. Nothing is nearer than the
-// planets: they are at depth 0 (core/depth.js), so they alone need no depthP here.
+// planets: they are at depth 0 (core/depth.js), so they alone need no depthP here. A flight into a system leaves them behind.
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
@@ -10,6 +10,7 @@ import { azAltToVec3 } from '../../core/sky.js';
 import { bandSkyBrightness } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { MIN_GLOW } from '../engine.js';
+import { travelPc } from '../../core/depth.js';
 
 const SKY_RADIUS = 1000;
 
@@ -32,9 +33,11 @@ export function createHomePlanetsLayer(engine, app) {
     const shape = new Float32Array(n * 3);      // Disc scale, banding, ring
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
+    const pcs = new Float32Array(n);
     bodies.forEach((body, i) => {
         const v = azAltToVec3(body.sky.az, body.sky.alt);
         const look = LOOKS[body.name] || { colour: [1, 1, 1], disc: 0.5, band: 0, ring: 0 };
+        pcs[i] = travelPc(body);
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         colours.set(look.colour, i * 3);
         shape.set([look.disc, look.band, look.ring], i * 3);
@@ -52,6 +55,7 @@ export function createHomePlanetsLayer(engine, app) {
     geometry.setAttribute('aShape', new THREE.InstancedBufferAttribute(shape, 3));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -63,6 +67,7 @@ export function createHomePlanetsLayer(engine, app) {
             attribute vec3 aShape;
             attribute vec4 aBandA;
             attribute float aBandB;
+            attribute float aPc;
             uniform float uDpr;
             varying vec2 vPx;
             varying vec3 vColour;
@@ -70,7 +75,9 @@ export function createHomePlanetsLayer(engine, app) {
             varying float vFill;    // Brightness of the disc itself
             varying float vQuad;
             void main() {
-                float glow = clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)), 0.0, 400.0);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float glow = clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)) * travelLight(near), 0.0, 400.0);
                 if (glow < ${MIN_GLOW.toFixed(3)} || uSkyFade <= 0.0) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -88,7 +95,7 @@ export function createHomePlanetsLayer(engine, app) {
                 vColour = bandColour(aColour);
                 vQuad = radius * (aShape.z > 0.5 ? 2.5 : 1.2) + (4.0 + 2.2 * m) * uDpr;
                 vPx = position.xy * vQuad;
-                vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 clip = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 clip.xy += vPx * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
             }`,

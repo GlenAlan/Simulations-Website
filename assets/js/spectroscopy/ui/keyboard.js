@@ -127,7 +127,7 @@ export function initKeyboard(app) {
 
     function selectionAtCentre(frame) {
         const at = drawnSky(engine, app.selected);
-        const p = engine.project(at.az, at.alt, at.depth);
+        const p = engine.project(at.az, at.alt);
         return !!p && Math.hypot(p.x - frame.width / 2, p.y - frame.height / 2) <= CENTRE_PICK_PX;
     }
 

@@ -10,7 +10,7 @@ import { bus } from '../../core/state.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB, planck, SIGMA } from '../../core/phys.js';
 import { limitingMag, MIN_FOV } from '../../core/sky.js';
-import { drawMag, depthLight, parallaxFactor, DEPTH_TABLE } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor, DEPTH_TABLE, travelPc } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, memberDirection, revealGain, REVEAL_GLSL } from './sky_tangent.js';
@@ -249,6 +249,7 @@ export function createClustersLayer(engine, app) {
     const memberInfo = new Float32Array(memberCount * 3); // Its magnitude as drawn, its cluster's sky area per member, and its cluster's magnitude
     const memberBoost = new Float32Array(memberCount);
     const memberDepth = new Float32Array(memberCount);
+    const memberPc = new Float32Array(memberCount);
     const memberCap = new Float32Array(memberCount * 2);  // Its light as it was against its cluster's brightest, and its share of a pair's
     clusters.forEach((c) => {
         const { members, radius_deg: radius } = c.body.cluster;
@@ -284,6 +285,7 @@ export function createClustersLayer(engine, app) {
         bandB[w] = (isXray ? Math.max(0.5, body.bands.xray) : (youngCorona ? 0.25 : 0.03) * body.bands.xray) * light;
         memberInfo.set([Math.min(drawMag(entity), FAINTEST_DRAWN), c.areaPerMember, drawMag(body)], w * 3);
         memberDepth[w] = entity.depth;
+        memberPc[w] = travelPc(entity);
     });
     const memberGeometry = new THREE.BufferGeometry();
     memberGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -293,6 +295,7 @@ export function createClustersLayer(engine, app) {
     memberGeometry.setAttribute('aInfo', new THREE.BufferAttribute(memberInfo, 3));
     memberGeometry.setAttribute('aBoost', new THREE.BufferAttribute(memberBoost, 1));
     memberGeometry.setAttribute('aDepth', new THREE.BufferAttribute(memberDepth, 1));
+    memberGeometry.setAttribute('aPc', new THREE.BufferAttribute(memberPc, 1));
     memberGeometry.setAttribute('aCap', new THREE.BufferAttribute(memberCap, 2));
     const memberMaterial = skyMaterial({
         uniforms: { uDpr },
@@ -306,6 +309,7 @@ export function createClustersLayer(engine, app) {
             attribute vec3 aInfo;
             attribute float aBoost;
             attribute float aDepth;
+            attribute float aPc;
             attribute vec2 aCap;
             varying vec3 vColour;
             float memberLight(float above) {
@@ -313,7 +317,10 @@ export function createClustersLayer(engine, app) {
                     * min(${LIGHT_MOST.toFixed(1)}, ${LIGHT_AT_START.toFixed(3)} * pow(10.0, ${LIGHT_RATE.toFixed(3)} * max(above - ${SHOW_FROM.toFixed(2)}, 0.0)));
             }
             void main() {
-                float pxPerDeg = uPxPerRad * depthP(aDepth) * 0.0174533;
+                // A flight into the cluster spreads its stars out as zooming does, and each brightens as it comes nearer
+                vec3 centre = position;
+                float near = travel(centre, aPc);
+                float pxPerDeg = uPxPerRad * depthP(aDepth) * travelSize(near) * 0.0174533;
                 // The screen each member has to itself, in square CSS pixels
                 float room = aInfo.y * pxPerDeg * pxPerDeg / (uDpr * uDpr);
                 float spread = clamp(room / 10.0, 0.12, 1.0);
@@ -339,8 +346,12 @@ export function createClustersLayer(engine, app) {
                     c *= peakWas / peak;
                     peak = peakWas;
                 }
+                float lit = travelLight(near);
+                c *= lit;
+                peak *= lit;
+                peakWas *= lit;
                 vColour = c;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 gl_Position.xy *= depthP(aDepth);
                 // A few bright stars and many faint ones. Going in they swell a little, as if you were getting closer
                 float zoom = clamp(pow(pxPerDeg / (8.0 * uDpr), 0.25), 1.0, 2.4);
@@ -476,6 +487,7 @@ export function createClustersLayer(engine, app) {
         aRect: new Float32Array(n * 4),
         aHazeAmount: new Float32Array(n),
         aDepth: new Float32Array(n),
+        aPc: new Float32Array(n),
         aShrunk: new Float32Array(n)
     };
     clusters.forEach((c, i) => {
@@ -506,6 +518,7 @@ export function createClustersLayer(engine, app) {
         glowData.aBandB[i] = body.bands.xray * light;
         glowData.aKind.set([c.globular ? 1 : 0, drawMag(body)], i * 2);
         glowData.aDepth[i] = body.depth;
+        glowData.aPc[i] = travelPc(body);
         glowData.aShrunk[i] = c.shrunk;
         if (c.hazeIndex >= 0) {
             const x = (c.hazeIndex % hazeCols) * HAZE_TILE;
@@ -513,7 +526,7 @@ export function createClustersLayer(engine, app) {
             glowData.aRect.set([(x + 1) / hazeAtlas.width, (y + 1) / hazeAtlas.height, (HAZE_TILE - 2) / hazeAtlas.width, (HAZE_TILE - 2) / hazeAtlas.height], i * 4);
         }
     });
-    Object.entries({ aCentre: 3, aU: 3, aV: 3, aColour: 3, aBandA: 4, aBandB: 1, aKind: 2, aRect: 4, aHazeAmount: 1, aDepth: 1, aShrunk: 1 }).forEach(([name, size]) => {
+    Object.entries({ aCentre: 3, aU: 3, aV: 3, aColour: 3, aBandA: 4, aBandB: 1, aKind: 2, aRect: 4, aHazeAmount: 1, aDepth: 1, aPc: 1, aShrunk: 1 }).forEach(([name, size]) => {
         glowGeometry.setAttribute(name, new THREE.InstancedBufferAttribute(glowData[name], size));
     });
     glowGeometry.instanceCount = n;
@@ -532,6 +545,7 @@ export function createClustersLayer(engine, app) {
             attribute vec4 aRect;
             attribute float aHazeAmount;
             attribute float aDepth;
+            attribute float aPc;
             attribute float aShrunk;
             varying vec2 vP;
             varying vec2 vUv;
@@ -545,18 +559,22 @@ export function createClustersLayer(engine, app) {
                 vP = position.xy * ${GLOW_REACH.toFixed(2)};   // 1 at the cluster's radius
                 vUv = aRect.xy + (position.xy * 0.5 + 0.5) * aRect.zw;
                 vColour = aColour;
-                vBand = vec4(aBandA.x, aBandA.y, aBandA.z * revealGain(aKind.y), aBandA.w);
+                // A flight grows it as it comes nearer, and it thins away as the flight goes right through it
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float grow = travelSize(near);
+                vBand = vec4(aBandA.x, aBandA.y, aBandA.z * revealGain(aKind.y), aBandA.w) * travelThrough(near) * min(near * near, 1.0);
                 vGlobular = aKind.x;
-                float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth);
+                float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth) * grow;
                 // How big it would be at this zoom without depth: the glow is never brighter than it was then
-                float pxWas = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad / aShrunk;
+                float pxWas = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad / aShrunk * grow;
                 // Once the stars can be told apart they carry the cluster, and the glow eases back
                 vResolved = 1.0 - 0.45 * smoothstep(60.0, 400.0, pxWas);
                 // A little leftover gas, seen from afar. It's only ever a small cloud, and close to it would be a blur
                 vHaze = aHazeAmount * (1.0 - smoothstep(70.0, 240.0, px));
                 // While tiny, a broader glow is what makes it read as a ball and not a dot
                 vSpread = 1.0 + 3.5 * (1.0 - smoothstep(8.0, 40.0, pxWas));
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(aCentre + position.x * aU + position.y * aV, 1.0);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre + position.x * aU * grow + position.y * aV * grow, 1.0);
                 gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
@@ -605,21 +623,24 @@ export function createClustersLayer(engine, app) {
 
     // The unresolved stars of a globular, resolved at last when you zoom right in. Built the first time they're needed.
     const decorMaterial = skyMaterial({
-        uniforms: { uFade: { value: 0 }, uDpr, uDepth: { value: 0 } },
+        uniforms: { uFade: { value: 0 }, uDpr, uDepth: { value: 0 }, uPc: { value: 0 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             uniform float uFade;
             uniform float uDpr;
             uniform float uDepth;
+            uniform float uPc;
             attribute vec3 aColour;
             attribute float aLum;
             varying vec3 vColour;
             void main() {
+                vec3 centre = position;
+                float near = travel(centre, uPc);
                 vec3 c = aColour * uBandW[2] + uBandTint[1] * uBandW[1] * aColour.r * 0.5 * (1.0 - aColour.b);
-                vColour = c * aLum * uFade;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                vColour = c * aLum * uFade * travelLight(near);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 gl_Position.xy *= depthP(uDepth);
-                gl_PointSize = (1.1 + 1.6 * sqrt(aLum)) * uDpr * clamp(pow(uPxPerRad * depthP(uDepth) / 8000.0, 0.25), 1.0, 1.8);
+                gl_PointSize = (1.1 + 1.6 * sqrt(aLum)) * uDpr * clamp(pow(uPxPerRad * depthP(uDepth) * travelSize(near) / 8000.0, 0.25), 1.0, 1.8);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -666,7 +687,7 @@ export function createClustersLayer(engine, app) {
         geometry.setAttribute('aColour', new THREE.BufferAttribute(col, 3));
         geometry.setAttribute('aLum', new THREE.BufferAttribute(lum, 1));
         const material = decorMaterial.clone();
-        material.uniforms = { ...decorMaterial.uniforms, uFade: { value: 0 }, uDpr, uDepth: { value: c.body.depth } };
+        material.uniforms = { ...decorMaterial.uniforms, uFade: { value: 0 }, uDpr, uDepth: { value: c.body.depth }, uPc: { value: travelPc(c.body) } };
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false;
         points.renderOrder = ORDER.clusters;
@@ -679,14 +700,17 @@ export function createClustersLayer(engine, app) {
     const ringGeometry = new THREE.BufferGeometry();
     ringGeometry.setAttribute('position', new THREE.BufferAttribute(ringPosition, 3));
     const ringMaterial = skyMaterial({
-        uniforms: { uDpr, uRadius: { value: RING_RADIUS_PX }, uDepth: { value: 0 } },
+        uniforms: { uDpr, uRadius: { value: RING_RADIUS_PX }, uDepth: { value: 0 }, uPc: { value: 0 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             uniform float uDpr;
             uniform float uRadius;
             uniform float uDepth;
+            uniform float uPc;
             void main() {
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                vec3 centre = position;
+                travel(centre, uPc);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 gl_Position.xy *= depthP(uDepth);
                 gl_PointSize = (uRadius * 2.0 + 6.0) * uDpr;
             }`,
@@ -727,6 +751,7 @@ export function createClustersLayer(engine, app) {
         ringPosition[2] = v[2] * SKY_RADIUS;
         ringGeometry.attributes.position.needsUpdate = true;
         ringMaterial.uniforms.uDepth.value = resolved.entity.depth;
+        ringMaterial.uniforms.uPc.value = travelPc(resolved.entity);
         ring.visible = true;
         ringCode = resolved.entity.code;
     }

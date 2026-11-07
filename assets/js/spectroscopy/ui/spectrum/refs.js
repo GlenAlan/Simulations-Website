@@ -243,8 +243,10 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
         return item ? item.label : NONE.label;
     }
 
+    // A long name is cut short in a narrow row: the whole of it shows on hover, and in the list
     function syncInput() {
         input.value = currentLabel();
+        input.title = currentLabel();
     }
 
     function renderList(query) {

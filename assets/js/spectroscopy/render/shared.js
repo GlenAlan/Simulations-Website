@@ -14,15 +14,22 @@ export const sharedUniforms = {
     uLimitMag: { value: 6 },        // Faintest visible-band magnitude drawn at this zoom (core/sky.js)
     uSkyFade: { value: 1 },         // 1 in the sky; falls to 0 while flying into a planetary system
     uViewport: { value: new THREE.Vector2(1, 1) }, // Device pixels
-    uParallaxLog: { value: 0 }      // How much further things lag as you zoom: see core/depth.js and depthP below
+    uParallaxLog: { value: 0 },     // Always 0 now: a telescope's pan or zoom shows no parallax (core/depth.js)
+    // A flight into a system really travels: xyz is where the traveller has got to, in parsecs from Earth along the line to
+    // the system, and w is the distance of the system itself. All 0 at rest. See travel() below.
+    uTravel: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uDomeFade: { value: 1 }         // The dome (sky glow, Milky Way, horizon): falls to 0 as a flight leaves the galaxy
 };
+
+const TRAVEL_LIGHT_MOST = 25;       // A point passed close by brightens by the inverse square, but by 3.5 magnitudes at most
+const TRAVEL_SIZE_MOST = 12;        // Something with a size grows as it comes nearer, but to 12 times at most
 
 // In the vertex or fragment shader:
 //   aBandA = vec4(radio, ir, visible, uv) and aBandB = xray hold the object's strength in each band
 //   bandAmount(a, b)       how strongly the object shows in the current mix of bands
 //   bandColour(trueColour) its true colour in visible light, the band's false colour otherwise
-//   depthP(d)              how far from the centre of the view a thing at depth d is drawn, as a share of where the
-//                          camera alone would put it. core/depth.js says how each kind of shader uses it.
+//   depthP(d)              always 1 now (core/depth.js): the sky no longer fakes parallax as the view pans or zooms
+//   travel(p, pc)          where the traveller sees a thing on a flight into a system: see below
 export const BAND_GLSL = /* glsl */`
 uniform float uBandW[5];
 uniform vec3 uBandTint[5];
@@ -34,9 +41,41 @@ uniform float uLimitMag;
 uniform float uSkyFade;
 uniform vec2 uViewport;
 uniform float uParallaxLog;
+uniform vec4 uTravel;
+uniform float uDomeFade;
 
 float depthP(float d) {
     return exp(d * uParallaxLog);
+}
+
+// A flight into a system leaves Earth for the system's star, and what's seen moves as it really would. travel(p, pc) takes
+// p, where a thing pc parsecs from Earth sits on the sky's sphere (any length), moves it to where the traveller sees it, at
+// the same length, and returns how much nearer the thing now is: its distance from Earth over its distance from the
+// traveller. At rest, and for whatever is at the system's own distance (the system itself, whose look the system view
+// takes over), it leaves p exactly as it was and returns 1. Every layer gives it each thing's distance as an attribute,
+// aPc, set from travelPc() in core/depth.js.
+float travel(inout vec3 p, float pc) {
+    if (uTravel.xyz == vec3(0.0) || abs(pc - uTravel.w) <= pc * 1e-6) return 1.0;
+    float r = length(p);
+    vec3 q = p * (pc / r) - uTravel.xyz;
+    float d = max(length(q), pc * 1e-4);
+    p = q * (r / d);
+    return pc / d;
+}
+
+// What being nearer does to the light of a point: the inverse square, held in so that nothing blows out
+float travelLight(float near) {
+    return min(near * near, ${TRAVEL_LIGHT_MOST.toFixed(1)});
+}
+
+// ... and to the size of something with a size. Its surface stays as bright, so a bigger thing gives more light.
+float travelSize(float near) {
+    return min(near, ${TRAVEL_SIZE_MOST.toFixed(1)});
+}
+
+// Something with a size thins away as the flight passes right through it, rather than standing at its largest
+float travelThrough(float near) {
+    return 1.0 - smoothstep(${(TRAVEL_SIZE_MOST * 0.5).toFixed(1)}, ${TRAVEL_SIZE_MOST.toFixed(1)}, near);
 }
 
 float bandAmount(vec4 a, float b) {
@@ -87,4 +126,23 @@ export function skyMaterial(params) {
 // Which pixel size a thing of the given angular size (degrees) would be at this zoom
 export function pixelsOf(sizeDeg, frame) {
     return (sizeDeg * Math.PI / 180) * frame.pxPerRad;
+}
+
+// The shaders' travel(), for what is placed from JavaScript: moves v (a THREE.Vector3, any length) to where the traveller
+// sees a thing pc parsecs away in that direction, and returns how much nearer it is. Leaves v alone at rest.
+export function travelPoint(v, pc) {
+    const t = sharedUniforms.uTravel.value;
+    if ((t.x === 0 && t.y === 0 && t.z === 0) || !(pc > 0) || Math.abs(pc - t.w) <= pc * 1e-6) return 1;
+    const r = v.length();
+    const k = pc / r;
+    const qx = v.x * k - t.x;
+    const qy = v.y * k - t.y;
+    const qz = v.z * k - t.z;
+    const d = Math.max(Math.hypot(qx, qy, qz), pc * 1e-4);
+    v.set((qx * r) / d, (qy * r) / d, (qz * r) / d);
+    return pc / d;
+}
+
+export function travelSize(near) {
+    return Math.min(near, TRAVEL_SIZE_MOST);
 }

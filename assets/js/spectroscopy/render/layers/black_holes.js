@@ -9,10 +9,10 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
 import { bandMagnitude } from '../../data/band_table.js';
-import { sharedUniforms, skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { sharedUniforms, skyMaterial, BAND_GLSL, ORDER, travelPoint, travelSize } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep, exoticNoise } from './exotic_common.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from './bh_geodesic.js';
 
@@ -61,6 +61,7 @@ function makeHole(body) {
         info,
         basis,
         world: new THREE.Vector3(v[0], v[1], v[2]).multiplyScalar(SKY_RADIUS),
+        pc: travelPc(body),
         discDeg: discDegrees(info.mass_Msun),
         // Disc axes on the sky: x right, y up, z towards the viewer. The far side of the orbit shows above the centre
         // when rho = 0, and orbital +y points away from us, matching vlos_kms in data/orbits.js
@@ -568,7 +569,8 @@ function createDeepStars(engine, geometry, dprUniform) {
             uReveal: { value: 0 },
             uDpr: dprUniform,
             uDepth: { value: 0 },
-            uKeepDeg: { value: 99 }
+            uKeepDeg: { value: 99 },
+            uGrow: { value: 1 }
         },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
@@ -579,12 +581,13 @@ function createDeepStars(engine, geometry, dprUniform) {
             uniform float uDpr;
             uniform float uDepth;
             uniform float uKeepDeg;
+            uniform float uGrow;      // How much a flight has grown the hole (travelSize)
             attribute vec3 aStar;     // Offset in degrees, brightness 0..1
             attribute vec3 aColour;
             varying vec3 vLight;
             void main() {
                 const float RAD = 0.0174533;
-                vec3 dir = uCentre + (uEast * aStar.x + uUp * aStar.y) * RAD;
+                vec3 dir = uCentre + (uEast * aStar.x + uUp * aStar.y) * RAD * uGrow;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir * ${SKY_RADIUS}.0, 1.0);
                 gl_Position.xy *= depthP(uDepth);
                 float cut = mix(0.08, 1.05, smoothstep(0.5, 3.0, uFov));
@@ -640,8 +643,10 @@ function createGlows(engine, holes) {
     const bandB = new Float32Array(n);
     const params = new Float32Array(n * 2);
     const depths = new Float32Array(n);
+    const pcs = new Float32Array(n);
     holes.forEach((bh, i) => {
         depths[i] = bh.body.depth;
+        pcs[i] = bh.pc;
         centres.set([bh.world.x, bh.world.y, bh.world.z], i * 3);
         // The disc is the detection, so it's the X-ray and UV strengths that matter. Not in visible or IR
         bandA.set([bh.body.bands.radio * 0.25, 0, 0, bh.body.bands.uv * 0.55], i * 4);
@@ -654,6 +659,7 @@ function createGlows(engine, holes) {
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 2));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
 
     const material = skyMaterial({
         vertexShader: /* glsl */`
@@ -663,18 +669,23 @@ function createGlows(engine, holes) {
             attribute float aBandB;
             attribute vec2 aParams;
             attribute float aDepth;
+            attribute float aPc;
             varying vec2 vP;
             varying float vAmount;
             void main() {
-                float discPx = radians(aParams.x) * 0.5 * uPxPerRad * depthP(aDepth);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float discPx = radians(aParams.x) * 0.5 * uPxPerRad * depthP(aDepth) * travelSize(near);
                 float hide = 1.0 - smoothstep(${REVEAL_LO.toFixed(1)}, ${REVEAL_HI.toFixed(1)}, discPx);
                 // X-ray binaries flicker: slowly, as the inner disc breathes
                 float flicker = 1.0 + 0.12 * uTwinkle * sin(uTime * (0.9 + aParams.y) + aParams.y * 40.0);
-                vAmount = bandAmount(aBandA, aBandB) * hide * flicker * uSkyFade;
+                float amount = bandAmount(aBandA, aBandB) * hide * flicker * uSkyFade;
+                // Its size goes by its light as Earth sees it; nearer, it is brighter, but no bigger
+                vAmount = amount * travelLight(near);
                 vP = position.xy;
-                vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 c = modelViewMatrix * vec4(centre, 1.0);
                 c.xy *= depthP(aDepth);
-                float sizePx = (vAmount > 0.002 ? 1.0 : 0.0) * uViewport.y * (0.02 + 0.035 * vAmount) * mix(1.0, 0.7, uBandW[4]);
+                float sizePx = (vAmount > 0.002 ? 1.0 : 0.0) * uViewport.y * (0.02 + 0.035 * amount) * mix(1.0, 0.7, uBandW[4]);
                 c.xy += position.xy * sizePx * length(c.xyz) / uPxPerRad;
                 gl_Position = projectionMatrix * c;
             }`,
@@ -707,6 +718,7 @@ function jetMaterial(pass, noise) {
             attribute vec4 aJet;      // half-length (deg), disc diameter (deg), near brightness, far brightness
             attribute vec2 aBandJet;  // radio strength, seed
             attribute float aDepth;
+            attribute float aPc;
             varying vec2 vP;
             varying vec2 vDoppler;
             varying float vRadio;
@@ -714,19 +726,22 @@ function jetMaterial(pass, noise) {
             varying float vSeed;
             varying float vLenM;
             void main() {
-                float discPx = radians(aJet.y) * 0.5 * uPxPerRad * depthP(aDepth);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float grow = travelSize(near);
+                float discPx = radians(aJet.y) * 0.5 * uPxPerRad * depthP(aDepth) * grow;
                 vReveal = smoothstep(${REVEAL_LO.toFixed(1)}, ${REVEAL_HI.toFixed(1)}, discPx);
                 // Holes in detail have their jets drawn over the bent picture, the rest in the sky as usual
                 float hero = step(0.0001, vReveal);
                 float gate = uPass > 0.5 ? hero : 1.0 - hero;
-                vDoppler = aJet.zw;
+                vDoppler = aJet.zw * travelThrough(near) * min(near * near, 1.0);
                 vRadio = aBandJet.x;
                 vSeed = aBandJet.y;
                 vLenM = aJet.x / aJet.y * ${(R_OUT * 2).toFixed(1)};
                 vP = position.xy;
-                vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 c = modelViewMatrix * vec4(centre, 1.0);
                 float dist = length(c.xyz);
-                float hl = tan(radians(aJet.x)) * dist;
+                float hl = tan(radians(aJet.x)) * dist * grow;
                 float hw = max(hl * 0.09, 5.0 * dist / uPxPerRad);
                 c.xy += (aAxis * position.x * hl + vec2(-aAxis.y, aAxis.x) * position.y * hw) * gate;
                 gl_Position = projectionMatrix * c;
@@ -780,8 +795,10 @@ function createJets(holes) {
     const jets = new Float32Array(n * 4);
     const bandJet = new Float32Array(n * 2);
     const jetDepths = new Float32Array(n);
+    const jetPcs = new Float32Array(n);
     withJets.forEach((bh, i) => {
         jetDepths[i] = bh.body.depth;
+        jetPcs[i] = bh.pc;
         const nxy = Math.hypot(bh.n.x, bh.n.y) || 1;
         centres.set([bh.world.x, bh.world.y, bh.world.z], i * 3);
         axes.set([bh.n.x / nxy, bh.n.y / nxy], i * 2);
@@ -798,6 +815,7 @@ function createJets(holes) {
     geometry.setAttribute('aJet', new THREE.InstancedBufferAttribute(jets, 4));
     geometry.setAttribute('aBandJet', new THREE.InstancedBufferAttribute(bandJet, 2));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(jetDepths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(jetPcs, 1));
     const noise = exoticNoise();
     const sky = new THREE.Mesh(geometry, jetMaterial(0, noise));
     const front = new THREE.Mesh(geometry, jetMaterial(1, noise));
@@ -828,10 +846,11 @@ export function createBlackHolesLayer(engine, app) {
     const dprUniform = { value: 1 };
     const heroes = [];
     for (let i = 0; i < MAX_HEROES; i++) {
-        heroes.push({ bh: null, reveal: 0, pxPerM: 1, ndcX: 0, ndcY: 0, starX: 0, starY: 0, companion: null, stream: null, stars: null });
+        heroes.push({ bh: null, reveal: 0, pxPerM: 1, ndcX: 0, ndcY: 0, starX: 0, starY: 0, companion: null, stream: null, stars: null, dir: new THREE.Vector3(), grow: 1 });
     }
     let heroCount = 0;
     const v = new THREE.Vector3();
+    const seen = new THREE.Vector3();  // Where a flight has the hole, before projecting
     const pickList = [];
 
     function ensureBuilt() {
@@ -866,12 +885,15 @@ export function createBlackHolesLayer(engine, app) {
         if (lens) compileLens();
     });
 
-    function placeHero(hero, bh, reveal, pxPerM, p) {
+    function placeHero(hero, bh, reveal, pxPerM, p, grow) {
         hero.bh = bh;
         hero.reveal = reveal;
         hero.pxPerM = pxPerM;
         hero.ndcX = v.x * p;
         hero.ndcY = v.y * p;
+        if (seen.equals(bh.world)) hero.dir.set(bh.basis.centre[0], bh.basis.centre[1], bh.basis.centre[2]);
+        else hero.dir.copy(seen).normalize();
+        hero.grow = grow;
     }
 
     // Keep the biggest holes on screen, without allocating
@@ -885,20 +907,22 @@ export function createBlackHolesLayer(engine, app) {
         for (let i = 0; i < holes.length; i++) {
             const bh = holes[i];
             const p = parallaxFactor(bh.body.depth, frame.fov);
-            const radiusPx = bh.discDeg * DEG * 0.5 * frame.pxPerRad * p;
+            seen.copy(bh.world);
+            const grow = travelSize(travelPoint(seen, bh.pc));
+            const radiusPx = bh.discDeg * DEG * 0.5 * frame.pxPerRad * p * grow;
             if (radiusPx < REVEAL_LO) continue;
-            v.copy(bh.world).project(frame.camera);
+            v.copy(seen).project(frame.camera);
             if (v.z > 1 || v.z < -1) continue;
             const pxPerM = radiusPx / R_OUT;
             const reach = (LENS_EDGE * pxPerM * 2);
             if (Math.abs(v.x * p) > 1 + reach / w || Math.abs(v.y * p) > 1 + reach / h) continue;
             const reveal = smoothstep(REVEAL_LO, REVEAL_HI, radiusPx) * sharedUniforms.uSkyFade.value * lensFade;
             if (heroCount < MAX_HEROES) {
-                placeHero(heroes[heroCount++], bh, reveal, pxPerM, p);
+                placeHero(heroes[heroCount++], bh, reveal, pxPerM, p, grow);
             } else {
                 let smallest = 0;
                 for (let k = 1; k < MAX_HEROES; k++) if (heroes[k].pxPerM < heroes[smallest].pxPerM) smallest = k;
-                if (pxPerM > heroes[smallest].pxPerM) placeHero(heroes[smallest], bh, reveal, pxPerM, p);
+                if (pxPerM > heroes[smallest].pxPerM) placeHero(heroes[smallest], bh, reveal, pxPerM, p, grow);
             }
         }
     }
@@ -963,7 +987,8 @@ export function createBlackHolesLayer(engine, app) {
 
         const { basis } = bh;
         const deep = hero.stars.material.uniforms;
-        deep.uCentre.value.set(basis.centre[0], basis.centre[1], basis.centre[2]);
+        deep.uCentre.value.copy(hero.dir);
+        deep.uGrow.value = hero.grow;
         deep.uEast.value.set(basis.east[0], basis.east[1], basis.east[2]);
         deep.uUp.value.set(basis.up[0], basis.up[1], basis.up[2]);
         deep.uReveal.value = hero.reveal;

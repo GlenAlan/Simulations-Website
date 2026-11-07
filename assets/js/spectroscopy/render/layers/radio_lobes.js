@@ -6,7 +6,8 @@ import { Rng } from '../../core/rng.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize } from './sky_tangent.js';
 
-// sources: [{ az, alt, positionAngleDeg, spanDeg, strength, seed, depth }]; spanDeg is the whole length, tip to tip
+// sources: [{ az, alt, positionAngleDeg, spanDeg, strength, seed, depth, pc }]; spanDeg is the whole length, tip to tip,
+// and pc the source's distance (core/depth.js travelPc)
 export function createRadioLobes(engine, sources) {
     const n = sources.length;
     const geometry = new THREE.InstancedBufferGeometry();
@@ -18,8 +19,10 @@ export function createRadioLobes(engine, sources) {
     const params = new Float32Array(n * 4);
     const shape = new Float32Array(n * 4);
     const depths = new Float32Array(n);
+    const pcs = new Float32Array(n);
     sources.forEach((src, i) => {
         depths[i] = src.depth;
+        pcs[i] = src.pc;
         const rng = new Rng(`lobes:${src.seed}`);
         const basis = tangentBasis(src.az, src.alt);
         // The quad is square; the jet axis runs along u
@@ -37,6 +40,7 @@ export function createRadioLobes(engine, sources) {
     geometry.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 4));
     geometry.setAttribute('aShape', new THREE.InstancedBufferAttribute(shape, 4));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -48,16 +52,20 @@ export function createRadioLobes(engine, sources) {
             attribute vec4 aParams;
             attribute vec4 aShape;
             attribute float aDepth;
+            attribute float aPc;
             varying vec2 vP;
             varying vec4 vParams;
             varying vec4 vShape;
             varying float vResolved;    // 0 while it's too small on screen to be drawn as anything but two soft dots
             void main() {
                 vP = position.xy;
-                vResolved = smoothstep(10.0, 30.0, length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth));
-                vParams = aParams;
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float grow = travelSize(near);
+                vResolved = smoothstep(10.0, 30.0, length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth) * grow);
+                vParams = vec4(aParams.x * travelThrough(near) * min(near * near, 1.0), aParams.yzw);
                 vShape = aShape;
-                vec3 world = aCentre + position.x * aU + position.y * aV;
+                vec3 world = centre + position.x * aU * grow + position.y * aV * grow;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
                 gl_Position.xy *= depthP(aDepth);
                 if (uBandW[0] < 0.001) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);

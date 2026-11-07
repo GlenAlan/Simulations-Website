@@ -12,7 +12,7 @@ import { bus } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
-import { depthLight, parallaxFactor } from '../../core/depth.js';
+import { depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { supernovaBandsAt } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, lineRGB } from './nebula_bake.js';
@@ -71,7 +71,7 @@ export function createSupernovaeLayer(engine, app) {
     const aN = f(3);
     const aRect = f(4);
     const aFilCol = f(3);
-    const aPack = f(3); // Half-size, job id, peak magnitude: packed, as WebGL allows only 16 attributes
+    const aPack = f(4); // Half-size, job id, peak magnitude, distance (pc): packed, as WebGL allows only 16 attributes
     const aReady = f(1);
     const aDepth = f(1);
     const stage = { shape: f(4), flash: f(4), shell: f(4), flashCol: f(3), sheetCol: f(3), lateSheet: [], shellLight: bodies.map(depthLight) };
@@ -141,7 +141,7 @@ export function createSupernovaeLayer(engine, app) {
         aR.set(r, i * 3);
         aN.set(nn, i * 3);
         aRect.set(job.rect, i * 4);
-        aPack.set([tanHalf, job.id, sn.peak_mag + (body.depth_dim_mag || 0)], i * 3);
+        aPack.set([tanHalf, job.id, sn.peak_mag + (body.depth_dim_mag || 0), travelPc(body)], i * 4);
         aDepth[i] = body.depth;
         // Filaments: Balmer-dominated and pale for Type Ia, a warmer red with [N II] and [S II] for Type II. The sheet
         // and ejecta: blue-white for a Type Ia's fast shock, oxygen teal for a Type II's oxygen-rich ejecta. Both are as
@@ -170,7 +170,7 @@ export function createSupernovaeLayer(engine, app) {
     inst('aN', aN, 3);
     inst('aRect', aRect, 4);
     inst('aFilCol', aFilCol, 3);
-    inst('aPack', aPack, 3);
+    inst('aPack', aPack, 4);
     inst('aDepth', aDepth, 1);
     const readyAttr = inst('aReady', aReady, 1, true);
     const stageAttrs = [
@@ -192,7 +192,7 @@ export function createSupernovaeLayer(engine, app) {
             attribute vec3 aN;
             attribute vec4 aRect;
             attribute vec3 aFilCol;
-            attribute vec3 aPack;
+            attribute vec4 aPack;     // Half-size, job id, peak magnitude, distance (pc)
             attribute float aReady;
             attribute vec4 aShape;
             attribute vec4 aFlash;
@@ -215,7 +215,12 @@ export function createSupernovaeLayer(engine, app) {
             varying float vSmall;
             varying vec2 vPoint;    // Where its centre is on the screen, in device pixels
             void main() {
-                float aHalf = aPack.x;
+                // A flight that comes nearer one grows its shell, which thins away as the flight goes through it. Its
+                // point's own light is the stars layer's
+                vec3 centre = aCentre;
+                float near = travel(centre, aPack.w);
+                float aHalf = aPack.x * travelSize(near);
+                float passing = travelThrough(near) * min(near * near, 1.0);
                 // Only a few tens of pixels across, a shell is a faint smoke ring on the sky, not yet a bright hoop
                 vSmall = mix(0.5, 1.0, smoothstep(30.0, 170.0, 2.0 * aHalf * aShape.x * uPxPerRad));
                 SET_HERO(aPack.y)
@@ -227,14 +232,14 @@ export function createSupernovaeLayer(engine, app) {
                 float ir = aFlash.y * uBandW[1];
                 float uv = aFlash.z * uBandW[3];
                 float xr = aFlash.w * uBandW[4];
-                vFlash = aFlashCol * vis + uBandTint[0] * radio + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr;
+                vFlash = (aFlashCol * vis + uBandTint[0] * radio + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr) * travelLight(near);
                 float total = vis + radio + ir + uv + xr;
                 // A point of light: the star's own sprite and spikes in stars.js say how bright it is, and this is only the
                 // soft bloom round them. So it's a size on the page, the same on a phone as on a desk, and never the
                 // largest thing in the sky
                 float glowPx = (3.0 + 15.0 * sqrt(total)) * uDpr;
                 vGlowPx = glowPx;
-                vec4 point = projectionMatrix * modelViewMatrix * vec4(aCentre * ${SKY_RADIUS.toFixed(1)}, 1.0);
+                vec4 point = projectionMatrix * modelViewMatrix * vec4(centre * ${SKY_RADIUS.toFixed(1)}, 1.0);
                 vPoint = (point.xy * depthP(aDepth) / max(point.w, 0.001) * 0.5 + 0.5) * uViewport;
                 float half_ = max(aHalf, glowPx / uPxPerRad);
                 vQ = position.xy * half_ / aHalf;
@@ -245,8 +250,8 @@ export function createSupernovaeLayer(engine, app) {
                 vShape = aShape;
                 vShell = vec4(aShell.x, aShell.y, aShape.z, aShell.z);
                 vShellX = aShell.w;
-                vReady = aReady;
-                vec3 world = (aCentre + (aR * position.x + aN * position.y) * half_) * ${SKY_RADIUS.toFixed(1)};
+                vReady = aReady * passing;
+                vec3 world = (centre + (aR * position.x + aN * position.y) * half_) * ${SKY_RADIUS.toFixed(1)};
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
                 gl_Position.xy *= depthP(aDepth);
             }`,

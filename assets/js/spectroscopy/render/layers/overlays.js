@@ -4,10 +4,10 @@
 
 import { bus } from '../../core/state.js';
 import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
 import { signed, withCommas } from '../../core/format.js';
 import { drawnSky } from './sky_tangent.js';
-import { sharedUniforms } from '../shared.js';
+import { sharedUniforms, travelSize } from '../shared.js';
 
 const RAD = Math.PI / 180;
 const BAND_EDGE_DEG = 14;          // How far either side of the galactic plane the highlight's edges sit
@@ -139,7 +139,7 @@ export function createOverlaysLayer(engine, app) {
         let drawing = false;
         ctx.beginPath();
         points.forEach(({ az, alt }) => {
-            const p = engine.project(az, alt, 1);
+            const p = engine.project(az, alt);
             if (!p) {
                 drawing = false;
                 return;
@@ -155,7 +155,7 @@ export function createOverlaysLayer(engine, app) {
     // The first spot along a line that's clear of the bars at the edges, for its label
     function labelSpot(points, frame, inset) {
         for (let i = 0; i < points.length; i++) {
-            const p = engine.project(points[i].az, points[i].alt, 1);
+            const p = engine.project(points[i].az, points[i].alt);
             if (p && p.x > 8 && p.x < frame.width - 44 && p.y > inset.top + 30 && p.y < frame.height - inset.bottom) return p;
         }
         return null;
@@ -385,9 +385,10 @@ export function createOverlaysLayer(engine, app) {
     function drawSelection(frame, at) {
         if (!at) return;
         const { entity, body } = app.selected;
-        const p = engine.project(at.az, at.alt, at.depth);
+        // Where it is drawn, and as big, on a flight into a system too
+        const p = engine.project(at.az, at.alt, entity.travel_pc || travelPc(body));
         if (!p) return;
-        const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr) * parallaxFactor(body.depth, frame.fov);
+        const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr) * travelSize(p.near);
         // A bright star's glare spreads well past its point: the frame goes round that, not inside it. Magnitudes above
         // where a star starts to be drawn, as stars.js has them
         const glare = entity === body ? Math.max(0, 1.0857 * Math.log(Math.max(engine.glowOf(body), 0.05)) + 3.25 - 3) * 2.2 : 0;
@@ -482,7 +483,7 @@ export function createOverlaysLayer(engine, app) {
             // A star of a multiple moves as its system's clock runs, and comes apart from its partner as the view zooms
             const marked = app.selected ? drawnSky(engine, app.selected) : null;
             const key = [
-                view.az.toFixed(4), view.alt.toFixed(4), view.fov.toFixed(4), frame.width, frame.height, pixelRatio, frame.band, inSky,
+                view.az.toFixed(4), view.alt.toFixed(4), view.fov.toFixed(4), sharedUniforms.uTravel.value.x, sharedUniforms.uTravel.value.y, frame.width, frame.height, pixelRatio, frame.band, inSky,
                 layers.grid, layers.labels, layers.galacticBand, layers.shiftTint, layers.homePlanets,
                 app.selected ? app.selected.entity.code : '', marked ? marked.az.toFixed(6) : '', marked ? marked.alt.toFixed(6) : '', reticle.on, reticle.code
             ].join();

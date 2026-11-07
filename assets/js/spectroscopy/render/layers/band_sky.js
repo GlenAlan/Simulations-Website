@@ -257,7 +257,7 @@ function createUnresolvedSources(basis, order) {
                 w += uBandTint[1] * aWeight.y * uBandW[1];
                 w += uBandTint[3] * aWeight.z * uBandW[3];
                 w += uBandTint[4] * aWeight.w * uBandW[4];
-                vColour = w * uSkyFade;
+                vColour = w * uSkyFade * uDomeFade;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                 gl_Position.xy *= depthP(1.0);
                 gl_PointSize = dot(w, w) > 0.00001 ? aSize * clamp(uViewport.y / 720.0, 1.0, 2.0) : 0.0;
@@ -411,7 +411,7 @@ export function createBandSkyLayer(engine, app) {
                 // dark gradient doesn't show bands
                 float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
                 vec3 root = max(sqrt(max(c, vec3(0.0))) + (n - 0.5) * 0.008, vec3(0.0));
-                gl_FragColor = vec4(root * root * smoothstep(-0.03, 0.05, d.y) * uSkyFade, 1.0);
+                gl_FragColor = vec4(root * root * smoothstep(-0.03, 0.05, d.y) * uSkyFade * uDomeFade, 1.0);
             }`
     }));
     skyMesh.frustumCulled = false;

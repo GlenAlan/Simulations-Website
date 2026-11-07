@@ -121,7 +121,7 @@ export function createSearchMarksLayer(engine, app) {
                 const found = app.universe.resolve(codes[i]);
                 if (!found || found.path !== 'member') continue;
                 const at = memberDirection(found.body, found.entity);
-                const p = at && engine.project(at.az, at.alt, found.body.depth);
+                const p = at && engine.project(at.az, at.alt);
                 if (!p || !p.onScreen) continue;
                 traceTick(p.x, p.y, base);
                 n += 1;
