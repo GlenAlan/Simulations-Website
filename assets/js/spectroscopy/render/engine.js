@@ -50,6 +50,7 @@ const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
 const PICK_SEEN_MIN = 0.12;     // Drawn fainter than this (see seenAmount), a point can't be made out, so it can't be clicked
 const PICK_FAINT_REACH = 0.25;  // The faintest that can be clicked must be clicked this near, as a share of the usual reach
+const ROGUE_SEEN_SOONER = 0.25; // Magnitudes: a rogue planet can be made out this much sooner than a star (see seenAmount)
 const CLUSTER_INSIDE = 0.45;    // A cluster's radius, as a share of the view's smaller side, once you are in among its stars
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
 const DRAWER_RESIZE_MS = 700;   // A change of size this soon after the drawer opens or closes is the drawer's doing
@@ -1167,6 +1168,9 @@ export function createEngine(canvas) {
     function seenAmount(body, glow, lim) {
         if (body.comet && app.band === 'visible') return smooth01((lim - drawMag(body) + 0.6) / 1.2);
         const m = 1.0857 * Math.log(Math.max(glow, MIN_GLOW)) + 3.25;
+        // A rogue planet's own layer (rogue_planets.js) draws a faint one as a warm haze, plainer to see than stars.js's
+        // point of the same glow, and doesn't dim it towards the horizon
+        if (body.kind === 'rogue_planet') return smooth01((m + ROGUE_SEEN_SOONER) / 2.2);
         const up = Math.max(Math.sin(body.sky.alt * RAD), 0);
         return smooth01(m / 2.2) * Math.exp(-0.05 / (up + 0.05));
     }
