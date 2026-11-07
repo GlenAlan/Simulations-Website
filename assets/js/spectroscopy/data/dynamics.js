@@ -13,10 +13,12 @@
 //               (P-type), well outside it. Comets keep to the same, all the way round their stretched orbits.
 //  Ages         The stars of a system were born together: one age, and every star's stage fits it. A main-sequence star hasn't
 //               outlived its time there; a giant has.
+//  Black holes  black_hole.feeding says how each is fed (settleHole): 'roche', 'wind' or 'none', and its orbit fits that.
+//  Eclipses     A few detached close pairs are turned edge-on (tiltEclipses), beside the tight pairs that eclipse anyway.
 
 import { stable } from '../core/rng.js';
-import { keplerPeriodDays, logG } from '../core/phys.js';
-import { dp, RSUN_AU, msLifetimeMyr, turnoffMass, starFromMass } from './stellar.js';
+import { keplerPeriodDays, logG, orbitalSpeedKms, fluxFromLuminosity } from '../core/phys.js';
+import { dp, RSUN_AU, msLifetimeMyr, turnoffMass, starFromMass, absoluteVisual, apparentMag, distanceForMag } from './stellar.js';
 
 export const TIDAL_DAYS = 10;           // Pairs closer than this are round
 export const DETACHED_FILL = 0.9;       // A pair that isn't passing mass keeps both stars within this share of their lobes
@@ -24,6 +26,18 @@ export const P_TYPE_MARGIN = 1.2;       // How far beyond the edge of the unstab
 export const S_TYPE_MARGIN = 0.8;       // How far inside the stable zone an orbit round one part of a system must be
 const ROUND = 0.01;                     // An orbit with less eccentricity than this counts as round
 const AGE_SPREAD = 0.02;                // Stars born together, within this share of their age
+
+// Black holes and how they are fed (black_hole.feeding): 'roche', a companion that fills its Roche lobe and spills gas onto a
+// disc round the hole, as in the low-mass X-ray binaries; 'wind', a massive companion whose wind the hole catches, as in the
+// high-mass ones; 'none', a quiet pair too far apart to feed it, faint in X-rays
+const ROCHE_DONOR_MAX = 3;
+const WIND_DONOR_MIN = 10;
+const WIND_FILL = [0.6, 0.9];
+
+export function holeFill(bh) {
+    const c = bh.companion.star;
+    return (c.radius_Rsun * RSUN_AU) / (rocheShare(c.mass_Msun / bh.mass_Msun) * bh.a_AU);
+}
 
 // Eggleton's Roche lobe: its radius as a share of the separation, for a star q times the mass of its partner
 export function rocheShare(q) {
@@ -146,8 +160,19 @@ export function systemProblems(body) {
         const speed = (2 * Math.PI * bh.a_AU * 149597870.7) / (bh.period_days * 86400);
         const K = speed * (bh.mass_Msun / total) * Math.sin((bh.inc_deg * Math.PI) / 180);
         if (Math.abs(bh.K_kms / K - 1) > 2e-3) problem('kepler', `${body.code}'s K doesn't follow from its orbit`);
-        const fill = (c.star.radius_Rsun * RSUN_AU) / (rocheShare(c.star.mass_Msun / bh.mass_Msun) * bh.a_AU);
-        if (fill > 1) problem('roche', `${c.code} overfills its Roche lobe (${fill.toFixed(2)})`);
+        const fill = holeFill(bh);
+        if (bh.feeding === 'roche') {
+            if (fill < 0.97 || fill > 1.03) problem('roche', `${body.code}'s companion should just fill its Roche lobe, not ${fill.toFixed(2)} of it`);
+            if (c.star.mass_Msun > ROCHE_DONOR_MAX) problem('roche', `${body.code}'s Roche-lobe donor is too heavy to feed it steadily`);
+        } else if (bh.feeding === 'wind') {
+            if (fill >= 1 || fill < WIND_FILL[0] * 0.99) problem('roche', `${body.code}'s wind-fed companion fills ${fill.toFixed(2)} of its lobe`);
+            if (c.star.mass_Msun < WIND_DONOR_MIN) problem('roche', `${body.code}'s companion is too light to blow a strong wind`);
+        } else if (bh.feeding === 'none') {
+            if (fill > DETACHED_FILL) problem('roche', `${body.code} is marked quiet but its companion fills ${fill.toFixed(2)} of its lobe`);
+        } else {
+            problem('roche', `${body.code} has feeding ${bh.feeding}`);
+        }
+        if ((bh.ecc || 0) > ROUND) problem('tides', `${body.code}'s orbit isn't round`);
         return out;
     }
     const stars = body.stars;
@@ -342,4 +367,72 @@ export function settleSystem(rng, system, { passing = false, planets = false } =
     system.interacting = passing;
     system.transfer = passing ? donorOf(stars, orbits[0]) : null;
     return system;
+}
+
+// ---------- Black holes: how each is fed ----------
+
+const HOLE_DISTANCE_PC = [6000, 15000];      // A wind-fed pair's supergiant is seen from across the disc
+const WIND_MAG = [6.5, 8.5];
+
+// Sets a black hole's pair up for how it is fed, from a stream of its own. 'roche': its low-mass companion just fills its
+// lobe on a round orbit, hours to days long. 'wind': its companion becomes a blue supergiant (make(rng) gives one), within
+// its lobe but near filling it, placed far enough off to look as faint as such stars do. 'none': left as drawn, a detached
+// pair. The period and the companion's K follow from the orbit either way, so Kepler and the mass function hold.
+export function settleHole(rng, body, feeding, make) {
+    const bh = body.black_hole;
+    const c = bh.companion;
+    bh.feeding = feeding;
+    if (feeding === 'wind') {
+        c.star = make(rng);
+        const absV = absoluteVisual(c.star.luminosity_Lsun, c.star.teff_K);
+        const d = stable(Math.min(HOLE_DISTANCE_PC[1], Math.max(HOLE_DISTANCE_PC[0], distanceForMag(absV, rng.range(WIND_MAG[0], WIND_MAG[1])))), 5);
+        c.distance_pc = d;
+        c.brightness = { flux_Wm2: stable(fluxFromLuminosity(c.star.luminosity_Lsun, d), 5), mag: apparentMag(absV, d) };
+        body.distance_pc = d;
+        body.brightness = { ...c.brightness };
+        bh.a_AU = stable((c.star.radius_Rsun * RSUN_AU) / (rocheShare(c.star.mass_Msun / bh.mass_Msun) * rng.range(WIND_FILL[0], WIND_FILL[1])), 4);
+    } else if (feeding === 'roche') {
+        bh.a_AU = stable((c.star.radius_Rsun * RSUN_AU) / rocheShare(c.star.mass_Msun / bh.mass_Msun), 4);
+    } else {
+        bh.jets = false;                          // Nothing falls in, so nothing is flung out
+    }
+    const total = bh.mass_Msun + c.star.mass_Msun;
+    bh.period_days = stable(keplerPeriodDays(bh.a_AU, total), 6);
+    bh.K_kms = stable(orbitalSpeedKms(bh.a_AU, bh.period_days) * (bh.mass_Msun / total) * Math.sin((bh.inc_deg * Math.PI) / 180), 5);
+}
+
+// Which black holes are fed which way: the heaviest companions blow the winds, the lightest fill their lobes, and the rest
+// are quiet. counts: { roche, wind, none }. Returns a Map from body to feeding.
+export function holeFeedings(holes, counts) {
+    const byMass = holes.slice().sort((a, b) => b.black_hole.companion.star.mass_Msun - a.black_hole.companion.star.mass_Msun || (a.code < b.code ? -1 : 1));
+    const out = new Map();
+    byMass.slice(0, counts.wind).forEach((b) => out.set(b, 'wind'));
+    byMass.slice(counts.wind).reverse().forEach((b, i) => out.set(b, i < counts.roche ? 'roche' : 'none'));
+    return out;
+}
+
+// ---------- Eclipses ----------
+
+// How far from edge-on a pair can be seen and still eclipse, in degrees: 90 - i < arcsin((R1 + R2) / a) on a round orbit
+export function eclipseWindowDeg(stars, orbit) {
+    const reach = (radiusAU(stars[orbit.a[0]]) + radiusAU(stars[orbit.b[0]])) / orbit.a_AU;
+    return (Math.asin(Math.min(1, reach)) * 180) / Math.PI;
+}
+
+// Turns n detached close pairs edge-on enough to eclipse, chosen from those whose two stars are alike enough in temperature
+// that both eclipses show: the classic light curve with a deep dip and a shallower one. Only the inner orbit's tilt changes,
+// and nothing stored depends on it, since speeds along the line of sight are worked out from the orbit (data/orbits.js).
+export function tiltEclipses(rng, systems, n) {
+    const suits = (b) => {
+        const o = b.orbits[0];
+        if (b.interacting || o.shared_path || o.ecc || o.period_days < 1 || o.period_days > 15) return false;
+        const t = [b.stars[o.a[0]].star.teff_K, b.stars[o.b[0]].star.teff_K];
+        return Math.min(...t) / Math.max(...t) >= 0.7 && eclipseWindowDeg(b.stars, o) >= 3 && 90 - o.inc_deg > eclipseWindowDeg(b.stars, o);
+    };
+    const chosen = rng.shuffle(systems.filter(suits).sort((a, b) => (a.code < b.code ? -1 : 1))).slice(0, n);
+    chosen.forEach((b) => {
+        const o = b.orbits[0];
+        o.inc_deg = dp(90 - eclipseWindowDeg(b.stars, o) * rng.range(0.05, 0.6), 2);
+    });
+    return chosen;
 }

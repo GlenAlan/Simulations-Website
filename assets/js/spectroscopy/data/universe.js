@@ -23,7 +23,7 @@ import { dp, clamp, STAR_TABLE, makeClassStar, makeRedGiant, makeRedSupergiant, 
 import { PLANET_COUNT_BUCKETS, hostContext, makeSystemPlanets, planetFromSpec, addToTally } from './planets.js';
 import { makeRandomMulti, makeFigureEightSystem, makeDoubleDoubleSystem, systemAbsoluteMag, systemLuminosity, systemMass,
     fillComponentFields } from './multi.js';
-import { planetFloorAU } from './dynamics.js';
+import { planetFloorAU, holeFeedings, settleHole, tiltEclipses } from './dynamics.js';
 import { makeCluster, makeBinaryMembers, keepMembersAboveHorizon, deepClusterOptions } from './clusters.js';
 import { makeNebula, makeNeutronStar, makeGalaxy, makeBlackHole, makeSupernova, makeQuasar, makeComet, makeRogue, pushBack,
     placeSkyComets } from './deep_sky.js';
@@ -418,11 +418,22 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     });
 
     const holes = root.fork('black_holes');
+    const holeBodies = [];
     for (let i = 0; i < BODY_COUNTS.black_hole; i++) {
         const body = makeBase('black_hole', otherCode());
         makeBlackHole(holes.fork(`hole:${i}`), otherCode, body);
         add(body, 'stars');
+        holeBodies.push(body);
     }
+    // Then how each is fed, from streams of their own, so no other number changes
+    const feedings = holeFeedings(holeBodies, MIX.blackHoleFeeding);
+    // A wind-fed hole's companion is a compact blue supergiant, as in the high-mass X-ray binaries: the first drawn under 40 solar radii
+    const supergiant = (r) => {
+        let star = makeBlueSupergiant(r);
+        for (let i = 0; i < 20 && star.radius_Rsun > 40; i++) star = makeBlueSupergiant(r);
+        return star;
+    };
+    holeBodies.forEach((body) => settleHole(holes.fork(`feeding:${body.code}`), body, feedings.get(body), supergiant));
 
     const quasars = root.fork('quasars');
     [[0.5, 1.2], [1.2, 2.5], [2.5, 4]].forEach(([lo, hi], i) => {
@@ -470,6 +481,9 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const cometSun = placeSkyComets(root.fork('sky comets'), skyComets, layout);
     const sky = first.filter((body) => !leaving.has(body)).concat(second);
     makeExocomets(root.fork('exocomets'), sky, [...leaving].map((b) => b.code), coder('exocomets'), sealed);
+
+    // A few detached close pairs turned edge-on, to join the tight pairs that eclipse already
+    tiltEclipses(root.fork('eclipses'), sky.filter((b) => b.stars && b.architecture !== 'figure_eight' && b.architecture !== 'double_double'), MIX.eclipsingTilted);
 
     // ---------- Motions ----------
     // After the layout, since a body's direction sets much of its motion. The hard-coded systems keep theirs.
