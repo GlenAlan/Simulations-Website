@@ -310,12 +310,13 @@ export function nucleusSpectrum(entity, grid, host) {
 // A broad emission line is many times wider than anything the line tools were made for, and noise along its top can look like
 // a line of its own. So for one: a straight continuum from either side of a wide window, the line smoothed over a few hundred
 // km/s, and its full width where the smoothed line falls to half its height. Works from the spectrum alone.
-// Returns { centre_nm, fwhm_nm, fwhm_kms, continuum, height, type: 'em', instrument_kms } or null.
+// Returns { centre_nm, fwhm_nm, fwhm_kms, err_fwhm_kms, continuum, height, type: 'em', instrument_kms } or null.
 const BROAD_WINDOW = 0.07;          // Half the window, as a share of the wavelength: about 21,000 km/s
 const BROAD_SMOOTH_KMS = 400;
 const BROAD_SIDE = 0.15;            // The share of the window at each end taken as continuum
 const BROAD_FIND_KMS = 2500;        // How far from where it's expected its peak may be
 const BROAD_CLEAR = 20;             // Standard deviations of smoothed noise its peak should stand above, for a clean half height
+const BROAD_SYSTEMATIC = 0.05;      // The share of the width that blends and the continuum leave uncertain, whatever the noise
 
 export const BROAD_LINE_HALF = BROAD_WINDOW;
 
@@ -355,8 +356,10 @@ export function broadLineWidth(spectrum, nearNm) {
     const scatter = Math.sqrt(left.concat(right).reduce((s, y, i) => s + (y - (i < side ? yl : yr)) ** 2, 0) / (2 * side));
     let noise = 0;
     let peak = -1;
+    let smoothK = 1;
     const smoothBy = (kms) => {
         const k = Math.max(1, Math.round(kms / dv / 2));
+        smoothK = k;
         let sum = 0;
         let count = 0;
         for (let i = 0; i < Math.min(n, k); i++) { sum += resid[i]; count++; }
@@ -373,11 +376,18 @@ export function broadLineWidth(spectrum, nearNm) {
             if (peak < 0 || smooth[i] > smooth[peak]) peak = i;
         }
     };
+    // Where the smoothed line falls through a height, and how steeply (flux per nm) it falls there
     const cross = (from, step, half) => {
         for (let i = from; i > 0 && i < n - 1; i += step) {
             if (smooth[i + step] < half) {
                 const t = (smooth[i] - half) / (smooth[i] - smooth[i + step]);
-                return wl[a + i] + t * (wl[a + i + step] - wl[a + i]);
+                const x = wl[a + i] + t * (wl[a + i + step] - wl[a + i]);
+                // Over the stretch the smoothing spans, so that one noisy step doesn't set it
+                const reach = Math.max(1, Math.round(smoothK / 2));
+                const i0 = Math.max(0, Math.min(n - 1, i - step * reach));
+                const i1 = Math.max(0, Math.min(n - 1, i + step * (reach + 1)));
+                const slope = Math.abs(smooth[i0] - smooth[i1]) / Math.max(1e-12, Math.abs(wl[a + i1] - wl[a + i0]));
+                return { x, slope };
             }
         }
         return null;
@@ -395,13 +405,25 @@ export function broadLineWidth(spectrum, nearNm) {
     }
     const edges = widthNow();
     if (!edges) return null;
-    const { l, r } = edges;
+    const l = edges.l.x;
+    const r = edges.r.x;
     const centre = 0.5 * (l + r);
     const R = 1 / (2 * (wl[a + 1] / wl[a] - 1));
+    // How well the noise lets the width be read: each half-height crossing moves by the smoothed noise over the line's slope
+    // there, and the half height itself moves with the noise on the peak and on the continuum either side, which moves both
+    // crossings together. A faint galaxy's broad line, in a noisy spectrum, can only be read roughly.
+    // On top of that, the narrow lines in and beside it and where the continuum is drawn leave a few per cent however clean the
+    // spectrum, as they do for real broad lines.
+    const contErr = (1.25 * scatter) / Math.sqrt(2 * side);
+    const halfErr = 0.5 * Math.hypot(noise, contErr);
+    const slope = 0.5 * (edges.l.slope + edges.r.slope);
+    const errNm = Math.hypot(noise / edges.l.slope, noise / edges.r.slope, (2 * halfErr) / slope);
+    const fwhmKms = ((r - l) / centre) * C_KMS;
     return {
         centre_nm: centre,
         fwhm_nm: r - l,
-        fwhm_kms: ((r - l) / centre) * C_KMS,
+        fwhm_kms: fwhmKms,
+        err_fwhm_kms: Math.hypot(Number.isFinite(errNm) ? (errNm / centre) * C_KMS : 0, BROAD_SYSTEMATIC * fwhmKms),
         continuum: cont(centre),
         height: smooth[peak],
         type: 'em',

@@ -10,7 +10,7 @@
 import { app } from '../../../core/state.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { C_KMS, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
-import { sci, signed, sig, withCommas } from '../../../core/format.js';
+import { CZ_REASON, beyondCz, sci, signed, speedText, withCommas, zPlain } from '../../../core/format.js';
 import { LINES } from '../../../data/lines.js';
 import { getReference } from '../../../data/references.js';
 import { blendAllowance, dopplerFrom, lineCentre, resolvingPower } from '../../../spectra/measure.js';
@@ -39,6 +39,18 @@ export function velocityText(v, err) {
     const shown = err < 1 ? err.toFixed(1) : withCommas(Math.max(1, err));
     const value = v === 0 ? '0' : digits ? signed(v, 1) : `${v < 0 ? '−' : '+'}${withCommas(Math.abs(v))}`;
     return `${value} ± ${shown} km/s`;
+}
+
+// A reading, the same in every way of measuring it and everywhere else a shift is shown (core/format.js): z always, and v = cz
+// beside it while that still applies. Takes { z, err_z, v_kms, err_kms }.
+export function readingText(d) {
+    const z = `z = ${zText(d.z, d.err_z)}`;
+    return beyondCz(d.z) ? z : `${z}, v = ${velocityText(d.v_kms, d.err_kms)}`;
+}
+
+// Said under a reading above z = 0.1, in place of the speed
+export function beyondNote(z) {
+    return beyondCz(z) ? el('p', { class: 'spectro-tool-line', text: `${CZ_REASON}.` }) : null;
 }
 
 // Every galaxy in this sky is moving away from us, as nearly all are in the real one. A far galaxy's lines move a long way, so a
@@ -236,10 +248,11 @@ export function createSlide(container, api, { says, single = false }) {
     // ---------- Building it ----------
 
     const answer = el('p', { class: 'spectro-tool-answer' });
+    const beyond = el('p', { class: 'spectro-tool-line', hidden: true, text: `${CZ_REASON}.` });
     const warning = el('p', { class: 'spectro-tool-warning', hidden: true });
     const working = el('p', { class: 'spectro-tool-line' });
     // The single line's working, a step at a time, filled in as the line moves
-    const workItems = [0, 1, 2, 3].map(() => el('li'));
+    const workItems = [0, 1, 2, 3, 4].map(() => el('li'));
     const workSteps = el('ol', { class: 'spectro-tool-steps', hidden: true }, ...workItems);
     const hint = para(single ? 'Drag the dashed line onto the object\'s line.' : 'Drag the dashed lines onto the dips.');
     const minus = el('button', { type: 'button', class: 'spectro-square', text: '−', 'aria-label': 'Slide a little towards blue', title: 'A little towards blue' });
@@ -251,7 +264,7 @@ export function createSlide(container, api, { says, single = false }) {
     const useBox = el('div', { class: 'spectro-hands-use' });
     const none = para('No line here stands out clearly enough to line up. Try Measure one line.');
     none.hidden = true;
-    const root = el('div', { class: 'spectro-hands-pane' }, answer, warning, single ? workSteps : working, hint, none, sliderRow, ends, zoomRow, useBox);
+    const root = el('div', { class: 'spectro-hands-pane' }, answer, beyond, warning, single ? workSteps : working, hint, none, sliderRow, ends, zoomRow, useBox);
     container.append(root);
 
     // ---------- The shift ----------
@@ -332,16 +345,16 @@ export function createSlide(container, api, { says, single = false }) {
             const r = reading();
             // Said every time the lines come to rest, so what is heard is never an older reading than what is shown. With no
             // reading, an old one is taken back, and anything else said (such as where the plot zoomed to) is left to be heard.
-            if (r) says.textContent = `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}`;
+            if (r) says.textContent = `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}${r.d.beyondCz ? `. ${CZ_REASON}` : ''}`;
             else if (/^[vz] = /.test(says.textContent)) says.textContent = 'Not moved yet';
         }, 160);
     }
 
     function answerText(r) {
-        return r.d.beyondCz ? `z = ${zText(r.d.z, r.d.err_z)}` : `v = ${velocityText(r.d.v_kms, r.d.err_kms)}`;
+        return readingText(r.d);
     }
 
-    // The single line's sum, from where the student has put it: rest, observed, the difference, then the speed or z
+    // The single line's sum, from where the student has put it: rest, observed, the difference, z, then v = cz while it applies
     function renderSteps(r) {
         workSteps.hidden = !r;
         if (!r) return;
@@ -351,15 +364,18 @@ export function createSlide(container, api, { says, single = false }) {
         workItems[1].textContent = `λ = ${obs.toFixed(2)} nm: where you put it`;
         workItems[2].textContent = `Δλ = λ − λ₀ = ${r.d.dlambda_nm >= 0 ? '+' : '−'}${Math.abs(r.d.dlambda_nm).toFixed(digits)} nm`;
         const dl = Math.abs(r.d.dlambda_nm).toFixed(digits);
-        workItems[3].textContent = r.d.beyondCz
-            ? `z = Δλ ÷ λ₀ = ${dl} ÷ ${r.line.rest.toFixed(2)} = ${signed(r.d.z, 3)}`
-            : `v = c × Δλ ÷ λ₀ = ${sci(C_KMS, 3)} km/s × ${dl} ÷ ${r.line.rest.toFixed(2)} = ${r.d.v_kms < 0 ? '−' : '+'}${withCommas(Math.abs(r.d.v_kms))} km/s`;
+        const z = zPlain(r.d.z, 3);
+        workItems[3].textContent = `z = Δλ ÷ λ₀ = ${r.d.dlambda_nm < 0 ? '−' : ''}${dl} ÷ ${r.line.rest.toFixed(2)} = ${z}`;
+        workItems[4].hidden = r.d.beyondCz;
+        const factor = r.d.z < 0 ? `(${z})` : z.replace(/^\+/, '');
+        workItems[4].textContent = r.d.beyondCz ? '' : `v = cz = ${sci(C_KMS, 3)} km/s × ${factor} = ${speedText(r.d.v_kms)}`;
     }
 
     let useKey = '';
     function render() {
         const r = reading();
         hint.hidden = !!r || (single && !lines.length);
+        beyond.hidden = !r || !r.d.beyondCz;
         if (!r) {
             answer.textContent = 'Not moved yet';
             working.textContent = '';
@@ -367,7 +383,7 @@ export function createSlide(container, api, { says, single = false }) {
         } else {
             answer.replaceChildren(answerText(r), el('span', { class: 'spectro-tool-direction', text: direction(r.z) }));
             working.hidden = false;
-            working.textContent = `Moved ${nmText(r.d.dlambda_nm)} at ${r.line.label}, so ${r.d.beyondCz ? 'z = Δλ ÷ λ' : 'v = c × Δλ ÷ λ'}`;
+            working.textContent = `Moved ${nmText(r.d.dlambda_nm)} at ${r.line.label}, so z = Δλ ÷ λ₀${r.d.beyondCz ? '' : ' and v = cz'}`;
         }
         const warn = r ? galaxyWarning(api.resolved && api.resolved.entity, r.z) : '';
         if (warning.textContent !== warn) warning.textContent = warn;

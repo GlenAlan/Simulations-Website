@@ -5,7 +5,8 @@
 import { bus } from '../../core/state.js';
 import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
-import { signed, withCommas } from '../../core/format.js';
+import { beyondCz, withCommas, zPlain } from '../../core/format.js';
+import { C_KMS } from '../../core/phys.js';
 import { drawnSky } from './sky_tangent.js';
 import { sharedUniforms, travelSize } from '../shared.js';
 
@@ -50,15 +51,17 @@ export function angularRadiusDeg(entity, body) {
     return 0;
 }
 
+// As every shift is shown (core/format.js): z always, and the speed beside it while v = cz still applies (spec 8.4)
+const STILL = 'z = 0, 0 km/s';      // Neither towards us nor away
 function shiftWords(body) {
-    const z = body.quasar ? body.quasar.z : (body.galaxy ? body.galaxy.z : null);
     const v = body.radial_velocity_kms;
-    // Above z of about 0.1, v = cz no longer holds, so the shift itself is shown (spec 8.4)
-    if (z !== null && z !== undefined && Math.abs(z) >= 0.1) return `z = ${signed(z, 2)}`;
-    if (!Number.isFinite(v)) return null;
+    const given = body.quasar ? body.quasar.z : (body.galaxy ? body.galaxy.z : null);
+    const z = Number.isFinite(given) ? given : v / C_KMS;
+    if (!Number.isFinite(z)) return null;
+    if (beyondCz(z)) return `z = ${zPlain(z, 2)}`;
     const speed = Math.abs(v) >= 1000 ? withCommas(Math.abs(v)) : Math.abs(v).toFixed(0);
-    if (speed === '0') return '0 km/s';     // Neither towards us nor away
-    return `${v < 0 ? '−' : '+'}${speed} km/s`;
+    if (speed === '0') return STILL;
+    return `z = ${zPlain(z, 2)}, ${v < 0 ? '−' : '+'}${speed} km/s`;
 }
 
 // A soft disc, drawn once for each colour and stamped at any size
@@ -340,7 +343,7 @@ export function createOverlaysLayer(engine, app) {
             const shift = showShift && body.kind !== 'home_planet' ? shiftWords(body) : null;
             if (!name && !shift) continue;
             const v = body.radial_velocity_kms;
-            const shiftText = shift ? (shift === '0 km/s' ? shift : `${v >= 0 ? '→' : '←'} ${shift}`) : null;
+            const shiftText = shift ? (shift === STILL ? shift : `${v >= 0 ? '→' : '←'} ${shift}`) : null;
 
             ctx.font = LABEL_FONT;
             const nameW = name ? ctx.measureText(name).width : 0;

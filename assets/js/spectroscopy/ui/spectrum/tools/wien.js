@@ -8,8 +8,8 @@
 
 import { registerTool } from './index.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
-import { C_KMS, WIEN_B, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
-import { plusMinus, sci, sig, withCommas } from '../../../core/format.js';
+import { WIEN_B, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
+import { plusMinus, sci, shiftWords, sig, withCommas } from '../../../core/format.js';
 import { STANDARDS, STANDARD_LABELS } from '../../../data/standards.js';
 import { wienPeak, wienCurveAt } from '../../../spectra/measure.js';
 import { topEdge, curveScale, curveAt, fitError, markOnPeak, markReading } from '../../../spectra/hand_fit.js';
@@ -262,8 +262,7 @@ function mount(container, api) {
     function syncShiftNote() {
         const z = api.picker.state().z;
         if (z) {
-            const v = z * C_KMS;
-            fill(stdShift, para(`Shifted by your slide: ${v >= 0 ? '+' : '−'}${withCommas(Math.abs(v))} km/s`));
+            fill(stdShift, para(`Shifted by your slide: ${shiftWords(z)}`));
         } else {
             fill(stdShift, actionRow(toolLink(api, 'doppler', 'Moving? Slide the lines first')));
         }

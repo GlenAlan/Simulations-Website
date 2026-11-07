@@ -48,14 +48,14 @@ export const app = {
     systemCode: null, // the body whose system is open
     selected: null,   // resolved selection: { entity, body, path } or null
     layers: {
-        homePlanets: true, // On by default (spec section 4); every other layer starts off
+        homePlanets: true, // On by default (spec section 4); every other layer but the CMB starts off
         backgroundStars: false, // Scenery that can't be selected. Off, so that every star on show can be clicked
         galacticBand: false,
         grid: false,
         labels: false,
         shiftTint: false,
         habitableZone: false,
-        cmb: false,
+        cmb: true,          // On from the start, as the owner asked: an even glow that only the Radio band shows
         visited: false,     // Marks over the sky to help a search: see render/layers/search_marks.js
         planetHosts: false
     },
