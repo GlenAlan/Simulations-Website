@@ -1,0 +1,122 @@
+// Which line shows a multiple star's lines splitting best. At the moment the stars' speeds along the line of sight are furthest
+// apart, each candidate line is drawn in the whole system's light, as the plot will show it, and the one whose two dips stand
+// clearest of each other wins. Hydrogen's lines and other broad ones seldom split for the eye, since each star's line is wider
+// than the gap between them; a narrow metal line does. Pure: no DOM, so it can be tested on its own.
+//
+//   widestSplit(body, from, period, codes?) -> t   the next moment within one period when the followed stars are furthest apart
+//   splitLine(entity, body, overviews, codes, { t, parts }) -> { line, contrast } | null
+//       overviews[i] is the overview spectrum of the star codes[i] alone. null when no line shows two dips plainly.
+
+import { C_KMS, R_ZOOM } from '../../../core/phys.js';
+import { spectrumOf } from '../../../spectra/synth.js';
+import { hasLongWings } from '../../../spectra/measure.js';
+import { componentStates } from '../../../data/orbits.js';
+
+const TRIED = 12;           // Candidates drawn and looked at, the likeliest first
+const PLAIN = 0.35;         // Between the dips, the flux comes at least this share of the way back up to the continuum
+const LEAST_DIP = 0.04;     // And each dip is at least this deep, as a share of the continuum
+const SAMPLES = 96;
+
+export function widestSplit(body, from, period, codes = null) {
+    let best = from;
+    let most = -1;
+    for (let k = 0; k < SAMPLES; k++) {
+        const t = from + (k / SAMPLES) * period;
+        const v = componentStates(body, t).filter((s) => !codes || codes.includes(s.code)).map((s) => s.vlos_kms);
+        if (v.length < 2) return from;
+        const spread = Math.max(...v) - Math.min(...v);
+        if (spread > most + 1e-9) {
+            most = spread;
+            best = t;
+        }
+    }
+    return best;
+}
+
+// A star's light at a wavelength, relative to the others: its area times a black body at its temperature
+function lightAt(star, nm) {
+    const x = 1.4388e7 / (nm * (star.teff_K || 5800));
+    return (star.radius_Rsun ?? 1) ** 2 / (nm ** 5 * Math.expm1(Math.min(x, 700)));
+}
+
+// How plainly a line shows as two dips at time t: { contrast between them, depth of the shallower }, or null if it doesn't
+function dipsAt(entity, body, line, t, a, b, parts) {
+    const rv = body.radial_velocity_kms ?? 0;
+    const nmA = line.rest_nm * (1 + (rv + a.vlos_kms) / C_KMS);
+    const nmB = line.rest_nm * (1 + (rv + b.vlos_kms) / C_KMS);
+    const half = line.rest_nm * ((Math.max(Math.abs(rv + a.vlos_kms), Math.abs(rv + b.vlos_kms)) + 60) / C_KMS);
+    const opts = { lo_nm: line.rest_nm - half, hi_nm: line.rest_nm + half, R: R_ZOOM, t };
+    if (parts) opts.parts = parts;
+    const { wl, flux, continuum } = spectrumOf(entity, opts);
+    if (!wl || wl.length < 8) return null;
+    const step = Math.log(wl[1] / wl[0]);
+    const index = (nm) => Math.max(0, Math.min(wl.length - 1, Math.round(Math.log(nm / wl[0]) / step)));
+    const reach = Math.max(2, index(nmA + 0.25 * (nmB - nmA)) - index(nmA));
+    const lowest = (nm) => {
+        const c = index(nm);
+        let at = c;
+        for (let i = Math.max(0, c - reach); i <= Math.min(wl.length - 1, c + reach); i++) if (flux[i] < flux[at]) at = i;
+        return at;
+    };
+    const ia = lowest(nmA);
+    const ib = lowest(nmB);
+    if (ib <= ia + 1) return null;
+    let between = -Infinity;
+    for (let i = ia + 1; i < ib; i++) between = Math.max(between, flux[i]);
+    const cont = continuum[(ia + ib) >> 1];
+    const shallow = Math.max(flux[ia], flux[ib]);
+    if (!(cont > 0) || 1 - shallow / cont < LEAST_DIP) return null;
+    return { contrast: (between - shallow) / (cont - shallow), depth: 1 - shallow / cont };
+}
+
+export function splitLine(entity, body, overviews, codes, { t = 0, parts = null } = {}) {
+    if (codes.length < 2) return null;
+    const states = componentStates(body, t).filter((s) => codes.includes(s.code)).sort((x, y) => x.vlos_kms - y.vlos_kms);
+    if (states.length < 2) return null;
+    const a = states[0];
+    const b = states[states.length - 1];
+    if (b.vlos_kms - a.vlos_kms < 3) return null;
+    const starOf = (code) => (body.stars || []).find((s) => s.code === code);
+    const sa = starOf(a.code);
+    const sb = starOf(b.code);
+    const oa = overviews[codes.indexOf(a.code)];
+    const ob = overviews[codes.indexOf(b.code)];
+    if (!sa || !sb || !oa || !ob) return null;
+
+    // Each line both stars have, by the smaller of the two dips it would make in their joint light, where there is light to
+    // see it in: a dip where the stars are dim is lost in the noise
+    const usable = (l) => !l.band && l.type !== 'em' && l.obs_nm > 380 && l.obs_nm < 1000;
+    const inB = new Map((ob.lines || []).filter(usable).map((l) => [l.rest_nm.toFixed(2), l]));
+    const peakOf = (sp) => sp.flux.reduce((m, f) => (f > m ? f : m), 0) || 1;
+    const peakA = peakOf(oa);
+    const peakB = peakOf(ob);
+    const fluxAt = (sp, nm) => {
+        const i = Math.max(0, Math.min(sp.wl.length - 1, Math.round(Math.log(nm / sp.wl[0]) / Math.log(sp.wl[1] / sp.wl[0]))));
+        return Math.max(0, sp.flux[i]);
+    };
+    const candidates = [];
+    (oa.lines || []).filter(usable).forEach((la) => {
+        const lb = inB.get(la.rest_nm.toFixed(2));
+        if (!lb) return;
+        const nm = la.rest_nm;
+        const wa = lightAt(sa.star, nm);
+        const wb = lightAt(sb.star, nm);
+        const dip = Math.min((la.depth_zoom ?? la.depth) * wa, (lb.depth_zoom ?? lb.depth) * wb) / (wa + wb);
+        if (dip < LEAST_DIP) return;
+        const light = Math.sqrt(Math.min(fluxAt(oa, la.obs_nm) / peakA, fluxAt(ob, lb.obs_nm) / peakB));
+        candidates.push({ line: la, light, guess: dip * light * (hasLongWings(la) ? 0.3 : 1) });
+    });
+    candidates.sort((x, y) => y.guess - x.guess);
+
+    // Plain, and then as deep and as well lit as can be: a clear gap between two faint dips is still hard to see
+    let best = null;
+    candidates.slice(0, TRIED).forEach(({ line, light }) => {
+        const seen = dipsAt(entity, body, line, t, a, b, parts);
+        if (!seen || seen.contrast < PLAIN) return;
+        const score = Math.min(1, seen.contrast) * seen.depth * light;
+        if (!best || score > best.score) best = { line, score, contrast: seen.contrast };
+    });
+    if (!best) return null;
+    const { rest_nm, label, species } = best.line;
+    return { line: { rest_nm, label, species }, contrast: best.contrast };
+}

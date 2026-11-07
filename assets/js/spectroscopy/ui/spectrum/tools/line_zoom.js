@@ -192,9 +192,11 @@ function mount(container, api) {
     container.append(chips, answer, widthLine, hint, sliderBox, checkBox, result, historyEl, says);
 
     const started = plot.getRange();
-    // The dashed line is the comparison here, so the reference stands aside and the star's line has the whole plot
+    // The dashed line is the comparison here, so the reference stands aside and the star's line has the whole plot, with the
+    // flux axis fitted to it: a fast spinner's line is shallow, and from zero it would lie almost flat
     const reference = borrowReference(api);
     reference.show('none');
+    if (plot.setFitFloor) plot.setFitFloor(true);
     let line = null;          // The line on show: { rest_nm, obs_nm, label, species }
     let twin = null;          // The still twin over the view
     let spun = null;          // Its ratio, spun to the student's speed
@@ -488,9 +490,22 @@ function mount(container, api) {
     function gripAt() {
         if (!shape) return null;
         const pane = plot.panes().body;
-        const x = plot.xOf(shape.centre * (1 + shape.halfKms / C_KMS));
+        let x = plot.xOf(shape.centre * (1 + shape.halfKms / C_KMS));
         const cont = twin.continuum[indexOf(shape.centre)];
-        const y = plot.yOf(cont * (1 - shape.depth / 2));
+        let y = plot.yOf(cont * (1 - shape.depth / 2));
+        // The axis fits the star's own line, so a still twin deeper than that runs out of the bottom: the grip goes where
+        // its side comes into view
+        const low = pane.y + pane.h - 10;
+        if (y > low) {
+            for (let i = indexOf(shape.centre); i < spun.length; i++) {
+                const yi = plot.yOf(spun[i] * twin.continuum[i]);
+                if (yi <= low) {
+                    x = plot.xOf(twin.wl[i]);
+                    y = yi;
+                    break;
+                }
+            }
+        }
         if (x < pane.x || x > pane.x + pane.w || y < pane.y || y > pane.y + pane.h) return null;
         return { x, y };
     }
@@ -654,6 +669,7 @@ function mount(container, api) {
             offOpts();
             removeOverlay();
             reference.dispose();
+            if (plot.setFitFloor) plot.setFitFloor(false);
             api.setResolution('overview');
             plot.setRange(started.lo, started.hi, { animate: !reduceMotion() });
         }
