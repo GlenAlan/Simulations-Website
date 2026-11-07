@@ -40,7 +40,7 @@ export function stagesAt(p) {
         backdrop: smoothstep(0.5, 1, p),
         backdropZoom: 0.62 + 0.38 * smoothstep(0.48, 1, p),
         orbits: smootherstep(0.56, 0.86, p),
-        planets: smootherstep(0.76, 1, p),
+        planets: smootherstep(0.84, 1, p),          // Once the camera has pulled back: a big half-faded planet looks wrong
         userBlend: smoothstep(0.82, 1, p)           // On the way out: from wherever the student left the camera
     };
 }

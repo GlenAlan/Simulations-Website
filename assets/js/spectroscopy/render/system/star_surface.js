@@ -298,8 +298,8 @@ void main() {
 // How bright the disc is before tone mapping. Any brighter and the colour and the granulation both wash out to white;
 // the corona and the engine's bloom carry the glare instead.
 function surfaceBrightness(T) {
-    if (T < 5800) return 0.84 + (0.1 * (Math.max(T, 2400) - 2400)) / 3400;
-    return 0.94 + (1.4 * (Math.min(T, 50000) - 5800)) / 44200;
+    if (T < 5800) return 0.72 + (0.12 * (Math.max(T, 2400) - 2400)) / 3400;
+    return 0.84 + (1.4 * (Math.min(T, 50000) - 5800)) / 44200;
 }
 
 // Extra saturation, for the same reason: the tone curve pales whatever it compresses. A true G star's black-body colour
@@ -539,7 +539,7 @@ export function createStar(starData, opts = {}) {
             const cellPx = s.pxRadius / look.cellScale;
             surfaceMaterial.uniforms.uDetail.value = THREE.MathUtils.smoothstep(cellPx, 1.6, 4);
             surfaceMaterial.uniforms.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70);
-            surfaceMaterial.uniforms.uIntensity.value = look.intensity * (1 + 0.5 * (1 - THREE.MathUtils.smoothstep(s.pxRadius, 12, 70)));
+            surfaceMaterial.uniforms.uIntensity.value = look.intensity * (1 + 0.15 * (1 - THREE.MathUtils.smoothstep(s.pxRadius, 12, 70)));
             reveal.value = s.reveal;
             corona.quaternion.copy(s.camera.getWorldQuaternion(qCam));
             coronaMaterial.uniforms.uCentre.value.copy(group.position);

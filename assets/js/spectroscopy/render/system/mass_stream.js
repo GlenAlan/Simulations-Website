@@ -1,52 +1,55 @@
-// Gas falling from one star of an interacting pair onto the other: a curved stream of particles and a small
-// accretion disc with a hot spot where the stream lands. Placed from the pair's live positions each frame, so it
-// turns with the pair and stays on the orbit the spectra use.
+// Gas falling from one star of an interacting pair onto the other: a curved ribbon of flowing gas and a small accretion
+// disc with a hot spot where the stream lands. Placed from the pair's live positions each frame, so it turns with the
+// pair and stays on the orbit the spectra use.
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { sharedUniforms, BAND_GLSL } from '../shared.js';
 import { NOISE_GLSL, getNoiseTexture } from './star_surface.js';
 
-const COUNT = { low: 60, medium: 120, high: 200 };
+const SEGMENTS = 48;
 
 const STREAM_VERTEX = /* glsl */`
 attribute float aU;
-attribute float aJitter;
+attribute float aSide;
 uniform vec3 uP0;
 uniform vec3 uP1;
 uniform vec3 uP2;
-uniform float uFlow;
-uniform float uPxPerWorld;
-uniform float uSize;
-uniform float uDpr;
+uniform float uW0;          // Half-width in world units at each end
+uniform float uW1;
+uniform float uMinW;        // Never thinner than this on screen: world units per unit of depth
 varying float vU;
-varying float vClump;
+varying float vSide;
 void main() {
-    float u = fract(aU + uFlow);
-    vClump = 0.45 + 1.1 * aJitter * aJitter;     // Uneven, so the stream reads as lumps of gas on the move
+    float u = aU;
     float m = 1.0 - u;
     vec3 p = m * m * uP0 + 2.0 * m * u * uP1 + u * u * uP2;
-    // A little spread sideways, narrowing as the gas is pulled in
-    p += vec3(sin(aJitter * 6.28), 0.0, cos(aJitter * 6.28)) * uSize * (0.35 * m + 0.1) * aJitter;
+    vec3 along = normalize(m * (uP1 - uP0) + u * (uP2 - uP1));
+    vec3 toCamera = cameraPosition - p;
+    float depth = length(toCamera);
+    vec3 across = normalize(cross(along, toCamera));
+    float w = max(mix(uW0, uW1, u), uMinW * depth);
     vU = u;
-    vec4 view = viewMatrix * vec4(p, 1.0);
-    gl_Position = projectionMatrix * view;
-    gl_PointSize = max(1.5, uSize * uPxPerWorld * (1.0 - 0.5 * u) / max(0.001, -view.z)) * uDpr;
+    vSide = aSide;
+    gl_Position = projectionMatrix * viewMatrix * vec4(p + across * aSide * w, 1.0);
 }`;
 
 const STREAM_FRAGMENT = /* glsl */`
 ${BAND_GLSL}
+${NOISE_GLSL}
 uniform vec3 uColourA;
 uniform vec3 uColourB;
 uniform float uFade;
+uniform float uFlow;
 varying float vU;
-varying float vClump;
+varying float vSide;
 void main() {
-    float r = length(gl_PointCoord - 0.5) * 2.0;
-    float g = exp(-r * r * 5.0);
-    float ends = smoothstep(0.0, 0.06, vU) * (1.0 - smoothstep(0.9, 1.0, vU));
+    float soft = exp(-vSide * vSide * 3.0);
+    float ends = smoothstep(0.0, 0.05, vU) * (1.0 - smoothstep(0.94, 1.0, vU));
+    // Lumps of gas on the move: the pattern runs along the stream, so it visibly falls from one star to the other
+    float lumps = fbm3(vec3(vU * 7.0 - uFlow, vSide * 0.7, 3.0));
     vec3 c = bandColour(mix(uColourA, uColourB, vU * vU));
-    gl_FragColor = vec4(c * g * ends * (0.12 + vU * 0.3) * vClump * uFade, 1.0);
+    gl_FragColor = vec4(c * soft * ends * (0.25 + 1.2 * lumps) * (0.55 + 0.7 * vU) * uFade, 1.0);
 }`;
 
 const DISC_VERTEX = /* glsl */`
@@ -80,46 +83,58 @@ void main() {
     gl_FragColor = vec4(bandColour(tint) * (glow + spot) * edge * uFade, 1.0);
 }`;
 
-export function createMassStream(model, quality = 'medium') {
+export function createMassStream(model) {
     const donor = model.stars[model.stream.donor].star;
     const accretor = model.stars[model.stream.accretor].star;
-    const n = COUNT[quality] || COUNT.medium;
-    const aU = new Float32Array(n);
-    const aJitter = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-        aU[i] = i / n;
-        aJitter[i] = (i * 0.61803398875) % 1;
+
+    const count = (SEGMENTS + 1) * 2;
+    const aU = new Float32Array(count);
+    const aSide = new Float32Array(count);
+    const indices = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+        aU[i * 2] = i / SEGMENTS;
+        aU[i * 2 + 1] = i / SEGMENTS;
+        aSide[i * 2] = -1;
+        aSide[i * 2 + 1] = 1;
+        if (i < SEGMENTS) {
+            const j = i * 2;
+            indices.push(j, j + 1, j + 2, j + 1, j + 3, j + 2);
+        }
     }
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geometry.setAttribute('aU', new THREE.BufferAttribute(aU, 1));
-    geometry.setAttribute('aJitter', new THREE.BufferAttribute(aJitter, 1));
+    geometry.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1));
+    geometry.setIndex(indices);
 
     const fade = { value: 1 };
+    const noise = { value: getNoiseTexture() };
     const material = new THREE.ShaderMaterial({
         toneMapped: false,
         transparent: true,
         depthWrite: false,
+        side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
         vertexShader: STREAM_VERTEX,
         fragmentShader: STREAM_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            tNoise: noise,
             uP0: { value: new THREE.Vector3() },
             uP1: { value: new THREE.Vector3() },
             uP2: { value: new THREE.Vector3() },
+            uW0: { value: 0.1 },
+            uW1: { value: 0.05 },
+            uMinW: { value: 0.001 },
             uFlow: { value: 0 },
-            uPxPerWorld: { value: 100 },
-            uSize: { value: 0.1 },
-            uDpr: { value: 1 },
             uColourA: { value: new THREE.Color(...blackBodyRGB(donor.teff_K)) },
             uColourB: { value: new THREE.Color(...blackBodyRGB(Math.max(14000, accretor.teff_K))) },
             uFade: fade
         }
     });
-    const particles = new THREE.Points(geometry, material);
-    particles.frustumCulled = false;
-    particles.renderOrder = 5;
+    const ribbon = new THREE.Mesh(geometry, material);
+    ribbon.frustumCulled = false;
+    ribbon.renderOrder = 5;
 
     const discMaterial = new THREE.ShaderMaterial({
         toneMapped: false,
@@ -131,7 +146,7 @@ export function createMassStream(model, quality = 'medium') {
         fragmentShader: DISC_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
-            tNoise: { value: getNoiseTexture() },
+            tNoise: noise,
             uColour: { value: new THREE.Color(...blackBodyRGB(Math.max(12000, accretor.teff_K))) },
             uRim: { value: new THREE.Color(1, 0.42, 0.12) },
             uInner: { value: 0.4 },
@@ -146,10 +161,10 @@ export function createMassStream(model, quality = 'medium') {
     disc.renderOrder = 4;
 
     const group = new THREE.Group();
-    group.add(particles, disc);
+    group.add(ribbon, disc);
 
     const toA = new THREE.Vector3();
-    const ahead = new THREE.Vector3();
+    const swing = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
     const local = new THREE.Vector3();
     let flow = 0;
@@ -158,31 +173,31 @@ export function createMassStream(model, quality = 'medium') {
     return {
         group,
         // d and a are the donor's and accretor's world positions, rD and rA their drawn radii
-        update({ d, a, rD, rA, dt, reduceMotion, opacity, pxPerWorld, dpr }) {
+        update({ d, a, rD, rA, dt, reduceMotion, opacity, pxPerWorld }) {
             if (!reduceMotion) {
-                flow = (flow + dt * 0.28) % 1;
+                flow += dt * 1.1;
                 spin += dt * 0.8;
             }
             toA.set(a[0] - d[0], a[1] - d[1], a[2] - d[2]);
             const sep = Math.max(1e-6, toA.length());
             toA.divideScalar(sep);
-            // Coriolis swings gas ahead of the accretor, in the direction the pair is turning
-            ahead.crossVectors(up, toA).normalize().multiplyScalar(-1);
+            // In the turning frame of the pair, Coriolis swings infalling gas the way the donor is moving
+            swing.crossVectors(toA, up).normalize();
 
             const discR = Math.min(rA * 2.8, sep * 0.42);
             const start = Math.min(rD * 0.96, sep * 0.7);
             const u = material.uniforms;
             u.uP0.value.set(d[0] + toA.x * start, d[1] + toA.y * start, d[2] + toA.z * start);
             u.uP2.value.set(
-                a[0] - toA.x * discR * 0.6 + ahead.x * discR * 0.8,
+                a[0] - toA.x * discR * 0.6 + swing.x * discR * 0.8,
                 a[1],
-                a[2] - toA.z * discR * 0.6 + ahead.z * discR * 0.8
+                a[2] - toA.z * discR * 0.6 + swing.z * discR * 0.8
             );
-            u.uP1.value.copy(u.uP0.value).add(u.uP2.value).multiplyScalar(0.5).addScaledVector(ahead, -sep * 0.1);
+            u.uP1.value.copy(u.uP0.value).add(u.uP2.value).multiplyScalar(0.5).addScaledVector(swing, sep * 0.05);
+            u.uW0.value = Math.min(rD, sep * 0.2) * 0.16;
+            u.uW1.value = Math.min(rA, sep * 0.2) * 0.1;
+            u.uMinW.value = 1.2 / pxPerWorld;
             u.uFlow.value = flow;
-            u.uPxPerWorld.value = pxPerWorld;
-            u.uSize.value = Math.min(rD, rA) * 0.2;
-            u.uDpr.value = dpr;
 
             disc.position.set(a[0], a[1], a[2]);
             disc.scale.setScalar(discR);
@@ -194,7 +209,6 @@ export function createMassStream(model, quality = 'medium') {
             du.uSpot.value.set(local.x / discR, -local.z / discR);
             fade.value = opacity;
         },
-        setFade(k) { fade.value = k; },
         dispose() {
             geometry.dispose();
             material.dispose();

@@ -7,7 +7,7 @@
 // moving away is what the spectrum shows redshifted.
 
 import { AU, G, M_SUN, R_SUN, R_EARTH, hzEdges, orbitalSpeedKms } from '../../core/phys.js';
-import * as Orbits from '../../data/orbits.js';
+import { componentStates, figureEightPath, planetOrbitCentre } from '../../data/orbits.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -83,18 +83,20 @@ function hostNodeOf(planet, model) {
 
 // The figure-eight's closed path in AU. It repeats its first point at the end, which a closed line doesn't want.
 function figureEightPoints() {
-    if (typeof Orbits.figureEightPath !== 'function') return [];
-    const points = Orbits.figureEightPath().map((q) => ({ x: q.x_AU, y: q.y_AU }));
+    const points = figureEightPath().map((q) => ({ x: q.x_AU, y: q.y_AU }));
     points.pop();
     return points;
 }
 
 // ---------- Where everything is ----------
 
+const ALONE = Object.freeze({ x_AU: 0, y_AU: 0, z_AU: 0, vlos_kms: 0 });
+
 // Star states in the stars' own order: from componentStates, the one source the spectra also use
 function readStates(model, tDays) {
-    const raw = Orbits.componentStates ? Orbits.componentStates(model.body, tDays) : [];
-    return model.stars.map((s) => raw.find((q) => q.code === s.code) || { code: s.code, x_AU: 0, y_AU: 0, z_AU: 0, vlos_kms: 0 });
+    if (model.body.star) return [ALONE]; // A lone star is the centre of its system
+    const raw = componentStates(model.body, tDays);
+    return model.stars.map((s) => raw.find((q) => q.code === s.code));
 }
 
 export function buildModel(body) {
@@ -122,8 +124,10 @@ export function buildModel(body) {
     model.root = buildTree(body, stars);
     model.nodes = allNodes(model.root);
 
-    model.planets = (body.planets || []).map((planet) => ({ planet, code: planet.code, node: null }));
-    model.planets.forEach((entry) => { entry.node = hostNodeOf(entry.planet, model); });
+    model.planets = (body.planets || []).map((planet) => {
+        const node = hostNodeOf(planet, model);
+        return { planet, code: planet.code, node, parent: model.nodes.find((n) => n.children && n.children.includes(node)) || null };
+    });
 
     // Every distance that has to fit: a separation for each orbit, a radius for each planet
     const levels = [];
@@ -145,7 +149,11 @@ export function buildModel(body) {
     }
     if (model.pathPoints) model.pathPoints.forEach((q) => { extent = Math.max(extent, Math.hypot(q.x, q.y)); });
     model.planets.forEach((e) => {
-        const offset = e.node === model.root ? 0 : nodeReach(model, e.node, longest);
+        let offset = 0;
+        for (let k = 0; k < 8; k++) {
+            const c = planetOrbitCentre(body, e.planet, (k / 8) * longest);
+            offset = Math.max(offset, Math.hypot(c.x_AU, c.y_AU, c.z_AU));
+        }
         extent = Math.max(extent, offset + e.planet.orbit_AU);
     });
     // A lone star with nothing round it still needs a frame
@@ -173,16 +181,6 @@ export function buildModel(body) {
 
     computeSizes(model);
     return model;
-}
-
-function nodeReach(model, node, period) {
-    let reach = 0;
-    for (let k = 0; k < 8; k++) {
-        const s = readStates(model, (k / 8) * period);
-        const c = comFrom(model, s, node);
-        reach = Math.max(reach, Math.hypot(c[0], c[1], c[2]));
-    }
-    return reach;
 }
 
 function comFrom(model, states, node) {
@@ -256,21 +254,12 @@ function computeSizes(model) {
         });
     });
 
-    // Who is losing gas: the star closest to filling its Roche lobe (Eggleton's fit)
+    // The data names who is losing gas and who is gaining it
     model.stream = null;
-    if (model.body.interacting) {
-        const pair = model.nodes.find((n) => n.children && !n.flat && n.children.every((c) => c.children === null));
-        if (pair) {
-            const [a, b] = pair.children.map((c) => c.index);
-            const fill = (self, other) => {
-                const q = model.stars[self].star.mass_Msun / model.stars[other].star.mass_Msun;
-                const q23 = q ** (2 / 3);
-                const lobe = (0.49 * q23) / (0.6 * q23 + Math.log(1 + Math.cbrt(q)));
-                return (model.stars[self].star.radius_Rsun * RSUN_AU) / (lobe * pair.a_AU);
-            };
-            const donor = fill(a, b) >= fill(b, a) ? a : b;
-            model.stream = { pair, donor, accretor: donor === a ? b : a };
-        }
+    const transfer = model.body.transfer;
+    if (transfer) {
+        const pair = model.nodes.find((n) => n.children && !n.flat && n.members.includes(transfer.donor) && n.members.includes(transfer.accretor) && n.members.length === 2);
+        if (pair) model.stream = { pair, donor: transfer.donor, accretor: transfer.accretor };
     }
 }
 
@@ -285,9 +274,15 @@ export function planetRadius(model, planet, m) {
 }
 
 // Positions in world units at time t. Each orbit's offsets are scaled by its own size, so in log scale a close pair
-// stays readable beside a wide one. out = { stars: [[x,y,z]...], planets: [[x,y,z]...], nodes: Map(node -> [x,y,z]) }
+// stays readable beside a wide one. out = { stars, planets, centres: [[x,y,z]...] and nodes: Map(node -> [x,y,z]) }
 export function layout(model, tDays, m, out = null) {
-    const o = out || { stars: model.stars.map(() => [0, 0, 0]), planets: model.planets.map(() => [0, 0, 0]), nodes: new Map(), states: null };
+    const o = out || {
+        stars: model.stars.map(() => [0, 0, 0]),
+        planets: model.planets.map(() => [0, 0, 0]),
+        centres: model.planets.map(() => [0, 0, 0]),
+        nodes: new Map(),
+        states: null
+    };
     const states = readStates(model, tDays);
     o.states = states;
     const place = (node, wx, wy, wz) => {
@@ -313,7 +308,13 @@ export function layout(model, tDays, m, out = null) {
         const inc = ((pl.inclination_deg || 0) * Math.PI) / 180;
         const x = Math.cos(angle) * r;
         const y = Math.sin(angle) * r;
-        const c = o.nodes.get(entry.node);
+        // Where the orbit is centred comes from the data. It sits on its group's own orbit, so it's scaled like that orbit.
+        const q = planetOrbitCentre(model.body, pl, tDays);
+        const k = entry.parent ? scaleOf(model, entry.parent.a_AU, m) : model.unit;
+        const c = o.centres[i];
+        c[0] = q.x_AU * k;
+        c[1] = q.z_AU * k;
+        c[2] = -q.y_AU * k;
         o.planets[i][0] = c[0] + x;
         o.planets[i][1] = c[1] + y * Math.sin(inc);
         o.planets[i][2] = c[2] - y * Math.cos(inc);

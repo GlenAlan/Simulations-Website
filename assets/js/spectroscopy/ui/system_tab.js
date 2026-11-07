@@ -179,7 +179,10 @@ export function initSystemTab(app) {
                 b.type = 'button';
                 b.dataset.code = s.code;
                 b.append(el('span', 'spectro-system-code', s.code));
-                b.setAttribute('aria-label', `Star ${s.code}`);
+                // The double-double's stars come in named pairs
+                const pair = (model.body.pairs || []).find((q) => q.codes.includes(s.code));
+                if (pair) b.append(el('span', 'spectro-system-facts', `Pair ${pair.label}`));
+                b.setAttribute('aria-label', pair ? `Star ${s.code}, pair ${pair.label}` : `Star ${s.code}`);
                 b.addEventListener('click', () => selectFromList(s.code));
                 li.appendChild(b);
                 parts.starList.appendChild(li);

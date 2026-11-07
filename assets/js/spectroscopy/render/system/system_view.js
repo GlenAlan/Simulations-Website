@@ -51,7 +51,7 @@ void main() {
     float width = max(uOuter - uInner, 1e-4);
     float soft = width * 0.28;
     float a = smoothstep(uInner - soft, uInner + soft, r) * (1.0 - smoothstep(uOuter - soft, uOuter + soft, r));
-    gl_FragColor = vec4(vec3(0.16, 0.85, 0.42) * a * 0.3 * uFade, 1.0);
+    gl_FragColor = vec4(vec3(0.16, 0.85, 0.42) * a * 0.11 * uFade, 1.0);
 }`;
 
 export function initSystemView(app) {
@@ -105,6 +105,7 @@ export function initSystemView(app) {
 
     // ---------- State ----------
     let mode = 'sky';           // 'sky' | 'load' | 'enter' | 'system' | 'exit'
+    let compiled = false;       // The system's shaders are ready: the flight can start
     let model = null;
     let world = null;
     let savedView = null;       // The sky view to come back to, exactly
@@ -138,11 +139,6 @@ export function initSystemView(app) {
     const notify = () => listeners.forEach((fn) => fn());
 
     // ---------- Building a system ----------
-    function hostTeff(entry) {
-        const members = entry.node.members.map((i) => model.stars[i].star);
-        return members.reduce((a, b) => (b.luminosity_Lsun > a.luminosity_Lsun ? b : a)).teff_K;
-    }
-
     function bandStrengthOf(s) {
         return s.entity.bands || model.body.bands || null;
     }
@@ -158,10 +154,10 @@ export function initSystemView(app) {
         const brightest = model.stars.reduce((best, s, i) => (s.star.luminosity_Lsun > model.stars[best].star.luminosity_Lsun ? i : best), 0);
 
         const planets = model.planets.map((entry) => {
-            const handle = createPlanetMesh(entry.planet, hostTeff(entry), { quality });
+            const handle = createPlanetMesh(entry.planet, entry.planet.host_teff_K, { quality, renderer: engine.renderer });
             handle.object3d.frustumCulled = false;
             group.add(handle.object3d);
-            const line = createOrbitLine(planetOrbitPoints(entry.planet), { opacity: 0.42, width: 1.5, trail: 1.5 });
+            const line = createOrbitLine(planetOrbitPoints(entry.planet), { opacity: 0.36, width: 1.4, trail: 0.8, colour: [0.5, 0.66, 0.95] });
             group.add(line.object);
             return { handle, line, entry };
         });
@@ -215,7 +211,7 @@ export function initSystemView(app) {
 
         let stream = null;
         if (model.stream) {
-            stream = createMassStream(model, quality);
+            stream = createMassStream(model);
             group.add(stream.group);
         }
 
@@ -287,10 +283,9 @@ export function initSystemView(app) {
         const fill = stage === 'white_dwarf' ? 0.13 : (stage === 'giant' || stage === 'supergiant') ? 0.36 : 0.27;
         let d = R / (2 * fill * TAN_V);
         if (model.stars.length > 1) {
-            // Both stars of the tightest pair should be in the picture
-            const inner = model.nodes.filter((n) => n.children && !n.flat);
-            const sep = inner.length ? Math.min(...inner.map((n) => ringRadius(model, n.a_AU, mix))) : FRAME * 0.7;
-            d = Math.max(d, (model.root.flat ? FRAME * 0.8 : sep * 0.85) / (TAN_V * Math.min(aspect, 1)));
+            // The flight aims at the centre of mass, which may be empty space: keep the widest orbit's stars in shot
+            const reach = model.root.flat ? FRAME * 0.8 : ringRadius(model, model.root.a_AU, mix) * 0.85;
+            d = Math.max(d, reach / (TAN_V * Math.min(aspect, 1)));
         }
         return d;
     }
@@ -548,6 +543,7 @@ export function initSystemView(app) {
         const duration = app.settings.reduceMotion ? 0 : FLIGHT_S;
         if (duration === 0) {
             cam.target = target;
+            if (target && target.kind === 'planet') faceLitSide(target);
             cam.zoom = zoomAfter;
             cam.dist = toDist;
             cam.distT = toDist;
@@ -557,7 +553,17 @@ export function initSystemView(app) {
         }
         cam.flight = { t: 0, duration, from: cam.focus.clone(), fromDist: cam.dist, toDist, target, zoomAfter };
         cam.target = target;
+        if (target && target.kind === 'planet') faceLitSide(target);
         notify();
+    }
+
+    // A planet is the point of the flight, so arrive on its day side, with the star over the viewer's shoulder
+    function faceLitSide(target) {
+        const p = positions.planets[target.index];
+        const sun = positions.stars[world.brightest];
+        const towardsSun = Math.atan2(sun[0] - p[0], sun[2] - p[2]);
+        cam.azT = cam.az + wrapPi(towardsSun + 0.65 - cam.az);
+        cam.elT = Math.max(10 * RAD, Math.min(32 * RAD, cam.elT));
     }
 
     function focusOn(code) {
@@ -759,23 +765,32 @@ export function initSystemView(app) {
             const R = planetRadius(model, item.entry.planet, mix);
             const big = Math.min(1, Math.max(0, ((item.entry.planet.radius_Rearth || 1) - 1) / 10));
             const minPx = 3.4 + 4.2 * Math.sqrt(big);
-            const drawn = Math.max(R, minPx / pxPerWorldAt(depth, frame));
+            const pxPerWorld = pxPerWorldAt(depth, frame);
+            const drawn = Math.max(R, minPx / pxPerWorld);
             planetDrawnRadius[i] = drawn;
-            obj.scale.setScalar(drawn * Math.max(1e-3, stage.planets));
-            if (item.handle.setFade) item.handle.setFade(stage.planets);
+            // The planets track can fade a planet; without that, it grows in instead
+            if (item.handle.setOpacity) item.handle.setOpacity(stage.planets);
+            obj.scale.setScalar(item.handle.setOpacity ? drawn : drawn * Math.max(1e-3, stage.planets));
 
             sunDir.set(sun[0] - p[0], sun[1] - p[1], sun[2] - p[2]).normalize();
+            // A few pixels of night side would be a black dot on a dark sky, so a small planet is lit from nearer the
+            // viewer. Its true phase comes back as it grows big enough to be seen properly.
+            const flat = 1 - smoothstep(16, 70, drawn * pxPerWorld);
+            if (flat > 0) {
+                tmp.set(camPos.x - p[0], camPos.y - p[1], camPos.z - p[2]).normalize();
+                sunDir.lerp(tmp, flat * 0.8).normalize();
+            }
             item.handle.update(sysFrame, sunDir);
 
-            const c = positions.nodes.get(item.entry.node);
+            const c = positions.centres[i];
             const isSel = item.entry.code === selectedCode;
             item.line.object.position.set(c[0], c[1], c[2]);
             item.line.object.scale.setScalar(ringRadius(model, item.entry.planet.orbit_AU, mix));
             item.line.set({
                 draw: stage.orbits,
                 head: planetPhase(item.entry.planet, tDays),
-                opacity: isSel ? 0.95 : 0.42,
-                width: (isSel ? 2.4 : 1.5) * frame.dpr
+                opacity: cam.target && cam.target.code === item.entry.code ? 0.3 : isSel ? 0.7 : 0.36,
+                width: (isSel ? 2.2 : 1.4) * frame.dpr
             });
         });
 
@@ -798,7 +813,6 @@ export function initSystemView(app) {
             const st = model.stream;
             const d = positions.stars[st.donor];
             const a = positions.stars[st.accretor];
-            const depth = tmp.set(a[0], a[1], a[2]).distanceTo(camPos);
             world.stream.update({
                 d, a,
                 rD: starDrawnRadius[st.donor],
@@ -806,9 +820,7 @@ export function initSystemView(app) {
                 dt: frame.dt,
                 reduceMotion: reduce,
                 opacity: smoothstep(0.35, 0.7, easeProgress(tNorm)),
-                pxPerWorld: frame.height / (2 * TAN_V),
-                dpr: frame.dpr,
-                depth
+                pxPerWorld: frame.height / (2 * TAN_V)
             });
         }
 
@@ -887,15 +899,27 @@ export function initSystemView(app) {
                 const outer = ringRadius(model, model.hz.outer, mix);
                 const a = Math.atan2(camera.position.x, camera.position.z);
                 const at = projectToCss([Math.sin(a) * outer, 0, Math.cos(a) * outer], frame);
-                if (at) placeLabel(world.hz.label, at.x, at.y + 20, frame, '');
-                else world.hz.label.hidden = true;
+                if (at) {
+                    const y = Math.max(90, Math.min(frame.height - 66, at.y + 20));
+                    const x = Math.max(110, Math.min(frame.width - 110, at.x));
+                    placeLabel(world.hz.label, x, y, frame, '');
+                } else {
+                    world.hz.label.hidden = true;
+                }
             }
         }
     }
 
     // ---------- Stepping everything ----------
     function step(frame) {
-        if (mode === 'sky' || mode === 'load') return;
+        if (mode === 'sky') return;
+        if (mode === 'load') {
+            // Selecting a star slews the sky to it. Wait for that: where it lands is the view to come back to.
+            if (!compiled || engine.isSlewing()) return;
+            savedView = engine.getView();
+            beginFlight(frame);
+            mode = 'enter';
+        }
         const dt = frame.dt;
         const duration = useFade ? FADE_S : TRANSITION_S;
         if (hold !== null) {
@@ -1004,7 +1028,7 @@ export function initSystemView(app) {
                 drawSystem(renderer);
             } else if (tNorm > 0) {
                 if (!fadeTarget) {
-                    fadeTarget = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: true });
+                    fadeTarget = new THREE.WebGLRenderTarget(w, h, { type: target.texture.type, depthBuffer: true });
                 } else if (fadeTarget.width !== w || fadeTarget.height !== h) {
                     fadeTarget.setSize(w, h);
                 }
@@ -1078,11 +1102,11 @@ export function initSystemView(app) {
         world = buildWorld();
         positions = layout(model, tDays, mix, positions);
         mode = 'load';
+        compiled = false;
         useFade = !!app.settings.reduceMotion;
         tNorm = 0;
         app.view = 'system';
         app.systemCode = body.code;
-        beginFlight(engine.currentFrame());
         canvas.setAttribute('aria-label', `Planetary system ${body.code}. Drag to orbit the camera, scroll to zoom, and select a planet to study it.`);
         bus.emit('view', { view: 'system', code: body.code });
         notify();
@@ -1090,9 +1114,9 @@ export function initSystemView(app) {
         // Compile before the clock starts, so a slow shader doesn't eat the first second of the flight
         const started = model;
         const go = () => {
-            if (mode === 'load' && model === started) mode = 'enter';
+            if (model === started) compiled = true;
         };
-        camera.position.set(0, 0, cam.dist);
+        camera.position.set(0, 0, FRAME * 3);
         camera.lookAt(0, 0, 0);
         camera.updateMatrixWorld();
         const renderer = engine.renderer;
