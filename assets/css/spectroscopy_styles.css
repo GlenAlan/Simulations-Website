@@ -1517,11 +1517,14 @@ html.dark-mode .spectro-sim {
     --spectro-on: #f2849e;
 }
 
-/* The plot is the panel: it fills the drawer edge to edge, with the tools docked under it. Only the space between the
-   two scrolls, so the plot never leaves the screen. */
+/* The plot is the panel: it fills the drawer edge to edge, with the tools docked under it. Where there's room, only the
+   space between the two scrolls, so the plot never leaves the screen. In a short drawer the panel scrolls as a whole
+   instead, with the dock held at the bottom (see "A short drawer" below). */
 #spectroDrawerBody:has(#spectroPanel-spectrum:not([hidden])) {
     padding: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 #spectroPanel-spectrum,
@@ -1530,6 +1533,19 @@ html.dark-mode .spectro-sim {
     height: 100%;
     min-height: 0;
     min-width: 0;
+}
+
+/* The tab's own height is what everything inside is shared out from (cqh), and what decides when it is too short to share */
+#spectroPanel-spectrum {
+    container: spectro-room / size;
+    --spectro-plot-min: 230px;      /* A plot with about 100 px of curve, under its header and over its axis and reference row */
+    --spectro-tool-room: clamp(290px, 48cqh, 470px);    /* An open tool's share, with the dock */
+}
+
+@media (pointer: coarse) {
+    #spectroPanel-spectrum {
+        --spectro-plot-min: 250px;  /* Its rows are 44 px tall for a finger */
+    }
 }
 
 /* So what's inside can rearrange by the width of the drawer itself, not of the window */
@@ -1574,20 +1590,28 @@ html.dark-mode .spectro-sim {
     border: 0;
 }
 
-/* The plot takes whatever the space under it doesn't need: all of it at rest, and with a tool open never less than 42% */
+/* The plot takes all the room over the dock at rest. With a tool open it gives the tool a set share, which doesn't follow
+   what the tool shows, so the plot keeps still while results come and go under it; it never goes below a usable height. */
 .spectro-head {
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
-    min-height: 200px;
+    min-height: var(--spectro-plot-min, 200px);
 }
 
 .spectro-instrument.has-tool .spectro-head {
-    min-height: 42%;
+    flex: 0 0 auto;
+    height: max(var(--spectro-plot-min), calc(100cqh - var(--spectro-tool-room)));
+}
+
+/* A tool with a figure of its own needs room for that more than it needs the plot beside it */
+.spectro-instrument.has-own-figure {
+    --spectro-tool-room: clamp(340px, 58cqh, 560px);
 }
 
 .spectro-spectrum.is-picking .spectro-head {
-    flex: 0 0 44%;
+    flex: 0 0 auto;
+    height: max(170px, 44cqh);
     min-height: 0;
 }
 
@@ -2010,11 +2034,21 @@ html.dark-mode .spectro-sim {
     position: relative; /* Holds what's placed out of sight in it, so none of it leaks past the drawer */
     flex: 0 1 auto;
     min-height: 0;
+    overflow-x: hidden; /* Nothing here runs sideways: the words wrap, and a scrollbar there would cover the last button */
     overflow-y: auto;
     overscroll-behavior: contain;
 }
 
-.spectro-spectrum.is-picking .spectro-area {
+/* What's only for screen readers sits at the start of the space, where it can't stretch it sideways */
+.spectro-area .spectro-sr-only {
+    top: 0;
+    left: 0;
+    width: 1px !important;
+    height: 1px !important;
+}
+
+.spectro-spectrum.is-picking .spectro-area,
+.spectro-instrument.has-tool .spectro-area {
     flex: 1 1 0;
 }
 
@@ -4491,13 +4525,7 @@ details.description-area > summary::after {
     justify-content: flex-end;
 }
 
-/* On a tall screen one spectrum needs no more height than a laptop gives it: the plot stops growing, and the room under it is
-   where a tool opens, so opening one doesn't shrink the plot. Stacked, the two panes share the full height. The dock stays at
-   the bottom. */
-.spectro-instrument:not(.is-stacked) .spectro-head {
-    max-height: 470px;
-}
-
+/* The dock stays at the bottom */
 .spectro-instrument .spectro-tool-bar {
     margin-top: auto;
 }
@@ -4603,6 +4631,95 @@ details.description-area > summary::after {
     opacity: 0.75;
 }
 /* === end UNIVERSE === */
+
+
+/* === PANELFIX: the room in the drawer at every window size, and the Layers menu at laptop heights === */
+/* A docked drawer runs the height of the column beside it, the sky and the About bar under it, so every tab has that room
+   as well. Its own content never sets its height, so it is the same on every tab, and it never runs past the screen. On a
+   screen under 540 px tall the sky already fills it, so the drawer stays as tall as the sky. */
+@media (min-height: 541px) {
+    body.sim-panel-side:not(.sim-fullscreen-active) .spectro-sim .sim-controls-panel.panel-open {
+        align-self: stretch;
+        height: auto;
+        min-height: var(--spectro-sky-h, auto);
+        max-height: calc(100vh - var(--sim-above-h) - var(--sim-fit-gap));
+        contain: size;
+    }
+
+    @supports (height: 100svh) {
+        body.sim-panel-side:not(.sim-fullscreen-active) .spectro-sim .sim-controls-panel.panel-open {
+            max-height: calc(100svh - var(--sim-above-h) - var(--sim-fit-gap));
+        }
+    }
+}
+
+/* A short drawer, as on a laptop with its window under 700 px tall or a phone held sideways: the plot keeps a usable height
+   and the panel scrolls as a whole, with the dock held at its foot, rather than squeeze the plot and the tool into the room */
+@container spectro-room (max-height: 440px) {
+    .spectro-instrument {
+        height: auto;
+        min-height: 100%;
+    }
+
+    .spectro-head {
+        flex: 1 0 auto;
+    }
+
+    .spectro-instrument.has-tool .spectro-head {
+        flex: 0 0 auto;
+        height: var(--spectro-plot-min);
+    }
+
+    .spectro-area,
+    .spectro-instrument.has-tool .spectro-area {
+        flex: 0 0 auto;
+        overflow: visible;
+    }
+
+    .spectro-instrument .spectro-tool-bar {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+    }
+}
+
+/* A narrow dock keeps its tools on one row, as a second row costs a phone held sideways most of its plot: the names a size
+   smaller, and the room shared out evenly, so a short name still has a wide target */
+@container (max-width: 360px) {
+    #simulationControlsPanel .spectro-tool-bar button.spectro-flat {
+        padding: 0 1px;
+        font-size: 11px;
+    }
+
+    #simulationControlsPanel .spectro-tool-bar button.spectro-flat:not(.spectro-help-button) {
+        flex: 1 1 0;
+        min-width: min-content;
+    }
+
+    #simulationControlsPanel .spectro-tool-bar button.spectro-help-button {
+        flex: 0 0 40px;
+    }
+}
+
+/* Layers, with a mouse: rows as tall as their switches need, and a menu wide enough that every tip fits on two lines, so the
+   whole menu shows at once on a laptop. A finger keeps its 44 px rows. */
+@media (pointer: fine) {
+    .spectro-layers-menu {
+        width: min(21.5rem, calc(100cqw - 16px));
+    }
+
+    .spectro-layers-menu .sim-checkbox-group input[type="checkbox"] + label {
+        min-height: 31px;
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+
+    .spectro-layers-menu .sim-control-group-label {
+        margin-top: 0.45em;
+        padding-top: 0.5em;
+    }
+}
+/* === end PANELFIX === */
 
 
 /* === OVERLAYS: labels and markers over the sky === */
