@@ -499,12 +499,12 @@ export function createBinariesLayer(engine, app) {
     build();
 
     // A panel's playback moves a system along its orbits
-    const unsubscribe = bus.on('timeline', ({ code, t_days }) => {
+    const unsubscribe = bus.on('timeline', ({ code, t_days, stepped_t_days }) => {
         const resolved = app.universe.resolve(code);
         const system = resolved && byCode.get(resolved.body.code);
         if (!system || !mesh) return;
         const previous = system.nodes;
-        layOutSystem(system, t_days);
+        layOutSystem(system, stepped_t_days ?? t_days); // Points of light: above the speed limit they step rather than strobe
         // The same tree in the same order, so nodes keep their instance slots
         const position = mesh.geometry.getAttribute('aPosition');
         const seps = mesh.geometry.getAttribute('aSep');

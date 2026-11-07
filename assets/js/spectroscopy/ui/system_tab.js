@@ -6,6 +6,7 @@ import { bus, select, setLayer } from '../core/state.js';
 import { sig, sci } from '../core/format.js';
 import { createPlayback } from './playback.js';
 import { hasSystemView, hzStatus, buildModel, keplerReadout, speedsFor } from '../render/system/system_model.js';
+import { clockFor } from './spectrum/tools/orbit_clock.js';
 
 function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -33,6 +34,7 @@ export function initSystemTab(app) {
     // Lives as long as the system is open, wherever the tab is
     const timeBox = el('div', 'spectro-system-playback');
     let playback = null;
+    let systemClock = null;
     let resolved = null;
     let parts = null;
     let modelCache = null;      // For readouts while still in the sky
@@ -48,25 +50,33 @@ export function initSystemTab(app) {
     function startPlayback(model) {
         stopPlayback();
         const { speeds, speed } = speedsFor(model);
+        // Stars' orbits run on the clock the spectrum shares; a single star's planets need only this control
+        const { body } = model;
+        systemClock = (body.orbits && body.orbits.length) || body.black_hole ? clockFor(body) : null;
+        if (systemClock && !systemClock.playing) systemClock.setSpeed(speed);
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
             speeds,
             speed,
             unit: 'days',
             t0: view.getTime(),
+            clock: systemClock,
             onTick(t) {
                 ownTick = true;
-                bus.emit('timeline', { code: model.code, t_days: t });
+                if (!systemClock) bus.emit('timeline', { code: model.code, t_days: t });
                 ownTick = false;
                 paintTime();
             }
         });
+        if (systemClock) systemClock.setTime(systemClock.t); // The view takes up this system's time from its clock
         if (!app.settings.reduceMotion) playback.play();
     }
 
     function stopPlayback() {
         if (playback) playback.dispose();
         playback = null;
+        if (systemClock) systemClock.pause();
+        systemClock = null;
     }
 
     let lastPaint = 0;

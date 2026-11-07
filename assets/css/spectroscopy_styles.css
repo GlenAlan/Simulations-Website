@@ -2939,6 +2939,110 @@ body.sim-panel-sheet #simulationControlsPanel:has(#spectroPanel-spectrum:not([hi
 /* === end SKYCORE === */
 
 
+/* === BINARY: a system's orbit beside its spectrum, and each star's share of the light === */
+.spectro-pinned:empty {
+    display: none;
+}
+
+/* Time series has the dial itself, in view with its picture */
+.spectro-instrument:has(.spectro-tool-body .spectro-orbit-dial) .spectro-pinned {
+    display: none;
+}
+
+.spectro-orbit {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+    margin: 0.35em 0 0.6em;
+}
+
+.spectro-orbit-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4em;
+}
+
+.spectro-orbit-controls .spectro-playback {
+    flex: 0 1 auto;
+    gap: 0.4em;
+}
+
+/* Time series: Play and its speed stacked, with the dial beside them, to keep the picture in view */
+.spectro-ts-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.5em;
+}
+
+.spectro-ts-top > .spectro-tool-controls {
+    flex: 0 0 8.5em;
+}
+
+.spectro-ts-top .spectro-tool-controls .spectro-playback {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.spectro-ts-top .spectro-tool-controls .spectro-playback select {
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+.spectro-ts-dial {
+    flex: 1 1 15em;
+    min-width: 0;
+}
+
+.spectro-share-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.spectro-share {
+    flex: 0 0 4.5em;
+    display: flex;
+    align-items: center;
+    margin-left: 0.6em;
+}
+
+.spectro-share-bar {
+    display: block;
+    width: 100%;
+    height: 0.55em;
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    background: var(--color-bg);
+    overflow: hidden;
+}
+
+.spectro-share-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--sim-value-color);
+}
+
+.spectro-share-value {
+    flex: 0 0 4.4em;
+    margin-left: 0.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-tool-body p.spectro-share-range {
+    margin-top: -0.2em;
+    font-size: 0.9em;
+}
+
+.spectro-tool-text[hidden] {
+    display: none;
+}
+/* === end BINARY === */
+
+
 /* === OVERLAYS: labels and markers over the sky === */
 /* Drawn over the sky, under the bars; drags go straight through it to the canvas */
 #spectroOverlay > .spectro-overlay-canvas {

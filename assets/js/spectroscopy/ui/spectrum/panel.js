@@ -96,6 +96,8 @@ function createSpectrumPanel(app, container) {
         return { preset, button };
     });
     instrument.appendChild(presetRow);
+    const pinnedHost = make('div', { class: 'spectro-pinned' });
+    instrument.appendChild(pinnedHost);
     // A mouse wheel has no sideways: let it scroll the row
     presetRow.addEventListener('wheel', (e) => {
         if (presetRow.scrollWidth <= presetRow.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
@@ -501,9 +503,34 @@ function createSpectrumPanel(app, container) {
         return row;
     }
 
+    // A pinned tool has no row to open: it is there for every object it applies to
+    const pinned = new Map();
+    function syncPinned(tool) {
+        let applies = false;
+        try {
+            applies = !!resolved && tool.appliesTo(resolved);
+            let instance = pinned.get(tool.id);
+            if (applies && !instance) {
+                instance = tool.mount(pinnedHost, panelApi);
+                pinned.set(tool.id, instance);
+            } else if (!applies && instance) {
+                pinned.delete(tool.id);
+                instance.dispose();
+                return;
+            }
+            if (applies && instance.setEntity) instance.setEntity(resolved);
+        } catch (err) {
+            console.error(`[spectroscopy] tool ${tool.id}:`, err);
+        }
+    }
+
     function syncTools() {
         let any = false;
         listTools().forEach((tool) => {
+            if (tool.pinned) {
+                syncPinned(tool);
+                return;
+            }
             const row = rowFor(tool);
             let applies = false;
             try {
@@ -601,10 +628,15 @@ function createSpectrumPanel(app, container) {
             visible = true;
             if (entityDirty) applyEntity();
             else plot.redraw();
+            pinned.forEach((instance) => { if (instance.onPanelShow) instance.onPanelShow(); });
+            toolRows.forEach((row) => {
+                if (row.instance && row.instance.onPanelShow) row.instance.onPanelShow();
+            });
         },
         onHide() {
             visible = false;
             // A tool playing through time stops when it can't be seen
+            pinned.forEach((instance) => { if (instance.onPanelHide) instance.onPanelHide(); });
             toolRows.forEach((row) => {
                 if (row.instance && row.instance.onPanelHide) row.instance.onPanelHide();
             });
