@@ -510,14 +510,30 @@ export function initGoto(app) {
         return Math.min(widest, fovAtDepth((sep * height * dpr) / SPLIT_PX, body.depth));
     }
 
-    function frameFor({ body, path }) {
+    function frameFor({ entity, body, path }) {
         // fov is vertical, so a portrait canvas needs a wider one to fit the object across
         const narrowest = Math.min(1, engine.camera.aspect || 1);
         const span = skySpanDeg(body);
         const framed = span > 0 ? fovAtDepth((span * FRAME_MARGIN) / narrowest, body.depth) : pointFov(body, path);
         const fov = Math.max(MIN_FOV, Math.min(MAX_FOV, framed));
         const shows = engine.bodyShows(body, limitingMag(fov) - MAG_MARGIN);
-        return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingMag(body.brightness && drawMag(body), fov) };
+        const end = shows ? fov : fovShowingMag(body.brightness && drawMag(body), fov);
+        // One star of a pair: the middle goes where that star is drawn at the end, not where the pair is
+        const at = (path === 'component' && componentSkyAt(entity.code, end)) || body.sky;
+        return { az: at.az, alt: at.alt, fov: end };
+    }
+
+    // Where a star of a multiple is drawn at a field of view: the point it's part of, until the pair comes apart there
+    function componentSkyAt(code, fov) {
+        const now = engine.currentFrame();
+        const tan = (f) => Math.tan((f * Math.PI) / 360);
+        const frame = { ...now, fov, pxPerRad: (now.pxPerRad * tan(now.fov)) / tan(fov) };
+        for (const id of ['binaries', 'clusters']) {
+            const layer = engine.getLayer(id);
+            const spot = layer && layer.componentSky ? layer.componentSky(code, frame) : null;
+            if (spot) return spot;
+        }
+        return null;
     }
 
     // A little wider than where a zoom would carry on into the hole, or the narrowest view for a galaxy too small for that
