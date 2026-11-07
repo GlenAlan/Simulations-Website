@@ -16,6 +16,7 @@ import { Rng } from '../../core/rng.js';
 import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
 import { BAND_INFO, GALACTIC_CENTRE_AZ } from '../../core/bands.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
+import { PLANE_GLSL } from './background.js';
 
 const RAD = Math.PI / 180;
 const LAT_SCALE_DEG = 18;           // Latitudes well inside this get most of the texture's rows
@@ -57,6 +58,7 @@ precision highp float;
 varying vec2 vUv;
 ${LAT_GLSL}
 ${LOOP_ZERO_GLSL}
+${PLANE_GLSL}
 
 // Hash without sine, so every GPU draws the same sky
 vec3 hash33(vec3 p) {
@@ -156,18 +158,22 @@ float ultravioletSky(vec3 g, float l, float b) {
     return light * (1.0 - 0.97 * clamp(blocked * 1.2, 0.0, 1.0)) + 0.004;
 }
 
-// X-ray and gamma: cosmic rays striking gas give a thin glowing ridge along the plane. Elsewhere, almost nothing.
+// X-ray and gamma: cosmic rays striking gas give a glow along the plane, as clumped and as uneven as the gas is, on the
+// same wandering line as the visible band. Elsewhere, almost nothing: a faint teal haze from far beyond the galaxy.
 float gammaSky(vec3 g, float l, float b) {
+    float bent = b + planeLean(g) / RAD + 1.2 * fbm(g * 4.0 + 21.0, 3);
     float along = 0.3 + 0.7 * gauss(l, 38.0);
-    float ridge = 0.68 * gauss(b, 1.25) * along;
-    float broad = 0.16 * exp(-abs(b) / 4.8) * along;
+    float clouds = smoothstep(-0.3, 0.4, sheared(g + 40.0, 6.0, 2.4, 5));
+    float ridge = 0.5 * gauss(bent, 2.4) * along * (0.25 + 1.1 * clouds);
+    float broad = 0.2 * exp(-abs(bent) / 6.5) * along * (0.45 + 0.7 * clouds);
     float centre = 0.9 * gauss(l, 5.0) * gauss(b, 3.0);
     // Two very faint lobes above and below the centre
     float side = b > 0.0 ? 1.0 : -1.0;
     float r = length(vec2(l / 19.0, (b - side * 25.0) / 24.0));
     float lobes = smoothstep(1.12, 0.82, r) * (0.012 + 0.024 * r * r) * (0.8 + 0.5 * fbm(g * 5.0 + 3.0, 3));
-    float mottle = 0.85 + 0.4 * fbm(g * 9.0 + 50.0, 3);
-    return (ridge + broad) * mottle + centre + lobes + 0.0035;
+    float mottle = 0.85 + 0.5 * fbm(g * 9.0 + 50.0, 3);
+    float beyond = 0.012 * (0.7 + 0.8 * fbm(g * 2.5 + 90.0, 3));
+    return (ridge + broad) * mottle + centre + lobes + beyond;
 }
 
 void main() {
@@ -370,6 +376,7 @@ export function createBandSkyLayer(engine, app) {
             uniform vec3 uHigh[4];
             varying vec3 vDir;
             const vec4 GAIN = vec4(${gainGlsl});
+            const vec2 TEXELS = vec2(${size}.0, ${size / 2}.0);
 
             vec3 ramp(float i, vec3 low, vec3 high) {
                 float t = clamp(i, 0.0, 1.0);
@@ -381,16 +388,20 @@ export function createBandSkyLayer(engine, app) {
                 vec3 g = uToGalactic * d;
                 vec2 uv = vec2(atan(g.y, g.x) / (2.0 * PI) + 0.5, latToV(asin(clamp(g.z, -1.0, 1.0)) / RAD));
                 vec4 glow;
-                if (uSoften > 0.5) {
+                float magnified = smoothstep(14.0, 6.0, uFov);
+                if (uSoften > 0.5 || magnified > 0.0) {
                     // Without the background stars, the glow's smallest knots mustn't pass for them: spread over a couple
                     // of pixels of the screen, which only shows at wide zoom. Held to a small reach for the seam's sake.
-                    vec2 w = min(fwidth(uv), vec2(0.002)) * 1.5;
+                    // In a narrow view it's spread over a texel, or more across the band, where the rows are closer: blown up
+                    // as they are, those show as streaks
+                    vec2 w = max(min(fwidth(uv), vec2(0.002)) * 1.5 * uSoften, vec2(0.5, 1.75) / TEXELS * magnified);
                     glow = (texture2D(tGlow, uv + w) + texture2D(tGlow, uv - w)
                         + texture2D(tGlow, uv + vec2(w.x, -w.y)) + texture2D(tGlow, uv - vec2(w.x, -w.y))) * 0.25;
                 } else {
                     glow = texture2D(tGlow, uv);
                 }
-                glow *= GAIN * uGlowFade;
+                // The sources are what a narrow view is for: a whole frame of glow would only be a wash of one colour
+                glow *= GAIN * uGlowFade * mix(0.3, 1.0, smoothstep(3.0, 25.0, uFov));
                 vec3 c = ramp(glow.r, uLow[0], uHigh[0]) * uBandW[0];
                 c += ramp(glow.g, uLow[1], uHigh[1]) * uBandW[1];
                 c += ramp(glow.b, uLow[2], uHigh[2]) * uBandW[3];     // uBandW[2] is the visible band, background.js's

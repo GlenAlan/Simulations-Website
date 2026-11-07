@@ -6,15 +6,16 @@
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
+import { BANDS } from '../../core/bands.js';
+import { hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
+import { bandSkyBrightness, bandMagnitude } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
-
-const SPLIT_LO = 6;     // Device pixels between two stars when they start to come apart...
-const SPLIT_HI = 13;    // ...and when they have
+import { createSprites, createSpikes, bodySoftness, SPLIT_LO, SPLIT_HI } from './stars.js';
 
 // Stylised on-sky separation in degrees: slow, wide orbits show first. Three days gives about 0.03 deg (seen apart at
 // a field of view near 2 deg), a thousand years about 0.25 deg (seen apart near 15 deg).
@@ -143,10 +144,10 @@ function layOut(node, x, y, parentSep, ctx, out) {
 export function createBinariesLayer(engine, app) {
     let systems = [];
     let flat = [];          // Every drawn node of every system, in instance order
-    let mesh = null;
+    let points = null;      // The members, drawn just as stars.js draws any star, and their diffraction spikes
+    let spikes = null;
     let bridges = null;
     let aura = null;
-    let veil = null;
     let pairs = [];         // Interacting pairs, in instance order of the bridges and auras
     const byCode = new Map();
     const pickList = [];
@@ -177,9 +178,10 @@ export function createBinariesLayer(engine, app) {
         system.nodes = out.filter((node) => node !== system.tree);
     }
 
-    function nodeMagnitude(system, node) {
+    // How much of the system's light this point has
+    function nodeShare(system, node) {
         const lum = (group) => group.reduce((sum, i) => sum + system.body.stars[i].star.luminosity_Lsun, 0);
-        return drawMag(system.body) - 2.5 * Math.log10(lum(node.stars) / lum(system.tree.stars));
+        return lum(node.stars) / lum(system.tree.stars);
     }
 
     function nodeColour(system, node) {
@@ -222,136 +224,51 @@ export function createBinariesLayer(engine, app) {
             system.nodes.forEach((node) => flat.push({ system, node }));
         });
         const n = flat.length;
-        const geometry = instancedQuad(n);
-        const position = new Float32Array(n * 3);
-        const seps = new Float32Array(n * 2);
-        const mags = new Float32Array(n);
-        const colours = new Float32Array(n * 3);
-        const bandA = new Float32Array(n * 4);
-        const bandB = new Float32Array(n);
-        const depths = new Float32Array(n);
+        const data = {
+            count: n,
+            centres: new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3),
+            colours: new Float32Array(n * 3),
+            bandA: new Float32Array(n * 4),
+            bandB: new Float32Array(n),
+            seeds: new Float32Array(n),
+            soft: new Float32Array(n),
+            depths: new Float32Array(n),
+            flux: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1),
+            split: new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2),
+            spike: new Float32Array(n).fill(1)
+        };
+        data.centres.setUsage(THREE.DynamicDrawUsage);
+        data.split.setUsage(THREE.DynamicDrawUsage);
         flat.forEach(({ system, node }, i) => {
-            const b = system.body.bands;
-            depths[i] = system.body.depth;
-            position.set(worldOf(system, node.x, node.y), i * 3);
-            seps.set([node.sepParent, node.sepSelf], i * 2);
-            mags[i] = nodeMagnitude(system, node);
-            colours.set(nodeColour(system, node), i * 3);
-            bandA.set([b.radio, b.ir, b.visible, b.uv], i * 4);
-            bandB[i] = b.xray;
+            const share = nodeShare(system, node);
             node.code = nodeCode(system, node);
+            data.centres.array.set(worldOf(system, node.x, node.y), i * 3);
+            data.split.array.set([node.sepParent, node.sepSelf], i * 2);
+            data.colours.set(nodeColour(system, node), i * 3);
+            // In BANDS order: radio, infrared, visible, ultraviolet here, and X-ray in bandB
+            const glow = BANDS.map((band) => bandSkyBrightness(system.body, band) * share);
+            data.bandA.set(glow.slice(0, 4), i * 4);
+            data.bandB[i] = glow[4];
+            data.seeds[i] = hashString(node.code || system.body.code) / 4294967296;
+            data.soft[i] = node.stars.length === 1 ? bodySoftness(system.body.stars[node.stars[0]]) : 1;
+            data.depths[i] = system.body.depth;
         });
-        geometry.setAttribute('aPosition', new THREE.InstancedBufferAttribute(position, 3));
-        geometry.setAttribute('aSep', new THREE.InstancedBufferAttribute(seps, 2));
-        geometry.setAttribute('aMag', new THREE.InstancedBufferAttribute(mags, 1));
-        geometry.setAttribute('aColour', new THREE.InstancedBufferAttribute(colours, 3));
-        geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
-        geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
-        geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+        points = createSprites(data);
+        spikes = createSpikes(data);
+        points.mesh.renderOrder = ORDER.exotic;
+        spikes.mesh.renderOrder = ORDER.exotic + 1;
+        spikes.mesh.visible = app.qualityLevel !== 'low';
+        engine.scene.add(points.mesh, spikes.mesh);
+        sendSplits();
 
-        const material = skyMaterial({
-            vertexShader: /* glsl */`
-                ${BAND_GLSL}
-                attribute vec3 aPosition;
-                attribute vec2 aSep;       // Separation from its sibling and of its own members (degrees; 0 if a single star)
-                attribute float aMag;
-                attribute vec3 aColour;
-                attribute vec4 aBandA;
-                attribute float aBandB;
-                attribute float aDepth;
-                varying vec3 vLight;
-                varying vec2 vP;
-                float resolved(float deg) {
-                    return smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(deg) * uPxPerRad * depthP(aDepth));
-                }
-                void main() {
-                    // In view once its parent has split, gone again once it has split itself
-                    float shows = resolved(aSep.x) * (1.0 - resolved(aSep.y));
-                    float m = clamp(pow(10.0, -0.4 * (aMag - uLimitMag)), 0.0, 400.0);
-                    float seen = aBandA.z * uBandW[2] * smoothstep(-0.6, 0.4, uLimitMag - aMag);
-                    float other = aBandA.x * uBandW[0] + aBandA.y * uBandW[1] + aBandA.w * uBandW[3] + aBandB * uBandW[4];
-                    float strength = (seen + min(other * 1.6, 1.6)) * shows * uSkyFade;
-                    float big = sqrt(sqrt(m));
-                    float radiusPx = (2.0 + 0.55 * min(big, 4.0)) * (uViewport.y / 800.0 * 0.4 + 0.6);
-                    float brightness = min(1.1 + 0.3 * big, 3.0);
-                    vLight = bandColour(aColour) * brightness * strength;
-                    vP = position.xy;
-                    vec4 c = modelViewMatrix * vec4(aPosition, 1.0);
-                    c.xy *= depthP(aDepth);
-                    float halfPx = radiusPx * 3.6 * (strength > 0.002 ? 1.0 : 0.0);
-                    c.xy += position.xy * halfPx * length(c.xyz) / uPxPerRad;
-                    gl_Position = projectionMatrix * c;
-                }`,
-            fragmentShader: /* glsl */`
-                varying vec3 vLight;
-                varying vec2 vP;
-                void main() {
-                    float r = length(vP);
-                    // A bright core well inside a dim halo, so the members of a pair read as clearly separate points
-                    float core = exp(-r * r * 36.0) * 2.4;
-                    float halo = exp(-r * r * 6.0) * 0.1;
-                    float edge = smoothstep(1.0, 0.65, r);
-                    gl_FragColor = vec4(vLight * (core + halo * edge), 1.0);
-                }`
-        });
-        mesh = new THREE.Mesh(geometry, material);
-        mesh.frustumCulled = false;
-        mesh.renderOrder = ORDER.exotic;
-        engine.scene.add(mesh);
-
-        buildVeil();
         buildInteracting();
     }
 
-    // stars.js still draws the system's single point, at its centre. Once the members are seen apart that point would
-    // read as one star too many, so dim it to a soft glow. Everything here is additive, so this one quad darkens instead
-    function buildVeil() {
-        const n = systems.length;
-        const geometry = instancedQuad(n);
-        const centres = new Float32Array(n * 3);
-        const seps = new Float32Array(n);
-        const depths = new Float32Array(n);
-        systems.forEach((system, i) => {
-            centres.set(worldOf(system, 0, 0), i * 3);
-            seps[i] = system.tree.sepSelf;
-            depths[i] = system.body.depth;
-        });
-        geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
-        geometry.setAttribute('aSepDeg', new THREE.InstancedBufferAttribute(seps, 1));
-        geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
-        const material = skyMaterial({
-            blending: THREE.CustomBlending,
-            blendEquation: THREE.AddEquation,
-            blendSrc: THREE.ZeroFactor,
-            blendDst: THREE.OneMinusSrcAlphaFactor,
-            vertexShader: /* glsl */`
-                ${BAND_GLSL}
-                attribute vec3 aCentre;
-                attribute float aSepDeg;
-                attribute float aDepth;
-                varying vec2 vP;
-                varying float vDim;
-                void main() {
-                    vP = position.xy;
-                    vDim = smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(aSepDeg) * uPxPerRad * depthP(aDepth)) * uSkyFade;
-                    vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
-                    c.xy *= depthP(aDepth);
-                    float halfPx = uViewport.y * 0.036 * (vDim > 0.002 ? 1.0 : 0.0);
-                    c.xy += position.xy * halfPx * length(c.xyz) / uPxPerRad;
-                    gl_Position = projectionMatrix * c;
-                }`,
-            fragmentShader: /* glsl */`
-                varying vec2 vP;
-                varying float vDim;
-                void main() {
-                    float r = length(vP);
-                    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.97 * vDim * smoothstep(1.0, 0.6, r));
-                }`
-        });
-        veil = new THREE.Mesh(geometry, material);
-        veil.frustumCulled = false;
-        veil.renderOrder = ORDER.exotic - 2;
-        engine.scene.add(veil);
+    // stars.js draws the system's single point, at its centre. It goes out as the members come apart
+    function sendSplits(only) {
+        const stars = engine.getLayer('stars');
+        if (!stars || !stars.setSpriteSplit) return;
+        (only ? [only] : systems).forEach((system) => stars.setSpriteSplit(system.body.code, system.tree.sepSelf));
     }
 
     function buildInteracting() {
@@ -424,8 +341,8 @@ export function createBinariesLayer(engine, app) {
                     float s = clamp(vP.x / 0.62 * 0.5 + 0.5, 0.0, 1.0);   // 0 at the star losing gas, 1 at the one gaining
                     // Curved by the orbit, so the gas misses the gaining star's centre and swirls in
                     float y = vP.y + 0.4 * sin(s * 3.1416) * (vSeed > 0.5 ? 1.0 : -1.0);
-                    float line = exp(-y * y * 26.0);
-                    float glow = exp(-y * y * 3.0);
+                    float line = exp(-y * y * 200.0);
+                    float glow = exp(-y * y * 9.0) * 0.5;
                     // The hot spot, where the stream strikes
                     float ds = (s - 0.86) / 0.13;
                     float spot = exp(-ds * ds - vP.y * vP.y * 9.0);
@@ -451,7 +368,8 @@ export function createBinariesLayer(engine, app) {
         pairs.forEach(({ system, node }, i) => {
             centres.set(worldOf(system, node.x, node.y), i * 3);
             auraBandA.set([0, 0, 0, system.body.bands.uv], i * 4);
-            auraBandB[i] = system.body.bands.xray;
+            // A brighter source has the bigger glow, so that the sky has a few great beacons and many small ones
+            auraBandB[i] = system.body.bands.xray * Math.min(1, 10 ** (-0.2 * (bandMagnitude(system.body, 'xray') - 1.5)));
             sep[i] = node.sepSelf;
         });
         auraGeometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
@@ -485,7 +403,7 @@ export function createBinariesLayer(engine, app) {
                 varying float vAmount;
                 void main() {
                     float r = length(vP);
-                    float glow = exp(-r * r * 12.0) * 0.5 + 0.1 / (1.0 + r * r * 25.0);
+                    float glow = exp(-r * r * 12.0) * mix(0.5, 0.28, uBandW[4]) + 0.1 / (1.0 + r * r * 25.0);
                     gl_FragColor = vec4(bandColour(vec3(1.0)) * glow * smoothstep(1.0, 0.55, r) * vAmount, 1.0);
                 }`
         });
@@ -504,16 +422,22 @@ export function createBinariesLayer(engine, app) {
     }
 
     function teardown() {
-        [mesh, bridges, aura, veil].forEach((m) => {
+        [points, spikes].forEach((part) => {
+            if (!part) return;
+            engine.scene.remove(part.mesh);
+            part.geometry.dispose();
+            part.material.dispose();
+        });
+        [bridges, aura].forEach((m) => {
             if (!m) return;
             engine.scene.remove(m);
             m.geometry.dispose();
             m.material.dispose();
         });
-        mesh = null;
+        points = null;
+        spikes = null;
         bridges = null;
         aura = null;
-        veil = null;
     }
 
     build();
@@ -522,12 +446,13 @@ export function createBinariesLayer(engine, app) {
     const unsubscribe = bus.on('timeline', ({ code, t_days, stepped_t_days }) => {
         const resolved = app.universe.resolve(code);
         const system = resolved && byCode.get(resolved.body.code);
-        if (!system || !mesh) return;
+        if (!system || !points) return;
         const previous = system.nodes;
         layOutSystem(system, stepped_t_days ?? t_days); // Points of light: above the speed limit they step rather than strobe
+        sendSplits(system);
         // The same tree in the same order, so nodes keep their instance slots
-        const position = mesh.geometry.getAttribute('aPosition');
-        const seps = mesh.geometry.getAttribute('aSep');
+        const position = points.geometry.getAttribute('aCentre');
+        const seps = points.geometry.getAttribute('aSplit');
         previous.forEach((node, k) => {
             const i = system.first + k;
             const p = worldOf(system, node.x, node.y);
@@ -554,9 +479,15 @@ export function createBinariesLayer(engine, app) {
         });
     });
 
+    const unbindQuality = bus.on('quality', ({ level }) => { if (spikes) spikes.mesh.visible = level !== 'low'; });
+
     return {
         id: 'binaries',
-        update() {},
+        update(frame) {
+            if (!points) return;
+            points.material.uniforms.uDpr.value = frame.dpr;
+            spikes.material.uniforms.uDpr.value = frame.dpr;
+        },
         // Resolved members can be selected. Only called on a click, so it may build a list
         picks(frame) {
             pickList.length = 0;
@@ -580,6 +511,7 @@ export function createBinariesLayer(engine, app) {
         },
         dispose() {
             unsubscribe();
+            unbindQuality();
             teardown();
         }
     };

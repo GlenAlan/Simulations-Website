@@ -373,7 +373,8 @@ void disc(vec2 p, out vec3 vis, out float uvLight, out float ir, out float radio
         float prof = exp(-0.5 * z * z / (hY * hY)) / (2.5066 * hY);
         float hD = uHDust * (1.0 + 1.3 * R);
         float dz = exp(-0.5 * z * z / (hD * hD)) / (2.5066 * hD);
-        float dTau = m.g * dz * ds;
+        // Seen nearly edge-on, the dust gathers into the dark lane along the disc
+        float dTau = m.g * dz * ds * (1.0 + 0.9 * smoothstep(0.82, 0.97, uSi));
         float mid = tau + 0.5 * dTau;
         vec3 T = exp(-mid * KVIS);
         vis += T * (eOld * COL_OLD * 0.34 + prof * (m.r * COL_YOUNG * 0.2 + m.a * COL_HII * 0.2)) * ds;
@@ -408,8 +409,11 @@ void main() {
         // Faint outer shells, left by a smaller galaxy it swallowed long ago
         if (uShells > 0.0) {
             float ang = atan(p.y / qApp, p.x) + 0.6 * sin(uOff.x);
-            float wave = pow(0.5 + 0.5 * cos(log(r + 0.02) * 15.0 + uOff.y), 8.0);
-            I += uShells * 0.02 * wave * smoothstep(0.18, 0.4, r) * fall(1.1, 0.6, r) * (0.5 + 0.5 * cos(ang));
+            float phase = log(r + 0.02) * 15.0 + uOff.y;
+            float wave = pow(0.5 + 0.5 * cos(phase), 8.0);
+            // Each shell is an arc, on its own side of the galaxy, or the rings would look like a lens's ghost
+            float arc = pow(0.5 + 0.5 * cos(ang + 2.4 * floor(phase / 6.2831853 + 0.5)), 3.0);
+            I += uShells * 0.02 * wave * smoothstep(0.18, 0.4, r) * fall(1.1, 0.6, r) * arc;
         }
         float T = 1.0;
         float irDust = 0.0;

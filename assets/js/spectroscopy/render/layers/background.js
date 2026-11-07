@@ -56,16 +56,10 @@ uvec3 pcg3d(uvec3 v) {
 }
 `;
 
-const BAKE_FRAGMENT = /* glsl */`
-    ${DOME_GLSL}
+// The noise the band is made of. planeLean(g) is how far the plane wanders at g (galactic axes), in radians: band_sky.js
+// has it too, so that a band's plane is in the same place in every band
+export const PLANE_GLSL = /* glsl */`
     ${HASH_GLSL}
-    ${LOOP_ZERO_GLSL}
-    uniform vec3 uPole;
-    uniform vec3 uCentre;
-    uniform vec3 uEast;
-    uniform float uGrain;           // 1 with the Background stars layer. Without it the band is a smooth glow.
-    varying vec2 vUv;
-
     vec3 gradient(ivec3 p) {
         uvec3 h = pcg3d(uvec3(p + 65536));
         return vec3(h >> 8u) / 8388608.0 - 1.0;
@@ -87,7 +81,7 @@ const BAKE_FRAGMENT = /* glsl */`
     }
     // Turned a little each octave, so the noise lattice doesn't show as lines
     const mat3 TURN = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
-    float fbm(vec3 p, int octaves) {
+    float planeNoise(vec3 p, int octaves) {
         float sum = 0.0;
         float amp = 0.55;
         for (int i = 0; i < octaves + uLoopZero; i++) {
@@ -97,6 +91,22 @@ const BAKE_FRAGMENT = /* glsl */`
         }
         return sum;
     }
+    float planeLean(vec3 g) {
+        return 0.05 * planeNoise(g * 1.3 + vec3(5.0, 2.0, 11.0), 3);
+    }
+`;
+
+const BAKE_FRAGMENT = /* glsl */`
+    ${DOME_GLSL}
+    ${LOOP_ZERO_GLSL}
+    ${PLANE_GLSL}
+    #define fbm planeNoise
+    uniform vec3 uPole;
+    uniform vec3 uCentre;
+    uniform vec3 uEast;
+    uniform float uGrain;           // 1 with the Background stars layer. Without it the band is a smooth glow.
+    varying vec2 vUv;
+
     // Sharp ridges: where dark lanes and filaments come from
     float ridged(vec3 p, int octaves) {
         float sum = 0.0;
@@ -132,7 +142,7 @@ const BAKE_FRAGMENT = /* glsl */`
         vec3 q = gs + warp * 0.30;
 
         // The plane wanders a little, and the disc swells towards the centre
-        float lean = 0.05 * fbm(g * 1.3 + vec3(5.0, 2.0, 11.0), 3);
+        float lean = planeLean(g);
         float bw = b + lean;
         float centreness = exp(-pow(absL / 1.15, 2.0));
         float thick = mix(0.082, 0.128, centreness);
@@ -144,7 +154,7 @@ const BAKE_FRAGMENT = /* glsl */`
         float middling = fbm(q * 9.5, 5);
         float clouds = smoothstep(-0.34, 0.42, big + middling * 0.45);
         float grain = 0.92;
-        if (uGrain > 0.5) grain = clamp(0.92 + 1.05 * fbm(g * 44.0, 4), 0.35, 1.7);
+        if (uGrain > 0.5) grain = clamp(0.92 + 1.4 * fbm(g * 44.0, 4), 0.3, 1.8);
 
         // The bulge: a squashed, warm swelling, a little peanut-shaped
         float bulgeR = length(vec2(l / 0.36, bw / (0.135 + 0.03 * cos(l * 7.0))));
@@ -239,22 +249,28 @@ const SKY_FRAGMENT = /* glsl */`
     uniform sampler2D tDetail;
     uniform float uMilkyWay;        // Fades the bake in when it first arrives
     uniform float uVisibleAmount;
-    uniform vec3 uDeepFade;
+    uniform vec4 uDeepFade;
     uniform vec3 uDetailFade;       // Coarse detail, fine detail, and how much glow is left
     uniform float uDpr;
     uniform float uDetailBias;
     uniform float uSkyBias;
+    uniform float uStarsAmount;     // 1 with the Background stars layer
+    uniform vec2 uHold;             // How far the glow eases towards its wider surroundings, and the mip level those are read at
+    uniform mat3 uGalactic;         // From the dome to galactic axes: x to the centre, z to the pole
     varying vec3 vDir;
 
-    // One layer of a star field too fine for points, for the view through a narrow field. Each star keeps to the
-    // middle of its grid cell, so a single cell is enough.
+    // One layer of a star field too fine for points, for the view through a narrow field. Each star keeps away from the
+    // edge of its grid cell, so a single cell is enough. Each layer's grid is turned its own way, so that rows never show.
     vec3 deepStars(vec2 dome, vec3 d, float cells, float fade, float seed, float shade, float keep) {
-        vec2 g = dome * cells;
+        float cosT = cos(seed * 0.7);
+        float sinT = sin(seed * 0.7);
+        vec2 g = vec2(cosT * dome.x - sinT * dome.y, sinT * dome.x + cosT * dome.y) * cells;
         vec2 fl = floor(g);
         uvec3 h = pcg3d(uvec3(ivec2(fl) + 131072, int(seed)));
         vec3 r = vec3(h >> 8u) / 16777216.0;
         if (r.z > keep) return vec3(0.0);
-        vec3 star = domeDir((fl + 0.28 + r.xy * 0.44) / cells);
+        vec2 at = (fl + 0.14 + r.xy * 0.72) / cells;
+        vec3 star = domeDir(vec2(cosT * at.x + sinT * at.y, -sinT * at.x + cosT * at.y));
         float dist = length(d - star) * uPxPerRad * depthP(1.0);
         float rank = 1.0 - r.z / keep;
         float sigma = (0.62 + 0.55 * rank * rank * rank) * uDpr;
@@ -272,15 +288,30 @@ const SKY_FRAGMENT = /* glsl */`
         vec3 col = tex.rgb * tex.rgb * ${SKY_GAIN.toFixed(3)};
         vec2 dome = (uv - 0.5) * 2.0 * DOME_R;
 
+        if (uHold.x > 0.0) {
+            // The star clouds that make the band's texture from afar would be billows of smoke seen close to. So as the
+            // view narrows the glow eases towards its surroundings: a smooth light that says how bright the band is here,
+            // however far in you go. The dust keeps its edges, which is what stays dark
+            vec4 around = textureLod(tSky, uv, uHold.y);
+            vec3 aroundCol = around.rgb * around.rgb * uMilkyWay * uMilkyWay * ${SKY_GAIN.toFixed(3)};
+            float brighter = step(dot(aroundCol, vec3(0.3, 0.55, 0.15)), dot(col, vec3(0.3, 0.55, 0.15)));
+            col = mix(col, aroundCol, uHold.x * mix(tex.a * tex.a, 1.0, brighter));
+            // Blended like this it would turn grey, so it keeps the colour the eye expects of the band there
+            col = max(mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.0 + 0.45 * uHold.x), vec3(0.0));
+        }
+
         if (uDetailFade.x > 0.0) {
-            // Mottle the glow, and fray the edges of the dust, more finely than the bake can
+            // Mottle the glow, and fray the edges of the dust, more finely than the bake can. All of it is drawn out along
+            // the plane, as the galaxy's turning draws out its gas and dust: even a narrow view shows which way the band runs
+            vec3 g = uGalactic * d;
+            vec2 along = vec2(atan(g.y, g.x), asin(clamp(g.z, -1.0, 1.0)) * 2.2);
             float edge = 4.0 * tex.a * (1.0 - tex.a);
-            vec2 d1 = texture2D(tDetail, dome * 3.1, uDetailBias).rg;
-            float mottle = mix(1.0, 0.55 + 0.9 * d1.r, uDetailFade.x);
+            vec2 d1 = texture2D(tDetail, along * 3.1, uDetailBias).rg;
+            float mottle = mix(1.0, mix(0.8 + 0.4 * d1.r, 0.55 + 0.9 * d1.r, uStarsAmount), uDetailFade.x);
             float fray = mix(1.0, 1.0 - edge * 0.85 * d1.g, uDetailFade.x);
             if (uDetailFade.y > 0.0) {
-                vec2 d2 = texture2D(tDetail, dome * 17.3, uDetailBias).rg;
-                mottle *= mix(1.0, 0.62 + 0.76 * d2.r, uDetailFade.y);
+                vec2 d2 = texture2D(tDetail, along * 17.3, uDetailBias).rg;
+                mottle *= mix(1.0, mix(0.86 + 0.28 * d2.r, 0.62 + 0.76 * d2.r, uStarsAmount), uDetailFade.y);
                 fray *= mix(1.0, 1.0 - edge * 0.7 * d2.g, uDetailFade.y);
             }
             col *= mottle * fray;
@@ -293,13 +324,16 @@ const SKY_FRAGMENT = /* glsl */`
         col *= air;
 
         if (uDeepFade.x > 0.0) {
-            // Dust dims the deep stars, and there are more of them where the band is bright
+            // Dust dims the deep stars, and the band is where they are: many times more of them there than off it
             float lum = dot(tex.rgb, vec3(0.3, 0.5, 0.2));
             float shade = mix(0.22, 1.0, tex.a) * (0.35 + 2.2 * lum) * air;
-            float keep = mix(0.14, 0.5, smoothstep(0.03, 0.32, lum));
-            col += deepStars(dome, d, 458.0, uDeepFade.x, 1.0, shade, keep);
-            if (uDeepFade.y > 0.0) col += deepStars(dome, d, 1146.0, uDeepFade.y, 2.0, shade * 0.8, keep);
-            if (uDeepFade.z > 0.0) col += deepStars(dome, d, 2865.0, uDeepFade.z, 3.0, shade * 0.65, keep);
+            float crowd = smoothstep(0.02, 0.25, lum);
+            float keep = mix(0.05, 0.95, crowd);
+            // The coarsest is the star grain of the band itself: off the band it adds nothing at all
+            if (crowd > 0.0) col += deepStars(dome, d, 183.0, uDeepFade.x, 4.0, shade * 1.2, 0.95 * crowd);
+            if (uDeepFade.y > 0.0) col += deepStars(dome, d, 458.0, uDeepFade.y, 1.0, shade, keep);
+            if (uDeepFade.z > 0.0) col += deepStars(dome, d, 1146.0, uDeepFade.z, 2.0, shade * 0.8, keep);
+            if (uDeepFade.w > 0.0) col += deepStars(dome, d, 2865.0, uDeepFade.w, 3.0, shade * 0.65, keep);
         }
 
         // Far from the band the sky is a deep blue, not quite black. Worked out here, not baked: it sits so near the
@@ -313,9 +347,7 @@ const SKY_FRAGMENT = /* glsl */`
         gl_FragColor = vec4(col * uVisibleAmount, 1.0);
     }`;
 
-// The Milky Way bake: a density map first, then the full-size texture over the next frames
-function createSkyBake(engine) {
-    const { renderer } = engine;
+function galacticFrame() {
     const pole = azAltToVec3(GALACTIC_POLE.az, GALACTIC_POLE.alt);
     // The bulge sits where the band passes the centre's azimuth, the same frame the other bands' skies use (band_sky.js)
     const centreAlt = Math.atan2(
@@ -328,6 +360,13 @@ function createSkyBake(engine) {
         pole[2] * centre[0] - pole[0] * centre[2],
         pole[0] * centre[1] - pole[1] * centre[0]
     ];
+    return { pole, centre, east };
+}
+
+// The Milky Way bake: a density map first, then the full-size texture over the next frames
+function createSkyBake(engine) {
+    const { renderer } = engine;
+    const { pole, centre, east } = galacticFrame();
 
     const bakeVertex = 'varying vec2 vUv; void main() { vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }';
     const material = new THREE.ShaderMaterial({
@@ -521,9 +560,9 @@ function densityLookup(pixels) {
     };
 }
 
-// The decorative star field: tens of thousands of faint points that can't be selected. They're in random order,
-// so a lower graphics level just draws fewer of them. This places them a few milliseconds at a time: placeSome(ms)
-// returns the finished field when the last one is in, and null until then.
+// The decorative star field: tens of thousands of faint points that can't be selected. Brightest first, so a lower
+// graphics level draws only the brightest and each higher one only adds fainter stars. This places them a few milliseconds
+// at a time: placeSome(ms) returns the finished field when the last one is in, and null until then.
 function fieldStarPlacer(pixels) {
     const rng = new Rng('skycore-field-stars');
     const lookup = densityLookup(pixels);
@@ -538,10 +577,10 @@ function fieldStarPlacer(pixels) {
     for (let i = 0; i < 64; i++) {
         const T = 2800 * (20000 / 2800) ** (i / 63);
         const [r, g, b] = blackBodyRGB(T);
-        // A little richer than true colour, as faint stars otherwise all read as white, but no channel goes quite
-        // to zero, which would turn a cool star into a hard orange speck
+        // Close to true colour: a faint star reads as near white, and no channel goes to zero, which would turn a cool
+        // star into a hard orange speck
         const grey = (r + g + b) / 3;
-        palette.push([r, g, b].map((c) => Math.round(Math.min(1, Math.max(0.1, grey + (c - grey) * 1.3)) * 255)));
+        palette.push([r, g, b].map((c) => Math.round(Math.min(1, Math.max(0.1, grey + (c - grey) * 1.1)) * 255)));
     }
 
     let placed = 0;
@@ -562,11 +601,12 @@ function fieldStarPlacer(pixels) {
             positions[placed * 3] = x * SKY_RADIUS;
             positions[placed * 3 + 1] = y * SKY_RADIUS;
             positions[placed * 3 + 2] = z * SKY_RADIUS;
-            // Many faint, few bright
-            mags[placed] = 4.6 + 9.4 * rng.next() ** 0.6;
+            // As real star counts go: about twice as many for each magnitude fainter. Set by place in the list, which has
+            // nothing to do with where a star is
+            mags[placed] = 5.6 + 3.03 * Math.log10(1 + ((placed + rng.next()) / n) * 129);
             seeds[placed] = rng.next();
-            // Mostly orange and yellow suns with some blue-white, weighted towards cool as real star counts are
-            const tone = Math.floor(63 * rng.next() ** 1.5 * (0.75 + 0.25 * rng.next()));
+            // Mostly yellow and white suns with some blue-white and orange
+            const tone = Math.floor(63 * rng.next() ** 1.2 * (0.75 + 0.25 * rng.next()));
             const colour = palette[tone];
             colours[placed * 3] = colour[0];
             colours[placed * 3 + 1] = colour[1];
@@ -812,6 +852,16 @@ function buildHorizon() {
     return { mesh, geometry, material };
 }
 
+// The same frame the bake uses, for what's worked out live
+function galacticAxes() {
+    const { pole, centre, east } = galacticFrame();
+    return new THREE.Matrix3().set(
+        centre[0], centre[1], centre[2],
+        east[0], east[1], east[2],
+        pole[0], pole[1], pole[2]
+    );
+}
+
 export function createBackgroundLayer(engine, app) {
     const { renderer, scene } = engine;
     if (!renderer) return { id: 'background', update() {} };
@@ -831,12 +881,15 @@ export function createBackgroundLayer(engine, app) {
             tDetail: { value: bake.detailTexture() },
             uMilkyWay: { value: 0 },
             uVisibleAmount: { value: 1 },
-            uDeepFade: { value: new THREE.Vector3(0, 0, 0) },
+            uDeepFade: { value: new THREE.Vector4(0, 0, 0, 0) },
             uDetailFade: { value: new THREE.Vector3(0, 0, 1) },
             uTan: { value: new THREE.Vector2(1, 1) },
             uDpr: { value: 1 },
             uDetailBias: { value: SMOOTH_DETAIL_BIAS },
-            uSkyBias: { value: SMOOTH_SKY_BIAS }
+            uSkyBias: { value: SMOOTH_SKY_BIAS },
+            uStarsAmount: { value: 0 },
+            uHold: { value: new THREE.Vector2(0, 0) },
+            uGalactic: { value: galacticAxes() }
         },
         vertexShader: /* glsl */`
             uniform vec2 uTan;
@@ -903,7 +956,7 @@ export function createBackgroundLayer(engine, app) {
     });
 
     // A layer of deep stars fades in when its grid cells are big enough on screen to hold a star
-    const fadeIn = (cellCssPx) => Math.min(1, Math.max(0, (cellCssPx - 6.5) / 4));
+    const fadeIn = (cellCssPx) => Math.min(1, Math.max(0, (cellCssPx - 5) / 12));
     const smooth = (a, b, x) => {
         const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
         return t * t * (3 - 2 * t);
@@ -950,17 +1003,23 @@ export function createBackgroundLayer(engine, app) {
             u.uTan.value.set(tanY * (frame.width / frame.height), tanY);
             const cssPerRad = (frame.pxPerRad * parallax) / frame.dpr;
             const low = frame.quality === 'low';
-            // Low draws only the coarsest layer: enough not to feel empty, at almost no cost
+            // Low draws only the coarsest layers: enough not to feel empty, at almost no cost
             u.uDeepFade.value.set(
+                fadeIn(cssPerRad / 183) * starsAmount,
                 fadeIn(cssPerRad / 458) * starsAmount,
                 low ? 0 : fadeIn(cssPerRad / 1146) * starsAmount,
                 low ? 0 : fadeIn(cssPerRad / 2865) * starsAmount
             );
             u.uDetailBias.value = SMOOTH_DETAIL_BIAS * (1 - starsAmount);
             u.uSkyBias.value = SMOOTH_SKY_BIAS * (1 - starsAmount);
+            u.uStarsAmount.value = starsAmount;
+            // What the glow eases towards is about two thirds of the view across, and never under a degree
+            const domeFovDeg = frame.fov / parallax;
+            const texelDeg = (2 * 1.5320888862 / (bake.size() || DENSITY_MAP_SIZE)) / RAD;
+            u.uHold.value.set(0.8 * smooth(40, 10, frame.fov), Math.log2(Math.max(1, 0.65 * domeFovDeg) / texelDeg));
             // Through a narrow field the glow resolves into stars, so less of it is left as glow. Without the stars,
             // it stays a glow, at every zoom
-            const resolvedGlow = 0.42 + 0.58 * smooth(1.5, 25, frame.fov);
+            const resolvedGlow = 0.65 + 0.35 * smooth(1.5, 25, frame.fov);
             u.uDetailFade.value.set(
                 low ? 0 : smooth(36, 14, frame.fov),
                 low ? 0 : smooth(9, 3, frame.fov),

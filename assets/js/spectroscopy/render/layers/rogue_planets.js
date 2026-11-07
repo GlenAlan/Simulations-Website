@@ -68,7 +68,7 @@ export function createRoguePlanetsLayer(engine, app) {
                 vShape = vec3(radius, halo, open);
                 vAmount = amount;
                 // Warm against the band's false colour: the warmer the world, the more it leans to orange
-                vColour = mix(uBandTint[1], vec3(1.0, 0.52, 0.22), 0.35 + 0.5 * aLook.z);
+                vColour = mix(uBandTint[1], vec3(1.0, 0.52, 0.22), 0.15 + 0.25 * aLook.z);
                 vPx = position.xy * vQuad;
                 vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
                 clip.xy *= depthP(aDepth);
@@ -90,7 +90,7 @@ export function createRoguePlanetsLayer(engine, app) {
                 float window = 1.0 - u * u;
                 window *= window;
                 float glow = exp(-outside * outside / (2.0 * vShape.y * vShape.y));
-                vec3 col = vColour * glow * window * mix(0.95, 0.62, vShape.z) * vAmount;
+                vec3 col = vColour * glow * window * mix(0.95, 0.22, vShape.z) * vAmount;
                 float alpha = 0.0;
                 if (radius > 0.5) {
                     float inside = clamp(radius - r + 0.5, 0.0, 1.0);
@@ -99,7 +99,9 @@ export function createRoguePlanetsLayer(engine, app) {
                     float x = min(r / radius, 1.0);
                     float x2 = x * x;
                     float limb = x2 * x2 * x2;
-                    float face = 0.03 + 0.05 * (1.0 - x2) + 0.34 * limb;
+                    // Stronger on one side: a dark globe, not a ring of light
+                    float side = 0.5 + 0.5 * dot(vPx / max(r, 0.001), vec2(-0.6, 0.8));
+                    float face = 0.03 + 0.05 * (1.0 - x2) + 0.16 * limb * mix(0.25, 1.0, side);
                     col = mix(col, vColour * face * (0.6 + vAmount), inside);
                     alpha = inside * vShape.z;
                 }
