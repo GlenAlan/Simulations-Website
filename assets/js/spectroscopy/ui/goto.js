@@ -36,6 +36,7 @@ const NEAR_MARGIN = 1.5;            // A double-click's flight stops this much w
 const NEAR_S = 0.9;                 // It takes this long...
 const NEAR_PER_E_S = 0.22;          // ...and this much longer for each e-fold of zoom...
 const NEAR_MOST_S = 2;              // ...but never longer than this
+const NUDGE_S = 0.3;                // A flight to somewhere already nearly in the middle
 const SYSTEM_STEP_LIMIT_MS = 12000; // A system transition that never reports back mustn't strand the selection
 
 const FRAME_MARGIN = 1.7;          // An extended object fills about 60% of the view
@@ -510,10 +511,17 @@ export function initGoto(app) {
 
     // Resolves when the slew ends, even if something cuts it short without calling onDone, such as a drag or a newer flight
     function slew(target, { duration = FLIGHT_S, pullBack = true, exact = false, glide = false } = {}) {
+        // What's in the middle of the canvas, which the lens can put off the camera's axis
         const view = engine.getView();
-        const framed = angularSeparation(view.az, view.alt, target.az, target.alt) < view.fov * (exact ? 0.0005 : 0.02)
-            && Math.abs(Math.log(view.fov / target.fov)) < 0.05;
-        if (framed && !engine.isSlewing()) return Promise.resolve(); // No wobble; but an older flight mustn't carry on
+        const middle = engine.centreDir();
+        const off = angularSeparation(middle.az, middle.alt, target.az, target.alt);
+        const sameZoom = Math.abs(Math.log(view.fov / target.fov)) < 0.05;
+        if (off < view.fov * 0.0005 && sameZoom && !engine.isSlewing()) return Promise.resolve(); // There already
+        // Nearly there, as when going from one star of a pair to the other: a short straight move, with no swing out and back
+        if (!exact && off < view.fov * 0.02 && sameZoom) {
+            duration = Math.min(duration, NUDGE_S);
+            pullBack = false;
+        }
 
         return new Promise((resolve) => {
             let watch = null;
