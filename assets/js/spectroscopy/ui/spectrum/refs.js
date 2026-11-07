@@ -585,7 +585,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
             shiftSlider.value = sliderFromZ(z);
             setZ(z);
         },
-        // Line labels, named on both spectra
+        // Line labels: the reference's lines are named, and matching them to the object's is left to the student
         setLabels(on) {
             state.labels = !!on;
             onLabels(state.labels);

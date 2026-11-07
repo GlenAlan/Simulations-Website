@@ -470,9 +470,12 @@ export function createPlot(container, opts = {}) {
         return layout;
     }
 
-    // Height of the band at the top of a pane that holds line labels
+    // Height of the band at the top of a pane that holds line labels. Labels name the reference's lines only, so that matching
+    // them to the object's own dips is still the student's to do: the object's pane has a band only when the reference is laid
+    // over it.
     function labelBand(pane) {
-        if (!labelsOn) return 0;
+        if (!labelsOn || !hasRef()) return 0;
+        if (layout && pane === layout.body && !(mode === 'overlay')) return 0;
         const rows = labelRows(pane);
         return rows * 12 + 2;
     }
@@ -1073,6 +1076,24 @@ export function createPlot(container, opts = {}) {
         }
     }
 
+    // Labels name a reference's lines, never the object's own: with none chosen, a word on where they'll come from
+    function drawLabelsWanted(pane) {
+        if (!labelsOn || hasRef()) return;
+        const text = 'Labels name a reference\'s lines: choose one below';
+        ctx.font = fontOf(11);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        const w = ctx.measureText(text).width;
+        const x = pane.x + 6;
+        const y = pane.y + 12;
+        ctx.fillStyle = tokens.well;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(x - 3, y - 8, w + 6, 16);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = tokens.ink;
+        ctx.fillText(text, x, y);
+    }
+
     function drawPaneNote(pane, s, y) {
         if (!s.paneNote) return;
         ctx.font = fontOf(12);
@@ -1135,7 +1156,7 @@ export function createPlot(container, opts = {}) {
 
         if (stacked) {
             drawTitle(bodyPane, body, 'body');
-            drawLineLabels(bodyPane, [{ s: body, ink: tokens.body }], labelRows(bodyPane));
+            drawLabelsWanted(bodyPane);
             drawPaneNote(bodyPane, body, bodyPane.y + bodyPane.h / 2);
             drawStrip(bodyPane, body);
             if (hasRef()) {
@@ -1155,7 +1176,7 @@ export function createPlot(container, opts = {}) {
             drawSeries(refPane, ref, tokens.ref, { fill: 0, alpha: 0.9, dash: OVERLAY_DASH });
             drawOverlayTitle(bodyPane);
             drawOverlayUnit(bodyPane, body);
-            drawLineLabels(bodyPane, [{ s: body, ink: tokens.body }, { s: ref, ink: tokens.ref }], labelRows(bodyPane));
+            drawLineLabels(bodyPane, [{ s: ref, ink: tokens.ref }], labelRows(bodyPane));
             drawPaneNote(bodyPane, body, bodyPane.y + 14 + labelBand(bodyPane));
             drawPaneNote(refPane, ref, bodyPane.y + 34 + labelBand(bodyPane));
             drawStrip(bodyPane, body);

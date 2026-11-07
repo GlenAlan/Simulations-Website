@@ -166,7 +166,7 @@ function createSpectrumPanel(app, container) {
     const overlayToggle = flat('Overlay', 'The reference over the object, dashed, on its own scale');
     const stackedToggle = flat('Stacked', 'Object on top, reference below, each on its own scale');
     const arrange = make('div', { class: 'spectro-ref-arrange spectro-needs-ref', role: 'group', 'aria-label': 'How the reference is shown' }, [overlayToggle, stackedToggle]);
-    const labelsToggle = flat('Labels', 'Name the lines on both spectra');
+    const labelsToggle = flat('Labels', 'Name the reference\'s lines, to match with the object\'s');
     const shiftToggle = flat('Shift', 'Slide the reference along the wavelength axis');
     shiftToggle.classList.add('spectro-needs-ref');
     overlayToggle.addEventListener('click', () => setMode('overlay'));
