@@ -119,6 +119,7 @@ function mount(container, api) {
         const options = candidatesFor(api, found.centre_nm);
         const kind = found.type === 'em' ? 'Bright line' : 'Dark line';
         picked.append(resultLine(`${kind} at ${found.centre_nm.toFixed(found.err_nm < 0.01 ? 3 : 2)} ± ${Math.max(found.err_nm, 0.001).toFixed(found.err_nm < 0.01 ? 3 : 2)} nm`));
+        if (found.jumped) picked.append(para('The mark may not be on the dip you meant: others are close by at this zoom, and the uncertainty allows for them. Zoom in to be sure.'));
         if (!options.length) {
             picked.append(para('No known line is close to this one. Try another line, or choose a reference whose lines might match.'));
             return;

@@ -1,15 +1,18 @@
-// Line zoom: shows one line at high resolution, measures its width, and says what that width means: rotation if its sides
-// are steep, density if it has long wings. Widths are kept through the session so that stars can be compared.
+// Line zoom: shows one line at high resolution, measures its width, and says how much of it is rotation and how much is
+// pressure, from the shape of that line. Widths are kept through the session so that stars can be compared.
 
 import { registerTool } from './index.js';
 import { C_KMS } from '../../../core/phys.js';
-import { lineWidth, hasLongWings, suggestRotationLines } from '../../../spectra/measure.js';
+import { lineWidth, lineZoomWindow, hasLongWings, suggestRotationLines, ROTATION_FWHM, FASTEST_SPIN_KMS } from '../../../spectra/measure.js';
 import { el } from '../../plot2d.js';
 import { actionRow, overlayTheme, para, plotLabel, resultLine, searchNmAt, statusBox } from './common.js';
 
-const MIN_WINDOW_KMS = 90;       // The narrowest view: wide enough for a narrow line and some continuum either side
-const WINDOW_PER_WIDTH = 4;      // Half the view, as a multiple of the line's width
 const PICKS = 5;
+const ROTATION_PICKS = 3;
+// The lines a giant and a dwarf differ in most: pressure sets their width. Named so that every star offers the same ones.
+const PRESSURE_LINES = ['Hα', 'Na D₂', 'Ca II K'];
+const SPIN_RULES_FROM_KMS = 100;
+const THIN_GAS_PRESSURE_KMS = 12;
 
 // Widths last the session and outlive a change of selection, so that the next star's line can be set beside them
 const history = [];
@@ -19,17 +22,74 @@ function kmsText(v) {
     return v < 10 ? v.toFixed(1) : String(Math.round(v));
 }
 
+// To one decimal below 100 km/s, so that a sum set out with these numbers comes out right on a calculator
+function sumText(v) {
+    return v < 100 ? v.toFixed(1) : String(Math.round(v));
+}
+
 function lineName(line) {
     return `${String(line.label || line.species || 'Line').replace(/\s*\d+(\.\d+)?$/, '')} ${line.rest_nm.toFixed(1)} nm`;
 }
 
-// A line with long wings is widened by pressure as well, so its width only says how fast the star could be turning at most
-function rotationText(w, winged) {
-    if (w.unresolved) {
-        return `Rotation: unresolved (< ${Math.round(w.limit_kms)} km/s)`;
+// The sum from a line's width to a speed, in the numbers as shown, so that it gives the answer as shown
+function spinSum(w) {
+    const width = Number(sumText(w.fwhm_kms));
+    const base = Number(sumText(w.base_kms));
+    const spread = Math.sqrt(Math.max(0, width * width - base * base));
+    return { width, base, spread: Number(sumText(spread)), spin: Number(sumText(spread)) / ROTATION_FWHM };
+}
+
+// Whether pressure rules this line in this star. Hydrogen and Ca II H and K's always does; a stronger line such as helium's or
+// sodium's can be so widened by a fast spin that pressure hardly counts. A line nobody has named goes by its shape.
+function pressureRules(w, identified) {
+    const spinWidth = ROTATION_FWHM * w.velocity_kms;
+    if (!identified) return w.pressure_kms > 2 * spinWidth;
+    if (!hasLongWings(identified)) return false;
+    const always = identified.species === 'H I' || identified.species === 'Ca II';
+    return always || w.fwhm_kms < SPIN_RULES_FROM_KMS || spinWidth < 0.7 * w.fwhm_kms;
+}
+
+// What a line says about rotation. A line that pressure widens gives only an upper limit, and a limit past anything a star
+// could do isn't a reading of its spin at all.
+function spinReading(w, winged) {
+    if (winged) {
+        const most = w.velocity_kms + 2 * w.err_kms;
+        if (most >= FASTEST_SPIN_KMS) return { kind: 'too wide' };
+        if (most < w.limit_kms) return { kind: 'unresolved' };
+        return { kind: 'limit', value: most };
     }
-    if (winged) return `Rotation: at most ${kmsText(w.velocity_kms)} km/s`;
-    return `Rotation: v sin i ≈ ${kmsText(w.velocity_kms)} ± ${kmsText(Math.max(w.err_kms, 0.5))} km/s`;
+    if (w.noReading) return { kind: 'noisy' };
+    if (w.unresolved) return { kind: 'unresolved' };
+    const { spin } = spinSum(w);
+    if (spin >= FASTEST_SPIN_KMS) return { kind: 'too wide' };
+    return { kind: 'value', value: spin, err: Math.max(w.err_kms, 0.5) };
+}
+
+function rotationText(w, reading) {
+    switch (reading.kind) {
+    case 'noisy': return 'Rotation: too noisy to read from this line';
+    case 'too wide': return 'Rotation: can\'t tell from this line';
+    case 'unresolved': return `Rotation: unresolved (< ${Math.round(w.limit_kms)} km/s)`;
+    case 'limit': return `Rotation: at most ${kmsText(reading.value)} km/s`;
+    default: return `Rotation: v sin i ≈ ${kmsText(reading.value)} ± ${kmsText(reading.err)} km/s`;
+    }
+}
+
+function rotationCell(w, reading) {
+    switch (reading.kind) {
+    case 'noisy':
+    case 'too wide': return 'can\'t tell';
+    case 'unresolved': return `< ${Math.round(w.limit_kms)}`;
+    case 'limit': return `up to ${kmsText(reading.value)}`;
+    default: return kmsText(reading.value);
+    }
+}
+
+// The working behind a reading, for a student with a calculator
+function workingText(w, reading) {
+    if (reading.kind !== 'value') return null;
+    const { width, base, spread, spin } = spinSum(w);
+    return `With no spin, the instrument, hot gas and pressure would make this line about ${sumText(base)} km/s wide. Take that off: √(${sumText(width)}² − ${sumText(base)}²) = ${sumText(spread)} km/s. Spin makes a line ${ROTATION_FWHM} × v sin i wide, not 2 ×, because little of a star's light comes from its fast-moving edges. So v sin i ≈ ${sumText(spread)} ÷ ${ROTATION_FWHM} = ${kmsText(spin)} km/s. (v sin i is the part of the spin along your line of sight.)`;
 }
 
 // Rotation and pressure are readings of a star's lines. Anywhere else, a line's width is gas or stars moving at many speeds.
@@ -44,24 +104,43 @@ const WIDTH_MEANS = {
     nebula: 'This width comes from the gas in the nebula moving about, and from its heat.'
 };
 
-// What the shape says. Words are about what was measured, not about what kind of star this is.
-function meaning(w, winged) {
-    if (w.shape === 'wings' || winged) {
-        return 'This line has long wings, which come from pressure. The denser the gas, the wider they spread: broad wings mean a dense dwarf or white dwarf, narrow lines a thin, puffed-up giant. Because pressure widens this line so much, a thin metal line is better for rotation.';
+// What this line's own shape says. Words go by what was measured on it, not by what kind of line or star it is.
+function meaning(w, winged, reading) {
+    const width = kmsText(w.fwhm_kms);
+    const pressure = kmsText(w.pressure_kms);
+    const spinWidth = ROTATION_FWHM * w.velocity_kms;
+    if (reading.kind === 'noisy') {
+        return 'There is too much noise here to split this width into rotation and pressure. A deeper line, in a brighter part of the spectrum, or a brighter star would settle it.';
     }
-    if (w.unresolved) {
-        return `Too narrow to show rotation. At this resolution the instrument alone makes a line ${kmsText(w.instrument_kms)} km/s wide, so a slower spin can't be told apart. That is a real limit, not a fault.`;
+    if (reading.kind === 'too wide') {
+        return `At ${width} km/s this is far wider than any star could spin, so it is pressure, or several lines run together. A thin metal line is better for rotation.`;
     }
-    if (w.shape === 'steep') {
-        return 'Steep sides and a flat bottom: that is rotation. One side of the star is coming towards you and the other going away, which spreads every line evenly.';
+    if (winged) {
+        const compare = 'Set this line beside the same line in another star: the wider one is the denser star, the dwarf. A thin metal line is better for rotation.';
+        if (w.pressure_kms <= THIN_GAS_PRESSURE_KMS) {
+            return `Pressure adds only about ${pressure} km/s to this line, so either the gas here is thin or there is little of this element. ${compare}`;
+        }
+        if (w.pressure_kms >= spinWidth || w.fwhm_kms >= 150) {
+            return `Most of this ${width} km/s is long wings around a narrow core, and those come from pressure: the denser the gas, the wider they spread. ${compare}`;
+        }
+        return `Spin and pressure both widen this line, with about ${pressure} km/s of it from pressure. ${compare}`;
     }
-    return 'Rounded, without long wings, so this width is mostly rotation and not pressure.';
+    if (reading.kind === 'unresolved') {
+        return `Too narrow to show rotation. This line is ${width} km/s wide, and the instrument, hot gas and pressure alone make about ${kmsText(w.base_kms)} km/s of that, so a slower spin can't be told apart. That is a real limit, not a fault.`;
+    }
+    if (spinWidth >= 0.7 * w.fwhm_kms) {
+        if (w.shape === 'steep' && w.fwhm_kms >= 25) {
+            return 'Steep sides and a flat bottom, the shape that rotation gives. One side of the star is coming towards you and the other going away, which spreads every line evenly.';
+        }
+        return 'Most of this width is rotation. One side of the star is coming towards you and the other going away, which spreads every line evenly.';
+    }
+    return 'Part of this width is rotation. The rest is the instrument, the hot gas and pressure.';
 }
 
 function mount(container, api) {
     const { plot } = api;
-    const intro = para('Click a line on the plot, or pick one here. In a star, thin metal lines show rotation best, and hydrogen or strong sodium and calcium lines show density.');
-    const chips = el('div', { class: 'spectro-tool-picks', role: 'group', 'aria-label': 'Lines to zoom in on' });
+    const intro = para('Click a line on the plot, or pick one here.');
+    const chips = el('div', {});
     const result = statusBox();
     const historyEl = el('div', { class: 'spectro-tool-measured', hidden: true });
     container.append(intro, chips, result, historyEl);
@@ -113,7 +192,7 @@ function mount(container, api) {
                     el('td', { text: h.code }),
                     el('td', { text: h.line }),
                     el('td', { text: kmsText(h.width) }),
-                    el('td', { text: h.unresolved ? `< ${Math.round(h.limit)}` : `${h.atMost ? 'up to ' : ''}${kmsText(h.rotation)}` }))))),
+                    el('td', { text: h.rotation }))))),
             actionRow(el('button', {
                 type: 'button',
                 class: 'spectro-tool-next',
@@ -126,46 +205,49 @@ function mount(container, api) {
         );
     }
 
+    function noLine(line) {
+        const named = line ? `${lineName(line)} doesn't stand clear of the noise in this spectrum. Try a stronger line, or a brighter object.` : 'No clear dip or spike here. Try closer to the middle of one, or zoom in.';
+        result.replaceChildren(para(named));
+        current = null;
+        plot.redraw();
+    }
+
     // Finds the line in the overview first: its width there sets how far to zoom
     function zoomTo(nm, line, searchNm) {
         const overview = api.getOverview();
-        const first = overview && lineWidth(overview, nm, { searchNm });
-        if (!first) {
-            result.replaceChildren(para('No clear line there. Try closer to the middle of a dip or a spike.'));
-            current = null;
-            plot.redraw();
+        const identity = line || nearestListed(nm);
+        const view = lineZoomWindow(overview, nm, { line, searchNm, hydrogen: identity?.species === 'H I' });
+        if (!view) {
+            noLine(null);
             return;
         }
-        const halfKms = Math.max(MIN_WINDOW_KMS, WINDOW_PER_WIDTH * first.fwhm_kms);
-        const centre = first.centre_nm;
-        const halfNm = (centre * halfKms) / C_KMS;
-        api.setResolution('zoom', { lo_nm: centre - halfNm, hi_nm: centre + halfNm });
-        measureHere(centre, line, Math.min(halfNm * 0.3, Math.max(first.fwhm_nm, (centre * 6) / C_KMS)));
+        api.setResolution('zoom', { lo_nm: view.centre_nm - view.half_nm, hi_nm: view.centre_nm + view.half_nm });
+        measureHere(view.centre_nm, line, view.search_nm);
     }
 
     function measureHere(nm, line, searchNm) {
         const spectrum = api.getSpectrum();
-        const w = spectrum && lineWidth(spectrum, nm, { searchNm });
+        const identity = line || nearestListed(nm);
+        const w = spectrum && lineWidth(spectrum, nm, { searchNm, hydrogen: identity?.species === 'H I' });
         if (!w) {
-            result.replaceChildren(para('No clear line there. Try closer to the middle of a dip or a spike.'));
-            current = null;
-            plot.redraw();
+            noLine(line);
             return;
         }
         current = { w, line };
         const identified = line || nearestListed(w.centre_nm);
         if (identified) lastLine = { rest_nm: identified.rest_nm, label: identified.label || identified.species };
         const name = identified ? lineName(identified) : `Line at ${w.centre_nm.toFixed(2)} nm`;
-        const R = Math.round(1 / (2 * (spectrum.wl[1] / spectrum.wl[0] - 1)));
-        const widthLine = resultLine(`${name}: ${w.fwhm_nm.toFixed(w.fwhm_nm < 1 ? 3 : 2)} nm wide at half depth, which is ${kmsText(w.fwhm_kms)} km/s`);
+        const widthLine = resultLine(`${name}: ${w.fwhm_nm.toFixed(w.fwhm_nm < 1 ? 3 : 2)} nm wide at half depth. c × that ÷ λ₀ is ${sumText(w.fwhm_kms)} km/s.`);
         const { entity } = api.resolved;
-        const winged = w.shape === 'wings' || (identified ? hasLongWings(identified) : false);
+        const winged = pressureRules(w, identified);
+        const reading = spinReading(w, winged);
         if (isStarLike(entity)) {
+            const working = workingText(w, reading);
             result.replaceChildren(
-                resultLine(rotationText(w, winged), true),
+                resultLine(rotationText(w, reading), true),
                 widthLine,
-                para(`v ≈ c × half-width ÷ λ₀, after taking off what the instrument (${kmsText(w.instrument_kms)} km/s at R = ${R.toLocaleString('en-AU')}) and the hot gas itself add.`),
-                para(meaning(w, winged))
+                ...(working ? [para(working)] : []),
+                para(meaning(w, winged, reading))
             );
         } else {
             const spread = 0.5 * Math.sqrt(Math.max(0, w.fwhm_kms ** 2 - w.instrument_kms ** 2));
@@ -180,10 +262,7 @@ function mount(container, api) {
             code,
             line: name.replace(' nm', ''),
             width: w.fwhm_kms,
-            rotation: w.velocity_kms,
-            atMost: winged,
-            unresolved: w.unresolved,
-            limit: w.limit_kms
+            rotation: isStarLike(entity) ? rotationCell(w, reading) : 'not a star'
         };
         const at = history.findIndex((h) => h.code === code && h.line === entry.line);
         if (at >= 0) history[at] = entry;
@@ -210,26 +289,48 @@ function mount(container, api) {
         return gap < (nm * 12) / C_KMS ? best : null;
     }
 
-    // The line last zoomed on comes first, so the same line can be read on the next star; then the thin metal lines
-    // that show rotation, then the strongest
+    function pickRow(text, label, lines) {
+        if (!lines.length) return [];
+        return [
+            para(text),
+            el('div', { class: 'spectro-tool-picks', role: 'group', 'aria-label': label }, ...lines.map((line) => el('button', {
+                type: 'button',
+                class: 'spectro-tool-pick',
+                text: lineName(line),
+                onclick: () => zoomTo(line.obs_nm, line, line.obs_nm * 0.0015)
+            })))
+        ];
+    }
+
+    // A star's lines come in two groups, because they answer two questions and only one line of each suits each. A student
+    // comparing a thin metal line between a giant and a dwarf is comparing their spins. The line last zoomed on stays in its
+    // group, so the same line can be read on the next star.
     function renderPicks() {
         const overview = api.getOverview();
         const lines = (overview && overview.lines) || [];
         const atoms = lines.filter((l) => !l.band);
-        const list = [];
-        const add = (line) => {
-            if (line && !list.some((x) => Math.abs(x.rest_nm - line.rest_nm) < 0.05)) list.push(line);
-        };
-        if (lastLine) add(atoms.find((l) => Math.abs(l.rest_nm - lastLine.rest_nm) < 0.05));
-        suggestRotationLines(overview || {}, 3).forEach(add);
-        atoms.slice().filter((l) => l.obs_nm > 330).sort((a, b) => Math.abs(b.depth) - Math.abs(a.depth)).slice(0, 4).forEach(add);
-        chips.replaceChildren(...list.slice(0, PICKS).map((line) => el('button', {
-            type: 'button',
-            class: 'spectro-tool-pick',
-            text: lineName(line),
-            onclick: () => zoomTo(line.obs_nm, line, line.obs_nm * 0.0015)
-        })));
-        chips.hidden = !list.length;
+        const same = (a, b) => Math.abs(a.rest_nm - b.rest_nm) < 0.05;
+        const last = lastLine ? atoms.concat((overview && overview.zoomLines) || []).find((l) => same(l, lastLine)) : null;
+        const { entity } = api.resolved;
+        if (!isStarLike(entity)) {
+            const list = [];
+            const add = (line) => {
+                if (line && !list.some((x) => same(x, line))) list.push(line);
+            };
+            add(last);
+            atoms.slice().filter((l) => l.obs_nm > 330).sort((a, b) => Math.abs(b.depth) - Math.abs(a.depth)).slice(0, PICKS).forEach(add);
+            chips.replaceChildren(...pickRow('Lines to zoom in on:', 'Lines to zoom in on', list.slice(0, PICKS)));
+            chips.hidden = !list.length;
+            return;
+        }
+        const pressure = PRESSURE_LINES.map((label) => atoms.find((l) => l.label === label)).filter(Boolean);
+        const rotation = suggestRotationLines(overview || {}, ROTATION_PICKS).filter((line) => !pressure.some((p) => same(p, line)));
+        if (last && !pressure.concat(rotation).some((l) => same(l, last))) (hasLongWings(last) ? pressure : rotation).unshift(last);
+        chips.replaceChildren(
+            ...pickRow('Giant or dwarf? Compare one of these on both stars: pressure widens them, so a dense dwarf\'s are wider.', 'Lines that show density', pressure),
+            ...pickRow('Rotation: the lines that show this star\'s spin best.', 'Lines that show rotation', rotation)
+        );
+        chips.hidden = !pressure.length && !rotation.length;
     }
 
     const offClick = plot.onClick((nm, e) => {

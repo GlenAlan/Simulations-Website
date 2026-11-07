@@ -3,7 +3,8 @@
 // spectrumOf(entity, opts) returns a Spectrum:
 //   { wl: Float64Array (nm, log spaced), flux: Float32Array, clean: Float32Array (the same without noise),
 //     continuum: Float32Array (without noise or lines),
-//     lines: [{ rest_nm, obs_nm, species, label, depth, type: 'abs'|'em', band?, width_nm?, code?, source? }],
+//     lines: [{ rest_nm, obs_nm, species, label, depth, type: 'abs'|'em', band?, width_nm?, head_nm?, code?, source? }],
+//     zoomLines: entries as in lines, too shallow to show here but clear at line-zoom resolution,
 //     snr, mode: 'absorption'|'emission'|'reflection'|'thermal'|'none', note }
 // opts: { lo_nm, hi_nm, R, t (days), noise (default true), parts (component codes to keep), subtractHost }
 //
@@ -20,7 +21,7 @@
 // The Wien tool should use blackBodyPeak(spectrum) from spectra/peak.js, on a spectrum across the whole range: smoothing
 // a spectrum and taking its highest point misses the true peak by more than 3% for a quarter of the sky's stars.
 
-import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, R_OVERVIEW, LY_PER_PC, wienPeakNm } from '../core/phys.js';
+import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, R_OVERVIEW, R_ZOOM, LY_PER_PC, wienPeakNm } from '../core/phys.js';
 import { hashString } from '../core/rng.js';
 import { makeGrid as latticeGrid, gridFor, noisy, gaussAt, bb, planckPeak, planckPeakInRange, snrFromFlux, effectiveFlux, MAG0_FLUX_WM2, SNR_MIN } from './kernel.js';
 import { starSpectrum, starPartsOf, parentOf, fluxOf } from './stellar.js';
@@ -93,6 +94,8 @@ function buildSpectrum(entity, grid, opts) {
 }
 
 const LINE_MIN_DEPTH = 0.01;
+const ZOOM_LINE_MIN_DEPTH = 0.02;
+const ZOOM_LINE_CLEAR = 6;       // Standard deviations of noise, at the line's own wavelength
 
 // How deep a line has to be for a student to see it through the noise at its own wavelength
 function visibleLines(spec, clean, grid, noise) {
@@ -115,15 +118,32 @@ function visibleLines(spec, clean, grid, noise) {
     return shown;
 }
 
+// Thin lines too shallow to show at this resolution that line zoom would bring out: the sharper instrument piles the same line
+// into a few samples. They aren't labelled on the plot, but are where a slow star's rotation can be read.
+function zoomOnlyLines(spec, clean, grid, shown) {
+    if (!Number.isFinite(spec.snr) || grid.R >= R_ZOOM) return [];
+    const have = new Set(shown);
+    const out = [];
+    for (const line of spec.lines) {
+        if (have.has(line) || line.depth_zoom === undefined) continue;
+        const i = Math.max(0, Math.min(grid.n - 1, Math.round((Math.log(line.obs_nm) - grid.lnLo) / grid.step)));
+        const level = Math.max(1e-12, clean[i]);
+        if (line.depth_zoom >= Math.max(ZOOM_LINE_MIN_DEPTH, ZOOM_LINE_CLEAR / (spec.snr * Math.sqrt(level / Math.max(1e-30, spec.fRef))))) out.push(line);
+    }
+    return out.sort((a, b) => a.obs_nm - b.obs_nm);
+}
+
 function finish(spec, grid, code, noise) {
     const clean = Float32Array.from(spec.flux);
     const flux = noise && Number.isFinite(spec.snr) ? noisy(spec.flux, grid, code, spec.snr, spec.fRef) : clean;
+    const lines = visibleLines(spec, spec.flux, grid, noise);
     return {
         wl: grid.wl,
         flux,
         clean,
         continuum: spec.continuum === spec.flux ? clean : Float32Array.from(spec.continuum),
-        lines: visibleLines(spec, spec.flux, grid, noise),
+        lines,
+        zoomLines: zoomOnlyLines(spec, spec.flux, grid, lines),
         snr: spec.snr,
         mode: spec.mode,
         note: spec.note || ''
