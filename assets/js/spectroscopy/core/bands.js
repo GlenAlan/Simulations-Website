@@ -8,6 +8,10 @@
 
 export const BANDS = ['radio', 'ir', 'visible', 'uv', 'xray'];
 
+// A band strength at or below this draws nothing a student could make out. The Overview's band row and Go to's
+// "Hidden in..." prompt both go by it, so they can't disagree.
+export const BAND_HIDDEN_AT = 0.03;
+
 export const BAND_INFO = {
     radio: {
         label: 'Radio', short: 'Radio',
@@ -21,7 +25,7 @@ export const BAND_INFO = {
         tint: [1.0, 0.06, 0.3],       // Red-magenta, false colour
         ramp: { low: [0.32, 0.006, 0.11], high: [1.0, 0.26, 0.42] },
         falseColour: true,
-        legend: 'Warm dust and cool objects glow here, even dark planets.'
+        legend: 'Warm dust and cool objects glow here. A small, redder point that vanishes in Visible may be a planet with no star.'
     },
     visible: {
         label: 'Visible', short: 'Visible',
@@ -34,7 +38,7 @@ export const BAND_INFO = {
         tint: [0.3, 0.1, 1.0],        // Deep blue-violet, false colour
         ramp: { low: [0.07, 0.015, 0.45], high: [0.52, 0.4, 1.0] },
         falseColour: true,
-        legend: 'The hottest stars glow here, because their light peaks at these short wavelengths.'
+        legend: 'Hot stars, white dwarfs and young clusters glow here. Flares and nearby cool stars can show too.'
     },
     xray: {
         label: 'X-ray and gamma', short: 'X-ray/γ',
