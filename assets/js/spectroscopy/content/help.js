@@ -57,7 +57,7 @@ const BANDS = `${definitions([
 <p>All but Visible are in ${term('false colour')}, and the legend says what glows and why. Detailed spectra run from 90 nm to 5 µm. Radio and X-ray views show where things are and how bright, not a full spectrum.</p>`;
 
 const READING = list([
-    `<strong>Layout.</strong> The object's spectrum fills the plot. Choose a reference under its name, or step through them with the arrows, and it is drawn over the object, dashed. Stacked puts it underneath instead. The colour strip shows lines as they would look.`,
+    `<strong>Layout.</strong> Choose a reference in the row under the object's spectrum, or step through them with the arrows, and it is drawn over the object, dashed. Stacked gives it its own plot underneath; Overlay puts it back. The colour strip shows lines as they would look.`,
     `<strong>The shape.</strong> The smooth ${term('continuum')} gives the temperature, through its peak. A hot solid gives one too, close to a ${term('black body')}: the white-hot filament of an incandescent lamp is the everyday example. A gas discharge tube gives bright lines instead, which is what the element lamps show.`,
     `<strong>The lines.</strong> Dark ${term('absorption line', 'absorption lines')} mean cooler gas in front of a hot source. Bright ${term('emission line', 'emission lines')} mean hot, thin gas. Their pattern tells you which atoms and molecules are there.`,
     `<strong>The shift.</strong> If every line has moved by the same fraction, the object is moving: z = Δλ/λ₀ and v = cz, with positive meaning away. For z above about 0.1, quote z instead.`,

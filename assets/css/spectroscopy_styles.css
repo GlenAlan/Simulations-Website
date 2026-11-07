@@ -4437,6 +4437,95 @@ details.description-area > summary::after {
     font-size: 15px;
 }
 
+/* The reference's row, under the object's spectrum: a little taller than the object's header, as a row of real controls,
+   with Overlay and Stacked as a pair of words, the one on show marked */
+.spectro-ref-arrange {
+    display: flex;
+    align-items: center;
+    margin-right: 6px;
+}
+
+.spectro-pane-ref.is-none .spectro-ref-arrange {
+    display: none;
+}
+
+@media (pointer: fine) {
+    .spectro-pane-ref .spectro-spectrum input.spectro-ref-input,
+    .spectro-spectrum .spectro-pane-ref input.spectro-ref-input,
+    .spectro-spectrum .spectro-pane-ref button.spectro-ref-open,
+    .spectro-pane-ref .spectro-ref-flat button.spectro-square {
+        height: 30px;
+    }
+}
+
+#simulationControlsPanel .spectro-spectrum .spectro-pane-ref input.spectro-ref-input {
+    font-size: 13.5px;
+}
+
+/* In a tight row the name gives way, never the arrows, and never under its own caret */
+.spectro-pane-ref .spectro-ref-flat button.spectro-square {
+    flex: 0 0 auto;
+}
+
+.spectro-pane-ref .spectro-ref-flat .spectro-ref-box {
+    min-width: 5em;
+}
+
+.spectro-spectrum .spectro-pane-ref input.spectro-ref-input {
+    min-width: 5em;
+}
+
+/* A narrow drawer: the reference and its arrows on one line, how it's shown on the next */
+.spectro-pane-ref.is-two-lines {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 0;
+}
+
+.spectro-pane-ref.is-two-lines .spectro-ref-flat {
+    flex: 1 0 100%;
+}
+
+.spectro-pane-ref.is-two-lines .spectro-ref-opts {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+}
+
+/* On a tall screen one spectrum needs no more height than a laptop gives it: the plot stops growing, and the room under it is
+   where a tool opens, so opening one doesn't shrink the plot. Stacked, the two panes share the full height. The dock stays at
+   the bottom. */
+.spectro-instrument:not(.is-stacked) .spectro-head {
+    max-height: 470px;
+}
+
+.spectro-instrument .spectro-tool-bar {
+    margin-top: auto;
+}
+
+/* A narrow drawer keeps every control in its row by drawing the words closer together. The range buttons are never let wrap
+   onto a second line, which would fall under the object's header: on the narrowest phones, where 44 px targets can't all fit,
+   the row scrolls sideways instead. */
+@container (max-width: 400px) {
+    #simulationControlsPanel .spectro-spectrum .spectro-pane-ref button.spectro-flat,
+    #simulationControlsPanel .spectro-spectrum .spectro-range button.spectro-flat {
+        padding: 0 4px;
+    }
+
+    .spectro-ref-arrange {
+        margin-right: 2px;
+    }
+}
+
+@container (max-width: 372px) {
+    .spectro-presets {
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+}
+
 /* Layers: the visited count comes and goes with its switch, so it sits under the last switch, where nothing below it is a
    switch to be reached for */
 .spectro-sim .spectro-layers-menu .spectro-visited-line {

@@ -89,9 +89,9 @@ function createSpectrumPanel(app, container) {
     root.append(empty, instrument);
     container.appendChild(root);
 
-    // The plot is the panel. It runs edge to edge and carries its own controls: the scale along its top, and on each pane a
-    // header that says what it shows and changes it. The tools are docked under it. Whatever is opened goes between the plot
-    // and the dock, and the plot gives up the room that needs, so it is always in view.
+    // The plot is the panel. It runs edge to edge and carries its own controls: the scale along its top, the object's header
+    // over its spectrum, and the reference's row straight under that spectrum. The tools are docked at the bottom. Whatever is
+    // opened goes between the plot and the dock, and the plot gives up the room that needs, so it is always in view.
     const plotHost = make('div', { class: 'spectro-plot-host' });
     const head = make('div', { class: 'spectro-head' }, [plotHost]);
     const area = make('div', { class: 'spectro-area' });
@@ -103,7 +103,11 @@ function createSpectrumPanel(app, container) {
         reduceMotion: () => !!(app.settings && app.settings.reduceMotion),
         ariaLabel: 'Spectrum'
     });
-    plot.setChrome({ headers: coarse ? 44 : 26, top: coarse ? 44 : 32 });
+    // The reference's row is a row of real controls, so it gets more room than the object's header. In a narrow drawer its
+    // controls go on two lines, so the name of the reference isn't squeezed out.
+    const REF_ROW = coarse ? 44 : 34;
+    const ONE_LINE_PX = coarse ? 400 : 340;
+    plot.setChrome({ headers: coarse ? 44 : 26, top: coarse ? 44 : 32, refRow: REF_ROW });
 
     // The scale: the wide views, then the views around one line, as words along the top of the plot
     const wideViews = make('div', { class: 'spectro-range-group' });
@@ -158,32 +162,41 @@ function createSpectrumPanel(app, container) {
     });
     const { parts } = picker;
     const flat = (text, title) => make('button', { type: 'button', class: 'spectro-flat', text, title, 'aria-pressed': 'false' });
+    // Over the object or under it: two words, one marked, so it's plain which is on and how to have the other
+    const overlayToggle = flat('Overlay', 'The reference over the object, dashed, on its own scale');
     const stackedToggle = flat('Stacked', 'Object on top, reference below, each on its own scale');
-    stackedToggle.classList.add('spectro-needs-ref');
+    const arrange = make('div', { class: 'spectro-ref-arrange spectro-needs-ref', role: 'group', 'aria-label': 'How the reference is shown' }, [overlayToggle, stackedToggle]);
     const labelsToggle = flat('Labels', 'Name the lines on both spectra');
     const shiftToggle = flat('Shift', 'Slide the reference along the wavelength axis');
     shiftToggle.classList.add('spectro-needs-ref');
-    stackedToggle.addEventListener('click', () => setMode(plot.getMode() === 'stacked' ? 'overlay' : 'stacked'));
+    overlayToggle.addEventListener('click', () => setMode('overlay'));
+    stackedToggle.addEventListener('click', () => setMode('stacked'));
     labelsToggle.addEventListener('click', () => picker.setLabels(!picker.state().labels));
     shiftToggle.addEventListener('click', () => {
         parts.shiftDetails.open = !parts.shiftDetails.open;
         shiftToggle.setAttribute('aria-pressed', parts.shiftDetails.open ? 'true' : 'false');
     });
-    const ownScale = make('span', { class: 'spectro-own-scale', text: 'own scale' });
     const refHead = make('div', { class: 'spectro-pane-head spectro-pane-ref' }, [
-        make('div', { class: 'spectro-ref-flat' }, [parts.box, parts.prev, parts.next, ownScale]),
-        make('div', { class: 'spectro-ref-opts' }, [stackedToggle, labelsToggle, shiftToggle])
+        make('div', { class: 'spectro-ref-flat' }, [parts.box, parts.prev, parts.next]),
+        make('div', { class: 'spectro-ref-opts' }, [arrange, labelsToggle, shiftToggle])
     ]);
     plot.stage.append(bodyHead, refHead);
     plot.onLayout((l) => {
-        const place = (el, y) => {
+        const place = (el, y, h) => {
             el.style.top = `${y}px`;
             el.style.left = `${l.left}px`;
             el.style.width = `${l.plotW}px`;
-            el.style.height = `${l.titleH}px`;
+            el.style.height = `${h}px`;
         };
-        place(bodyHead, l.body.titleY);
-        place(refHead, l.refRowY);
+        place(bodyHead, l.body.titleY, l.titleH);
+        place(refHead, l.refRowY, l.refRowH);
+        // With no reference the row is short enough for one line anywhere
+        const twoLines = l.plotW < ONE_LINE_PX && !!l.ref;
+        refHead.classList.toggle('is-two-lines', twoLines);
+        const line = twoLines && !coarse ? REF_ROW - 4 : REF_ROW;
+        const want = twoLines ? 2 * line : line;
+        // Laid out again with the new height once this drawing is done, which calls this again and finds it right
+        if (l.refRowH !== want) queueMicrotask(() => plot.setChrome({ refRow: want, refLine: line }));
     });
 
     function syncRefHead() {
@@ -191,6 +204,8 @@ function createSpectrumPanel(app, container) {
         const overlay = plot.getMode() === 'overlay';
         refHead.classList.toggle('is-none', !chosen);
         refHead.classList.toggle('is-overlay', chosen && overlay);
+        instrument.classList.toggle('is-stacked', chosen && !overlay);
+        overlayToggle.setAttribute('aria-pressed', overlay ? 'true' : 'false');
         stackedToggle.setAttribute('aria-pressed', overlay ? 'false' : 'true');
     }
 
