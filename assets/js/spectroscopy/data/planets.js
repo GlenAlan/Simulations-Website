@@ -273,17 +273,6 @@ function equilibriumTemperature(L, a, albedo) {
     return 278.5 * Math.sqrt(Math.sqrt(L * (1 - albedo))) / Math.sqrt(a);
 }
 
-function planetBands(type, tEq) {
-    const hot = tEq > 700;
-    return {
-        radio: 0,
-        ir: hot ? 0.9 : 0.5,
-        visible: type === 'hot_jupiter' ? 0.25 : 0.5,
-        uv: 0.05,
-        xray: 0
-    };
-}
-
 function assemble(code, type, label, a, f, ctx, massForPeriod, extras) {
     const periodDays = stable(keplerPeriodDays(a, massForPeriod), 6);
     const hz = ctx.hz;
@@ -324,7 +313,7 @@ function assemble(code, type, label, a, f, ctx, massForPeriod, extras) {
             flux_Wm2: stable(ctx.flux * reflected, 4),
             mag: dp(ctx.mag - 2.5 * Math.log10(reflected), 2)
         },
-        bands: planetBands(type, tEq),
+        bands: null,                 // Set last of all, from band_table.js
         visual_seed: code
     };
 }

@@ -131,8 +131,25 @@ function checkCounts(u, fail) {
     expectMix(sky.filter((b) => b.galaxy), (b) => b.galaxy.morphology, MIX.galaxy, 'galaxies');
     expectMix(sky.filter((b) => b.supernova), (b) => b.supernova.type, MIX.supernova, 'supernovae');
     expectMix(sky.filter((b) => b.rogue_planet), (b) => b.rogue_planet.type, MIX.rogue_planet, 'rogue planets');
+    const bursts = sky.filter((b) => b.galaxy && b.galaxy.starburst);
+    if (bursts.length !== MIX.starbursts || bursts.some((b) => b.galaxy.morphology === 'elliptical')) fail(`${bursts.length} starburst galaxies`);
     const radioLoud = sky.filter((b) => b.quasar && b.quasar.radio_loud).length;
     if (radioLoud !== 1) fail(`${radioLoud} radio-loud quasars`);
+}
+
+// Every entity that stores band strengths has them, and they're 0..1
+function checkBands(u, fail) {
+    const check = (entity) => {
+        const b = entity.bands;
+        if (!b || !['radio', 'ir', 'visible', 'uv', 'xray'].every((k) => b[k] >= 0 && b[k] <= 1)) fail(`${entity.code} has bad bands`);
+    };
+    u.bodies.forEach((body) => {
+        check(body);
+        (body.planets || []).forEach(check);
+        (body.stars || []).forEach(check);
+        if (body.planet) check(body.planet);
+        if (body.black_hole) check(body.black_hole.companion);
+    });
 }
 
 function checkPlacement(u, fail) {
@@ -358,6 +375,7 @@ export function validateUniverse(u) {
     const fail = (message) => { failures.push(message); return null; };
     checkCounts(u, fail);
     checkCodes(u, fail);
+    checkBands(u, fail);
     checkPlacement(u, fail);
     checkStars(u, fail);
     checkPlanets(u, fail);

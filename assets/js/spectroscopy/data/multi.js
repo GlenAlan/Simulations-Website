@@ -6,7 +6,7 @@
 //   stars[]        { code, kind: 'star_component', parent, star, distance_pc, radial_velocity_kms, brightness, ... }
 //   orbits[]       { a: [i..], b: [j..], a_AU, period_days, ecc, inc_deg, omega_deg, phase0 }, innermost first, widest
 //                  last; pairs groups of stars[] by index (see data/orbits.js). The figure-eight has one entry with
-//                  shared_path: true and an empty b, which gives its period but isn't an ellipse: draw figureEightPath().
+//                  shared_path: true, empty a and b and no a_AU: it gives the period, but draw figureEightPath().
 //   interacting    a close pair passing mass across: bright in X-rays
 //   transfer       null or { donor, accretor }: star indices of the interacting pair
 //   figure_eight   null or { period_days, inc_deg, phase0 }
@@ -161,7 +161,7 @@ export function makeFigureEightSystem(code) {
         kind: 'multiple',
         architecture: 'figure_eight',
         stars,
-        orbits: [{ a: [0, 1, 2], b: [], a_AU: 1, period_days: 365.25, ecc: 0, inc_deg: FIXED_INC_DEG, omega_deg: 0, phase0: 0, shared_path: true }],
+        orbits: [{ a: [], b: [], period_days: 365.25, ecc: 0, inc_deg: FIXED_INC_DEG, omega_deg: 0, phase0: 0, shared_path: true }],
         interacting: false,
         transfer: null,
         figure_eight: { period_days: 365.25, inc_deg: FIXED_INC_DEG, phase0: 0 },

@@ -13,7 +13,7 @@
 // generateUniverse(seed) -> { seed, bodies[], cometTailAz, counts, resolve(code), allCodes() }
 
 import { Rng, DEFAULT_SEED, stable } from '../core/rng.js';
-import { fluxFromLuminosity, wienPeakNm } from '../core/phys.js';
+import { fluxFromLuminosity } from '../core/phys.js';
 import { dp, clamp, STAR_TABLE, makeClassStar, makeRedGiant, makeRedSupergiant, makeBlueSupergiant, makeWhiteDwarf,
     fixedStar, absoluteVisual, apparentMag, distanceForMag, distanceModulus } from './stellar.js';
 import { PLANET_COUNT_BUCKETS, hostContext, makeSystemPlanets, planetFromSpec, addToTally } from './planets.js';
@@ -69,20 +69,9 @@ function makeBase(kind, code) {
         sky: { az: 0, alt: 0 },
         distance_pc: 0,
         radial_velocity_kms: 0,
-        bands: { radio: 0, ir: 0.5, visible: 1, uv: 0.2, xray: 0.05 },
+        bands: null,               // Set last of all, because band_table.js reads every other field
         brightness: { flux_Wm2: 0, mag: 99 },
         visual_seed: code
-    };
-}
-
-function starBands(star) {
-    const peak = wienPeakNm(star.teff_K);
-    return {
-        radio: star.active ? 0.05 : 0.02,
-        ir: dp(Math.min(1, peak / 900), 3),
-        visible: star.stage === 'white_dwarf' ? 0.5 : 1,
-        uv: dp(Math.min(1, 200 / peak), 3),
-        xray: star.teff_K > 25000 || star.active ? 0.1 : 0.02
     };
 }
 
@@ -168,7 +157,6 @@ function makeSingleStarBody(rng, code, star, plan) {
     body.radial_velocity_kms = radialVelocity(rng, star.population);
     body.star = star;
     body.planets = [];
-    body.bands = starBands(star);
     return body;
 }
 
@@ -203,22 +191,6 @@ function setMultiBrightness(body, rng, share, faintest) {
     setStellarBrightness(body, systemLuminosity(body.stars), absV, distanceWithin(rng, absV, targetMag(rng, share, faintest), faintest, FARTHEST_STAR_PC));
     body.radial_velocity_kms = dp(rng.range(-100, 100), 1);
     fillComponentFields(body, (l, d) => stable(fluxFromLuminosity(l, d), 6));
-    body.stars.forEach((s) => { s.bands = starBands(s.star); });
-}
-
-function multiBands(body) {
-    let radio = 0;
-    let ir = 0;
-    let uv = 0;
-    let xray = 0;
-    body.stars.forEach((s) => {
-        const b = starBands(s.star);
-        radio = Math.max(radio, b.radio);
-        ir = Math.max(ir, b.ir);
-        uv = Math.max(uv, b.uv);
-        xray = Math.max(xray, b.xray);
-    });
-    return { radio, ir, visible: 1, uv, xray: body.interacting ? 0.8 : xray };
 }
 
 export function generateUniverse(seed = DEFAULT_SEED) {
@@ -276,7 +248,6 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         setStellarBrightness(body, star.luminosity_Lsun, absV, stable(distanceForMag(absV, target.host.apparent_mag), 5));
         body.radial_velocity_kms = target.host.radial_velocity_kms;
         body.star = star;
-        body.bands = starBands(star);
         const ctx = singleStarContext(body);
         body.planets = target.planets.map((spec) => {
             addToTally(tally, spec.type);
@@ -292,7 +263,6 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         setStellarBrightness(body, star.luminosity_Lsun, absV, stable(distanceForMag(absV, decoy.host.apparent_mag), 5));
         body.radial_velocity_kms = decoy.host.radial_velocity_kms;
         body.star = star;
-        body.bands = starBands(star);
         const ctx = singleStarContext(body);
         const fixed = { orbit_AU: decoy.planet.orbit_AU, planet: planetFromSpec(r, decoy.planet, ctx) };
         body.planets = makeSystemPlanets(r, planetCode, ctx, nextPlanetCount(r), tally, fixed);
@@ -303,7 +273,6 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         const body = makeBase('multiple', 'F8Q3ZN');
         Object.assign(body, makeFigureEightSystem('F8Q3ZN'));
         setMultiBrightness(body, r, 1, NAKED_EYE_MAG);
-        body.bands = multiBands(body);
         add(body, 'stars');
     }
     {
@@ -311,7 +280,6 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         const body = makeBase('multiple', 'D2W7XK');
         Object.assign(body, makeDoubleDoubleSystem('D2W7XK'));
         setMultiBrightness(body, r, 1, NAKED_EYE_MAG);
-        body.bands = multiBands(body);
         const pairA = [0, 1];
         const massA = pairA.reduce((m, i) => m + body.stars[i].star.mass_Msun, 0);
         body.planets = [planetFromSpec(r, {
@@ -346,7 +314,6 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         const body = makeBase('binary', multiCode());
         Object.assign(body, makeRandomMulti(r, multiCode, body.code, tripleFlags[i], multiFlags[i]));
         setMultiBrightness(body, r, 0.5, 14);
-        body.bands = multiBands(body);
         if (multiFlags[i]) body.planets = makeSystemPlanets(r, planetCode, multiContext(body), nextPlanetCount(r), tally);
         add(body, 'stars');
     }
@@ -354,21 +321,21 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const rogues = root.fork('rogues');
     shuffled(quota, quotaList(MIX.rogue_planet)).forEach((type, i) => {
         const body = makeBase('rogue_planet', otherCode());
-        body.bands = makeRogue(rogues.fork(`rogue:${i}`), body, type);
+        makeRogue(rogues.fork(`rogue:${i}`), body, type);
         add(body, 'even');
     });
 
     const comets = root.fork('comets');
     for (let i = 0; i < BODY_COUNTS.comet; i++) {
         const body = makeBase('comet', otherCode());
-        body.bands = makeComet(comets.fork(`comet:${i}`), body);
+        makeComet(comets.fork(`comet:${i}`), body);
         add(body, 'even', { group: 'comet', groupSep_deg: 16, altMin: 16 });
     }
 
     const nebulae = root.fork('nebulae');
     shuffled(quota, quotaList(MIX.nebula)).forEach((type, i) => {
         const body = makeBase('nebula', otherCode());
-        body.bands = makeNebula(nebulae.fork(`nebula:${i}`), body, type);
+        makeNebula(nebulae.fork(`nebula:${i}`), body, type);
         add(body, type === 'planetary' ? 'stars' : 'tight', { radius_deg: body.nebula.size_deg / 2 });
     });
 
@@ -379,9 +346,6 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         makeCluster(r, memberCode, body, type);
         body.radial_velocity_kms = dp(type === 'globular' ? r.range(-200, 200) : r.range(-40, 40), 1);
         body.cluster.members.forEach((m) => { m.radial_velocity_kms = dp(body.radial_velocity_kms + r.range(-2, 2), 2); });
-        body.bands = type === 'globular'
-            ? { radio: 0, ir: 0.6, visible: 1, uv: 0.1, xray: 0.1 }
-            : { radio: 0, ir: 0.4, visible: 1, uv: 0.7, xray: 0.03 };
         add(body, type === 'globular' ? 'wide' : 'tight', { radius_deg: body.cluster.radius_deg });
     });
 
@@ -395,7 +359,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         const body = makeBase('supernova', otherCode());
         const span = (400 + 15) / BODY_COUNTS.supernova;
         const phase = dp(-15 + span * (phases[i] + r.next()), 2);
-        body.bands = makeSupernova(r, body, type, phase);
+        makeSupernova(r, body, type, phase);
         supernovaEntries.push(add(body, 'stars', { radius_deg: body.supernova.shell_deg }));
     });
     const remnantSources = supernovaEntries.filter((e) => e.body.supernova.remnant_kind === 'neutron_star');
@@ -406,7 +370,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         const r = neutronStars.fork(`ns:${i}`);
         const source = remnantSources[i] || null;
         const body = makeBase('neutron_star', otherCode());
-        body.bands = makeNeutronStar(r, body, pulsar, source ? source.body : null);
+        makeNeutronStar(r, body, pulsar, source ? source.body : null);
         if (source) {
             source.body.supernova.remnant_code = body.code;
             add(body, 'stars', { near: source, near_deg: [0.35, 0.6] });
@@ -420,19 +384,21 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const steps = shuffled(quota, Array.from({ length: BODY_COUNTS.galaxy }, (_, i) => i));
     const radioFlags = shuffled(quota, Array.from({ length: BODY_COUNTS.galaxy }, (_, i) => i < 4));
     const activeFlags = shuffled(quota, Array.from({ length: BODY_COUNTS.galaxy }, (_, i) => i < 5));
-    shuffled(quota, quotaList(MIX.galaxy)).forEach((morphology, i) => {
+    const morphologies = shuffled(quota, quotaList(MIX.galaxy));
+    const starForming = morphologies.flatMap((m, i) => (m === 'elliptical' ? [] : [i]));
+    const starbursts = new Set(shuffled(quota, starForming).slice(0, MIX.starbursts));
+    morphologies.forEach((morphology, i) => {
         const r = galaxies.fork(`galaxy:${i}`);
         const body = makeBase('galaxy', otherCode());
         const dMpc = stable(10 * 100 ** ((steps[i] + r.next()) / BODY_COUNTS.galaxy), 5);
-        body.bands = makeGalaxy(r, body, morphology, dMpc, radioFlags[i], activeFlags[i]);
+        makeGalaxy(r, body, morphology, dMpc, { radioLobes: radioFlags[i], activeNucleus: activeFlags[i], starburst: starbursts.has(i) });
         add(body, 'avoid', { radius_deg: body.galaxy.size_deg / 2 });
     });
 
     const holes = root.fork('black_holes');
     for (let i = 0; i < BODY_COUNTS.black_hole; i++) {
         const body = makeBase('black_hole', otherCode());
-        body.bands = makeBlackHole(holes.fork(`hole:${i}`), otherCode, body);
-        body.black_hole.companion.bands = starBands(body.black_hole.companion.star);
+        makeBlackHole(holes.fork(`hole:${i}`), otherCode, body);
         add(body, 'stars');
     }
 
@@ -440,7 +406,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     [[0.5, 1.2], [1.2, 2.5], [2.5, 4]].forEach(([lo, hi], i) => {
         const r = quasars.fork(`quasar:${i}`);
         const body = makeBase('quasar', otherCode());
-        body.bands = makeQuasar(r, body, dp(r.range(lo, hi), 3), i === 0);
+        makeQuasar(r, body, dp(r.range(lo, hi), 3), i === 0);
         add(body, 'avoid');
     });
 
@@ -450,7 +416,15 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     layOutSky(entries, root.fork('sky'));
 
     const all = root.fork('order').shuffle(bodies).concat(home);
-    all.forEach((body) => { body.bands = bandStrengths(body) || body.bands; });
+
+    // Last of all, because band strengths read every other field
+    all.forEach((body) => {
+        (body.planets || []).forEach((planet) => { planet.bands = bandStrengths(planet); });
+        if (body.planet) body.planet.bands = bandStrengths(body.planet);
+        (body.stars || []).forEach((star) => { star.bands = bandStrengths(star); });
+        if (body.black_hole) body.black_hole.companion.bands = bandStrengths(body.black_hole.companion);
+        body.bands = bandStrengths(body);
+    });
 
     const byCode = new Map();
     const register = (entity, body, path) => byCode.set(entity.code, { entity, body, path });

@@ -1,27 +1,28 @@
 // Everything in the sky that isn't a plain star or multi-star system (spec 7.3). Each function fills in the kind's own
-// block on a body that already has its code, returning the fallback band strengths the sky uses until band_table.js
-// sets the real ones. Sky positions come later (data/sky_layout.js).
+// block on a body that already has its code. Sky positions and band strengths come later, in data/universe.js.
 //
 // body.nebula       { type: 'emission'|'planetary'|'dark'|'reflection', emission_lines[], size_deg, central_star, dust,
 //                     star_forming }. central_star is a star block: ionising O or B star, a planetary's white dwarf, or
 //                     the star a reflection nebula scatters. Dark nebulae have null.
 // body.neutron_star { pulsar, pulse_period_s, gamma, remnant_of, teff_K, radius_km, mass_Msun, luminosity_Lsun,
 //                     magnetic_tilt_deg }
-// body.galaxy       { morphology, inclination_deg, position_angle_deg, size_deg, z, radio_lobes, active_nucleus,
+// body.galaxy       { morphology, inclination_deg, position_angle_deg, size_deg, z, radio_lobes, active_nucleus, starburst,
 //                     distance_Mpc, abs_mag, luminosity_Lsun }
 // body.black_hole   { mass_Msun, companion, a_AU, period_days, K_kms, inc_deg, phase0, jets, disc_tilt_deg }.
 //                     K_kms is the companion's true velocity amplitude, K = 2 pi a1 sin i / P.
 // body.supernova    { type: 'Ia'|'II', phase0_days, peak_mag, abs_peak_mag, peak_time, remnant_code, remnant_kind,
 //                     shell_deg }. phase0_days is days after peak at t = 0, so peak_time = -phase0_days.
+//                     A supernova's brightness.mag is its peak; its flux_Wm2 is what a photometer reads at t = 0.
 // body.quasar       { z, radio_loud, blazar, luminosity_distance_pc, luminosity_Lsun }
 // body.comet        { emission_lines[], coma_deg, tail_deg, dust_ratio, heliocentric_AU }
-// body.rogue_planet { type, teff_K, radius_Rearth, mass_Mearth, atmosphere_pct, atmosphere_ppm, luminosity_Lsun }
+// body.rogue_planet { type, teff_K, radius_Rearth, mass_Mearth, atmosphere_pct, atmosphere_ppm, pressure_bar, surface,
+//                     luminosity_Lsun }
 
 import { stable } from '../core/rng.js';
 import { keplerPeriodDays, fluxFromLuminosity, orbitalSpeedKms, H0, C_KMS, PC, AU, L_SUN, R_EARTH, SIGMA, R_SUN } from '../core/phys.js';
 import { dp, luminosityFromRT, absoluteVisual, apparentMag, distanceForMag, fluxFromVisualMag, distanceModulus,
     makeClassStar, makeWhiteDwarf } from './stellar.js';
-import { supernovaMag } from './lightcurve.js';
+import { supernovaBandsAt } from './band_table.js';
 
 function line(w, rel, label) {
     return { w, rel: dp(rel, 3), label };
@@ -64,10 +65,6 @@ export function makeNebula(rng, body, type) {
         dust: dp(type === 'dark' ? rng.range(0.8, 1) : planetary ? rng.range(0.05, 0.2) : rng.range(0.25, 0.7), 2),
         star_forming: type === 'emission'
     };
-    if (type === 'dark') return { radio: 0.2, ir: 0.9, visible: 0.15, uv: 0, xray: 0 };
-    if (type === 'reflection') return { radio: 0.05, ir: 0.6, visible: 0.7, uv: 0.4, xray: 0.02 };
-    if (planetary) return { radio: 0.2, ir: 0.5, visible: 1, uv: 0.7, xray: 0.08 };
-    return { radio: 0.5, ir: 0.9, visible: 1, uv: 0.3, xray: 0.05 };
 }
 
 function neutronStarLuminosity(radiusKm, teff) {
@@ -98,11 +95,10 @@ export function makeNeutronStar(rng, body, pulsar, remnant) {
         luminosity_Lsun: luminosity,
         magnetic_tilt_deg: dp(rng.range(10, 80), 1)
     };
-    return { radio: pulsar ? 1 : 0, ir: 0, visible: 0.02, uv: 0.1, xray: 0.7 };
 }
 
 // d comes in from a stratified list, so that the Hubble plot has galaxies all along its length
-export function makeGalaxy(rng, body, morphology, dMpc, radioLobes, activeNucleus) {
+export function makeGalaxy(rng, body, morphology, dMpc, flags) {
     const distance = dMpc * 1e6;
     const velocity = dp(H0 * dMpc + rng.range(-300, 300), 1);
     const modulus = distanceModulus(distance);
@@ -120,18 +116,12 @@ export function makeGalaxy(rng, body, morphology, dMpc, radioLobes, activeNucleu
         position_angle_deg: dp(rng.range(0, 180), 1),
         size_deg: dp(rng.range(0.3, 2.2), 3),
         z: stable(velocity / C_KMS, 5),
-        radio_lobes: radioLobes,
-        active_nucleus: activeNucleus,
+        radio_lobes: flags.radioLobes,
+        active_nucleus: flags.activeNucleus,
+        starburst: flags.starburst,
         distance_Mpc: dMpc,
         abs_mag: dp(absMag, 2),
         luminosity_Lsun: luminosity
-    };
-    return {
-        radio: radioLobes ? 0.8 : 0.05,
-        ir: morphology === 'elliptical' ? 0.3 : 0.6,
-        visible: 1,
-        uv: morphology === 'elliptical' ? 0.1 : 0.5,
-        xray: activeNucleus ? 0.6 : 0.02
     };
 }
 
@@ -177,7 +167,6 @@ export function makeBlackHole(rng, nextCode, body) {
         jets,
         disc_tilt_deg: dp(rng.range(50, 85), 1)
     };
-    return { radio: jets ? 0.6 : 0.03, ir: 0.3, visible: 0.5, uv: 0.5, xray: 1 };
 }
 
 export function makeSupernova(rng, body, type, phase0Days) {
@@ -196,12 +185,12 @@ export function makeSupernova(rng, body, type, phase0Days) {
         remnant_kind: ia ? 'none' : 'neutron_star',
         shell_deg: dp(rng.range(0.1, 0.5), 3)
     };
-    const mag = dp(supernovaMag(sn, 0), 3);
+    // brightness.mag stays the peak, which every layer dims by its own playback; the flux is what can be measured now
+    const fadedBy = -2.5 * Math.log10(Math.max(0.001, supernovaBandsAt(sn, phase0Days).visible));
     body.distance_pc = distance;
     body.radial_velocity_kms = dp(rng.range(-100, 100), 1);
-    body.brightness = { flux_Wm2: fluxFromVisualMag(mag), mag };
+    body.brightness = { flux_Wm2: fluxFromVisualMag(peakMag + fadedBy), mag: peakMag };
     body.supernova = sn;
-    return { radio: 0.3, ir: 0.8, visible: 1, uv: 0.7, xray: 0.5 };
 }
 
 // Comoving distance in a flat universe (Omega_m = 0.3), since z = v/c fails badly this far out
@@ -233,7 +222,6 @@ export function makeQuasar(rng, body, z, radioLoud) {
         luminosity_distance_pc: lumDistance,
         luminosity_Lsun: stable((4 * Math.PI * d * d * flux) / L_SUN, 4)
     };
-    return { radio: radioLoud ? 1 : 0.05, ir: 0.5, visible: 0.3, uv: 1, xray: 0.9 };
 }
 
 export function makeComet(rng, body) {
@@ -256,7 +244,6 @@ export function makeComet(rng, body) {
         dust_ratio: dp(rng.next(), 3),
         heliocentric_AU: helio
     };
-    return { radio: 0.1, ir: 0.8, visible: 1, uv: 0.8, xray: 0.05 };
 }
 
 // Warm only from its own leftover heat, so it shines in the infrared alone
@@ -266,6 +253,8 @@ export function makeRogue(rng, body, type) {
     let mass;
     let pct;
     let ppm;
+    let pressure = 100;
+    let surface = { ocean_fraction: 0, rock: 'silicate', ice: null, red_edge_nm: null, subsurface_ocean: false };
     if (type === 'gas_giant') {
         teff = rng.range(120, 400);
         radius = rng.range(7, 13);
@@ -286,6 +275,8 @@ export function makeRogue(rng, body, type) {
         mass = stable(0.3 * radius ** 3 * rng.range(0.85, 1.15), 3);
         pct = { N2: 90, CH4: 7, CO: 3 };
         ppm = {};
+        pressure = stable(rng.logRange(0.00001, 0.001), 3);
+        surface = { ...surface, ice: 'methane_nitrogen' };
     }
     const T = dp(teff, 1);
     const rMetres = radius * R_EARTH;
@@ -301,7 +292,8 @@ export function makeRogue(rng, body, type) {
         mass_Mearth: stable(mass, 4),
         atmosphere_pct: pct,
         atmosphere_ppm: ppm,
+        pressure_bar: pressure,
+        surface,
         luminosity_Lsun: luminosity
     };
-    return { radio: 0, ir: 0.5, visible: 0, uv: 0, xray: 0 };
 }

@@ -13,6 +13,7 @@ export const MIX = {
     cluster: { open: 32, globular: 8 },
     neutron_star: { pulsar: 21, quiet: 14 },
     galaxy: { spiral: 21, elliptical: 10, irregular: 4 },
+    starbursts: 5,                                     // Among the spirals and irregulars
     supernova: { Ia: 8, II: 7 },
     rogue_planet: { gas_giant: 59, sub_neptune: 35, ice_dwarf: 23 },
     giants: { red_giant: 20, red_supergiant: 3, blue_supergiant: 6 },
