@@ -13,13 +13,16 @@ export const sharedUniforms = {
     uPxPerRad: { value: 1000 },     // Device pixels per radian at the centre of the view
     uLimitMag: { value: 6 },        // Faintest visible-band magnitude drawn at this zoom (core/sky.js)
     uSkyFade: { value: 1 },         // 1 in the sky; falls to 0 while flying into a planetary system
-    uViewport: { value: new THREE.Vector2(1, 1) } // Device pixels
+    uViewport: { value: new THREE.Vector2(1, 1) }, // Device pixels
+    uParallaxLog: { value: 0 }      // How much further things lag as you zoom: see core/depth.js and depthP below
 };
 
 // In the vertex or fragment shader:
 //   aBandA = vec4(radio, ir, visible, uv) and aBandB = xray hold the object's strength in each band
 //   bandAmount(a, b)       how strongly the object shows in the current mix of bands
 //   bandColour(trueColour) its true colour in visible light, the band's false colour otherwise
+//   depthP(d)              how far from the centre of the view a thing at depth d is drawn, as a share of where the
+//                          camera alone would put it. core/depth.js says how each kind of shader uses it.
 export const BAND_GLSL = /* glsl */`
 uniform float uBandW[5];
 uniform vec3 uBandTint[5];
@@ -30,6 +33,11 @@ uniform float uPxPerRad;
 uniform float uLimitMag;
 uniform float uSkyFade;
 uniform vec2 uViewport;
+uniform float uParallaxLog;
+
+float depthP(float d) {
+    return exp(d * uParallaxLog);
+}
 
 float bandAmount(vec4 a, float b) {
     return a.x * uBandW[0] + a.y * uBandW[1] + a.z * uBandW[2] + a.w * uBandW[3] + b * uBandW[4];

@@ -1,6 +1,7 @@
 // The seven home planets: bright steady points that don't twinkle, as real planets don't, each with its own colour.
 // They grow into small discs as you zoom in, with bands on the giants and a ring on Saturn. This layer alone draws
-// them (stars.js leaves them out) and it honours the Home planets switch in the Layers menu.
+// them (stars.js leaves them out) and it honours the Home planets switch in the Layers menu. Nothing is nearer than the
+// planets: they are at depth 0 (core/depth.js), so they alone need no depthP here.
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';

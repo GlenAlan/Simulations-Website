@@ -42,12 +42,11 @@ export function nextButton(next) {
     arrow.setAttribute('aria-hidden', 'true');
     button.append(element('span', '', next.label), arrow);
     button.addEventListener('click', () => {
+        // This button is about to be hidden, which would drop keyboard focus on the page itself, so focus moves on with it
+        if (next.tool && app.spectrumPanel && app.spectrumPanel.openTool(next.tool, { focus: true })) return;
         app.drawer.selectTab(next.tab);
-        // The Spectrum tab makes app.spectrumPanel the first time it opens, so the tool comes after the tab
-        const toolOpened = !!next.tool && !!app.spectrumPanel && app.spectrumPanel.openTool(next.tool);
-        // This button has just been hidden, which would drop keyboard focus on the page itself
         const tab = document.getElementById(`spectroTab-${next.tab}`);
-        if (tab && !toolOpened) tab.focus({ preventScroll: true });
+        if (tab) tab.focus({ preventScroll: true });
     });
     return button;
 }

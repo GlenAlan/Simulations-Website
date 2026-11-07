@@ -239,6 +239,8 @@ export function initKeyboard(app) {
         if (tip) return;
         // The Go to box has first say over Esc while it has focus: see below
         if (topLeft && e.target && e.target.closest && e.target.closest('#spectroTopLeft')) return;
+        // So does an open list: Esc closes it and goes back to what was chosen before
+        if (e.target && e.target.closest && e.target.closest('[role="combobox"][aria-expanded="true"]')) return;
         stepBack(e);
     }, { capture: true });
 

@@ -318,6 +318,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         uWrap: { value: a.wrap },
         uIsEnvelope: { value: isSolid ? 0 : 1 },
         uRelief: { value: isSolid ? look.solid.relief : 0 },
+        uLimbDark: { value: isSolid ? 0 : look.envelope.limbDark },
         uCloudCol: { value: v3(look.clouds.colour) },
         uCloudShade: { value: v3(look.clouds.shade) },
         uEmitCool: { value: v3(look.emission.cool) },
@@ -661,5 +662,5 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         fixedQuality = level;
     }
 
-    return { object3d, update, dispose, setOpacity, setQuality, look };
+    return { object3d, update, dispose, setOpacity, setQuality, look, meanColour: [flatAlbedo.x, flatAlbedo.y, flatAlbedo.z] };
 }

@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { sharedUniforms, BAND_GLSL } from '../shared.js';
-import { NOISE_GLSL, getNoiseTexture } from './star_surface.js';
+import { NOISE_GLSL, TRUE_COLOUR, getNoiseTexture } from './star_surface.js';
 
 const SEGMENTS = 48;
 
@@ -119,6 +119,7 @@ export function createMassStream(model) {
         fragmentShader: STREAM_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            ...TRUE_COLOUR,
             tNoise: noise,
             uP0: { value: new THREE.Vector3() },
             uP1: { value: new THREE.Vector3() },
@@ -146,6 +147,7 @@ export function createMassStream(model) {
         fragmentShader: DISC_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            ...TRUE_COLOUR,
             tNoise: noise,
             uColour: { value: new THREE.Color(...blackBodyRGB(Math.max(12000, accretor.teff_K))) },
             uRim: { value: new THREE.Color(1, 0.42, 0.12) },
@@ -159,6 +161,7 @@ export function createMassStream(model) {
     disc.rotation.x = -Math.PI / 2;
     disc.frustumCulled = false;
     disc.renderOrder = 4;
+    disc.visible = !model.stream.ontoHole;   // A black hole brings its own disc
 
     const group = new THREE.Group();
     group.add(ribbon, disc);
@@ -184,7 +187,7 @@ export function createMassStream(model) {
             // In the turning frame of the pair, Coriolis swings infalling gas the way the donor is moving
             swing.crossVectors(toA, up).normalize();
 
-            const discR = Math.min(rA * 2.8, sep * 0.42);
+            const discR = model.stream.ontoHole ? rA : Math.min(rA * 2.8, sep * 0.42);
             const start = Math.min(rD * 0.96, sep * 0.7);
             const u = material.uniforms;
             u.uP0.value.set(d[0] + toA.x * start, d[1] + toA.y * start, d[2] + toA.z * start);

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { Rng } from '../../core/rng.js';
 import { limitingMag } from '../../core/sky.js';
+import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
@@ -34,7 +35,9 @@ export function createQuasarsLayer(engine, app) {
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
     const extra = new Float32Array(n * 2);
+    const depths = new Float32Array(n);
     quasars.forEach((q, i) => {
+        depths[i] = q.body.depth;
         const axes = quadAxes(q.basis, q.positionAngle, 1);
         centres.set(q.basis.centre.map((c) => c * SKY_RADIUS), i * 3);
         us.set(axes.u, i * 3);
@@ -42,7 +45,7 @@ export function createQuasarsLayer(engine, app) {
         const { bands } = q.body;
         bandA.set([bands.radio, bands.ir, bands.visible, bands.uv], i * 4);
         bandB[i] = bands.xray;
-        extra.set([q.body.brightness.mag, q.flatten], i * 2);
+        extra.set([drawMag(q.body), q.flatten], i * 2);
     });
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aU', new THREE.InstancedBufferAttribute(us, 3));
@@ -50,6 +53,7 @@ export function createQuasarsLayer(engine, app) {
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.setAttribute('aExtra', new THREE.InstancedBufferAttribute(extra, 2));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -62,6 +66,7 @@ export function createQuasarsLayer(engine, app) {
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute vec2 aExtra;
+            attribute float aDepth;
             varying vec2 vDeg;       // Position in degrees from the core, along the host's axes
             varying vec2 vPx;        // The same in device pixels
             varying vec4 vBand;
@@ -81,6 +86,7 @@ export function createQuasarsLayer(engine, app) {
                 vHost = smoothstep(120.0, 420.0, pxPerDeg);
                 float h = tan(radians(halfDeg)) * ${SKY_RADIUS.toFixed(1)};
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(aCentre + (position.x * aU + position.y * aV) * h, 1.0);
+                gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -120,7 +126,8 @@ export function createQuasarsLayer(engine, app) {
         positionAngleDeg: q.positionAngle + 90,
         spanDeg: q.span,
         strength: Math.max(0.5, q.body.bands.radio) * 1.2,
-        seed: q.body.visual_seed
+        seed: q.body.visual_seed,
+        depth: q.body.depth
     })));
 
     return {
@@ -131,11 +138,13 @@ export function createQuasarsLayer(engine, app) {
             const lim = limitingMag(frame.fov);
             if (app.band === 'radio') {
                 // A click on a lobe finds its quasar
-                const stepDeg = 30 / ((frame.pxPerRad * RAD) / frame.dpr);
-                loud.forEach((q) => scatterPicks(out, q.body.code, q.basis, q.positionAngle + 90, q.span / 2, q.span * 0.1, stepDeg));
+                loud.forEach((q) => {
+                    const stepDeg = 30 / ((frame.pxPerRad * RAD * parallaxFactor(q.body.depth, frame.fov)) / frame.dpr);
+                    scatterPicks(out, q.body.code, q.basis, q.positionAngle + 90, q.span / 2, q.span * 0.1, stepDeg, q.body.depth);
+                });
             } else if (app.band === 'visible') {
                 quasars.forEach((q) => {
-                    if (revealGain(q.body.brightness.mag, lim) >= 0.03) out.push({ code: q.body.code, az: q.body.sky.az, alt: q.body.sky.alt, radiusPx: 0 });
+                    if (revealGain(drawMag(q.body), lim) >= 0.03) out.push({ code: q.body.code, az: q.body.sky.az, alt: q.body.sky.alt, radiusPx: 0, depth: q.body.depth });
                 });
             }
             return out;
