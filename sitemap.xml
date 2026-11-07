@@ -112,8 +112,19 @@
     </image:image>
   </url>
   <url>
-    <loc>https://simulations.science/spectroscopy_simulation.html</loc>
+    <loc>https://simulations.science/charges_in_fields_simulation.html</loc>
     <lastmod>2026-11-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://simulations.science/images/charges.png</image:loc>
+      <image:title>Charges in Fields Simulation</image:title>
+      <image:caption>Drop or fire charged particles into electric and magnetic fields to see parabolas and circles, then repeat Thomson's experiment</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://simulations.science/spectroscopy_simulation.html</loc>
+    <lastmod>2026-11-08</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
     <image:image>

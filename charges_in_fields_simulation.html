@@ -1,0 +1,480 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Charges in Fields Simulation | Electric &amp; Magnetic Fields | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Interactive physics simulation: drop or fire charges into uniform electric and magnetic fields, watch parabolas and circles, then repeat Thomson&#39;s experiment." />
+		<meta name="keywords" content="charged particles, electric field, magnetic field, parallel plates, uniform field, E = V/d, F = qE, F = qvB, right-hand rule, circular motion, cathode rays, Thomson&#39;s experiment, charge-to-mass ratio, discovery of the electron, physics simulation, interactive science" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/charges_in_fields_simulation.html" />
+		<meta property="og:title" content="Charges in Fields Simulation | Simulations.Science" />
+		<meta property="og:description" content="Drop a charge into an electric or magnetic field, or fire one in. Watch it fall in a parabola or turn in a circle, then measure what cathode rays are made of." />
+		<meta property="og:image" content="https://simulations.science/images/charges.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/charges_in_fields_simulation.html" />
+		<meta name="twitter:title" content="Charges in Fields Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="Drop a charge into an electric or magnetic field, or fire one in. Watch it fall in a parabola or turn in a circle, then measure what cathode rays are made of." />
+		<meta name="twitter:image" content="https://simulations.science/images/charges.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/charges_in_fields_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Charges in Fields Simulation",
+			"description": "An interactive simulation of charged particles in uniform electric and magnetic fields: drop a proton, electron or alpha particle in at rest or fire it in from an accelerator or a slingshot, and see it speed up in a straight line, curve in a parabola between charged plates or go round in a circle in a magnetic field, then balance the two fields as J. J. Thomson did to measure the charge-to-mass ratio of cathode rays.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/charges_in_fields_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"about": [
+				{
+					"@type": "Thing",
+					"name": "Uniform Electric Field",
+					"description": "The field between two parallel charged plates, the same everywhere between them, with strength E = V/d"
+				},
+				{
+					"@type": "Thing",
+					"name": "Force on a Charge in an Electric Field",
+					"description": "A charge q feels a force F = qE whether it is moving or not, and crossing a potential difference V it gains kinetic energy qV"
+				},
+				{
+					"@type": "Thing",
+					"name": "Projectile Motion of a Charge",
+					"description": "A charge fired across a uniform electric field keeps its sideways velocity and follows a parabola, like a ball thrown sideways under gravity"
+				},
+				{
+					"@type": "Thing",
+					"name": "Magnetic Force on a Moving Charge",
+					"description": "A charge moving across a magnetic field feels a force F = qvB sin theta at right angles to its velocity, given by the right-hand rule"
+				},
+				{
+					"@type": "Thing",
+					"name": "Circular Motion in a Magnetic Field",
+					"description": "The magnetic force changes a charge's direction but not its speed, so it moves in a circle of radius r = mv/(qB)"
+				},
+				{
+					"@type": "Thing",
+					"name": "Thomson's Experiment",
+					"description": "J. J. Thomson's 1897 measurement of the charge-to-mass ratio of cathode rays by balancing electric and magnetic deflections, which led to the discovery of the electron"
+				}
+			],
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/charges.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "charged particles, electric field, magnetic field, parallel plates, E = V/d, F = qE, F = qvB, right-hand rule, circular motion, parabola, cathode rays, Thomson's experiment, charge-to-mass ratio, electron, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Charges in Fields Simulation",
+					"item": "https://simulations.science/charges_in_fields_simulation.html"
+				}
+			]
+		}
+		</script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/charges_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li><a href="index.html">Home</a></li>
+							<li><a href="convection_simulation.html">Convection</a></li>
+							<li><a href="conduction_simulation.html">Conduction</a></li>
+							<li><a href="radiation_simulation.html">Radiation</a></li>
+							<li><a href="buoyancy_simulation.html">Buoyancy</a></li>
+							<li><a href="pressure_simulation.html">Pressure</a></li>
+							<li><a href="maxwell_demon_simulation.html">Maxwell's Demon</a></li>
+							<li><a href="nuclear_decay_simulation.html">Nuclear Decay</a></li>
+							<li><a href="relativity_simulation.html">Special Relativity</a></li>
+							<li><a href="orbits_simulation.html">Orbits &amp; Gravity</a></li>
+							<li><a href="charges_in_fields_simulation.html">Charges in Fields</a></li>
+							<li><a href="spectroscopy_simulation.html">Celestial Spectroscopy</a></li>
+							<li><a href="sitemap.html">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Charges in Fields</h1>
+
+							<div class="simulation-area-wrapper charges-sim">
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="setupLabel">Setup</p>
+											<div class="sim-select-container">
+												<select id="setupSelect" aria-labelledby="setupLabel" aria-describedby="setupHint">
+													<option value="free" selected>Free play</option>
+													<option value="thomson">Thomson's experiment</option>
+												</select>
+											</div>
+											<p class="ch-hint" id="setupHint">Drop a charge into a field, or fire one in.</p>
+										</div>
+
+										<div class="sim-control-group" id="particleGroup">
+											<p class="sim-control-group-label" id="particleLabel">Particle</p>
+											<div class="ch-chips" role="radiogroup" aria-labelledby="particleLabel">
+												<button type="button" class="ch-chip" role="radio" data-particle="proton" aria-checked="true"><span class="ch-swatch ch-swatch-pos" aria-hidden="true">+</span>Proton</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="electron" aria-checked="false"><span class="ch-swatch ch-swatch-neg" aria-hidden="true">&minus;</span>Electron</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="alpha" aria-checked="false"><span class="ch-swatch ch-swatch-pos" aria-hidden="true">2+</span>Alpha</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="neutron" aria-checked="false"><span class="ch-swatch ch-swatch-neutral" aria-hidden="true">0</span>Neutron</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="custom" aria-checked="false"><span class="ch-swatch ch-swatch-pos" id="customSwatch" aria-hidden="true">+</span>Custom</button>
+											</div>
+										</div>
+
+										<div class="sim-control-group" id="beamGroup" hidden>
+											<p class="sim-control-group-label" id="beamLabel">Beam</p>
+											<div class="ch-chips" role="radiogroup" aria-labelledby="beamLabel">
+												<button type="button" class="ch-chip" role="radio" data-beam="cathode" aria-checked="true"><span class="ch-swatch ch-swatch-neutral" aria-hidden="true">?</span>Cathode rays</button>
+												<button type="button" class="ch-chip" role="radio" data-beam="hydrogen" aria-checked="false"><span class="ch-swatch ch-swatch-pos" aria-hidden="true">+</span>Hydrogen ions</button>
+											</div>
+											<label for="cathodeSelect">Cathode metal</label>
+											<div class="sim-select-container">
+												<select id="cathodeSelect">
+													<option value="copper" selected>Copper</option>
+													<option value="aluminium">Aluminium</option>
+													<option value="platinum">Platinum</option>
+												</select>
+											</div>
+										</div>
+
+										<div class="sim-control-group" id="launchGroup">
+											<p class="sim-control-group-label" id="launcherLabel">Launch</p>
+											<div class="ch-seg ch-seg-panel" role="radiogroup" aria-labelledby="launcherLabel">
+												<button type="button" class="ch-seg-btn" role="radio" data-launcher="accelerator" aria-checked="true">Accelerator</button>
+												<button type="button" class="ch-seg-btn" role="radio" data-launcher="slingshot" aria-checked="false">Slingshot</button>
+											</div>
+											<label>Launch voltage: <span id="launchVVal" class="sim-value" style="--chars: 4">500</span> V
+												<input type="range" id="launchVSlider" min="0" max="2000" step="50" value="500">
+											</label>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="aimGuideToggle">
+												<label for="aimGuideToggle" title="A dashed line shows where the particle will go while you aim">Aim guide</label>
+											</div>
+										</div>
+
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Show</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="velocityToggle" checked>
+												<label for="velocityToggle"><span class="ch-key ch-key-velocity" aria-hidden="true"></span>Velocity</label>
+												<input type="checkbox" id="forceToggle" checked>
+												<label for="forceToggle"><span class="ch-key ch-key-force" aria-hidden="true"></span>Force</label>
+												<input type="checkbox" id="componentsToggle">
+												<label for="componentsToggle">Velocity components</label>
+												<input type="checkbox" id="rhrToggle">
+												<label for="rhrToggle">Right-hand rule</label>
+											</div>
+										</div>
+
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Measure</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="gridToggle">
+												<label for="gridToggle">Grid (cm)</label>
+												<input type="checkbox" id="equipToggle">
+												<label for="equipToggle">Equipotentials</label>
+												<input type="checkbox" id="valuesToggle">
+												<label for="valuesToggle" title="Field, force, acceleration and radius for the selected particle">Values</label>
+											</div>
+										</div>
+
+										<details class="sim-controls-more">
+											<summary>More options</summary>
+											<div class="sim-control-group">
+												<label>Plate gap: <span id="gapVal" class="sim-value" style="--chars: 3">5.0</span> cm
+													<input type="range" id="gapSlider" min="2" max="8" step="0.1" value="5">
+												</label>
+												<label>Playback speed: <span id="playbackVal" class="sim-value" style="--chars: 3">1.0</span>&times;
+													<input type="range" id="playbackSlider" min="0.1" max="3" step="0.1" value="1">
+												</label>
+											</div>
+											<div class="sim-control-group" id="customGroup" role="group" aria-labelledby="customLabel">
+												<p class="sim-control-group-label" id="customLabel">Custom particle</p>
+												<label>Charge: <span id="customQVal" class="sim-value" style="--chars: 2">+1</span> e
+													<input type="range" id="customQSlider" min="-3" max="3" step="1" value="1" aria-describedby="customHint">
+												</label>
+												<label>Mass: <span id="customMVal" class="sim-value" style="--chars: 8">1.01</span> u
+													<input type="range" id="customMSlider" min="0" max="1000" step="1" value="580" aria-describedby="customHint">
+												</label>
+												<p class="ch-hint" id="customHint">Particles already fired keep their own charge and mass.</p>
+											</div>
+										</details>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 4/3;">
+												<canvas id="simulationCanvas" class="sim-canvas" tabindex="0" role="img" aria-label="A box of uniform field between two charged plates, with a particle launcher on the left. Click the launcher or press Space to fire; tap the field to drop a charge at rest; arrow keys aim."></canvas>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<!-- The main controls, always in view: which field, how strong, and Fire -->
+										<div class="ch-toolbar" id="chToolbar">
+											<div class="ch-field" role="radiogroup" aria-labelledby="fieldLabel">
+												<span class="ch-toolbar-label" id="fieldLabel">Field</span>
+												<div class="ch-seg">
+													<button type="button" class="ch-seg-btn" role="radio" data-field="E" aria-checked="true">Electric</button>
+													<button type="button" class="ch-seg-btn" role="radio" data-field="B" aria-checked="false">Magnetic</button>
+													<button type="button" class="ch-seg-btn" role="radio" data-field="both" aria-checked="false">Both</button>
+												</div>
+											</div>
+											<div class="ch-strength" id="eStrength">
+												<label class="ch-slider">
+													<span class="ch-toolbar-label" id="plateVLabel">Plate voltage</span>
+													<input type="range" id="plateVSlider" min="0" max="1000" step="10" value="500" aria-labelledby="plateVLabel">
+													<span class="ch-slider-value"><span id="plateVVal" class="sim-value" style="--chars: 4">500</span> V</span>
+												</label>
+												<button type="button" class="ch-dir-btn" id="eDirBtn" title="Swap the plates" aria-label="Positive plate on top. Press to swap the plates"><span class="ch-dir-sym" aria-hidden="true">+</span><span class="ch-dir-text">on top</span></button>
+											</div>
+											<div class="ch-strength" id="bStrength" hidden>
+												<label class="ch-slider">
+													<span class="ch-toolbar-label" id="bLabel">Magnetic field</span>
+													<input type="range" id="bSlider" min="0" max="1000" step="1" value="0" aria-labelledby="bLabel">
+													<span class="ch-slider-value"><span id="bVal" class="sim-value" style="--chars: 5">200</span> mT</span>
+												</label>
+												<button type="button" class="ch-dir-btn" id="bDirBtn" title="Reverse the field" aria-label="Field into the page. Press to reverse it"><span class="ch-dir-sym" aria-hidden="true">&otimes;</span><span class="ch-dir-text">into page</span></button>
+											</div>
+											<button type="button" class="ch-fire" id="fireBtn" title="Fire (Space)"><span class="icon solid fa-bolt" aria-hidden="true"></span> Fire</button>
+										</div>
+										<!-- Thomson's experiment: the student's answer for the beam's charge-to-mass ratio -->
+										<div class="th-answer" id="thAnswer" hidden>
+											<form class="th-answer-row" id="thAnswerForm" novalidate autocomplete="off">
+												<label for="thAnswerInput" class="th-answer-label"><span id="thAnswerBeam">Cathode rays</span>: <i>q</i>/<i>m</i> =</label>
+												<input type="text" id="thAnswerInput" class="th-answer-input" placeholder="e.g. 4.2e9" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="done" aria-describedby="thAnswerUnit">
+												<span class="th-answer-unit" id="thAnswerUnit">C/kg</span>
+												<button type="submit" class="th-check" id="thCheckBtn">Check</button>
+												<button type="button" class="th-reveal" id="thRevealBtn" hidden>Show answer</button>
+												<p class="th-feedback" id="thFeedback" aria-live="polite"></p>
+											</form>
+										</div>
+										<div class="sim-info-bar" id="statsBar">
+											<div class="stats-container" id="statsFree">
+												<div class="stats-box" title="The selected particle (tap one to select it)"><span class="ch-dot" id="selDot" aria-hidden="true"></span><strong id="selName">Proton</strong></div>
+												<div class="stats-box"><strong>Speed</strong> <span id="statSpeed" class="sim-value" style="--chars: 8">&ndash;</span> m/s</div>
+												<div class="stats-box"><strong>Energy</strong> <span id="statEnergy" class="sim-value" style="--chars: 4">&ndash;</span> <span id="statEnergyUnit">eV</span></div>
+												<div class="stats-box"><strong>Time</strong> <span id="statTime" class="sim-value" style="--chars: 4">&ndash;</span> <span id="statTimeUnit">ns</span></div>
+												<div class="stats-box ch-values" id="statEBox" hidden><strong><em>E</em></strong> <span id="statE" class="sim-value" style="--chars: 8">&ndash;</span> V/m</div>
+												<div class="stats-box ch-values" id="statBBox" hidden><strong><em>B</em></strong> <span id="statB" class="sim-value" style="--chars: 5">&ndash;</span> mT</div>
+												<div class="stats-box ch-values" id="statFBox" hidden><strong><em>F</em></strong> <span id="statF" class="sim-value" style="--chars: 9">&ndash;</span> N</div>
+												<div class="stats-box ch-values" id="statABox" hidden><strong><em>a</em></strong> <span id="statA" class="sim-value" style="--chars: 9">&ndash;</span> m/s&sup2;</div>
+												<div class="stats-box ch-values" id="statRBox" hidden><strong><em>r</em></strong> <span id="statR" class="sim-value" style="--chars: 5">&ndash;</span> cm</div>
+											</div>
+											<div class="stats-container" id="statsThomson" hidden>
+												<div class="stats-box" title="Where the beam hits the screen, measured from the centre line"><strong>Spot</strong> <span id="thSpot" class="sim-value" style="--chars: 4">&ndash;</span> <span id="thSpotUnit">cm</span> <span id="thSpotDir" class="th-spot-dir"></span></div>
+											</div>
+											<div class="sim-info-actions">
+												<button type="button" id="pauseBtn" class="sim-icon-button" aria-label="Pause" title="Pause (P)" aria-pressed="false">
+													<span class="icon solid fa-pause" aria-hidden="true"></span>
+												</button>
+												<button type="button" id="stepBtn" class="sim-icon-button" aria-label="Step forward" title="Step forward (.)" hidden>
+													<span class="icon solid fa-step-forward" aria-hidden="true"></span>
+												</button>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Graphs">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart: clear the particles and trails" title="Restart">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+											</div>
+										</div>
+										<div class="ch-live visually-hidden" id="chLive" aria-live="polite"></div>
+									</div>
+									<div id="charts-container" style="display: none;">
+										<div class="sim-charts-row">
+											<div class="chart-box">
+												<canvas id="speedChart" role="img" aria-label="Graph of speed against time for the most recent particles"></canvas>
+											</div>
+											<div class="chart-box">
+												<canvas id="vyChart" role="img" aria-label="Graph of vertical velocity against time for the most recent particles"></canvas>
+											</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<p>What does a field do to a charge at rest, and to one that is moving? An electric field pushes on both; a magnetic field pushes only on the moving one, and always sideways.</p>
+
+											<h4>What you're seeing</h4>
+											<ul>
+												<li>A 10&nbsp;cm box of uniform field: charged plates for <strong>Electric</strong>, crosses (into the page) or dots (out of it) for <strong>Magnetic</strong>, and no field outside.</li>
+												<li>Dots along a path are a strobe photo, at equal time steps. Teal arrows are velocity, orange the electric force, violet the magnetic force.</li>
+												<li>It runs in slow motion, slowed more for faster particles. The times shown are real.</li>
+												<li>The model: uniform fields with sharp edges, no gravity, motion in the page with <em>B</em> at right angles to it, and Newton&rsquo;s laws (speeds stay below 0.09<em>c</em>).</li>
+											</ul>
+
+											<h4>Key idea</h4>
+											<p><strong>Electric:</strong> between the plates <em>E</em>&nbsp;=&nbsp;<em>V</em>/<em>d</em> everywhere, and a charge feels <em>F</em>&nbsp;=&nbsp;<em>qE</em> (against the field lines if it is negative). From rest it speeds up in a straight line, and across a voltage <em>V</em> it gains <em>W</em>&nbsp;=&nbsp;<em>qV</em>&nbsp;=&nbsp;&frac12;<em>mv</em>&sup2;, which is how the launcher sets its speed. Fired across the field, it curves in a parabola, like a thrown ball.</p>
+											<p><strong>Magnetic:</strong> only a moving charge feels a force, <em>F</em>&nbsp;=&nbsp;<em>qvB</em>&nbsp;sin&nbsp;<em>&theta;</em>: only the part of its velocity across <em>B</em> counts. The force is at right angles to <em>v</em> and <em>B</em> (the right-hand rule, reversed for a negative charge), so it turns the charge without speeding it up. It goes round a circle: <em>qvB</em>&nbsp;=&nbsp;<em>mv</em>&sup2;/<em>r</em>, so <em>r</em>&nbsp;=&nbsp;<em>mv</em>/(<em>qB</em>).</p>
+
+											<h4>Thomson&rsquo;s experiment</h4>
+											<p>In 1897 J.&nbsp;J. Thomson asked what cathode rays, the glowing beams in a vacuum tube, are made of. In <em>Setup: Thomson&rsquo;s experiment</em> you see only what he could measure.</p>
+											<ol>
+												<li>Electric, plates at 0&nbsp;V: the spot is at zero.</li>
+												<li>Raise the plate voltage: the spot moves a distance <em>y</em>.</li>
+												<li>Switch to Both and tune <em>B</em> until the spot is back at zero (reverse <em>B</em> if it moves further away). Then <em>qE</em>&nbsp;=&nbsp;<em>qvB</em>, so <em>v</em>&nbsp;=&nbsp;<em>E</em>/<em>B</em>.</li>
+												<li>In step 2 the beam crossed the plates (<em>L</em>&nbsp;=&nbsp;10&nbsp;cm) in a time <em>L</em>/<em>v</em>, falling <em>y</em>&nbsp;=&nbsp;&frac12;(<em>qE</em>/<em>m</em>)(<em>L</em>/<em>v</em>)&sup2;. So <em>q</em>/<em>m</em>&nbsp;=&nbsp;2<em>yE</em>/(<em>B</em>&sup2;<em>L</em>&sup2;), or from the launch voltage, <em>q</em>/<em>m</em>&nbsp;=&nbsp;<em>v</em>&sup2;/(2<em>V</em>). Enter it and press Check.</li>
+											</ol>
+											<p>Then measure hydrogen ions, and try other cathode metals. How do the answers compare, and what do they say cathode rays are?</p>
+
+											<h4>Things to try</h4>
+											<ul>
+												<li>Drop a proton at rest in each field.</li>
+												<li>Halve the gap: does a dropped proton hit faster? (<em>E</em> doubles but the distance halves, so it still gains <em>qV</em>.)</li>
+												<li>Turn on <strong>Velocity components</strong>: in the electric field the part along the plates never changes.</li>
+												<li>Compare an electron with a proton in each field: in <em>E</em> the same path, mirrored, but different times. In <em>B</em>?</li>
+												<li>Measure a circle with <strong>Grid (cm)</strong>, then double the launch voltage, then double <em>B</em>.</li>
+												<li>Sling a proton straight up against the field: it rises until the voltage it has crossed equals its launch voltage.</li>
+												<li>In the magnetic field, sling in different directions: the circle stays the same size.</li>
+												<li>With both fields on, tune <em>B</em> until the beam goes straight: that is Thomson&rsquo;s method.</li>
+												<li>Why ignore gravity? On a proton here, <em>qE</em> is about 10<sup>11</sup> times <em>mg</em>.</li>
+											</ul>
+
+											<h4>How to interact</h4>
+											<ul>
+												<li>Tap the field to drop a charge at rest. Tap a particle to select it; <strong>Values</strong>, in the settings, adds its <em>E</em>, <em>B</em>, <em>F</em>, <em>a</em> and <em>r</em>.</li>
+												<li>Fire: click or tap the launcher, press <span class="icon solid fa-bolt"></span> Fire or Space. Drag the launcher to move it and its round knob to aim; with the canvas focused, the arrow keys aim. Hold Shift for any angle when dragging, or fine steps with the keys.</li>
+												<li>Slingshot (Launch, in the settings): pull back and let go. A longer pull is a faster launch, in 50&nbsp;V steps (Shift for fine control). Drag its base to move it.</li>
+												<li>Drag a plate to change the gap. Under the canvas, choose the field, its strength and its direction.</li>
+												<li><span class="icon solid fa-pause"></span> pauses (P) and <span class="icon solid fa-step-forward"></span> then steps (.), <span class="icon solid fa-chart-bar"></span> shows graphs, <span class="icon solid fa-sync-alt"></span> restarts, <span class="icon solid fa-expand"></span> goes fullscreen and <span class="icon solid fa-cog"></span> opens the settings. Press F to show the frame rate.</li>
+											</ul>
+										</div>
+									</details>
+								</div>
+							</div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script src="assets/js/charges_core.js" defer></script> <!-- Simulation specific logic -->
+	</body>
+</html>

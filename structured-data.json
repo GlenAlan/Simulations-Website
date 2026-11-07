@@ -203,6 +203,24 @@
           "position": 10,
           "item": {
             "@type": "LearningResource",
+            "name": "Charges in Fields Simulation",
+            "description": "Drop or fire charged particles into electric and magnetic fields to see parabolas and circles, then repeat Thomson's experiment",
+            "url": "https://simulations.science/charges_in_fields_simulation.html",
+            "image": "https://simulations.science/images/charges.png",
+            "learningResourceType": "Simulation",
+            "audience": {
+              "@type": "EducationalAudience",
+              "educationalRole": ["student", "teacher", "researcher"]
+            },
+            "educationalLevel": "High School and Above",
+            "isAccessibleForFree": true
+          }
+        },
+        {
+          "@type": "ListItem",
+          "position": 11,
+          "item": {
+            "@type": "LearningResource",
             "name": "Celestial Spectroscopy Simulation",
             "description": "Stand under a night sky and read the light of stars, galaxies and planets to work out what they are and how they move",
             "url": "https://simulations.science/spectroscopy_simulation.html",
