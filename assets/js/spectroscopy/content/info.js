@@ -718,8 +718,36 @@ function centreNote(nucleus) {
     return { heading: 'Its black hole', text: `Like nearly every big galaxy, it has a black hole at its centre, ${nucleus.code}, of about ${massWords(n.mass_Msun)} times the Sun's mass. Hardly any gas is falling in, so it is quiet and nothing of it shows.` };
 }
 
+// The Local Group's big spiral (data/local_group.js): the same page, without what isn't so of it. Which way it moves is for the
+// student to find; the Hubble tab says why once they plot it.
+function localGalaxyInfo(entity, block) {
+    return {
+        kindLabel: 'Spiral galaxy',
+        lead: 'Billions of stars in a big spiral, one of our own galaxy\'s nearest neighbours.',
+        summary: 'Billions of stars in a big spiral, near enough to see by eye. Their light adds up to a single spectrum, and the shift of its lines tells you how the galaxy is moving.',
+        notes: present(
+            { heading: 'Measuring the shift', text: 'Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far, and which way, they have moved. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool.' },
+            { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. Read d with the Brightness tool and add this galaxy to the Hubble plot. Does it follow the law?" },
+            MORPHOLOGY_NOTE.spiral,
+            centreNote(entity.nucleus)
+        ),
+        rarity: 'Rare: only a couple of big galaxies lie this close to our own.',
+        catalogue: clean([
+            row('Shape', capital(words(block.morphology))),
+            row('Redshift, z', isNum(block.z) ? block.z.toFixed(4) : null),
+            row('Radial velocity', velocityText(entity.radial_velocity_kms)),
+            row('Distance', distanceText(entity.distance_pc)),
+            row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
+            row('Central black hole', entity.nucleus ? entity.nucleus.code : null),
+            row('Measured brightness', isNum(entity.brightness?.flux_Wm2) ? `${sig(entity.brightness.flux_Wm2, 3)} W/m²` : null),
+            row('Apparent magnitude', num(entity.brightness?.mag))
+        ])
+    };
+}
+
 function galaxyInfo({ entity }) {
     const block = entity.galaxy || {};
+    if (block.local_group) return localGalaxyInfo(entity, block);
     const shape = MORPHOLOGY_NOTE[block.morphology] ? capital(block.morphology) : null;
     return {
         kindLabel: shape ? `${shape} galaxy` : 'Galaxy',

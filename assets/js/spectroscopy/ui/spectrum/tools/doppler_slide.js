@@ -43,10 +43,15 @@ export function velocityText(v, err) {
 
 // Every galaxy in this sky is moving away from us, as nearly all are in the real one. A far galaxy's lines move a long way, so a
 // dip near where one line belongs is often another line that has moved there: Na D lands beside Hα's rest place at z ≈ 0.11.
-// Said when a reading comes out as a galaxy coming towards us at more than galaxies' own motions allow.
+// Said when a reading comes out as a galaxy coming towards us at more than galaxies' own motions allow. The one exception, the
+// Local Group's spiral (data/local_group.js), really is coming towards us at about 300 km/s: only a reading well past that is
+// a misread line there.
 const GALAXY_TOWARDS_KMS = 300;
+const LOCAL_TOWARDS_KMS = 700;
 export function galaxyWarning(entity, z) {
-    if (!entity || entity.kind !== 'galaxy' || !(z * C_KMS < -GALAXY_TOWARDS_KMS)) return '';
+    if (!entity || entity.kind !== 'galaxy') return '';
+    const limit = entity.galaxy && entity.galaxy.local_group ? LOCAL_TOWARDS_KMS : GALAXY_TOWARDS_KMS;
+    if (!(z * C_KMS < -limit)) return '';
     return 'Almost every galaxy is moving away from us. A far galaxy\'s lines move a long way, so this dip may be a different line that has moved here.';
 }
 
