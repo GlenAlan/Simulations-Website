@@ -118,6 +118,7 @@ function passDown(body) {
         ...(body.planets || []),
         ...(body.stars || []),
         ...(body.black_hole ? [body.black_hole.companion] : []),
+        ...(body.nucleus ? [body.nucleus, ...body.nucleus.nucleus.stars] : []),
         ...(body.cluster ? body.cluster.members : [])
     ];
     inside.forEach((entity) => {

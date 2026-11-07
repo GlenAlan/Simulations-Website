@@ -169,8 +169,11 @@ const WIDTH_MEANS = {
     galaxy: 'Stars moving about inside the galaxy smear every line.',
     quasar: 'Gas whirling round the central black hole spreads these lines out.',
     supernova: 'Gas thrown out by the explosion moves at a huge range of speeds.',
-    nebula: 'The gas in the nebula moving about, and its heat, widen this line.'
+    nebula: 'The gas in the nebula moving about, and its heat, widen this line.',
+    nucleus: 'The stars round the black hole, moving every which way, smear this line.'
 };
+// A galaxy's centre: a bright line's width is how fast the gas round its black hole moves
+const GAS_MEANS = 'The gas whirling round the black hole spreads this line out. The faster it moves, the wider the line.';
 
 function mount(container, api) {
     const { plot } = api;
@@ -225,7 +228,10 @@ function mount(container, api) {
             suggestRotationLines(overview || {}, 1).forEach(add);
             PRESSURE_LINES.forEach((label) => add(atoms.find((l) => l.label === label)));
         } else {
-            atoms.filter((l) => l.obs_nm > 330).sort((a, b) => Math.abs(b.depth) - Math.abs(a.depth)).slice(0, 3).forEach(add);
+            // At a galaxy's centre the bright lines are what the tool is for, if there are any
+            const pool = atoms.filter((l) => l.obs_nm > 330);
+            const bright = entity.kind === 'nucleus' ? pool.filter((l) => l.type === 'em') : [];
+            (bright.length ? bright : pool).sort((a, b) => Math.abs(b.depth) - Math.abs(a.depth)).slice(0, 3).forEach(add);
         }
         return list;
     }
@@ -420,6 +426,15 @@ function mount(container, api) {
             return;
         }
         const w = measured;
+        if (entity.kind === 'nucleus' && w.type === 'em') {
+            // The gas's speed is about the line's whole width: the sum that weighs the hole uses it so
+            const speed = Math.sqrt(Math.max(0, w.fwhm_kms ** 2 - w.instrument_kms ** 2));
+            fill(result,
+                resultLine(`How fast the gas moves: about ${kmsText(speed)} km/s`, true),
+                resultLine(`The line is ${kmsText(w.fwhm_kms)} km/s wide at half its height: v ≈ c × width ÷ λ₀`),
+                para(GAS_MEANS));
+            return;
+        }
         if (!isStarLike(entity)) {
             const spread = 0.5 * Math.sqrt(Math.max(0, w.fwhm_kms ** 2 - w.instrument_kms ** 2));
             fill(result,

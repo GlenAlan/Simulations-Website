@@ -22,7 +22,8 @@ const NEARER_LINE_KMS = 100;
 // How far from the clicked wavelength a rest line can be, by kind of object: depends only on the kind
 function restWindow(entity, centre) {
     switch (entity.kind) {
-    case 'galaxy': return { lo: centre / 1.32, hi: centre * 1.012 };
+    case 'galaxy':
+    case 'nucleus': return { lo: centre / 1.32, hi: centre * 1.012 };
     case 'quasar': return { lo: centre / 5.5, hi: centre * 1.02 };
     case 'supernova': return { lo: centre * 0.97, hi: centre * 1.07 };
     default: return { lo: centre * 0.992, hi: centre * 1.008 };
@@ -58,7 +59,7 @@ function candidatesFor(api, centre) {
     const reference = api.getReference();
     take(reference && reference.lines, true);
     const list = [...seen.values()];
-    const far = entity.kind === 'galaxy' || entity.kind === 'quasar';
+    const far = entity.kind === 'galaxy' || entity.kind === 'quasar' || entity.kind === 'nucleus';
     list.sort((a, b) => (far ? b.strength - a.strength : Math.abs(a.line.rest_nm - centre) - Math.abs(b.line.rest_nm - centre)));
     return list.slice(0, MAX_CANDIDATES);
 }

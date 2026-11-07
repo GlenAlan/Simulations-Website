@@ -13,7 +13,8 @@
 //   faint star has to be showing properly. With only that one thing in play, a wheel covers the way down in fewer notches.
 //   At the sky's zoom limit, whatever is left and being pointed at can be entered.
 // Which star: the one under the pointer, or else the selected one if it's on show, or else one near the centre of the view.
-// Pointing at something that isn't a system, such as a galaxy, means no capture at all.
+// Pointing at something that isn't a system, such as a galaxy, means no capture at all. A galaxy's own black hole is one,
+// once the galaxy is big enough for its point to be picked: it hands over once the galaxy fills the view.
 //
 // Zooming in on one takes no panel with it: a panel already open on something else moves to it on arrival, and otherwise the
 // context bar names the system and opens its panel in one click.
@@ -119,6 +120,12 @@ export function createZoomInto(app, view) {
     // The field of view at which the sky has shown all it has of this system
     function handOverFov(system, frame) {
         if (system.black_hole) return LENS_FOV;
+        // A galaxy's black hole: once the galaxy fills the view (render/layers/galaxies.js)
+        if (system.kind === 'nucleus') {
+            const galaxies = engine.getLayer('galaxies');
+            const fov = galaxies && galaxies.nucleusFov ? galaxies.nucleusFov(system.code) : LIMIT_FOV;
+            return Math.max(LIMIT_FOV, Math.min(CAPTURE_FOV, fov));
+        }
         const binaries = engine.getLayer('binaries');
         const apart = binaries && binaries.fovApart ? binaries.fovApart(system.code, frame) : 0;
         return apart ? Math.max(LIMIT_FOV, Math.min(CAPTURE_FOV, apart * APART_MARGIN)) : CAPTURE_FOV;
@@ -174,7 +181,8 @@ export function createZoomInto(app, view) {
         aim = {
             code: system.code,
             fov,
-            seen: engine.glowOf(system) >= SEEN_GLOW,
+            // A galaxy's black hole is only offered once its point is on show, so it's seen already
+            seen: system.kind === 'nucleus' || engine.glowOf(system) >= SEEN_GLOW,
             alone: engine.view.fov <= CAPTURE_FOV && isClear(system, frame)
         };
     }

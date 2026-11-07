@@ -97,8 +97,9 @@ function notFoundMessage(code) {
 // Plain words only: never the class or type, which the student is there to work out
 function kindInWords({ body, path }) {
     if (path === 'planet') return 'Planet';
+    if (path === 'nucleus') return 'Black hole in a galaxy';
     if (path === 'member') return 'Star in a cluster';
-    if (path === 'component') return body.black_hole ? 'Black hole companion' : 'Star in a multiple';
+    if (path === 'component') return body.black_hole ? 'Black hole companion' : body.kind === 'galaxy' ? 'Star near a black hole' : 'Star in a multiple';
     if (body.kind === 'home_planet') return `${body.name}, home planet`;
     if (body.kind === 'binary' && body.architecture && body.architecture !== 'binary') return KIND_WORDS.multiple;
     return KIND_WORDS[body.kind] || 'Object';
@@ -279,6 +280,7 @@ export function initGoto(app) {
         if (app.view === 'system') {
             const open = app.systemCode && universe.resolve(app.systemCode);
             if (!open) return [];
+            if (open.path === 'nucleus') return [open.entity.code, ...open.entity.nucleus.stars.map((s) => s.code)];
             const { body } = open;
             const companion = body.black_hole ? [body.black_hole.companion] : [];
             return [body, ...(body.planets || []), ...(body.stars || []), ...companion].map((entity) => entity.code);
@@ -296,6 +298,14 @@ export function initGoto(app) {
             const layer = engine.getLayer(id);
             if (layer && layer.picks) (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.depth));
         });
+        // A galaxy's black hole, once its point can be picked out
+        const galaxies = engine.getLayer('galaxies');
+        if (galaxies && galaxies.picks) {
+            (galaxies.picks(frame) || []).forEach((c) => {
+                const found = universe.resolve(c.code);
+                if (found && found.path === 'nucleus') consider(c.code, c.az, c.alt, c.depth);
+            });
+        }
         return [...distances.keys()].sort((a, b) => distances.get(a) - distances.get(b));
     }
 
@@ -505,6 +515,13 @@ export function initGoto(app) {
         return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingMag(body.brightness && drawMag(body), fov) };
     }
 
+    // A little wider than where a zoom would carry on into the hole, or the narrowest view for a galaxy too small for that
+    function nucleusFov(code) {
+        const layer = engine.getLayer('galaxies');
+        const enter = layer && layer.nucleusFov ? layer.nucleusFov(code) : MIN_FOV;
+        return enter <= MIN_FOV * 1.001 ? MIN_FOV : Math.min(MAX_FOV, enter * 1.5);
+    }
+
     function memberFov(body, member) {
         const fov = Math.max(MIN_FOV, fovAtDepth(body.cluster.radius_deg * 1.2, body.depth));
         // Only visible light has a brightness limit: see engine.bodyShows. Every member shows at the deepest zoom, however faint
@@ -572,6 +589,11 @@ export function initGoto(app) {
             await slew({ az: dir.az, alt: dir.alt, fov: memberFov(body, entity) }, { duration: MEMBER_ZOOM_S, pullBack: false, exact: true });
             if (!stillCurrent()) return false;
             bus.emit('highlight', { code: entity.code });
+        }
+        if (path === 'nucleus' && app.view === 'sky') {
+            // On in to the galaxy's heart, close enough for its black hole's point to be picked out
+            await slew({ az: body.sky.az, alt: body.sky.alt, fov: nucleusFov(entity.code) }, { duration: MEMBER_ZOOM_S, pullBack: false, exact: true });
+            if (!stillCurrent()) return false;
         }
         return true;
     }

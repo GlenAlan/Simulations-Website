@@ -252,6 +252,7 @@ function componentInfo({ entity, body }) {
     const star = entity.star;
     const parent = entity.parent || body?.code;
     const code = parent ? ` ${parent}` : '';
+    if (body?.kind === 'galaxy') return closeStarInfo(entity, body, parent);
     if (body?.kind === 'black_hole') {
         return {
             kindLabel: 'Companion star',
@@ -689,6 +690,24 @@ const MORPHOLOGY_NOTE = {
     irregular: { heading: 'An irregular', text: 'Irregulars have no tidy shape, often after a close pass by another galaxy. Clumps of young stars are common.' }
 };
 
+// "about 300 million", "about 2.4 billion": a hole's mass in words, in solar masses
+function massWords(m) {
+    if (!isNum(m)) return null;
+    if (m >= 1e9) return `${sig(m / 1e9, 2)} billion`;
+    if (m >= 1e6) return `${sig(m / 1e6, 2)} million`;
+    return withCommas(Math.round(Number(sig(m, 2))));
+}
+
+// What a galaxy's own page says of the black hole at its middle
+function centreNote(nucleus) {
+    if (!nucleus || !nucleus.nucleus) return null;
+    const n = nucleus.nucleus;
+    if (n.active) {
+        return { heading: 'Its black hole', text: `At its centre is a black hole of about ${massWords(n.mass_Msun)} times the Sun's mass, ${nucleus.code}, and it is feeding: gas falling in makes the bright point at the core. Zoom in on the core and click that point to study it.` };
+    }
+    return { heading: 'Its black hole', text: `Like nearly every big galaxy, it has a black hole at its centre, ${nucleus.code}, of about ${massWords(n.mass_Msun)} times the Sun's mass. Hardly any gas is falling in, so it is quiet and nothing of it shows.` };
+}
+
 function galaxyInfo({ entity }) {
     const block = entity.galaxy || {};
     const shape = MORPHOLOGY_NOTE[block.morphology] ? capital(block.morphology) : null;
@@ -700,6 +719,7 @@ function galaxyInfo({ entity }) {
             { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Doppler tool. Above about z = 0.1, v = cz starts to fail, so quote z too." },
             { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d from the Photometer, add the galaxy to the Hubble plot, and the gradient gives H₀." },
             MORPHOLOGY_NOTE[block.morphology],
+            centreNote(entity.nucleus),
             { heading: 'Faint means noisy', text: 'Distant galaxies give noisy spectra. Measure several lines, and take note of the uncertainty the tool reports.' }
         ),
         rarity: 'Common: the observable Universe holds hundreds of billions. Among bright nearby ones, spirals lead, while the faint dwarfs that outnumber them all are too dim to see at these distances.',
@@ -711,6 +731,7 @@ function galaxyInfo({ entity }) {
             row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
             row('Radio lobes', yesNo(block.radio_lobes)),
             row('Active nucleus', yesNo(block.active_nucleus)),
+            row('Central black hole', entity.nucleus ? entity.nucleus.code : null),
             row('Measured brightness', isNum(entity.brightness?.flux_Wm2) ? `${sig(entity.brightness.flux_Wm2, 3)} W/m²` : null),
             row('Apparent magnitude', num(entity.brightness?.mag))
         ])
@@ -745,6 +766,98 @@ function blackHoleInfo({ entity }) {
             observedRows(entity, entity, "System's radial velocity")
         ])
     };
+}
+
+// ---------- Black holes at the centres of galaxies ----------
+
+const NUCLEUS_RARITY = 'Nearly every big galaxy has a black hole at its centre. Only about 1 nearby galaxy in 10 has one feeding brightly enough to see; this sky has a few more, so that you can find them.';
+
+const BROAD_NOTE = {
+    heading: 'How broad lines reveal a black hole',
+    text: 'Gas close to the hole whirls round it at thousands of km/s. Some is coming towards you and some going away, so the Doppler effect spreads each line out: the wider the line, the faster the gas. Measure the width of Hα with Line zoom to find the speed v. How far out the gas is, R, comes from timing: when the disc brightens, the broad lines brighten a few days later, and that delay times the speed of light is R. Gravity holding gas that fast that close needs a mass M ≈ v²R/G: millions of Suns, in a space smaller than a few light-weeks. Only a black hole fits.'
+};
+
+function nucleusInfo({ entity, body }) {
+    const n = entity.nucleus || {};
+    const galaxy = entity.parent || body?.code;
+    const mass = massWords(n.mass_Msun);
+    const where = galaxy ? `the centre of the galaxy ${galaxy}` : 'the centre of its galaxy';
+    const typeText = n.type === 1 ? 'Type 1: seen down the dust ring\'s axis, broad lines show'
+        : n.type === 2 ? 'Type 2: seen through the dust ring, broad lines hidden' : null;
+    const catalogue = clean([
+        row('Mass', isNum(n.mass_Msun) ? `${num(n.mass_Msun, ' M☉', 2)} (about ${mass})` : null),
+        row('Galaxy', galaxy),
+        row('Feeding', yesNo(n.active)),
+        row('Kind', typeText),
+        row('Radio jets', yesNo(n.jets)),
+        row('Power given out', num(n.luminosity_Lsun, ' L☉', 2)),
+        row('Share of its greatest possible power (Eddington ratio)', isNum(n.eddington_ratio) ? sig(n.eddington_ratio, 2) : null),
+        row('X-ray power', num(n.xray_Lsun, ' L☉', 2)),
+        row('Broad-line gas, distance from the hole', isNum(n.blr_light_days) ? `${sig(n.blr_light_days, 2)} light-days` : null),
+        row('Broad lines, full width at half height', n.active && isNum(n.broad_fwhm_kms) ? `${withCommas(n.broad_fwhm_kms)} km/s` : null),
+        row('Narrow lines, full width at half height', n.active && isNum(n.narrow_fwhm_kms) ? `${withCommas(n.narrow_fwhm_kms)} km/s` : null),
+        row("Stars' speeds in the bulge (σ)", num(n.sigma_kms, ' km/s')),
+        row('Redshift, z', isNum(n.z) ? n.z.toFixed(4) : null),
+        row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+        row('Distance', distanceText(entity.distance_pc))
+    ]);
+    if (!n.active) {
+        return {
+            kindLabel: 'Central black hole',
+            lead: `A black hole of about ${mass} times the Sun's mass at ${where}. It is quiet: almost nothing is falling in.`,
+            summary: `Nearly every big galaxy has a black hole at its centre, and the bigger the galaxy's bulge, the heavier it is. This one is quiet: so little gas falls in that it gives out almost no light, and what you see here is the light of the stars round it.`,
+            notes: [
+                { heading: 'Weighing a quiet one', text: "The stars near a galaxy's centre move faster round a heavier hole, so their lines are wider. Measure a line's width with Line zoom: the heavier the hole, the wider." },
+                { heading: 'Our own Galaxy\'s', text: 'The Milky Way has one too, Sagittarius A*, about 4 million times the Sun\'s mass. Astronomers followed stars orbiting it for over 25 years, and Kepler\'s third law gave its mass. That work won the 2020 Nobel Prize in Physics. Zoom in on this one to see stars like those.' }
+            ],
+            rarity: NUCLEUS_RARITY,
+            catalogue
+        };
+    }
+    const notes = [BROAD_NOTE];
+    if (n.type === 2) notes.push({ heading: 'Hidden by dust', text: 'A thick ring of dust surrounds the disc. From this side it blocks the disc and the fast gas, so the broad lines are hidden and only the narrow lines of slower gas further out show. The dust, warmed by the disc, glows in infrared, and X-rays get through it.' });
+    else notes.push({ heading: 'Broad and narrow', text: 'Hα and Hβ are broad here, from gas close in. [O III] stays narrow: it only shines in thin gas far out, where things move far more slowly.' });
+    notes.push(
+        { heading: 'Measuring its redshift', text: "Its lines are shifted by its galaxy's redshift. Slide the reference lines onto them with the Doppler tool, as you would for the galaxy." },
+        { heading: 'Other bands', text: `The hot disc shines most in ultraviolet and X-rays, and warm dust round it in infrared.${n.jets ? ' This one also drives jets, which glow in radio and blow up the giant lobes either side of its galaxy.' : ''}` }
+    );
+    return {
+        kindLabel: 'Active galactic nucleus',
+        lead: `A black hole of about ${mass} times the Sun's mass at ${where}, feeding on gas that glows as it falls in.`,
+        summary: 'Gas spiralling into a giant black hole heats up and shines, and can outshine the galaxy\'s billions of stars from a space smaller than a few light-weeks.',
+        notes,
+        rarity: NUCLEUS_RARITY,
+        catalogue
+    };
+}
+
+// One of the few stars on close orbits round a galaxy's central black hole
+function closeStarInfo(entity, body, parent) {
+    const star = entity.star;
+    const hole = parent ? nucleusOf(body, parent) : null;
+    const i = hole ? hole.nucleus.stars.indexOf(entity) : -1;
+    const orbit = i >= 0 ? hole.nucleus.orbits[i] : null;
+    return {
+        kindLabel: 'Star near a giant black hole',
+        lead: 'A star on a tight, fast orbit round the black hole at the centre of its galaxy.',
+        summary: `One of a few stars on tight, fast orbits round the black hole${parent ? ` ${parent}` : ''}. From this far away it is lost in the light of its galaxy, so its spectrum is mostly noise.`,
+        notes: [
+            { heading: 'Weighing a black hole with stars', text: 'At the centre of our own Galaxy, astronomers followed stars like this round Sagittarius A* for over 25 years. Their orbits, with Kepler\'s third law, r³/T² = GM/4π², gave its mass: about 4 million times the Sun\'s.' }
+        ],
+        rarity: 'Only round our own Galaxy\'s black hole are stars like this close enough to follow.',
+        catalogue: clean([
+            row('Black hole', parent),
+            row('Orbit, average distance', orbit ? `${withCommas(Math.round(orbit.a_AU))} AU` : null),
+            row('Orbital period', orbit ? periodText(orbit.period_days) : null),
+            starRows(star),
+            observedRows(entity, body)
+        ])
+    };
+}
+
+// The nucleus a close star belongs to, from its galaxy: no lookup through the app, so this stays pure
+function nucleusOf(body, code) {
+    return body && body.nucleus && body.nucleus.code === code ? body.nucleus : null;
 }
 
 const SUPERNOVA_TYPE = {
@@ -826,6 +939,7 @@ const BUILDERS = {
     neutron_star: neutronStarInfo,
     galaxy: galaxyInfo,
     black_hole: blackHoleInfo,
+    nucleus: nucleusInfo,
     supernova: supernovaInfo,
     quasar: quasarInfo
 };

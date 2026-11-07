@@ -103,6 +103,7 @@ function planetFacts(planet) {
 // a cluster's stars the cluster is all round the view, so the way back to it flies out far enough to see it whole: [.., fly].
 function relationOf({ entity, body, path }) {
     if (path === 'planet') return ['Orbits', entity.host || body.code];
+    if (path === 'nucleus') return ['Centre of', body.code];
     if (path === 'component') return ['Part of', entity.parent || body.code];
     if (path === 'member') return ['Member of', entity.parent || body.code, true];
     if (entity.in_cluster) return ['Member of', entity.in_cluster, true];

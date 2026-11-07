@@ -47,7 +47,7 @@ const PRESET_SHORT = { full: 'Full', lya: 'Ly-α', cahk: 'Ca H&K' };
 const BROAD_SORT = {
     star: 'star', binary: 'star', multiple: 'star', cluster: 'star', black_hole: 'star', neutron_star: 'star',
     planet: 'planet', home_planet: 'planet', rogue_planet: 'planet',
-    galaxy: 'galaxy', quasar: 'galaxy'
+    galaxy: 'galaxy', quasar: 'galaxy', nucleus: 'galaxy'
 };
 
 function make(tag, props = {}, children = []) {
@@ -425,7 +425,7 @@ function createSpectrumPanel(app, container) {
         const range = autoRange(entity) || {};
         let lo = range.lo_nm ?? 380;
         let hi = range.hi_nm ?? 750;
-        const z = (entity.quasar && entity.quasar.z) || (entity.galaxy && entity.galaxy.z) || 0;
+        const z = (entity.quasar && entity.quasar.z) || (entity.galaxy && entity.galaxy.z) || (entity.nucleus && entity.nucleus.z) || 0;
         const lines = (spectrum.lines || []).filter((l) => l.obs_nm >= SPECTRUM_LO_NM && l.obs_nm <= SPECTRUM_HI_NM);
         if (z >= 0.1 && lines.length) {
             const strong = lines.slice().sort((a, b) => Math.abs(b.depth ?? 0) - Math.abs(a.depth ?? 0)).slice(0, 6);
