@@ -6815,6 +6815,7 @@
         trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
         if (low) {
             if (swarmLayer.tiles.length) layerFree();
+            swarmLayer.slow = LAYER_SLOW;
         } else {
             ctx.lineJoin = 'miter';
             if (!swarmFromLayer(tr, first, oFirst, C, lw)) trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
@@ -6874,8 +6875,11 @@
     const LAYER_ALPHA = 0.56;             // the newest block (as the newest shade of trailGroups)
     const LAYER_PEN_PX = 6, LAYER_PEN_SAMPLES = 16;   // a body's new stretch goes on the canvases when this long
     const LAYER_WAIT = 60;                // frames at least between redrawing them all because bodies have gone
+    // (frames of trails drawn the old way before the canvases again, after drawing was too slow for any: on
+    // the edge, drawing them all afresh again and again would only make it slower)
+    const LAYER_SLOW = 120;
     const swarmLayer = {
-        off: false, tiles: [], built: false, stale: false, T: 0, span: 1, k: 0, sig: 0, wait: 0, reach: 0, builds: 0,
+        off: false, tiles: [], built: false, stale: false, T: 0, span: 1, k: 0, sig: 0, wait: 0, slow: 0, reach: 0, builds: 0,
         w: 0, h: 0, dpr: 0, scale: 0, offX: 0, offY: 0, dark: false, lw: 0, oT: null, list: null, epoch: 0, dir: 0, sel: null, pop: null, frame: null
     };
 
@@ -7038,6 +7042,7 @@
         const count = sampleCount - Math.max(first, oFirst, sampleCount - SWARM_TRAIL + 1);
         const T = Math.min(SWARM_TRAIL - 1, Math.max(Math.ceil(trailYears() / sampleDt), count));
         if (q.off || n * T < LAYER_MIN || tr.turn || freeze || trailDir !== timeDir) { if (q.tiles.length) layerFree(); return false; }
+        if (q.slow > 0) { q.slow--; return false; }
         for (const t of q.tiles) if (t.g.isContextLost && t.g.isContextLost()) { q.built = false; return false; }
         // (the view on the move: not worth keeping them until it stops)
         if (!layerSameView(tr, C, lw)) { q.built = false; q.wait = 0; return false; }
