@@ -4627,6 +4627,12 @@ details.description-area > summary::after {
     box-shadow: inset 0 0 0 2px #e6e9f2;
 }
 
+/* The tag by the pointer names what's under it, so it shows over the legend and the bottom bar, which come before it.
+   The menus at the top stay over it. */
+#spectroOverlay > .spectro-hover-tag {
+    z-index: 1;
+}
+
 /* The System tab's switches are finger-sized on a touch screen */
 @media (pointer: coarse) {
     .spectro-system-tab .sim-checkbox-group input[type="checkbox"] + label {
