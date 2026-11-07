@@ -16,6 +16,7 @@
 //                           brought into view. from names a tab to offer a way back to, focus moves focus onto the tool.
 //                           False if this object doesn't have that tool. Ids can be written 'light-curve' or 'light_curve'.
 //   cameFrom                the tab that sent the student to a tool, while it still has a way back
+//   setMode('stacked'|'overlay')   how the two spectra are arranged, with the buttons that say so
 //   picker                  the reference picker, see refs.js
 //   toolsEl                 the element the open tools' panels sit in
 //
@@ -35,7 +36,7 @@ const OVERVIEW_MIN_RATIO = 1.002;    // About 1.3 nm at Hα, which is 20 samples
 const ZOOM_MIN_RATIO = 1.0001;       // About 0.07 nm at Hα, which is 20 samples at line-zoom resolution
 const ZOOM_UPGRADE_RATIO = 1.08;     // Higher resolution only shows on screen once the view is this narrow
 const NO_SPECTRUM_NOTE = 'This object gives off too little light to record a spectrum in this range. Its Overview tab says what can be seen of it instead.';
-const HEAT_RUNS_OFF = 'The planet\'s own heat runs off the top';
+const RUNS_OFF_TOP = 'Part of this curve runs off the top';
 
 // The wavelength buttons, in two rows that never move: the wide views, then the views around one line
 const PRESET_ORDER = ['uv', 'visible', 'nir', 'full', 'lya', 'halpha', 'cahk', 'nad'];
@@ -222,8 +223,9 @@ function createSpectrumPanel(app, container) {
     }
 
     function drawBody() {
-        // With the star divided out, a planet's own heat climbs far above the rest of its curve at long wavelengths
-        plot.setTopCap(bodyOpts.subtractHost ? HEAT_RUNS_OFF : '');
+        // With the star divided out, the ends of the range, where the star gives little light, climb far above the rest. The
+        // planet's bands are what this view is for, so the scale fits those.
+        plot.setTopCap(bodyOpts.subtractHost ? RUNS_OFF_TOP : '');
         plot.setSpectrum(bodySpectrum, bodyName());
     }
 
@@ -691,13 +693,15 @@ function createSpectrumPanel(app, container) {
             referenceFns.add(fn);
             return () => referenceFns.delete(fn);
         },
+        // Asked of the selection itself, as the buttons only catch up with it once this tab is showing
         hasTool(id) {
-            const row = toolRows.get(toolId(id));
-            return !!row && !row.chip.hidden;
+            const tool = listTools().find((t) => t.id === toolId(id));
+            return !!tool && !!resolved && tool.appliesTo(resolved);
         },
         get cameFrom() {
             return cameFrom;
         },
+        setMode,
         openTool(id, { from = null, focus = false } = {}) {
             app.drawer.selectTab('spectrum');
             const row = toolRows.get(toolId(id));

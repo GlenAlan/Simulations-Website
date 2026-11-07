@@ -506,6 +506,11 @@ export function createMeasureCard(parent, options) {
         const tick = el('span', { class: `spectro-fig-tick spectro-fig-accepted${has(m, field) ? ' is-on' : ''}` }, '✓ Accepted');
         const errorLine = el('p', { class: 'spectro-fig-error', role: 'alert', hidden: true });
         input.addEventListener('change', () => commit(field, input, errorLine, tick));
+        // A complaint goes as soon as the slip is being put right, not when the box loses focus, which would move the Plot button
+        input.addEventListener('input', () => {
+            errorLine.hidden = true;
+            input.removeAttribute('aria-invalid');
+        });
         input.addEventListener('keydown', (event) => {
             if (event.key !== 'Enter') return;
             event.preventDefault();
@@ -625,16 +630,26 @@ export function createMeasureCard(parent, options) {
             if (!committing) renderRows();
             renderOutcome();
         },
-        // Where focus goes on arriving at this card: the next thing to press
+        // Where focus goes on arriving at this card: the next thing to press, unless all that's left is taking it off again
         focusNext() {
-            const next = [...toolButtons.values(), button].find((b) => !b.hidden);
+            const next = options.isPlotted(code) ? null : [...toolButtons.values(), button].find((b) => !b.hidden);
             (next || title).focus();
         },
-        focusTitle() {
-            title.focus();
+        focusTitle(focusOptions) {
+            title.focus(focusOptions);
         },
         setHidden(hidden) { root.hidden = hidden; }
     };
+}
+
+// Just arrived with a new point, on a screen too short to hold both the card and the figure: show the figure
+export function showFigure(root, figure) {
+    const scroller = root.closest('.sim-controls-content');
+    if (!scroller) return;
+    const box = scroller.getBoundingClientRect();
+    const seen = figure.wrap.getBoundingClientRect();
+    if (seen.bottom <= box.bottom + 2) return;
+    scroller.scrollTop += Math.min(seen.top - box.top - 6, seen.bottom - box.bottom + 6);
 }
 
 // ---------- Plots that last through a reload ----------

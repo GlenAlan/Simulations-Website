@@ -9,7 +9,7 @@ import { plusMinus, sig, withCommas } from '../core/format.js';
 import {
     createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
     drawFrame, drawMarker, el, fitThroughOrigin, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint,
-    niceCeil, niceTicks, powerLabel, readSaved, writeSaved
+    niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved
 } from './plot2d.js';
 
 const Z_LIMIT = 0.1;          // Above this, v = cz is only an approximation (spec section 8.4)
@@ -139,7 +139,11 @@ export function initHubbleTab(app) {
     app.diagrams = app.diagrams || {};
     app.diagrams.hubble = {
         isPlotted: (code) => plotted.has(code),
-        canPlot: (code) => !!galaxyPoint(code),
+        // A quasar has a tab here too, to say why it can't go on the plot
+        canPlot: (code) => {
+            const found = app.universe.resolve(code);
+            return !!found && found.body.kind === 'galaxy' && !!galaxyPoint(code);
+        },
         plot(code) {
             open();
             addGalaxy(code);
@@ -320,7 +324,8 @@ function mountHubble(container, app) {
         added(code) {
             announceAdded(code);
             refresh();
-            card.focusTitle();
+            card.focusTitle({ preventScroll: true });
+            showFigure(root, figure);
         }
     };
 

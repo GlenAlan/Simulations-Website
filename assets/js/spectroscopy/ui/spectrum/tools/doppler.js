@@ -240,7 +240,7 @@ function mount(container, api) {
             // The way on comes before the explaining, so that it's on screen along with the answer
             actionRow(
                 diagramLink('hubble'),
-                hasTab('hubble') && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Photometer next') : null,
+                hasTab('hubble') && api.resolved.entity.kind === 'galaxy' && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Photometer next') : null,
                 keyboardUsed ? el('button', { type: 'button', class: 'spectro-tool-next', text: 'Measure another line', onclick: () => plot.canvas.focus() }) : null
             ),
             termLine(beyond ? shift : `${shift}, so z = Δλ ÷ λ₀ = ${zText(combined.z, combined.err_z)}, and v = cz`, seen),

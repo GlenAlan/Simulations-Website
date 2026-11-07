@@ -12,7 +12,7 @@ import * as synth from '../spectra/synth.js';
 import {
     blackBodyCss, createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
     drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel,
-    readSaved, writeSaved
+    readSaved, showFigure, writeSaved
 } from './plot2d.js';
 
 const T_MAX = 130000;     // Left edge (K): the hottest white dwarfs
@@ -151,7 +151,7 @@ const SOURCES = { wien: 'the Wien tool', reference: 'the reference match', typed
 const SOURCE_SHORT = { wien: 'Wien tool', reference: 'Reference match', typed: 'Typed in' };
 const T_NOISE = 0.02;     // Cluster members: true temperature with this fractional noise
 
-// How far to trust a turn-off age. Plotting all 40 of this sky's clusters at the suggested turn-off gave 0.77 to 1.34 times
+// How far to trust a turn-off age. Plotting all 40 of this sky's clusters at the suggested turn-off gave 0.77 to 1.37 times
 // the catalogue age, so the true age is within about 30% of what's shown. Stated in words beside the figure.
 const AGE_ERROR_PERCENT = 30;
 
@@ -569,7 +569,7 @@ function mountHR(container, app) {
         ];
         const notes = [
             'A star about to leave the main sequence is roughly twice as bright as when it formed, hence L ÷ 2. The cluster is about as old as the lifetime of these stars.',
-            `Read the age as ± ${AGE_ERROR_PERCENT}%. These are rough rules, and on this sky's clusters they come out between about 0.8 and 1.3 times the catalogue age, with the line where Suggest puts it.`,
+            `Read the age as ± ${AGE_ERROR_PERCENT}%. These are rough rules, and on this sky's clusters they come out between about 0.8 and 1.4 times the catalogue age, with the line where Suggest puts it.`,
             cluster.type === 'globular'
                 ? 'Globular clusters have lost their hot, bright stars, so the main sequence stops low down and red giants stand out.'
                 : 'Open clusters are usually young enough to keep hot, bright stars high on the main sequence.',
@@ -647,7 +647,8 @@ function mountHR(container, app) {
         added(code) {
             announceAdded(code);
             refresh();
-            card.focusTitle();
+            card.focusTitle({ preventScroll: true });
+            showFigure(root, figure);
         }
     };
 

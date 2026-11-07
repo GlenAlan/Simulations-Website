@@ -177,7 +177,7 @@ function mount(container, api) {
 
     function showBlackBody() {
         api.picker.choose('bb');
-        plot.setMode('overlay');
+        api.setMode('overlay');
         // The slope that matters is at the short end, so show that much of the range
         const { hi } = plot.getRange();
         plot.setRange(90, Math.min(hi, 800), { animate: true });

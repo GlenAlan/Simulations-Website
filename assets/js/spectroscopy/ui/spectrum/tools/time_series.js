@@ -2,7 +2,7 @@
 // playback runs: each column is the spectrum around one line at one moment, and the marks are that line's measured centre
 // for each star. From those come the period, the speed swing K, and with them the masses (see orbit_sums.js).
 
-import { registerTool } from './index.js';
+import { linkToolNames, registerTool } from './index.js';
 import { bus } from '../../../core/state.js';
 import { C_KMS, R_ZOOM } from '../../../core/phys.js';
 import { sig } from '../../../core/format.js';
@@ -265,6 +265,7 @@ function mount(container, api) {
         });
         const covered = filledCount >= COLUMNS;
         result.replaceChildren(...orbitResults({ resolved, stars, shapes: SHAPES, covered, span, shortest }));
+        linkToolNames(result, api.hasTool);
         figure.setLabel(`Time series: how far the line ${line ? lineTitle(line) : ''} has shifted, in km/s, against time in days, for ${stars.map((star) => `star ${star.code}`).join(' and ')}. The results are below it, and the values are in the table under Show as table.`);
         updateTable();
     }

@@ -3,12 +3,10 @@
 
 import { registerTool } from './index.js';
 import { el } from '../../plot2d.js';
-import { para } from './common.js';
 
 function mount(container, api) {
-    const status = el('p', { class: 'spectro-tool-line', role: 'status', text: 'The host star\'s light is removed.' });
-    const explain = para('Most of a planet\'s light is reflected starlight, so the star\'s lines are all through it. Removing the star leaves the dips and rises that belong to the planet.');
-    container.append(status, explain);
+    // Short, so the wavelength buttons below it stay in view: going through a planet's bands is what this is for
+    container.append(el('p', { class: 'spectro-tool-text', role: 'status', text: 'The host star\'s light is removed, leaving the dips and rises that belong to the planet.' }));
 
     return {
         setEntity() {

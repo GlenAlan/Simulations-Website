@@ -1738,7 +1738,8 @@ export function createPlot(container, opts = {}) {
             }
             s.fluxPeak = fluxPeak;
             s.noiseK = measureNoise(sp, fluxPeak);
-            s.emissive = sp.mode === 'emission' || (fluxPeak > 0 && contPeak < 0.02 * fluxPeak);
+            // A spike that's going to run off the top doesn't make this a spectrum of bright lines
+            s.emissive = sp.mode === 'emission' || (!s.capNote && fluxPeak > 0 && contPeak < 0.02 * fluxPeak);
         }
         layout = null;
         redraw();

@@ -1256,8 +1256,8 @@ html.dark-mode .spectro-sim {
     min-width: 0;
 }
 
-/* Tall enough to read, while leaving the reference picker on screen under it: 480px is what the page above, the drawer's
-   own header and tabs, and the controls around the plot down to the picker take up, with one row of tools */
+/* Tall enough to read, while leaving the reference picker on screen under it: 445px is what the drawer's own header and
+   tabs, the controls around the plot down to the picker, and the page below the drawer take up, with one row of tools */
 .spectro-plot-stage {
     position: relative;
     width: 100%;
@@ -1328,6 +1328,12 @@ body.sim-panel-sheet .spectro-plot-stage {
     8% { opacity: 1; }
     85% { opacity: 1; }
     100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .spectro-plot-tip {
+        animation: none;
+    }
 }
 
 /* On a phone the Spectrum tab needs more of the screen than the sheet's usual height, to fit the plot and the picker */
@@ -1846,7 +1852,8 @@ body.sim-panel-sheet #simulationControlsPanel:has(#spectroPanel-spectrum:not([hi
 }
 
 /* On a phone the sheet takes more of the sky while a tool is open: the tool is what's being looked at, and it needs the room */
-body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-instrument.has-tool) {
+body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-instrument.has-tool),
+body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-picking) {
     height: min(80vh, 46rem);
 }
 
