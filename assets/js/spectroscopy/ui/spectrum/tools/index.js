@@ -102,7 +102,16 @@ export function linkToolNames(root, hasTool) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'spectro-tool-link';
-            button.textContent = match[1];
+            const tool = named.tool ? words(named.tool) : null;
+            // The text keeps its own words, which name the law; the mark is the one on the tool's button in the dock
+            if (tool && tool.icon) {
+                const mark = document.createElement('span');
+                mark.className = `icon solid ${tool.icon}`;
+                mark.setAttribute('aria-hidden', 'true');
+                button.appendChild(mark);
+                button.title = `${tool.short}, in the Spectrum tab`;
+            }
+            button.appendChild(document.createTextNode(match[1]));
             if (named.tool) button.dataset.spectroTool = named.tool;
             else button.dataset.spectroTab = named.tab;
             parts.append(button);
