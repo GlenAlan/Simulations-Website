@@ -594,9 +594,6 @@ function initReduceMotion() {
     }
 }
 
-// Said beside Reduce motion, and in the About text on the page
-const FLASH_WORDS = 'Some objects flash quickly. Turn on Reduce motion if flashing bothers you.';
-
 // ---------- Settings page ----------
 const QUALITY_WORDS = { low: 'Low', medium: 'Medium', high: 'High' };
 
@@ -647,7 +644,7 @@ function initSettingsPage(app) {
         checks.append(motion, motionLabel, fps, fpsLabel, keys, keysLabel);
         toggles.append(
             checks,
-            element('p', 'spectro-setting-note', `${FLASH_WORDS} It also stops the twinkle and swaps camera flights for quick fades.`),
+            element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for quick fades.'),
             element('p', 'spectro-setting-note', 'Turn single-key shortcuts off if speech input or a stray key sets them off. They then work only while the sky itself has the focus.')
         );
 
