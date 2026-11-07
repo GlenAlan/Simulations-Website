@@ -9,6 +9,7 @@ import { luminosityFromFlux, L_SUN, PC } from '../core/phys.js';
 import { Rng } from '../core/rng.js';
 import { distance, plusMinus, sci, sig, withCommas } from '../core/format.js';
 import * as synth from '../spectra/synth.js';
+import { toolWords } from './spectrum/tools/index.js';
 import {
     blackBodyCss, createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
     drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel,
@@ -147,8 +148,8 @@ const REGIONS = [
 const CLASSES = [['O', T_MAX, 30000], ['B', 30000, 10000], ['A', 10000, 7500], ['F', 7500, 6000], ['G', 6000, 5200], ['K', 5200, 3700], ['M', 3700, T_MIN]];
 const T_TICKS = [100000, 50000, 20000, 10000, 5000, 3000];
 const RADIUS_LINES = [0.01, 0.1, 1, 10, 100, 1000];
-const SOURCES = { wien: 'the Wien tool', reference: 'the reference match', typed: 'your typed value' };
-const SOURCE_SHORT = { wien: 'Wien tool', reference: 'Reference match', typed: 'Typed in' };
+const SOURCES = { wien: 'Wien\'s law', fit: 'your fitted curve', standard: 'a standard star', reference: 'the reference match', typed: 'your typed value' };
+const SOURCE_SHORT = { wien: 'Wien\'s law', fit: 'Fitted curve', standard: 'Standard star', reference: 'Reference match', typed: 'Typed in' };
 const T_NOISE = 0.02;     // Cluster members: true temperature with this fractional noise
 
 // How far to trust a turn-off age. Plotting all 40 of this sky's clusters at the suggested turn-off gave 0.77 to 1.37 times
@@ -408,7 +409,7 @@ function mountHR(container, app) {
                 unit: 'K',
                 placeholder: '5,800',
                 tool: 'wien',
-                toolName: 'Wien\'s law',
+                toolName: toolWords({ id: 'wien' }).short,
                 min: 100,
                 max: 1e7,
                 rangeText: 'a temperature from 100 to 10,000,000 K',

@@ -1,33 +1,68 @@
-// Wien's Law peak finder: marks where the object's black-body curve peaks and works out T = b / lambda max. When the peak
-// is off the short end of the range, it says why and hands over to the black-body reference, or a standard star's match.
+// How hot? The student works the temperature out from the spectrum, three ways, one at a time:
+//   Fit a curve     lay a black-body curve over the spectrum and drag it, or its slider, until the shapes match
+//   Standard stars  lay standard stars over it in turn, and find the one with the same dips
+//   Wien's law      mark the top of the curve; the mark snaps to the peak and T = b / lambda max follows, with its working
+// Each reading is what the student set or marked, and nothing says whether it is right. "Use this temperature" sends it on
+// to the H-R diagram, saying where it came from. Light of more than one star is a blend, and says so.
 
 import { registerTool } from './index.js';
+import { app } from '../../../core/state.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
-import { WIEN_B } from '../../../core/phys.js';
+import { C_KMS, WIEN_B, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
 import { plusMinus, sci, sig, withCommas } from '../../../core/format.js';
-import { STANDARDS } from '../../../data/standards.js';
+import { STANDARDS, STANDARD_LABELS } from '../../../data/standards.js';
 import { wienPeak, wienCurveAt } from '../../../spectra/measure.js';
+import { topEdge, curveScale, curveAt, fitError, markOnPeak } from '../../../spectra/hand_fit.js';
 import { el } from '../../plot2d.js';
-import { actionRow, diagramLink, fill, hasTab, overlayTheme, para, plotLabel, plotMark, resultLine, statusBox, steps, termLine, toolLink } from './common.js';
+import { actionRow, diagramLink, fill, hasTab, para, plotLabel, resultLine, statusBox, steps, toolLink } from './common.js';
+import { borrowReference, drawGrip, handTheme, HAND_DASH, modeRow, plotGrab, reachOf } from './hands_on.js';
 
 const BODY_KINDS = ['star', 'binary', 'multiple', 'black_hole', 'supernova', 'neutron_star'];
+const WIEN_NM_K = WIEN_B * 1e9;
 
 function applies(resolved) {
     if (resolved.path === 'member' || resolved.path === 'component') return true;
     return resolved.path === 'body' && BODY_KINDS.includes(resolved.body.kind);
 }
 
-// By eye, a curve can be told from its neighbours to about this share of the temperature. With its peak off the short end,
-// only a slope is left to match, and that hardly changes with temperature: an O6 star looks as good at 31,000 K as at 43,000 K.
-const PEAK_OFF_SCALE_K = 32000;
-function blackBodyMatchErr(T) {
-    if (T >= 2 * PEAK_OFF_SCALE_K) return 0.3;
-    return T >= PEAK_OFF_SCALE_K ? 0.2 : 0.05;
+const MODES = [
+    { id: 'fit', label: 'Fit a curve' },
+    { id: 'standards', label: 'Standard stars' },
+    { id: 'peak', label: 'Wien\'s law' }
+];
+
+// The whole curve for fitting and for finding its top; the visible for comparing lines. Fixed, so they say nothing about the star.
+const FULL_VIEW = { lo: SPECTRUM_LO_NM, hi: SPECTRUM_HI_NM };
+const OPENING_VIEWS = { fit: FULL_VIEW, standards: { lo: 380, hi: 750 }, peak: FULL_VIEW };
+
+// Kept from one object to the next, as an instrument would be: the mode, where the curve was, the views
+const memory = { mode: 'fit', T: 10000, views: {}, standard: null };
+
+// ---------- The curve's temperature, on a slider that is logarithmic as temperatures are far apart at the hot end ----------
+
+const T_MIN = 1000;
+const T_MAX = 150000;
+const T_STEPS = 1000;
+
+function roundT(T) {
+    const step = T < 10000 ? 10 : 100;
+    return Math.min(T_MAX, Math.max(T_MIN, Math.round(T / step) * step));
 }
 
-function roundTo3(x) {
-    return Number(x.toPrecision(3));
+function sliderOf(T) {
+    return Math.round((T_STEPS * Math.log(T / T_MIN)) / Math.log(T_MAX / T_MIN));
 }
+
+function tOf(s) {
+    return roundT(T_MIN * (T_MAX / T_MIN) ** (s / T_STEPS));
+}
+
+// ---------- Standard stars ----------
+
+const CLASSES = ['O', 'B', 'A', 'F', 'G', 'K', 'M'];
+const MAIN_SEQUENCE = ['O5', 'B0', 'B5', 'A0', 'A5', 'F0', 'F5', 'G2', 'G8', 'K0', 'K5', 'M0', 'M5'];
+const OTHERS = [{ id: 'DA', label: 'White dwarf' }, { id: 'RG', label: 'Red giant' }];
+const STEP_ORDER = [...MAIN_SEQUENCE, 'DA', 'RG'];
 
 // Half the gap to the next standard either side: a match is only as fine as the list of standards
 function standardError(id) {
@@ -40,6 +75,14 @@ function standardError(id) {
     return Math.max(...gaps) / 2;
 }
 
+function standardName(id) {
+    return MAIN_SEQUENCE.includes(id) ? id : STANDARD_LABELS[id];
+}
+
+// ---------- Where each reading came from, as the H-R diagram says it ----------
+
+const SOURCE_WORDS = { fit: 'your fitted curve', standard: 'a standard star', wien: 'Wien\'s law', reference: 'the reference match' };
+
 function partCount(api) {
     const { parts } = api.getBodyOpts();
     if (parts && parts.length) return parts.length;
@@ -49,70 +92,454 @@ function partCount(api) {
 
 function mount(container, api) {
     const { plot } = api;
-    const result = statusBox();
-    const refBlock = el('div', { class: 'spectro-tool-ref', hidden: true });
-    container.append(result, refBlock);
+    const reference = borrowReference(api);
+    const reduceMotion = () => !!(app.settings && app.settings.reduceMotion);
+    const opened = plot.getRange();
+    let openedCode = null;
 
-    let peak = null;
+    let mode = null;
+    let edge = null;          // The top of the spectrum, for laying the curve on
+    let peak = null;          // wienPeak's answer, kept out of sight until the student marks the peak
+    let blend = 1;            // How many stars' light this is
     let pending = 0;
     const offs = [];
 
-    const removeOverlay = plot.addOverlay((ctx) => {
-        if (!peak) return;
-        const theme = overlayTheme(plot);
+    // ---------- Building it ----------
+
+    const modes = modeRow('How to find the temperature', MODES, (id) => select(id));
+    const says = el('p', { class: 'spectro-sr-only', role: 'status' });
+
+    // Fit a curve
+    const fitAnswer = el('p', { class: 'spectro-tool-answer' });
+    const fitSlider = el('input', { type: 'range', class: 'spectro-hands-big', min: '0', max: String(T_STEPS), step: '1', 'aria-label': 'Temperature of the curve' });
+    const fitEnds = el('div', { class: 'spectro-hands-ends', 'aria-hidden': 'true' }, el('span', { text: 'Cooler' }), el('span', { text: 'Hotter' }));
+    const fitHint = para('Drag the dashed curve, or the slider, until it has the same shape.');
+    const fitBox = el('div', { class: 'spectro-hands-pane' }, fitAnswer, fitSlider, fitEnds, fitHint);
+
+    // Standard stars
+    const stdQuestion = para('Which has the same dips?');
+    const classButtons = CLASSES.map((cls) => el('button', {
+        type: 'button',
+        class: 'spectro-hands-chip',
+        'aria-pressed': 'false',
+        text: cls,
+        'aria-label': `${cls} standard star`,
+        onclick: () => chooseStandard(MAIN_SEQUENCE.find((id) => id[0] === cls))
+    }));
+    const classRow = el('div', { class: 'spectro-hands-chips', role: 'group', 'aria-label': 'Class' }, ...classButtons);
+    const subRow = el('div', { class: 'spectro-hands-subs', role: 'group', 'aria-label': 'Standard star' });
+    const stdAnswer = el('p', { class: 'spectro-tool-answer', hidden: true });
+    const stdShift = el('div', { class: 'spectro-hands-note' });
+    const stdBox = el('div', { class: 'spectro-hands-pane' }, stdQuestion, classRow, subRow, stdAnswer, stdShift);
+
+    // Wien's law
+    const peakPrompt = para('Drag the marker to the top of the curve.');
+    const peakInput = el('input', { type: 'range', class: 'spectro-sr-only', min: '0', max: '200', step: '1', value: '156', 'aria-label': 'Peak marker. Arrow keys move it, Enter marks the top' });
+    const peakResult = statusBox();
+    const peakBox = el('div', { class: 'spectro-hands-pane' }, peakPrompt, peakInput, peakResult);
+
+    const useBox = el('div', { class: 'spectro-hands-use' });
+    container.append(modes.el, fitBox, stdBox, peakBox, useBox, says);
+
+    // ---------- Fit a curve ----------
+
+    let T = memory.T;
+    let touched = false;      // Nothing to send on until the student has moved the curve
+    let fitDrawn = null;      // The scale the curve was last drawn at, for hit testing
+    let fitDrag = null;
+
+    function setT(next, { from = 'slider' } = {}) {
+        const value = roundT(next);
+        if (value === T && touched) return;
+        T = value;
+        memory.T = T;
+        touched = true;
+        if (from !== 'slider') fitSlider.value = String(sliderOf(T));
+        syncFit();
+        plot.redraw();
+        renderUse();
+    }
+
+    function syncFit() {
+        fitAnswer.textContent = `This curve: ${withCommas(T)} K`;
+        fitSlider.value = String(sliderOf(T));
+        fitSlider.setAttribute('aria-valuetext', `${withCommas(T)} K`);
+        fitHint.hidden = touched;
+    }
+
+    fitSlider.addEventListener('input', () => setT(tOf(Number(fitSlider.value))));
+
+    function curveY(nm) {
+        return plot.yOf(curveAt(fitDrawn.amp, T, nm));
+    }
+
+    // The grip sits at the curve's top when that is in view, or at the edge it runs off
+    function fitGrip() {
         const pane = plot.panes().body;
-        const { lo } = plot.getRange();
-        // Under the line labels, if they're showing
-        const labelY = pane.y + plot.labelBand() + 12;
-        if (peak.belowRange) {
-            plotLabel(ctx, theme, `← the peak is below ${sig(lo, 3)} nm`, pane.x + 6, labelY, { align: 'left' });
-            return;
-        }
-        if (peak.T_K === null) return;
-        // The fitted curve, dashed, so the mark can be seen to sit at its top and not at some spike in the spectrum
+        const { lo, hi } = plot.getRange();
+        const top = WIEN_NM_K / T;
+        let x;
+        if (top < lo) x = pane.x + 14;
+        else if (top > hi) x = pane.x + pane.w - 14;
+        else x = plot.xOf(top);
+        const y = Math.max(pane.y + 12, Math.min(pane.y + pane.h - 12, curveY(plot.nmOf(x))));
+        return { x, y };
+    }
+
+    function drawFit(ctx) {
+        if (!edge || !edge.nm.length) return;
+        const theme = handTheme(plot);
+        const pane = plot.panes().body;
+        const { lo, hi } = plot.getRange();
+        fitDrawn = { amp: curveScale(edge, T, lo, hi) };
+        if (!(fitDrawn.amp > 0)) return;
         ctx.save();
         ctx.beginPath();
         ctx.rect(pane.x, pane.y, pane.w, pane.h);
         ctx.clip();
-        ctx.strokeStyle = theme.mark;
-        ctx.lineWidth = 1.3;
-        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = theme.ref;
+        ctx.lineWidth = 2;
+        ctx.setLineDash(HAND_DASH);
         ctx.beginPath();
-        const stepsAcross = Math.max(24, Math.round(pane.w / 3));
-        for (let i = 0; i <= stepsAcross; i++) {
-            const x = pane.x + (i / stepsAcross) * pane.w;
-            const y = plot.yOf(wienCurveAt(peak.fit, plot.nmOf(x)));
+        const across = Math.max(24, Math.round(pane.w / 2));
+        for (let i = 0; i <= across; i++) {
+            const x = pane.x + (i / across) * pane.w;
+            const y = curveY(plot.nmOf(x));
             if (i === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
         }
         ctx.stroke();
         ctx.restore();
-        const mark = plotMark(ctx, plot, theme, peak.peak_nm);
-        if (!mark) {
-            const side = peak.peak_nm < lo;
-            plotLabel(ctx, theme, side ? '← peak' : 'peak →', side ? pane.x + 6 : pane.x + pane.w - 6, labelY, { align: side ? 'left' : 'right' });
-            return;
+        const grip = fitGrip();
+        drawGrip(ctx, theme, grip.x, grip.y, { focused: !!fitDrag });
+        const right = grip.x < pane.x + pane.w * 0.62;
+        plotLabel(ctx, theme, `${withCommas(T)} K`, grip.x + (right ? 15 : -15), grip.y, { align: right ? 'left' : 'right', within: pane });
+    }
+
+    function hitFit(x, y, e) {
+        if (!edge || !fitDrawn || !(fitDrawn.amp > 0)) return null;
+        const pane = plot.panes().body;
+        if (x < pane.x - 4 || x > pane.x + pane.w + 4 || y < pane.y - 6 || y > pane.y + pane.h + 4) return null;
+        const reach = reachOf(e);
+        const grip = fitGrip();
+        if (Math.hypot(x - grip.x, y - grip.y) <= reach + 4) return true;
+        const yc = curveY(plot.nmOf(Math.max(pane.x, Math.min(pane.x + pane.w, x))));
+        // Where the curve lies along the floor it is out of the way, and the plot keeps the drag
+        if (yc > pane.y + pane.h - 6) return null;
+        return Math.abs(y - Math.max(pane.y, yc)) <= reach ? true : null;
+    }
+
+    // A curve keeps its shape as its temperature changes, only sliding along in wavelength: so the point under the pointer
+    // follows it, and T goes as the inverse of where that point has got to. The pointer may go past the edge of the plot,
+    // as it must to push a hot star's peak further off the short end.
+    function dragFit(x) {
+        const nm = plot.nmOf(x);
+        if (nm > 1) setT(fitDrag.T * (fitDrag.nm / nm), { from: 'drag' });
+    }
+
+    // ---------- Standard stars ----------
+
+    let standard = null;
+
+    function syncStandards() {
+        classButtons.forEach((button, i) => button.setAttribute('aria-pressed', standard && standard[0] === CLASSES[i] && MAIN_SEQUENCE.includes(standard) ? 'true' : 'false'));
+        const cls = standard && MAIN_SEQUENCE.includes(standard) ? standard[0] : null;
+        const subs = cls ? MAIN_SEQUENCE.filter((id) => id[0] === cls) : [];
+        const items = [...subs.map((id) => ({ id, label: id })), ...OTHERS];
+        subRow.replaceChildren(...items.map((item) => el('button', {
+            type: 'button',
+            class: `spectro-hands-chip${OTHERS.includes(item) ? ' is-other' : ''}`,
+            'aria-pressed': item.id === standard ? 'true' : 'false',
+            text: item.label,
+            onclick: () => chooseStandard(item.id)
+        })));
+        stdAnswer.hidden = !standard;
+        if (standard) stdAnswer.textContent = `${standardName(standard)}: ${withCommas(STANDARDS[standard].teff_K)} K`;
+        syncShiftNote();
+    }
+
+    // What the student slid the lines by is kept, so the standards are shifted with the star. With nothing slid yet, a
+    // fast-moving star's lines won't sit on a standard's, so there is a way to go and slide them first.
+    function syncShiftNote() {
+        const z = api.picker.state().z;
+        if (z) {
+            const v = z * C_KMS;
+            fill(stdShift, para(`Shifted by your slide: ${v >= 0 ? '+' : '−'}${withCommas(Math.abs(v))} km/s`));
+        } else {
+            fill(stdShift, actionRow(toolLink(api, 'doppler', 'Moving? Slide the lines first')));
         }
-        const right = mark.x < pane.x + pane.w * 0.6;
-        plotLabel(ctx, theme, `λmax = ${sig(peak.peak_nm, 3)} nm`, mark.x + (right ? 6 : -6), labelY, { align: right ? 'left' : 'right' });
+    }
+
+    function chooseStandard(id, { focus = false } = {}) {
+        standard = id;
+        memory.standard = { code: api.resolved.entity.code, id };
+        reference.show(`std:${id}`, 'overlay');
+        syncStandards();
+        says.textContent = `${STANDARD_LABELS[id]}, ${withCommas(STANDARDS[id].teff_K)} K`;
+        if (focus) {
+            const pressed = stdBox.querySelector('[aria-pressed="true"]');
+            if (pressed) pressed.focus();
+        }
+        renderUse();
+    }
+
+    // Left and right step along the standards, so a student can watch the lines come and go
+    stdBox.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (!e.target.closest('.spectro-hands-chips, .spectro-hands-subs')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const at = standard ? STEP_ORDER.indexOf(standard) : -1;
+        const next = Math.max(0, Math.min(STEP_ORDER.length - 1, at + (e.key === 'ArrowRight' ? 1 : -1)));
+        chooseStandard(STEP_ORDER[next], { focus: true });
     });
 
-    // A peak that gave a temperature, as opposed to one off the scale or light with no curve to it
-    function hasReading() {
-        return !!peak && !peak.belowRange && peak.T_K !== null;
+    // ---------- Wien's law ----------
+
+    const PARKED = 0.78;      // Where the marker waits, as a share of the width: the same for every star
+    let markNm = null;        // Null while parked
+    let marked = null;        // { on: true } once on the peak, { on: false, rising } off it, { off: 'short'|'long' } for no peak in range
+    let markDrag = false;
+    let glide = 0;
+    let markerFocused = false;
+
+    function markerNm() {
+        if (markNm !== null) return markNm;
+        const pane = plot.panes().body;
+        return plot.nmOf(pane.x + PARKED * pane.w);
     }
 
-    function keepReferenceResult() {
-        const m = getMeasurement(api.resolved.entity.code);
-        return !!m && m.T_source === 'reference';
+    function hasCurve() {
+        return !!peak && (peak.T_K !== null || peak.belowRange || peak.aboveRange);
     }
 
-    function record(T, err, source) {
-        recordMeasurement(api.resolved.entity.code, { T_K: T, T_err_K: err, T_source: source });
+    // The top of the spectrum at a wavelength, for the grip to ride on
+    function edgeAt(nm) {
+        if (!edge || !edge.nm.length) return 0;
+        const list = edge.nm;
+        let a = 0;
+        let b = list.length - 1;
+        if (nm <= list[0]) return edge.level[0];
+        if (nm >= list[b]) return edge.level[b];
+        while (b - a > 1) {
+            const m = (a + b) >> 1;
+            if (list[m] < nm) a = m;
+            else b = m;
+        }
+        const w = (nm - list[a]) / (list[b] - list[a]);
+        return edge.level[a] + (edge.level[b] - edge.level[a]) * w;
     }
 
-    // The way on from a reading: to the H-R diagram if the tab is there and there's something to do on it, and to the
-    // Photometer if that's what the diagram still needs
+    function markerPoint() {
+        const pane = plot.panes().body;
+        const nm = markerNm();
+        const { lo, hi } = plot.getRange();
+        if (nm < lo || nm > hi) return null;
+        const x = plot.xOf(nm);
+        const y = Math.max(pane.y + 12, Math.min(pane.y + pane.h - 12, plot.yOf(edgeAt(nm)) - 12));
+        return { x, y, nm };
+    }
+
+    function drawPeak(ctx) {
+        if (!hasCurve()) return;
+        const theme = handTheme(plot);
+        const pane = plot.panes().body;
+        const labelY = pane.y + plot.labelBand() + 12;
+        const onPeak = marked && marked.on;
+        if (onPeak && peak.fit) {
+            // The curve that peak belongs to, dashed, so the mark can be seen to sit at its top and not at some spike
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(pane.x, pane.y, pane.w, pane.h);
+            ctx.clip();
+            ctx.strokeStyle = theme.mark;
+            ctx.lineWidth = 1.3;
+            ctx.setLineDash(HAND_DASH);
+            ctx.beginPath();
+            const across = Math.max(24, Math.round(pane.w / 3));
+            for (let i = 0; i <= across; i++) {
+                const x = pane.x + (i / across) * pane.w;
+                const y = plot.yOf(wienCurveAt(peak.fit, plot.nmOf(x)));
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.restore();
+        }
+        if (marked && marked.off) {
+            const { lo, hi } = plot.getRange();
+            const short = marked.off === 'short';
+            plotLabel(ctx, theme, short ? `← the peak is below ${sig(lo, 3)} nm` : `the peak is beyond ${sig(hi, 3)} nm →`, short ? pane.x + 6 : pane.x + pane.w - 6, labelY, { align: short ? 'left' : 'right' });
+        }
+        const point = markerPoint();
+        if (!point) {
+            const { lo } = plot.getRange();
+            const left = markerNm() < lo;
+            plotLabel(ctx, theme, left ? '← marker' : 'marker →', left ? pane.x + 6 : pane.x + pane.w - 6, labelY + 18, { align: left ? 'left' : 'right' });
+            return;
+        }
+        ctx.save();
+        ctx.strokeStyle = theme.mark;
+        ctx.lineWidth = onPeak ? 2 : 1.6;
+        if (!onPeak) ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(point.x, pane.y);
+        ctx.lineTo(point.x, pane.y + pane.h);
+        ctx.stroke();
+        ctx.restore();
+        drawGrip(ctx, theme, point.x, point.y, { colour: theme.mark, focused: markerFocused || markDrag });
+        if (markNm === null || (marked && marked.off)) return;
+        const right = point.x < pane.x + pane.w * 0.6;
+        const text = onPeak ? `λmax = ${sig(peak.peak_nm, 3)} nm` : `${sig(point.nm, 3)} nm`;
+        plotLabel(ctx, theme, text, point.x + (right ? 15 : -15), point.y, { align: right ? 'left' : 'right', within: pane });
+    }
+
+    function hitMarker(x, y, e) {
+        if (!hasCurve()) return null;
+        const point = markerPoint();
+        if (!point) return null;
+        const pane = plot.panes().body;
+        if (y < pane.y - 6 || y > pane.y + pane.h + 4) return null;
+        const reach = reachOf(e);
+        // The grip, or anywhere along the line itself
+        return Math.hypot(x - point.x, y - point.y) <= reach + 4 || Math.abs(x - point.x) <= Math.max(6, reach * 0.6) ? true : null;
+    }
+
+    function slackAt(nm) {
+        const x = plot.xOf(nm);
+        return Math.abs(plot.nmOf(x + 10) - nm);
+    }
+
+    function moveMarker(nm) {
+        stopGlide();
+        markNm = nm;
+        if (marked) {
+            marked = null;
+            renderMark();
+        }
+        syncMarkerInput();
+        plot.redraw();
+    }
+
+    function stopGlide() {
+        if (glide) cancelAnimationFrame(glide);
+        glide = 0;
+    }
+
+    // To the top, gliding, or in one jump with reduced motion
+    function glideTo(target) {
+        stopGlide();
+        const from = markerNm();
+        if (reduceMotion() || !(from > 0)) {
+            markNm = target;
+            plot.redraw();
+            return;
+        }
+        const started = performance.now();
+        const step = (now) => {
+            const u = Math.min(1, (now - started) / 220);
+            const e = 1 - (1 - u) ** 3;
+            markNm = Math.exp(Math.log(from) + (Math.log(target) - Math.log(from)) * e);
+            plot.redraw();
+            glide = u < 1 ? requestAnimationFrame(step) : 0;
+            if (!glide) syncMarkerInput();
+        };
+        glide = requestAnimationFrame(step);
+    }
+
+    function tryMark(nm) {
+        if (!hasCurve()) return;
+        markNm = nm;
+        if (peak.belowRange) marked = { off: 'short' };
+        else if (peak.aboveRange) marked = { off: 'long' };
+        else {
+            const m = markOnPeak(peak, nm, slackAt(nm));
+            marked = m.on ? { on: true } : { on: false, rising: m.rising };
+            if (m.on) glideTo(peak.peak_nm);
+        }
+        renderMark();
+        plot.redraw();
+    }
+
+    function syncMarkerInput() {
+        const pane = plot.panes().body;
+        const share = (plot.xOf(markerNm()) - pane.x) / pane.w;
+        peakInput.value = String(Math.round(Math.max(0, Math.min(1, share)) * 200));
+        peakInput.setAttribute('aria-valuetext', `Marker at ${sig(markerNm(), 3)} nm`);
+    }
+
+    peakInput.addEventListener('input', () => {
+        const pane = plot.panes().body;
+        moveMarker(plot.nmOf(pane.x + (Number(peakInput.value) / 200) * pane.w));
+    });
+    peakInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        tryMark(markerNm());
+    });
+    peakInput.addEventListener('focus', () => {
+        markerFocused = true;
+        peakPrompt.hidden = !hasCurve();
+        peakPrompt.textContent = 'Left and right move the marker. Enter marks the top.';
+        plot.redraw();
+    });
+    peakInput.addEventListener('blur', () => {
+        markerFocused = false;
+        syncPeakPrompt();
+        plot.redraw();
+    });
+
+    function syncPeakPrompt() {
+        peakPrompt.hidden = !hasCurve() || !!marked;
+        peakPrompt.textContent = 'Drag the marker to the top of the curve.';
+    }
+
+    function renderMark() {
+        peakResult.replaceChildren();
+        if (!markerFocused) peakPrompt.hidden = !hasCurve() || !!marked;
+        if (!peak) return;
+        if (!hasCurve()) {
+            fill(peakResult, para('This light doesn\'t follow one black-body curve, so there is no peak to find. Mostly bright lines over very little continuum, such as a supernova long after its peak, have no temperature to read this way.'));
+            renderUse();
+            return;
+        }
+        if (!marked) {
+            renderUse();
+            return;
+        }
+        if (marked.off) {
+            fill(peakResult,
+                resultLine('The peak is off the scale', true),
+                para(marked.off === 'short'
+                    ? 'The light still rises at the short end, so its peak is below 90 nm and too hot to find here. Fit a curve instead.'
+                    : 'The light still rises at the long end, so its peak is beyond this range. Fit a curve instead.'),
+                actionRow(el('button', { type: 'button', class: 'spectro-tool-go', text: 'Fit a curve', onclick: () => select('fit') })));
+        } else if (!marked.on) {
+            fill(peakResult, resultLine(marked.rising < 0 ? '← The light is still higher to the left' : 'The light is still higher to the right →'));
+        } else {
+            const metres = peak.peak_nm * 1e-9;
+            const answer = plusMinus(peak.T_K, peak.err_K);
+            fill(peakResult,
+                resultLine(blend > 1 ? `Blend: T = ${answer} K` : `T = ${answer} K`, true),
+                steps([
+                    `λmax = ${sig(peak.peak_nm, 3)} nm = ${sci(metres, 3)} m`,
+                    `T = b ÷ λmax, with b = ${sci(WIEN_B, 4)} m·K`,
+                    `T = (${sci(WIEN_B, 4)} m·K) ÷ (${sci(metres, 3)} m) = ${withCommas(peak.T_K)} K`
+                ]));
+        }
+        renderUse();
+    }
+
+    // ---------- Using a reading ----------
+
+    function reading() {
+        if (mode === 'fit') return touched ? { T, err: fitError(T), source: 'fit' } : null;
+        if (mode === 'standards') return standard ? { T: STANDARDS[standard].teff_K, err: standardError(standard), source: 'standard' } : null;
+        if (mode === 'peak') return marked && marked.on ? { T: peak.T_K, err: peak.err_K, source: 'wien' } : null;
+        return null;
+    }
+
+    // The way on from a reading: to the H-R diagram, and to the Photometer if that's what the diagram still needs
     function nextSteps() {
         const m = getMeasurement(api.resolved.entity.code) || {};
         const items = [diagramLink('hr')];
@@ -120,151 +547,190 @@ function mount(container, api) {
         return actionRow(...items);
     }
 
-    function renderBelowRange() {
-        const seen = new Set();
-        result.replaceChildren(
-            resultLine('The peak is off the scale', true),
-            termLine('This object is too hot to find its peak here. Above about 32,000 K, the black-body peak falls below 90 nm, the short end of this spectrum, and what you see is only the curve sloping up towards it. There is no top to read, so Wien\'s law has nothing to work on.', seen, 'spectro-tool-text'),
-            para('Instead, fit the black-body reference: show it over the spectrum, then slide its temperature until the two curves have the same shape.')
-        );
-    }
-
-    function renderPeak() {
-        const metres = peak.peak_nm * 1e-9;
-        const answer = plusMinus(peak.T_K, peak.err_K);
-        const blended = partCount(api) > 1;
-        const reading = keepReferenceResult() ? getMeasurement(api.resolved.entity.code) : null;
-        // A blend's one temperature is true of the blend and of no star in it, so it isn't sent on to the H-R diagram as if it were
-        const blendNote = blended ? [
-            para(`This is the peak of ${partCount(api)} stars' light added together. That one temperature is true of the blend, but of no star in it.`),
-            actionRow(toolLink(api, 'stars-shown', 'Read each star with Stars shown'))
-        ] : [];
-        fill(result,
-            resultLine(blended ? `Blend: T = ${answer} K` : `T = ${answer} K`, true),
-            steps([
-                `λmax = ${sig(peak.peak_nm, 3)} nm = ${sci(metres, 3)} m`,
-                `T = b ÷ λmax, with b = ${sci(WIEN_B, 4)} m·K`,
-                `T = (${sci(WIEN_B, 4)} m·K) ÷ (${sci(metres, 3)} m) = ${withCommas(peak.T_K)} K`
-            ]),
-            ...blendNote,
-            reading ? para(`Your H-R diagram is using ${withCommas(reading.T_K)} K from the reference.`) : null,
-            reading ? actionRow(el('button', {
-                type: 'button',
-                class: 'spectro-tool-next',
-                text: 'Use Wien\'s value instead',
-                onclick: () => {
-                    record(peak.T_K, peak.err_K, 'wien');
-                    renderPeak();
-                }
-            })) : null,
-            blended ? null : nextSteps()
-        );
-    }
-
-    function renderNothing() {
-        result.replaceChildren(para('This light doesn\'t follow one black-body curve, so there is no peak to find. Mostly bright lines over very little continuum, such as a supernova long after its peak, have no temperature to read this way.'));
-    }
-
-    // A reference that carries a temperature can stand in for the peak: the black-body curve, or a standard star
-    function referenceReading() {
-        const st = api.picker.state();
-        if (!st.item) return null;
-        if (st.item.kind === 'blackbody') {
-            return { T: st.T, err: blackBodyMatchErr(st.T) * st.T, rough: st.T >= PEAK_OFF_SCALE_K, name: `Black-body reference, ${withCommas(st.T)} K` };
-        }
-        if (st.item.kind === 'standard') {
-            const id = st.item.standard;
-            return { T: STANDARDS[id].teff_K, err: standardError(id), name: st.item.label };
-        }
-        return null;
-    }
-
-    function showBlackBody() {
-        api.picker.choose('bb');
-        api.setMode('overlay');
-        // The slope that matters is at the short end, so show that much of the range
-        const { hi } = plot.getRange();
-        plot.setRange(90, Math.min(hi, 800), { animate: true });
-    }
-
-    function renderReference() {
-        const reading = referenceReading();
-        const hot = peak && peak.belowRange;
-        refBlock.replaceChildren();
-        refBlock.hidden = !reading && !hot;
-        if (refBlock.hidden) return;
-        if (!reading) {
-            refBlock.append(actionRow(el('button', { type: 'button', class: 'spectro-tool-go', text: 'Show the black-body reference', onclick: showBlackBody })));
+    let useKey = '';
+    function renderUse(force = false) {
+        const r = reading();
+        const code = api.resolved ? api.resolved.entity.code : '';
+        const m = getMeasurement(code) || {};
+        const used = !!r && m.T_source === r.source && m.T_K === r.T;
+        const key = !r ? 'none' : blend > 1 ? `blend${blend}` : !hasTab('hr') ? 'no-hr' : used ? `used|${r.T}` : `offer|${m.T_K}|${m.T_source}`;
+        if (!force && key === useKey) return;
+        useKey = key;
+        if (!r || (blend === 1 && !hasTab('hr'))) {
+            useBox.replaceChildren();
             return;
         }
-        const code = api.resolved.entity.code;
-        const m = getMeasurement(code);
-        const used = !!m && m.T_source === 'reference' && m.T_K === reading.T;
-        const low = roundTo3(reading.T - reading.err);
-        const high = roundTo3(reading.T + reading.err);
-        fill(refBlock,
-            para(reading.rough
-                ? `${reading.name}. If this matches your spectrum, its temperature is a measurement too, but a rough one. With no peak to read, a slope changes little with temperature, so anything from about ${withCommas(low)} to ${withCommas(high)} K could look as good.`
-                : `${reading.name}. If this matches your spectrum, its temperature is a measurement too.`),
+        if (blend > 1) {
+            // A blend's one temperature is true of the blend and of no star in it, so it isn't sent on as if it were a star's
+            fill(useBox,
+                para(`This is ${blend} stars' light added together. That one temperature is true of the blend, but of no star in it.`),
+                actionRow(toolLink(api, 'stars-shown', 'Read each star with Stars shown')));
+            return;
+        }
+        if (used) {
+            fill(useBox,
+                para(`Sent to H-R: ${plusMinus(r.T, r.err)} K, from ${SOURCE_WORDS[r.source]}.`),
+                nextSteps());
+            return;
+        }
+        fill(useBox,
+            m.T_K > 0 ? para(`The H-R diagram has ${m.T_err_K > 0 ? plusMinus(m.T_K, m.T_err_K) : withCommas(m.T_K)} K, from ${SOURCE_WORDS[m.T_source] || 'your own value'}.`) : null,
             actionRow(el('button', {
                 type: 'button',
                 class: 'spectro-tool-go',
                 text: 'Use this temperature',
-                onclick: () => {
-                    record(reading.T, reading.err, 'reference');
-                    renderReference();
-                    if (hasReading()) renderPeak();
+                onclick: (e) => {
+                    const now = reading();
+                    if (!now) return;
+                    recordMeasurement(api.resolved.entity.code, { T_K: now.T, T_err_K: now.err, T_source: now.source });
+                    renderUse(true);
+                    says.textContent = `Sent to the H-R diagram: ${plusMinus(now.T, now.err)} K`;
+                    // By keyboard, on to what comes next rather than back through the page
+                    if (e.detail === 0) {
+                        const next = useBox.querySelector('button');
+                        if (next) next.focus();
+                    }
                 }
-            })),
-            used ? resultLine(reading.rough ? `T is about ${withCommas(low)} to ${withCommas(high)} K, from the reference` : `T = ${plusMinus(reading.T, reading.err)} K, from the reference`, true) : null,
-            // A star with a peak of its own already offers these under its reading
-            used && !hasReading() ? nextSteps() : null
-        );
+            })));
     }
 
-    function run({ frame = true } = {}) {
-        const spectrum = api.getOverview();
-        peak = spectrum ? wienPeak(spectrum) : null;
-        if (peak && peak.belowRange) {
-            renderBelowRange();
-        } else if (hasReading()) {
-            if (!keepReferenceResult()) record(peak.T_K, peak.err_K, 'wien');
-            renderPeak();
-            if (frame) {
-                const { lo, hi } = plot.getRange();
-                if (peak.peak_nm < lo || peak.peak_nm > hi) {
-                    plot.setRange(Math.min(lo, peak.peak_nm * 0.75), Math.max(hi, peak.peak_nm * 1.35), { animate: true });
-                }
-            }
-        } else {
-            renderNothing();
+    // ---------- Modes ----------
+
+    function select(next, { frame = true } = {}) {
+        if (mode === next) return;
+        stopGlide();
+        if (mode) memory.views[mode] = plot.getRange();
+        mode = next;
+        memory.mode = next;
+        modes.set(next);
+        fitBox.hidden = next !== 'fit';
+        stdBox.hidden = next !== 'standards';
+        peakBox.hidden = next !== 'peak';
+        if (next === 'standards' && standard) reference.show(`std:${standard}`, 'overlay');
+        else reference.show('none');
+        if (next === 'standards') syncShiftNote();
+        if (frame) {
+            const v = memory.views[next] || OPENING_VIEWS[next];
+            plot.setRange(v.lo, v.hi, { animate: true });
         }
-        renderReference();
+        if (next === 'peak') syncMarkerInput();
+        renderUse(true);
         plot.redraw();
+    }
+
+    // ---------- On the plot ----------
+
+    const removeOverlay = plot.addOverlay((ctx) => {
+        if (mode === 'fit') drawFit(ctx);
+        else if (mode === 'peak') drawPeak(ctx);
+    });
+
+    offs.push(plotGrab(plot, {
+        hit(x, y, e) {
+            if (mode === 'fit') return hitFit(x, y, e);
+            if (mode === 'peak') return hitMarker(x, y, e);
+            return null;
+        },
+        start(what, x) {
+            if (mode === 'fit') {
+                const pane = plot.panes().body;
+                fitDrag = { T, nm: plot.nmOf(Math.max(pane.x, Math.min(pane.x + pane.w, x))) };
+                plot.redraw();
+            } else {
+                markDrag = true;
+                plot.redraw();
+            }
+        },
+        move(x) {
+            if (mode === 'fit' && fitDrag) dragFit(x);
+            else if (mode === 'peak') {
+                const pane = plot.panes().body;
+                moveMarker(plot.nmOf(Math.max(pane.x, Math.min(pane.x + pane.w, x))));
+            }
+        },
+        end(x, y, e, moved) {
+            if (mode === 'fit') {
+                fitDrag = null;
+                if (moved) says.textContent = `Curve at ${withCommas(T)} K`;
+                plot.redraw();
+            } else if (mode === 'peak') {
+                markDrag = false;
+                tryMark(markerNm());
+            }
+        }
+    }));
+
+    // A click or tap on the plot, or Enter on it, marks there
+    offs.push(plot.onClick((nm) => {
+        if (mode !== 'peak' || !hasCurve()) return;
+        stopGlide();
+        tryMark(nm);
+        syncMarkerInput();
+    }));
+
+    // ---------- The object ----------
+
+    function measure() {
+        const spectrum = api.getOverview();
+        edge = spectrum ? topEdge(spectrum) : null;
+        peak = spectrum ? wienPeak(spectrum) : null;
+        blend = partCount(api);
+    }
+
+    function startOver() {
+        stopGlide();
+        markNm = null;
+        marked = null;
+        syncPeakPrompt();
+        renderMark();
+        syncMarkerInput();
     }
 
     // A change of stars shown, or of time: wait for it to settle, since a full-range spectrum takes a moment
     offs.push(api.onBodyOpts(() => {
         clearTimeout(pending);
-        pending = setTimeout(() => run({ frame: false }), 220);
+        pending = setTimeout(() => {
+            measure();
+            startOver();
+            renderUse(true);
+            plot.redraw();
+        }, 220);
     }));
-    offs.push(api.onReferenceChange(renderReference));
+    offs.push(api.onReferenceChange(() => {
+        if (mode === 'standards') syncShiftNote();
+    }));
 
     return {
-        setEntity() {
-            run();
+        setEntity(resolved) {
+            const code = resolved.entity.code;
+            openedCode = openedCode || code;
+            measure();
+            touched = false;
+            standard = memory.standard && memory.standard.code === code ? memory.standard.id : null;
+            syncFit();
+            syncStandards();
+            if (!mode) select(memory.mode);
+            else if (mode === 'standards') reference.show(standard ? `std:${standard}` : 'none', standard ? 'overlay' : null);
+            startOver();
+            renderUse(true);
+            plot.redraw();
         },
         dispose() {
             clearTimeout(pending);
+            stopGlide();
             offs.forEach((off) => off());
             removeOverlay();
+            if (mode) memory.views[mode] = plot.getRange();
+            reference.dispose();
+            // Closed by the student on the object it opened on: the view goes back to what it was
+            if (api.resolved && api.resolved.entity.code === openedCode) plot.setRange(opened.lo, opened.hi, { animate: true });
         }
     };
 }
 
 registerTool({
     id: 'wien',
-    label: 'Wien\'s Law peak finder',
+    label: 'How hot?',
     draws: true,
     appliesTo: applies,
     mount

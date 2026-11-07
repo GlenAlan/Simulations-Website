@@ -1,13 +1,17 @@
-// Doppler measure: click an observed line, say which line it is, and read off the shift, z and v = cz. Several lines can
-// be measured and are averaged, which also catches a line given the wrong name.
+// How is it moving? Two ways, one at a time:
+//   Slide the lines    drag a lamp's lines onto the object's own, and read how far they moved (doppler_slide.js)
+//   Measure one line   click an observed line, say which line it is, and read off the shift, z and v = cz. Several lines can
+//                      be measured and are averaged, which also catches a line given the wrong name. The precise route.
 
 import { registerTool } from './index.js';
 import { getMeasurement, recordMeasurement } from '../../../core/measurements.js';
 import { C_KMS } from '../../../core/phys.js';
-import { signed, sig, withCommas } from '../../../core/format.js';
+import { signed, sig } from '../../../core/format.js';
 import { blendAllowance, lineCentre, dopplerFrom, combineDoppler } from '../../../spectra/measure.js';
 import { el } from '../../plot2d.js';
 import { actionRow, diagramLink, fill, hasTab, overlayTheme, para, plotLabel, plotMark, resultLine, searchNmAt, statusBox, termLine, toolLink } from './common.js';
+import { borrowReference, modeRow } from './hands_on.js';
+import { createSlide, direction, velocityText, zText } from './doppler_slide.js';
 
 const MAX_CANDIDATES = 6;
 // Faster than this along the line of sight, and a star has almost certainly been given the wrong rest line
@@ -59,24 +63,9 @@ function candidatesFor(api, centre) {
     return list.slice(0, MAX_CANDIDATES);
 }
 
-function direction(z) {
-    return z >= 0 ? '→ moving away' : '← moving towards us';
-}
-
-// z and v with an uncertainty rounded together: enough digits to show it, no more
-function zText(z, err) {
-    const digits = err > 0 ? Math.max(2, Math.min(6, Math.ceil(-Math.log10(err)))) : 5;
-    return `${signed(z, digits)} ± ${err.toFixed(digits)}`;
-}
-
-function velocityText(v, err) {
-    const digits = err < 1 ? 1 : 0;
-    const shown = err < 1 ? err.toFixed(1) : withCommas(Math.max(1, err));
-    const value = digits ? signed(v, 1) : `${v < 0 ? '−' : '+'}${withCommas(Math.abs(v))}`;
-    return `${value} ± ${shown} km/s`;
-}
-
-function mount(container, api) {
+// The precise route, as it was before the slide joined it. isActive() says whether it is the mode on show: when it isn't, it
+// neither draws nor takes clicks.
+function mountExact(container, api, isActive) {
     const { plot } = api;
     const prompt = para('Click a line on the plot, then say which line it is. Zoom in close for a sharper reading. By keyboard: on the plot, Shift and an arrow move the cursor, and Enter picks.');
     const picked = el('div', { class: 'spectro-tool-choice', hidden: true });
@@ -92,7 +81,7 @@ function mount(container, api) {
     let measured = [];     // Lines measured on this object
 
     const removeOverlay = plot.addOverlay((ctx) => {
-        if (!found) return;
+        if (!found || !isActive()) return;
         const theme = overlayTheme(plot);
         const pane = plot.panes().body;
         // Under the line labels, if they're showing
@@ -230,7 +219,7 @@ function mount(container, api) {
         if (!measured.length) return;
         const combined = combineDoppler(measured.map((m) => m.d));
         const code = api.resolved.entity.code;
-        recordMeasurement(code, { v_kms: combined.v_kms, v_err_kms: combined.err_kms, z: combined.z });
+        recordMeasurement(code, { v_kms: combined.v_kms, v_err_kms: combined.err_kms, z: combined.z, v_source: 'line' });
         const last = measured[measured.length - 1];
         const beyond = Math.abs(combined.z) > 0.1;
         const m = getMeasurement(code) || {};
@@ -277,7 +266,7 @@ function mount(container, api) {
 
     const offClick = plot.onClick((nm, e) => {
         const spectrum = api.getSpectrum();
-        if (!spectrum) return;
+        if (!spectrum || !isActive()) return;
         const line = lineCentre(spectrum, nm, { searchNm: searchNmAt(plot, nm, e) });
         keyboardUsed = !!e && e.type === 'keydown';
         if (!line) {
@@ -303,8 +292,6 @@ function mount(container, api) {
             rest = null;
             choosing = false;
             measured = [];
-            // Zooming in close shows the line at high resolution, where its centre can be read more finely
-            api.setResolution('zoom');
             renderCandidates();
             result.replaceChildren();
             renderList();
@@ -313,6 +300,59 @@ function mount(container, api) {
         dispose() {
             offClick();
             removeOverlay();
+        }
+    };
+}
+
+const MODES = [
+    { id: 'slide', label: 'Slide the lines' },
+    { id: 'exact', label: 'Measure one line' }
+];
+
+// The mode is kept from one object to the next
+const memory = { mode: 'slide' };
+
+function mount(container, api) {
+    const reference = borrowReference(api);
+    let mode = null;
+    const says = el('p', { class: 'spectro-sr-only', role: 'status' });
+    const modes = modeRow('How to measure the motion', MODES, (id) => select(id));
+    const slideBox = el('div', { class: 'spectro-hands-mode-body' });
+    const exactBox = el('div', { class: 'spectro-hands-mode-body spectro-tool-body' });
+    container.append(modes.el, slideBox, exactBox, says);
+    const slide = createSlide(slideBox, api, { says });
+    const exact = mountExact(exactBox, api, () => mode === 'exact');
+
+    function select(next) {
+        if (mode === next) return;
+        if (mode === 'slide') slide.leave();
+        mode = next;
+        memory.mode = next;
+        modes.set(next);
+        slideBox.hidden = next !== 'slide';
+        exactBox.hidden = next !== 'exact';
+        // The slide draws its own lamp lines, so the reference stands aside for it; measuring one line has it back
+        if (next === 'slide') {
+            reference.show('none');
+            slide.enter();
+        } else {
+            reference.give();
+        }
+        api.plot.redraw();
+    }
+
+    return {
+        setEntity(resolved) {
+            // Zooming in close shows a line at high resolution, where its centre can be read more finely
+            api.setResolution('zoom');
+            slide.setEntity(resolved);
+            exact.setEntity(resolved);
+            if (!mode) select(memory.mode);
+        },
+        dispose() {
+            slide.dispose();
+            exact.dispose();
+            reference.dispose();
             api.setResolution('overview');
         }
     };
@@ -320,7 +360,7 @@ function mount(container, api) {
 
 registerTool({
     id: 'doppler',
-    label: 'Doppler measure',
+    label: 'How is it moving?',
     draws: true,
     appliesTo: () => true,
     mount
