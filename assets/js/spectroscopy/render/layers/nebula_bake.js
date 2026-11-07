@@ -10,18 +10,44 @@
 import * as THREE from 'three';
 import { Rng } from '../../core/rng.js';
 import { bus } from '../../core/state.js';
-import { BAKE_VERT, CLOUD_FRAG, PLANETARY_FRAG, REMNANT_FRAG } from './nebula_shaders.js';
+import { BAKE_VERT, CLOUD_FRAG, EMISSION_FRAG, DUST_FRAG, PLANETARY_FRAG, REMNANT_FRAG } from './nebula_shaders.js';
 
 const CELL_PX = { low: 128, medium: 256, high: 256 };
-const ATLAS_STEPS = { low: 18, medium: 36, high: 44 };
-const ATLAS_OCTAVES = { low: 2, medium: 3, high: 3 };
+// Steps through the object, by program. Reflection is a real ray march; emission is a few layers that overlap as veils,
+// and dark clouds need none at all. The fine detail comes from once-per-pixel octaves, not from steps.
+const ATLAS_STEPS = {
+    cloud: { low: 18, medium: 36, high: 44 },
+    emission: { low: 8, medium: 12, high: 14 },
+    dust: { low: 1, medium: 1, high: 1 },
+    planetary: { low: 22, medium: 40, high: 48 },
+    remnant: { low: 16, medium: 28, high: 34 }
+};
+const HERO_STEPS = {
+    cloud: { low: 28, medium: 56, high: 84 },
+    emission: { low: 8, medium: 12, high: 14 },     // The same layers as the atlas, or the veils would change as it fades in
+    dust: { low: 1, medium: 1, high: 1 },
+    planetary: { low: 36, medium: 72, high: 96 },
+    remnant: { low: 28, medium: 48, high: 64 }
+};
+const ATLAS_OCTAVES = { low: 2, medium: 3, high: 3 };   // The reflection program's fbm
+const ATLAS_DETAIL = { low: 1, medium: 2, high: 2 };    // The others' per-pixel detail
 const HERO_MAX_PX = { low: 512, medium: 1280, high: 1920 };
-const HERO_STEPS = { low: 28, medium: 56, high: 84 };
 
 const NOISE_SIZE = 64;
 const HERO_FADE_S = 0.35;
-const FETCHES_PER_STEP = { cloud: 9, planetary: 7, remnant: 8 }; // Roughly, so strips can be sized by cost
 const START_BUDGET = 4e6;
+
+// Noise fetches for one pixel, roughly, so strips can be sized by cost
+function fetchesPerPixel(program, steps, octaves) {
+    switch (program) {
+        case 'cloud': return steps * 9;
+        case 'emission': return steps * 3 + 2 * octaves + 6;
+        case 'dust': return octaves + 7;
+        case 'planetary': return steps * 3 + octaves;
+        default: return steps * 4 + octaves + 13;
+    }
+}
+
 const ATLAS_PAID_FOR_SHARE = 0.25;  // With less than this baked, a fall in level starts again at the smaller size
 
 // Tiling noise: three fractal channels and one cellular. Built on the CPU from a fixed seed, so it is the same
@@ -172,12 +198,21 @@ function createBaker(engine, app) {
             uBlob: { value: v4s(6) }, uStar: { value: v4s(4) }, uLane: { value: v4s(2) },
             uA: { value: new THREE.Vector4() }, uB: { value: new THREE.Vector4() }, uC: { value: new THREE.Vector4() }
         }),
+        emission: makeProgram(EMISSION_FRAG, {
+            uBlob: { value: v4s(8) }, uStar: { value: v4s(4) }, uLane: { value: v4s(3) },
+            uA: { value: new THREE.Vector4() }, uB: { value: new THREE.Vector4() }, uC: { value: new THREE.Vector4() }, uD: { value: new THREE.Vector4() }
+        }),
+        dust: makeProgram(DUST_FRAG, {
+            uBlob: { value: v4s(8) },
+            uA: { value: new THREE.Vector4() }, uB: { value: new THREE.Vector4() }, uC: { value: new THREE.Vector4() }
+        }),
         planetary: makeProgram(PLANETARY_FRAG, {
             uP: { value: new THREE.Vector4() }, uC: { value: new THREE.Vector4() }
         }),
         remnant: makeProgram(REMNANT_FRAG, {
             uS: { value: new THREE.Vector4() }, uAsym: { value: new THREE.Vector4() },
-            uAxis: { value: new THREE.Vector3() }, uC: { value: new THREE.Vector4() }
+            uAxis: { value: new THREE.Vector3() }, uC: { value: new THREE.Vector4() },
+            uL: { value: new THREE.Vector4() }, uF: { value: new THREE.Vector4() }
         })
     };
 
@@ -232,7 +267,7 @@ function createBaker(engine, app) {
     const jobs = [];
     let nextId = 1;
 
-    // spec = { program: 'cloud'|'planetary'|'remnant', dir: [x, y, z], set(uniforms) }; returns the job, whose rect
+    // spec = { program: 'cloud'|'emission'|'dust'|'planetary'|'remnant', dir: [x, y, z], set(uniforms) }; returns the job, whose rect
     // [u, v, du, dv] is its cell in the atlas and whose .ready becomes true when the sprite can use it.
     function addJob(spec) {
         const index = jobs.length;
@@ -384,6 +419,14 @@ function createBaker(engine, app) {
         return sharpEnough && notTooFine && windowCoversView(slot, c);
     }
 
+    // Detail keeps coming as the window shrinks: one octave more each time a texel gets 2.43 times smaller on the object
+    function heroOctaves(program, h) {
+        if (program === 'cloud') return Math.min(6, 3 + Math.round(Math.log2(1 / h) * 0.6));
+        const texelsPerUnit = heroPx / (2 * h);
+        const extra = Math.round(Math.log(texelsPerUnit / 128) / Math.log(2.43));
+        return Math.max(1, Math.min(9, (ATLAS_DETAIL[app.qualityLevel] || 2) + extra));
+    }
+
     function updateHero(frame) {
         // Fades, whatever else is happening
         const fadeStep = frame.reduceMotion ? 1 : frame.dt / HERO_FADE_S;
@@ -428,11 +471,10 @@ function createBaker(engine, app) {
                 // The older slot is about to be written to, so it must stop showing
                 older.job = null;
                 older.k = 0;
-                const steps = HERO_STEPS[app.qualityLevel] || 56;
-                const zoomOctaves = Math.round(Math.log2(1 / want.h) * 0.6);
+                const steps = HERO_STEPS[c.job.program][app.qualityLevel] || 40;
                 heroWork = {
                     job: c.job, cx: want.cx, cy: want.cy, h: want.h, row: 0, target: older.target,
-                    steps, octaves: Math.min(6, 3 + zoomOctaves)
+                    steps, octaves: heroOctaves(c.job.program, want.h)
                 };
             }
         }
@@ -492,7 +534,7 @@ function createBaker(engine, app) {
             let job = prev.job && !prev.job.ready ? prev.job : null;
             if (!job && heroWork) {
                 const w = heroWork;
-                const cost = heroPx * w.steps * (FETCHES_PER_STEP[w.job.program] + w.octaves - 2);
+                const cost = heroPx * fetchesPerPixel(w.job.program, w.steps, w.octaves);
                 const rows = Math.max(2, Math.min(heroPx - w.row, Math.floor(left / cost)));
                 renderStrip(w.job.program, w.job, w.target, 0, 0, heroPx, w.row, rows, w.cx, w.cy, w.h, w.steps, w.octaves);
                 w.row += rows;
@@ -521,9 +563,9 @@ function createBaker(engine, app) {
             }
             if (!job) job = nearestUnbakedJob();
             if (!job) break;
-            const steps = ATLAS_STEPS[q] || 36;
-            const octaves = ATLAS_OCTAVES[q] || 2;
-            const cost = cellPx * steps * FETCHES_PER_STEP[job.program];
+            const steps = ATLAS_STEPS[job.program][q] || 24;
+            const octaves = job.program === 'cloud' ? ATLAS_OCTAVES[q] || 2 : ATLAS_DETAIL[q] || 2;
+            const cost = cellPx * fetchesPerPixel(job.program, steps, octaves);
             const rows = Math.max(4, Math.min(cellPx - job.row, Math.floor(left / cost)));
             const x = (job.index % grid) * cellPx;
             const y = Math.floor(job.index / grid) * cellPx;
@@ -688,6 +730,8 @@ function createBaker(engine, app) {
             budget = keep;
             syncHeroUniforms();
             flushing = false;
+            // This frame's candidates are spent, and the next frame would take that as nothing being big enough on screen
+            Object.assign(cand, prev);
         },
         stats() {
             return {
@@ -767,10 +811,11 @@ vec4 heroFetch(sampler2D tex, vec2 w) {
         + textureLod(tex, w + vec2(-d.x, d.y), 0.0) + textureLod(tex, w + vec2(d.x, d.y), 0.0));
 }
 
-// q is the position in the sprite (-1..1), cellUv the same position in the atlas
-vec4 fetchBaked(vec2 q, vec2 cellUv) {
-    vec2 dx = dFdx(cellUv);
-    vec2 dy = dFdy(cellUv);
+// q is the position in the sprite (-1..1), cellUv the same position in the atlas. blur above 1 reads a softer mip level
+// than the screen needs, as seeing does to something only a few tens of pixels across.
+vec4 fetchBaked(vec2 q, vec2 cellUv, float blur) {
+    vec2 dx = dFdx(cellUv) * blur;
+    vec2 dy = dFdy(cellUv) * blur;
     vec4 t;
     if (max(dot(dx, dx), dot(dy, dy)) * uAtlasPx * uAtlasPx < 0.5) {
         t = atlasSmooth(cellUv);
@@ -825,6 +870,11 @@ export function lineRGB(nm) {
 // hydrogen zone holds the Balmer lines and the low-ionisation lines beside them; the oxygen zone holds the lines
 // that need hotter gas. Returns { hydrogen, oxygen } as linear RGB scaled by each zone's share of the light,
 // plus the ratio of oxygen to hydrogen light, which sets how far the oxygen zone reaches.
+//
+// H-beta shines from the same gas as H-alpha, and it is what turns the deep red of H-alpha into the rose of a real
+// photograph. A camera records [O III] as a teal much paler than the pure colour of the line, hence the mix with white.
+const OXYGEN_AS_PHOTOGRAPHED = [0.75, 0.92, 0.92];
+const OXYGEN_PALING = 0.42;
 export function zonePalette(lines) {
     const zones = { hydrogen: [0, 0, 0], oxygen: [0, 0, 0] };
     let sumH = 0;
@@ -833,21 +883,16 @@ export function zonePalette(lines) {
         const label = line.label || '';
         const hot = /III|He|IV|V\b/.test(label) || (!label.includes('H') && line.w < 520);
         const c = lineRGB(line.w);
-        // Blue-green H-beta shines from the same gas as H-alpha, but it reads better shared with the inner, bluer zone
-        const shared = !hot && line.w < 520 ? 0.6 : 0;
-        const toOxygen = hot ? line.rel : line.rel * shared;
-        const toHydrogen = hot ? 0 : line.rel * (1 - shared);
-        for (let i = 0; i < 3; i++) {
-            zones.oxygen[i] += c[i] * toOxygen;
-            zones.hydrogen[i] += c[i] * toHydrogen;
-        }
-        sumO += toOxygen;
-        sumH += toHydrogen;
+        const zone = hot ? zones.oxygen : zones.hydrogen;
+        for (let i = 0; i < 3; i++) zone[i] += c[i] * line.rel;
+        if (hot) sumO += line.rel;
+        else sumH += line.rel;
     });
     const peak = Math.max(sumH, sumO, 1e-6);
     const scale = (zone, sum) => {
         const m = Math.max(zone[0], zone[1], zone[2], 1e-6);
         return zone.map((v) => (v / m) * (sum / peak));
     };
-    return { hydrogen: scale(zones.hydrogen, sumH), oxygen: scale(zones.oxygen, sumO), excitation: sumO / Math.max(sumH, 1e-6) };
+    const oxygen = scale(zones.oxygen, sumO).map((v, i) => v * (1 - OXYGEN_PALING) + OXYGEN_AS_PHOTOGRAPHED[i] * (sumO / peak) * OXYGEN_PALING);
+    return { hydrogen: scale(zones.hydrogen, sumH), oxygen, excitation: sumO / Math.max(sumH, 1e-6) };
 }
