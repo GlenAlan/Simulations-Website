@@ -1,6 +1,6 @@
 // The Hubble tab (spec section 12): recession speed against distance for the galaxies the student has measured.
 // The gradient of a line through the origin is H₀. Speed comes from the Doppler tool and distance from the
-// Photometer. Plotted galaxies last for the session only: nothing is saved.
+// Photometer. Plotted galaxies last through a reload, in this browser, until they're cleared.
 
 import { bus, select } from '../core/state.js';
 import { getMeasurement, recordMeasurement } from '../core/measurements.js';
@@ -9,18 +9,49 @@ import { plusMinus, sig, withCommas } from '../core/format.js';
 import {
     createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
     drawFrame, drawMarker, el, fitThroughOrigin, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint,
-    niceCeil, niceTicks, powerLabel
+    niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved
 } from './plot2d.js';
 
 const Z_LIMIT = 0.1;          // Above this, v = cz is only an approximation (spec section 8.4)
 const SUGGESTED_GALAXIES = 8;
 const RESIDUALS_HEIGHT = 120; // Extra height the residuals panel adds to the figure (px)
+const HEAVY_SHARE = 0.6;      // A galaxy with this much of the fit's weight is setting the line by itself
+const NEARBY_MPC = 50;        // Closer than this, a galaxy's own motion is a real part of its speed
 
 // ---------- Session state ----------
 
 const plotted = new Map();    // code -> number shown beside the point
 let nextNumber = 1;
 let refreshTab = () => {};    // The mounted tab's refresh
+let tab = null;               // The mounted tab's announce and focus
+let saveKey = null;
+
+function persist() {
+    if (!saveKey) return;
+    const galaxies = [...plotted].map(([code, number]) => ({ code, number, values: getMeasurement(code) }));
+    writeSaved(saveKey, galaxies.length ? { nextNumber, galaxies } : null);
+}
+
+function restore(app) {
+    saveKey = `spectro.hubble.v1.${app.universe.seed}`;
+    const saved = readSaved(saveKey);
+    if (!saved || !Array.isArray(saved.galaxies)) return;
+    saved.galaxies.forEach(({ code, number, values }) => {
+        if (!values || !app.universe.resolve(code)) return;
+        recordMeasurement(code, values);
+        if (galaxyPoint(code)) {
+            plotted.set(code, number);
+            nextNumber = Math.max(nextNumber, number + 1);
+        }
+    });
+}
+
+function addGalaxy(code) {
+    if (plotted.has(code)) return;
+    plotted.set(code, nextNumber++);
+    persist();
+    bus.emit('plotted', { code });
+}
 
 // ---------- Numbers ----------
 
@@ -50,6 +81,35 @@ function currentFit() {
     return fitThroughOrigin(points.map((p) => p.dMpc), points.map((p) => p.v));
 }
 
+// Plain words on the student's own points, without saying what H₀ should come out as. A line through the origin is
+// weighted by distance squared, so one far galaxy can set it alone, and nearby galaxies scatter because their own motion
+// through space is a large share of their speed.
+export function hubbleAdvice(points, useLog) {
+    const out = [];
+    const weights = points.map((p) => p.dMpc * p.dMpc);
+    const total = weights.reduce((sum, w) => sum + w, 0);
+    if (points.length >= 3 && total > 0) {
+        const at = weights.indexOf(Math.max(...weights));
+        const share = weights[at] / total;
+        if (share >= HEAVY_SHARE) {
+            const others = points.filter((p, i) => i !== at);
+            const fit = fitThroughOrigin(others.map((p) => p.dMpc), others.map((p) => p.v));
+            const without = fit.err !== null ? `${plusMinus(fit.slope, fit.err)} km/s/Mpc` : `about ${sig(fit.slope, 3)} km/s/Mpc`;
+            out.push(`One galaxy is setting this line: ${points[at].code}, at ${sig(points[at].dMpc, 3)} Mpc, carries ${Math.round(share * 100)}% of the weight. Without it, H₀ would be ${without}. More far galaxies would share the load.`);
+        }
+    }
+    const near = points.filter((p) => p.dMpc <= NEARBY_MPC);
+    if (near.length >= 2) {
+        const rates = near.map((p) => p.v / p.dMpc);
+        out.push(`Nearby galaxies scatter: yours give v ÷ d from ${sig(Math.min(...rates), 2)} to ${sig(Math.max(...rates), 2)} km/s/Mpc. A galaxy's own motion through space matters most when its expansion speed is small, so far galaxies tell you more.`);
+    }
+    if (!useLog && points.length >= 4) {
+        const sorted = points.map((p) => p.dMpc).sort((a, b) => a - b);
+        if (sorted[sorted.length >> 1] < 0.2 * sorted[sorted.length - 1]) out.push('Most of your points are bunched near the origin. Log scales spreads them out.');
+    }
+    return out;
+}
+
 // Test only, and not reachable from the page's UI: plots every galaxy from its true values, so a test can check
 // that the fit recovers H₀ (spec section 19). Load this module from the test and call it directly.
 export function __plotAllGalaxiesFromTrueValues(app) {
@@ -72,6 +132,28 @@ export function initHubbleTab(app) {
         appliesTo: (resolved) => resolved.path === 'body' && ['galaxy', 'quasar'].includes(resolved.body.kind),
         mount: (container) => mountHubble(container, app)
     });
+    restore(app);
+
+    // How the Spectrum tab's tools hand their results over
+    const open = () => app.drawer.selectTab('hubble');
+    app.diagrams = app.diagrams || {};
+    app.diagrams.hubble = {
+        isPlotted: (code) => plotted.has(code),
+        // A quasar has a tab here too, to say why it can't go on the plot
+        canPlot: (code) => {
+            const found = app.universe.resolve(code);
+            return !!found && found.body.kind === 'galaxy' && !!galaxyPoint(code);
+        },
+        plot(code) {
+            open();
+            addGalaxy(code);
+            if (tab) tab.added(code);
+        },
+        show() {
+            open();
+            if (tab) tab.arrive();
+        }
+    };
 }
 
 function mountHubble(container, app) {
@@ -83,14 +165,20 @@ function mountHubble(container, app) {
     const root = el('div', { class: 'spectro-fig-tab' });
     container.appendChild(root);
 
+    // What to do next comes first, directly over the plot it acts on
+    const top = el('div', { class: 'spectro-fig-top' });
     const readout = el('p', { class: 'spectro-fig-readout', tabindex: '-1' });
     const readoutNote = el('p', { class: 'spectro-fig-card-status', role: 'status' });
-    root.append(readout, readoutNote);
+    root.append(top, readout, readoutNote);
 
     const figure = createFigure(root, {
         label: 'Hubble plot',
         height: (w) => {
-            const main = Math.max(240, Math.min(w * 0.82, 380, window.innerHeight * 0.5));
+            const scroller = root.closest('.sim-controls-content');
+            const room = scroller && scroller.clientHeight
+                ? scroller.clientHeight - top.offsetHeight - readout.offsetHeight - readoutNote.offsetHeight - 52
+                : window.innerHeight * 0.5;
+            const main = Math.max(220, Math.min(w * 0.82, 380, room));
             return showResiduals ? main + RESIDUALS_HEIGHT : main;
         },
         draw
@@ -108,33 +196,36 @@ function mountHubble(container, app) {
     });
     root.appendChild(zNote);
 
+    const advice = el('div', { class: 'spectro-fig-advice', hidden: true });
+    root.appendChild(advice);
+
     const chips = el('div', { class: 'sim-checkbox-group sim-chips spectro-fig-chips' });
     root.appendChild(chips);
     createChip(chips, 'spectroHubbleLog', 'Log scales', (on) => {
         useLog = on;
-        figure.redraw();
+        refresh();
     });
     createChip(chips, 'spectroHubbleResiduals', 'Residuals', (on) => {
         showResiduals = on;
         figure.redraw();
     });
 
-    const card = createMeasureCard(root, {
-        addLabel: 'Add to Hubble plot',
+    const card = createMeasureCard(top, {
+        addLabel: 'Plot on Hubble',
         removeLabel: 'Remove from Hubble plot',
-        onHint: (field) => {
-            app.drawer.selectTab('spectrum');
-            if (app.spectrumPanel) app.spectrumPanel.openTool(field.tool);
-        },
+        workingParent: root,
+        onTool: (tool) => app.spectrumPanel.openTool(tool, { from: 'hubble', focus: true }),
         fields: [
             {
                 key: 'v_kms',
-                label: 'Recession speed',
+                label: 'Speed',
                 unit: 'km/s',
                 placeholder: '7,000',
-                hint: 'Use the Doppler tool in Spectrum',
                 tool: 'doppler',
+                toolName: 'Doppler',
                 allowNegative: true,
+                max: 1e6,
+                rangeText: 'a speed of up to 1,000,000 km/s',
                 extra: { v_err_kms: undefined, z: undefined },
                 show: (m) => `${m.v_err_kms > 0 ? plusMinus(m.v_kms, m.v_err_kms) : withCommas(m.v_kms)} km/s, from the Doppler tool`
             },
@@ -144,13 +235,16 @@ function mountHubble(container, app) {
                 unit: 'Mpc',
                 scale: 1e6,
                 placeholder: '100',
-                hint: 'Use the Photometer in Spectrum',
                 tool: 'photometer',
+                toolName: 'Photometer',
+                min: 1e-3,
+                max: 1e6,
+                rangeText: 'a distance from 0.001 to 1,000,000 Mpc',
                 show: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc, from the Photometer`
             }
         ],
         status(code) {
-            return plotted.has(code) ? `On your plot as point ${plotted.get(code)}.` : 'Not on your plot yet.';
+            return plotted.has(code) ? `On your plot as point ${plotted.get(code)}.` : '';
         },
         working(code, m) {
             const v = velocityOf(m);
@@ -166,25 +260,40 @@ function mountHubble(container, app) {
         },
         isPlotted: (code) => plotted.has(code),
         onAdd(code) {
-            plotted.set(code, nextNumber++);
-            const point = galaxyPoint(code);
-            announce(`${code} added at ${sig(point.dMpc, 3)} Mpc and ${withCommas(point.v)} km/s.`);
+            addGalaxy(code);
+            announceAdded(code);
             refresh();
         },
         onRemove: removeGalaxy
     });
 
     const quasarNote = el('div', { class: 'spectro-fig-card', hidden: true });
-    root.appendChild(quasarNote);
+    top.appendChild(quasarNote);
+
+    function announceAdded(code) {
+        const point = galaxyPoint(code);
+        if (point) announce(`${code} added at ${sig(point.dMpc, 3)} Mpc and ${withCommas(point.v)} km/s.`);
+    }
 
     function removeGalaxy(code) {
         plotted.delete(code);
         if (plotted.size === 0) nextNumber = 1;
+        persist();
         announce(`${code} removed.`);
+        bus.emit('plotted', { code });
         refresh();
     }
 
-    const list = createPlottedList(root, 'Your galaxies', () => readout);
+    function clearGalaxies() {
+        plotted.clear();
+        nextNumber = 1;
+        persist();
+        announce('All your galaxies removed from the plot.');
+        bus.emit('plotted', { code: null });
+        refresh();
+    }
+
+    const list = createPlottedList(root, 'Your galaxies', () => readout, clearGalaxies);
     const table = createDataTable(root, {
         label: 'Plotted galaxies',
         columns: ['Point', 'Code', 'Distance (Mpc)', 'Speed (km/s)', 'z', 'Residual (km/s)'],
@@ -205,6 +314,21 @@ function mountHubble(container, app) {
     root.appendChild(live);
     function announce(text) { live.textContent = text; }
 
+    tab = {
+        // Back from a tool: on to the next thing to press
+        arrive() {
+            refresh();
+            if (!card.root.hidden) card.focusNext();
+            else readout.focus();
+        },
+        added(code) {
+            announceAdded(code);
+            refresh();
+            card.focusTitle({ preventScroll: true });
+            showFigure(root, figure);
+        }
+    };
+
     function renderQuasarNote(resolved) {
         const { body } = resolved;
         const measured = getMeasurement(body.code);
@@ -217,7 +341,16 @@ function mountHubble(container, app) {
         quasarNote.replaceChildren(
             el('p', { class: 'spectro-fig-card-title', text: `Quasar ${body.code}` }),
             el('p', { class: 'spectro-fig-readout', text: `z = ${sig(z, 3)}` }),
-            el('p', { class: 'spectro-fig-card-status', text: measuredZ !== null ? 'From your Doppler measurement.' : 'From the catalogue. Measure it yourself with the Doppler tool in Spectrum.' }),
+            el('p', { class: 'spectro-fig-card-status', text: measuredZ !== null ? 'From your Doppler measurement.' : 'From the catalogue.' }),
+            el('div', { class: 'spectro-fig-measure', hidden: measuredZ !== null },
+                el('span', { class: 'spectro-fig-measure-word', text: 'Measure it yourself with' }),
+                el('button', {
+                    type: 'button',
+                    class: 'spectro-fig-tool',
+                    text: 'Doppler',
+                    'aria-label': 'Measure z with Doppler, in the Spectrum tab',
+                    onclick: () => app.spectrumPanel.openTool('doppler', { from: 'hubble', focus: true })
+                })),
             el('p', { text: `A quasar can't go on this plot. Using v = cz here would give ${sig(v, 3)} km/s, ${compared}. Its light has been stretched by the expanding Universe during a very long journey, so astronomers quote z itself instead of a speed.` }));
     }
 
@@ -248,6 +381,9 @@ function mountHubble(container, app) {
 
         legend.hidden = n === 0;
         zNote.hidden = !points.some((p) => Math.abs(p.z) > Z_LIMIT);
+        const words = hubbleAdvice(points, useLog);
+        advice.hidden = words.length === 0;
+        advice.replaceChildren(...words.map((text) => el('p', { text })));
         list.update(points.map((p) => ({
             key: p.code,
             badge: String(plotted.get(p.code)),
@@ -456,7 +592,13 @@ function mountHubble(container, app) {
     });
 
     bus.on('measurement', ({ code }) => {
+        // A point that has lost a value it needs comes off the plot
+        if (plotted.has(code) && !galaxyPoint(code)) {
+            removeGalaxy(code);
+            return;
+        }
         if (plotted.has(code)) {
+            persist();
             refresh();
             return;
         }

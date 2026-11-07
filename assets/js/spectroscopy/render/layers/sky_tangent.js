@@ -75,8 +75,8 @@ export function worldHalfSize(sizeDeg) {
 }
 
 // Pick candidates scattered over an elliptical patch, so that a click anywhere on a large object finds it without
-// its reach swamping a star that sits in front. Appends { code, az, alt, radiusPx: 0 } to out. No more than maxPoints.
-export function scatterPicks(out, code, basis, positionAngleDeg, majorDeg, minorDeg, stepDeg, maxPoints = 800) {
+// its reach swamping a star that sits in front. Appends { code, az, alt, radiusPx: 0, depth } to out. No more than maxPoints.
+export function scatterPicks(out, code, basis, positionAngleDeg, majorDeg, minorDeg, stepDeg, depth = 0, maxPoints = 800) {
     const step = Math.max(stepDeg, Math.sqrt((Math.PI * majorDeg * minorDeg) / maxPoints));
     const c = Math.cos(positionAngleDeg * RAD);
     const s = Math.sin(positionAngleDeg * RAD);
@@ -88,7 +88,7 @@ export function scatterPicks(out, code, basis, positionAngleDeg, majorDeg, minor
             // a runs along the position angle, b square to it, as in quadAxes
             const v = offsetVector(basis, a * s - b * c, a * c + b * s);
             const { az, alt } = vec3ToAzAlt(v[0], v[1], v[2]);
-            out.push({ code, az, alt, radiusPx: 0 });
+            out.push({ code, az, alt, radiusPx: 0, depth });
         }
     }
 }

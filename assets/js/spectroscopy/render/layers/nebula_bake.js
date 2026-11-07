@@ -278,7 +278,8 @@ function createBaker(engine, app) {
             rect: [(index % grid) / grid, Math.floor(index / grid) / grid, 1 / grid, 1 / grid],
             ready: false,
             row: 0,
-            half: 1.5   // Set by the layer before each considerSprite. Starts as a fraction, so the field holds fractions
+            half: 1.5,  // Set by the layer before each considerSprite. Starts as a fraction, so the field holds fractions
+            parallax: 0.5 // And this: parallaxFactor of its depth at this zoom
         };
         jobs.push(job);
         return job;
@@ -354,12 +355,13 @@ function createBaker(engine, app) {
         const d = forward.x * c[0] + forward.y * c[1] + forward.z * c[2];
         if (d < 0.5) return;
         const tanHalf = job.half;
-        const hv = frameTanFov / tanHalf;
+        // Further things are drawn smaller than the camera alone would have them: see core/depth.js
+        const hv = frameTanFov / (tanHalf * job.parallax);
         const hh = hv * frameAspect;
         const vx = (forward.x * r[0] + forward.y * r[1] + forward.z * r[2]) / d / tanHalf;
         const vy = (forward.x * n[0] + forward.y * n[1] + forward.z * n[2]) / d / tanHalf;
         if (Math.abs(vx) > 1 + hh || Math.abs(vy) > 1 + hv) return;
-        const across = 2 * framePxPerRad * tanHalf;
+        const across = 2 * framePxPerRad * tanHalf * job.parallax;
         const startPx = Math.max(cellPx * 1.5, 340);
         const heldPx = newest.job === job ? startPx * 0.75 : startPx;
         if (across < heldPx) return;

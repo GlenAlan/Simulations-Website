@@ -5,7 +5,7 @@ import { registerTool } from './index.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { LY_PER_PC, luminosityFromFlux } from '../../../core/phys.js';
 import { sci, sig } from '../../../core/format.js';
-import { actionRow, diagramLink, fill, para, resultLine, statusBox, toolLink } from './common.js';
+import { actionRow, diagramLink, fill, hasTab, para, resultLine, statusBox, toolLink } from './common.js';
 
 function reading(entity, t) {
     return synth.photometer(entity, t === undefined ? {} : { t });
@@ -64,7 +64,11 @@ function mount(container, api) {
                 : resultLine('No distance is known for this object'),
             ownLight ? para('Luminosity follows from L = 4πd²b, with d in metres. Brightness is how much arrives here; luminosity is how much the object gives out in all directions.') : null,
             hasFlux && !shinesByItself(entity) ? para('This is reflected sunlight, so it says how much light is bounced back this way and not how much the object gives out.') : null,
-            actionRow(go, go && !(m.T_K > 0) && go.textContent === 'Add to H-R' ? toolLink(api, 'wien', 'Wien\'s law next') : null)
+            actionRow(
+                go,
+                hasTab('hr') && !(m.T_K > 0) ? toolLink(api, 'wien', 'Wien\'s law next') : null,
+                hasTab('hubble') && !Number.isFinite(m.v_kms) ? toolLink(api, 'doppler', 'Doppler next') : null
+            )
         );
     }
 

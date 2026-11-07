@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
+import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, zonePalette } from './nebula_bake.js';
 
@@ -396,7 +397,9 @@ function embeddedStars(body, shape, frame, half, rect, out, picks) {
             bands: [v, ir, uv, xr],
             fade: [fadeLo, fadeHi, half],
             cell: [rect[0] + (x * 0.5 + 0.5) * rect[2], rect[1] + (y * 0.5 + 0.5) * rect[3]],
-            strength: body.bands
+            strength: body.bands,
+            depth: body.depth,
+            light: depthLight(body)
         });
         // What looks like a star in here has to answer a click, with the nebula it belongs to
         const { az, alt } = vec3ToAzAlt(wx, wy, wz);
@@ -467,16 +470,14 @@ const SPRITE_VERTEX = /* glsl */`
     attribute vec3 aCentre;
     attribute vec3 aR;
     attribute vec3 aN;
-    attribute float aHalf;
+    attribute vec4 aPack;
     attribute vec4 aRect;
     attribute vec3 aColA;
     attribute vec3 aColB;
     attribute vec4 aBandA;
     attribute float aBandB;
-    attribute float aMag;
-    attribute float aId;
     attribute float aReady;
-    attribute float aKind;
+    attribute float aDepth;
     varying vec2 vQ;
     varying vec2 vCell;
     varying vec3 vColA;
@@ -496,8 +497,10 @@ const SPRITE_VERTEX = /* glsl */`
         vColA = aColA;
         vColB = aColB;
         vReady = aReady;
+        float aKind = aPack.w;
+        float aMag = aPack.z;
         vKind = aKind;
-        SET_HERO(aId)
+        SET_HERO(aPack.y)
         // Faint nebulae come up as you zoom in, gently, so they don't pop: surface brightness is unchanged by
         // zoom in reality, but the sky's limiting magnitude is how this sim reveals faint objects
         float over = clamp(pow(10.0, -0.4 * (aMag - uLimitMag)), 0.0, 1.0);
@@ -506,7 +509,7 @@ const SPRITE_VERTEX = /* glsl */`
 
         // Small on screen, a nebula is a soft glow in the Milky Way, as in any wide-field photograph. It only earns its
         // full brightness and contrast as it grows. Planetaries are compact and stay jewels at any size.
-        float across = 2.0 * aHalf * uPxPerRad;
+        float across = 2.0 * aPack.x * uPxPerRad * depthP(aDepth);
         float small = 1.0 - smoothstep(26.0, 300.0, across);
         float tiny = 1.0 - smoothstep(26.0, 200.0, across);
         vGain = 1.0;
@@ -529,8 +532,9 @@ const SPRITE_VERTEX = /* glsl */`
         }
         // Radio and X-rays come from broad, smooth gas, the more so the smaller it looks
         vLod = mix(3.4, 4.8, small);
-        vec3 world = (aCentre + (aR * position.x + aN * position.y) * aHalf) * ${SKY_RADIUS.toFixed(1)};
+        vec3 world = (aCentre + (aR * position.x + aN * position.y) * aPack.x) * ${SKY_RADIUS.toFixed(1)};
         gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
+        gl_Position.xy *= depthP(aDepth);
     }`;
 
 const SPRITE_VARYINGS = /* glsl */`
@@ -560,16 +564,14 @@ export function createNebulaeLayer(engine, app) {
     const aCentre = stride(3);
     const aR = stride(3);
     const aN = stride(3);
-    const aHalf = stride(1);
+    const aPack = stride(4); // Half-size, job id, magnitude, kind: packed, as a program can only have so many attributes
     const aRect = stride(4);
     const aColA = stride(3);
     const aColB = stride(3);
     const aBandA = stride(4);
     const aBandB = stride(1);
-    const aMag = stride(1);
-    const aId = stride(1);
     const aReady = stride(1);
-    const aKind = stride(1);
+    const aDepth = stride(1);
 
     const items = [];
     const starList = [];
@@ -603,15 +605,15 @@ export function createNebulaeLayer(engine, app) {
         aCentre.set(frame.c, i * 3);
         aR.set(frame.r, i * 3);
         aN.set(frame.n, i * 3);
-        aHalf[i] = tanHalf;
+        // A dark cloud shows by what it hides, at any zoom
+        aPack.set([tanHalf, job.id, type === 'dark' ? -99 : drawMag(body), KIND_CODE[type]], i * 4);
         aRect.set(job.rect, i * 4);
         aColA.set(colours.a, i * 3);
         aColB.set(colours.b, i * 3);
-        aBandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
-        aBandB[i] = body.bands.xray;
-        aMag[i] = type === 'dark' ? -99 : body.brightness.mag; // A dark cloud shows by what it hides, at any zoom
-        aId[i] = job.id;
-        aKind[i] = KIND_CODE[type];
+        const light = depthLight(body);
+        aBandA.set([body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light], i * 4);
+        aBandB[i] = body.bands.xray * light;
+        aDepth[i] = body.depth;
         const stars = [];
         items.push({ body, job, frame, tanHalf, shown: 0, stars, bodyTan: Math.tan((body.nebula.size_deg * 0.5) * RAD) });
         embeddedStars(body, shape, frame, tanHalf, job.rect, starList, stars);
@@ -624,15 +626,13 @@ export function createNebulaeLayer(engine, app) {
     inst('aCentre', aCentre, 3);
     inst('aR', aR, 3);
     inst('aN', aN, 3);
-    inst('aHalf', aHalf, 1);
+    inst('aPack', aPack, 4);
     inst('aRect', aRect, 4);
     inst('aColA', aColA, 3);
     inst('aColB', aColB, 3);
     inst('aBandA', aBandA, 4);
     inst('aBandB', aBandB, 1);
-    inst('aMag', aMag, 1);
-    inst('aId', aId, 1);
-    inst('aKind', aKind, 1);
+    inst('aDepth', aDepth, 1);
     const readyAttr = new THREE.InstancedBufferAttribute(aReady, 1);
     readyAttr.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('aReady', readyAttr);
@@ -773,7 +773,9 @@ export function createNebulaeLayer(engine, app) {
     const sFade = new Float32Array(starCount * 3);
     const sCell = new Float32Array(starCount * 2);
     const sStrength = new Float32Array(starCount * 4);
+    const sDepth = new Float32Array(starCount);
     starList.forEach((s, i) => {
+        sDepth[i] = s.depth;
         sPos.set(s.pos, i * 3);
         sCol.set(s.col, i * 3);
         sSize[i] = s.size;
@@ -781,7 +783,7 @@ export function createNebulaeLayer(engine, app) {
         sFade.set(s.fade, i * 3);
         sCell.set(s.cell, i * 2);
         // A nebula with no strength in a band keeps its stars out of it too
-        sStrength.set([s.strength.ir, s.strength.visible, s.strength.uv, s.strength.xray], i * 4);
+        sStrength.set([s.strength.ir * s.light, s.strength.visible * s.light, s.strength.uv * s.light, s.strength.xray * s.light], i * 4);
     });
     const starGeometry = new THREE.BufferGeometry();
     starGeometry.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
@@ -791,6 +793,7 @@ export function createNebulaeLayer(engine, app) {
     starGeometry.setAttribute('aFade', new THREE.BufferAttribute(sFade, 3));
     starGeometry.setAttribute('aCell', new THREE.BufferAttribute(sCell, 2));
     starGeometry.setAttribute('aStrength', new THREE.BufferAttribute(sStrength, 4));
+    starGeometry.setAttribute('aDepth', new THREE.BufferAttribute(sDepth, 1));
     const starMaterial = skyMaterial({
         uniforms: { tAtlas: baker.atlasUniform },
         vertexShader: /* glsl */`
@@ -802,11 +805,12 @@ export function createNebulaeLayer(engine, app) {
             attribute vec3 aFade;
             attribute vec2 aCell;
             attribute vec4 aStrength;
+            attribute float aDepth;
             varying vec3 vColour;
             varying float vGlow;
             void main() {
                 // Stars only come out once the parent nebula is large enough on screen for them to read as stars
-                float fade = smoothstep(aFade.x, aFade.y, aFade.z * 2.0 * uPxPerRad);
+                float fade = smoothstep(aFade.x, aFade.y, aFade.z * 2.0 * uPxPerRad * depthP(aDepth));
                 float opacity = textureLod(tAtlas, aCell, 1.0).a;
                 float vis = aVis.x * aStrength.y * uBandW[2] * (1.0 - 0.93 * opacity);
                 float ir = aVis.y * aStrength.x * uBandW[1];
@@ -816,6 +820,7 @@ export function createNebulaeLayer(engine, app) {
                     + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr;
                 vGlow = fade;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position.xy *= depthP(aDepth);
                 float dprScale = clamp(uViewport.y / 900.0, 0.8, 2.0);
                 gl_PointSize = (vis + ir + uv + xr) * fade > 0.01 ? (aSize * 1.5 + sqrt(vis + ir + uv + xr) * aSize) * dprScale : 0.0;
             }`,
@@ -851,6 +856,7 @@ export function createNebulaeLayer(engine, app) {
                 }
                 const f = item.frame;
                 item.job.half = item.tanHalf;
+                item.job.parallax = parallaxFactor(item.body.depth, frame.fov);
                 baker.considerSprite(item.job, f.c, f.r, f.n);
             }
             if (changed) readyAttr.needsUpdate = true;
@@ -867,18 +873,19 @@ export function createNebulaeLayer(engine, app) {
                 const { body, tanHalf, bodyTan, stars: inside, frame: f } = items[i];
                 const strength = body.bands[frame.band] || 0;
                 if (strength <= 0.01) continue;
-                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: bodyTan * pxPerRad * 1.05 });
-                const across = 2 * tanHalf * frame.pxPerRad;
+                const P = parallaxFactor(body.depth, frame.fov);
+                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: bodyTan * pxPerRad * P * 1.05, depth: body.depth });
+                const across = 2 * tanHalf * frame.pxPerRad * P;
                 for (let j = 0; j < inside.length; j++) {
                     const s = inside[j];
-                    if (across > s.fadeLo && s.shows[frame.band] > 0.01) out.push({ code: body.code, az: s.az, alt: s.alt, radiusPx: 0 });
+                    if (across > s.fadeLo && s.shows[frame.band] > 0.01) out.push({ code: body.code, az: s.az, alt: s.alt, radiusPx: 0, depth: body.depth });
                 }
                 const d = forward.x * f.c[0] + forward.y * f.c[1] + forward.z * f.c[2];
                 if (d <= 0) continue;
                 const off = Math.tan(Math.acos(Math.min(1, d)));
                 if (off < bodyTan * 1.05) {
                     if (!viewAt) viewAt = vec3ToAzAlt(forward.x, forward.y, forward.z);
-                    out.push({ code: body.code, az: viewAt.az, alt: viewAt.alt, radiusPx: (bodyTan * 1.05 - off) * pxPerRad });
+                    out.push({ code: body.code, az: viewAt.az, alt: viewAt.alt, radiusPx: (bodyTan * 1.05 - off) * pxPerRad * P, depth: body.depth });
                 }
             }
             return out;

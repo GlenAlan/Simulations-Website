@@ -14,7 +14,9 @@ export function createRoguePlanetsLayer(engine, app) {
     const n = bodies.length;
     const centres = new Float32Array(n * 3);
     const look = new Float32Array(n * 3);   // Infrared glow, size (0..1), warmth (0..1)
+    const depths = new Float32Array(n);
     bodies.forEach((body, i) => {
+        depths[i] = body.depth;
         const v = azAltToVec3(body.sky.az, body.sky.alt);
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         const rogue = body.rogue_planet || {};
@@ -28,6 +30,7 @@ export function createRoguePlanetsLayer(engine, app) {
     geometry.setIndex([0, 1, 2, 0, 2, 3]);
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aLook', new THREE.InstancedBufferAttribute(look, 3));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -41,6 +44,7 @@ export function createRoguePlanetsLayer(engine, app) {
             ${BAND_GLSL}
             attribute vec3 aCentre;
             attribute vec3 aLook;
+            attribute float aDepth;
             uniform float uDpr;
             varying vec2 vPx;
             varying vec3 vColour;
@@ -67,6 +71,7 @@ export function createRoguePlanetsLayer(engine, app) {
                 vColour = mix(uBandTint[1], vec3(1.0, 0.52, 0.22), 0.35 + 0.5 * aLook.z);
                 vPx = position.xy * vQuad;
                 vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                clip.xy *= depthP(aDepth);
                 clip.xy += vPx * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
             }`,

@@ -13,6 +13,7 @@ import { bus, select, setBand, setLayer } from '../core/state.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
 import { isValidCode } from '../core/rng.js';
 import { limitingMag, angularSeparation, MIN_FOV, MAX_FOV } from '../core/sky.js';
+import { drawMag, parallaxFactor } from '../core/depth.js';
 
 const RECENT_MAX = 10;
 const SUGGEST_MAX = 8;
@@ -130,6 +131,14 @@ function widestFovShowing(mag) {
 function fovShowingMag(mag, fov) {
     if (!Number.isFinite(mag) || mag > limitingMag(MIN_FOV)) return fov;
     return Math.min(fov, widestFovShowing(mag + MAG_MARGIN));
+}
+
+// A field of view worked out as if the object were at depth 0, made tight enough for one at its real depth, which is drawn
+// smaller. The factor itself depends on the zoom, but so gently that a few rounds settle it.
+function fovAtDepth(fov, depth) {
+    let at = fov;
+    for (let i = 0; i < 4; i++) at = fov * parallaxFactor(depth, at);
+    return at;
 }
 
 function strongestBand(body) {
@@ -252,16 +261,16 @@ export function initGoto(app) {
         }
         const frame = engine.currentFrame();
         const distances = new Map();
-        const consider = (code, az, alt) => {
-            const p = engine.project(az, alt);
+        const consider = (code, az, alt, depth) => {
+            const p = engine.project(az, alt, depth);
             if (p && p.onScreen) distances.set(code, Math.hypot(p.x - frame.width / 2, p.y - frame.height / 2));
         };
         universe.bodies.forEach((body) => {
-            if (engine.bodyShows(body) && !isFaintInBand(body)) consider(body.code, body.sky.az, body.sky.alt);
+            if (engine.bodyShows(body) && !isFaintInBand(body)) consider(body.code, body.sky.az, body.sky.alt, body.depth);
         });
         PICK_LAYERS.forEach((id) => {
             const layer = engine.getLayer(id);
-            if (layer && layer.picks) (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt));
+            if (layer && layer.picks) (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.depth));
         });
         return [...distances.keys()].sort((a, b) => distances.get(a) - distances.get(b));
     }
@@ -458,23 +467,23 @@ export function initGoto(app) {
         if (!body.visual_sep_deg) return widest;
         const { height, dpr } = engine.currentFrame();
         const sep = path === 'component' ? Math.min(body.visual_sep_deg, CLOSEST_PAIR_DEG) : body.visual_sep_deg;
-        return Math.min(widest, (sep * height * dpr) / SPLIT_PX);
+        return Math.min(widest, fovAtDepth((sep * height * dpr) / SPLIT_PX, body.depth));
     }
 
     function frameFor({ body, path }) {
         // fov is vertical, so a portrait canvas needs a wider one to fit the object across
         const narrowest = Math.min(1, engine.camera.aspect || 1);
         const span = skySpanDeg(body);
-        const framed = span > 0 ? (span * FRAME_MARGIN) / narrowest : pointFov(body, path);
+        const framed = span > 0 ? fovAtDepth((span * FRAME_MARGIN) / narrowest, body.depth) : pointFov(body, path);
         const fov = Math.max(MIN_FOV, Math.min(MAX_FOV, framed));
         const shows = engine.bodyShows(body, limitingMag(fov) - MAG_MARGIN);
-        return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingMag(body.brightness && body.brightness.mag, fov) };
+        return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingMag(body.brightness && drawMag(body), fov) };
     }
 
     function memberFov(body, member) {
-        const fov = Math.max(MIN_FOV, body.cluster.radius_deg * 1.2);
+        const fov = Math.max(MIN_FOV, fovAtDepth(body.cluster.radius_deg * 1.2, body.depth));
         // Only visible light has a brightness limit: see engine.bodyShows
-        return app.band === 'visible' ? fovShowingMag(member.brightness && member.brightness.mag, fov) : fov;
+        return app.band === 'visible' ? fovShowingMag(member.brightness && drawMag(member), fov) : fov;
     }
 
     async function fly(resolved, id) {

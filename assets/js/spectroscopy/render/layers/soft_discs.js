@@ -17,17 +17,20 @@ export function createSoftDiscLayer(engine, app, { id, kinds, sizeDeg, colour, o
     const sizes = new Float32Array(n);
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
+    const depths = new Float32Array(n);
     bodies.forEach((body, i) => {
         const v = azAltToVec3(body.sky.az, body.sky.alt);
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         sizes[i] = sizeDeg(body);
         bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
         bandB[i] = body.bands.xray;
+        depths[i] = body.depth;
     });
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aSize', new THREE.InstancedBufferAttribute(sizes, 1));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -38,6 +41,7 @@ export function createSoftDiscLayer(engine, app, { id, kinds, sizeDeg, colour, o
             attribute float aSize;
             attribute vec4 aBandA;
             attribute float aBandB;
+            attribute float aDepth;
             varying vec2 vUv;
             varying float vAmount;
             void main() {
@@ -48,6 +52,7 @@ export function createSoftDiscLayer(engine, app, { id, kinds, sizeDeg, colour, o
                 float half_ = tan(radians(aSize) * 0.5) * length(c.xyz);
                 c.xy += position.xy * half_;
                 gl_Position = projectionMatrix * c;
+                gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}

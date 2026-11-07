@@ -47,6 +47,7 @@ export const app = {
     selected: null,   // resolved selection: { entity, body, path } or null
     layers: {
         homePlanets: true, // On by default (spec section 4); every other layer starts off
+        backgroundStars: false, // Scenery that can't be selected. Off, so that every star on show can be clicked
         galacticBand: false,
         grid: false,
         labels: false,

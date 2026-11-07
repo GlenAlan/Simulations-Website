@@ -6,7 +6,7 @@ import { Rng } from '../../core/rng.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize } from './sky_tangent.js';
 
-// sources: [{ az, alt, positionAngleDeg, spanDeg, strength, seed }]; spanDeg is the whole length, tip to tip
+// sources: [{ az, alt, positionAngleDeg, spanDeg, strength, seed, depth }]; spanDeg is the whole length, tip to tip
 export function createRadioLobes(engine, sources) {
     const n = sources.length;
     const geometry = new THREE.InstancedBufferGeometry();
@@ -17,7 +17,9 @@ export function createRadioLobes(engine, sources) {
     const vs = new Float32Array(n * 3);
     const params = new Float32Array(n * 4);
     const shape = new Float32Array(n * 4);
+    const depths = new Float32Array(n);
     sources.forEach((src, i) => {
+        depths[i] = src.depth;
         const rng = new Rng(`lobes:${src.seed}`);
         const basis = tangentBasis(src.az, src.alt);
         // The quad is square; the jet axis runs along u
@@ -34,6 +36,7 @@ export function createRadioLobes(engine, sources) {
     geometry.setAttribute('aV', new THREE.InstancedBufferAttribute(vs, 3));
     geometry.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 4));
     geometry.setAttribute('aShape', new THREE.InstancedBufferAttribute(shape, 4));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -44,6 +47,7 @@ export function createRadioLobes(engine, sources) {
             attribute vec3 aV;
             attribute vec4 aParams;
             attribute vec4 aShape;
+            attribute float aDepth;
             varying vec2 vP;
             varying vec4 vParams;
             varying vec4 vShape;
@@ -53,6 +57,7 @@ export function createRadioLobes(engine, sources) {
                 vShape = aShape;
                 vec3 world = aCentre + position.x * aU + position.y * aV;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
+                gl_Position.xy *= depthP(aDepth);
                 if (uBandW[0] < 0.001) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
             }`,
         fragmentShader: /* glsl */`

@@ -9,6 +9,7 @@ import { el, markerIcon } from '../../plot2d.js';
 import { para, resultLine, steps } from './common.js';
 
 const NEUTRON_STAR_LIMIT = 3;    // Solar masses: the most a neutron star can be
+const LOPSIDED_ECC = 0.1;        // Less oval than this, the swing still looks even and the sums are within a couple of per cent
 
 function valueErr(value, err, unit) {
     const step = 10 ** Math.floor(Math.log10(Math.max(err, 1e-9)));
@@ -17,11 +18,12 @@ function valueErr(value, err, unit) {
     return `${round(value)} ± ${round(Math.max(err, step))} ${unit}`;
 }
 
-function periodTable(stars, shapes) {
-    const rows = stars.map((star, s) => el('tr', {},
-        el('td', {}, markerIcon(shapes[s % shapes.length], { hollow: true }), ` ${star.code}`),
-        el('td', { text: star.fit ? valueErr(star.fit.period_days, star.fit.err_period_days, 'days') : 'Not yet' }),
-        el('td', { text: star.fit ? valueErr(star.fit.K_kms, star.fit.err_K_kms, 'km/s') : 'Not yet' })));
+function periodTable(stars) {
+    const blank = (star) => (star.tooFast ? 'Too fast here' : 'Not yet');
+    const rows = stars.map((star) => el('tr', {},
+        el('td', {}, markerIcon(star.shape, { hollow: true }), ` ${star.code}`),
+        el('td', { text: star.fit ? valueErr(star.fit.period_days, star.fit.err_period_days, 'days') : blank(star) }),
+        el('td', { text: star.fit ? valueErr(star.fit.K_kms, star.fit.err_K_kms, 'km/s') : blank(star) })));
     return el('table', { class: 'spectro-tool-table' },
         el('thead', {}, el('tr', {},
             el('th', { scope: 'col', text: 'Star' }),
@@ -57,12 +59,20 @@ function blackHoleSums(star, companionMass) {
     ];
 }
 
-function pairSums(a, b) {
+// A star's mass goes as P (K1 + K2)^2 times the other star's K, so its uncertainty follows from theirs
+function massError(mass, P, errP, sum, otherK, errOtherK, errOwnK) {
+    return mass * Math.hypot(errP / P, (2 / sum) * errOwnK, (2 / sum + 1 / otherK) * errOtherK);
+}
+
+function pairSums(a, b, oval) {
     const P = 0.5 * (a.fit.period_days + b.fit.period_days);
+    const errP = 0.5 * Math.hypot(a.fit.err_period_days, b.fit.err_period_days);
     const seconds = P * 86400;
     const K1 = a.fit.K_kms;
     const K2 = b.fit.K_kms;
     const m = pairMasses(P, K1, K2);
+    const err1 = massError(m.m1_Msun, P, errP, K1 + K2, K2, b.fit.err_K_kms, a.fit.err_K_kms);
+    const err2 = massError(m.m2_Msun, P, errP, K1 + K2, K1, a.fit.err_K_kms, b.fit.err_K_kms);
     return [
         el('h4', { class: 'spectro-tool-heading', text: `Masses of ${a.code} and ${b.code}` }),
         steps([
@@ -72,9 +82,10 @@ function pairSums(a, b) {
             `Kepler's third law: r³ ÷ T² = GM ÷ 4π², so M = 4π²r³ ÷ GT² = ${sig(m.total_Msun, 3)} M☉ together`,
             `The heavier star moves less: mass ratio = ${sig(K2, 3)} ÷ ${sig(K1, 3)} = ${sig(m.ratio, 3)}`
         ]),
-        resultLine(`${a.code}: ${sig(m.m1_Msun, 2)} M☉, ${b.code}: ${sig(m.m2_Msun, 2)} M☉`, true),
-        para('These are minimum masses, for a circular orbit seen edge on. Only motion along your line of sight shows, so if the orbit is tilted the true masses are larger: speeds look smaller by sin i, and masses by sin³ i.')
-    ];
+        resultLine(`${a.code}: ${valueErr(m.m1_Msun, err1, 'M☉')}, ${b.code}: ${valueErr(m.m2_Msun, err2, 'M☉')}`, true),
+        para('These are minimum masses, for a circular orbit seen edge on. Only motion along your line of sight shows, so if the orbit is tilted the true masses are larger: speeds look smaller by sin i, and masses by sin³ i.'),
+        oval ? para('This swing is lopsided, because the orbit is oval and not a circle. These sums take no account of that, so here they come out somewhat too high.') : null
+    ].filter(Boolean);
 }
 
 // Pairs in which both stars are followed and share a period
@@ -86,25 +97,46 @@ function followedPairs(body, stars) {
         if (!orbit.a || !orbit.b || orbit.a.length !== 1 || orbit.b.length !== 1) return;
         const a = byCode.get(body.stars[orbit.a[0]].code);
         const b = byCode.get(body.stars[orbit.b[0]].code);
-        if (a && b && a.fit && b.fit && Math.abs(a.fit.period_days / b.fit.period_days - 1) < 0.05) out.push([a, b]);
+        if (a && b && a.fit && b.fit && Math.abs(a.fit.period_days / b.fit.period_days - 1) < 0.05) out.push([a, b, orbit]);
     });
     return out;
 }
 
-export function orbitResults({ resolved, stars, shapes, covered, span }) {
+function namesOf(stars) {
+    const codes = stars.map((s) => s.code);
+    return codes.length < 2 ? codes.join('') : `${codes.slice(0, -1).join(', ')} and ${codes[codes.length - 1]}`;
+}
+
+export function orbitResults({ resolved, stars, covered, span, line, sampleGap }) {
     const { body } = resolved;
     const any = stars.some((s) => s.fit);
+    const tooFast = stars.filter((s) => s.tooFast);
     const items = [];
-    if (!any) {
-        items.push(para(covered
-            ? `No regular swing shows in ${sig(span, 3)} days. An orbit slower than this looks like a slow drift, so try a longer time.`
-            : 'The period appears once more than one full swing has gone by.'));
+    if (!any && !tooFast.length) {
+        const slow = stars.every((s) => s.tooSlow);
+        items.push(para(!covered
+            ? 'The period appears once more than one full swing has gone by.'
+            : slow
+                ? `No regular swing shows in ${sig(span, 3)} days. An orbit slower than this looks like a slow drift, so try a longer time.`
+                : 'No regular swing can be measured here. These lines are too broad or too faint for it to stand out from their width.'));
         return items;
     }
-    items.push(periodTable(stars, shapes));
-    const waiting = stars.some((s) => !s.fit);
-    if (waiting && covered) {
-        items.push(para('A star marked Not yet is moving too slowly to show a full swing in this time. Try a longer time, if the list offers one.'));
+    items.push(periodTable(stars));
+    // Readings a line apart in time can't follow a swing faster than that, and would fit a false, slower one. So there is no reading.
+    if (tooFast.length) {
+        const verb = tooFast.length > 1 ? 'go round too fast' : 'goes round too fast';
+        items.push(para(`${namesOf(tooFast)} ${verb} to follow at this time scale. Readings here are ${sig(sampleGap, 2)} days apart, so any period read from them would be false. Choose a shorter time to measure ${tooFast.length > 1 ? 'them' : 'it'}.`));
+    }
+    const waiting = stars.filter((s) => !s.fit && !s.tooFast);
+    if (waiting.length && covered) {
+        const slow = waiting.filter((s) => s.tooSlow);
+        const hard = waiting.filter((s) => !s.tooSlow);
+        if (slow.length) items.push(para(`${namesOf(slow)} ${slow.length > 1 ? 'are' : 'is'} moving too slowly to show a full swing in this time. Try a longer time, if the list offers one.`));
+        if (hard.length) items.push(para(`The lines of ${namesOf(hard)} are too broad or too faint for ${hard.length > 1 ? 'their swings' : 'its swing'} to stand out from their width.`));
+    }
+    const elsewhere = line ? stars.filter((s) => s.fit && s.line !== line) : [];
+    if (elsewhere.length) {
+        items.push(para(`${namesOf(elsewhere)} ${elsewhere.length > 1 ? 'do' : 'does'} not show this line clearly, so ${elsewhere.length > 1 ? 'their figures come from other lines' : `its figures come from another line, at ${elsewhere[0].line.rest_nm.toFixed(1)} nm`}.`));
     }
 
     if (body.black_hole) {
@@ -117,7 +149,7 @@ export function orbitResults({ resolved, stars, shapes, covered, span }) {
         return items;
     }
     const pairs = followedPairs(body, stars);
-    pairs.forEach(([a, b]) => items.push(...pairSums(a, b)));
+    pairs.forEach(([a, b, orbit]) => items.push(...pairSums(a, b, orbit.ecc >= LOPSIDED_ECC)));
     if (!pairs.length && stars.length === 1) {
         items.push(para('Show both stars of the pair, and masses can be worked out from their two swings.'));
     }
