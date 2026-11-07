@@ -407,8 +407,9 @@ export function createCometsLayer(engine, app) {
                 particles.geometry.setDrawRange(0, Math.floor(total * share));
             }
         },
-        // A comet can be clicked anywhere along its tail, not only on its head: all across the width its grains drift
-        // over, at every zoom, as they look like stars when zoomed right in. Only called on a click or a hover
+        // A comet can be clicked anywhere it can be seen, not only on its head: all across the width its dust grains drift
+        // over, along the straight ion tail, and in ultraviolet anywhere in its great hydrogen cloud. At every zoom, as the
+        // grains look like stars when zoomed right in. Only called on a click or a hover
         picks(frame) {
             const list = [];
             comets.forEach(({ body, basis, curve }) => {
@@ -417,15 +418,17 @@ export function createCometsLayer(engine, app) {
                 if (frame.band === 'visible' && drawMag(body) > limitingMag(frame.fov) + 0.6) return;
                 const { c, t, n } = basis;
                 const tail = body.comet.tail_deg;
-                const step = 30 / ((frame.pxPerRad * DEG * parallaxFactor(body.depth, frame.fov)) / frame.dpr);
-                const push = (x, y) => {
+                const pxPerDeg = (frame.pxPerRad * DEG * parallaxFactor(body.depth, frame.fov)) / frame.dpr;
+                const step = 30 / pxPerDeg;
+                const push = (x, y, radiusPx = 0) => {
                     const dx = x * DEG;
                     const dy = y * DEG;
                     const sky = vec3ToAzAlt(c[0] + t[0] * dx + n[0] * dy, c[1] + t[1] * dx + n[1] * dy, c[2] + t[2] * dx + n[2] * dy);
-                    list.push({ code: body.code, az: sky.az, alt: sky.alt, radiusPx: 0, depth: body.depth });
+                    list.push({ code: body.code, az: sky.az, alt: sky.alt, radiusPx, depth: body.depth });
                 };
                 const along = Math.max(step, tail / 40);
-                for (let x = along; x <= tail; x += along) {
+                // The dust tail, out to where it fades (the glow's shader draws it to 1.6 of 0.82 of the tail, faintly)
+                for (let x = along; x <= tail * 1.1; x += along) {
                     const xd = x / (tail * 0.82);
                     // As far out as the grains go: see the particles' shader
                     const halfWidth = tail * (0.012 + 0.11 * xd) * 1.7;
@@ -433,6 +436,13 @@ export function createCometsLayer(engine, app) {
                     const middle = curve * tail * 0.3 * xd * xd;
                     for (let y = -halfWidth; y <= halfWidth + across * 0.5; y += across) push(x, middle + y);
                 }
+                // The ion tail goes straight out from the head, where a strongly curved dust tail has left it, in visible
+                // light and ultraviolet; infrared shows only the dust
+                if (frame.band === 'visible' || frame.band === 'uv') {
+                    for (let x = along; x <= tail * 1.1; x += along) push(x, 0);
+                }
+                // In ultraviolet the hydrogen cloud is far bigger than the rest, and plainly part of the comet
+                if (frame.band === 'uv') push(0, 0, Math.max(body.comet.tail_deg * 0.85, 2.4) * 0.85 * pxPerDeg);
             });
             return list;
         },

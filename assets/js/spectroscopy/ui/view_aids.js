@@ -215,7 +215,8 @@ export function initViewAids(app) {
 
     return {
         update(frame) {
-            // Not during the start of a zoom into a system either, so the bar doesn't change width under the pointer
+            // Kept through the start of a zoom into a system, where the sky is still on show, so that the bar doesn't change
+            // width under the pointer and then change back if the zoom settles out again
             const showReset = (frame.view === 'sky' || opening()) && frame.fov < RESET_BELOW_FOV;
             if (showReset) reset.hidden = false;
             else hide(reset);

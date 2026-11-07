@@ -25,7 +25,7 @@ import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
 import { BANDS, bandIndex } from '../core/bands.js';
 import { azAltToVec3, DEFAULT_VIEW, MIN_FOV, MAX_FOV, limitingMag } from '../core/sky.js';
-import { parallaxFactor, parallaxLog } from '../core/depth.js';
+import { parallaxFactor, parallaxLog, drawMag } from '../core/depth.js';
 import { bandSkyBrightness } from '../data/band_table.js';
 import { sharedUniforms } from './shared.js';
 
@@ -42,6 +42,8 @@ const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a
 const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
 const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
+const PICK_SEEN_MIN = 0.12;     // Drawn fainter than this (see seenAmount), a point can't be made out, so it can't be clicked
+const PICK_FAINT_REACH = 0.25;  // The faintest that can be clicked must be clicked this near, as a share of the usual reach
 const CLUSTER_INSIDE = 0.45;    // A cluster's radius, as a share of the view's smaller side, once you are in among its stars
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
 const ANCHOR_HOLD_PX = 8;       // A zoom keeps the depth it found under the pointer until the pointer moves this far...
@@ -91,6 +93,12 @@ const FULLSCREEN_VERT = /* glsl */`
 
 function easeInOut(x) {
     return x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2;
+}
+
+// smoothstep(0, 1, x)
+function smooth01(x) {
+    const t = Math.max(0, Math.min(1, x));
+    return t * t * (3 - 2 * t);
 }
 
 // The lowest a user's view can go at a field of view: the bottom edge sits a little below the horizon, by 8 degrees
@@ -1097,6 +1105,16 @@ export function createEngine(canvas) {
         return row[band];
     }
 
+    // How well a body can be seen, 0 to 1, as its layer draws it. A point fades in from nothing over its first two magnitudes
+    // (stars.js), and dims towards the horizon; a comet in visible light comes in as the zoom reaches its magnitude
+    // (comets.js). What can barely be seen still answers a click, but only right on it, and what can't be seen doesn't.
+    function seenAmount(body, glow, lim) {
+        if (body.comet && app.band === 'visible') return smooth01((lim - drawMag(body) + 0.6) / 1.2);
+        const m = 1.0857 * Math.log(Math.max(glow, MIN_GLOW)) + 3.25;
+        const up = Math.max(Math.sin(body.sky.alt * RAD), 0);
+        return smooth01(m / 2.2) * Math.exp(-0.05 / (up + 0.05));
+    }
+
     // The code of the object nearest a screen position (CSS pixels), or null. Bodies must show in the current band
     // at this zoom. Layers can add candidates (cluster members, say) through layer.picks(frame). skip(code, radiusPx)
     // can rule things out, to ask what else is near a thing.
@@ -1107,12 +1125,14 @@ export function createEngine(canvas) {
         let bestScore = Infinity;
         const lim = limitingMag(view.fov);
         const pxPerDeg = (height * 0.5 * RAD * lens.zoom) / Math.tan(view.fov * RAD * 0.5);
-        const consider = (code, az, alt, radiusPx, bonusPx, depth) => {
+        // A click or a hover, as against a question about what's round a thing: only what can be seen
+        const byEye = maxPx <= PICK_RADIUS_TOUCH;
+        const consider = (code, az, alt, radiusPx, bonusPx, depth, reach = maxPx) => {
             const p = project(az, alt, depth);
             // Something with a size can be on show while its middle is off the edge of the view
             if (!p || (!p.onScreen && !radiusPx)) return;
             const dist = Math.hypot(p.x - x, p.y - y);
-            if (dist > maxPx + radiusPx || (skip && skip(code, radiusPx))) return;
+            if (dist > reach + radiusPx || (skip && skip(code, radiusPx))) return;
             const score = pickScore(dist, radiusPx, bonusPx);
             if (score < bestScore) {
                 bestScore = score;
@@ -1128,7 +1148,13 @@ export function createEngine(canvas) {
                     const radiusPx = extendedRadiusDeg(body) * pxPerDeg * parallaxFactor(depth, view.fov);
                     // Inside an open cluster the dark between its stars is just sky: only the stars answer a click
                     if (body.cluster && body.cluster.type === 'open' && radiusPx > CLUSTER_INSIDE * Math.min(width, height)) continue;
-                    consider(body.code, body.sky.az, body.sky.alt, radiusPx, brightnessBonusPx(body, lim), depth);
+                    let reach = maxPx;
+                    if (byEye && (radiusPx <= 12 || body.comet)) {
+                        const seen = seenAmount(body, bodyGlow(body, app.band) * zoomGain(lim), lim);
+                        if (seen < PICK_SEEN_MIN) continue;
+                        reach = maxPx * (PICK_FAINT_REACH + (1 - PICK_FAINT_REACH) * smooth01((seen - PICK_SEEN_MIN) * 2));
+                    }
+                    consider(body.code, body.sky.az, body.sky.alt, radiusPx, brightnessBonusPx(body, lim), depth, reach);
                 }
             }
         }

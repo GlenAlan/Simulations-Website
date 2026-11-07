@@ -443,13 +443,13 @@ export function initSystemView(app) {
         cam.azT = az1;
         cam.el = HOME_EL;
         cam.elT = HOME_EL;
-        cam.zoom = 1;
+        cam.zoom = path.endZoom || 1;
         cam.focus.set(0, 0, 0);
         cam.target = null;
         cam.flight = null;
         fitSmooth = fit;
-        cam.dist = fit;
-        cam.distT = fit;
+        cam.dist = fit * cam.zoom;
+        cam.distT = cam.dist;
 
         // Line the faint sky's catalogue up with the line of sight, so what's behind the star is what was behind it
         const skyQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(star.alt * RAD, -star.az * RAD, 0, 'YXZ'));
@@ -522,6 +522,15 @@ export function initSystemView(app) {
         const angle = holes && holes.companionAngle ? holes.companionAngle(model.code) : null;
         path.d0 = fit * HOLE_APPROACH;
         path.skyLog = Math.log(HOLE_SKY_ZOOM);
+        // Exactly: the hole starts as big as the sky draws its disc, and on the way in it's never drawn smaller than that,
+        // so zooming in can't shrink it. Its companion may then be off to the side on arrival; zooming out brings it in.
+        const discDeg = holes && holes.discDeg ? holes.discDeg(model.code) : 0;
+        if (discDeg > 0) {
+            const frame = engine.currentFrame();
+            const skyPx = (discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(model.body.depth || 0, savedView.fov)) / Math.tan(savedView.fov * RAD * 0.5);
+            path.d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
+            path.endZoom = Math.max(minDistance() / fit, Math.min(1, path.d0 / (HOLE_SKY_ZOOM * fit)));
+        }
         if (angle === null) return;
         const [hole, star] = positions.stars;
         const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));

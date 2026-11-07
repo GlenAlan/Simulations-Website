@@ -473,7 +473,12 @@ function initContextBar(app) {
         app.system.enter(code, { onDone: planet ? () => app.system.focusPlanet(planet) : undefined });
     });
     back.addEventListener('click', () => { if (app.system) app.system.exit(); });
-    here.addEventListener('click', () => { if (app.systemCode) select(app.systemCode); });
+    // It hides as the panel it opens comes up, so the focus goes on into that panel
+    here.addEventListener('click', () => {
+        if (!app.systemCode) return;
+        select(app.systemCode);
+        app.drawer.focusContent();
+    });
 
     function panelShowsSystem() {
         const shown = app.selected;
@@ -485,7 +490,7 @@ function initContextBar(app) {
         const inSystem = app.view === 'system' && !app.system.isOpening();
         const code = inSystem ? null : systemCodeFor(app, app.selected);
         // Hiding the button that has focus would drop it to the page: pass it to the one taking its place
-        const held = [enter, back].find((b) => b === document.activeElement);
+        const held = [enter, back, here].find((b) => b === document.activeElement);
         readout.hidden = inSystem;
         back.hidden = !inSystem;
         enter.hidden = !code;
