@@ -8,6 +8,7 @@
 import { app, select } from '../core/state.js';
 import { codeHtml, escapeHtml, glossaryHtml } from '../content/glossary.js';
 import { safeInfo } from './drawer.js';
+import { toWidestSplit } from './spectrum/tools/orbit_clock.js';
 
 // Six capitals and digits on their own. Only those that really name an object in this sky become links.
 const CODE_TOKEN = /(?<![\p{L}\p{N}])[A-Z0-9]{6}(?![\p{L}\p{N}])/gu;
@@ -34,7 +35,8 @@ export function richHtml(text, seen = null) {
     return html + plain(source.slice(last));
 }
 
-// The button that does the obvious next thing. next = { label, tab, tool? } from content/info.js.
+// The button that does the obvious next thing. next = { label, tab, tool?, split? } from content/info.js. split: a multiple
+// star's clock goes to when its lines are furthest apart, and plays, as the tool opens.
 export function nextButton(next) {
     const button = element('button', 'spectro-next');
     button.type = 'button';
@@ -42,6 +44,10 @@ export function nextButton(next) {
     arrow.setAttribute('aria-hidden', 'true');
     button.append(element('span', '', next.label), arrow);
     button.addEventListener('click', () => {
+        const body = app.selected && app.selected.body;
+        if (next.split && body && body.stars && body.orbits && body.orbits.length) {
+            toWidestSplit(body, !(app.settings && app.settings.reduceMotion));
+        }
         // This button is about to be hidden, which would drop keyboard focus on the page itself, so focus moves on with it
         if (next.tool && app.spectrumPanel && app.spectrumPanel.openTool(next.tool, { focus: true })) return;
         app.drawer.selectTab(next.tab);

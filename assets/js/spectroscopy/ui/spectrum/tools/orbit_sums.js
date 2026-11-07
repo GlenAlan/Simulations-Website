@@ -154,7 +154,7 @@ export function orbitResults({ resolved, stars, covered, span, line, sampleGap }
         items.push(para('Show both stars of the pair, and masses can be worked out from their two swings.'));
     }
     if (body.pairs && stars.length === 4) {
-        items.push(para('Four sets of lines, with two different periods: these are two close pairs. Use Stars shown to look at one pair at a time.'));
+        items.push(para('Four sets of lines, with two different periods: these are two close pairs. Use the Stars tool to look at one pair at a time.'));
     }
     return items;
 }

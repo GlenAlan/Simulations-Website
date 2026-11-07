@@ -619,7 +619,7 @@ function createSpectrumPanel(app, container) {
             make('span', { class: 'spectro-tool-name', text: words.short, 'data-name': words.short })
         ]);
         const body = make('div', { class: 'spectro-tool-body' });
-        const panel = make('div', { id: panelId, class: 'spectro-tool-panel', role: 'region', 'aria-label': tool.label, tabIndex: -1, hidden: true }, [body]);
+        const panel = make('div', { id: panelId, class: 'spectro-tool-panel', role: 'region', 'aria-label': words.short, tabIndex: -1, hidden: true }, [body]);
         row = { tool, words, chip, panel, body, instance: null, open: false, wanted: false };
         const thisRow = row;
         chip.addEventListener('click', () => {

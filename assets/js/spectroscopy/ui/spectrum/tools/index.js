@@ -61,7 +61,16 @@ export function toolWords(tool) {
 
 // ---------- Words in text that name a tool, as buttons that go there ----------
 
+// Text names a tool as its button does, followed by "tool" ("the Temperature tool"), so that the name can't be mistaken for a
+// heading or a row of figures that happens to share the word. The button is the name alone, with the dock's mark. The old
+// names are still understood, for words written before the tools were renamed.
+const BY_NAME = ['wien', 'doppler', 'line-zoom', 'photometer', 'time-series', 'stars-shown', 'pulse-timing', 'subtract-star']
+    .map((tool) => ({ phrase: `${words(tool).short} tool`, button: words(tool).short, tool }));
 const NAMED = [
+    ...BY_NAME,
+    { phrase: 'Light curve', tool: 'light-curve' },
+    { phrase: 'Press play in its panel', tool: 'light-curve' },
+    { phrase: 'Open the Spectrum tab', tab: 'spectrum' },
     { phrase: 'the Wien tool', tool: 'wien' },
     { phrase: 'Wien tool', tool: 'wien' },
     { phrase: 'the Doppler tool', tool: 'doppler' },
@@ -71,11 +80,8 @@ const NAMED = [
     { phrase: 'Photometer', tool: 'photometer' },
     { phrase: 'Time series', tool: 'time-series' },
     { phrase: 'Stars shown', tool: 'stars-shown' },
-    { phrase: 'Light curve', tool: 'light-curve' },
-    { phrase: 'Press play in its panel', tool: 'light-curve' },
     { phrase: 'Pulse timing', tool: 'pulse-timing' },
-    { phrase: 'Subtract star', tool: 'subtract-star' },
-    { phrase: 'Open the Spectrum tab', tab: 'spectrum' }
+    { phrase: 'Subtract star', tool: 'subtract-star' }
 ];
 const NAMED_PATTERN = new RegExp(`\\b(${NAMED.map((n) => n.phrase).join('|')})\\b`, 'g');
 
@@ -103,7 +109,7 @@ export function linkToolNames(root, hasTool) {
             button.type = 'button';
             button.className = 'spectro-tool-link';
             const tool = named.tool ? words(named.tool) : null;
-            // The text keeps its own words, which name the law; the mark is the one on the tool's button in the dock
+            // The name and the mark are the ones on the tool's button in the dock
             if (tool && tool.icon) {
                 const mark = document.createElement('span');
                 mark.className = `icon solid ${tool.icon}`;
@@ -111,10 +117,13 @@ export function linkToolNames(root, hasTool) {
                 button.appendChild(mark);
                 button.title = `${tool.short}, in the Spectrum tab`;
             }
-            button.appendChild(document.createTextNode(match[1]));
+            const shown = named.button || match[1];
+            button.appendChild(document.createTextNode(shown));
             if (named.tool) button.dataset.spectroTool = named.tool;
             else button.dataset.spectroTab = named.tab;
             parts.append(button);
+            // "tool", after the name, stays in the sentence
+            if (shown !== match[1]) parts.append(match[1].slice(shown.length));
             last = match.index + match[1].length;
             changed = true;
         }
