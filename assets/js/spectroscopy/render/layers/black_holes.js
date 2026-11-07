@@ -1010,7 +1010,7 @@ export function createBlackHolesLayer(engine, app) {
             for (let i = 0; i < heroCount; i++) {
                 const hero = heroes[i];
                 const bh = hero.bh;
-                if (hero.reveal < 0.5 || (bh.body.bands[frame.band] || 0) <= 0.01) continue;
+                if (hero.reveal < 0.05 || (bh.body.bands[frame.band] || 0) <= 0.01) continue;
                 const cssPerM = hero.pxPerM / frame.dpr;
                 const { depth } = bh.body;
                 // Out to the edge of the bent sky, with the stars that are drawn there

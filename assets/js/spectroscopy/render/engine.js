@@ -939,7 +939,8 @@ export function createEngine(canvas) {
         const pxPerDeg = (height * 0.5 * RAD) / Math.tan(view.fov * RAD * 0.5);
         const consider = (code, az, alt, radiusPx, bonusPx, depth) => {
             const p = project(az, alt, depth);
-            if (!p || !p.onScreen) return;
+            // Something with a size can be on show while its middle is off the edge of the view
+            if (!p || (!p.onScreen && !radiusPx)) return;
             const dist = Math.hypot(p.x - x, p.y - y);
             if (dist > maxPx + radiusPx) return;
             const score = pickScore(dist, radiusPx, bonusPx);

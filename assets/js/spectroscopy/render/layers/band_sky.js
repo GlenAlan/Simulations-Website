@@ -346,6 +346,7 @@ export function createBandSkyLayer(engine, app) {
             uGlowFade: { value: 0 },
             uToGalactic: { value: toGalactic },
             uCmb,
+            uSoften: { value: app.layers.backgroundStars ? 0 : 1 },
             uLow: { value: GLOW_BANDS.map((b) => new THREE.Vector3(...BAND_INFO[b].ramp.low)) },
             uHigh: { value: GLOW_BANDS.map((b) => new THREE.Vector3(...BAND_INFO[b].ramp.high)) }
         },
@@ -364,6 +365,7 @@ export function createBandSkyLayer(engine, app) {
             uniform float uGlowFade;
             uniform mat3 uToGalactic;
             uniform float uCmb;
+            uniform float uSoften;
             uniform vec3 uLow[4];
             uniform vec3 uHigh[4];
             varying vec3 vDir;
@@ -378,7 +380,17 @@ export function createBandSkyLayer(engine, app) {
                 vec3 d = normalize(vDir);
                 vec3 g = uToGalactic * d;
                 vec2 uv = vec2(atan(g.y, g.x) / (2.0 * PI) + 0.5, latToV(asin(clamp(g.z, -1.0, 1.0)) / RAD));
-                vec4 glow = texture2D(tGlow, uv) * GAIN * uGlowFade;
+                vec4 glow;
+                if (uSoften > 0.5) {
+                    // Without the background stars, the glow's smallest knots mustn't pass for them: spread over a couple
+                    // of pixels of the screen, which only shows at wide zoom. Held to a small reach for the seam's sake.
+                    vec2 w = min(fwidth(uv), vec2(0.002)) * 1.5;
+                    glow = (texture2D(tGlow, uv + w) + texture2D(tGlow, uv - w)
+                        + texture2D(tGlow, uv + vec2(w.x, -w.y)) + texture2D(tGlow, uv - vec2(w.x, -w.y))) * 0.25;
+                } else {
+                    glow = texture2D(tGlow, uv);
+                }
+                glow *= GAIN * uGlowFade;
                 vec3 c = ramp(glow.r, uLow[0], uHigh[0]) * uBandW[0];
                 c += ramp(glow.g, uLow[1], uHigh[1]) * uBandW[1];
                 c += ramp(glow.b, uLow[2], uHigh[2]) * uBandW[3];     // uBandW[2] is the visible band, background.js's
@@ -409,6 +421,7 @@ export function createBandSkyLayer(engine, app) {
                 skyMesh.material.uniforms.uGlowFade.value = glowFade;
             }
             skyMesh.visible = showing;
+            skyMesh.material.uniforms.uSoften.value = app.layers.backgroundStars ? 0 : 1;
             if (!sources && showing && app.layers.backgroundStars) {
                 sources = createUnresolvedSources(basis, ORDER.bandSky + 1);
                 engine.scene.add(sources);

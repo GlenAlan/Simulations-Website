@@ -512,7 +512,8 @@ export function createNebulaeLayer(engine, app) {
                 const { body, tanHalf } = items[i];
                 const strength = body.bands[frame.band] || 0;
                 if (strength <= 0.01) continue;
-                const radiusPx = (tanHalf * frame.pxPerRad * parallaxFactor(body.depth, frame.fov) * 0.55) / frame.dpr;
+                // Out to the furthest of its stars: see embeddedStars
+                const radiusPx = (tanHalf * frame.pxPerRad * parallaxFactor(body.depth, frame.fov) * 0.74) / frame.dpr;
                 out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx, depth: body.depth });
             }
             return out;

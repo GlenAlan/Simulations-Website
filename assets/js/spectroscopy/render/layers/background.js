@@ -26,6 +26,7 @@ const SKY_GAIN = 1.6;               // The texture stores sqrt(colour / SKY_GAIN
 const MILKY_WAY_FADE_S = 0.8;       // How long the Milky Way takes to come up once its first bake is there
 const STARS_FADE_S = 0.4;           // How long the Background stars layer takes to come and go
 const SMOOTH_DETAIL_BIAS = 2;       // Mip levels to skip in the detail texture without the stars: soft clouds, not grain
+const SMOOTH_SKY_BIAS = 1;          // And in the Milky Way itself, whose finest knots would otherwise pass for stars
 
 const FIELD_STARS = { low: 12000, medium: 34000, high: 64000 };
 const FIELD_STARS_MAX = FIELD_STARS.high;
@@ -242,6 +243,7 @@ const SKY_FRAGMENT = /* glsl */`
     uniform vec3 uDetailFade;       // Coarse detail, fine detail, and how much glow is left
     uniform float uDpr;
     uniform float uDetailBias;
+    uniform float uSkyBias;
     varying vec3 vDir;
 
     // One layer of a star field too fine for points, for the view through a narrow field. Each star keeps to the
@@ -265,7 +267,7 @@ const SKY_FRAGMENT = /* glsl */`
     void main() {
         vec3 d = normalize(vDir);
         vec2 uv = domeUv(d);
-        vec4 tex = texture2D(tSky, uv);
+        vec4 tex = texture2D(tSky, uv, uSkyBias);
         tex.rgb *= uMilkyWay;
         vec3 col = tex.rgb * tex.rgb * ${SKY_GAIN.toFixed(3)};
         vec2 dome = (uv - 0.5) * 2.0 * DOME_R;
@@ -833,7 +835,8 @@ export function createBackgroundLayer(engine, app) {
             uDetailFade: { value: new THREE.Vector3(0, 0, 1) },
             uTan: { value: new THREE.Vector2(1, 1) },
             uDpr: { value: 1 },
-            uDetailBias: { value: SMOOTH_DETAIL_BIAS }
+            uDetailBias: { value: SMOOTH_DETAIL_BIAS },
+            uSkyBias: { value: SMOOTH_SKY_BIAS }
         },
         vertexShader: /* glsl */`
             uniform vec2 uTan;
@@ -954,6 +957,7 @@ export function createBackgroundLayer(engine, app) {
                 low ? 0 : fadeIn(cssPerRad / 2865) * starsAmount
             );
             u.uDetailBias.value = SMOOTH_DETAIL_BIAS * (1 - starsAmount);
+            u.uSkyBias.value = SMOOTH_SKY_BIAS * (1 - starsAmount);
             // Through a narrow field the glow resolves into stars, so less of it is left as glow. Without the stars,
             // it stays a glow, at every zoom
             const resolvedGlow = 0.42 + 0.58 * smooth(1.5, 25, frame.fov);

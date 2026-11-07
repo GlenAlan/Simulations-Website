@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { bandMagnitudes } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, instancedQuad, exoticNoise } from './exotic_common.js';
 
@@ -59,6 +60,11 @@ const COMET_COMMON = /* glsl */`
         // Fainter comets come into view as you zoom in, like everything else in visible light
         return smoothstep(-0.6, 0.6, uLimitMag - mag) * clamp(pow(10.0, -0.4 * (mag - 4.0)), 0.5, 1.4);
     }
+    // In the other bands, as for a sprite in stars.js: from a little over 3 magnitudes below the zoom's limit, which is
+    // when engine.bodyShows says it can be clicked
+    float bandShows(float mag) {
+        return smoothstep(-3.25, -2.25, uLimitMag - mag);
+    }
 `;
 
 function createGlow(engine, comets) {
@@ -67,7 +73,7 @@ function createGlow(engine, comets) {
     const a = {
         centre: new Float32Array(n * 3), tail: new Float32Array(n * 3), normal: new Float32Array(n * 3),
         shape: new Float32Array(n * 4), extra: new Float32Array(n * 4), gas: new Float32Array(n * 3),
-        bandA: new Float32Array(n * 4), bandB: new Float32Array(n), depth: new Float32Array(n)
+        bandA: new Float32Array(n * 4), bandB: new Float32Array(n), depth: new Float32Array(n), mags: new Float32Array(n * 4)
     };
     comets.forEach((comet, i) => {
         const { body, basis } = comet;
@@ -77,6 +83,7 @@ function createGlow(engine, comets) {
         a.shape.set([body.comet.coma_deg, body.comet.tail_deg, body.comet.dust_ratio, comet.seed], i * 4);
         a.extra.set([comet.curve, drawMag(body), 0, 0], i * 4);
         a.depth[i] = body.depth;
+        a.mags.set(comet.mags, i * 4);
         a.gas.set(comet.gas, i * 3);
         a.bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
         a.bandB[i] = body.bands.xray;
@@ -90,6 +97,7 @@ function createGlow(engine, comets) {
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(a.bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(a.bandB, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(a.depth, 1));
+    geometry.setAttribute('aMags', new THREE.InstancedBufferAttribute(a.mags, 4));
 
     const material = skyMaterial({
         side: THREE.DoubleSide,  // The quad lies on the sky; which way round it faces depends on the tail
@@ -106,6 +114,7 @@ function createGlow(engine, comets) {
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute float aDepth;
+            attribute vec4 aMags;     // Radio, IR, UV, X-ray, as drawn
             varying float vPxDeg;     // Degrees of this comet's sky in a device pixel
             varying vec2 vXY;         // Degrees from the nucleus: x along the tail, y across it
             varying vec4 vShape;
@@ -133,8 +142,8 @@ function createGlow(engine, comets) {
                 vCurve = aExtra.x;
                 vGas = aGas;
                 vHalo = halo;
-                vAmount = vec4(aBandA.x * uBandW[0], aBandA.y * uBandW[1], aBandA.z * uBandW[2] * cometShows(aExtra.y), aBandA.w * uBandW[3]);
-                vXray = aBandB * uBandW[4];
+                vAmount = vec4(aBandA.x * uBandW[0] * bandShows(aMags.x), aBandA.y * uBandW[1] * bandShows(aMags.y), aBandA.z * uBandW[2] * cometShows(aExtra.y), aBandA.w * uBandW[3] * bandShows(aMags.z));
+                vXray = aBandB * uBandW[4] * bandShows(aMags.w);
                 vec3 dir = aCentre + (aTail * vXY.x + aNormal * vXY.y) * RAD * ${SKY_RADIUS}.0;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir, 1.0);
                 gl_Position.xy *= depthP(aDepth);
@@ -256,7 +265,7 @@ function createParticles(engine, comets) {
     const a = {
         centre: new Float32Array(total * 3), tail: new Float32Array(total * 3), normal: new Float32Array(total * 3),
         shape: new Float32Array(total * 4), grain: new Float32Array(total * 4), band: new Float32Array(total * 3),
-        depth: new Float32Array(total)
+        depth: new Float32Array(total), mags: new Float32Array(total * 2)
     };
     // Interleaved, so that drawing only the first part still gives every comet its share
     let k = 0;
@@ -270,6 +279,7 @@ function createParticles(engine, comets) {
             a.normal.set(basis.n, k * 3);
             a.shape.set([body.comet.coma_deg, body.comet.tail_deg, comet.curve, drawMag(body)], k * 4);
             a.depth[k] = body.depth;
+            a.mags.set([comet.mags[1], comet.mags[2]], k * 2);
             // Start along the tail, sideways offset (more near the middle), dust (0) or ion (1), phase
             a.grain.set([rng.next(), rng.gauss(0, 0.55), isDust ? 0 : 1, rng.next()], k * 4);
             a.band.set([body.bands.ir, body.bands.visible, body.bands.uv], k * 3);
@@ -284,6 +294,7 @@ function createParticles(engine, comets) {
     geometry.setAttribute('aGrain', new THREE.BufferAttribute(a.grain, 4));
     geometry.setAttribute('aBand', new THREE.BufferAttribute(a.band, 3));
     geometry.setAttribute('aDepth', new THREE.BufferAttribute(a.depth, 1));
+    geometry.setAttribute('aMags', new THREE.BufferAttribute(a.mags, 2));
 
     const material = skyMaterial({
         uniforms: { uDpr: { value: 1 } },
@@ -297,6 +308,7 @@ function createParticles(engine, comets) {
             attribute vec4 aGrain;
             attribute vec3 aBand;
             attribute float aDepth;
+            attribute vec2 aMags;     // IR, UV, as drawn
             varying vec3 vLight;
             void main() {
                 const float RAD = 0.0174533;
@@ -326,8 +338,8 @@ function createParticles(engine, comets) {
                 // At wide views the grains blur into the glow; zoomed in they stand apart
                 float vis = aBand.y * uBandW[2] * cometShows(aShape.w);
                 vec3 light = tint * vis
-                    + uBandTint[1] * (uBandW[1] * aBand.x * (1.0 - isIon))
-                    + uBandTint[3] * (uBandW[3] * aBand.z * isIon * 0.4);
+                    + uBandTint[1] * (uBandW[1] * aBand.x * (1.0 - isIon) * bandShows(aMags.x))
+                    + uBandTint[3] * (uBandW[3] * aBand.z * isIon * 0.4 * bandShows(aMags.y));
                 vLight = light * along * life * flicker * 0.5 * uSkyFade;
                 gl_PointSize = (0.9 + 1.3 * aGrain.w * aGrain.w) * 1.5 * uDpr;
             }`,
@@ -350,7 +362,8 @@ export function createCometsLayer(engine, app) {
     const comets = app.universe.bodies.filter((b) => b.kind === 'comet' && b.comet).map((body) => {
         const rng = bodyRng(body, 'comet');
         const curve = (rng.next() < 0.5 ? -1 : 1) * rng.range(0.55, 1);
-        return { body, rng, basis: tailBasis(body, sunDir), seed: rng.next(), curve, gas: gasColour(body.comet.emission_lines) };
+        const m = bandMagnitudes(body);
+        return { body, rng, basis: tailBasis(body, sunDir), seed: rng.next(), curve, gas: gasColour(body.comet.emission_lines), mags: [m.radio, m.ir, m.uv, m.xray] };
     });
     const glow = createGlow(engine, comets);
     const particles = createParticles(engine, comets);
