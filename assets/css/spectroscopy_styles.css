@@ -4390,6 +4390,59 @@ details.description-area > summary::after {
 /* === end KEYS === */
 
 
+/* === UIPOLISH: four text sizes across the drawer, and small layout fixes. After KEYS, so these win over it === */
+/* 12 px for labels and small print, 13.5 px for controls and a tool's words, 15 px for reading, about 17 px for titles and
+   answers. Glyph buttons such as + and − keep their own. The site sets every panel paragraph at 0.85em (12.75 px here):
+   the first rule lifts that to 13.5 at the same weight, so anything sized on purpose still wins. */
+:where(.spectro-sim) .sim-controls-content p {
+    font-size: 13.5px;
+}
+
+#simulationControlsPanel .spectro-hands-ends,
+#simulationControlsPanel .spectro-page kbd,
+#simulationControlsPanel .spectro-ov-stat dt {
+    font-size: 12px;
+}
+
+#simulationControlsPanel .spectro-spectrum button.spectro-flat:not(.spectro-glyph):not(.spectro-tool-chip),
+#simulationControlsPanel .spectro-pinned button.spectro-play,
+#simulationControlsPanel button.spectro-play,
+#simulationControlsPanel button.spectro-tool-next,
+#simulationControlsPanel .spectro-spectrum button.spectro-hands-mode,
+#simulationControlsPanel .spectro-spectrum button.spectro-hands-chip,
+#simulationControlsPanel .spectro-band-chip-name,
+#simulationControlsPanel .spectro-fig-working,
+#simulationControlsPanel .spectro-fig-tab .spectro-fig-card-status,
+#simulationControlsPanel .spectro-fig-tab button.spectro-fig-button,
+#simulationControlsPanel .spectro-fig-tab button.spectro-fig-link,
+#simulationControlsPanel .spectro-fig-tab button.spectro-fig-toggle,
+#simulationControlsPanel .spectro-fig-cell-value,
+#simulationControlsPanel .spectro-ov-status {
+    font-size: 13.5px;
+}
+
+#simulationControlsPanel .spectro-info p,
+#simulationControlsPanel .spectro-info-section h4,
+#simulationControlsPanel .spectro-fact,
+#simulationControlsPanel .spectro-next,
+#simulationControlsPanel .spectro-fig-tab .spectro-fig-card-title,
+#simulationControlsPanel .spectro-ov-stat dd,
+#simulationControlsPanel .spectro-page p,
+#simulationControlsPanel .spectro-page li,
+#simulationControlsPanel .spectro-page dt,
+#simulationControlsPanel .spectro-page dd {
+    font-size: 15px;
+}
+
+/* Layers: the visited count comes and goes with its switch, so it sits under the last switch, where nothing below it is a
+   switch to be reached for */
+.spectro-sim .spectro-layers-menu .spectro-visited-line {
+    order: 1;
+    margin-top: 0;
+}
+/* === end UIPOLISH === */
+
+
 /* === OVERLAYS: labels and markers over the sky === */
 /* Drawn over the sky, under the bars; drags go straight through it to the canvas */
 #spectroOverlay > .spectro-overlay-canvas {

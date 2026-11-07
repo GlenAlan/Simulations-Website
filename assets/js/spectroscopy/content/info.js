@@ -458,6 +458,7 @@ function planetInfo({ entity, body }) {
             orbitAndSizeNote(entity, host),
             { heading: "Kepler's third law", text: "Every planet here obeys r³/T² = GM/4π². Put in this planet's orbit and period and you have the mass of what it orbits. You can also find its speed: v = 2πr/T." },
             REFLECTED_NOTE,
+            { heading: 'Reading the bands', text: 'Bands can overlap: water vapour shares 2.7 µm with carbon dioxide, and 1.4 µm with methane, so its band at 1.9 µm is the clean test for it. Nitrogen, argon, hydrogen and helium leave almost no bands in this range. A thick hydrogen atmosphere shows instead in the planet\'s size: a large radius for its mass.' },
             { heading: 'Habitable zone', text: "The zone where a planet's surface could hold liquid water runs from about √(L/1.1) to √(L/0.53) AU, with L in L☉. Turn on Habitable zone in Layers to see it round a main-sequence star. Being in the zone does not prove there is water: only the spectrum can show that." }
         ),
         rarity: 'More than 6,000 exoplanets have been confirmed, and most stars probably have at least one planet.',

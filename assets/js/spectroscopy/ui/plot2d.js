@@ -609,9 +609,17 @@ export function createMeasureCard(parent, options) {
 
     typeButton.addEventListener('click', () => openForm(missingFields()));
 
-    button.addEventListener('click', () => {
+    // Plot and Remove share a place, so a second press that comes too soon after the first, as in a double-click, is a slip
+    let pressedAt = -Infinity;
+    button.addEventListener('click', (e) => {
+        const now = performance.now();
+        if (e.detail > 0 && now - pressedAt < 700) return;
+        pressedAt = now;
         if (options.isPlotted(code)) {
             options.onRemove(code);
+            // Said, as the point goes quietly: its values are kept, so the same button puts it back
+            message.textContent = `Taken off. Its values are kept, so ${options.addLabel} puts it back.`;
+            message.hidden = false;
             return;
         }
         // A value still in its box counts, even if the box hasn't lost focus yet
