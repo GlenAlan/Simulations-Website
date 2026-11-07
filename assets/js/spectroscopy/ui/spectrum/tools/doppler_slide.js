@@ -325,8 +325,10 @@ export function createSlide(container, api, { says, single = false }) {
             width = { obs, nm, blend: blendAllowance(overview && overview.lines, line.rest, nm, z) };
             render();
             const r = reading();
-            // Said every time the lines come to rest, so what is heard is never an older reading than what is shown
-            says.textContent = r ? `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}` : 'Not moved yet';
+            // Said every time the lines come to rest, so what is heard is never an older reading than what is shown. With no
+            // reading, an old one is taken back, and anything else said (such as where the plot zoomed to) is left to be heard.
+            if (r) says.textContent = `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}`;
+            else if (/^[vz] = /.test(says.textContent)) says.textContent = 'Not moved yet';
         }, 160);
     }
 
