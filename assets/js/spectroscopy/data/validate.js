@@ -1,19 +1,47 @@
-// Checks a generated sky against the spec's rules (sections 7, 8.3, 9, 12, 14, 19). Returns a list of failures in plain
-// words; an empty list means the sky is sound. Too slow to be worth running on every load: tests call it instead.
+// Checks a generated sky against the spec's rules (sections 7, 8.3, 9, 12, 14, 19), and that every system of stars could
+// really exist (data/dynamics.js). Returns a list of failures in plain words; an empty list means the sky is sound. Too slow
+// to be worth running on every load: tests call it instead.
 
 import { isValidCode } from '../core/rng.js';
 import { hzEdges, keplerPeriodDays, fluxFromLuminosity, H0, C_KMS } from '../core/phys.js';
 import { MIN_ALT, MIN_FOV, azAltToVec3, limitingMag, galacticLatitude } from '../core/sky.js';
 import { STAR_TABLE, RSUN_AU, luminosityFromRT, msLifetimeMyr } from './stellar.js';
 import { PLANET_TYPES, MIN_STELLAR_RADII } from './planets.js';
-import { MIN_SPACING_DEG } from './sky_layout.js';
-import { BODY_COUNTS, MIX } from './quotas.js';
-import { componentStates } from './orbits.js';
+import { spacingBetween } from './sky_layout.js';
+import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS } from './quotas.js';
+import { componentStates, cometTailAU } from './orbits.js';
+import { systemProblems } from './dynamics.js';
+import { crossesPlanet, MAX_ECC } from './exocomets.js';
 import { unseal } from './sealed.js';
 
 const RAD = Math.PI / 180;
 const DEFAULT_FOV = 80;
 const DEFAULT_ZOOM_RANGE = [250, 450];
+const FAST_STAR_KMS = 300;          // Spec 12: stars stay within this, but for a rare few
+const FAST_STAR_SHARE = 0.02;
+const FASTEST_STAR_KMS = 450;
+const PECULIAR_GALAXY_KMS = 550;    // The most a galaxy strays from Hubble's law (data/motions.js)
+
+// The whole sky's quotas: the first sky's and the deeper sky's together
+const sum = (a, b) => {
+    const out = { ...a };
+    Object.keys(b).forEach((k) => { out[k] = (out[k] || 0) + b[k]; });
+    return out;
+};
+const TOTAL = {
+    counts: { ...sum(BODY_COUNTS, DEEP.counts), comet: SKY_COMETS },
+    triples: MIX.triples + DEEP.mix.triples,
+    multiWithPlanets: MIX.multiWithPlanets + DEEP.mix.multiWithPlanets,
+    nebula: sum(MIX.nebula, DEEP.mix.nebula),
+    cluster: sum(MIX.cluster, DEEP.mix.cluster),
+    galaxy: sum(MIX.galaxy, DEEP.mix.galaxy),
+    rogue_planet: sum(MIX.rogue_planet, DEEP.mix.rogue_planet),
+    starbursts: MIX.starbursts + DEEP.mix.starbursts,
+    population: sum(MIX.population, DEEP.mix.population),
+    stars: Object.fromEntries(Object.keys(STAR_TABLE).map((c) => [c, {
+        count: STAR_TABLE[c].count + DEEP.stars[c].count, withPlanets: STAR_TABLE[c].withPlanets + DEEP.stars[c].withPlanets
+    }]))
+};
 
 function hasWater(planet) {
     const pct = planet.atmosphere_pct || {};
@@ -66,6 +94,7 @@ function everyCode(u) {
     u.bodies.forEach((body) => {
         codes.push(body.code);
         (body.planets || []).forEach((p) => codes.push(p.code));
+        (body.comets || []).forEach((c) => codes.push(c.code));
         (body.stars || []).forEach((s) => codes.push(s.code));
         if (body.black_hole) codes.push(body.black_hole.companion.code);
         if (body.cluster) {
@@ -92,37 +121,46 @@ function checkCodes(u, fail) {
 function checkCounts(u, fail) {
     const sky = u.bodies.filter((b) => b.kind !== 'home_planet');
     const home = u.bodies.filter((b) => b.kind === 'home_planet');
-    if (sky.length !== 1000) fail(`${sky.length} sky bodies`);
+    const expected = Object.values(TOTAL.counts).reduce((a, b) => a + b, 0);
+    if (sky.length !== expected) fail(`${sky.length} sky bodies, expected ${expected}`);
     if (home.length !== 7) fail(`${home.length} home planets`);
     const kinds = countBy(sky, (b) => b.kind);
-    Object.keys(BODY_COUNTS).forEach((kind) => {
+    Object.keys(TOTAL.counts).forEach((kind) => {
         if (kind === 'multi') return;
-        if (kinds[kind] !== BODY_COUNTS[kind]) fail(`${kinds[kind]} of ${kind}, expected ${BODY_COUNTS[kind]}`);
+        if (kinds[kind] !== TOTAL.counts[kind]) fail(`${kinds[kind]} of ${kind}, expected ${TOTAL.counts[kind]}`);
+    });
+    // The rare kinds are only ever in the first sky
+    sky.filter((b) => b.deep).forEach((b) => {
+        if (!DEEP.counts[b.kind === 'binary' || b.kind === 'multiple' ? 'multi' : b.kind]) fail(`${b.code} is a ${b.kind} in the deeper sky`);
     });
     const multis = sky.filter((b) => b.stars);
-    if (multis.length !== BODY_COUNTS.multi) fail(`${multis.length} multi-star systems`);
+    if (multis.length !== TOTAL.counts.multi) fail(`${multis.length} multi-star systems`);
     const arch = countBy(multis, (b) => b.architecture);
-    if (arch.binary !== 80 || arch.hierarchical_triple !== 20 || arch.figure_eight !== 1 || arch.double_double !== 1) {
+    const random = TOTAL.counts.multi - 2;
+    if (arch.binary !== random - TOTAL.triples || arch.hierarchical_triple !== TOTAL.triples || arch.figure_eight !== 1 || arch.double_double !== 1) {
         fail(`multi-star mix ${JSON.stringify(arch)}`);
     }
-    const random = multis.filter((b) => b.architecture === 'binary' || b.architecture === 'hierarchical_triple');
-    const withPlanets = random.filter((b) => b.planets.length > 0).length;
-    if (withPlanets !== MIX.multiWithPlanets) fail(`${withPlanets} random multi-star systems with planets`);
+    const randoms = multis.filter((b) => b.architecture === 'binary' || b.architecture === 'hierarchical_triple');
+    const withPlanets = randoms.filter((b) => b.planets.length > 0).length;
+    if (withPlanets !== TOTAL.multiWithPlanets) fail(`${withPlanets} random multi-star systems with planets`);
 
     const stars = sky.filter((b) => b.kind === 'star');
     const byClass = countBy(stars, (b) => classKey(b.star));
     const planetsByClass = countBy(stars.filter((b) => b.planets.length), (b) => classKey(b.star));
     Object.keys(STAR_TABLE).forEach((cls) => {
-        const row = STAR_TABLE[cls];
+        const row = TOTAL.stars[cls];
         if (byClass[cls] !== row.count) fail(`${byClass[cls]} stars of class ${cls}, expected ${row.count}`);
         if (planetsByClass[cls] !== row.withPlanets) fail(`${planetsByClass[cls]} planet hosts of class ${cls}`);
     });
     const pops = countBy(stars, (b) => b.star.population);
-    Object.keys(MIX.population).forEach((p) => {
-        if (pops[p] !== MIX.population[p]) fail(`${pops[p]} stars of population ${p}`);
+    Object.keys(TOTAL.population).forEach((p) => {
+        if (pops[p] !== TOTAL.population[p]) fail(`${pops[p]} stars of population ${p}`);
     });
+    const hosts = Object.values(TOTAL.stars).reduce((n, row) => n + row.withPlanets, 0) + TOTAL.multiWithPlanets + 1;
     const hostCount = sky.filter((b) => b.planets && b.planets.length).length;
-    if (hostCount !== 338 + MIX.multiWithPlanets + 1) fail(`${hostCount} planetary systems`);
+    if (hostCount !== hosts) fail(`${hostCount} planetary systems, expected ${hosts}`);
+    const exocomets = sky.reduce((n, b) => n + (b.comets || []).length, 0);
+    if (exocomets !== EXOCOMETS) fail(`${exocomets} comets of other stars, expected ${EXOCOMETS}`);
 
     const expectMix = (list, keyOf, table, name) => {
         const got = countBy(list, keyOf);
@@ -130,14 +168,14 @@ function checkCounts(u, fail) {
             if (got[key] !== table[key]) fail(`${got[key]} ${name} of type ${key}, expected ${table[key]}`);
         });
     };
-    expectMix(sky.filter((b) => b.nebula), (b) => b.nebula.type, MIX.nebula, 'nebulae');
-    expectMix(sky.filter((b) => b.cluster), (b) => b.cluster.type, MIX.cluster, 'clusters');
+    expectMix(sky.filter((b) => b.nebula), (b) => b.nebula.type, TOTAL.nebula, 'nebulae');
+    expectMix(sky.filter((b) => b.cluster), (b) => b.cluster.type, TOTAL.cluster, 'clusters');
     expectMix(sky.filter((b) => b.neutron_star), (b) => (b.neutron_star.pulsar ? 'pulsar' : 'quiet'), MIX.neutron_star, 'neutron stars');
-    expectMix(sky.filter((b) => b.galaxy), (b) => b.galaxy.morphology, MIX.galaxy, 'galaxies');
+    expectMix(sky.filter((b) => b.galaxy), (b) => b.galaxy.morphology, TOTAL.galaxy, 'galaxies');
     expectMix(sky.filter((b) => b.supernova), (b) => b.supernova.type, MIX.supernova, 'supernovae');
-    expectMix(sky.filter((b) => b.rogue_planet), (b) => b.rogue_planet.type, MIX.rogue_planet, 'rogue planets');
+    expectMix(sky.filter((b) => b.rogue_planet), (b) => b.rogue_planet.type, TOTAL.rogue_planet, 'rogue planets');
     const bursts = sky.filter((b) => b.galaxy && b.galaxy.starburst);
-    if (bursts.length !== MIX.starbursts || bursts.some((b) => b.galaxy.morphology === 'elliptical')) fail(`${bursts.length} starburst galaxies`);
+    if (bursts.length !== TOTAL.starbursts || bursts.some((b) => b.galaxy.morphology === 'elliptical')) fail(`${bursts.length} starburst galaxies`);
     const radioLoud = sky.filter((b) => b.quasar && b.quasar.radio_loud).length;
     if (radioLoud !== 1) fail(`${radioLoud} radio-loud quasars`);
 }
@@ -151,6 +189,7 @@ function checkBands(u, fail) {
     u.bodies.forEach((body) => {
         check(body);
         (body.planets || []).forEach(check);
+        (body.comets || []).forEach(check);
         (body.stars || []).forEach(check);
         if (body.planet) check(body.planet);
         if (body.black_hole) check(body.black_hole.companion);
@@ -164,17 +203,21 @@ function checkPlacement(u, fail) {
         if (b.neutron_star && b.neutron_star.remnant_of) linked.set(b.code, b.neutron_star.remnant_of);
     });
     const vecs = u.bodies.map((b) => azAltToVec3(b.sky.az, b.sky.alt));
-    const threshold = Math.cos(MIN_SPACING_DEG * RAD);
+    // No pair is ever further apart than this and still too close, so only pairs inside it need the full rule
+    const widest = Math.cos(1.0001 * RAD);
     u.bodies.forEach((body, i) => {
         if (!(body.sky.alt > MIN_ALT)) fail(`${body.code} (${body.kind}) is at altitude ${body.sky.alt}`);
         if (body.sky.az < 0 || body.sky.az >= 360) fail(`${body.code} has azimuth ${body.sky.az}`);
         for (let j = i + 1; j < u.bodies.length; j++) {
             const a = vecs[i];
             const b = vecs[j];
-            if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > threshold) {
-                const other = u.bodies[j];
+            const dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            if (dot <= widest) continue;
+            const other = u.bodies[j];
+            const need = spacingBetween(body, other);
+            if (dot > Math.cos(need * RAD) + 1e-12) {
                 if (linked.get(body.code) === other.code || linked.get(other.code) === body.code) continue;
-                fail(`${body.code} and ${other.code} are closer than ${MIN_SPACING_DEG} degrees`);
+                fail(`${body.code} and ${other.code} are closer than ${need.toFixed(3)} degrees`);
             }
         }
         if (body.bands.visible > 0.01 && body.brightness.mag > lim) fail(`${body.code} (${body.kind}) shows in visible light but has magnitude ${body.brightness.mag}`);
@@ -230,9 +273,13 @@ function checkStars(u, fail) {
         if (body.kind === 'star') {
             const f = fluxFromLuminosity(body.star.luminosity_Lsun, body.distance_pc);
             if (Math.abs(body.brightness.flux_Wm2 / f - 1) > 1e-3) fail(`${body.code}'s flux doesn't match its luminosity and distance`);
-            if (Math.abs(body.radial_velocity_kms) > 300) fail(`${body.code} moves at ${body.radial_velocity_kms} km/s`);
+            if (Math.abs(body.radial_velocity_kms) > FASTEST_STAR_KMS) fail(`${body.code} moves at ${body.radial_velocity_kms} km/s`);
         }
     });
+    // Spec 12: stars within 300 km/s, but for a rare few fast halo stars
+    const stars = u.bodies.filter((b) => b.kind === 'star');
+    const fast = stars.filter((b) => Math.abs(b.radial_velocity_kms) > FAST_STAR_KMS).length;
+    if (fast > FAST_STAR_SHARE * stars.length) fail(`${fast} stars move faster than ${FAST_STAR_KMS} km/s`);
 }
 
 function checkPlanets(u, fail) {
@@ -245,6 +292,7 @@ function checkPlanets(u, fail) {
             if (body.planet.in_hz) fail(`home planet ${body.name} is marked in a habitable zone`);
             return;
         }
+        checkComets(body, fail);
         if (!body.planets || !body.planets.length) return;
         // Worked out from luminosity for every host, even those the panel's formula doesn't suit
         const L = hostLuminosity(body);
@@ -301,6 +349,41 @@ function checkPlanets(u, fail) {
     });
 }
 
+// Comets of other stars: clear of their stars and of every planet's path, and growing tails only where it's warm enough.
+// Round a multiple system, data/dynamics.js checks them against its stars as it does planets.
+function checkComets(body, fail) {
+    (body.comets || []).forEach((c) => {
+        if (c.host !== body.code) fail(`${c.code} names the wrong host`);
+        if (c.kind !== 'comet' || !c.comet || !c.comet.emission_lines.length) fail(`${c.code} is an incomplete comet`);
+        const mass = body.star ? body.star.mass_Msun : body.stars.reduce((m, s) => m + s.star.mass_Msun, 0);
+        if (Math.abs(c.period_days / keplerPeriodDays(c.orbit_AU, mass) - 1) > 1e-3) fail(`${c.code}'s period breaks Kepler's third law`);
+        if (!(c.ecc > 0 && c.ecc < 1)) fail(`${c.code} has eccentricity ${c.ecc}`);
+        if (body.star && c.orbit_AU * (1 - c.ecc) < 2 * MIN_STELLAR_RADII * body.star.radius_Rsun * RSUN_AU) fail(`${c.code} grazes its star`);
+        if (crossesPlanet(c, body.planets || [])) fail(`${c.code}'s path crosses a planet's`);
+        const L = hostLuminosity(body);
+        if (c.comet.tail_onset_AU > 3.01 * Math.sqrt(L)) fail(`${c.code} grows a tail too far from its star`);
+        if (!(c.comet.tail_AU > 0) || cometTailAU(c, c.comet.tail_onset_AU * 1.001) !== 0) fail(`${c.code}'s tail doesn't grow and fade with warmth`);
+        if (c.ecc > MAX_ECC) fail(`${c.code} is more stretched than the system view draws`);
+        if (Math.abs(c.radial_velocity_kms - body.radial_velocity_kms) > 1e-9) fail(`${c.code} doesn't share its star's velocity`);
+    });
+}
+
+// Every system of stars could really exist: Kepler, a stable hierarchy, Roche lobes, round close orbits, planets in stable
+// zones, stars born together (data/dynamics.js). Sky systems, pairs in clusters, and black holes with their companions.
+// The deeper sky adds none of the few pairs that pass mass across.
+function checkDynamics(u, fail) {
+    const systems = [];
+    u.bodies.forEach((body) => {
+        if (body.stars || body.black_hole) systems.push(body);
+        if (body.cluster) body.cluster.members.forEach((m) => { if (m.stars) systems.push(m); });
+    });
+    systems.forEach((system) => systemProblems(system).forEach((p) => fail(`${p.test}: ${p.message}`)));
+    u.bodies.filter((b) => b.deep).forEach((body) => {
+        if (body.interacting) fail(`${body.code} is a deeper-sky pair passing mass across`);
+        if (body.cluster && body.cluster.members.some((m) => m.interacting)) fail(`${body.code} is a deeper-sky cluster with a pair passing mass across`);
+    });
+}
+
 function checkMulti(u, fail) {
     u.bodies.filter((b) => b.stars).forEach((body) => {
         if (body.stars.length !== { binary: 2, hierarchical_triple: 3, figure_eight: 3, double_double: 4 }[body.architecture]) {
@@ -316,11 +399,6 @@ function checkMulti(u, fail) {
             const period = keplerPeriodDays(orbit.a_AU, mass);
             if (Math.abs(orbit.period_days / period - 1) > 2e-3) fail(`${body.code}'s orbit breaks Kepler's third law`);
         });
-        const inner = body.orbits[0];
-        if (inner && !inner.shared_path) {
-            const reach = (body.stars[inner.a[0]].star.radius_Rsun + body.stars[inner.b[0]].star.radius_Rsun) * RSUN_AU;
-            if (inner.a_AU < 2.4 * reach) fail(`${body.code}'s inner pair overlap`);
-        }
         const states = componentStates(body, 12.34);
         if (states.length !== body.stars.length) fail(`${body.code} gives ${states.length} component states`);
         let weighted = 0;
@@ -375,7 +453,7 @@ function checkDeepSky(u, fail) {
         }
         if (body.galaxy) {
             const expected = H0 * body.galaxy.distance_Mpc;
-            if (Math.abs(body.radial_velocity_kms - expected) > 300.5) fail(`${body.code} strays from Hubble's law`);
+            if (Math.abs(body.radial_velocity_kms - expected) > PECULIAR_GALAXY_KMS + 0.5) fail(`${body.code} strays from Hubble's law`);
             if (Math.abs(body.galaxy.z - body.radial_velocity_kms / C_KMS) > 1e-3) fail(`${body.code}'s z is wrong`);
         }
         if (body.quasar && !within(body.quasar.z, 0.5, 4)) fail(`${body.code} has z = ${body.quasar.z}`);
@@ -402,6 +480,7 @@ export function validateUniverse(u) {
     checkStars(u, fail);
     checkPlanets(u, fail);
     checkMulti(u, fail);
+    checkDynamics(u, fail);
     checkDeepSky(u, fail);
     return failures;
 }

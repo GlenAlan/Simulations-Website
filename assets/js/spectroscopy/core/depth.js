@@ -33,7 +33,7 @@ const LIGHT_SHARE = 0.5;    // How much of its depth_dim_mag an extended object 
 // byMag ranks by apparent brightness instead, for a kind whose distance and magnitude have nothing to do with each other: a
 // comet's looks are all that say how near it is, and with its biggest among its faintest they read as one flat layer.
 export const DEPTH_TABLE = {
-    comet: { near: 0, far: 1, kSize: 0.7, kDim: 2.5, byMag: true },
+    comet: { near: 0, far: 0.4, kSize: 0.7, kDim: 2.5, byMag: true },  // Only two now, both our own: not far apart
     nebula: { near: 0, far: 1, kSize: 0.5, kDim: 1.5 },
     cluster: { near: 0, far: 1, kSize: 0.5, kDim: 1.5 },
     galaxy: { near: 0.2, far: 1, kSize: 0.45, kDim: 1.5 },
@@ -68,11 +68,29 @@ export function depthLight(entity) {
 }
 
 // Nearest first. A row of one sits at its kind's near end. Ties go by code, so the order never depends on the list's.
+// The first sky's bodies rank among themselves, exactly as they did before the deeper sky was added (body.deep, see
+// data/universe.js), so they keep their looks. A deeper body takes the depth its distance would have among them: most are
+// further than all of them, so they sit at the far end, small and dim.
 function rankDepths(list, row) {
     const rank = row.byMag ? (body) => body.brightness.mag : (body) => body.distance_pc;
-    const sorted = list.slice().sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
+    const sorted = list.filter((b) => !b.deep).sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
     const last = Math.max(1, sorted.length - 1);
-    sorted.forEach((body, i) => { body.depth = row.near + ((row.far - row.near) * i) / last; });
+    const depthAt = (i) => row.near + ((row.far - row.near) * i) / last;
+    sorted.forEach((body, i) => { body.depth = depthAt(i); });
+    const keys = sorted.map(rank);
+    list.forEach((body) => {
+        if (!body.deep) return;
+        const x = rank(body);
+        let hi = 0;
+        while (hi < keys.length && keys[hi] <= x) hi++;
+        if (hi === 0) body.depth = row.near;
+        else if (hi === keys.length) body.depth = row.far;
+        else {
+            const lo = hi - 1;
+            const f = keys[hi] > keys[lo] ? (x - keys[lo]) / (keys[hi] - keys[lo]) : 0;
+            body.depth = depthAt(lo + f);
+        }
+    });
 }
 
 function scaleSizes(body, scale) {

@@ -259,6 +259,59 @@ export function componentStates(body, tDays = 0) {
     return [];
 }
 
+// ---- Comets of other stars ----
+//
+// An exocomet (data/exocomets.js) runs a long, stretched orbit round its star, or round the middle of a pair. Its tail grows
+// only inside tail_onset_AU, where the star warms it enough, and is longest at its closest: comet.comet.tail_AU.
+
+// Tail length (AU) at a distance r (AU) from the star: none beyond the onset, rising steeply to the longest at perihelion
+export function cometTailAU(comet, rAU) {
+    const c = comet.comet;
+    if (!c || rAU >= c.tail_onset_AU) return 0;
+    const near = comet.orbit_AU * (1 - comet.ecc);
+    const span = Math.max(1e-6, c.tail_onset_AU - near);
+    const f = Math.min(1, Math.max(0, (c.tail_onset_AU - rAU) / span));
+    return c.tail_AU * f * Math.sqrt(f);
+}
+
+// Where an exocomet is at a time, in the plane of its system's planets (x, y) and out of it (z), from the centre it circles,
+// with its distance from there and its tail's length. The tail points straight away from that centre.
+export function cometState(comet, tDays = 0) {
+    const e = comet.ecc;
+    const twoPi = 2 * Math.PI;
+    let m = twoPi * (comet.phase0 + tDays / comet.period_days);
+    m -= twoPi * Math.floor(m / twoPi);
+    // Kepler's equation by Newton's method, started at pi for these very stretched orbits so that it always converges
+    let ecc = e > 0.8 ? Math.PI : m;
+    for (let i = 0; i < 30; i++) {
+        const step = (ecc - e * Math.sin(ecc) - m) / (1 - e * Math.cos(ecc));
+        ecc -= step;
+        if (Math.abs(step) < 1e-12) break;
+    }
+    const a = comet.orbit_AU;
+    const xp = a * (Math.cos(ecc) - e);
+    const yp = a * Math.sqrt(1 - e * e) * Math.sin(ecc);
+    const r = Math.hypot(xp, yp);
+    const w = (comet.omega_deg * Math.PI) / 180;
+    const node = (comet.node_deg * Math.PI) / 180;
+    const inc = (comet.inclination_deg * Math.PI) / 180;
+    // Along the orbit from the node, then tipped about the line of nodes, then turned to the node's longitude
+    const u = Math.atan2(yp, xp) + w;
+    const cu = Math.cos(u);
+    const su = Math.sin(u);
+    const cn = Math.cos(node);
+    const sn = Math.sin(node);
+    const ci = Math.cos(inc);
+    return {
+        code: comet.code,
+        x_AU: r * (cn * cu - sn * su * ci),
+        y_AU: r * (sn * cu + cn * su * ci),
+        z_AU: r * su * Math.sin(inc),
+        r_AU: r,
+        tail_AU: cometTailAU(comet, r)
+    };
+}
+
 // ---- Eclipses ----
 //
 // On the sky a pair sit (r cos U, r sin U cos i) apart, and group a is further away than group b when r sin U sin i is

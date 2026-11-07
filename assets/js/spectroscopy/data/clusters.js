@@ -204,8 +204,9 @@ function memberBrightness(star, distance) {
 }
 
 // Turns about one in eight of a cluster's members into pairs. A companion was born with its star, so it has the same age
-// and make-up, and is lighter, which keeps it on the main sequence below the turn-off.
-export function makeBinaryMembers(body, nextCode) {
+// and make-up, and is lighter, which keeps it on the main sequence below the turn-off. canPass: false keeps every pair
+// apart, so that none passes mass across (the deeper sky's clusters, so as not to add to the sky's few that do).
+export function makeBinaryMembers(body, nextCode, { canPass = true } = {}) {
     const c = body.cluster;
     const rng = new Rng(`cluster-pairs:${body.code}`);
     const canPair = c.members.filter((m) => m.star.stage !== 'white_dwarf' && m.brightness.mag <= PAIR_FAINTEST_MAG);
@@ -221,7 +222,7 @@ export function makeBinaryMembers(body, nextCode) {
             aged: Math.min(1, c.age_Myr / msLifetimeMyr(mass)),
             tight: true
         });
-        Object.assign(member, makePairOf(rng, nextCode, member.code, primary, companion, pairSeparationDeg));
+        Object.assign(member, makePairOf(rng, nextCode, member.code, primary, companion, pairSeparationDeg, { canPass }));
         member.in_cluster = body.code;
         member.stars.forEach((part) => {
             part.distance_pc = member.distance_pc;
@@ -234,14 +235,43 @@ export function makeBinaryMembers(body, nextCode) {
     c.n_stars = c.members.length + chosen.length;
 }
 
-// Fills in body.cluster, the body's distance and its integrated brightness. nextCode gives member codes.
-export function makeCluster(rng, nextCode, body, type) {
+// The deeper sky's clusters (data/universe.js): further away, so smaller on the sky and showing fewer members, but never so
+// far that the main sequence below the turn-off is lost, since that is what a student reads the age from. lowFactor: how
+// far below the turn-off, in mass, the members must still be seen.
+const DEEP_CLUSTERS = {
+    open: { range: [1500, 5000], lowFactor: 1.3, total: [30, 100], refPc: 700 },
+    globular: { range: [1500, 3000], lowFactor: 1.12, total: [70, 130], refPc: 1150 }
+};
+
+function mainSequenceAbsMag(mass) {
+    const track = mainSequenceAt(mass);
+    return absoluteVisual(luminosityFromRT(track.R, track.T), track.T);
+}
+
+export function deepClusterOptions(type) {
+    const row = DEEP_CLUSTERS[type];
+    return {
+        distance(rng, age) {
+            const lowest = turnoffMass(age) / row.lowFactor;
+            const reach = 10 * 10 ** ((MEMBER_LIMIT_MAG - mainSequenceAbsMag(lowest)) / 5);
+            const wanted = rng.logRange(row.range[0], row.range[1]);
+            return stable(Math.min(wanted, reach * rng.range(0.75, 0.95)), 5);
+        },
+        lowFactor: row.lowFactor,
+        total: row.total,
+        radiusScale: (distance) => Math.min(1, row.refPc / distance)
+    };
+}
+
+// Fills in body.cluster, the body's distance and its integrated brightness. nextCode gives member codes. opts, for the
+// deeper sky: distance(rng, age), lowFactor, total: [least, most], radiusScale(distance).
+export function makeCluster(rng, nextCode, body, type, opts = {}) {
     const globular = type === 'globular';
     const age = stable(globular ? rng.range(9000, 13000) : rng.logRange(5, 800), 4);
-    const distance = stable(globular ? rng.logRange(800, 1500) : rng.logRange(150, 2500), 5);
+    const distance = opts.distance ? opts.distance(rng, age) : stable(globular ? rng.logRange(800, 1500) : rng.logRange(150, 2500), 5);
     const population = globular ? 'II' : 'I';
     const composition = makeComposition(rng, population);
-    const total = globular ? rng.int(100, 150) : rng.int(30, 150);
+    const total = opts.total ? rng.int(opts.total[0], opts.total[1]) : globular ? rng.int(100, 150) : rng.int(30, 150);
     const mTurn = turnoffMass(age);
     const turnTrack = mainSequenceAt(mTurn);
     const turnoff = { mass: mTurn, T: turnTrack.T, L: luminosityFromRT(turnTrack.R, turnTrack.T) };
@@ -254,7 +284,7 @@ export function makeCluster(rng, nextCode, body, type) {
 
     const stars = [];
     // Even steps in log mass with jitter, so the sequence is well filled right up to the turn-off
-    const mLow = Math.min(faintestVisibleMass(distance), mTurn / 1.3);
+    const mLow = Math.min(faintestVisibleMass(distance), mTurn / (opts.lowFactor || 1.3));
     for (let i = 0; i < nMain; i++) {
         const f = (i + rng.next()) / nMain;
         const mass = stable(mLow * (mTurn / mLow) ** f, 4);
@@ -274,7 +304,7 @@ export function makeCluster(rng, nextCode, body, type) {
         stars.push(dwarf);
     }
 
-    const radius = dp(globular ? rng.range(0.2, 0.6) : rng.range(0.4, 1.6), 3);
+    const radius = dp((globular ? rng.range(0.2, 0.6) : rng.range(0.4, 1.6)) * (opts.radiusScale ? opts.radiusScale(distance) : 1), 3);
     const members = stars.map((star) => {
         // Members used to take their places from this stream. placeMembers has its own, so these two draws are thrown away,
         // which keeps every later number from it, and so every code and speed, the same.

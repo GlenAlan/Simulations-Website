@@ -74,7 +74,7 @@ function buildSpectrum(entity, grid, opts) {
     case 'rogue_planet':
         return roguePlanetSpectrum(entity, grid);
     case 'comet':
-        return cometSpectrum(entity, grid);
+        return cometSpectrum(entity, grid, entity.host ? parentOf(entity, opts) : null);
     case 'nebula':
         return nebulaSpectrum(entity, grid);
     case 'supernova':
