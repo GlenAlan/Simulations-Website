@@ -10,6 +10,7 @@ const HINT_SEEN_KEY = 'spectroscopy.firstHintSeen';
 const HINT_DELAY_MS = 1200;     // Time to take in the sky, and for a ?goto= link's selection to arrive first
 const TAG_GAP_PX = 14;          // From the pointer, so that the tag doesn't sit under it
 const TAG_PICK_PX = 12;         // The same reach as the pointing-hand cursor (render/engine.js), so the two agree
+const TAG_LOOK_EVERY_S = 0.1;   // How often to look under the pointer while it or the sky is moving
 
 // Storage can be blocked, in which case the hint is only remembered for this visit
 function hintSeen() {
@@ -57,7 +58,9 @@ function initHoverTag(overlay) {
 
     let inside = false;
     let pressed = false;
-    let moved = false;
+    let moved = false;      // The pointer has moved since the tag was last placed
+    let stale = false;      // The pointer or the sky has moved since the last look under the pointer
+    let lastLook = -Infinity;
     let x = 0;
     let y = 0;
     let shownCode = null;
@@ -68,6 +71,13 @@ function initHoverTag(overlay) {
         if (shownCode === null) return;
         shownCode = null;
         tag.hidden = true;
+    }
+
+    // To the right of the pointer, or to its left near the edge of the sky
+    function place(skyWidth) {
+        if (shownCode === null) return;
+        const left = x + TAG_GAP_PX + tagWidth > skyWidth ? x - TAG_GAP_PX - tagWidth : x + TAG_GAP_PX;
+        tag.style.transform = `translate(${Math.round(left)}px, ${Math.round(y + TAG_GAP_PX)}px)`;
     }
 
     canvas.addEventListener('pointermove', (e) => {
@@ -92,36 +102,38 @@ function initHoverTag(overlay) {
     canvas.addEventListener('pointerup', release);
     canvas.addEventListener('pointercancel', release);
 
-    // A layer is called once a frame, so that's as often as this can look. Only when the pointer or the sky has moved.
+    // A layer is called once a frame. Keeping up with the pointer costs next to nothing, but a pick walks every body in
+    // the sky, which is several times a whole frame's work, so that waits for its turn. Nothing runs while all is still.
     engine.addLayer({
         id: 'hover-tag',
         update(frame) {
             if (!inside || pressed) return;
             const view = engine.view;
-            if (!moved && view.az === lastView.az && view.alt === lastView.alt && view.fov === lastView.fov) return;
-            moved = false;
-            lastView.az = view.az;
-            lastView.alt = view.alt;
-            lastView.fov = view.fov;
-            const code = engine.isSlewing() ? null : engine.pick(x, y, TAG_PICK_PX);
-            if (!code) {
-                hide();
-                return;
+            if (view.az !== lastView.az || view.alt !== lastView.alt || view.fov !== lastView.fov) {
+                lastView.az = view.az;
+                lastView.alt = view.alt;
+                lastView.fov = view.fov;
+                stale = true;
             }
-            if (code !== shownCode) {
-                const resolved = app.universe.resolve(code);
-                if (!resolved) {
-                    hide();
-                    return;
-                }
+            if (moved) {
+                moved = false;
+                stale = true;
+                place(frame.width);
+            }
+            if (!stale || frame.t - lastLook < TAG_LOOK_EVERY_S) return;
+            stale = false;
+            lastLook = frame.t;
+            const code = engine.isSlewing() ? null : engine.pick(x, y, TAG_PICK_PX);
+            const resolved = code && code !== shownCode ? app.universe.resolve(code) : null;
+            if (!code || (code !== shownCode && !resolved)) {
+                hide();
+            } else if (resolved) {
                 shownCode = code;
                 tag.textContent = kindLabelOf(resolved);
                 tag.hidden = false;
                 tagWidth = tag.offsetWidth;
+                place(frame.width);
             }
-            // To the right of the pointer, or to its left near the edge of the sky
-            const left = x + TAG_GAP_PX + tagWidth > frame.width ? x - TAG_GAP_PX - tagWidth : x + TAG_GAP_PX;
-            tag.style.transform = `translate(${Math.round(left)}px, ${Math.round(y + TAG_GAP_PX)}px)`;
         }
     });
 }

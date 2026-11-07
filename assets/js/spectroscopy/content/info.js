@@ -471,7 +471,7 @@ function homePlanetInfo({ entity }) {
     const name = entity.name || 'This planet';
     return {
         kindLabel: 'Home planet',
-        lead: 'A planet of our own Solar System, shining by reflected sunlight.',
+        lead: 'A planet of our own Solar System.',
         summary: `${name}, a planet of our own Solar System, shining by reflected sunlight. It keeps its real name, but its place in this sky is made up.`,
         notes: present(
             orbitAndSizeNote(block, 'the Sun (never shown in this sky)'),
