@@ -80,6 +80,7 @@ const avgDensityDisplay = document.getElementById('avgDensityVal');
 const resetSimButton = document.getElementById('resetSimulationBtn');
 const modeButtons = Array.from(document.querySelectorAll('.thermal-mode [data-mode]'));
 const hintEl = document.getElementById('thermalHint');
+const gridNoticeEl = document.getElementById('gridNotice');
 const legendBar = document.getElementById('colourLegendBar');
 const brushGuidesToggle = document.getElementById('brushGuidesToggle');
 
@@ -459,9 +460,9 @@ const colorLUT = new Uint8Array(COLOR_LEVELS * 3);
 })();
 
 // SOLVER: the GPU version of the solver below (convection_gpu.js, WebGL2) when the browser can run it,
-// which is fast enough for a 256x256 grid; otherwise the CPU solver below. ?solver=cpu in the address
-// forces the CPU solver. The GPU solver's shaders take a moment to build after the page loads; until
-// then the fluid stays at rest (drawn by the CPU renderer).
+// which is fast enough for a 256x256 grid (and 512x512 on a fast GPU); otherwise the CPU solver below.
+// ?solver=cpu in the address forces the CPU solver. The GPU solver's shaders take a moment to build
+// after the page loads; until then the fluid stays at rest (drawn by the CPU renderer).
 let gpuSolver = null;
 (function createGpuSolver() {
     if (typeof window.createConvectionGpuSolver !== 'function') return;
@@ -476,7 +477,7 @@ let gpuSolver = null;
     }
 })();
 const cpuGridSizes = [48, 64, 96, 128];
-const gpuGridSizes = [48, 64, 96, 128, 256];
+const gpuGridSizes = [48, 64, 96, 128, 256, 512];
 
 // The GPU solver's WebGL context can be lost (a driver reset, say): carry on with the CPU solver
 function switchToCpuSolver() {
@@ -515,8 +516,9 @@ function renderDensity() {
     if (!ctx) return;
     if (gpuSolver && gpuSolver.ready()) {
         // The GPU solver draws the N x N cells into its own canvas, scaled up here like the CPU's image
+        // (or, for 512x512 on a canvas with fewer pixels than cells, scaled down smoothly)
         gpuSolver.render();
-        ctx.imageSmoothingEnabled = false;
+        ctx.imageSmoothingEnabled = canvas.width < N;
         ctx.drawImage(gpuSolver.canvas, 0, 0, canvas.width, canvas.height);
         drawBrushOutlines();
         return;
@@ -697,6 +699,46 @@ function updateGpuStepLimit(frameMs) {
   gpuLimitReached = false;
   return gpuStepLimit;
 }
+// A 512x512 step is about eight times the GPU work of a 256x256 one, more than many laptops' GPUs can
+// do in real time. While it runs, each 2 seconds of frames are checked: if fewer steps ran than real
+// time needs (or the speed asked for, if that is lower), the grid drops back to 256x256 and a notice
+// says why. 512x512 stays on the list, to try again.
+const speedCheckedGridSize = 512;
+const speedCheckSeconds = 2;
+let speedCheck;
+function startSpeedCheck() {
+  // The first check starts half a second in, once the step limit has settled
+  speedCheck = { seconds: -0.5, wanted: 0, ran: 0 };
+}
+startSpeedCheck();
+function checkGpuSpeed(frameSeconds, steps) {
+  if (N < speedCheckedGridSize) return;
+  speedCheck.seconds += frameSeconds;
+  if (speedCheck.seconds <= 0) return;
+  speedCheck.wanted += frameSeconds * targetPhysicsRate * Math.min(timeScale, 1);
+  speedCheck.ran += steps;
+  if (speedCheck.seconds < speedCheckSeconds) return;
+  const tooSlow = speedCheck.ran < 0.9 * speedCheck.wanted;
+  speedCheck = { seconds: 0, wanted: 0, ran: 0 };
+  if (!tooSlow) return;
+  const smaller = gpuGridSizes[gpuGridSizes.indexOf(N) - 1];
+  showGridNotice(`${N}x${N} is too slow on this device; back to ${smaller}x${smaller}`);
+  window.convectionSimulation.setSize(smaller);
+  const selector = document.getElementById('convectionGridSizeSelector');
+  if (selector) selector.value = String(smaller);
+}
+let gridNoticeTimer = 0;
+function showGridNotice(text) {
+  if (!gridNoticeEl) return;
+  hideHint(); // it sits in the same place
+  clearTimeout(gridNoticeTimer);
+  gridNoticeEl.textContent = text;
+  gridNoticeEl.classList.remove('is-hidden');
+  gridNoticeTimer = setTimeout(() => {
+    gridNoticeEl.classList.add('is-hidden');
+    gridNoticeTimer = setTimeout(() => { gridNoticeEl.textContent = ''; }, 500);
+  }, 6000);
+}
 function step(timestamp) {
   if (gpuSolver && gpuSolver.lost) switchToCpuSolver();
   if (!ctx && canvas) ctx = canvas.getContext('2d'); // Attempt to get context if lost
@@ -732,7 +774,10 @@ function step(timestamp) {
       break;
     }
   }
-  if (gpuRunning) avg_density = gpuSolver.averageTemperature();
+  if (gpuRunning) {
+    checkGpuSpeed(cappedDeltaTime, steps);
+    avg_density = gpuSolver.averageTemperature();
+  }
   updateAverageDisplay();
 
   if (canvas.width > 0 && canvas.height > 0) {
@@ -806,7 +851,10 @@ function reinitializeArrays(newN) {
     // Reset any other necessary simulation state related to grid size
     if (gpuSolver) {
         gpuSolver.resize(N);
-        gpuStepLimit = 4; // a step's cost changes with the grid size
+        // A step's cost changes with the grid size. On the largest grid start at one step per frame, as
+        // more could hold up the first frames for a long time on a GPU that turns out to be too slow.
+        gpuStepLimit = N >= speedCheckedGridSize ? 1 : 4;
+        startSpeedCheck();
     }
     if (offscreenCanvas) {
         offscreenCanvas.width = N;

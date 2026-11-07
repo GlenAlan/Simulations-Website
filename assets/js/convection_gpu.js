@@ -1,6 +1,6 @@
 // Convection simulation: the solver of convection_core.js run on the GPU with WebGL2, which is fast
-// enough for a 256x256 grid. convection_core.js uses it when the browser supports it and falls back to
-// its own CPU solver otherwise.
+// enough for a 256x256 grid (and 512x512 on a fast GPU). convection_core.js uses it when the browser
+// supports it and falls back to its own CPU solver otherwise.
 //
 // A step does what simulate() in convection_core.js does, in the same order and with the same boundary
 // rules. Each field is a float texture of the N x N fluid cells; the boundary cells around them are not
@@ -8,7 +8,7 @@
 // - Gauss-Seidel sweeps update the cells in two halves, the "red" and then the "black" squares of a
 //   checkerboard, as a GPU updates many cells at once rather than one after another. This converges as
 //   fast as the CPU's row-by-row order, but not along the same path, so results differ very slightly.
-// - At 256x256, a size the CPU solver doesn't offer, the solves get more sweeps (TUNING below).
+// - At 256x256 and 512x512, sizes the CPU solver doesn't offer, the solves get more sweeps (TUNING below).
 // - The random flicker of the surface cooling comes from a hash of the cell and the step number.
 // - Sums over the grid (average temperature, heat correction, pressure mean) are added up on the GPU in
 //   single precision.
@@ -19,20 +19,20 @@
     const REDUCE_BLOCK = 8; // a reduction pass adds up blocks of 8 x 8 values
 
     // Gauss-Seidel sweeps and over-relaxation factor of the iterative solves. Up to 128x128 these are the
-    // CPU solver's, which then gives the same flow. At 256x256 they fall well short of converging, which
-    // makes the flow up to half as fast again as it should be, so there the pressure solve gets 16
-    // over-relaxed sweeps, and the viscous solve of the thick fluids (a > 1, where it converges as slowly
-    // as the pressure one) four times the sweeps, over-relaxed by the factor that suits it best. Both then
-    // come to within a few per cent of a fully converged solve: the same flow as at the smaller sizes.
-    // (With only twice the sweeps honey's flow picks up, within about 1000 steps, a grid-scale roughness
-    // along the walls that a converged solve doesn't have.)
+    // CPU solver's, which then gives the same flow. On the larger grids they fall well short of converging
+    // (at 256x256 the flow is up to half as fast again as it should be), so there the pressure solve gets
+    // 16 (256) or 48 (512) over-relaxed sweeps, and the viscous solve of the thick fluids (a > 1, where it
+    // converges as slowly as the pressure one) 4 or 8 times the CPU's sweeps, over-relaxed by the factor
+    // that suits it best up to a cap. Both then come to within a few per cent of a fully converged solve:
+    // the same flow as at the smaller sizes.
     const TUNING = {
-        pressure: (n) => (n > 128 ? { sweeps: 16, omega: 1.8 } : { sweeps: 4, omega: 1 }),
+        pressure: (n) => (n > 256 ? { sweeps: 48, omega: 1.93 }
+            : n > 128 ? { sweeps: 16, omega: 1.8 } : { sweeps: 4, omega: 1 }),
         // a: the solve's coupling (dt * viscosity * n^2); cpuSweeps: diffusionIterations(a)
         viscous: (n, a, cpuSweeps) => {
             if (n <= 128 || a <= 1) return { sweeps: cpuSweeps, omega: 1 };
             const r = 4 * a / (1 + 4 * a); // how much of the error a Jacobi sweep leaves
-            return { sweeps: 4 * cpuSweeps, omega: Math.min(1.8, 2 / (1 + Math.sqrt(1 - r * r))) };
+            return { sweeps: cpuSweeps * n / 64, omega: Math.min(n > 256 ? 1.9 : 1.8, 2 / (1 + Math.sqrt(1 - r * r))) };
         },
     };
 
@@ -86,7 +86,10 @@ void main() {
         },
         // One half-sweep (cells with (i + j) % 2 == uParity) of the viscous solve for the velocity change
         // (diffuseVelocity): (1 + 4a) d - a (sum of the neighbours' d) = a * laplacian(vel0), over-relaxed
-        // by uOmega
+        // by uOmega. Beside a wall the neighbour outside it is this cell's own d (or minus it). Like the
+        // CPU, a plain sweep takes that from before the sweep; an over-relaxed one solves for it with the
+        // cell instead, as over-relaxing a cell's own value as if it were a neighbour's makes it overshoot
+        // further each sweep, which left the thick fluids' flow rough along the walls.
         viscosity: {
             textures: ['uDelta', 'uVel0'],
             source: `
@@ -99,8 +102,18 @@ void main() {
     if (((c.x + c.y) & 1) == uParity) {
         vec2 rhs = uA * (velocityAt(uVel0, c - DX) + velocityAt(uVel0, c + DX)
                        + velocityAt(uVel0, c - DY) + velocityAt(uVel0, c + DY) - 4.0 * velocityAt(uVel0, c));
-        vec2 gs = (rhs + uA * (velocityAt(uDelta, c - DX) + velocityAt(uDelta, c + DX)
-                             + velocityAt(uDelta, c - DY) + velocityAt(uDelta, c + DY))) * uCInv;
+        vec2 neighbours = velocityAt(uDelta, c - DX) + velocityAt(uDelta, c + DX)
+                        + velocityAt(uDelta, c - DY) + velocityAt(uDelta, c + DY);
+        vec2 diagonal = vec2(1.0 / uCInv);
+        if (uOmega > 1.0) {
+            // Walls beside the cell: across a side wall u changes sign and v doesn't; across the top or
+            // bottom, the other way round
+            float sides = float(c.x == 1) + float(c.x == uN), ends = float(c.y == 1) + float(c.y == uN);
+            vec2 own = sides * vec2(-1.0, 1.0) + ends * vec2(1.0, -1.0); // how much of d the neighbours hold
+            neighbours -= own * d;
+            diagonal -= uA * own;
+        }
+        vec2 gs = (rhs + uA * neighbours) / diagonal;
         d += uOmega * (gs - d);
     }
     outColor = vec4(d, 0.0, 0.0);
