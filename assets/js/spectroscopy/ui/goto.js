@@ -4,9 +4,11 @@
 // Autocomplete only offers what the student can already see (objects on screen in this band) or has already looked
 // at (Recent). universe.allCodes() is never listed, so a code can't be fished out by typing its first letters.
 //
-// app.goto = { goto(code, opts), recent(), focus(), linkFor(code, band) }
+// app.goto = { goto(code, opts), flyNear(code), recent(), focus(), linkFor(code, band) }
 //   goto(code, { band }) sets the band if given, then flies. Its promise gives true when the flight is over and the
 //   object selected, and false if the code is unknown or the flight was called off or replaced by a newer one.
+//   flyNear(code) is a double-click's flight (the engine's 'skydoubleclick'): to just outside where zooming in on it would
+//   carry on into its system, or framed as Go to frames it if it has none. It never goes in.
 // Bus events sent: 'goto' { code } as a flight sets off, 'highlight' { code } when a cluster member is reached.
 
 import { bus, select, setBand, setLayer } from '../core/state.js';
@@ -18,6 +20,7 @@ import { drawMag, parallaxFactor } from '../core/depth.js';
 import { bandMagnitude } from '../data/band_table.js';
 import { createVisited } from './visited.js';
 import { createSearchMarksLayer } from '../render/layers/search_marks.js';
+import { drawnSky } from '../render/layers/sky_tangent.js';
 
 const RECENT_MAX = 30;         // The list scrolls, and a search visits far more than the 10 first planned
 const SUGGEST_MAX = 8;
@@ -29,6 +32,10 @@ const ROW_PX = 44;
 
 const FLIGHT_S = 1.5;
 const MEMBER_ZOOM_S = 0.8;
+const NEAR_MARGIN = 1.5;            // A double-click's flight stops this much wider than where zooming in goes into the system
+const NEAR_S = 0.9;                 // It takes this long...
+const NEAR_PER_E_S = 0.22;          // ...and this much longer for each e-fold of zoom...
+const NEAR_MOST_S = 2;              // ...but never longer than this
 const SYSTEM_STEP_LIMIT_MS = 12000; // A system transition that never reports back mustn't strand the selection
 
 const FRAME_MARGIN = 1.7;          // An extended object fills about 60% of the view
@@ -148,8 +155,8 @@ function fovAtDepth(fov, depth) {
     return at;
 }
 
-function strongestBand(body) {
-    return BANDS.reduce((best, band) => (body.bands[band] > body.bands[best] ? band : best), 'visible');
+function strongestBand(bands) {
+    return BANDS.reduce((best, band) => (bands[band] > bands[best] ? band : best), 'visible');
 }
 
 function animationFrames(n) {
@@ -298,7 +305,7 @@ export function initGoto(app) {
             if (p && p.onScreen) distances.set(code, Math.hypot(p.x - frame.width / 2, p.y - frame.height / 2));
         };
         universe.bodies.forEach((body) => {
-            if (engine.bodyShows(body) && !isFaintInBand(body)) consider(body.code, body.sky.az, body.sky.alt, body.depth);
+            if (engine.bodyShows(body) && !isFaintInBand(body.bands)) consider(body.code, body.sky.az, body.sky.alt, body.depth);
         });
         PICK_LAYERS.forEach((id) => {
             const layer = engine.getLayer(id);
@@ -471,21 +478,22 @@ export function initGoto(app) {
         if (answerPrompt) answer('cancel');
     }
 
-    function isFaintInBand(body) {
-        return body.bands[app.band] <= BAND_HIDDEN_AT;
+    function isFaintInBand(bands) {
+        return bands[app.band] <= BAND_HIDDEN_AT;
     }
 
     function isHidden({ body, path }) {
         if (path === 'planet' || path === 'comet') return false; // Not drawn on the sky at all: the flight ends in its system, whatever the band
         // Faint in this band, or too faint to be drawn in it at any zoom (a dim red dwarf in ultraviolet)
-        const unseen = isFaintInBand(body) || !engine.bodyShows(body, limitingMag(MIN_FOV));
-        return unseen && strongestBand(body) !== app.band;
+        const bands = body.bands;
+        const unseen = isFaintInBand(bands) || !engine.bodyShows(body, limitingMag(MIN_FOV));
+        return unseen && strongestBand(bands) !== app.band;
     }
 
     // --- Flights ---
 
     // Resolves when the slew ends, even if something cuts it short without calling onDone, such as a drag or a newer flight
-    function slew(target, { duration = FLIGHT_S, pullBack = true, exact = false } = {}) {
+    function slew(target, { duration = FLIGHT_S, pullBack = true, exact = false, glide = false } = {}) {
         const view = engine.getView();
         const framed = angularSeparation(view.az, view.alt, target.az, target.alt) < view.fov * (exact ? 0.0005 : 0.02)
             && Math.abs(Math.log(view.fov / target.fov)) < 0.05;
@@ -499,7 +507,7 @@ export function initGoto(app) {
                 clearInterval(watch);
                 resolve();
             };
-            engine.slewTo(target, { duration, pullBack, onDone: finish });
+            engine.slewTo(target, { duration, pullBack, glide, onDone: finish });
             if (!done) watch = setInterval(() => { if (!engine.isSlewing()) finish(); }, 200);
         });
     }
@@ -630,6 +638,41 @@ export function initGoto(app) {
         return true;
     }
 
+    // --- Double-click ---
+
+    // Just short of where zooming in on it carries on into its system, so the next zoom takes the student in. Something with
+    // no system to go into is framed as Go to frames it, and so is a star that no zoom could take them into from here.
+    function nearView(resolved) {
+        const { entity, body, path } = resolved;
+        const entry = systemCodeOf(resolved) && app.system.entryFov ? app.system.entryFov(entity.code) : null;
+        if (!entry) {
+            if (path !== 'member') return frameFor(resolved);
+            const at = drawnSky(engine, resolved);
+            return { az: at.az, alt: at.alt, fov: memberFov(body, entity) };
+        }
+        const fov = Math.min(MAX_FOV, entry * NEAR_MARGIN);
+        const at = (path === 'component' && componentSkyAt(entity.code, fov)) || drawnSky(engine, resolved);
+        return { az: at.az, alt: at.alt, fov };
+    }
+
+    // Double-clicking something in the sky selects it, as the first click has already done, and the camera glides it to the
+    // middle. Never into its system: that's the student's own zoom.
+    async function flyNear(code) {
+        const resolved = universe.resolve(code);
+        if (!resolved || app.view !== 'sky') return false;
+        cancelPrompt();
+        const id = ++flightId;
+        if (!app.selected || app.selected.entity.code !== resolved.entity.code) select(resolved.entity.code);
+        const target = nearView(resolved);
+        const zoom = Math.abs(Math.log(target.fov / engine.getView().fov));
+        await slew(target, { duration: Math.min(NEAR_MOST_S, NEAR_S + NEAR_PER_E_S * zoom), pullBack: false, glide: true });
+        if (id !== flightId) return false;
+        if (resolved.path === 'member') bus.emit('highlight', { code: resolved.entity.code });
+        return true;
+    }
+
+    bus.on('skydoubleclick', ({ code }) => { if (code) flyNear(code); });
+
     function findObject(code) {
         const found = code ? universe.resolve(code) : null;
         if (found) return found;
@@ -663,7 +706,7 @@ export function initGoto(app) {
         const inOpenSystem = app.view === 'system' && app.systemCode === systemCodeOf(resolved);
         if (!inOpenSystem && isHidden(resolved)) {
             const hiddenIn = app.band;
-            const strongest = strongestBand(body);
+            const strongest = strongestBand(body.bands);
             input.value = entity.code;
             const choice = await askToSwitch(hiddenIn, strongest);
             if (id !== flightId || choice === 'cancel') return false;
@@ -796,7 +839,7 @@ export function initGoto(app) {
     if (bandBar) observer.observe(bandBar);
     fit();
 
-    app.goto = { goto, recent: () => [...recents], focus: focusBox, linkFor };
+    app.goto = { goto, flyNear, recent: () => [...recents], focus: focusBox, linkFor };
 
     // --- Links ---
 

@@ -50,6 +50,8 @@ const SETTLE_PER_T_S = 1.5;     // ... and this much more for the whole of it
 const REDUCED_THRESHOLD = 0.3;  // Reduce motion: a zoom this much past the point (log of the field of view), then a fade
 const REDUCED_FORGET_S = 0.6;
 const SAY_WAITING_S = 0.6;      // A wait as long as this gets a word in the context bar
+const ENTRY_SCAN_STEP = 0.6;    // entryFov: the steps it looks down in...
+const ENTRY_SPLITS = 3;         // ...and how many times the last of them is halved, to within about half a wheel's notch
 
 // Where the gesture has got to. It moves seen progress (see transition.js), so that every notch shows, and eases to it at the
 // speed the sky's own zoom eases to the wheel's goal. A short pause holds it there, so a slow, deliberate student still gets
@@ -293,6 +295,53 @@ export function createZoomInto(app, view) {
         view.beginOut(hand);
     }
 
+    // Would a zoom at this field of view, pointing at the system, carry on into it? As look() and atThePoint() would judge it
+    // there, from a view centred on it that is never drawn.
+    function wouldEnter(system, fov) {
+        const { width, height } = engine.currentFrame();
+        const centre = engine.axisPutting(system.sky.az, system.sky.alt, width / 2, height / 2, fov);
+        return engine.atView({ az: centre.az, alt: centre.alt, fov }, () => {
+            const frame = engine.currentFrame();
+            const at = engine.projectBody(system);
+            if (!at || !at.onScreen || engine.view.fov > handOverFov(system, frame)) return false;
+            // The cheap questions first: each pick is a sweep through everything in the sky
+            if (engine.view.fov > LIMIT_FOV) {
+                const seen = system.kind === 'nucleus' || engine.glowOf(system) >= SEEN_GLOW;
+                if (!seen || engine.view.fov > CAPTURE_FOV || !isClear(system, frame)) return false;
+            }
+            const code = engine.pick(at.x, at.y, POINT_PX.wheel);
+            const found = code ? systemOf(app.universe.resolve(code)) : null;
+            return !!found && found.code === system.code;
+        });
+    }
+
+    // The widest field of view at which a zoom pointing at this object carries on into its system, or null if none would:
+    // a double-click's flight stops a little short of it (ui/goto.js). The way down is scanned from the widest it could be,
+    // then the last step is split a few times.
+    function entryFov(code) {
+        const system = systemOf(app.universe.resolve(code));
+        if (!system || app.view !== 'sky') return null;
+        const frame = engine.currentFrame();
+        let fov = Math.max(LIMIT_FOV, Math.min(handOverFov(system, frame), CAPTURE_FOV));
+        // A faint star isn't offered until it shows well enough, and its glow goes as the square of the zoom
+        if (system.kind !== 'nucleus') {
+            const glow = engine.glowOf(system);
+            if (glow > 0) fov = Math.max(LIMIT_FOV, Math.min(fov, engine.view.fov * Math.sqrt(glow / SEEN_GLOW) * 0.999));
+        }
+        let wider = null;
+        while (!wouldEnter(system, fov)) {
+            if (fov <= LIMIT_FOV) return null;
+            wider = fov;
+            fov = Math.max(LIMIT_FOV, fov * ENTRY_SCAN_STEP);
+        }
+        for (let i = 0; wider && i < ENTRY_SPLITS; i++) {
+            const mid = Math.sqrt(fov * wider);
+            if (wouldEnter(system, mid)) fov = mid;
+            else wider = mid;
+        }
+        return fov;
+    }
+
     engine.setZoomIntake(intake);
     engine.addLayer({
         id: 'zoom-into',
@@ -332,5 +381,5 @@ export function createZoomInto(app, view) {
         }
     });
 
-    return { zoomedOutPast };
+    return { zoomedOutPast, entryFov };
 }

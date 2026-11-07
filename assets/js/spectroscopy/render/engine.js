@@ -13,6 +13,9 @@
 // Each frame: sky scene -> overlay passes -> post effects (all HDR) -> bloom -> tone map, vignette, sRGB, dither.
 // If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
 //
+// A click on the sky emits bus 'skyclick' { code, x, y } (code null for empty sky), and the second of two quick clicks on
+// the same spot 'skydoubleclick' { code, x, y } as well, a tap's as a click's.
+//
 // If the browser takes the graphics context away the engine emits bus 'gl-lost', and if it later gives it back,
 // 'gl-restored'. Whatever a layer baked into a render target is gone by then, so a layer that bakes should listen and
 // bake again.
@@ -41,6 +44,8 @@ const INERTIA_RATE = 4.2;       // How fast a flicked sky slows down (1/s)
 export const ZOOM_RATE = 11;    // How fast the zoom catches up with the wheel (1/s)
 const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a drag
 const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
+const DOUBLE_MS = { mouse: 500, touch: 350 };   // A second click this soon after the first is a double-click (Windows' own
+const DOUBLE_PX = { mouse: 6, touch: 30 };      // time for a mouse, a phone's for a tap), if it lands this near the first
 const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
 const PICK_SEEN_MIN = 0.12;     // Drawn fainter than this (see seenAmount), a point can't be made out, so it can't be clicked
@@ -857,9 +862,10 @@ export function createEngine(canvas) {
         zoomAnchor = null;
     }
 
-    // Fly the camera along the shortest way round. opts: { duration (s), pullBack, onDone }. Duration 0 jumps.
-    // pullBack widens the view on the way, more for a long flight, so the sky doesn't whip past. Reduce motion
-    // replaces the flight with a quick dip to black.
+    // Fly the camera along the shortest way round. opts: { duration (s), pullBack, glide, onDone }. Duration 0 jumps.
+    // pullBack widens the view on the way, more for a long flight, so the sky doesn't whip past. glide: a target already on
+    // screen slides from where it is to the middle in a straight line as the zoom goes, so a zoom right in on something
+    // never swings it off the screen on the way. Reduce motion replaces the flight with a quick dip to black.
     function slewTo(target, opts = {}) {
         velocity.az = 0;
         velocity.alt = 0;
@@ -894,7 +900,39 @@ export function createEngine(canvas) {
             const across = Math.hypot(dAz * Math.cos(((view.alt + to.alt) / 2) * RAD), dAlt);
             midFov = Math.min(MAX_FOV, Math.max(Math.max(view.fov, toFov) * 1.25, Math.min(70, across * 0.8)));
         }
-        slew = { from: { ...view }, aim, dAz, dAlt, toFov, midFov, t: 0, duration, onDone: opts.onDone };
+        let glide = null;
+        if (aim && opts.glide) {
+            const p = project(aim.az, aim.alt);
+            if (p && p.onScreen) glide = { x: p.x - width / 2, y: p.y - height / 2 };
+        }
+        slew = { from: { ...view }, aim, dAz, dAlt, toFov, midFov: glide ? null : midFov, glide, t: 0, duration, onDone: opts.onDone };
+    }
+
+    // A glide's view at k of the way: the zoom eases in log steps as any flight's does, and the target sits on the straight
+    // line from where it was to the middle, solved from scratch each frame so that nothing builds up
+    function glideView(k) {
+        const { from, toFov, glide, aim } = slew;
+        if (k >= 1) return { ...axisFor(aim, toFov), fov: toFov };
+        const fov = from.fov * (toFov / from.fov) ** k;
+        const axis = axisPutting(aim.az, aim.alt, width / 2 + glide.x * (1 - k), height / 2 + glide.y * (1 - k), fov);
+        return { az: axis.az, alt: axis.alt, fov };
+    }
+
+    // Answers a question about another view without drawing it: the camera looks from there while fn runs, and then every
+    // digit of this view comes back. For working out what a zoom would find before it gets there.
+    function atView(next, fn) {
+        const was = { az: view.az, alt: view.alt, fov: view.fov, goal: zoomGoal, anchor: zoomAnchor };
+        try {
+            placeView(next.az, next.alt, next.fov);
+            return fn();
+        } finally {
+            view.az = was.az;
+            view.alt = was.alt;
+            view.fov = was.fov;
+            zoomGoal = was.goal;
+            zoomAnchor = was.anchor;
+            applyView();
+        }
     }
 
     // The camera's axis for a direction that is to be in the middle of the canvas
@@ -913,6 +951,9 @@ export function createEngine(canvas) {
                 placeView(to.az, to.alt, slew.toFov);
                 zoomGoal = view.fov;
             }
+        } else if (slew.glide) {
+            const to = glideView(easeInOut(slew.t));
+            placeView(to.az, to.alt, to.fov);
         } else {
             const k = easeInOut(slew.t);
             const { from, midFov, toFov } = slew;
@@ -1380,6 +1421,7 @@ export function createEngine(canvas) {
 
     const dragPointers = new Map(); // pointerId -> { x, y }
     let press = null;               // The press that may yet turn out to be a click
+    let lastClick = null;           // The click before, which another may make a double-click: { at, x, y, how, code }
     let pinch = null;
     const dragTrail = { x: 0, y: 0, time: 0 };
     const hover = { x: 0, y: 0, dirty: false, lastAt: 0 };
@@ -1493,7 +1535,18 @@ export function createEngine(canvas) {
             if (press && !cancelled && inputActive()) {
                 const p = canvasPoint(e);
                 const code = pick(p.x, p.y, press.touch ? PICK_RADIUS_TOUCH : PICK_RADIUS_MOUSE);
+                // Two clicks in quick succession on the same spot are a double-click. A third starts afresh.
+                const how = press.touch ? 'touch' : 'mouse';
+                const now = performance.now();
+                const first = lastClick;
+                const double = !!first && first.how === how && now - first.at <= DOUBLE_MS[how]
+                    && Math.hypot(p.x - first.x, p.y - first.y) <= DOUBLE_PX[how];
+                lastClick = double ? null : { at: now, x: p.x, y: p.y, how, code };
                 bus.emit('skyclick', { code, x: p.x, y: p.y });
+                // The second click can just miss what the first found, so the first one's answer stands
+                if (double && (code || first.code)) bus.emit('skydoubleclick', { code: code || first.code, x: p.x, y: p.y });
+            } else {
+                lastClick = null;   // A drag or a pinch in between: not a double-click
             }
             press = null;
         };
@@ -1609,8 +1662,9 @@ export function createEngine(canvas) {
         setView,                    // setView({ az, alt, fov }) jumps straight there
         flyView,
         getView: () => ({ ...view }),
-        slewTo,                     // slewTo({ az, alt, fov }, { duration, pullBack, onDone })
+        slewTo,                     // slewTo({ az, alt, fov }, { duration, pullBack, glide, onDone })
         isSlewing: () => !!slew,
+        atView,                     // atView({ az, alt, fov }, fn): fn's answer from that view, which is never drawn
         // setZoomIntake(fn): fn(step, point, kind) sees every zoom step before the sky does, and returns true to keep it.
         // step is the change in the natural log of the field of view, negative going in. point is in CSS pixels, or null for
         // the centre of the view. kind is 'wheel', 'touch' or 'key'. The system view uses this to carry a zoom into a star.
