@@ -9,7 +9,9 @@
 //
 // Only one tool is open at a time, so opening one closes the last and its dispose hands back the plot. draws: true marks a
 // tool that draws on the plot or takes over its view. A tool may also return onPanelHide(), called when the Spectrum tab
-// goes out of view, to pause what it's playing.
+// goes out of view, to pause what it's playing, and onPanelShow() for when it comes back.
+//
+// pinned: true marks one with no button of its own: it is mounted under the plot for every object it applies to.
 //
 // To add a tool, write tools/<name>.js, which imports registerTool from here, import it at the bottom of this file, and
 // give it words in WORDS.
@@ -122,3 +124,4 @@ import './stars_shown.js';
 import './light_curve.js';
 import './pulse_timing.js';
 import './subtract_star.js';
+import './orbit_strip.js';

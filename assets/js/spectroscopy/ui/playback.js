@@ -5,8 +5,12 @@
 //   pb.t, pb.setTime(t), pb.play(), pb.pause(), pb.dispose()
 //
 // `t` advances by (real seconds) * (speed), so speeds are "units per second" in the given unit.
+//
+// With opts.clock (a multi-star system's clock, ui/spectrum/tools/orbit_clock.js) the control keeps no time of its own: it
+// plays, pauses and shows that clock, along with every other control on it. onTick still runs whenever the clock moves.
 
 export function createPlayback(container, opts) {
+    const clock = opts.clock || null;
     const speeds = opts.speeds || [0.25, 1, 4, 16];
     const unit = opts.unit || 'days';
     const el = document.createElement('div');
@@ -33,15 +37,25 @@ export function createPlayback(container, opts) {
     let last = 0;
     let playing = false;
 
+    const offClock = [];
+
     const api = {
-        t: opts.t0 || 0,
+        t: clock ? clock.t : opts.t0 || 0,
         el,
-        get playing() { return playing; },
+        get playing() { return clock ? clock.playing : playing; },
         setTime(t) {
+            if (clock) {
+                clock.setTime(t);
+                return;
+            }
             api.t = t;
             if (opts.onTick) opts.onTick(api.t, 0);
         },
         play() {
+            if (clock) {
+                clock.play();
+                return;
+            }
             if (playing) return;
             playing = true;
             last = performance.now();
@@ -49,13 +63,19 @@ export function createPlayback(container, opts) {
             raf = requestAnimationFrame(tick);
         },
         pause() {
+            if (clock) {
+                clock.pause();
+                return;
+            }
             playing = false;
             if (raf) cancelAnimationFrame(raf);
             raf = null;
             paint();
         },
         dispose() {
-            api.pause();
+            // A control on a shared clock can go without stopping it
+            if (clock) offClock.forEach((off) => off());
+            else api.pause();
             el.remove();
         }
     };
@@ -67,8 +87,9 @@ export function createPlayback(container, opts) {
     playBtn.append(playIcon, playWord);
 
     function paint() {
-        playIcon.className = `icon solid ${playing ? 'fa-pause' : 'fa-play'}`;
-        playWord.textContent = playing ? 'Pause' : 'Play';
+        const on = api.playing;
+        playIcon.className = `icon solid ${on ? 'fa-pause' : 'fa-play'}`;
+        playWord.textContent = on ? 'Pause' : 'Play';
     }
 
     function tick(now) {
@@ -80,7 +101,34 @@ export function createPlayback(container, opts) {
         if (opts.onTick) opts.onTick(api.t, dt);
     }
 
-    playBtn.addEventListener('click', () => (playing ? api.pause() : api.play()));
+    // The clock's speed may have been set by another control, with a list of its own: offer it here as well
+    function showClockSpeed() {
+        const value = String(clock.speed);
+        const known = [...speedSelect.options].some((o) => Number(o.value) === clock.speed);
+        if (!known) {
+            const o = document.createElement('option');
+            o.value = value;
+            o.textContent = `${Number(clock.speed.toPrecision(3))} ${unit}/s`;
+            const after = [...speedSelect.options].find((other) => Number(other.value) > clock.speed);
+            speedSelect.insertBefore(o, after || null);
+        }
+        if (Number(speedSelect.value) !== clock.speed) speedSelect.value = value;
+    }
+
+    if (clock) {
+        showClockSpeed();
+        speedSelect.addEventListener('change', () => clock.setSpeed(Number(speedSelect.value)));
+        offClock.push(clock.onState(() => {
+            paint();
+            showClockSpeed();
+        }));
+        offClock.push(clock.onTime((t) => {
+            api.t = t;
+            if (opts.onTick) opts.onTick(t, 0);
+        }));
+    }
+
+    playBtn.addEventListener('click', () => (api.playing ? api.pause() : api.play()));
     paint();
     if (opts.autoplay) api.play();
     return api;

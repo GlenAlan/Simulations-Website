@@ -116,6 +116,9 @@ function createSpectrumPanel(app, container) {
     // Tools open directly under the plot, ahead of everything else, so nothing needs to scroll to bring one into view
     const toolsEl = make('div', { class: 'spectro-tools', hidden: true });
     instrument.append(toolsEl, make('div', { class: 'spectro-range' }, [presetRow, zoomGroup]));
+    // Tools with nothing to open, such as a system's orbit strip, sit under the range buttons
+    const pinnedHost = make('div', { class: 'spectro-pinned' });
+    instrument.appendChild(pinnedHost);
 
     const note = make('p', { class: 'spectro-note', hidden: true });
 
@@ -615,10 +618,34 @@ function createSpectrumPanel(app, container) {
         syncScrollPadding();
     }
     new ResizeObserver(layoutToolBar).observe(toolBar);
+    // A pinned tool has no row to open: it is there for every object it applies to
+    const pinned = new Map();
+    function syncPinned(tool) {
+        let applies = false;
+        try {
+            applies = !!resolved && tool.appliesTo(resolved);
+            let instance = pinned.get(tool.id);
+            if (applies && !instance) {
+                instance = tool.mount(pinnedHost, panelApi);
+                pinned.set(tool.id, instance);
+            } else if (!applies && instance) {
+                pinned.delete(tool.id);
+                instance.dispose();
+                return;
+            }
+            if (applies && instance.setEntity) instance.setEntity(resolved);
+        } catch (err) {
+            console.error(`[spectroscopy] tool ${tool.id}:`, err);
+        }
+    }
 
     function syncTools() {
         let any = false;
         listTools().forEach((tool) => {
+            if (tool.pinned) {
+                syncPinned(tool);
+                return;
+            }
             const row = rowFor(tool);
             let applies = false;
             try {
@@ -731,11 +758,16 @@ function createSpectrumPanel(app, container) {
             if (entityDirty) applyEntity();
             else plot.redraw();
             syncScrollPadding();
+            pinned.forEach((instance) => { if (instance.onPanelShow) instance.onPanelShow(); });
+            toolRows.forEach((row) => {
+                if (row.instance && row.instance.onPanelShow) row.instance.onPanelShow();
+            });
         },
         onHide() {
             visible = false;
             syncScrollPadding();
             // A tool playing through time stops when it can't be seen
+            pinned.forEach((instance) => { if (instance.onPanelHide) instance.onPanelHide(); });
             toolRows.forEach((row) => {
                 if (row.instance && row.instance.onPanelHide) row.instance.onPanelHide();
             });

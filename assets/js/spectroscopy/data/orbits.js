@@ -12,7 +12,7 @@
 // is [{ a: [0], b: [1] }, { a: [0, 1], b: [2] }], a double-double is [{ a: [0], b: [1] }, { a: [2], b: [3] },
 // { a: [0, 1], b: [2, 3] }]. The figure-eight's single entry only records its period; it reads a stored path (see below).
 
-import { AU } from '../core/phys.js';
+import { AU, R_SUN } from '../core/phys.js';
 
 const TWO_PI = 2 * Math.PI;
 const RAD = Math.PI / 180;
@@ -257,6 +257,75 @@ export function componentStates(body, tDays = 0) {
     if (body.stars && body.orbits && body.orbits.length) return nestedStates(body, tDays);
     if (body.black_hole) return blackHoleStates(body, tDays);
     return [];
+}
+
+// ---- Eclipses ----
+//
+// On the sky a pair sit (r cos U, r sin U cos i) apart, and group a is further away than group b when r sin U sin i is
+// positive: that is the position whose rate of change is relativeOrbit's line-of-sight speed. So the two moments of closest
+// approach on the sky, when one star can hide the other, are when both stars move across the line of sight and their spectral
+// lines cross. Discs are taken as evenly bright.
+
+const RSUN_AU = R_SUN / AU;
+const ECLIPSE_SEARCH_STEPS = 720;
+const eclipseCache = new WeakMap();
+
+// The share of a disc of radius rBack hidden by a disc of radius rFront, with their centres d apart
+export function hiddenShare(rBack, rFront, d) {
+    if (d >= rBack + rFront) return 0;
+    if (d <= Math.abs(rBack - rFront)) return rFront >= rBack ? 1 : (rFront * rFront) / (rBack * rBack);
+    const a = rBack * rBack;
+    const b = rFront * rFront;
+    const lens = a * Math.acos((d * d + a - b) / (2 * d * rBack))
+        + b * Math.acos((d * d + b - a) / (2 * d * rFront))
+        - 0.5 * Math.sqrt((-d + rBack + rFront) * (d + rBack - rFront) * (d - rBack + rFront) * (d + rBack + rFront));
+    return lens / (Math.PI * a);
+}
+
+function discRadiusAU(component) {
+    return (component.star.radius_Rsun ?? 1) * RSUN_AU;
+}
+
+// The star-and-star orbits of a system that ever line up from here. Worked out once for each system, and nearly always none.
+export function eclipsingOrbits(body) {
+    let list = eclipseCache.get(body);
+    if (list) return list;
+    list = [];
+    if (body.stars && body.orbits && !body.figure_eight) {
+        body.orbits.forEach((orbit) => {
+            if (!orbit.a || orbit.a.length !== 1 || orbit.b.length !== 1 || !(orbit.a_AU > 0)) return;
+            const reach = discRadiusAU(body.stars[orbit.a[0]]) + discRadiusAU(body.stars[orbit.b[0]]);
+            const cosI = Math.cos(orbit.inc_deg * RAD);
+            // The sky separation can't be less than the orbit's smallest radius times cos i
+            if (orbit.a_AU * (1 - (orbit.ecc || 0)) * Math.abs(cosI) >= reach) return;
+            for (let k = 0; k < ECLIPSE_SEARCH_STEPS; k++) {
+                const rel = relativeOrbit(orbit, (k / ECLIPSE_SEARCH_STEPS) * orbit.period_days, orbit.inc_deg);
+                if (Math.hypot(rel.x, rel.y * cosI) < reach) {
+                    list.push(orbit);
+                    return;
+                }
+            }
+        });
+    }
+    eclipseCache.set(body, list);
+    return list;
+}
+
+// How much of each star shows at this moment, in body.stars order; null for a system that never eclipses
+export function visibleShares(body, tDays = 0) {
+    const orbits = eclipsingOrbits(body);
+    if (!orbits.length) return null;
+    const out = body.stars.map(() => 1);
+    orbits.forEach((orbit) => {
+        const rel = relativeOrbit(orbit, tDays, orbit.inc_deg);
+        const angle = orbit.inc_deg * RAD;
+        const apart = Math.hypot(rel.x, rel.y * Math.cos(angle));
+        const [aIsBehind, a, b] = [rel.y * Math.sin(angle) > 0, orbit.a[0], orbit.b[0]];
+        const back = aIsBehind ? a : b;
+        const front = aIsBehind ? b : a;
+        out[back] *= 1 - hiddenShare(discRadiusAU(body.stars[back]), discRadiusAU(body.stars[front]), apart);
+    });
+    return out;
 }
 
 // Where a planet's orbit is centred, in the same frame as componentStates: the origin, except for a planet that
