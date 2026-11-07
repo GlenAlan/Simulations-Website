@@ -666,6 +666,18 @@ function smooth(a, b, x) {
 export const ORBITS_PER_SECOND = 1;
 export const ORBITS_PER_SECOND_REDUCED = 0.1;
 
+// A busier orbit gets a share of that. Gas falling from one star to the other puts a stream and a bright disc beside the
+// stars, and they all pass a spot each turn, from in front and from behind: up to nine flashes a turn, close up, with the
+// stars big on the screen. A black hole's disc is streaked, and the streaks race past as the hole swings round its partner.
+// At this share neither goes over three flashes a second, at any zoom or size of window.
+export const BUSY_ORBIT_SHARE = 0.4;
+
+export function orbitShare(model, node) {
+    if (model.stream && model.stream.pair === node) return BUSY_ORBIT_SHARE;
+    if (model.body.black_hole && node === model.root) return BUSY_ORBIT_SHARE;
+    return 1;
+}
+
 export function createSmear(model) {
     return {
         nodes: new Map(model.nodes.map((n) => [n, { own: 0, above: 0 }])),
@@ -683,8 +695,9 @@ export function smearWeights(model, daysPerSecond, cap, out) {
     const walk = (node, above, fastest) => {
         const entry = out.nodes.get(node);
         const period = node.flat ? model.pathPeriodDays : node.orbit ? node.orbit.period_days : 0;
-        // The figure-eight's three stars share one path, so each spot on it is passed three times an orbit
-        entry.own = weight(period, node.flat ? 3 : 1);
+        // The figure-eight's three stars share one path, so each spot on it is passed three times an orbit. A busy orbit
+        // counts as faster than it is, by the same reasoning.
+        entry.own = weight(period, (node.flat ? 3 : 1) / orbitShare(model, node));
         entry.above = above;
         const next = Math.max(above, entry.own);
         const rate = period > 0 ? Math.max(fastest, daysPerSecond / period) : fastest;
@@ -767,12 +780,20 @@ export function hzStatus(body) {
 // motion the top is far lower. Null if nothing here goes round anything.
 export function speedsFor(model, reduceMotion = false, mix = model.startLog ? 1 : 0) {
     const periods = model.planets.map((e) => e.planet.period_days);
-    model.nodes.forEach((n) => { if (n.orbit && n.orbit.period_days) periods.push(n.orbit.period_days); });
+    // A busy orbit (orbitShare) is held to its share of the top speed, as if it were that much shorter
+    const shared = [...periods];
+    model.nodes.forEach((n) => {
+        if (!n.orbit || !n.orbit.period_days) return;
+        periods.push(n.orbit.period_days);
+        shared.push(n.orbit.period_days * orbitShare(model, n));
+    });
     if (model.pathPoints) periods.push(model.pathPeriodDays);
     (model.comets || []).forEach((c) => periods.push(c.orbit.period_days));
     if (!periods.length) return null;
+    if (model.pathPoints) shared.push(model.pathPeriodDays);
+    (model.comets || []).forEach((c) => shared.push(c.orbit.period_days));
     const shortest = Math.min(...periods);
-    const longest = Math.max(...periods);
+    const longest = Math.max(...shared);
     const min = shortest / 200;
     const fastest = model.pathPoints ? 0.2 : 0.5;   // The figure-eight's stars share a path, and must stay stars at the top
     const max = longest * (reduceMotion ? ORBITS_PER_SECOND_REDUCED * 0.2 : ORBITS_PER_SECOND * fastest);

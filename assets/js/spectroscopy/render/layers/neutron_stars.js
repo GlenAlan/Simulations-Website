@@ -13,6 +13,8 @@ import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, pulsarSpin, HELD_ANG
 
 export { pulseDisplay } from './exotic_common.js';
 
+const BEAMS_SHOW_PX = 64;   // Half-size, in device pixels, at which the beams are well on show (vDetail about 0.6)
+
 export function createNeutronStarsLayer(engine, app) {
     const bodies = app.universe.bodies.filter((b) => b.kind === 'neutron_star' && b.neutron_star);
     const n = bodies.length;
@@ -205,6 +207,17 @@ export function createNeutronStarsLayer(engine, app) {
                 out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth });
             });
             return out;
+        },
+        // The field of view at which a pulsar is drawn big enough for its beams to be seen turning (vDetail above), so that a
+        // zoom shows them on the sky before the system view takes over (render/system/zoom_into.js): the same turn, followed
+        // from one view into the other. 0 for a neutron star with no beams.
+        beamsFov(code, frame) {
+            const i = bodies.findIndex((b) => b.code === code);
+            if (i < 0 || !bodies[i].neutron_star.pulsar) return 0;
+            const reach = infos[i * 4] * DEG * frame.pxPerRad * Math.tan((frame.fov * DEG) / 2);
+            let fov = frame.fov;
+            for (let k = 0; k < 4; k++) fov = (2 * Math.atan((reach * parallaxFactor(bodies[i].depth, fov)) / BEAMS_SHOW_PX)) / DEG;
+            return fov;
         },
         dispose() {
             engine.scene.remove(mesh);

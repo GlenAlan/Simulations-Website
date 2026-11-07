@@ -9,7 +9,7 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { hashString, Rng } from '../../core/rng.js';
 import { sharedUniforms } from '../shared.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from '../layers/bh_geodesic.js';
-import { exoticNoise, bodyRng, pulsarSpin, pulsarAngle, pulsarBeam, PULSAR_BEAM_SLOPE } from '../layers/exotic_common.js';
+import { exoticNoise, bodyRng, pulsarSpin, pulsarAngle, pulsarBeam, smoothstep, PULSAR_BEAM_SLOPE } from '../layers/exotic_common.js';
 import { HOLE_DISC, JET_BANDS, BEAM_BANDS, BEAM_TRUE, bandRgb, falseTint } from './band_look.js';
 
 // Lengths in units of the hole's mass M, as on the sky. The radius the system view gives a hole is its disc's outer edge.
@@ -17,6 +17,8 @@ const R_IN = 6;
 const R_OUT = 18;
 const QUAD_M = R_OUT * 2.6;     // Half the quad's width
 const STREAM_LEAD = 1.15;       // How far round the orbit the stream lands, ahead of the star (radians)
+const CALM_FROM = 0.06;         // Crossing the screen at this many of its own radii a second, the disc's clumps start to blur...
+const CALM_TO = 0.2;            // ... and by this, they're an even glow
 
 const HOLE_VERTEX = /* glsl */`
 varying vec2 vP;
@@ -44,6 +46,7 @@ uniform vec3 uE1;
 uniform vec3 uE2;
 uniform vec2 uBandDisc;     // The band: how bright the whole disc is, and how much more towards its hot inner edge
 uniform vec4 uBandTint;     // ... the false colour it's drawn in, and how much of the mix is false colour
+uniform float uCalm;        // 1: the hole is crossing the screen fast, and its clumps are a blur
 varying vec2 vP;
 
 const float PI = 3.14159265;
@@ -58,6 +61,7 @@ const float R_IN = ${R_IN.toFixed(1)};
 const float R_OUT = ${R_OUT.toFixed(1)};
 const float FLOW = 9.0;
 const float CYCLE = 64.0;
+const float CLUMPS_MEAN = 0.85;
 
 float tableX(float b) {
     float s = (b - B_CRIT) / WIDTH;
@@ -96,7 +100,7 @@ vec4 discLight(float r, float phi, float g) {
     float inner = smoothstep(R_IN * 0.97, R_IN * 1.1, r);
     float outer = 1.0 - smoothstep(R_OUT * 0.5, R_OUT, r);
     float Tn = pow(f, 0.75) * pow(max(1.0 - sqrt(f), 0.0), 0.12) / 0.62;
-    float clumps = 0.28 + 2.0 * pow(gas(r, phi), 1.8);
+    float clumps = uCalm > 0.999 ? CLUMPS_MEAN : mix(0.28 + 2.0 * pow(gas(r, phi), 1.8), CLUMPS_MEAN, uCalm);
     float dPhi = mod(phi - uHotAngle + PI, TAU) - PI;
     float rh = R_OUT * 0.8;
     float spot = exp(-((r - rh) * (r - rh)) / 3.0 - (dPhi * rh * dPhi * rh) / 7.0);
@@ -223,7 +227,8 @@ export function createHole(starData, opts = {}) {
             uE1: { value: new THREE.Vector3(1, 0, 0) },
             uE2: { value: new THREE.Vector3(0, 1, 0) },
             uBandDisc: { value: new THREE.Vector2(1, 0) },
-            uBandTint: { value: new THREE.Vector4(1, 1, 1, 0) }
+            uBandTint: { value: new THREE.Vector4(1, 1, 1, 0) },
+            uCalm: { value: 0 }
         }
     });
     const quad = new THREE.Mesh(quadGeometry, material);
@@ -251,6 +256,7 @@ export function createHole(starData, opts = {}) {
     }
     const tintOut = [0, 0, 0];
     const jetRgb = [0, 0, 0];
+    let sweep = 0;      // How fast the hole crosses the screen, in its own radii a second, smoothed over a few frames
 
     const api = {
         group,
@@ -291,6 +297,11 @@ export function createHole(starData, opts = {}) {
             const pxPerM = Math.max(0.05, (s.pxRadius * (s.dpr || 1)) / R_OUT);
             u.uPxM.value = 1 / pxPerM;
             u.uLod.value = Math.max(0, Math.log2(25 / pxPerM));
+            // Swinging round its partner, the hole carries its streaked disc across the screen, and every spot the streaks
+            // pass flickers. Moving fast, the streaks blur into an even glow, as a star's surface does.
+            const across = (s.pxPerSecond || 0) / Math.max(s.pxRadius || 0, 1);
+            sweep += (across - sweep) * Math.min(1, (s.dt || 0) * 4);
+            u.uCalm.value = smoothstep(CALM_FROM, CALM_TO, sweep);
             rot.setFromMatrix4(s.camera.matrixWorldInverse);
             u.uN.value.copy(normal).applyMatrix3(rot);
             u.uE1.value.copy(e1).applyMatrix3(rot);
@@ -381,11 +392,110 @@ function createBeams({ radius, length, knots, sides }) {
     };
 }
 
+// A pulsar's beams as light in the space round the star, not as cones with walls: each pixel shows the beam where its line
+// of sight passes nearest the axis, fading smoothly across, as the sky draws it. A beam sweeping a wall's hard edge over the
+// screen changes a wide area at once; this changes it gently. The cones are only something to draw on, wider than the light.
+const SOFT_BEAM_VERTEX = /* glsl */`
+varying vec3 vWorld;
+void main() {
+    vec4 world = modelMatrix * vec4(position, 1.0);
+    vWorld = world.xyz;
+    gl_Position = projectionMatrix * viewMatrix * world;
+}`;
+
+const SOFT_BEAM_FRAGMENT = /* glsl */`
+uniform vec3 uColour;
+uniform float uAmount;
+uniform vec3 uApex;
+uniform vec3 uAxis;
+uniform float uLength;
+uniform float uSlope;
+varying vec3 vWorld;
+void main() {
+    vec3 rd = normalize(vWorld - cameraPosition);
+    vec3 w0 = cameraPosition - uApex;
+    float b = dot(rd, uAxis);
+    float t = max((b * dot(uAxis, w0) - dot(rd, w0)) / max(1.0 - b * b, 1e-4), 0.0);
+    vec3 p = cameraPosition + rd * t - uApex;
+    // Each cone draws its own half of the beam
+    float side = sign(dot(vWorld - uApex, uAxis));
+    float s = dot(p, uAxis) * side;
+    if (s <= 0.0) discard;
+    float across = length(p - uAxis * s * side) / max(s * uSlope, uLength * 0.004);
+    float a = s / uLength;
+    float fade = (1.0 - smoothstep(0.1, 1.0, a)) * smoothstep(0.0, 0.08, a);
+    gl_FragColor = vec4(uColour * exp(-across * across) * fade * uAmount, 1.0);
+}`;
+const SOFT_BEAM_ROOM = 2.2;     // The cones' width, as a share of the light's own
+// How bright a beam is, as the luminance of its colour times this: about the same in every band, and dim enough that a beam
+// sweeping over the screen changes no wide area by much from one frame to the next. Each line of sight crosses a cone
+// twice, so the light peaks at twice this. A pale colour may go a little brighter, up to SOFT_BEAM_MOST.
+const SOFT_BEAM_LIGHT = 0.142;
+const SOFT_BEAM_MOST = 0.16;
+
+function createSoftBeams({ slope, sides }) {
+    // Closed, so that every line of sight through it crosses it twice, even one looking in at the open end
+    const geometry = new THREE.ConeGeometry(slope * SOFT_BEAM_ROOM, 1, sides, 1, false);
+    geometry.translate(0, -0.5, 0);
+    const material = new THREE.ShaderMaterial({
+        toneMapped: false,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        vertexShader: SOFT_BEAM_VERTEX,
+        fragmentShader: SOFT_BEAM_FRAGMENT,
+        uniforms: {
+            uColour: { value: new THREE.Color(...BEAM_TRUE) },
+            uAmount: { value: 0 },
+            uApex: { value: new THREE.Vector3() },
+            uAxis: { value: new THREE.Vector3(0, 1, 0) },
+            uLength: { value: 1 },
+            uSlope: { value: slope }
+        }
+    });
+    const object = new THREE.Group();
+    const north = new THREE.Mesh(geometry, material);
+    const south = new THREE.Mesh(geometry, material);
+    south.rotation.z = Math.PI;
+    [north, south].forEach((m) => {
+        m.frustumCulled = false;
+        m.renderOrder = 3;
+    });
+    object.add(north, south);
+    const q = new THREE.Quaternion();
+    const scaleNow = new THREE.Vector3();
+    let amount = SOFT_BEAM_MOST;
+    return {
+        object,
+        setColour(rgb) {
+            material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]);
+            const light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            amount = Math.min(SOFT_BEAM_MOST, SOFT_BEAM_LIGHT / Math.max(light, 1e-3));
+            object.visible = rgb[0] + rgb[1] + rgb[2] > 0.002;
+        },
+        update({ reveal, scale }) {
+            object.scale.setScalar(scale);
+            object.updateWorldMatrix(true, false);
+            const u = material.uniforms;
+            object.getWorldPosition(u.uApex.value);
+            // The cones open along -y: the axis the north one points along
+            u.uAxis.value.set(0, -1, 0).applyQuaternion(object.getWorldQuaternion(q));
+            u.uLength.value = object.getWorldScale(scaleNow).y;
+            u.uAmount.value = amount * reveal;
+        },
+        dispose() {
+            geometry.dispose();
+            material.dispose();
+        }
+    };
+}
+
 // The pulsar the sky shows, turning the same way at the same moment (pulsarSpin in layers/exotic_common.js): the same tilt,
 // beam width and turns a second, on the shared clock. sight is the unit vector towards us, where the flight in starts: the
 // sky's view of the pulsar is laid along it, so whenever the sky shows a pulse, the beam here points back along the flight.
 export function createPulsarBeams(body, sight) {
-    const beams = createBeams({ radius: PULSAR_BEAM_SLOPE, length: 1, knots: 0, sides: 28 });
+    const beams = createSoftBeams({ slope: PULSAR_BEAM_SLOPE, sides: 28 });
     const spin = pulsarSpin(body, bodyRng(body, 'pulsar'));
     // The sky's frame at the pulsar (right, up, towards us) in this world: up is the world's up, square to the line of sight
     const z = new THREE.Vector3(...sight).normalize();
@@ -406,7 +516,7 @@ export function createPulsarBeams(body, sight) {
             pulsarBeam(local, angle, along);
             // The beams lie along the object's y axis
             beams.object.quaternion.setFromUnitVectors(Y, pointing.fromArray(along).normalize());
-            beams.update({ dt: 0, reveal, reduceMotion: true, scale: radius * 7 });
+            beams.update({ reveal, scale: radius * 7 });
         },
         dispose: beams.dispose
     };
