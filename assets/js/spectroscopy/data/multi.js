@@ -51,9 +51,9 @@ function makeOrbit(rng, a, b, aAU, massTotal, opts = {}) {
     };
 }
 
-// Primary of a random system, then a partner drawn by mass ratio; all share a birth cloud
-function drawPrimary(rng, population, composition) {
-    const cls = rng.weighted(PRIMARY_CLASSES);
+// Primary of a random system, then a partner drawn by mass ratio; all share a birth cloud. forced: a class to use instead.
+function drawPrimary(rng, population, composition, forced = null) {
+    const cls = forced || rng.weighted(PRIMARY_CLASSES);
     if (cls === 'WD') return makeWhiteDwarf(rng, { population, composition });
     if (cls === 'GIANT') return makeRedGiant(rng, { population, composition, maxMass: 3 });
     const maxMass = population === 'II' ? 0.92 : undefined;
@@ -73,21 +73,23 @@ function primaryPopulation(rng) {
 // A random binary or hierarchical triple, ready for a position and brightness. wantsPlanets keeps the orbits tight
 // enough for planets to circle the whole system at a sensible distance. canPass: false keeps it from being one of the few
 // pairs that pass mass across. Drawn as it always was, then settled by data/dynamics.js so that it could really exist.
-export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets, { canPass = true } = {}) {
+// For the added sky (data/quotas.js EXTRA) only: passing makes its inner pair one that passes mass across, primary gives the
+// class of its first star, and widestAU lets a plain pair be drawn out to that separation instead of 3 AU.
+export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets, { canPass = true, passing = false, primary = null, widestAU = null } = {}) {
     let population = primaryPopulation(rng);
     let composition = makeComposition(rng, population);
-    let s0 = drawPrimary(rng, population, composition);
+    let s0 = drawPrimary(rng, population, composition, primary);
     // Metal-poor stars are old: a massive primary can't be one
     if (population === 'II' && s0.mass_Msun > 1) {
         population = 'I';
         composition = makeComposition(rng, population);
-        s0 = drawPrimary(rng, population, composition);
+        s0 = drawPrimary(rng, population, composition, primary);
     }
     const s1 = drawPartner(rng, Math.max(s0.mass_Msun, 0.15), population, composition);
     const mass01 = s0.mass_Msun + s1.mass_Msun;
 
     const floor = smallestSeparation(s0, s1);
-    const hiInner = wantsPlanets ? (triple ? 0.1 : 0.5) : triple ? 0.6 : 3;
+    const hiInner = wantsPlanets ? (triple ? 0.1 : 0.5) : triple ? 0.6 : widestAU || 3;
     const aInner = stable(rng.logRange(Math.max(0.02, floor * 1.02), Math.max(hiInner, floor * 2)), 5);
     const inner = makeOrbit(rng, [0], [1], aInner, mass01, { circular: aInner < 0.2 });
     const parts = [s0, s1];
@@ -120,7 +122,7 @@ export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets, { can
         visual_sep_deg: dp(rng.range(0.02, 0.06), 3),
         planets: []
     };
-    return settleSystem(rng.fork('settle'), system, { passing: closeEnough && canPass, planets: wantsPlanets });
+    return settleSystem(rng.fork('settle'), system, { passing: passing || (closeEnough && canPass), planets: wantsPlanets });
 }
 
 // A pair from two stars that already exist, for a cluster's binary members: the same shape as a random binary

@@ -9,8 +9,9 @@
 // A body: { code, kind, sky: { az, alt }, distance_pc, radial_velocity_kms, bands: { radio, ir, visible, uv, xray },
 //           brightness: { flux_Wm2, mag }, visual_seed, deep?, ...its kind's block }
 //   brightness.flux_Wm2 is the true bolometric flux; mag is apparent visual magnitude (99 where it can't be seen at all).
-//   deep: true marks the further, fainter bodies added behind the first sky (data/quotas.js SKY_SCALE). They rank for
-//   depth among their own kind's (core/depth.js); nothing else need treat them differently.
+//   deep: true marks the further, fainter bodies added behind the first sky (data/quotas.js SKY_SCALE), the added sky's
+//   (EXTRA) and supernovae in other galaxies (SUPERNOVAE). They rank for depth among their own kind's (core/depth.js);
+//   nothing else need treat them differently.
 //   A star or multi-star body may also have comets[], comets of its own (data/exocomets.js), which resolve with path 'comet'.
 //   A galaxy may have nucleus, its central black hole (data/nuclei.js), which resolves with path 'nucleus'.
 //   Radial velocities come from data/motions.js, once the sky is laid out.
@@ -29,11 +30,12 @@ import { makeCluster, makeBinaryMembers, keepMembersAboveHorizon, deepClusterOpt
 import { makeNebula, makeNeutronStar, makeGalaxy, makeBlackHole, makeSupernova, makeQuasar, makeComet, makeRogue, pushBack,
     placeSkyComets } from './deep_sky.js';
 import { makeExocomet } from './exocomets.js';
-import { layOutSky, layOutDeep, removeFromLayout } from './sky_layout.js';
+import { layOutSky, layOutDeep, removeFromLayout, DEEP_CLEAR_DEG } from './sky_layout.js';
 import { makeHomePlanets } from './home_system.js';
 import { unseal, SHOWCASE_CODES } from './sealed.js';
 import { bandStrengths } from './band_table.js';
-import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion } from './quotas.js';
+import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion, ROGUE_PLANETS_KEPT, EXTRA, EXTRA_STARS } from './quotas.js';
+import { sortSupernovae, freeNeutronStar, makeFarSupernovae, setFarVelocities } from './far_supernovae.js';
 import { assignVelocities } from './motions.js';
 import { addNuclei, nucleusEntities } from './nuclei.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
@@ -164,10 +166,14 @@ function setStellarBrightness(body, luminosity, absV, distance) {
     body.brightness = { flux_Wm2: stable(fluxFromLuminosity(luminosity, distance), 6), mag: apparentMag(absV, distance) };
 }
 
+// deep: false for the first sky's, true for the deeper sky's, 'bright' for one of the added sky's seen by eye
 function makeSingleStarBody(rng, code, star, plan, deep = false) {
     const body = makeBase('star', code);
     const absV = absoluteVisual(star.luminosity_Lsun, star.teff_K);
-    if (deep) {
+    if (deep === 'bright') {
+        const faintest = SKY_SHARE[plan.cls][1];
+        setStellarBrightness(body, star.luminosity_Lsun, absV, distanceWithin(rng, absV, targetMag(rng, 1, faintest), faintest, FARTHEST_STAR_PC));
+    } else if (deep) {
         const faintest = DEEP_FAINTEST[plan.cls];
         setStellarBrightness(body, star.luminosity_Lsun, absV, distanceWithin(rng, absV, deepTargetMag(rng, faintest), faintest, DEEP_FARTHEST_PC));
     } else {
@@ -342,10 +348,12 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     }
 
     const rogues = root.fork('rogues');
+    const rogueBodies = [];
     shuffled(quota, quotaList(MIX.rogue_planet)).forEach((type, i) => {
         const body = makeBase('rogue_planet', otherCode());
         makeRogue(rogues.fork(`rogue:${i}`), body, type);
         add(body, 'even');
+        rogueBodies.push(body);
     });
 
     // Ten comets were first laid out across the sky. Only SKY_COMETS of them stay in it, re-placed by the Sun below the
@@ -394,11 +402,13 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     const neutronStars = root.fork('neutron_stars');
     const pulsars = shuffled(quota, quotaList(MIX.neutron_star)).map((k) => k === 'pulsar');
+    const neutronBodies = new Map();
     pulsars.forEach((pulsar, i) => {
         const r = neutronStars.fork(`ns:${i}`);
         const source = remnantSources[i] || null;
         const body = makeBase('neutron_star', otherCode());
         makeNeutronStar(r, body, pulsar, source ? source.body : null);
+        neutronBodies.set(body.code, body);
         if (source) {
             source.body.supernova.remnant_code = body.code;
             add(body, 'stars', { near: source, near_deg: [0.35, 0.6] });
@@ -485,7 +495,34 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const leaving = new Set(cometBodies.slice(SKY_COMETS));
     removeFromLayout(layout, cometBodies);
     const cometSun = placeSkyComets(root.fork('sky comets'), skyComets, layout);
-    const sky = first.filter((body) => !leaving.has(body)).concat(second);
+
+    // ---------- The sky's proportions (data/quotas.js, round 4) ----------
+    // Everything above is made and laid out as it always was. Now some of it goes, and in its place come supernovae in other
+    // galaxies; the added sky comes last of all, below.
+    // Rogue planets: the first made of each sky's stay
+    const goneRogues = [...rogueBodies.slice(ROGUE_PLANETS_KEPT.first), ...deep.rogues.slice(ROGUE_PLANETS_KEPT.deep)];
+    // Supernovae: the nearest stay, and the codes of the rest go to supernovae in other galaxies. A neutron star that one of
+    // them left stays where it is, as one of our own galaxy's.
+    const supernovaSort = sortSupernovae(supernovaEntries.map((e) => e.body));
+    const moving = supernovaSort.far.map((f) => f.body).filter(Boolean);
+    const freed = root.fork('freed neutron stars');
+    [...supernovaSort.gone, ...moving].forEach((body) => {
+        const ns = neutronBodies.get(body.supernova.remnant_code);
+        if (ns) freeNeutronStar(freed.fork(ns.code), ns);
+    });
+    const gone = new Set([...goneRogues, ...supernovaSort.gone]);
+    removeFromLayout(layout, [...gone, ...moving]);
+    const farCode = coder('far supernovae');
+    const farNew = [];
+    const keptSky = first.filter((body) => !leaving.has(body) && !gone.has(body)).concat(second.filter((body) => !gone.has(body)));
+    const farBodies = makeFarSupernovae(root.fork('far supernovae'), supernovaSort.far, keptSky.filter((b) => b.kind === 'galaxy'), layout,
+        new Set(supernovaSort.near.map((b) => b.supernova.phase0_days)), () => {
+            const body = makeBase('supernova', farCode());
+            farNew.push(body);
+            return body;
+        });
+
+    const sky = keptSky.concat(farNew);
     makeExocomets(root.fork('exocomets'), sky, [...leaving].map((b) => b.code), coder('exocomets'), sealed);
 
     // A few detached close pairs turned edge-on, to join the tight pairs that eclipse already
@@ -495,12 +532,25 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     // After the layout, since a body's direction sets much of its motion. The hard-coded systems keep theirs.
     const fixedMotion = new Set([target.host.code, ...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK']);
     assignVelocities(sky, root.fork('motions'), fixedMotion);
+    // A supernova in another galaxy moves with it
+    const galaxyByCode = new Map(sky.filter((b) => b.kind === 'galaxy').map((b) => [b.code, b]));
+    setFarVelocities(root.fork('far supernova motions'), farBodies, (code) => galaxyByCode.get(code));
 
     // ---------- Black holes at the centres of galaxies ----------
     // A stream and codes of their own, drawn after every other code, and after the motions they copy (data/nuclei.js)
     addNuclei(root.fork('nuclei'), sky, coder('nuclei'));
 
-    const all = sky.concat(home);
+    // ---------- The added sky (data/quotas.js EXTRA) ----------
+    // Last of all, from streams and codes of its own, laid out among and behind everything above, so that nothing above moves
+    const extraRoot = root.fork('extra');
+    const extra = makeExtraSky(extraRoot, coder, tally);
+    layOutDeep(layout, extra.entries, extraRoot.fork('sky'));
+    tiltEclipses(extraRoot.fork('eclipses'), extra.bodies.filter((b) => b.stars), EXTRA.eclipsingTilted);
+    assignVelocities(extra.bodies, root.fork('motions'), new Set());
+    addNuclei(extraRoot.fork('nuclei'), extra.bodies, coder('extra nuclei'));
+    const third = extraRoot.fork('order').shuffle(extra.bodies.slice());
+
+    const all = sky.concat(third, home);
 
     // Last of all, because band strengths read every other field. Band strengths are cached by temperature, so the first
     // sky goes first, in the order it always has, and the deeper sky after it: that way nothing nudges the first sky's.
@@ -524,10 +574,16 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     };
     const firstSet = new Set(first);
     bandsOf(all.filter((body) => firstSet.has(body) || body.kind === 'home_planet'));
-    bandsOf(second);
-    all.forEach((body) => (body.comets || []).forEach((comet) => { comet.bands = bandStrengths(comet); }));
+    bandsOf(second.filter((body) => !gone.has(body)));
+    bandsOf(farNew);
+    const added = new Set(third);
+    const before = all.filter((body) => !added.has(body));
+    before.forEach((body) => (body.comets || []).forEach((comet) => { comet.bands = bandStrengths(comet); }));
     // After everything else's, so that nothing they put in the band table's caches can change anyone else's
-    all.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
+    before.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
+    // And the added sky's after all of those, for the same reason
+    bandsOf(third);
+    third.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
 
     const byCode = new Map();
     const register = (entity, body, path) => byCode.set(entity.code, { entity, body, path });
@@ -556,7 +612,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     return {
         seed,
-        bodies: all,               // The sky bodies, the first sky's then the deeper sky's, then the 7 home planets
+        bodies: all,               // The sky bodies, the first sky's, the deeper sky's and the added sky's, then the 7 home planets
         cometTailAz: cometSun.az,  // Every comet's tail points away from a Sun below the horizon on this bearing
         cometSun,                  // Where that Sun is: { az, alt }, alt below the horizon
         counts: tallyCounts(all, tally),
@@ -632,10 +688,12 @@ function makeDeepSky(deepRoot, coder, tally) {
     }
 
     const rogues = deepRoot.fork('rogues');
+    const rogueBodies = [];
     shuffled(quota, quotaList(mix.rogue_planet)).forEach((type, i) => {
         const body = makeBase('rogue_planet', code());
         makeRogue(rogues.fork(`rogue:${i}`), body, type, { distance: [40, 200] });
         add(body, 'even');
+        rogueBodies.push(body);
     });
 
     const nebulae = deepRoot.fork('nebulae');
@@ -672,6 +730,87 @@ function makeDeepSky(deepRoot, coder, tally) {
         // Seen smaller the further it is, as the first sky's middling galaxy would be
         body.galaxy.size_deg = dp(body.galaxy.size_deg * Math.max(0.15, Math.min(1, 100 / dMpc)), 3);
         add(body, 'avoid', { radius_deg: body.galaxy.size_deg / 2 });
+    });
+    return { bodies, entries, rogues: rogueBodies };
+}
+
+// The added sky (data/quotas.js EXTRA): { bodies, entries } for layOutDeep. More single stars, with many giants among them;
+// multi-star systems of every kind, wide pairs and close ones, a few passing mass across or led by a giant; and distant
+// galaxies, out beyond the rest. Each has deep: true, so that it takes its depth from its distance as the deeper sky's do
+// (core/depth.js). The bright ones keep as clear of everything as the first sky's do; the rest are fainter, for the zoom to
+// find. Planets carry on the sky's tally.
+function makeExtraSky(root, coder, tally) {
+    const quota = root.fork('quota');
+    const code = coder('extra');
+    const planetCode = coder('extra planets');
+    const bodies = [];
+    const entries = [];
+    const add = (body, rule, bright, extra = {}) => {
+        body.deep = true;
+        bodies.push(body);
+        entries.push({ body, rule, ...extra, ...(bright ? { clear_deg: DEEP_CLEAR_DEG } : {}) });
+    };
+    const { stars, mix } = EXTRA_STARS;
+    const n = EXTRA.multi;
+    const flags = (count, of = n) => shuffled(quota, Array.from({ length: of }, (_, i) => i < count));
+
+    // Which systems are which. Those passing mass across have no planets, as most of the first sky's have none.
+    const tripleFlags = flags(EXTRA.triples);
+    const roles = shuffled(quota, Array.from({ length: n }, (_, i) => (i < EXTRA.interacting ? 'passing' : i < EXTRA.interacting + EXTRA.withPlanets ? 'planets' : null)));
+    const giantFlags = flags(EXTRA.giantPrimaries);
+    const brightFlags = flags(EXTRA.brightMultis);
+    const systems = Object.keys(stars).reduce((sum, c) => sum + stars[c].withPlanets, 0) + EXTRA.withPlanets;
+    const bucketCounts = apportion(PLANET_COUNT_BUCKETS.map((b) => b.share), systems);
+    const bucketList = shuffled(quota, bucketCounts.flatMap((count, i) => Array(count).fill(i)));
+    const nextPlanetCount = (rng) => PLANET_COUNT_BUCKETS[bucketList.pop()].draw(rng);
+
+    const starStream = root.fork('stars');
+    const plans = planSingleStars(quota, [], stars, mix);
+    const brightGiants = new Set(shuffled(quota, plans.filter((p) => p.cls === 'GIANT')).slice(0, EXTRA.brightGiants));
+    plans.forEach((plan, i) => {
+        const r = starStream.fork(`star:${i}`);
+        const bright = brightGiants.has(plan);
+        const body = makeSingleStarBody(r, code(), buildStar(r, plan), plan, bright ? 'bright' : true);
+        if (plan.hasPlanets) body.planets = makeSystemPlanets(r, planetCode, singleStarContext(body), nextPlanetCount(r), tally);
+        add(body, 'stars', bright);
+    });
+
+    const multiStream = root.fork('multi');
+    for (let i = 0; i < n; i++) {
+        const r = multiStream.fork(`multi:${i}`);
+        const body = makeBase('binary', code());
+        const passing = roles[i] === 'passing';
+        const planets = roles[i] === 'planets';
+        Object.assign(body, makeRandomMulti(r, code, body.code, tripleFlags[i], planets, {
+            canPass: false,
+            passing,
+            primary: giantFlags[i] ? 'GIANT' : null,
+            widestAU: passing ? null : EXTRA.widestPairAU
+        }));
+        setMultiBrightness(body, r, 1, brightFlags[i] ? NAKED_EYE_MAG : DEEP_MULTI_FAINTEST, !brightFlags[i]);
+        if (planets) body.planets = makeSystemPlanets(r, planetCode, multiContext(body), nextPlanetCount(r), tally);
+        add(body, 'stars', brightFlags[i]);
+    }
+
+    // Galaxies: further than most of the rest, in steps that crowd towards the far end, so the Hubble plot reaches further
+    const galaxies = root.fork('galaxies');
+    const count = Object.values(EXTRA.galaxy).reduce((a, b) => a + b, 0);
+    const [nearMpc, farMpc] = EXTRA.galaxyMpc;
+    const steps = shuffled(quota, Array.from({ length: count }, (_, i) => i));
+    const radioFlags = flags(EXTRA.radioLobes, count);
+    const activeFlags = flags(EXTRA.activeNuclei, count);
+    const morphologies = shuffled(quota, quotaList(EXTRA.galaxy));
+    const starForming = morphologies.flatMap((m, i) => (m === 'elliptical' ? [] : [i]));
+    const starbursts = new Set(shuffled(quota, starForming).slice(0, EXTRA.starbursts));
+    morphologies.forEach((morphology, i) => {
+        const r = galaxies.fork(`galaxy:${i}`);
+        const body = makeBase('galaxy', code());
+        const dMpc = stable(nearMpc * (farMpc / nearMpc) ** Math.sqrt((steps[i] + r.next()) / count), 5);
+        const faintest = dp(r.fork('faintest').range(EXTRA.galaxyFaintest[0], EXTRA.galaxyFaintest[1]), 2);
+        makeGalaxy(r, body, morphology, dMpc, { radioLobes: radioFlags[i], activeNucleus: activeFlags[i], starburst: starbursts.has(i), faintest });
+        // Seen smaller the further it is, as the deeper sky's are
+        body.galaxy.size_deg = dp(body.galaxy.size_deg * Math.max(0.15, Math.min(1, 100 / dMpc)), 3);
+        add(body, 'avoid', false, { radius_deg: body.galaxy.size_deg / 2 });
     });
     return { bodies, entries };
 }
