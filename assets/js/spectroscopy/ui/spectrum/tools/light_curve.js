@@ -12,6 +12,7 @@ import { el } from '../../plot2d.js';
 import { createTimeFigure, everyFew, figureTable, niceSpeeds, para, timeSlider } from './common.js';
 import { clockFor } from './orbit_clock.js';
 import { eclipseCurve } from './star_light.js';
+import { sketchBox, drawSupernovaSketch, sketchWords } from './supernova_sketch.js';
 
 const SPEEDS = [5, 10, 20, 40];  // Days per second
 const SPEED = 10;
@@ -22,7 +23,7 @@ function dayText(phase) {
 }
 
 function mountSupernova(container, api) {
-    const note = para('The spectrum and the sky follow this time. Drag Time back to the start to see the flash, and compare the spectrum near peak with later on.');
+    const note = para('The spectrum and the sky follow this time. Drag Time back to the start and play it to see the flash, and compare the spectrum near peak with later on.');
     const caveat = para('This curve is the explosion\'s own visible light, and it is held flat 1.64 magnitudes below peak, where the simulation hands over to the glow of the expanding shell. A real supernova goes on fading for years. The shell\'s slow brightening after about 150 days shows in the sky but isn\'t drawn here.');
     const readout = el('p', { class: 'spectro-tool-answer' });
     // Says where it has got to when it stops, not several times a second while it plays
@@ -92,6 +93,9 @@ function mountSupernova(container, api) {
                 ctx.fill();
                 ctx.stroke();
             }
+            // In the corner, the explosion up close at this moment
+            const box = sketchBox(rect);
+            if (box) drawSupernovaSketch(ctx, box, entity, playback.t, theme);
         }
     });
     container.append(below, note, caveat);
@@ -130,7 +134,7 @@ function mountSupernova(container, api) {
         const mag = magAt(clamped);
         const phase = clamped - curve.t_peak_days;
         readout.textContent = Number.isFinite(mag) ? `${dayText(phase)}: magnitude ${mag.toFixed(1)}` : `${dayText(phase)}: not yet visible`;
-        if (!playback.playing) spoken.textContent = readout.textContent;
+        if (!playback.playing) spoken.textContent = `${readout.textContent}. ${sketchWords(entity, clamped)}`;
         slider.set((clamped - from) / (to - from), dayText(phase));
         api.setBodyOpts({ t: clamped });
         bus.emit('timeline', { code: entity.code, t_days: clamped });
@@ -155,7 +159,7 @@ function mountSupernova(container, api) {
             reset(entity && entity !== resolved.entity ? entity.code : null);
             entity = resolved.entity;
             curve = lightCurve(entity);
-            figure.setLabel(`Light curve: magnitude against days after peak, reaching magnitude ${curve.peak_mag.toFixed(1)} at its peak. The values are in the table under Show as table.`);
+            figure.setLabel(`Light curve: magnitude against days after peak, reaching magnitude ${curve.peak_mag.toFixed(1)} at its peak, with a sketch of the explosion up close at the time shown in the top right corner. The values are in the table under Show as table.`);
             updateTable();
             playback.pause();
             playback.setTime(0);

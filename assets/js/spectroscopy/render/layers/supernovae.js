@@ -14,6 +14,7 @@ import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { supernovaBandsAt } from '../../data/band_table.js';
+import { supernovaTemperature, SUPERNOVA_FIRST_LIGHT } from '../../spectra/supernova.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, lineRGB } from './nebula_bake.js';
 
@@ -31,11 +32,36 @@ function shellRadius(t) {
     return Math.min(1, Math.max(0.03, 1.15 * (t / (t + 220)) ** 0.8));
 }
 
+// How bright a colour looks, by two measures: linear luminance, and luminance as the screen's encoded values weigh it.
+// A new colour is dimmed until it looks no brighter than the old by either.
+const luminance = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+const encode = (v) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055);
+const onScreen = (rgb) => 0.3 * encode(rgb[0]) + 0.55 * encode(rgb[1]) + 0.15 * encode(rgb[2]);
+const noBrighter = (was, now) => Math.min(1, luminance(was) / luminance(now), onScreen(was) / onScreen(now));
+const POINT_WAS = blackBodyRGB(12000);              // The point's colour in stars.js before it followed the light
+const PROGENITOR_K = 3600;                           // A red supergiant's surface
+const PROGENITOR_ABS_MAG = -6.5;                     // ... and how bright it is, as a red supergiant about to explode is
+
 // Everything that changes with time, written straight into the instance arrays. How bright each band is comes from
 // the band table, the one source for that; this only decides where that light is: early on it is all in the point,
-// and later it is all in the shell. Returns the point's share of its peak light, for the sprite in stars.js.
+// and later it is all in the shell. Returns the point's share of its peak light and its colour temperature, for the sprite
+// in stars.js.
+//   The colour is its spectrum's (spectra/supernova.js): blue-white at first, cooling to orange as it fades. A colour can
+// look brighter than the one it replaces, so each is dimmed to look no brighter than the one before.
+//   Before first light a type II's red supergiant is a faint red point, about ten magnitudes below the explosion's peak.
+// A type Ia's white dwarf can't be seen at all.
 function writeStage(a, i, sn, t) {
     const isIa = sn.type === 'Ia';
+    if (t < SUPERNOVA_FIRST_LIGHT) {
+        a.shape.set([shellRadius(0), 0, 0, 0], i * 4);
+        a.flash.set([0, 0, 0, 0], i * 4);
+        a.shell.set([0, 0, 0, 0], i * 4);
+        a.flashCol.set(blackBodyRGB(PROGENITOR_K), i * 3);
+        a.sheetCol.set(blackBodyRGB(7000), i * 3);
+        const star = isIa ? 0 : 10 ** (-0.4 * (PROGENITOR_ABS_MAG - sn.abs_peak_mag));
+        // The sprite's light is scaled from today's: see bandMagnitudes in data/band_table.js
+        return { share: star / Math.max(supernovaBandsAt(sn, sn.phase0_days).visible, 1e-3), T: PROGENITOR_K };
+    }
     const bands = supernovaBandsAt(sn, t);
     const inShell = smooth(20, 130, t);
     const inFlash = 1 - inShell;
@@ -44,11 +70,15 @@ function writeStage(a, i, sn, t) {
     a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * shell, bands.visible * inFlash], i * 4);
     a.flash.set([bands.radio * inFlash, bands.ir * inFlash, bands.uv * inFlash, bands.xray * inFlash], i * 4);
     a.shell.set([bands.radio * shell, bands.ir * shell, bands.uv * shell, bands.xray * shell], i * 4);
-    // Colour of the flash: a cooling black body. Type II starts hotter and ends redder, on its hydrogen plateau
+    // Colour of the flash: a cooling black body, the spectrum's own. Type II starts hotter and ends redder, on its
+    // hydrogen plateau
     const hot = isIa ? 11500 : 19000;
     const cool = isIa ? 5600 : 4400;
-    const T = t <= 0 ? hot : cool + (hot - cool) * Math.exp(-t / (isIa ? 22 : 16));
-    a.flashCol.set(blackBodyRGB(T), i * 3);
+    const was = blackBodyRGB(t <= 0 ? hot : cool + (hot - cool) * Math.exp(-t / (isIa ? 22 : 16)));
+    const T = supernovaTemperature(sn, t);
+    const colour = blackBodyRGB(T);
+    const keep = noBrighter(was, colour);
+    a.flashCol.set([colour[0] * keep, colour[1] * keep, colour[2] * keep], i * 3);
     // Colour of the shell sheet: glowing white while young, then the lines of the gas it has swept up
     const young = Math.exp(-t / 120);
     const late = a.lateSheet[i];
@@ -58,7 +88,7 @@ function writeStage(a, i, sn, t) {
         warm[1] * young + late[1] * (1 - young),
         warm[2] * young + late[2] * (1 - young)
     ], i * 3);
-    return bands.visible * inFlash;
+    return { share: bands.visible * inFlash * noBrighter(POINT_WAS, colour), T };
 }
 
 export function createSupernovaeLayer(engine, app) {
@@ -151,8 +181,8 @@ export function createSupernovaeLayer(engine, app) {
             : [hydrogen[0] * 0.50 + nitrogenSulphur[0] * 0.50, 0.18 + rng.range(0, 0.08), 0.17];
         aFilCol.set(filament, i * 3);
         stage.lateSheet.push(isIa ? [0.55, 0.72, 1.0] : [oxygen[0] * 0.5 + 0.34, oxygen[1] * 0.45 + 0.27, oxygen[2] * 0.5 + 0.42]);
-        const pointShare = writeStage(stage, i, sn, sn.phase0_days);
-        items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, bands: supernovaBandsAt(sn, sn.phase0_days), pointShare });
+        const point = writeStage(stage, i, sn, sn.phase0_days);
+        items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, bands: supernovaBandsAt(sn, sn.phase0_days), point });
         byCode.set(body.code, i);
     });
 
@@ -317,7 +347,10 @@ export function createSupernovaeLayer(engine, app) {
         if (!stars) return;
         pointsDirty = false;
         if (!stars.setSpriteFlux) return;
-        items.forEach((item) => stars.setSpriteFlux(item.body.code, item.pointShare));
+        items.forEach((item) => {
+            stars.setSpriteFlux(item.body.code, item.point.share);
+            if (stars.setSpriteColour) stars.setSpriteColour(item.body.code, blackBodyRGB(item.point.T));
+        });
     }
 
     const offTimeline = bus.on('timeline', ({ code, t_days: tDays }) => {
@@ -326,7 +359,7 @@ export function createSupernovaeLayer(engine, app) {
         const item = items[i];
         const sn = item.body.supernova;
         const t = sn.phase0_days + tDays;
-        item.pointShare = writeStage(stage, i, sn, t);
+        item.point = writeStage(stage, i, sn, t);
         pointsDirty = true;
         item.bands = supernovaBandsAt(sn, t);
         stageAttrs.forEach((attr) => { attr.needsUpdate = true; });
