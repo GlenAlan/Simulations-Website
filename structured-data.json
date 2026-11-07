@@ -197,6 +197,24 @@
             "educationalLevel": "High School and Above",
             "isAccessibleForFree": true
           }
+        },
+        {
+          "@type": "ListItem",
+          "position": 10,
+          "item": {
+            "@type": "LearningResource",
+            "name": "Charges in Fields Simulation",
+            "description": "Drop or fire charged particles into electric and magnetic fields to see parabolas and circles, then repeat Thomson's experiment",
+            "url": "https://simulations.science/charges_in_fields_simulation.html",
+            "image": "https://simulations.science/images/charges.png",
+            "learningResourceType": "Simulation",
+            "audience": {
+              "@type": "EducationalAudience",
+              "educationalRole": ["student", "teacher", "researcher"]
+            },
+            "educationalLevel": "High School and Above",
+            "isAccessibleForFree": true
+          }
         }
       ]
     }
