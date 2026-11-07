@@ -4526,6 +4526,12 @@ details.description-area > summary::after {
     }
 }
 
+/* A note under the plot, such as what a molecule reference can't show, keeps the same edge as everything else there: the
+   site's rule for panel paragraphs would otherwise take its margins away */
+.spectro-sim .spectro-area > p {
+    margin: 0.4em 12px;
+}
+
 /* Layers: the visited count comes and goes with its switch, so it sits under the last switch, where nothing below it is a
    switch to be reached for */
 .spectro-sim .spectro-layers-menu .spectro-visited-line {

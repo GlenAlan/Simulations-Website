@@ -692,7 +692,8 @@ function mountHR(container, app) {
         const code = current ? current.entity.code : null;
         const isStar = current && !(current.path === 'body' && current.body.kind === 'cluster');
         card.setHidden(!isStar);
-        if (isStar) card.setCode(code, `Star ${code}`);
+        // A multiple star's light is all of its stars' together, so it isn't called a star
+        if (isStar) card.setCode(code, `${current.entity.stars ? 'System' : 'Star'} ${code}`);
         renderClusterCard();
 
         const any = plotted.size > 0 || !!cluster;
