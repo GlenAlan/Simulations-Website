@@ -1,16 +1,17 @@
-// The reference picker: one grouped, searchable list (spec 10.3), a black-body temperature slider, a slider that
-// Doppler-shifts the reference to line it up with the object, and the line labels switch.
+// The reference picker: one grouped, searchable list (spec 10.3), arrows that step through it, a black-body temperature
+// slider, and a slider that Doppler-shifts the reference to line it up with the object. It starts on no reference.
 //
-//   const picker = createRefPicker(container, { beside, onChange(state), onLabels(on), onOpenChange(open), onFrame(lo, hi) })
-//   beside is an element for the row with the line labels switch
+//   const picker = createRefPicker(container, { onChange(state), onLabels(on), onOpenChange(open), onFrame(lo, hi) })
 //   picker.state() -> { id, item, T, z, shift_kms, labels }   item is null for "No reference"
 //   picker.setEntity(resolved)   sets the shift slider's range for this kind of object and zeroes it
 //   picker.setView(lo, hi)       the range on show: a reference with a range of its own offers to go there when it's elsewhere
 //   picker.setNote(text)         a note under the list, for what the reference's spectrum says about itself
-//   picker.choose(id), picker.setTemperature(T), picker.setShiftZ(z), picker.dispose()
+//   picker.choose(id), picker.setTemperature(T), picker.setShiftZ(z), picker.setLabels(on), picker.dispose()
+//   picker.parts                 its pieces, which the panel places: the box and arrows go in the reference pane's header,
+//                                the list and sliders under the plot
 //
 // The list is a combobox over a listbox rather than a native select, because a select's rows can't be made 44 px
-// tall on a desktop and can't be filtered. It opens in place, under the plot, so the plot stays on screen; arrow keys
+// tall on a desktop and can't be filtered. It opens under the plot, so the plot stays on screen; arrow keys
 // try each reference live and Esc goes back to the one before.
 
 import { REFERENCE_GROUPS } from '../../data/references.js';
@@ -123,7 +124,7 @@ function repeating(button, step) {
     button.addEventListener('click', (e) => { if (e.detail === 0) step(); });
 }
 
-export function createRefPicker(container, { beside = null, onChange = () => {}, onLabels = () => {}, onOpenChange = () => {}, onFrame = () => {} } = {}) {
+export function createRefPicker(container, { onChange = () => {}, onLabels = () => {}, onOpenChange = () => {}, onFrame = () => {} } = {}) {
     const uid = `spectroRef${++nextId}`;
 
     const allItems = [];
@@ -144,7 +145,7 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
     const T_MAX = blackBody.T_max_K ?? 50000;
 
     const state = {
-        id: allItems.length ? allItems[0].item.id : NONE.id,
+        id: NONE.id,
         T: blackBody.T_default_K ?? 5800,
         z: 0,
         labels: false
@@ -183,10 +184,6 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
     const tSlider = make('input', { type: 'range', id: `${uid}T`, min: 0, max: 1000, step: 1, value: tToSlider(state.T, T_MIN, T_MAX) });
     const tRow = make('div', { class: 'spectro-ref-slider', hidden: true }, [tLabel, tSlider]);
 
-    const labelsInput = make('input', { type: 'checkbox', id: `${uid}Labels` });
-    const labelsLabel = make('label', { htmlFor: `${uid}Labels`, text: 'Show line labels', title: 'Name the lines on both spectra' });
-    const labelsRow = make('div', { class: 'sim-checkbox-group' }, [labelsInput, labelsLabel]);
-
     const shiftSummaryValue = make('span', { class: 'spectro-summary-value' });
     const shiftSummary = make('summary', {}, [make('span', { text: 'Shift reference' }), shiftSummaryValue]);
     const shiftNote = make('p', { class: 'spectro-hint', text: 'Slide the reference until its lines sit under the object\'s. The shift is the object\'s velocity along your line of sight.' });
@@ -203,8 +200,7 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
     const frameButton = make('button', { type: 'button', class: 'spectro-text-button spectro-ref-frame', hidden: true });
     const refNote = make('p', { class: 'spectro-hint', hidden: true });
 
-    const optionsRow = make('div', { class: 'spectro-ref-options' }, beside ? [beside, labelsRow] : [labelsRow]);
-    const root = make('div', { class: 'spectro-ref' }, [label, row, list, status, frameButton, refNote, tRow, optionsRow, shiftDetails]);
+    const root = make('div', { class: 'spectro-ref' }, [label, row, list, status, frameButton, refNote, tRow, shiftDetails]);
     container.appendChild(root);
 
     // ---------- The list ----------
@@ -463,12 +459,13 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
         leave();
     });
 
+    // No reference is a stop on the way round, before the first, so the arrows can always get back to it
     function step(delta) {
         if (!allItems.length) return;
-        const at = allItems.findIndex((entry) => entry.item.id === state.id);
-        const nextAt = at < 0 ? 0 : (at + delta + allItems.length) % allItems.length;
+        const ids = [NONE.id, ...allItems.map((entry) => entry.item.id)];
+        const at = Math.max(0, ids.indexOf(state.id));
         close();
-        if (setChoice(allItems[nextAt].item.id)) emit();
+        if (setChoice(ids[(at + delta + ids.length) % ids.length])) emit();
         syncInput();
         status.textContent = `Reference: ${currentLabel()}`;
     }
@@ -542,13 +539,6 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
         shiftSlider.focus();
     });
 
-    // ---------- Line labels ----------
-
-    labelsInput.addEventListener('change', () => {
-        state.labels = labelsInput.checked;
-        onLabels(state.labels);
-    });
-
     // ---------- Start ----------
 
     tRow.hidden = !(itemOf(state.id) && itemOf(state.id).kind === 'blackbody');
@@ -559,6 +549,7 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
 
     const api = {
         el: root,
+        parts: { label, box, prev, next, list, tRow, shiftDetails, frameButton, refNote },
         state() {
             const item = itemOf(state.id);
             return { id: state.id, item, T: state.T, z: state.z, shift_kms: state.z * C_KMS, labels: state.labels };
@@ -593,6 +584,11 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
         setShiftZ(z) {
             shiftSlider.value = sliderFromZ(z);
             setZ(z);
+        },
+        // Line labels, named on both spectra
+        setLabels(on) {
+            state.labels = !!on;
+            onLabels(state.labels);
         },
         items: () => allItems.map((entry) => entry.item),
         dispose() {

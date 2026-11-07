@@ -12,10 +12,14 @@
 //   Cursor    setCursor(nm|null), getCursor()
 //   Events    onClick(fn(nm, e)), onHover(fn(nm|null, e)), onRangeChange(fn(lo, hi)): each returns a function that removes it
 //   Drawing   addOverlay(fn(ctx, plot)) -> remove, redraw(now?), showLineLabels(on), labelBand(), setTopCap(note), setAriaLabel(text), dispose()
+//   Chrome    stage (the element the panel puts its own controls on), setChrome({ headers, top }), onLayout(fn(layout))
 //
-// The wheel belongs to the drawer, which it scrolls: the plot fills most of the drawer, so a wheel it kept would stop the
-// panel scrolling just when the pointer is over the plot. Ctrl with the wheel (which is also what a trackpad pinch sends)
-// zooms, as do a touch pinch, a mouse drag up and down, the keys and the panel's buttons.
+// The panel puts its controls on the plot: a header row above each pane (headers px tall), and a strip across the top (top px).
+// The plot leaves room for them and says where they go through onLayout. Values are read where the pointer is: the wavelength
+// on the axis, and each spectrum's value beside its point.
+//
+// The plot is pinned in its panel, so the wheel is the plot's: it zooms about the pointer, and a sideways scroll pans. A touch
+// pinch, a mouse drag up and down, the keys and the panel's buttons zoom as well.
 //
 // An overlay is drawn after the spectra each time the plot redraws, in CSS pixels; call redraw() when its own state
 // changes. Wavelengths in the visible are coloured with wavelengthToRgb, and wavelengthScale and wavelengthTicks are
@@ -25,9 +29,6 @@
 
 import { SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../core/phys.js';
 import { sig, wavelength, superscript } from '../../core/format.js';
-
-// Said once a visit, the first time someone wheels over the plot
-let wheelNoteShown = false;
 
 export const VISIBLE_LO_NM = 380;
 export const VISIBLE_HI_NM = 750;
@@ -274,9 +275,6 @@ export function createPlot(container, opts = {}) {
     const root = document.createElement('div');
     root.className = 'spectro-plot';
 
-    const readout = document.createElement('div');
-    readout.className = 'spectro-readout';
-
     const stage = document.createElement('div');
     stage.className = 'spectro-plot-stage';
 
@@ -292,13 +290,8 @@ export function createPlot(container, opts = {}) {
     cursorCanvas.className = 'spectro-plot-cursor';
     cursorCanvas.setAttribute('aria-hidden', 'true');
 
-    const stageNote = document.createElement('div');
-    stageNote.className = 'spectro-plot-tip';
-    stageNote.setAttribute('aria-hidden', 'true');
-    stageNote.hidden = true;
-
-    stage.append(canvas, cursorCanvas, stageNote);
-    root.append(readout, stage);
+    stage.append(canvas, cursorCanvas);
+    root.append(stage);
     container.appendChild(root);
 
     const ctx = canvas.getContext('2d');
@@ -315,6 +308,11 @@ export function createPlot(container, opts = {}) {
     let mode = 'stacked';
     let labelsOn = false;
     let cursorNm = null;
+
+    // Room kept for the panel's own controls: a header above each pane, and a strip across the top
+    const chrome = { headers: 26, top: 32 };
+    const layoutFns = new Set();
+    let layoutKey = '';
 
     let cssW = 0;
     let cssH = 0;
@@ -399,24 +397,26 @@ export function createPlot(container, opts = {}) {
         const left = 34;
         const right = 10;
         const plotW = Math.max(10, cssW - left - right);
-        const rulerH = compact ? 0 : 15;
-        const titleH = 15;
+        const rulerH = chrome.top;
+        const titleH = chrome.headers;
         const stripH = compact ? 10 : 13;
         const stripGap = 2;
         const paneGap = compact ? 4 : 7;
-        const axisH = compact ? 20 : 34;
+        const axisH = 20;
         const base = { x: left, w: plotW, stripH };
         let body;
         let ref = null;
         if (mode === 'overlay' || !hasRef()) {
             const strips = hasRef() ? 2 : 1;
-            const h = Math.max(20, cssH - rulerH - titleH - strips * (stripH + stripGap) - axisH);
-            const y = rulerH + titleH;
+            // A header each, one above the other: the reference's header is there even with no reference, to choose one
+            const rows = 2;
+            const h = Math.max(20, cssH - rulerH - rows * titleH - strips * (stripH + stripGap) - axisH);
+            const y = rulerH + rows * titleH;
             body = { ...base, titleY: rulerH, y, h, stripY: y + h + stripGap };
-            if (hasRef()) ref = { ...base, titleY: rulerH, y, h, stripY: body.stripY + stripH + stripGap };
+            if (hasRef()) ref = { ...base, titleY: rulerH + (rows - 1) * titleH, y, h, stripY: body.stripY + stripH + stripGap };
         } else {
             const free = Math.max(40, cssH - rulerH - 2 * titleH - 2 * (stripH + stripGap) - paneGap - axisH);
-            const bodyH = Math.round(free * 0.54);
+            const bodyH = Math.round(free * 0.58);
             const refH = free - bodyH;
             const y0 = rulerH + titleH;
             body = { ...base, titleY: rulerH, y: y0, h: bodyH, stripY: y0 + bodyH + stripGap };
@@ -425,6 +425,7 @@ export function createPlot(container, opts = {}) {
         }
         const last = ref || body;
         return {
+            refRowY: ref ? ref.titleY : rulerH + titleH,
             left,
             right: left + plotW,
             plotW,
@@ -884,37 +885,33 @@ export function createPlot(container, opts = {}) {
         return x + length + 4;
     }
 
-    function drawTitle(pane, s, which, unit) {
+    // The pane's key, and for the object its name. The reference's name is the panel's picker, in the same row. The unit of
+    // the scale is in the gutter beside it.
+    function drawTitle(pane, s, which) {
         const y = pane.titleY + layout.titleH / 2 + 0.5;
-        ctx.font = fontOf(11);
         ctx.textBaseline = 'middle';
-        ctx.textAlign = 'right';
-        ctx.fillStyle = tokens.ink;
-        const unitWidth = unit ? ctx.measureText(unit).width : 0;
-        if (unit && pane.w > 200) ctx.fillText(unit, pane.x + pane.w, y);
         ctx.textAlign = 'left';
-        const room = pane.w - (unit && pane.w > 200 ? unitWidth + 10 : 0) - 12;
-        const x = drawKey(pane.x, y, which === 'body' ? tokens.body : tokens.ref, which === 'ref');
-        ctx.font = fontOf(11.5, 700);
         ctx.fillStyle = tokens.ink;
-        ctx.fillText(ellipsize(s.label || (which === 'body' ? 'This object' : 'Reference'), room), x, y);
+        ctx.font = fontOf(11);
+        ctx.fillText('flux', 6, y);
+        const x = drawKey(pane.x, y, which === 'body' ? tokens.body : tokens.ref, which === 'ref');
+        if (which === 'ref') return;
+        ctx.font = fontOf(11.5, 700);
+        ctx.fillText(ellipsize(s.label || 'This object', pane.w * 0.4), x, y);
     }
 
     function drawOverlayTitle(pane) {
         const y = pane.titleY + layout.titleH / 2 + 0.5;
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        const half = pane.w * 0.42;
-        let x = drawLineKey(pane.x, y, tokens.body, false);
+        // A row each: the reference's name is the panel's own control, in the row beside its key
+        const x0 = drawLineKey(pane.x, y, tokens.body, false);
         ctx.font = fontOf(11.5, 700);
         ctx.fillStyle = tokens.ink;
-        const name = ellipsize(series.body.label || 'This object', half - 14);
-        ctx.fillText(name, x, y);
-        x += ctx.measureText(name).width + 12;
-        x = drawLineKey(x, y, tokens.ref, true);
-        ctx.font = fontOf(11.5);
-        ctx.fillStyle = tokens.ink;
-        ctx.fillText(ellipsize(`${series.ref.label || 'Reference'} (own scale)`, pane.x + pane.w - x), x, y);
+        ctx.fillText(ellipsize(series.body.label || 'This object', pane.w * 0.4), x0, y);
+        ctx.font = fontOf(11);
+        ctx.fillText('flux', 6, y);
+        drawLineKey(pane.x, layout.ref.titleY + layout.titleH / 2 + 0.5, tokens.ref, true);
     }
 
     function drawOverlayUnit(pane, s) {
@@ -930,28 +927,6 @@ export function createPlot(container, opts = {}) {
         ctx.globalAlpha = 1;
         ctx.fillStyle = tokens.ink;
         ctx.fillText(text, pane.x + 4, y);
-    }
-
-    function drawRuler() {
-        if (!layout.rulerH) return;
-        const y = layout.rulerH / 2;
-        const x0 = layout.left;
-        const x1 = layout.right;
-        const a = lo < VISIBLE_LO_NM ? Math.min(scale.xOf(VISIBLE_LO_NM), x1) : x0;
-        const b = hi > VISIBLE_HI_NM ? Math.max(scale.xOf(VISIBLE_HI_NM), x0) : x1;
-        ctx.font = fontOf(11);
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = tokens.ink;
-        const put = (from, to, long, short) => {
-            const w = to - from;
-            if (w <= 0) return;
-            if (ctx.measureText(long).width + 6 <= w) ctx.fillText(long, 0.5 * (from + to), y);
-            else if (ctx.measureText(short).width + 4 <= w) ctx.fillText(short, 0.5 * (from + to), y);
-        };
-        if (lo < VISIBLE_LO_NM) put(x0, a, 'Ultraviolet', 'UV');
-        if (hi > VISIBLE_LO_NM && lo < VISIBLE_HI_NM) put(Math.max(a, x0), Math.min(b, x1), 'Visible', 'Vis');
-        if (hi > VISIBLE_HI_NM) put(b, x1, 'Infrared', 'IR');
     }
 
     function drawAxis(ticks) {
@@ -984,10 +959,6 @@ export function createPlot(container, opts = {}) {
             const x = Math.max(layout.left - 30, Math.min(tick.x - w / 2, layout.right + 8 - w));
             ctx.fillText(tick.label, x, y + 6);
         });
-        if (!layout.compact) {
-            ctx.textAlign = 'center';
-            ctx.fillText(scale.isLog ? 'Wavelength (log scale)' : 'Wavelength', 0.5 * (layout.left + layout.right), y + 20);
-        }
     }
 
     // Labels go in a band at the top of the pane, in up to `rows` rows, strongest lines first; a line that can't fit is
@@ -1081,10 +1052,6 @@ export function createPlot(container, opts = {}) {
         ctx.fillText(text, pane.x + pane.w - 5, y);
     }
 
-    function fluxUnit(s) {
-        return s.exp ? `relative flux × 10${superscript(s.exp)}` : 'relative flux';
-    }
-
     function drawBase() {
         const started = performance.now();
         if (!cssW || !cssH) return;
@@ -1093,6 +1060,11 @@ export function createPlot(container, opts = {}) {
         scale = wavelengthScale(lo, hi, layout.left, layout.plotW);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssW, cssH);
+        const nextKey = [layout.body.titleY, layout.refRowY, !!layout.ref, layout.titleH, layout.left, layout.plotW, mode, layout.compact].join();
+        if (nextKey !== layoutKey) {
+            layoutKey = nextKey;
+            layoutFns.forEach((fn) => fn(layout, mode));
+        }
 
         ctx.font = fontOf(11);
         const ticks = wavelengthTicks(scale, (t) => ctx.measureText(t).width);
@@ -1101,7 +1073,6 @@ export function createPlot(container, opts = {}) {
         ensureColumns(ref, 'ref');
         const stacked = mode === 'stacked' || !hasRef();
 
-        drawRuler();
 
         const bodyPane = layout.body;
         drawWell(bodyPane);
@@ -1111,7 +1082,7 @@ export function createPlot(container, opts = {}) {
         if (body.sp) drawSeries(bodyPane, body, tokens.body, { fill: stacked ? 0.13 : 0.06 });
 
         if (stacked) {
-            drawTitle(bodyPane, body, 'body', body.sp ? fluxUnit(body) : '');
+            drawTitle(bodyPane, body, 'body');
             drawLineLabels(bodyPane, [{ s: body, ink: tokens.body }], labelRows(bodyPane));
             drawPaneNote(bodyPane, body, bodyPane.y + bodyPane.h / 2);
             drawStrip(bodyPane, body);
@@ -1122,7 +1093,7 @@ export function createPlot(container, opts = {}) {
                 drawYAxis(refPane, ref);
                 drawRegionEdges(refPane);
                 drawSeries(refPane, ref, tokens.ref);
-                drawTitle(refPane, ref, 'ref', fluxUnit(ref));
+                drawTitle(refPane, ref, 'ref');
                 drawLineLabels(refPane, [{ s: ref, ink: tokens.ref }], labelRows(refPane));
                 drawPaneNote(refPane, ref, refPane.y + refPane.h / 2);
                 drawStrip(refPane, ref);
@@ -1139,7 +1110,25 @@ export function createPlot(container, opts = {}) {
             drawStrip(refPane, ref);
         }
         drawCapNote(bodyPane, body);
+        if (stacked) {
+            drawOverlayUnit(bodyPane, body);
+            if (hasRef()) drawOverlayUnit(layout.ref, ref);
+        }
         drawAxis(ticks);
+        if (scale.isLog) {
+            const pane = layout.ref || layout.body;
+            ctx.font = fontOf(10.5);
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            const text = 'log scale';
+            const w = ctx.measureText(text).width;
+            ctx.fillStyle = tokens.well;
+            ctx.globalAlpha = 0.8;
+            ctx.fillRect(pane.x + pane.w - w - 6, pane.y + pane.h - 15, w + 6, 14);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = tokens.ink;
+            ctx.fillText(text, pane.x + pane.w - 3, pane.y + pane.h - 8);
+        }
 
         overlays.forEach((fn) => {
             ctx.save();
@@ -1204,6 +1193,24 @@ export function createPlot(container, opts = {}) {
             c.lineWidth = 1.5;
             c.fill();
             c.stroke();
+            // The value right beside the point it belongs to, so no line of the panel has to be kept for it
+            const words = sig(v, 3);
+            c.font = fontOf(11, 700);
+            const tw = c.measureText(words).width + 8;
+            let tx = x + 7;
+            if (tx + tw > pane.x + pane.w) tx = x - 7 - tw;
+            const ty = Math.max(pane.y + 1, Math.min(pane.y + pane.h - 17, y - 8));
+            c.fillStyle = tokens.well;
+            c.globalAlpha = 0.86;
+            c.beginPath();
+            if (c.roundRect) c.roundRect(tx, ty, tw, 16, 3);
+            else c.rect(tx, ty, tw, 16);
+            c.fill();
+            c.globalAlpha = 1;
+            c.fillStyle = tokens.ink;
+            c.textAlign = 'center';
+            c.textBaseline = 'middle';
+            c.fillText(words, tx + tw / 2, ty + 8.5);
         };
         dot('body', tokens.body);
         if (hasRef()) dot('ref', tokens.ref);
@@ -1225,41 +1232,23 @@ export function createPlot(container, opts = {}) {
         c.fillText(text, px + w / 2, py + 8.5);
     }
 
+    // What the cursor reads, for screen readers: on the canvas itself, as the sighted reading is drawn on it
     function updateReadout() {
-        readout.replaceChildren();
-        const add = (cls, text, key) => {
-            const span = document.createElement('span');
-            span.className = cls;
-            if (key) {
-                const mark = document.createElement('i');
-                mark.className = `spectro-key spectro-key-${key}`;
-                span.appendChild(mark);
-            }
-            span.appendChild(document.createTextNode(text));
-            readout.appendChild(span);
-        };
         if (cursorNm === null) {
-            const touch = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
-            add('spectro-readout-hint', touch
-                ? 'Tap to read a value. Drag to pan, pinch to zoom.'
-                : 'Point to read a value. Drag to pan, Ctrl + scroll to zoom.');
             canvas.setAttribute('aria-valuenow', String(Math.round(Math.sqrt(lo * hi))));
             canvas.setAttribute('aria-valuetext', `Showing ${wavelength(lo)} to ${wavelength(hi)}`);
             return;
         }
         const text = wavelength(cursorNm, cursorDigits());
-        add('spectro-readout-wl', text);
         const a = fluxAt(cursorNm, 'body');
         const b = hasRef() ? fluxAt(cursorNm, 'ref') : null;
         const parts = [text];
         if (series.body.sp) {
             const v = a === null ? 'no data' : sig(a, 3);
-            add('spectro-readout-item', `Object ${v}`, 'body');
             parts.push(`object flux ${v}`);
         }
         if (hasRef()) {
             const v = b === null ? 'no data' : sig(b, 3);
-            add('spectro-readout-item', `Reference ${v}`, 'ref');
             parts.push(`reference flux ${v}`);
         }
         canvas.setAttribute('aria-valuenow', String(Math.round(cursorNm)));
@@ -1420,14 +1409,6 @@ export function createPlot(container, opts = {}) {
         const span = Math.log(hi0 / lo0) * factor;
         const a = Math.log(anchorNm) - u * span;
         applyRange(Math.exp(a), Math.exp(a + span));
-    }
-
-    function noteWheel() {
-        if (wheelNoteShown) return;
-        wheelNoteShown = true;
-        stageNote.textContent = 'Hold Ctrl and scroll to zoom the plot';
-        stageNote.hidden = false;
-        setTimeout(() => { stageNote.hidden = true; }, 2600);
     }
 
     // ---------- Pointers ----------
@@ -1619,21 +1600,17 @@ export function createPlot(container, opts = {}) {
         fireHover(null, e);
     }
 
+    // Up and down zooms about the pointer, as on a map; sideways, or Shift with the wheel, pans
     function onWheel(e) {
         const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
         const dx = e.deltaX * unit;
         const dy = (e.shiftKey && !dx ? 0 : e.deltaY) * unit;
         const sideways = e.shiftKey && !dx ? e.deltaY * unit : dx;
-        const zooming = e.ctrlKey || e.metaKey;
-        if (!zooming && Math.abs(sideways) <= Math.abs(dy)) {
-            // Straight up and down: this is the drawer's, so it scrolls
-            if (dy) noteWheel();
-            return;
-        }
+        if (!dy && !sideways) return;
         e.preventDefault();
         stopTween();
         ensureLayout();
-        if (!zooming) {
+        if (Math.abs(sideways) > Math.abs(dy)) {
             panFrom(lo, hi, sideways / layout.plotW);
             return;
         }
@@ -1753,6 +1730,17 @@ export function createPlot(container, opts = {}) {
     const api = {
         el: root,
         canvas,
+        stage,
+        setChrome(next) {
+            Object.assign(chrome, next);
+            layout = null;
+            layoutKey = '';
+            redraw();
+        },
+        onLayout(fn) {
+            layoutFns.add(fn);
+            return () => layoutFns.delete(fn);
+        },
         setSpectrum(sp, label) { setSeries(series.body, sp, label); },
         setReference(sp, label) { setSeries(series.ref, sp || null, label); },
         setMode(next) {

@@ -14,31 +14,34 @@ import { announce, kindLabelOf, safeInfo } from './drawer.js';
 import { nextButton, richHtml } from './info_tab.js';
 
 // ---------- Which bands it shines in ----------
-// The row compares an object with itself, from one band's sky to the next, so it says where to look. Band magnitudes
-// are what the sky draws, so "most" here is where the object really does stand out when the band is switched.
+// The row is the object's own light, band by band: its band strengths (body.bands), each against its strongest. That is
+// what "shines most in" means to a student. A spiral galaxy is mostly starlight, so it shines most in visible light,
+// however well its few X-ray sources happen to stand out on a sky that is dark in X-rays.
 
-const MOST_WITHIN_MAG = 1;      // Within a factor of 2.5 of its best band
-const SOME_WITHIN_MAG = 3.5;    // Within a factor of 25
+const MOST_SHARE = 0.75;        // At least three quarters of its strongest band
+const SOME_SHARE = 0.35;
 const FAINTEST_DRAWN_MAG = limitingMag(MIN_FOV) - 2.5 * Math.log10(MIN_GLOW); // Nothing fainter shows even at full zoom
 
 const BAND_WORDS = ['None', 'A little', 'Some', 'Most'];
 
-// { levels: { band: 0..3 }, most: [bands], best: band or null }
+// { levels: { band: 0..3 }, most: [bands], best: band or null, seen: { band: bool } }
+// seen is whether the sky draws it in that band at all, which is what says it is hidden there.
 function bandProfile(resolved) {
     const { entity, body } = resolved;
     const strengths = entity.bands || body.bands || {};
     const mags = bandMagnitudes(entity);
-    const shows = (band) => strengths[band] > BAND_HIDDEN_AT && mags[band] < NOT_SEEN && mags[band] <= FAINTEST_DRAWN_MAG;
-    let best = null;
-    BANDS.forEach((band) => { if (shows(band) && (best === null || mags[band] < mags[best])) best = band; });
+    const strength = (band) => (strengths[band] > BAND_HIDDEN_AT ? strengths[band] : 0);
+    const top = Math.max(0, ...BANDS.map(strength));
     const levels = {};
+    const seen = {};
     BANDS.forEach((band) => {
-        if (!shows(band)) levels[band] = 0;
-        else if (mags[band] - mags[best] <= MOST_WITHIN_MAG) levels[band] = 3;
-        else if (mags[band] - mags[best] <= SOME_WITHIN_MAG) levels[band] = 2;
-        else levels[band] = 1;
+        const share = top > 0 ? strength(band) / top : 0;
+        levels[band] = share <= 0 ? 0 : share >= MOST_SHARE ? 3 : share >= SOME_SHARE ? 2 : 1;
+        seen[band] = levels[band] > 0 && mags[band] < NOT_SEEN && mags[band] <= FAINTEST_DRAWN_MAG;
     });
-    return { levels, best, most: BANDS.filter((band) => levels[band] === 3) };
+    let best = null;
+    BANDS.forEach((band) => { if (seen[band] && (best === null || strength(band) > strength(best))) best = band; });
+    return { levels, best, seen, most: BANDS.filter((band) => levels[band] === 3) };
 }
 
 function listWords(words) {
@@ -57,7 +60,7 @@ function statusOf(resolved, profile) {
     if (app.view !== 'sky') return STATUS.NONE;
     if (path === 'planet') return STATUS.PLANET;
     if (body.kind === 'home_planet' && !app.layers.homePlanets) return STATUS.LAYER_OFF;
-    if (profile.levels[app.band] === 0) return STATUS.HIDDEN;
+    if (!profile.seen[app.band]) return STATUS.HIDDEN;
     return app.engine.bodyShows(body) ? STATUS.NONE : STATUS.TOO_FAINT;
 }
 
@@ -166,7 +169,7 @@ function mountOverview(container) {
 
     const bandsWrap = element('div', 'spectro-ov-bands');
     const bandsLabel = element('p', 'spectro-ov-label');
-    bandsLabel.innerHTML = `${tipHtml('Shines most in', "Compares this object with itself from band to band, so it says where to look, not how bright it will look. Choose a band to switch the sky to it.")} `;
+    bandsLabel.innerHTML = `${tipHtml('Shines most in', "How its own light is shared between the bands, each against its strongest. Choose a band to switch the sky to it.")} `;
     const bandsMost = element('strong');
     bandsLabel.appendChild(bandsMost);
     const chips = element('div', 'spectro-band-chips');
@@ -182,14 +185,14 @@ function mountOverview(container) {
         const chip = element('button', 'spectro-band-chip');
         chip.type = 'button';
         chip.title = `Switch the sky to ${BAND_INFO[band].label}`;
+        // The band's name, and under it a bar as long as its share: its word is in the button's name and tooltip
         const name = element('span', 'spectro-band-chip-name', BAND_INFO[band].short);
         const meter = element('span', 'spectro-band-chip-meter');
         meter.setAttribute('aria-hidden', 'true');
-        const value = element('span', 'spectro-band-chip-value');
-        chip.append(name, meter, value);
+        chip.append(name, meter);
         chip.addEventListener('click', () => setBand(band));
         chips.appendChild(chip);
-        chipByBand[band] = { chip, meter, value };
+        chipByBand[band] = { chip, meter };
     });
 
     let current = null;
@@ -215,12 +218,12 @@ function mountOverview(container) {
         if (bandsWrap.hidden) return;
         bandsMost.textContent = profile.most.length ? listWords(profile.most.map((band) => BAND_INFO[band].short)) : 'no band';
         BANDS.forEach((band) => {
-            const { chip, meter, value } = chipByBand[band];
+            const { chip, meter } = chipByBand[band];
             const word = BAND_WORDS[profile.levels[band]];
-            value.textContent = word;
             meter.dataset.level = String(profile.levels[band]);
             const { short, label } = BAND_INFO[band];
             chip.setAttribute('aria-label', `${short === label ? label : `${short}, ${label}`}: ${word}`);
+            chip.title = `${label}: ${word.toLowerCase()}. Choose to switch the sky to it.`;
             chip.setAttribute('aria-pressed', band === app.band ? 'true' : 'false');
         });
     }
