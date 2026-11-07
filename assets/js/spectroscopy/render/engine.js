@@ -1244,7 +1244,10 @@ export function createEngine(canvas) {
                 const now = pinchState();
                 if (pinch.dist > 0 && now.dist > 0) {
                     const ratio = pinch.dist / now.dist;
-                    if (zoomIntake && zoomIntake(Math.log(ratio), now, 'touch')) return;
+                    if (zoomIntake && zoomIntake(Math.log(ratio), now, 'touch')) {
+                        if (pinch) pinch = now;
+                        return;
+                    }
                     zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * ratio));
                 }
                 moveByPixels(now.x - pinch.x, now.y - pinch.y);

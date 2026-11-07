@@ -22,12 +22,15 @@ const lerp = (a, b, k) => a + (b - a) * k;
 
 // d0: the star is a speck. dClose: its surface fills the view. dEnd: the whole system fits. arrive: where in p the camera
 // arrives on a move that never turns back, as under a student's hand: see below.
-export function pathAt(p, { d0, dClose, dEnd, el0, el1, az0, az1, arrive = 0 }) {
+export function pathAt(p, { d0, dClose, dEnd, el0, el1, az0, az1, arrive = 0 }, out = {}) {
     const approach = arrive ? handApproach(p, arrive) : smoothstep(0, 0.62, p);
     const pull = smootherstep(0.5, 1, p);
     const logD = lerp(lerp(Math.log(d0), Math.log(dClose), approach), Math.log(dEnd), pull);
     const tilt = smootherstep(0.3, 0.96, p);
-    return { dist: Math.exp(logD), el: lerp(el0, el1, tilt), az: lerp(az0, az1, tilt) };
+    out.dist = Math.exp(logD);
+    out.el = lerp(el0, el1, tilt);
+    out.az = lerp(az0, az1, tilt);
+    return out;
 }
 
 // byHand: a student's zoom is moving this. crowded: there the sky's points of light and the real stars don't quite land on
@@ -58,7 +61,7 @@ export function stagesAt(p, byHand = false, crowded = false) {
 
 export const HAND_LOG = 0.9;        // Zooming the whole move takes, as a log of the field of view: seven or eight notches of a wheel
 export const HAND_ARRIVE = 0.8;     // Where in p the camera arrives
-const HAND_SKY_FACTOR = 16;         // How far the sky narrows
+const HAND_SKY_FACTOR = 10;         // How far the sky narrows
 const SKY_RUN = 0.66;               // Where in t the sky's zoom has finished. It has faded out by then.
 const CENTRE_RUN = 0.55;            // Where in t the star has reached the centre
 

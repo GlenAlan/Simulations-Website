@@ -13,6 +13,7 @@
 //   app.system.setClock({ speed, playing, read }) what the System tab's playback is doing, in days per second. read() gives
 //                                               the time every frame, for a clock whose 'timeline' events come in steps
 //   app.system.timeScale()                      how much the clock is slowed just now, while a planet is in close-up
+//   app.system.isOpening(), skyShows()          a zoom has only just begun; a flight is under way, with the sky on show behind it
 //   app.system.setLogScale(on), isLogScale(), logScaleUseful(), getTime(), getModel(), isFocused(), isBusy(),
 //   readout(code), onChange(fn); names starting with _ are hooks for tests
 
@@ -50,6 +51,9 @@ const COMPILE_WAIT_MS = 4000;       // The longest a flight waits for its shader
 const WARM_AFTER_SELECT_MS = 500;
 const KEY_ZOOM_RATE = 1.3;          // Zooming with a key held down, as a log of the field of view a second, as on the sky
 const VIEW_SHOWN_AT = 0.14;         // A zoom this far in has really gone in, so the rest of the page can hear about it
+const HOLE_APPROACH = 1.5;          // How far off a zoom into a black hole's system starts, as a share of where it ends
+const HOLE_SKY_ZOOM = 1.25;         // How far the sky narrows meanwhile
+const HOLE_NEAR_FOV = 1;            // The sky draws a black hole about as big as this view does at a field of view like this
 const DAY_SIDE = 0.65;              // How far round from the star a close-up looks at a planet (radians)
 const CLOSE_UP_ORBITS_PER_S = 0.02; // A planet in close-up goes round no faster than this: it's there to be looked at
 const CLOSE_UP_SLOWDOWN = 0.1;      // ... and the clock runs at least this much slower
@@ -455,11 +459,20 @@ export function initSystemView(app) {
         backdrop.setOrientation(sysQ.multiply(skyQ.invert()));
     }
 
+    const lockBack = new THREE.Vector3();
+    const lockRight = new THREE.Vector3();
+    const lockUp = new THREE.Vector3();
+    const lockGap = new THREE.Vector3();
+
     // Under a hand a multiple's stars start right where the sky has already drawn them apart, and stay on them: the camera
     // starts as far off as puts the two widest parts of its first split that far apart, turned to match, and comes in just
     // as the sky zooms. A pair lands exactly. The sky draws the spacing in a triple or two pairs in its own way, so they land
     // close, each part round its place on the sky.
     function lockStarsToSky(frame, fit) {
+        if (model.body.black_hole) {
+            lockHoleToSky(fit);
+            return;
+        }
         const binaries = engine.getLayer('binaries');
         const onSky = model.stars.length > 1 && binaries && binaries.firstSplit ? binaries.firstSplit(model.code) : null;
         if (!onSky || onSky.length < 2) return;
@@ -475,11 +488,6 @@ export function initSystemView(app) {
             }
         }));
         if (!(widest > 0)) return;
-        // Where those two lie across the view, from the path's starting point
-        const { el0, az0 } = path;
-        const back = lockBack.set(Math.cos(el0) * Math.sin(az0), Math.sin(el0), Math.cos(el0) * Math.cos(az0));
-        const right = lockRight.set(0, 1, 0).cross(back).normalize();
-        const up = lockUp.copy(back).cross(right);
         const gap = lockGap.set(0, 0, 0);
         [[to, 1], [from, -1]].forEach(([part, sign]) => {
             let mass = 0;
@@ -492,8 +500,7 @@ export function initSystemView(app) {
                 gap.z += q[2] * share;
             });
         });
-        const across = gap.dot(right);
-        const along = gap.dot(up);
+        const { across, along } = seenFromPathStart(gap);
         const worldApart = Math.hypot(across, along);
         if (!(worldApart > 1e-6)) return;
         const depth = model.body.depth || 0;
@@ -505,6 +512,29 @@ export function initSystemView(app) {
         path.roll = Math.atan2(to.y - from.y, to.x - from.x) - Math.atan2(along, across);
         // The sky zooms by just enough, as the camera arrives. Its depth holds it back a little: see core/depth.js.
         path.skyLog = Math.log(d0 / fit) / (1 - ETA * depth);
+    }
+
+    // The sky has already drawn a black hole close up by the time a zoom gets here, about as near as the system's own view:
+    // so there's next to no flying, just one coming up through the other, with its companion on the same side.
+    function lockHoleToSky(fit) {
+        if (savedView.fov > HOLE_NEAR_FOV) return;
+        const holes = engine.getLayer('black_holes');
+        const angle = holes && holes.companionAngle ? holes.companionAngle(model.code) : null;
+        path.d0 = fit * HOLE_APPROACH;
+        path.skyLog = Math.log(HOLE_SKY_ZOOM);
+        if (angle === null) return;
+        const [hole, star] = positions.stars;
+        const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
+        path.roll = angle - Math.atan2(along, across);
+    }
+
+    // A distance in the system, as it lies across the view from where the path begins
+    function seenFromPathStart(gap) {
+        const { el0, az0 } = path;
+        lockBack.set(Math.cos(el0) * Math.sin(az0), Math.sin(el0), Math.cos(el0) * Math.cos(az0));
+        lockRight.set(0, 1, 0).cross(lockBack).normalize();
+        lockUp.copy(lockBack).cross(lockRight);
+        return { across: gap.dot(lockRight), along: gap.dot(lockUp) };
     }
 
     // ---------- Input: while a system is open the sky's own handlers never see these ----------
@@ -899,6 +929,9 @@ export function initSystemView(app) {
     const sizeView = { cam: [0, 0, 0], fwd: [0, 0, -1], f: 1, minSize: 1, planets: 1, focus: -1 };
     let sysFrame = null;
 
+    const poseAsk = { d0: 1, dClose: 1, dEnd: 1, el0: 0, el1: HOME_EL, az0: 0, az1: 0, arrive: 0 };
+    const poseOut = { dist: 1, el: 0, az: 0 };
+
     function stepCamera(frame, stage) {
         const dt = frame.dt;
         const aspect = frame.width / Math.max(1, frame.height);
@@ -946,16 +979,14 @@ export function initSystemView(app) {
         let fz = cam.focus.z;
         if (w < 1) {
             // Under a hand there is no swing in close: the camera comes straight to where the student's is
-            const pose = pathAt(easeProgress(tNorm), {
-                d0: path.d0,
-                dClose: path.byHand ? cam.dist : path.dClose,
-                dEnd: path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth),
-                arrive: path.byHand ? HAND_ARRIVE : undefined,
-                el0: path.el0,
-                el1: HOME_EL,
-                az0: path.az0,
-                az1: path.az1
-            });
+            poseAsk.d0 = path.d0;
+            poseAsk.dClose = path.byHand ? cam.dist : path.dClose;
+            poseAsk.dEnd = path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth);
+            poseAsk.arrive = path.byHand ? HAND_ARRIVE : 0;
+            poseAsk.el0 = path.el0;
+            poseAsk.az0 = path.az0;
+            poseAsk.az1 = path.az1;
+            const pose = pathAt(easeProgress(tNorm), poseAsk, poseOut);
             if (path.locked) pose.dist = path.d0 * skyScale(engine.view.fov);
             // Take the short way round from wherever the student left it
             const azUser = pose.az + wrapPi(cam.az - pose.az);
@@ -1458,7 +1489,7 @@ export function initSystemView(app) {
             backdrop.set(1, 1, frame.dpr);
         } else {
             const p = easeProgress(tNorm);
-            const stage = stagesAt(p, path.byHand, path.byHand && model.stars.length > 2);
+            const stage = stagesAt(p, path.byHand, path.byHand && (model.stars.length > 2 || !!model.body.black_hole));
             const ndc = stepSky(stage);
             sharedUniforms.uSkyFade.value = stage.skyFade;
             engine.setSkyVisible(stage.skyFade > 0.001);
@@ -1689,7 +1720,7 @@ export function initSystemView(app) {
         tDays = lastTimeline && lastTimeline.code === body.code ? lastTimeline.t_days : 0;
         ensureBackdrop();
         world = buildWorld();
-        positions = layout(model, tDays, mix, positions);
+        positions = layout(model, tDays, mix);
         compiled = false;
 
         // Compile before the clock starts, so a slow shader doesn't eat the first second of the flight
@@ -1733,7 +1764,9 @@ export function initSystemView(app) {
         },
         beginOut(moving) {
             hand = moving;
+            // At this end the timed path and this one are the same, so nothing jumps as it changes to this
             path.byHand = true;
+            lockStarsToSky(engine.currentFrame(), cam.dist);
             mode = 'exit';
         },
         enter(code) { enter(code, { focus: false }); },
@@ -1817,10 +1850,6 @@ export function initSystemView(app) {
     // One at every level, as Auto can change the level during a visit.
     let warmStars = [];
     let warmLine = null;
-    const lockBack = new THREE.Vector3();
-    const lockRight = new THREE.Vector3();
-    const lockUp = new THREE.Vector3();
-    const lockGap = new THREE.Vector3();
     let warmGlow = null;
     function warmSmallPrograms() {
         const renderer = engine.renderer;
@@ -1849,6 +1878,13 @@ export function initSystemView(app) {
         else setTimeout(warmSmallPrograms, 1500);
     });
     bus.on('gl-restored', warmSmallPrograms);
+    // A system kept ready has lost what it compiled
+    bus.on('gl-restored', () => {
+        if (mode !== 'sky' || !model) return;
+        disposeWorld();
+        model = null;
+        compiled = false;
+    });
 
     // A star with planets has been picked, so a visit may be coming: start on the costly programs those planets will
     // need. Not straight away, in case the student is just clicking through the sky.
@@ -1897,6 +1933,7 @@ export function initSystemView(app) {
         isFocused: () => !!cam.target,
         isBusy: () => mode === 'load' || mode === 'enter' || mode === 'exit',
         isOpening: () => !viewShown,    // A zoom has only just begun, and might yet settle back to the sky
+        skyShows: () => (mode === 'enter' || mode === 'exit') && !useFade,  // A flight is under way, so the sky is on show behind it
         readout(code) {
             if (!model) return null;
             const entry = model.planets.find((e) => e.code === code);

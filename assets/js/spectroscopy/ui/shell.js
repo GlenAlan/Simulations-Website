@@ -257,6 +257,7 @@ function initLayersMenu(app, topRight) {
 // ---------- Context bar: the zoom, and the way into or out of a planetary system ----------
 const ZOOM_HINT_FROM_AFAR = 'Zoom in on it to visit';
 const ZOOM_HINT_ON_THE_WAY = 'Keep zooming to go in';
+const ZOOM_WAIT = 'Getting the system ready';
 const ZOOM_HINT_MS = 6000;
 const ZOOM_HINT_KEY = 'spectroZoomHintSeen';
 
@@ -368,6 +369,11 @@ function initContextBar(app) {
     }
     bus.on('select', () => { if (app.view === 'sky' && systemCodeFor(app, app.selected)) offerHint(ZOOM_HINT_FROM_AFAR); });
     bus.on('zoomaim', () => offerHint(ZOOM_HINT_ON_THE_WAY));
+    // Not a hint but a state of things, for as long as it lasts
+    bus.on('zoomwait', ({ waiting }) => {
+        hint.textContent = ZOOM_WAIT;
+        hint.hidden = !waiting;
+    });
     // Going in shows it's understood, so the hint needn't stay or come again
     bus.on('view', ({ view }) => {
         if (view !== 'system') return;

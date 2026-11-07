@@ -31,6 +31,7 @@ export const bus = {
 //   'goto'      { code }                    the Go to box or a link asked to fly to an object
 //   'quality'   { level }                   the graphics level has been applied ('low'|'medium'|'high')
 //   'zoomaim'   { code }                    a zoom is getting near enough to this star that keeping on would go in
+//   'zoomwait'  { waiting }                 a zoom would go in, but the system is still being got ready
 
 function prefersReducedMotion() {
     return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;

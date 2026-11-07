@@ -13,6 +13,9 @@
 //   At the sky's zoom limit, whatever is left and being pointed at can be entered.
 // Which star: the one under the pointer, or else the selected one if it's on show, or else one near the centre of the view.
 // Pointing at something that isn't a system, such as a galaxy, means no capture at all.
+//
+// Zooming in on one takes no panel with it: a panel already open on something else moves to it on arrival, and otherwise the
+// context bar names the system and opens its panel in one click.
 
 import { MIN_FOV } from '../../core/sky.js';
 import { bus } from '../../core/state.js';
@@ -23,7 +26,7 @@ const CAPTURE_FOV = 12;         // No star takes over a wider view than this (de
 const CLEAR_SHARE = 0.15;       // How clear of other stars it has to be, as a share of the view's height
 const SEEN_GLOW = 0.3;          // How well a faint star has to be showing (see engine.glowOf) before it goes further
 const APART_MARGIN = 0.95;      // A multiple's stars have split by this share of the field of view at which they come apart
-const RUN_UP_BOOST = 1.6;       // On the way down to that, or to a faint star showing, a wheel's notch goes this much further
+const RUN_UP_BOOST = 2;         // On the way down to that, or to a faint star showing, a wheel's notch goes this much further
 const LENS_FOV = 0.46;          // A black hole's lens shows by about 0.5 degrees
 const LIMIT_FOV = MIN_FOV * 1.03;
 const READY_AHEAD = 2;          // Start getting a system ready this many times the hand-over field of view away
@@ -31,15 +34,19 @@ const LOOK_EVERY_MS = 120;      // How often to look for what's being zoomed int
 const POINT_MOVED_PX = 8;
 const POINT_PX = { wheel: 24, touch: 44, key: 40 };
 const NEAR_CENTRE_SHARE = 0.12; // How near the centre, as a share of the view's height
+const POINTER_NEAR_CENTRE_SHARE = 0.25;
 const GESTURE_GONE_MS = 450;    // A zoom this long ago isn't going on any more
 const KEEP_READY_S = 8;         // How long a system stays ready for a student who has stopped zooming at it
 
+const MOST_PER_S = 1.5;          // The fastest the move goes, of its whole length a second. A big bright star fills much of the
+                                // screen by the end of it, and rocking the wheel must not be able to flash that over 3 times a second.
 const PAUSE_S = 0.5;            // A gesture has stopped after this long: long enough to span slow, single notches
 const SETTLE_MIN_S = 0.3;       // The move's rest takes this long...
 const SETTLE_PER_T_S = 1.5;     // ... and this much more for the whole of it
 const NEAR_END_LEAN = 0.1;      // Which end is nearer leans this much of the way along towards where the gesture was going
 const REDUCED_THRESHOLD = 0.3;  // Reduce motion: a zoom this much past the point (log of the field of view), then a fade
 const REDUCED_FORGET_S = 0.6;
+const SAY_WAITING_S = 0.6;      // A wait as long as this gets a word in the context bar
 
 // Where the gesture has got to, as a goal that t eases to at the speed the sky's own zoom eases to the wheel's goal
 function createHand(t) {
@@ -72,7 +79,8 @@ function createHand(t) {
                 hand.heading = to ? 1 : -1;
                 return now;
             }
-            const next = now + (hand.goal - now) * (1 - Math.exp(-dt * ZOOM_RATE));
+            const most = MOST_PER_S * dt;
+            const next = now + Math.max(-most, Math.min(most, (hand.goal - now) * (1 - Math.exp(-dt * ZOOM_RATE))));
             return Math.abs(hand.goal - next) < 1e-3 ? hand.goal : next;
         },
         // Which way it's going, as the view's modes name it
@@ -98,6 +106,8 @@ export function createZoomInto(app, view) {
     let readyIdle = 0;          // Seconds a system has been kept ready with no zoom going on
     let pressure = 0;           // Reduce motion: how far past the point the zoom has gone
     let pressureQuiet = 0;
+    let waited = 0;             // Seconds at the point of going in, with the system not ready yet
+    let saidWaiting = false;
 
     const reduced = () => !!app.settings.reduceMotion;
 
@@ -141,6 +151,8 @@ export function createZoomInto(app, view) {
             const p = engine.projectBody(selected);
             if (p && p.onScreen) return selected;
         }
+        // A pointer well off to one side is aiming there, at empty sky, and that's where the zoom is going
+        if (Math.hypot(at.x - frame.width / 2, at.y - frame.height / 2) > frame.height * POINTER_NEAR_CENTRE_SHARE) return null;
         const near = engine.pick(frame.width / 2, frame.height / 2, frame.height * NEAR_CENTRE_SHARE);
         return near ? systemOf(app.universe.resolve(near)) : null;
     }
@@ -168,11 +180,24 @@ export function createZoomInto(app, view) {
         };
     }
 
-    function canBegin() {
+    function atThePoint() {
         if (!aim || engine.isSlewing() || engine.isPressed()) return false;
         const { fov } = engine.view;
-        if (fov > aim.fov) return false;
-        return ((aim.alone && aim.seen) || fov <= LIMIT_FOV) && view.isReady(aim.code);
+        return fov <= aim.fov && ((aim.alone && aim.seen) || fov <= LIMIT_FOV);
+    }
+
+    function canBegin() {
+        return atThePoint() && view.isReady(aim.code);
+    }
+
+    // A slow machine: the sky has zoomed as far as it can, or as far as it should, while shaders compile
+    function sayIfWaiting(going, dt) {
+        waited = going && atThePoint() && !view.isReady(aim.code) ? waited + dt : 0;
+        const say = waited >= SAY_WAITING_S;
+        if (say !== saidWaiting) {
+            saidWaiting = say;
+            bus.emit('zoomwait', { waiting: say });
+        }
     }
 
     function beginIn(extraLog) {
@@ -191,8 +216,7 @@ export function createZoomInto(app, view) {
             pressure = 0;
             return false;
         }
-        const moved = !point || !at || Math.hypot(at.x - point.x, at.y - point.y) > POINT_MOVED_PX;
-        if (moved) lookedAt = -Infinity;
+        if ((!at !== !point) || (at && Math.hypot(at.x - point.x, at.y - point.y) > POINT_MOVED_PX)) lookedAt = -Infinity;
         point = at;
         kind = stepKind;
         lastIn = now;
@@ -237,12 +261,13 @@ export function createZoomInto(app, view) {
         update(frame) {
             pressureQuiet += frame.dt;
             if (pressureQuiet > REDUCED_FORGET_S) pressure = 0;
+            const now = performance.now();
+            const going = app.view === 'sky' && now - lastIn < GESTURE_GONE_MS;
+            sayIfWaiting(going, frame.dt);
             if (app.view !== 'sky') {
                 readyIdle = 0;
                 return;
             }
-            const now = performance.now();
-            const going = now - lastIn < GESTURE_GONE_MS;
             if (going) {
                 look(now);
                 readyIdle = 0;
