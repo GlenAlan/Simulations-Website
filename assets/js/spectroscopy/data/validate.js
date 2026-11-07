@@ -1,0 +1,385 @@
+// Checks a generated sky against the spec's rules (sections 7, 8.3, 9, 12, 14, 19). Returns a list of failures in plain
+// words; an empty list means the sky is sound. Too slow to be worth running on every load: tests call it instead.
+
+import { isValidCode } from '../core/rng.js';
+import { hzEdges, keplerPeriodDays, fluxFromLuminosity, H0, C_KMS } from '../core/phys.js';
+import { MIN_ALT, MIN_FOV, azAltToVec3, limitingMag, galacticLatitude } from '../core/sky.js';
+import { STAR_TABLE, RSUN_AU, luminosityFromRT, msLifetimeMyr } from './stellar.js';
+import { PLANET_TYPES, MIN_STELLAR_RADII } from './planets.js';
+import { MIN_SPACING_DEG } from './sky_layout.js';
+import { BODY_COUNTS, MIX } from './quotas.js';
+import { componentStates } from './orbits.js';
+import { unseal } from './sealed.js';
+
+const RAD = Math.PI / 180;
+const DEFAULT_FOV = 80;
+const DEFAULT_ZOOM_RANGE = [250, 450];
+
+function hasWater(planet) {
+    const pct = planet.atmosphere_pct || {};
+    const ppm = planet.atmosphere_ppm || {};
+    const surface = planet.surface || {};
+    return (pct.H2O || 0) > 0 || (ppm.H2O || 0) > 0 || (surface.ocean_fraction || 0) > 0 || surface.ice === 'water'
+        || !!surface.subsurface_ocean || (planet.clouds && planet.clouds.kind === 'H2O');
+}
+
+function hostLuminosity(body) {
+    if (body.star) return body.star.luminosity_Lsun;
+    return body.stars.reduce((sum, s) => sum + s.star.luminosity_Lsun, 0);
+}
+
+function hostMass(body) {
+    if (body.star) return body.star.mass_Msun;
+    return body.stars.reduce((sum, s) => sum + s.star.mass_Msun, 0);
+}
+
+function hostRadiusAU(body) {
+    if (body.star) return body.star.radius_Rsun * RSUN_AU;
+    return body.stars.reduce((max, s) => Math.max(max, s.star.radius_Rsun), 0) * RSUN_AU;
+}
+
+function isSingleMainSequence(body) {
+    return !!body.star && body.star.stage === 'main_sequence';
+}
+
+function within(x, lo, hi, tolerance = 0) {
+    return x >= lo * (1 - tolerance) && x <= hi * (1 + tolerance);
+}
+
+function countBy(list, keyOf) {
+    const out = {};
+    list.forEach((item) => {
+        const key = keyOf(item);
+        out[key] = (out[key] || 0) + 1;
+    });
+    return out;
+}
+
+function classKey(star) {
+    if (star.stage === 'white_dwarf') return 'WD';
+    if (star.stage === 'giant' || star.stage === 'supergiant') return 'GIANT';
+    return star.class;
+}
+
+function everyCode(u) {
+    const codes = [];
+    u.bodies.forEach((body) => {
+        codes.push(body.code);
+        (body.planets || []).forEach((p) => codes.push(p.code));
+        (body.stars || []).forEach((s) => codes.push(s.code));
+        if (body.black_hole) codes.push(body.black_hole.companion.code);
+        if (body.cluster) body.cluster.members.forEach((m) => codes.push(m.code));
+    });
+    return codes;
+}
+
+function checkCodes(u, fail) {
+    const seen = new Set();
+    everyCode(u).forEach((code) => {
+        if (!isValidCode(code)) fail(`bad code ${code}`);
+        if (seen.has(code)) fail(`duplicate code ${code}`);
+        seen.add(code);
+        if (!u.resolve(code)) fail(`code ${code} does not resolve`);
+    });
+    if (u.allCodes().length !== seen.size) fail(`allCodes has ${u.allCodes().length} codes, the sky ${seen.size}`);
+}
+
+function checkCounts(u, fail) {
+    const sky = u.bodies.filter((b) => b.kind !== 'home_planet');
+    const home = u.bodies.filter((b) => b.kind === 'home_planet');
+    if (sky.length !== 1000) fail(`${sky.length} sky bodies`);
+    if (home.length !== 7) fail(`${home.length} home planets`);
+    const kinds = countBy(sky, (b) => b.kind);
+    Object.keys(BODY_COUNTS).forEach((kind) => {
+        if (kind === 'multi') return;
+        if (kinds[kind] !== BODY_COUNTS[kind]) fail(`${kinds[kind]} of ${kind}, expected ${BODY_COUNTS[kind]}`);
+    });
+    const multis = sky.filter((b) => b.stars);
+    if (multis.length !== BODY_COUNTS.multi) fail(`${multis.length} multi-star systems`);
+    const arch = countBy(multis, (b) => b.architecture);
+    if (arch.binary !== 80 || arch.hierarchical_triple !== 20 || arch.figure_eight !== 1 || arch.double_double !== 1) {
+        fail(`multi-star mix ${JSON.stringify(arch)}`);
+    }
+    const random = multis.filter((b) => b.architecture === 'binary' || b.architecture === 'hierarchical_triple');
+    const withPlanets = random.filter((b) => b.planets.length > 0).length;
+    if (withPlanets !== MIX.multiWithPlanets) fail(`${withPlanets} random multi-star systems with planets`);
+
+    const stars = sky.filter((b) => b.kind === 'star');
+    const byClass = countBy(stars, (b) => classKey(b.star));
+    const planetsByClass = countBy(stars.filter((b) => b.planets.length), (b) => classKey(b.star));
+    Object.keys(STAR_TABLE).forEach((cls) => {
+        const row = STAR_TABLE[cls];
+        if (byClass[cls] !== row.count) fail(`${byClass[cls]} stars of class ${cls}, expected ${row.count}`);
+        if (planetsByClass[cls] !== row.withPlanets) fail(`${planetsByClass[cls]} planet hosts of class ${cls}`);
+    });
+    const pops = countBy(stars, (b) => b.star.population);
+    Object.keys(MIX.population).forEach((p) => {
+        if (pops[p] !== MIX.population[p]) fail(`${pops[p]} stars of population ${p}`);
+    });
+    const hostCount = sky.filter((b) => b.planets && b.planets.length).length;
+    if (hostCount !== 338 + MIX.multiWithPlanets + 1) fail(`${hostCount} planetary systems`);
+
+    const expectMix = (list, keyOf, table, name) => {
+        const got = countBy(list, keyOf);
+        Object.keys(table).forEach((key) => {
+            if (got[key] !== table[key]) fail(`${got[key]} ${name} of type ${key}, expected ${table[key]}`);
+        });
+    };
+    expectMix(sky.filter((b) => b.nebula), (b) => b.nebula.type, MIX.nebula, 'nebulae');
+    expectMix(sky.filter((b) => b.cluster), (b) => b.cluster.type, MIX.cluster, 'clusters');
+    expectMix(sky.filter((b) => b.neutron_star), (b) => (b.neutron_star.pulsar ? 'pulsar' : 'quiet'), MIX.neutron_star, 'neutron stars');
+    expectMix(sky.filter((b) => b.galaxy), (b) => b.galaxy.morphology, MIX.galaxy, 'galaxies');
+    expectMix(sky.filter((b) => b.supernova), (b) => b.supernova.type, MIX.supernova, 'supernovae');
+    expectMix(sky.filter((b) => b.rogue_planet), (b) => b.rogue_planet.type, MIX.rogue_planet, 'rogue planets');
+    const bursts = sky.filter((b) => b.galaxy && b.galaxy.starburst);
+    if (bursts.length !== MIX.starbursts || bursts.some((b) => b.galaxy.morphology === 'elliptical')) fail(`${bursts.length} starburst galaxies`);
+    const radioLoud = sky.filter((b) => b.quasar && b.quasar.radio_loud).length;
+    if (radioLoud !== 1) fail(`${radioLoud} radio-loud quasars`);
+}
+
+// Every entity that stores band strengths has them, and they're 0..1
+function checkBands(u, fail) {
+    const check = (entity) => {
+        const b = entity.bands;
+        if (!b || !['radio', 'ir', 'visible', 'uv', 'xray'].every((k) => b[k] >= 0 && b[k] <= 1)) fail(`${entity.code} has bad bands`);
+    };
+    u.bodies.forEach((body) => {
+        check(body);
+        (body.planets || []).forEach(check);
+        (body.stars || []).forEach(check);
+        if (body.planet) check(body.planet);
+        if (body.black_hole) check(body.black_hole.companion);
+    });
+}
+
+function checkPlacement(u, fail) {
+    const lim = limitingMag(MIN_FOV);
+    const linked = new Map();
+    u.bodies.forEach((b) => {
+        if (b.neutron_star && b.neutron_star.remnant_of) linked.set(b.code, b.neutron_star.remnant_of);
+    });
+    const vecs = u.bodies.map((b) => azAltToVec3(b.sky.az, b.sky.alt));
+    const threshold = Math.cos(MIN_SPACING_DEG * RAD);
+    u.bodies.forEach((body, i) => {
+        if (!(body.sky.alt > MIN_ALT)) fail(`${body.code} (${body.kind}) is at altitude ${body.sky.alt}`);
+        if (body.sky.az < 0 || body.sky.az >= 360) fail(`${body.code} has azimuth ${body.sky.az}`);
+        for (let j = i + 1; j < u.bodies.length; j++) {
+            const a = vecs[i];
+            const b = vecs[j];
+            if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > threshold) {
+                const other = u.bodies[j];
+                if (linked.get(body.code) === other.code || linked.get(other.code) === body.code) continue;
+                fail(`${body.code} and ${other.code} are closer than ${MIN_SPACING_DEG} degrees`);
+            }
+        }
+        if (body.bands.visible > 0.01 && body.brightness.mag > lim) fail(`${body.code} (${body.kind}) shows in visible light but has magnitude ${body.brightness.mag}`);
+    });
+
+    const showing = u.bodies.filter((b) => b.bands.visible > 0.01 && b.brightness.mag <= limitingMag(DEFAULT_FOV)).length;
+    if (showing < DEFAULT_ZOOM_RANGE[0] || showing > DEFAULT_ZOOM_RANGE[1]) fail(`${showing} bodies show at the default zoom`);
+
+    // Concentrated to the band, or away from it
+    const share = (list) => list.filter((b) => Math.abs(galacticLatitude(b.sky.az, b.sky.alt)) < 20).length / list.length;
+    const stars = u.bodies.filter((b) => b.kind === 'star');
+    const distant = u.bodies.filter((b) => b.kind === 'galaxy' || b.kind === 'quasar');
+    if (share(stars) < 0.42) fail(`only ${share(stars)} of stars lie near the band`);
+    if (distant.some((b) => Math.abs(galacticLatitude(b.sky.az, b.sky.alt)) < 11.5)) fail('a galaxy or quasar is in the zone of avoidance');
+}
+
+function checkStar(star, cls, code, fail) {
+    const row = STAR_TABLE[cls];
+    if (!row) return;
+    if (!within(star.teff_K, row.T[0], row.T[1], 0.001)) fail(`${code} ${cls} has temperature ${star.teff_K}`);
+    if (!within(star.mass_Msun, row.M[0], row.M[1], 0.01)) fail(`${code} ${cls} has mass ${star.mass_Msun}`);
+    if (!within(star.radius_Rsun, row.R[0], row.R[1], cls === 'WD' ? 2 : 0.1)) fail(`${code} ${cls} has radius ${star.radius_Rsun}`);
+    // White dwarfs break the table's luminosity column on purpose: at 0.01 solar radii, Stefan-Boltzmann takes the
+    // hottest to several solar luminosities, and the physics matters more than the column
+    if (cls !== 'WD' && !within(star.luminosity_Lsun, row.L[0], row.L[1], 0.3)) fail(`${code} ${cls} has luminosity ${star.luminosity_Lsun}`);
+    if (star.vsini_kms < 0) fail(`${code} has negative v sin i`);
+    const expected = luminosityFromRT(star.radius_Rsun, star.teff_K);
+    if (Math.abs(star.luminosity_Lsun / expected - 1) > 0.12) fail(`${code} breaks L = R^2 T^4: ${star.luminosity_Lsun} against ${expected}`);
+    if (star.population === 'II' && star.composition.Z > 0.0011) fail(`${code} is population II with Z = ${star.composition.Z}`);
+    if (star.population === 'II' && star.stage === 'main_sequence' && msLifetimeMyr(star.mass_Msun) < 8000) fail(`${code} is too massive to be population II`);
+    if (!star.spectral_type) fail(`${code} has no spectral type`);
+}
+
+// Stars inside other things keep to the same physics, though not to one class's row of the table
+function checkInnerStar(star, code, fail) {
+    const expected = luminosityFromRT(star.radius_Rsun, star.teff_K);
+    if (Math.abs(star.luminosity_Lsun / expected - 1) > 0.12) fail(`${code} breaks L = R^2 T^4`);
+    if (!star.spectral_type || !star.composition) fail(`${code} has an incomplete star block`);
+}
+
+function checkStars(u, fail) {
+    u.bodies.forEach((body) => {
+        if (body.star) checkStar(body.star, classKey(body.star), body.code, fail);
+        (body.stars || []).forEach((s) => checkInnerStar(s.star, s.code, fail));
+        if (body.black_hole) checkInnerStar(body.black_hole.companion.star, body.black_hole.companion.code, fail);
+        if (body.cluster) body.cluster.members.forEach((m) => checkInnerStar(m.star, m.code, fail));
+        if (body.nebula && body.nebula.central_star) checkInnerStar(body.nebula.central_star, body.code, fail);
+        if (body.kind === 'star') {
+            const f = fluxFromLuminosity(body.star.luminosity_Lsun, body.distance_pc);
+            if (Math.abs(body.brightness.flux_Wm2 / f - 1) > 1e-3) fail(`${body.code}'s flux doesn't match its luminosity and distance`);
+            if (Math.abs(body.radial_velocity_kms) > 300) fail(`${body.code} moves at ${body.radial_velocity_kms} km/s`);
+        }
+    });
+}
+
+function checkPlanets(u, fail) {
+    const sealed = unseal();
+    const exempt = new Set([sealed.target.host.code, ...sealed.decoys.map((d) => d.host.code)]);
+    const wet = [];
+    u.bodies.forEach((body) => {
+        if (body.kind === 'home_planet') {
+            if (hasWater(body.planet)) fail(`home planet ${body.name} has water`);
+            if (body.planet.in_hz) fail(`home planet ${body.name} is marked in a habitable zone`);
+            return;
+        }
+        if (!body.planets || !body.planets.length) return;
+        // Worked out from luminosity for every host, even those the panel's formula doesn't suit
+        const L = hostLuminosity(body);
+        const hz = hzEdges(L);
+        const rStar = hostRadiusAU(body);
+        const single = isSingleMainSequence(body);
+        let last = null;
+        body.planets.forEach((planet) => {
+            const a = planet.orbit_AU;
+            const inZone = a >= hz.inner && a <= hz.outer;
+            if (planet.host !== body.code) fail(`${planet.code} names the wrong host`);
+            if (a < (MIN_STELLAR_RADII - 0.01) * rStar) fail(`${planet.code} at ${a} AU is inside ${MIN_STELLAR_RADII} radii of its star`);
+            if (planet.in_hz && !single) fail(`${planet.code} is marked in_hz around a host the formula doesn't suit`);
+            if (planet.in_hz !== (single && inZone)) fail(`${planet.code}'s in_hz flag is wrong`);
+            if (hasWater(planet) && inZone) wet.push(planet.code);
+            const hot = planet.type === 'hot_jupiter' || planet.type === 'lava_world';
+            if (hot && !(a < 0.1 || a < 0.3 * hz.inner)) fail(`${planet.code} (${planet.type}) is too far out at ${a} AU`);
+            if (hot && inZone) fail(`${planet.code} (${planet.type}) is in the zone`);
+            if ((planet.type === 'ice_giant' || planet.type === 'ice_dwarf' || planet.type === 'frozen_ocean') && a <= hz.outer) {
+                fail(`${planet.code} (${planet.type}) is inside the zone's outer edge`);
+            }
+            const mass = planet.orbit_centre_stars
+                ? planet.orbit_centre_stars.reduce((m, i) => m + body.stars[i].star.mass_Msun, 0)
+                : hostMass(body);
+            const period = keplerPeriodDays(a, mass);
+            if (Math.abs(planet.period_days / period - 1) > 1e-3) fail(`${planet.code}'s period breaks Kepler's third law`);
+            if (Math.abs(planet.radial_velocity_kms - body.radial_velocity_kms) > 1e-9) fail(`${planet.code} doesn't inherit its star's velocity`);
+            if (!exempt.has(body.code) && last !== null) {
+                const ratio = a / last;
+                if (ratio < 1.399 || ratio > 2.001) fail(`${planet.code} is spaced ${ratio} from the planet inside it`);
+            }
+            if (!exempt.has(body.code) && planet.type && !PLANET_TYPES[planet.type]) fail(`${planet.code} has unknown type ${planet.type}`);
+            last = a;
+        });
+        if (body.stars && body.orbits.length && body.architecture !== 'double_double') {
+            const widest = body.orbits[body.orbits.length - 1].a_AU;
+            if (body.planets[0].orbit_AU < 2.99 * widest) fail(`${body.code}'s first planet is too near its stars`);
+        }
+    });
+    if (wet.length !== 1 || wet[0] !== sealed.target.planets[sealed.target_index].code) {
+        fail(`${wet.length} planets have water in a habitable zone`);
+    }
+    const flagged = [];
+    u.bodies.forEach((b) => (b.planets || []).forEach((p) => { if (p.in_hz && hasWater(p)) flagged.push(p.code); }));
+    if (flagged.length !== 1) fail(`${flagged.length} planets are marked in_hz with water`);
+    // The decoys must be there and must fail in the way they're meant to
+    sealed.decoys.forEach((decoy, i) => {
+        const found = u.resolve(decoy.planet.code);
+        if (!found) return fail(`decoy ${i} is missing`);
+        const zone = hzEdges(found.body.star.luminosity_Lsun);
+        const a = found.entity.orbit_AU;
+        if (decoy.beyond_zone ? a <= zone.outer : !(a >= zone.inner && a <= zone.outer)) fail(`decoy ${i} is in the wrong place`);
+        return null;
+    });
+}
+
+function checkMulti(u, fail) {
+    u.bodies.filter((b) => b.stars).forEach((body) => {
+        if (body.stars.length !== { binary: 2, hierarchical_triple: 3, figure_eight: 3, double_double: 4 }[body.architecture]) {
+            fail(`${body.code} has ${body.stars.length} stars for ${body.architecture}`);
+        }
+        if (body.kind !== (body.architecture === 'binary' ? 'binary' : 'multiple')) fail(`${body.code} has kind ${body.kind}`);
+        if (body.architecture === 'hierarchical_triple' && body.orbits[1].period_days < 10 * body.orbits[0].period_days) {
+            fail(`${body.code}'s outer period is under ten times its inner`);
+        }
+        body.orbits.filter((o) => !o.shared_path).forEach((orbit) => {
+            const members = [...orbit.a, ...orbit.b];
+            const mass = members.reduce((m, i) => m + body.stars[i].star.mass_Msun, 0);
+            const period = keplerPeriodDays(orbit.a_AU, mass);
+            if (Math.abs(orbit.period_days / period - 1) > 2e-3) fail(`${body.code}'s orbit breaks Kepler's third law`);
+        });
+        const inner = body.orbits[0];
+        if (inner && !inner.shared_path) {
+            const reach = (body.stars[inner.a[0]].star.radius_Rsun + body.stars[inner.b[0]].star.radius_Rsun) * RSUN_AU;
+            if (inner.a_AU < 2.4 * reach) fail(`${body.code}'s inner pair overlap`);
+        }
+        const states = componentStates(body, 12.34);
+        if (states.length !== body.stars.length) fail(`${body.code} gives ${states.length} component states`);
+        let weighted = 0;
+        states.forEach((s, i) => { weighted += s.vlos_kms * body.stars[i].star.mass_Msun; });
+        if (Math.abs(weighted) > 1e-6) fail(`${body.code}'s centre of mass is moving: ${weighted}`);
+    });
+    const eight = u.resolve('F8Q3ZN');
+    if (!eight || eight.body.architecture !== 'figure_eight' || eight.body.planets.length) fail('figure-eight is wrong');
+    const dd = u.resolve('D2W7XK');
+    if (!dd || dd.body.architecture !== 'double_double' || dd.body.planets.length !== 1) fail('double-double is wrong');
+    ['F8Q3ZA', 'F8Q3ZB', 'F8Q3ZC', 'D2W7XA', 'D2W7XB', 'D2W7XC', 'D2W7XD'].forEach((code) => {
+        const r = u.resolve(code);
+        if (!r || r.path !== 'component') fail(`${code} doesn't resolve to a component`);
+    });
+}
+
+function checkDeepSky(u, fail) {
+    u.bodies.forEach((body) => {
+        if (body.black_hole) {
+            const bh = body.black_hole;
+            if (!within(bh.mass_Msun, 3, 30)) fail(`${body.code} has mass ${bh.mass_Msun}`);
+            const amplitude = Math.max(...Array.from({ length: 64 }, (_, i) => Math.abs(componentStates(body, (i / 64) * bh.period_days)[1].vlos_kms)));
+            if (Math.abs(amplitude / bh.K_kms - 1) > 0.01) fail(`${body.code}'s K doesn't match its orbit`);
+        }
+        if (body.cluster) {
+            const c = body.cluster;
+            const n = c.members.length;
+            if (n < 30 || n > 150) fail(`${body.code} has ${n} members`);
+            c.members.forEach((m) => {
+                if (c.type === 'globular' && m.star.population !== 'II') fail(`${m.code} isn't metal-poor`);
+                if (m.star.stage === 'main_sequence') {
+                    if (m.star.mass_Msun > c.turnoff_Msun * 1.001) fail(`${m.code} should have left the main sequence`);
+                    if (m.brightness.mag > limitingMag(MIN_FOV)) fail(`${m.code} is too faint to find`);
+                }
+            });
+            if (Math.abs(msLifetimeMyr(c.turnoff_Msun) / c.age_Myr - 1) > 0.02) fail(`${body.code}'s turn-off doesn't match its age`);
+        }
+        if (body.neutron_star && body.neutron_star.pulsar) {
+            if (!within(body.neutron_star.pulse_period_s, 0.001, 5)) fail(`${body.code} has period ${body.neutron_star.pulse_period_s}`);
+        }
+        if (body.galaxy) {
+            const expected = H0 * body.galaxy.distance_Mpc;
+            if (Math.abs(body.radial_velocity_kms - expected) > 300.5) fail(`${body.code} strays from Hubble's law`);
+            if (Math.abs(body.galaxy.z - body.radial_velocity_kms / C_KMS) > 1e-3) fail(`${body.code}'s z is wrong`);
+        }
+        if (body.quasar && !within(body.quasar.z, 0.5, 4)) fail(`${body.code} has z = ${body.quasar.z}`);
+        if (body.supernova && body.supernova.remnant_code) {
+            const r = u.resolve(body.supernova.remnant_code);
+            if (!r || r.body.neutron_star.remnant_of !== body.code) fail(`${body.code}'s remnant link is broken`);
+            if (r && r.body.distance_pc !== body.distance_pc) fail(`${body.code} and its remnant are at different distances`);
+        }
+        if (body.nebula && body.nebula.type === 'planetary' && (!body.nebula.central_star || body.nebula.central_star.stage !== 'white_dwarf')) {
+            fail(`${body.code} has no central white dwarf`);
+        }
+    });
+    const phases = u.bodies.filter((b) => b.supernova).map((b) => b.supernova.phase0_days);
+    if (new Set(phases).size !== phases.length) fail('two supernovae share a phase');
+}
+
+export function validateUniverse(u) {
+    const failures = [];
+    const fail = (message) => { failures.push(message); return null; };
+    checkCounts(u, fail);
+    checkCodes(u, fail);
+    checkBands(u, fail);
+    checkPlacement(u, fail);
+    checkStars(u, fail);
+    checkPlanets(u, fail);
+    checkMulti(u, fail);
+    checkDeepSky(u, fail);
+    return failures;
+}
