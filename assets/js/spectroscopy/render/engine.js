@@ -14,7 +14,8 @@
 // If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
 //
 // A click on the sky emits bus 'skyclick' { code, x, y } (code null for empty sky), and the second of two quick clicks on
-// the same spot 'skydoubleclick' { code, x, y } as well, a tap's as a click's.
+// the same spot 'skydoubleclick' { code, x, y } as well, a tap's as a click's. On a narrow screen, where the panel a click
+// opens moves the sky, a click on an object is told a moment late, in case a second one is coming.
 //
 // If the browser takes the graphics context away the engine emits bus 'gl-lost', and if it later gives it back,
 // 'gl-restored'. Whatever a layer baked into a render target is gone by then, so a layer that bakes should listen and
@@ -1463,6 +1464,30 @@ export function createEngine(canvas) {
 
     const inputActive = () => app.view === 'sky' && !slew && !contextLost;
 
+    // Two clicks in quick succession on the same spot are a double-click, and a third starts afresh. The same spot on the
+    // page, not on the canvas: the panel the first click opens can move the canvas while the sky holds still.
+    function isSecondClick(e, touch) {
+        const first = lastClick;
+        const how = touch ? 'touch' : 'mouse';
+        return !!first && first.how === how && performance.now() - first.at <= DOUBLE_MS[how]
+            && Math.hypot(e.clientX - first.x, e.clientY - first.y) <= DOUBLE_PX[how];
+    }
+
+    // A click held back for a moment (see release), now told
+    let heldClick = null;
+    function releaseHeldClick() {
+        if (!heldClick) return;
+        const { click, timer } = heldClick;
+        heldClick = null;
+        clearTimeout(timer);
+        bus.emit('skyclick', click);
+    }
+
+    // The panel a click opens is a sheet under the sky on a narrow screen, which shrinks the sky and scrolls the page
+    function clicksMoveTheSky() {
+        return !!app.drawer && !app.drawer.isOpen() && document.body.classList.contains('sim-panel-sheet');
+    }
+
     function canvasPoint(e) {
         const rect = canvas.getBoundingClientRect();
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -1488,7 +1513,13 @@ export function createEngine(canvas) {
 
     if (renderer) {
         canvas.addEventListener('pointerdown', (e) => {
-            if (!inputActive() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            // The first click can set the sky moving, to bring what it chose out from under a bar or the panel. That doesn't
+            // stop a second click from making it a double-click, though it stops anything else.
+            const second = !inputActive() && !dragPointers.size && app.view === 'sky' && !contextLost && isSecondClick(e, e.pointerType !== 'mouse');
+            // Anything but the second click of a double-click lets a click held back go at once
+            if (heldClick && (dragPointers.size || !isSecondClick(e, e.pointerType !== 'mouse'))) releaseHeldClick();
+            if (!inputActive() && !second) return;
             const p = canvasPoint(e);
             dragPointers.set(e.pointerId, p);
             try {
@@ -1499,7 +1530,7 @@ export function createEngine(canvas) {
             zoomAnchor = null;
             zoomGoal = view.fov;
             if (dragPointers.size === 1) {
-                press = { x: p.x, y: p.y, moved: 0, touch: e.pointerType !== 'mouse' };
+                press = { x: p.x, y: p.y, moved: 0, touch: e.pointerType !== 'mouse', second };
                 dragTrail.time = performance.now();
             } else if (dragPointers.size === 2) {
                 press = null; // Two fingers are never a click
@@ -1545,6 +1576,7 @@ export function createEngine(canvas) {
                 const slop = press.touch ? CLICK_SLOP_TOUCH : CLICK_SLOP_MOUSE;
                 if (press.moved <= slop) return; // Still might be a click: hold the sky still
                 press = null;
+                releaseHeldClick();
             }
             const moved = moveByPixels(dx, dy);
             // The flick's speed: an average over the last moments of the drag
@@ -1567,21 +1599,39 @@ export function createEngine(canvas) {
                 velocity.az = 0;
                 velocity.alt = 0;
             }
-            if (press && !cancelled && inputActive()) {
+            if (press && !cancelled && press.second) {
+                // Pressed while the sky was moving: it can only be the second click of a double-click, on what the first found
+                const p = canvasPoint(e);
+                const first = lastClick;
+                const double = isSecondClick(e, press.touch);
+                lastClick = null;
+                if (double && first.code) bus.emit('skydoubleclick', { code: first.code, x: p.x, y: p.y });
+            } else if (press && !cancelled && inputActive()) {
                 const p = canvasPoint(e);
                 const code = pick(p.x, p.y, press.touch ? PICK_RADIUS_TOUCH : PICK_RADIUS_MOUSE);
-                // Two clicks in quick succession on the same spot are a double-click. A third starts afresh.
-                const how = press.touch ? 'touch' : 'mouse';
-                const now = performance.now();
                 const first = lastClick;
-                const double = !!first && first.how === how && now - first.at <= DOUBLE_MS[how]
-                    && Math.hypot(p.x - first.x, p.y - first.y) <= DOUBLE_PX[how];
-                lastClick = double ? null : { at: now, x: p.x, y: p.y, how, code };
-                bus.emit('skyclick', { code, x: p.x, y: p.y });
-                // The second click can just miss what the first found, so the first one's answer stands
-                if (double && (code || first.code)) bus.emit('skydoubleclick', { code: code || first.code, x: p.x, y: p.y });
+                const double = isSecondClick(e, press.touch);
+                const how = press.touch ? 'touch' : 'mouse';
+                lastClick = double ? null : { at: performance.now(), x: e.clientX, y: e.clientY, how, code };
+                const click = { code, x: p.x, y: p.y };
+                if (double) {
+                    // A held first click is the one to go with: nothing has moved since it
+                    if (heldClick) releaseHeldClick();
+                    else bus.emit('skyclick', click);
+                    // The first click's find stands: the second can just miss it, or the sky may have moved it from under the pointer
+                    if (first.code || code) bus.emit('skydoubleclick', { code: first.code || code, x: p.x, y: p.y });
+                } else if (code && clicksMoveTheSky()) {
+                    // On a narrow screen the panel this opens comes up under the sky and moves it, so the second click of a
+                    // double-click would land somewhere else: it waits a moment to see whether one comes
+                    releaseHeldClick();
+                    heldClick = { click, timer: setTimeout(releaseHeldClick, DOUBLE_MS[how]) };
+                } else {
+                    releaseHeldClick();
+                    bus.emit('skyclick', click);
+                }
             } else {
                 lastClick = null;   // A drag or a pinch in between: not a double-click
+                releaseHeldClick();
             }
             press = null;
         };
