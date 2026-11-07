@@ -469,11 +469,13 @@ function initContextBar(app) {
         app.system.enter(code, { onDone: planet ? () => app.system.focusPlanet(planet) : undefined });
     });
     back.addEventListener('click', () => { if (app.system) app.system.exit(); });
-    // It hides as the panel it opens comes up, so the focus goes on into that panel
+    // It hides as the panel it opens comes up, so the focus goes on into that panel, and comes back here when it closes
+    let backToHere = false;
     here.addEventListener('click', () => {
         if (!app.systemCode) return;
         select(app.systemCode);
         app.drawer.focusContent();
+        backToHere = true;
     });
 
     function panelShowsSystem() {
@@ -507,6 +509,16 @@ function initContextBar(app) {
     bus.on('view', paint);
     bus.on('drawer', paint);
     paint();
+    // The drawer sends the focus back to what opened it, but this button was hidden then, and the focus fell to Settings
+    bus.on('drawer', ({ open }) => {
+        if (open || !backToHere) return;
+        backToHere = false;
+        const active = document.activeElement;
+        const stranded = !active || active === document.body || active.classList.contains('sim-panel-toggle-button');
+        if (!stranded) return;
+        (here.hidden ? app.engine.canvas : here).focus({ preventScroll: true });
+    });
+    bus.on('view', () => { backToHere = false; });
 
     // Once ever, as the student first gets somewhere it would help: choosing a star that can be visited, or zooming on one
     let hintTimer = 0;
