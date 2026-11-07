@@ -8,6 +8,7 @@
 
 import { AU, G, M_SUN, R_SUN, R_EARTH, hzEdges, orbitalSpeedKms } from '../../core/phys.js';
 import { componentStates, figureEightPath, planetOrbitCentre } from '../../data/orbits.js';
+import { memberDirection } from '../layers/sky_tangent.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -21,16 +22,42 @@ export function compressedSize(radiusRsun) {
 
 const SIZE_TRUE = 0.5;                  // World radius of a one-solar-radius star, true scale
 const SIZE_LOG = 0.7;                   // ... and log scale, where there is more room around it
+const STAR_TO_RING = 0.42;              // A star's radius as a share of its innermost planet's orbit
+const PLANET_TO_STAR = 0.62;            // A planet's radius, rings included, as a share of its smallest host star's
+const PLANET_TO_RING = 0.16;            // ... and of its own orbit, so that a close-up has room for it
+const HOLE_DISC = 2.4;
 
-export function hasSystemView(body) {
-    if (!body || !(body.kind === 'star' || body.kind === 'binary' || body.kind === 'multiple')) return false;
-    if (body.architecture === 'figure_eight' || body.architecture === 'double_double') return true;
-    return !!(body.planets && body.planets.length);
+// Everything that shines can be visited: lone stars, with or without planets, pairs, triples, cluster members, black
+// holes with their companions, and neutron stars
+export function canDraw(body) {
+    return !!body && (!!body.star || !!(body.stars && body.stars.length) || !!body.black_hole || !!body.neutron_star);
 }
 
-// Any kind that has stars can be drawn, even when it isn't offered a System tab
-export function canDraw(body) {
-    return !!body && (!!body.star || !!(body.stars && body.stars.length));
+export function hasSystemView(body) {
+    return canDraw(body);
+}
+
+// A cluster member is entered as a system of its own: a copy with what a system needs from its cluster
+const memberSystems = new WeakMap();
+function memberSystem(member, cluster) {
+    let system = memberSystems.get(member);
+    if (!system) {
+        system = {
+            ...member,
+            sky: memberDirection(cluster, member),
+            bands: member.bands || cluster.bands,
+            planets: member.planets || []
+        };
+        memberSystems.set(member, system);
+    }
+    return system;
+}
+
+// What a resolved selection opens: its body, or for a cluster member the member. Null if there's nothing to visit.
+export function systemBodyOf(resolved) {
+    if (!resolved) return null;
+    const body = resolved.path === 'member' ? memberSystem(resolved.entity, resolved.body) : resolved.body;
+    return canDraw(body) ? body : null;
 }
 
 // ---------- Hierarchy ----------
@@ -39,7 +66,15 @@ function massOf(stars, members) {
     return members.reduce((sum, i) => sum + stars[i].star.mass_Msun, 0);
 }
 
-// The orbit tree, from body.orbits: each entry pairs two groups of stars by index, innermost first
+// The orbit data pairs by star index. A black hole has one orbit, in its own fields, which data/orbits.js reads too.
+function orbitsOf(body) {
+    if (body.orbits) return body.orbits;
+    const hole = body.black_hole;
+    if (!hole) return [];
+    return [{ a: [0], b: [1], a_AU: hole.a_AU, period_days: hole.period_days, ecc: 0, inc_deg: hole.inc_deg, omega_deg: 0, phase0: hole.phase0 }];
+}
+
+// The orbit tree, from the body's orbits: each entry pairs two groups of stars by index, innermost first
 function buildTree(body, stars) {
     const leaves = stars.map((_, i) => ({ members: [i], index: i, children: null, a_AU: 0, orbit: null, flat: false }));
     if (leaves.length === 1) return leaves[0];
@@ -49,7 +84,7 @@ function buildTree(body, stars) {
     const key = (list) => [...list].sort((a, b) => a - b).join(',');
     const nodes = new Map(leaves.map((leaf) => [key(leaf.members), leaf]));
     let root = leaves[0];
-    (body.orbits || []).forEach((orbit) => {
+    orbitsOf(body).forEach((orbit) => {
         const members = [...orbit.a, ...orbit.b];
         root = {
             members,
@@ -94,15 +129,49 @@ const ALONE = Object.freeze({ x_AU: 0, y_AU: 0, z_AU: 0, vlos_kms: 0 });
 
 // Star states in the stars' own order: from componentStates, the one source the spectra also use
 function readStates(model, tDays) {
-    if (model.body.star) return [ALONE]; // A lone star is the centre of its system
+    if (model.stars.length === 1) return [ALONE]; // A lone star is the centre of its system
     const raw = componentStates(model.body, tDays);
     return model.stars.map((s) => raw.find((q) => q.code === s.code));
 }
 
+// A black hole or neutron star in the shape of a star, for the sums. Their looks live in remnants.js. A hole's radius is
+// its disc's, and stylised, as sizes are everywhere here.
+function holeAsStar(hole) {
+    return {
+        teff_K: 5800 * (10 / hole.mass_Msun) ** 0.25,
+        mass_Msun: hole.mass_Msun,
+        radius_Rsun: 0.5 * (hole.mass_Msun / 8) ** 0.5,
+        luminosity_Lsun: 0,
+        stage: 'black_hole'
+    };
+}
+
+function neutronAsStar(ns) {
+    return {
+        teff_K: ns.teff_K,
+        mass_Msun: ns.mass_Msun,
+        radius_Rsun: ns.radius_km / 695700,
+        luminosity_Lsun: ns.luminosity_Lsun,
+        stage: 'neutron_star',
+        vsini_kms: 0
+    };
+}
+
+function starsOf(body) {
+    if (body.star) return [{ code: body.code, star: body.star, entity: body }];
+    if (body.stars) return body.stars.map((s) => ({ code: s.code, star: s.star, entity: s }));
+    if (body.black_hole) {
+        const { companion } = body.black_hole;
+        return [
+            { code: body.code, star: holeAsStar(body.black_hole), entity: body },
+            { code: companion.code, star: companion.star, entity: companion }
+        ];
+    }
+    return [{ code: body.code, star: neutronAsStar(body.neutron_star), entity: body }];
+}
+
 export function buildModel(body) {
-    const stars = body.star
-        ? [{ code: body.code, star: body.star, entity: body }]
-        : body.stars.map((s) => ({ code: s.code, star: s.star, entity: s }));
+    const stars = starsOf(body);
 
     const model = {
         body,
@@ -172,12 +241,14 @@ export function buildModel(body) {
 
     // The true line of sight, from the orbit the spectra use: i = 90 is edge-on. Lines shift with motion along +y in
     // the widest orbit, but along the long axis (+x) of the figure-eight, so that's where the flight starts from.
-    const widest = body.figure_eight || (body.orbits && body.orbits.length ? body.orbits[body.orbits.length - 1] : null);
+    const orbits = orbitsOf(body);
+    const widest = body.figure_eight || (orbits.length ? orbits[orbits.length - 1] : null);
     model.inclination = widest ? widest.inc_deg : null;
     model.sightAz = body.figure_eight ? -Math.PI / 2 : 0;
 
     const main = stars.length === 1 && (stars[0].star.stage === 'main_sequence');
     if (main) model.hz = hzEdges(stars[0].star.luminosity_Lsun);
+    model.lone = stars.length === 1 && model.planets.length === 0;
 
     computeSizes(model);
     return model;
@@ -206,16 +277,30 @@ export function ringRadius(model, aAU, m) {
     return scaleOf(model, aAU, m) * aAU;
 }
 
-// Star sizes at each end of the log mix, worked out once. A star never covers its own innermost orbit or its partner.
+// A star with nothing round it is what there is to see, so it fills the view: a giant most, a white dwarf least
+function loneRadius(star) {
+    return FRAME * Math.min(0.5, 0.34 * compressedSize(star.radius_Rsun) ** 0.6);
+}
+
+// How far a planet reaches, in its own radii: rings are part of what's drawn
+export function planetReach(planet) {
+    return planet.rings ? Math.max(1, planet.rings.outer_Rp || 1) : 1;
+}
+
+// Star and planet sizes at each end of the log mix, worked out once. A star never covers its own innermost orbit or its
+// partner, and a planet starts out well under the size of its star.
 function computeSizes(model) {
     const atMix = (m) => {
         const out = model.stars.map((s) => {
-            const base = (SIZE_TRUE + (SIZE_LOG - SIZE_TRUE) * m) * compressedSize(s.star.radius_Rsun);
+            if (model.lone) return loneRadius(s.star);
+            // A hole's radius is its disc's edge, and most of the disc is faint: it needs more room to be seen
+            const own = s.star.stage === 'black_hole' ? HOLE_DISC : 1;
+            const base = own * (SIZE_TRUE + (SIZE_LOG - SIZE_TRUE) * m) * compressedSize(s.star.radius_Rsun);
             const real = (1 - m) * s.star.radius_Rsun * RSUN_AU * model.unit;
             return Math.max(base, real);
         });
         let ringLimit = Infinity;
-        model.planets.forEach((e) => { ringLimit = Math.min(ringLimit, 0.6 * ringRadius(model, e.planet.orbit_AU, m)); });
+        model.planets.forEach((e) => { ringLimit = Math.min(ringLimit, STAR_TO_RING * ringRadius(model, e.planet.orbit_AU, m)); });
         out.forEach((r, i) => { out[i] = Math.min(r, ringLimit); });
         // Partners, innermost first: their radii may not add up to more than the gap between them
         model.nodes.filter((n) => n.children && !n.flat && n.children.every((c) => c.children === null))
@@ -238,6 +323,26 @@ function computeSizes(model) {
     model.starRadiiTrue = atMix(0);
     model.starRadiiLog = atMix(1);
 
+    const planetsAtMix = (m, starRadii) => model.planets.map((e) => {
+        const base = (SIZE_TRUE + (SIZE_LOG - SIZE_TRUE) * m) * compressedSize((e.planet.radius_Rearth || 1) * REARTH_RSUN);
+        const hostMin = Math.min(...e.node.members.map((i) => starRadii[i]));
+        const room = Math.min(PLANET_TO_STAR * hostMin, PLANET_TO_RING * ringRadius(model, e.planet.orbit_AU, m));
+        return Math.min(base, room / planetReach(e.planet));
+    });
+    model.planetRadiiTrue = planetsAtMix(0, model.starRadiiTrue);
+    model.planetRadiiLog = planetsAtMix(1, model.starRadiiLog);
+    model.planetIndex = new Map(model.planets.map((e, j) => [e.planet, j]));
+
+    // The smallest either may be on screen, in pixels of radius, so that everything is still something to click
+    model.starFloorPx = model.stars.map((s) => {
+        if (s.star.stage === 'black_hole') return 22;
+        return Math.max(6, Math.min(44, 9 * compressedSize(s.star.radius_Rsun)));
+    });
+    model.planetFloorPx = model.planets.map((e) => {
+        const big = Math.min(1, Math.max(0, ((e.planet.radius_Rearth || 1) - 1) / 10));
+        return 5 + 6 * Math.sqrt(big);
+    });
+
     // How squashed each star is by its partner, from the real sizes. The true effect only shows near contact,
     // so this is stylised, but it grows with how close the pair really are.
     model.tides = model.stars.map(() => null);
@@ -254,12 +359,12 @@ function computeSizes(model) {
         });
     });
 
-    // The data names who is losing gas and who is gaining it
+    // The data names who is losing gas and who is gaining it. A black hole's companion always feeds its disc.
     model.stream = null;
-    const transfer = model.body.transfer;
+    const transfer = model.body.black_hole ? { donor: 1, accretor: 0 } : model.body.transfer;
     if (transfer) {
         const pair = model.nodes.find((n) => n.children && !n.flat && n.members.includes(transfer.donor) && n.members.includes(transfer.accretor) && n.members.length === 2);
-        if (pair) model.stream = { pair, donor: transfer.donor, accretor: transfer.accretor };
+        if (pair) model.stream = { pair, donor: transfer.donor, accretor: transfer.accretor, ontoHole: !!model.body.black_hole };
     }
 }
 
@@ -269,8 +374,109 @@ export function starRadius(model, i, m) {
 
 // Planets use the stars' size scale, so a giant planet is rightly smaller than a dwarf star
 export function planetRadius(model, planet, m) {
-    const scale = SIZE_TRUE + (SIZE_LOG - SIZE_TRUE) * m;
-    return scale * compressedSize((planet.radius_Rearth || 1) * REARTH_RSUN);
+    const j = model.planetIndex.get(planet);
+    return model.planetRadiiTrue[j] + (model.planetRadiiLog[j] - model.planetRadiiTrue[j]) * m;
+}
+
+// ---------- What's drawn: a planet is never bigger than its star ----------
+
+// How much bigger a star's picture is than its planets' at the very least. Over 1 because a shape off to the side of the
+// view is stretched outwards a little by the perspective, by at most about a fifth in this view.
+export const SIZE_MARGIN = 1.25;
+
+// The apparent size of a sphere, as the tangent of the angle it covers: its pixels are this times the focal length
+function apparent(r, z) {
+    return r / Math.sqrt(Math.max(z * z - r * r, 1e-12));
+}
+
+function radiusFor(a, z) {
+    return (a * z) / Math.sqrt(1 + a * a);
+}
+
+const distance = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+
+export function createSizes(model) {
+    return {
+        stars: new Float64Array(model.stars.length),
+        planets: new Float64Array(model.planets.length),
+        starZ: new Float64Array(model.stars.length),
+        planetZ: new Float64Array(model.planets.length)
+    };
+}
+
+// The one place that decides how big things are drawn this frame, and the one place the hard rule is kept: seen from
+// where the camera is now, every planet looks smaller than every star it goes round. This is about the picture, so what
+// counts is apparent size, which takes in how far each is from the camera.
+//
+// Each starts at its world size or its minimum on screen. Then a star grows to stay ahead of its planets, as far as it
+// has room to: it can't reach the camera or its partner, or cover a planet that's on show (while one planet is in focus,
+// only that one, as the others are faded). Whatever that doesn't settle is settled by making the planet smaller.
+//
+// view = { cam: [x, y, z], fwd: unit vector the camera looks along, f: pixels per unit of tangent at the view's middle,
+//          minSize: 0 to 1, how far minimum sizes apply, planets: how far planets have faded in, focus: planet index or -1 }
+// out comes from createSizes: stars and planets hold world radii of the bodies, rings left out.
+export function drawnSizes(model, pos, m, view, out) {
+    const { cam, fwd, f, minSize, focus } = view;
+    const nStars = model.stars.length;
+    const nPlanets = model.planets.length;
+    for (let i = 0; i < nStars; i++) {
+        const p = pos.stars[i];
+        const z = (p[0] - cam[0]) * fwd[0] + (p[1] - cam[1]) * fwd[1] + (p[2] - cam[2]) * fwd[2];
+        out.starZ[i] = z;
+        const least = z > 0 ? radiusFor((model.starFloorPx[i] * minSize) / f, z) : 0;
+        out.stars[i] = Math.max(starRadius(model, i, m), least);
+    }
+    for (let j = 0; j < nPlanets; j++) {
+        const p = pos.planets[j];
+        const z = (p[0] - cam[0]) * fwd[0] + (p[1] - cam[1]) * fwd[1] + (p[2] - cam[2]) * fwd[2];
+        out.planetZ[j] = z;
+        const r = model.planetRadiiTrue[j] + (model.planetRadiiLog[j] - model.planetRadiiTrue[j]) * m;
+        const least = z > 0 ? radiusFor((model.planetFloorPx[j] * minSize) / f, z) : 0;
+        out.planets[j] = Math.max(r, least);
+    }
+    if (view.planets <= 0.001) return out;
+
+    // Keep each star ahead of its planets
+    for (let j = 0; j < nPlanets; j++) {
+        if (out.planetZ[j] <= 0) continue;
+        const reach = planetReach(model.planets[j].planet);
+        const need = apparent(out.planets[j] * reach, out.planetZ[j]) * SIZE_MARGIN;
+        const { members } = model.planets[j].node;
+        for (let h = 0; h < members.length; h++) {
+            const i = members[h];
+            if (out.starZ[i] <= 0) continue;
+            const want = radiusFor(need, out.starZ[i]);
+            if (want > out.stars[i]) out.stars[i] = Math.max(out.stars[i], Math.min(want, roomFor(model, pos, out, i, cam, focus)));
+        }
+    }
+    // Then hold each planet under what its stars came to
+    for (let j = 0; j < nPlanets; j++) {
+        if (out.planetZ[j] <= 0) continue;
+        const reach = planetReach(model.planets[j].planet);
+        const { members } = model.planets[j].node;
+        for (let h = 0; h < members.length; h++) {
+            const i = members[h];
+            if (out.starZ[i] <= 0) continue;
+            const most = apparent(out.stars[i], out.starZ[i]) / SIZE_MARGIN;
+            if (apparent(out.planets[j] * reach, out.planetZ[j]) > most) out.planets[j] = radiusFor(most, out.planetZ[j]) / reach;
+        }
+    }
+    return out;
+}
+
+// How big a star can grow without getting in the way of anything on show
+function roomFor(model, pos, out, i, cam, focus) {
+    const here = pos.stars[i];
+    let room = 0.92 * distance(here, cam);
+    for (let k = 0; k < model.stars.length; k++) {
+        if (k !== i) room = Math.min(room, 0.46 * distance(here, pos.stars[k]));
+    }
+    for (let j = 0; j < model.planets.length; j++) {
+        if (focus >= 0 && j !== focus) continue;
+        const clear = out.planets[j] * planetReach(model.planets[j].planet);
+        room = Math.min(room, 0.85 * distance(here, pos.planets[j]) - clear);
+    }
+    return room;
 }
 
 // Positions in world units at time t. Each orbit's offsets are scaled by its own size, so in log scale a close pair
@@ -371,6 +577,56 @@ export function figureEightWorldPoints(model) {
     return model.pathPoints.map((q) => [q.x * model.unit, 0, -q.y * model.unit]);
 }
 
+// ---------- Fast orbits turn into steady smears ----------
+
+function smooth(a, b, x) {
+    const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+}
+
+// The most orbits a second still drawn as a moving disc. A disc passes any one spot once per orbit (a pair of them,
+// twice), so this is what keeps the flash rate down. Reduce motion holds it far lower.
+export const ORBITS_PER_SECOND = 1;
+export const ORBITS_PER_SECOND_REDUCED = 0.1;
+
+export function createSmear(model) {
+    return {
+        nodes: new Map(model.nodes.map((n) => [n, { own: 0, above: 0 }])),
+        stars: new Float64Array(model.stars.length),        // 0: a disc, 1: nothing but the smear
+        starBlur: new Float64Array(model.stars.length),     // A disc going fast: 1 has no surface detail left to race past
+        planets: new Float64Array(model.planets.length),
+        planetAbove: new Float64Array(model.planets.length) // The same for whatever carries the planet's whole orbit
+    };
+}
+
+// How far each orbit has merged into its smear at this clock speed (days per second). What rides on a fast orbit goes
+// too: a pair on a fast wide orbit can't stay a ring that jumps about.
+export function smearWeights(model, daysPerSecond, cap, out) {
+    const weight = (period, sharedBy) => (period > 0 ? smooth(cap * 0.5, cap, (daysPerSecond * sharedBy) / period) : 0);
+    const walk = (node, above, fastest) => {
+        const entry = out.nodes.get(node);
+        const period = node.flat ? model.pathPeriodDays : node.orbit ? node.orbit.period_days : 0;
+        // The figure-eight's three stars share one path, so each spot on it is passed three times an orbit
+        entry.own = weight(period, node.flat ? 3 : 1);
+        entry.above = above;
+        const next = Math.max(above, entry.own);
+        const rate = period > 0 ? Math.max(fastest, daysPerSecond / period) : fastest;
+        if (node.children === null) {
+            out.stars[node.index] = above;
+            out.starBlur[node.index] = smooth(cap * 0.08, cap * 0.35, fastest);
+        } else {
+            node.children.forEach((child) => walk(child, next, rate));
+        }
+    };
+    walk(model.root, 0, 0);
+    model.planets.forEach((e, j) => {
+        const entry = out.nodes.get(e.node);
+        out.planets[j] = weight(e.planet.period_days, 1);
+        out.planetAbove[j] = entry.above;
+    });
+    return out;
+}
+
 // ---------- Readouts ----------
 
 // r, T, v = 2 pi r / T and both sides of Kepler's third law, for the System tab
@@ -395,6 +651,9 @@ export function keplerReadout(model, entry) {
 // Can the habitable zone be drawn for this body? The reason is shown as the switch's tooltip when it can't.
 export function hzStatus(body) {
     if (!body) return { ok: false, reason: 'The habitable zone shows inside a planetary system. Enter a system to see it.' };
+    if (body.black_hole || body.neutron_star) {
+        return { ok: false, reason: 'No habitable zone here: the simple formula is for a single star on the main sequence.' };
+    }
     if (!body.star) {
         return { ok: false, reason: 'No habitable zone here: with more than one star, the simple formula does not apply.' };
     }
@@ -405,17 +664,18 @@ export function hzStatus(body) {
     return { ok: true, reason: '' };
 }
 
-// A ladder of playback speeds from a crawl through the shortest orbit to a visible turn of the longest
-export function speedsFor(model) {
+// The range of the clock, in days per second, from a crawl through the shortest orbit to a visible turn of the longest.
+// Fast enough, the shorter orbits merge into their smears, and the longer ones are what's left to watch. With Reduce
+// motion the top is far lower. Null if nothing here goes round anything.
+export function speedsFor(model, reduceMotion = false) {
     const periods = model.planets.map((e) => e.planet.period_days);
     model.nodes.forEach((n) => { if (n.orbit && n.orbit.period_days) periods.push(n.orbit.period_days); });
     if (model.pathPoints) periods.push(model.pathPeriodDays);
-    const shortest = periods.length ? Math.min(...periods) : 10;
-    const longest = periods.length ? Math.max(...periods) : 10;
-    const ladder = [0.01, 0.05, 0.25, 1, 5, 25, 125, 625, 3125, 15625, 78125];
-    const pick = (x) => ladder.reduce((best, s) => (Math.abs(Math.log(s / x)) < Math.abs(Math.log(best / x)) ? s : best), ladder[0]);
-    const low = pick(shortest / 50);
-    const start = pick(shortest / 8);
-    const high = Math.max(pick(longest / 10), pick(start * 25));
-    return { speeds: ladder.filter((s) => s >= low && s <= high), speed: start };
+    if (!periods.length) return null;
+    const shortest = Math.min(...periods);
+    const longest = Math.max(...periods);
+    const min = shortest / 200;
+    const fastest = model.pathPoints ? 0.2 : 0.5;   // The figure-eight's stars share a path, and must stay stars at the top
+    const max = longest * (reduceMotion ? ORBITS_PER_SECOND_REDUCED * 0.2 : ORBITS_PER_SECOND * fastest);
+    return { min, max, speed: Math.min(max, shortest / 8) };
 }

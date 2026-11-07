@@ -5,7 +5,7 @@
 import { bus, select, setLayer } from '../core/state.js';
 import { sig, sci } from '../core/format.js';
 import { createPlayback } from './playback.js';
-import { hasSystemView, hzStatus, buildModel, keplerReadout, speedsFor } from '../render/system/system_model.js';
+import { hzStatus, buildModel, keplerReadout, speedsFor } from '../render/system/system_model.js';
 
 function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -20,11 +20,33 @@ function timeText(days) {
     return `${sig(days / 365.25, 3)} years`;
 }
 
+function speedWords(days) {
+    if (days >= 730) return `${sig(days / 365.25, 2)} years/s`;
+    const n = sig(days, 2);
+    return `${n} ${n === '1' ? 'day' : 'days'}/s`;
+}
+
 function row(list, label, value) {
     const dt = el('dt', '', label);
     const dd = el('dd', '', value);
     list.append(dt, dd);
     return dd;
+}
+
+// A sentence on what's here. With nothing going round it, that includes what there is to do.
+function summaryOf(model) {
+    const { body } = model;
+    if (body.black_hole) return 'A black hole and the star going round it. Gas from the star falls onto the disc.';
+    if (body.neutron_star) {
+        return body.neutron_star.pulsar
+            ? 'A neutron star, with its beams slowed right down. Really it turns far too fast to draw.'
+            : 'A neutron star, on its own. Drag to look round it.';
+    }
+    const n = model.planets.length;
+    if (model.lone) return 'One star, no planets. Nothing goes round it, so this is the star up close: drag to look round it, or zoom in on its surface.';
+    const starText = model.stars.length === 1 ? 'One star' : `${model.stars.length} stars`;
+    const planetText = n === 0 ? 'no planets' : n === 1 ? 'one planet' : `${n} planets`;
+    return `${starText}, ${planetText}.`;
 }
 
 export function initSystemTab(app) {
@@ -36,6 +58,7 @@ export function initSystemTab(app) {
     let resolved = null;
     let parts = null;
     let modelCache = null;      // For readouts while still in the sky
+    let listed = null;          // The model the rows were made for: rows that stay put keep their keyboard focus
     let ownTick = false;
 
     function modelFor(body) {
@@ -45,28 +68,40 @@ export function initSystemTab(app) {
         return modelCache;
     }
 
+    function tellClock() {
+        if (playback) view.setClock({ speed: playback.speed, playing: playback.playing });
+        else view.setClock({ speed: 0, playing: false });
+    }
+
     function startPlayback(model) {
         stopPlayback();
-        const { speeds, speed } = speedsFor(model);
+        const reduced = !!app.settings.reduceMotion;
+        const range = speedsFor(model, reduced);
+        if (!range) return;    // Nothing here goes round anything
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
-            speeds,
-            speed,
+            range,
+            speed: range.speed,
+            words: speedWords,
             unit: 'days',
             t0: view.getTime(),
+            scale: () => view.timeScale(),
+            onChange: tellClock,
             onTick(t) {
                 ownTick = true;
-                bus.emit('timeline', { code: model.code, t_days: t });
+                bus.emit('timeline', { code: model.code, t_days: t, own: true });
                 ownTick = false;
                 paintTime();
             }
         });
-        if (!app.settings.reduceMotion) playback.play();
+        tellClock();
+        if (!reduced) playback.play();
     }
 
     function stopPlayback() {
         if (playback) playback.dispose();
         playback = null;
+        tellClock();
     }
 
     let lastPaint = 0;
@@ -75,7 +110,8 @@ export function initSystemTab(app) {
         const now = performance.now();
         if (now - lastPaint < 150) return;
         lastPaint = now;
-        parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}`;
+        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
+        parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}`;
     }
 
     function selectFromList(code) {
@@ -84,22 +120,35 @@ export function initSystemTab(app) {
         else app.drawer.selectTab('system');
     }
 
+    // The button that was just pressed has gone: on to the next thing there is to do here
+    function focusIntoTab() {
+        const next = (playback && playback.button) || parts.list.querySelector('button') || parts.starList.querySelector('button');
+        if (next) next.focus({ preventScroll: true });
+        else app.engine.canvas.focus({ preventScroll: true });
+    }
+
     function buildParts(container) {
         const box = el('div', 'spectro-system-tab');
 
         const summary = el('p', 'spectro-system-lead');
 
-        const action = el('button', 'spectro-system-btn spectro-system-primary');
+        const action = el('button', 'spectro-system-btn spectro-system-primary', 'Enter system');
         action.type = 'button';
         action.addEventListener('click', () => {
-            const code = resolved && resolved.body.code;
-            if (app.view === 'system' && code && app.systemCode === code) view.exit();
-            else if (code) view.enter(code);
+            if (!resolved) return;
+            // Selected a planet? Then that's what the flight is for.
+            view.enter(resolved.path === 'planet' ? resolved.entity.code : view.systemOf(resolved).code);
+            if (action.hidden) focusIntoTab();
         });
 
         const whole = el('button', 'spectro-system-btn', 'View the whole system');
         whole.type = 'button';
-        whole.addEventListener('click', () => view.focusPlanet(null));
+        whole.addEventListener('click', () => {
+            view.focusPlanet(null);
+            const current = parts.list.querySelector('[aria-current="true"]') || parts.starList.querySelector('[aria-current="true"]');
+            if (current) current.focus({ preventScroll: true });
+            else focusIntoTab();
+        });
 
         const timeGroup = el('div', 'sim-control-group');
         timeGroup.append(el('span', 'sim-control-group-label', 'Orbit time'), timeBox);
@@ -122,7 +171,8 @@ export function initSystemTab(app) {
         hzBox.addEventListener('change', () => setLayer('habitableZone', hzBox.checked));
         const hzLabel = el('label', '', 'Habitable zone');
         hzLabel.htmlFor = 'spectroSystemHz';
-        hzLabel.title = 'Where water could stay liquid on a planet\'s surface. Inner edge about √(L/1.1) AU, outer edge about √(L/0.53) AU, with L in solar luminosities.';
+        const hzTip = 'Where water could stay liquid on a planet\'s surface. Inner edge about √(L/1.1) AU, outer edge about √(L/0.53) AU, with L in solar luminosities.';
+        hzLabel.title = hzTip;
         scaleGroup.append(hzBox, hzLabel);
         const hzNote = el('p', 'spectro-system-note');
 
@@ -143,16 +193,18 @@ export function initSystemTab(app) {
         const about = el('details', 'sim-controls-more');
         about.append(
             el('summary', '', 'About the scale'),
-            el('p', 'spectro-system-note', 'Sizes are not to scale. Real stars and planets would be invisible specks beside these orbits, so every size is compressed the same way (radius to the power 0.3). A giant is still bigger than a dwarf, and a dwarf bigger than a planet.'),
-            el('p', 'spectro-system-note', 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control.')
+            el('p', 'spectro-system-note', 'Sizes are not to scale. Real stars and planets would be invisible specks beside these orbits, so every size is compressed the same way (radius to the power 0.3). A giant is still bigger than a dwarf, and a planet is always drawn smaller than its star.'),
+            el('p', 'spectro-system-note', 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. An orbit too fast to follow turns into a steady ring of light, so that the slower ones can still be watched.')
         );
 
         box.append(summary, action, whole, timeGroup, scaleWrap, detail, listGroup, starGroup, about);
         container.appendChild(box);
-        return { summary, action, whole, timeGroup, time, scaleWrap, logBox, logLabel, hzBox, hzLabel, hzNote, detail, listGroup, list, listLabel, starGroup, starList };
+        return { summary, action, whole, timeGroup, time, scaleWrap, logBox, logLabel, hzBox, hzLabel, hzTip, hzNote, detail, listGroup, list, listLabel, starGroup, starList };
     }
 
     function renderList(model) {
+        if (listed === model) return;
+        listed = model;
         parts.list.replaceChildren();
         parts.listGroup.hidden = model.planets.length === 0;
         model.planets.forEach((entry) => {
@@ -181,8 +233,10 @@ export function initSystemTab(app) {
                 b.append(el('span', 'spectro-system-code', s.code));
                 // The double-double's stars come in named pairs
                 const pair = (model.body.pairs || []).find((q) => q.codes.includes(s.code));
+                const hole = s.star.stage === 'black_hole';
                 if (pair) b.append(el('span', 'spectro-system-facts', `Pair ${pair.label}`));
-                b.setAttribute('aria-label', pair ? `Star ${s.code}, pair ${pair.label}` : `Star ${s.code}`);
+                if (hole) b.append(el('span', 'spectro-system-facts', 'Black hole'));
+                b.setAttribute('aria-label', hole ? `Black hole ${s.code}` : pair ? `Star ${s.code}, pair ${pair.label}` : `Star ${s.code}`);
                 b.addEventListener('click', () => selectFromList(s.code));
                 li.appendChild(b);
                 parts.starList.appendChild(li);
@@ -222,31 +276,33 @@ export function initSystemTab(app) {
 
     function paint() {
         if (!parts || !resolved) return;
-        const body = resolved.body;
+        const body = view.systemOf(resolved);
+        if (!body) return;
         const model = modelFor(body);
         const inThis = app.view === 'system' && app.systemCode === body.code;
 
-        const n = model.planets.length;
-        const starText = model.stars.length === 1 ? 'One star' : `${model.stars.length} stars`;
-        const planetText = n === 0 ? 'no planets' : n === 1 ? 'one planet' : `${n} planets`;
-        parts.summary.textContent = `${starText}, ${planetText}.`;
+        parts.summary.textContent = summaryOf(model);
 
-        parts.action.textContent = inThis ? 'Back to sky' : 'Enter system';
+        // The way back to the sky is on the context bar, always in the same place
+        parts.action.hidden = inThis;
         parts.whole.hidden = !(inThis && view.isFocused());
-        parts.timeGroup.hidden = !inThis;
-        parts.scaleWrap.hidden = !inThis;
+        parts.timeGroup.hidden = !inThis || !playback;
 
+        const remnant = !!(body.black_hole || body.neutron_star);
+        parts.scaleWrap.hidden = !inThis || remnant;
         if (inThis) {
             parts.logBox.checked = view.isLogScale();
             const useful = view.logScaleUseful();
             parts.logBox.disabled = !useful;
+            parts.logBox.hidden = model.lone;
+            parts.logLabel.hidden = model.lone;
             parts.logLabel.title = useful
                 ? 'Squeezes wide orbits together so that the inner planets can be seen. Times and speeds stay true, but drawn distances do not.'
                 : 'This system has only one distance to show, so a log scale would change nothing.';
             const hz = hzStatus(body);
             parts.hzBox.disabled = !hz.ok;
             parts.hzBox.checked = hz.ok && !!app.layers.habitableZone;
-            parts.hzLabel.title = hz.ok ? parts.hzLabel.title : hz.reason;
+            parts.hzLabel.title = hz.ok ? parts.hzTip : hz.reason;
             parts.hzNote.hidden = hz.ok;
             parts.hzNote.textContent = hz.ok ? '' : hz.reason;
         }
@@ -265,16 +321,24 @@ export function initSystemTab(app) {
             startPlayback(view.getModel());
             // Already reading about this system? The System tab is what you came for.
             const open = app.drawer.isOpen() && app.drawer.currentView() === 'object';
-            if (open && app.selected && app.selected.body === view.getModel().body) app.drawer.selectTab('system');
+            if (open && app.selected && view.systemOf(app.selected) === view.getModel().body) app.drawer.selectTab('system');
         } else {
             stopPlayback();
         }
+        listed = null;
         paint();
     });
     bus.on('layer', ({ name }) => { if (name === 'habitableZone') paint(); });
-    // Another panel's playback moved this system's clock: carry on from there rather than jump back
+    // Another panel's playback moved this system's clock: carry on from there rather than jump back. When it goes back to
+    // the start it has let go, and this clock just carries on.
     bus.on('timeline', ({ code, t_days }) => {
-        if (!ownTick && playback && code === app.systemCode) playback.t = t_days;
+        if (!ownTick && playback && code === app.systemCode && t_days) playback.t = t_days;
+    });
+    // Reduce motion stops the orbits where they are, and takes the top off the speeds
+    bus.on('settings', ({ key }) => {
+        if (key !== 'reduceMotion' || !playback) return;
+        startPlayback(view.getModel());
+        paint();
     });
     view.onChange(paint);
 
@@ -282,7 +346,7 @@ export function initSystemTab(app) {
         id: 'system',
         label: 'System',
         order: 40,
-        appliesTo: (r) => !!r && (r.path === 'body' || r.path === 'planet' || r.path === 'component') && hasSystemView(r.body),
+        appliesTo: (r) => !!view.systemOf(r),
         mount(container) {
             parts = buildParts(container);
             return {

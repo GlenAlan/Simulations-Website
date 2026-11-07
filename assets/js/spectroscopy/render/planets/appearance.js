@@ -276,9 +276,11 @@ function envelopeColours(ctx) {
     const absorb = [lerp(1, 0.3, ch4Eff) * lerp(1, 0.5, deep), lerp(1, 0.8, ch4Eff) * lerp(1, 0.56, deep), lerp(1, 1, ch4Eff) * lerp(1, 0.96, deep)];
     const white = [0.86, 0.91, 1];
     // CO2 haze lies above the methane and pales it, so a sub-Neptune looks chalkier than a clear ice giant
-    const co2Haze = smooth(0.05, 0.9, gas.amount('CO2')) * 0.42;
+    const co2Haze = smooth(0.05, 0.9, gas.amount('CO2')) * 0.5;
     const pale = srgb(206, 208, 200);
-    const tint = (c) => mix3(mul3(mix3(c, white, ch4Eff * 0.72), absorb), pale, co2Haze);
+    // Methane's blue, seen through haze, is soft rather than a painted turquoise
+    const soften = (c) => mix3(c, [luma(c), luma(c), luma(c)], 0.34 * ch4Eff);
+    const tint = (c) => mix3(soften(mul3(mix3(c, white, ch4Eff * 0.72), absorb)), pale, co2Haze);
     const out = { zone: tint(zone), belt: tint(belt), accent: tint(accent), storm: tint(storm), ch4Eff };
     if (mass < 25) {
         const dim = lerp(0.72, 1, smooth(8, 25, mass));
@@ -306,13 +308,16 @@ function envelopeFrom(ctx, rng) {
             cirrus: 0,
             polar: 0.15,
             jetSpeed: 0.3,
-            chevron: 0.8
+            chevron: 0.8,
+            limbDark: 0.14
         };
     }
     const massF = smooth(12, 120, mass);
     const coldMute = 1 - 0.62 * smooth(100, 68, T);
     const hazeHide = 1 - 0.72 * c.ch4Eff * (1 - smooth(50, 100, mass));
-    const bands = clamp(lerp(0.34, 1, massF) * coldMute * hazeHide);
+    // Faint bands still show on an ice giant; the cold, heavy giants keep their contrast down so as not to look marbled
+    const bandGain = lerp(1, 1.9, c.ch4Eff) * lerp(1, 0.62, smooth(340, 220, T) * (1 - c.ch4Eff));
+    const bands = clamp(lerp(0.34, 1, massF) * coldMute * hazeHide * bandGain);
     // Warmer means more turbulent; the heaviest giants also stir themselves with their own internal heat
     const turbulence = clamp((0.22 + 0.72 * smooth(60, 560, T) + 0.28 * smooth(100, 400, mass)) * lerp(0.45, 1, massF));
     // Faster spin and a bigger planet make narrower jets (Rhines scale)
@@ -329,7 +334,8 @@ function envelopeFrom(ctx, rng) {
         cirrus: c.ch4Eff > 0.5 ? 0.6 : 0,
         polar: 0.55 * massF,
         jetSpeed: lerp(0.5, 1, turbulence),
-        chevron: 0
+        chevron: 0,
+        limbDark: lerp(0.14, 0.42, c.ch4Eff)
     };
 }
 
@@ -456,7 +462,7 @@ function emissionFrom(ctx, solid) {
         const bb = blackBodyRGB(T);
         const m = Math.max(bb[0], bb[1], bb[2]);
         const c = scale3(bb, 1 / m);
-        return { on: true, cool: scale3(c, 0.004 * glow), warm: scale3(c, 0.026 * glow), hot: scale3(c, 0.11 * glow) };
+        return { on: true, cool: scale3(c, 0.008 * glow), warm: scale3(c, 0.052 * glow), hot: scale3(c, 0.2 * glow) };
     }
     return off;
 }
