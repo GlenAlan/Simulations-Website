@@ -522,8 +522,7 @@ export function createEngine(canvas) {
     function bakesAllowed(lowPriority = false) {
         bakedThisFrame = true;
         if (lowPriority && bakeTurns.askedBefore > 0) return false;
-        const index = bakeTurns.asked;
-        bakeTurns.asked += 1;
+        const index = lowPriority ? 0 : bakeTurns.asked++;
         if (gpu.behind < 2 && lastRealDt <= BAKE_ONE_ONLY_ABOVE_S) return true;
         if (gpu.behind >= GPU_BEHIND_FLAT_OUT && bakeTurns.frame % BAKE_FLAT_OUT_EVERY !== 0) return false;
         if (index !== bakeTurns.turn % Math.max(1, bakeTurns.askedBefore)) return false;
