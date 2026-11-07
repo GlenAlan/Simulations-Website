@@ -161,7 +161,19 @@ export function createFigure(parent, { label, height, draw }) {
         draw(ctx, { width, height: cssHeight, dpr, theme: readTheme(wrap) });
     }
 
-    new ResizeObserver(() => { if (wrap.clientWidth !== width) redraw(); }).observe(wrap);
+    // A height that follows the width can feed back through the page's scrollbar (taller, a scrollbar, narrower, shorter,
+    // no scrollbar...). Should the width ever flip back to where it was a moment ago, keep the size it had and stop there.
+    let lastWidths = [];
+    new ResizeObserver(() => {
+        const w = wrap.clientWidth;
+        if (w === width) return;
+        const now = performance.now();
+        lastWidths = lastWidths.filter((entry) => now - entry.t < 400);
+        const flipping = lastWidths.filter((entry) => entry.w === w).length >= 2;
+        lastWidths.push({ w, t: now });
+        if (flipping) return;
+        redraw();
+    }).observe(wrap);
     // If the graphics process restarts, the browser gives the canvas back empty
     canvas.addEventListener('contextrestored', redraw);
     new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
