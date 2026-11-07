@@ -314,8 +314,8 @@ export function initSystemView(app) {
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
-            lastX: new Float64Array(model.stars.length),
-            lastY: new Float64Array(model.stars.length),
+            lastStars: new Float64Array(model.stars.length * 3),
+            lastPlanets: new Float64Array(model.planets.length * 3),
             sizes: createSizes(model),
             smear: createSmear(model),
             parents: new Map(model.nodes.flatMap((n) => (n.children || []).map((c) => [c, n])))
@@ -935,6 +935,26 @@ export function initSystemView(app) {
         camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
     }
 
+    // How fast something is going across the screen because of its orbit, not because the student is turning the camera.
+    // Whatever the camera is following isn't going anywhere.
+    function orbitPxPerSecond(last, i, p, f, z, dt) {
+        const k = i * 3;
+        const x = p[0] - cam.focus.x;
+        const y = p[1] - cam.focus.y;
+        const w = p[2] - cam.focus.z;
+        const moved = Math.hypot(x - last[k], y - last[k + 1], w - last[k + 2]);
+        last[k] = x;
+        last[k + 1] = y;
+        last[k + 2] = w;
+        return dt > 0 && !cam.flight ? (moved * f) / (z * dt) : 0;
+    }
+
+    // A disc big enough to fill the screen, swept across its own width several times a second, is a flash over a wide area,
+    // however few orbits it's doing. It gets out of the way until it's slower or further off.
+    function sweeping(pxPerSecond, pxRadius) {
+        return smoothstep(1.5, 3, pxPerSecond / (2 * Math.max(pxRadius, 1))) * smoothstep(40, 80, pxRadius);
+    }
+
     function updateWorld(frame, stage, starNdc) {
         const reduce = app.settings.reduceMotion;
         const seen = starNdc ? starNdc.seen : 1;
@@ -970,7 +990,8 @@ export function initSystemView(app) {
             const drawn = sizes.stars[i];
             const pxRadius = (drawn * f) / Math.max(sizes.starZ[i], drawn, 1e-6);
             star.setRadius(drawn);
-            const disc = 1 - smear.stars[i];
+            const pxPerSecond = orbitPxPerSecond(world.lastStars, i, p, f, Math.max(sizes.starZ[i], drawn, 1e-6), frame.dt);
+            const disc = (1 - smear.stars[i]) * (1 - sweeping(pxPerSecond, pxRadius));
 
             // Tides: this star leans towards its partner
             const tide = model.tides[i];
@@ -985,13 +1006,6 @@ export function initSystemView(app) {
                 star.setCompanion(q[0], q[1], q[2]);
             }
 
-            // How fast it's crossing the screen, for the sake of the pattern on its surface
-            tmp.set(p[0], p[1], p[2]).project(camera);
-            const across = (tmp.x - world.lastX[i]) * frame.width * 0.5;
-            const down = (tmp.y - world.lastY[i]) * frame.height * 0.5;
-            world.lastX[i] = tmp.x;
-            world.lastY[i] = tmp.y;
-
             const sharp = s.star.stage === 'white_dwarf' || s.star.stage === 'neutron_star';
             star.update({
                 dt: frame.dt,
@@ -1003,7 +1017,7 @@ export function initSystemView(app) {
                 reduceMotion: reduce,
                 pxRadius,
                 blur: smear.starBlur[i],
-                pxPerSecond: frame.dt > 0 ? Math.hypot(across, down) / frame.dt : 0,
+                pxPerSecond,
                 dpr: frame.dpr
             });
         });
@@ -1032,6 +1046,7 @@ export function initSystemView(app) {
             const pxRadius = (drawn * f) / z;
             const own = smear.planets[i];
             const above = smear.planetAbove[i];
+            const passing = sweeping(orbitPxPerSecond(world.lastPlanets, i, p, f, z, frame.dt), pxRadius);
 
             let standBack = 1;
             if (focus >= 0 && i !== focus) {
@@ -1040,7 +1055,7 @@ export function initSystemView(app) {
                 standBack = 0.12 + 0.88 * smoothstep(1.1, 3.2, apart / Math.max(focusPx + pxRadius, 1));
             }
 
-            const opacity = stage.planets * (1 - Math.max(own, above)) * standBack;
+            const opacity = stage.planets * (1 - Math.max(own, above, passing)) * standBack;
             obj.visible = opacity > 0.001;
             obj.position.set(p[0], p[1], p[2]);
             item.handle.setOpacity(opacity);
