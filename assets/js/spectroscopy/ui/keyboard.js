@@ -1,22 +1,11 @@
 // The sky by keyboard: arrow keys look, + and - zoom, Enter selects what's at the centre of the view, PageUp, PageDown,
 // [ and ] walk from one object to its nearest neighbour, and Esc steps back one thing at a time. Tab reaches every
 // control by itself. A reticle marks the centre of the view only while the keyboard is in use (see render/layers/overlays.js).
+// The Help page lists these keys (content/help.js), so change it with them.
 
 import { bus, select } from '../core/state.js';
 import { angularSeparation } from '../core/sky.js';
 import { announce, kindLabelOf } from './drawer.js';
-
-// Also shown on the Help page if its content has no keyboard section
-export const KEYBOARD_MAP = [
-    { keys: ['←', '↑', '↓', '→'], action: 'Look around' },
-    { keys: ['+', '−'], action: 'Zoom in and out' },
-    { keys: ['Enter'], action: 'Select what is at the centre of the view' },
-    { keys: ['[', ']'], action: 'Move to the next nearest object (or PageUp and PageDown)' },
-    { keys: ['/'], action: 'Go to a code' },
-    { keys: ['Tab'], action: 'Move through the controls' },
-    { keys: ['Esc'], action: 'Close the menu or panel, then leave the system view, then fullscreen' },
-    { keys: ['F'], action: 'Show or hide the frame rate' }
-];
 
 const LOOK = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
 const ZOOM_IN = new Set(['+', '=']);

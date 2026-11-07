@@ -5,6 +5,7 @@
 import { app, bus, select, setBand } from '../core/state.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
 import { sig } from '../core/format.js';
+import { glossaryHtml } from '../content/glossary.js';
 import { announce, kindLabelOf, safeInfo } from './drawer.js';
 
 // Apparent magnitude in plain words. The limits line up with what shows at each zoom: see limitingMag in core/sky.js.
@@ -73,14 +74,9 @@ function element(tag, className, text) {
     return el;
 }
 
-// Technical terms in the notes get a tooltip from the glossary (content/glossary.js), each one once per object.
-// The notes read fine without them, so a missing glossary costs nothing.
-let glossaryHtml = null;
-import('../content/glossary.js').then((mod) => { glossaryHtml = mod.glossaryHtml; }).catch(() => {});
-
+// Technical terms in the notes get a tooltip from the glossary, each one once per object. glossaryHtml escapes the text.
 function fillWords(el, text, seen) {
-    if (glossaryHtml) el.innerHTML = glossaryHtml(text, { seen });
-    else el.textContent = text;
+    el.innerHTML = glossaryHtml(text, { seen });
     return el;
 }
 
@@ -113,11 +109,11 @@ function relationLine(resolved) {
     return line;
 }
 
-function factList(rows) {
+function factList(rows, seen) {
     const list = element('dl', 'spectro-facts');
     rows.forEach(([label, value, tip]) => {
         const row = element('div', 'spectro-fact');
-        const dt = element('dt', '', label);
+        const dt = seen ? fillWords(element('dt'), label, seen) : element('dt', '', label);
         if (tip) dt.title = tip;
         row.append(dt, element('dd', '', value));
         list.appendChild(row);
@@ -214,7 +210,7 @@ function mountOverview(container) {
                 const details = element('details', 'sim-controls-more spectro-catalogue');
                 details.appendChild(element('summary', '', 'Catalogue values'));
                 details.appendChild(element('p', 'spectro-catalogue-hint', 'The true values. Work them out from the light first, then check yourself here.'));
-                details.appendChild(factList(info.catalogue.map((row) => [row.label, row.value, row.tip || row.tooltip || ''])));
+                details.appendChild(factList(info.catalogue.map((row) => [row.label, row.value]), seen));
                 words.appendChild(details);
             }
         }

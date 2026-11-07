@@ -94,7 +94,6 @@ export function createDrawer() {
     let pageEl = null;
     let tabBarKey = '';
     let opener = null;        // Where focus goes back to when the drawer closes
-    let pageToken = 0;
 
     // simulation_ui.js names its close button for a settings panel; this one holds more than settings
     if (closeBtn) {
@@ -299,8 +298,7 @@ export function createDrawer() {
         selectTab(tabId || (keepTab ? current : null) || 'overview');
     }
 
-    // Replace the drawer's contents with a page; render(container) fills it each time it is opened.
-    // render may be async: a page replaced while it loads checks pageToken() before it writes.
+    // Replace the drawer's contents with a page; render(container) fills it each time it is opened
     function showPage(id, heading, render) {
         hideShown();
         noteOpener();
@@ -319,7 +317,6 @@ export function createDrawer() {
         }
         pageEl.hidden = false;
         pageEl.replaceChildren();
-        pageToken++;
         render(pageEl);
         body.scrollTop = 0;
         renderTabBar();
@@ -388,7 +385,6 @@ export function createDrawer() {
         focusContent,
         currentTab: () => current,
         currentView: () => view,
-        pageToken: () => pageToken,
         setSettingsPage(fn) { settingsPage = fn; }
     };
     app.drawer = api;

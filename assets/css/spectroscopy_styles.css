@@ -443,6 +443,13 @@ body.sim-fullscreen-active .spectro-sim .sim-aspect-ratio-box {
     }
 }
 
+/* On a phone with the sheet open the sky is a small preview: the band switcher still says which band it is in */
+@container spectro-sky (max-width: 520px) {
+    body.sim-panel-sheet.sim-panel-active #spectroLegend {
+        display: none;
+    }
+}
+
 @container spectro-sky (max-width: 460px) {
     .spectro-band-btn {
         padding: 0 0.15em;
@@ -830,66 +837,6 @@ h3.is-object .spectro-title-sub {
 .spectro-help-section:first-child {
     padding-top: 0;
     border-top: 0;
-}
-
-.spectro-help-section > p,
-.spectro-help-section > ul,
-.spectro-help-section > ol,
-.spectro-help-html {
-    font-size: 0.95em;
-    line-height: 1.5;
-}
-
-.spectro-help-items {
-    margin: 0.5em 0;
-    padding-left: 1.3em;
-}
-
-.spectro-help-items li {
-    margin: 0 0 0.45em;
-    padding-left: 0.1em;
-}
-
-.spectro-keys {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5em;
-    margin: 0.5em 0;
-}
-
-.spectro-key-row {
-    display: grid;
-    grid-template-columns: minmax(6.5em, auto) minmax(0, 1fr);
-    gap: 0.75em;
-    align-items: center;
-    font-size: 0.92em;
-    line-height: 1.35;
-}
-
-.spectro-key-row dt {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
-    margin: 0;
-    font-weight: 400;
-}
-
-.spectro-key-row dd {
-    margin: 0;
-}
-
-.spectro-keys kbd {
-    display: inline-block;
-    min-width: 1.7em;
-    padding: 0.1em 0.4em;
-    box-sizing: border-box;
-    border: 1px solid var(--color-border);
-    border-bottom-width: 2px;
-    border-radius: 4px;
-    background-color: var(--color-bg);
-    font: inherit;
-    font-size: 0.9em;
-    text-align: center;
 }
 
 /* === end DRAWER === */

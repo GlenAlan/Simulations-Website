@@ -4,7 +4,8 @@
 import { bus, setBand, setLayer, setSetting } from '../core/state.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
 import { DEFAULT_VIEW } from '../core/sky.js';
-import { KEYBOARD_MAP } from './keyboard.js';
+import { helpSections } from '../content/help.js';
+import { initLegend } from './legend.js';
 
 function element(tag, className, text) {
     const el = document.createElement(tag);
@@ -377,55 +378,16 @@ function initSettingsPage(app) {
 }
 
 // ---------- Help page ----------
-// content/help.js supplies the words. A section is { heading, text?, items?, keys?, html? }; the first section starts open.
-function keyRows(rows) {
-    const list = element('dl', 'spectro-keys');
-    rows.forEach((row) => {
-        const keys = Array.isArray(row) ? row[0] : (row.keys ?? row.key ?? row.shortcut ?? '');
-        const action = Array.isArray(row) ? row[1] : (row.action ?? row.text ?? row.description ?? '');
-        const line = element('div', 'spectro-key-row');
-        const dt = element('dt');
-        [].concat(keys).forEach((k) => dt.appendChild(element('kbd', '', k)));
-        line.append(dt, element('dd', '', action));
-        list.appendChild(line);
-    });
-    return list;
-}
-
+// The words come from content/help.js as { heading, html }. Each section folds away; the first starts open.
 function helpSection(section, open) {
     const details = element('details', 'sim-controls-more spectro-help-section');
     details.open = open;
-    details.appendChild(element('summary', '', section.heading ?? section.title ?? 'Help'));
-    if (section.html) {
-        const holder = element('div', 'spectro-help-html');
-        holder.innerHTML = section.html; // Our own words from content/help.js
-        details.appendChild(holder);
-    }
-    [].concat(section.text ?? section.body ?? section.intro ?? []).forEach((t) => details.appendChild(element('p', '', t)));
-    if (section.keys || section.rows) details.appendChild(keyRows(section.keys ?? section.rows));
-    const items = section.items ?? section.list ?? section.tasks ?? section.steps;
-    if (items && items.length) {
-        const ordered = !!(section.ordered || section.tasks);
-        const list = element(ordered ? 'ol' : 'ul', 'spectro-help-items');
-        items.forEach((item) => {
-            const li = element('li');
-            if (typeof item === 'string') li.textContent = item;
-            else {
-                if (item.title || item.heading) li.appendChild(element('strong', '', `${item.title ?? item.heading} `));
-                li.append(item.text ?? item.body ?? '');
-            }
-            list.appendChild(li);
-        });
-        details.appendChild(list);
-    }
+    details.appendChild(element('summary', '', section.heading));
+    const holder = element('div', 'spectro-help-html');
+    holder.innerHTML = section.html; // Our own words, not anything typed in
+    details.appendChild(holder);
     return details;
 }
-
-const KEYBOARD_SECTION = { heading: 'Keyboard', keys: KEYBOARD_MAP };
-const HELP_FALLBACK = [
-    KEYBOARD_SECTION,
-    { heading: 'How to use this', text: ['Drag to look around and scroll or pinch to zoom. Select an object to read its light, and use the band switcher to see the sky at other wavelengths.'] }
-];
 
 function initHelpPage(app, topRight) {
     const help = button('sim-icon-button spectro-help-btn');
@@ -434,17 +396,8 @@ function initHelpPage(app, topRight) {
     help.title = 'Help';
     topRight.insertBefore(help, topRight.querySelector('.sim-action-buttons-overlay'));
 
-    async function render(container) {
-        const token = app.drawer.pageToken();
-        let sections = null;
-        try {
-            const mod = await import('../content/help.js');
-            sections = mod.helpSections();
-        } catch (err) { /* The words aren't there: the short version below still gives the keys */ }
-        if (app.drawer.pageToken() !== token) return; // Something else opened while this loaded
-        if (!Array.isArray(sections) || !sections.length) sections = HELP_FALLBACK;
-        else if (!sections.some((s) => /keyboard|keys/i.test(s.heading ?? s.title ?? ''))) sections = [KEYBOARD_SECTION, ...sections];
-        container.replaceChildren(...sections.map((s, i) => helpSection(s, i === 0)));
+    function render(container) {
+        container.append(...helpSections().map((section, i) => helpSection(section, i === 0)));
     }
 
     help.addEventListener('click', () => {
@@ -515,8 +468,5 @@ export function initShell(app) {
     const updateZoom = initContextBar(app);
     app.engine.addLayer({ id: 'shell', update(frame) { updateZoom(frame.fov); } });
 
-    // The legend comes from the bands track; the sky works without it
-    import('./legend.js').then((mod) => mod.initLegend(app)).catch((err) => {
-        console.info('[spectroscopy] No legend:', err.message);
-    });
+    initLegend(app);
 }
