@@ -154,8 +154,8 @@
     const PALETTE = [
         { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
         { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole', 'sgra'] },
-        { label: 'Planets and moons', kinds: ['jupiter', 'saturn', 'neptune', 'earth', 'mars', 'moon'] },
-        { label: 'Small bodies', kinds: ['comet', 'asteroid', 'custom'] }
+        { label: 'Planets', kinds: ['jupiter', 'neptune', 'earth', 'mars'] },
+        { label: 'Moons and small bodies', kinds: ['moon', 'comet', 'asteroid', 'custom'] }
     ];
     const RING_SHADES = ['#e9dcbc', '#d2c09a', '#b7a581'];   // (dusty ice: a disc's pieces, in three shades)
     const SWATCHES = ['#ffd166', '#ff8a5c', '#f2849e', '#c75b9b', '#ae85ca', '#8499e7', '#7ecaf6', '#7bd0c1', '#e0b48a', '#c9ccd3'];
@@ -12707,11 +12707,7 @@
         if (!p) return;
         p.style.maxHeight = p.style.overflowY = '';
         if (more) { more.hidden = true; more.parentElement.classList.remove('has-more'); }
-        // (with a mouse, as a last resort, chips one line tall, then no "Add a body": see orbits_styles.css)
-        const box = ui.toolbar || p, chips = p.querySelectorAll('.orb-chip');
-        const over = () => chips.length && chips[chips.length - 1].getBoundingClientRect().bottom - p.getBoundingClientRect().top + p.scrollTop > p.clientHeight;
-        box.classList.remove('is-slim', 'is-slimmer');
-        for (const q of ['is-slim', 'is-slimmer']) if (over()) box.classList.add(q);
+        const chips = p.querySelectorAll('.orb-chip');
         let room = p.clientHeight;
         if (!room || p.scrollHeight <= room + 1) return;
         const top = p.getBoundingClientRect().top - p.scrollTop;

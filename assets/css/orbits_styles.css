@@ -4111,7 +4111,7 @@ dialog.orb-help::backdrop {
         container: orb-tools / size;
     }
 
-    @container orb-tools (max-height: 655px) {
+    @container orb-tools (max-height: 604px) {
         .orb-palette {
             --orb-chip-h: 34px;
             gap: 5px;
@@ -4140,7 +4140,7 @@ dialog.orb-help::backdrop {
         }
     }
 
-    @container orb-tools (max-height: 595px) {
+    @container orb-tools (max-height: 562px) {
         .orb-palette {
             --orb-chip-h: 31px;
             gap: 4px;
@@ -4174,7 +4174,7 @@ dialog.orb-help::backdrop {
         }
     }
 
-    @container orb-tools (max-height: 524px) {
+    @container orb-tools (max-height: 492px) {
         .orb-palette {
             --orb-chip-h: 28px;
             gap: 3px;
@@ -4191,43 +4191,6 @@ dialog.orb-help::backdrop {
         .orb-toolbar .orb-chip-disc {
             max-width: 10px;
             max-height: 10px;
-        }
-    }
-
-    /* Tighter still: each chip's disc beside its name */
-    @container orb-tools (max-height: 485px) {
-        .orb-palette {
-            --orb-chip-h: 24px;
-        }
-
-        .orb-palette::-webkit-scrollbar {
-            width: 4px;
-        }
-
-        .orb-toolbar .orb-chip {
-            flex-direction: row;
-            justify-content: flex-start;
-            gap: 3px;
-            padding: 0 1px 0 3px;
-        }
-
-        .orb-toolbar .orb-chip-disc {
-            max-width: 9px;
-            max-height: 9px;
-        }
-
-        .orb-chip-name {
-            font-size: min(0.74em, 10.5px);
-        }
-
-        .orb-hint {
-            font-size: 0.84em;
-            line-height: 1.25;
-        }
-
-        .orb-toolbar .orb-history-btn,
-        .orb-toolbar .orb-fit {
-            height: 28px;
         }
     }
 
@@ -5046,32 +5009,6 @@ html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
     body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-fullscreen-toggle,
     body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-panel-toggle-button {
         grid-column: span 6;
-    }
-}
-
-/* ---------- A column still too short for the chips, with a mouse ----------
-   (paletteCut in orbits_core.js sets these only if it helps, so more chips will simply bring them on sooner.)
-   Each chip's disc goes beside its name, on one line; then "Add a body", which the headings and the hint say
-   well enough. */
-@media (pointer: fine) and (orientation: landscape) and (min-width: 640px) and (min-height: 541px) {
-    .orb-toolbar.is-slim .orb-palette {
-        --orb-chip-h: 24px;
-    }
-
-    .orb-toolbar.is-slim .orb-chip {
-        flex-direction: row;
-        gap: 3px;
-        padding: 0 2px;
-    }
-
-    .orb-toolbar.is-slim .orb-chip-disc {
-        flex: 0 0 auto;
-        max-width: 10px;
-        max-height: 10px;
-    }
-
-    .orb-toolbar.is-slimmer .orb-toolbar-label {
-        display: none;
     }
 }
 
