@@ -10,7 +10,7 @@
 import { app } from '../../../core/state.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { C_KMS, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
-import { signed, sig, withCommas } from '../../../core/format.js';
+import { sci, signed, sig, withCommas } from '../../../core/format.js';
 import { LINES } from '../../../data/lines.js';
 import { getReference } from '../../../data/references.js';
 import { blendAllowance, dopplerFrom, lineCentre, resolvingPower } from '../../../spectra/measure.js';
@@ -89,6 +89,61 @@ function targetsFor(entity, overview) {
     return { list: TARGETS.filter((t) => strong.some((s) => s.t === t)), first };
 }
 
+// ---------- The one best line, for lining up a single line ----------
+
+// Lines a student will know by name, any of which the best line can be
+const KNOWN_LINES = [656.282, 486.133, 434.047, 393.366, 396.847, 588.995, 589.592, 518.36, 121.567, 154.82, 279.553, 500.684, 447.148, 587.562, 468.57, 541.152];
+const BEST_MIN_DEPTH = 0.05;
+
+// The object's own line that is easiest to line up a reference line with, and to set finely: strong, narrow, standing clear of
+// its neighbours, where the object gives plenty of light, and in the visible if it can be, where a student is already looking.
+// Returns { rest, obs, rel, label, fwhm } or null.
+const SHARP_KMS = 100;          // A line this wide counts half as well as a very narrow one
+export function bestLineFor(overview, { broad = false } = {}) {
+    const lines = (overview && overview.lines) || [];
+    const { wl, flux } = overview || {};
+    if (!wl || !flux) return null;
+    let top = 0;
+    for (let i = 0; i < flux.length; i += 20) if (flux[i] > top) top = flux[i];
+    const lightAt = (nm) => {
+        let a = 0;
+        let b = wl.length - 1;
+        while (b - a > 1) {
+            const m = (a + b) >> 1;
+            if (wl[m] < nm) a = m;
+            else b = m;
+        }
+        let sum = 0;
+        let n = 0;
+        for (let i = Math.max(0, a - 40); i < Math.min(flux.length, a + 40); i++) {
+            sum += Math.max(0, flux[i]);
+            n++;
+        }
+        return top > 0 && n ? sum / n / top : 0;
+    };
+    let best = null;
+    let bestScore = 0;
+    lines.forEach((line) => {
+        if (line.band || !(Math.abs(line.depth ?? 0) >= BEST_MIN_DEPTH)) return;
+        if (!KNOWN_LINES.some((w) => Math.abs(w - line.rest_nm) < 0.05)) return;
+        const obs = line.obs_nm ?? line.rest_nm;
+        if (obs < SPECTRUM_LO_NM * 1.05 || obs > SPECTRUM_HI_NM * 0.95) return;
+        const found = lineCentre(overview, obs, { searchNm: obs * 0.002, type: line.type === 'em' ? 'em' : 'abs' });
+        // A quasar's bright lines are all broad, whatever a noisy top seems to measure
+        const fwhm = Math.max(found ? found.fwhm_nm : obs / 5000, broad ? obs * QUASAR_LINE_WIDTH : 0);
+        const blended = blendAllowance(lines, line.rest_nm, fwhm, obs / line.rest_nm - 1) > 0;
+        const visible = obs >= 380 && obs <= 750 ? 1 : 0.7;
+        const sharp = 1 / (1 + (fwhm / obs) * C_KMS / SHARP_KMS);
+        const light = Math.sqrt(Math.max(0.0025, lightAt(obs)));
+        const score = Math.sqrt(Math.min(1, Math.abs(line.depth))) * (blended ? 0.35 : 1) * visible * sharp * light;
+        if (score > bestScore) {
+            bestScore = score;
+            best = { rest: line.rest_nm, obs, rel: 1, label: line.label || `${line.species} ${line.rest_nm.toFixed(1)}`, fwhm };
+        }
+    });
+    return best;
+}
+
 // A lamp's lines, strongest first. A thin lamp's brightness goes as s cubed; the faintest are left out, as they'd only clutter.
 const lampCache = new Map();
 function lampLines(id) {
@@ -139,7 +194,8 @@ function scaleFor(entity) {
     };
 }
 
-export function createSlide(container, api, { says }) {
+// single: true lines up just the object's best line, which it picks and zooms to for the student, with the working in steps
+export function createSlide(container, api, { says, single = false }) {
     const { plot } = api;
     const reduceMotion = () => !!(app.settings && app.settings.reduceMotion);
 
@@ -153,20 +209,26 @@ export function createSlide(container, api, { says }) {
     let width = null;           // { obs, nm }: the width of the dip under the main line, once it has settled there
     let settleTimer = 0;
     let framedQuasar = null;
+    let framedBest = null;      // The object whose best line was last framed
 
     // ---------- Building it ----------
 
     const answer = el('p', { class: 'spectro-tool-answer' });
     const working = el('p', { class: 'spectro-tool-line' });
-    const hint = para('Drag the dashed lines onto the dips.');
+    // The single line's working, a step at a time, filled in as the line moves
+    const workItems = [0, 1, 2, 3].map(() => el('li'));
+    const workSteps = el('ol', { class: 'spectro-tool-steps', hidden: true }, ...workItems);
+    const hint = para(single ? 'Drag the dashed line onto the object\'s line.' : 'Drag the dashed lines onto the dips.');
     const minus = el('button', { type: 'button', class: 'spectro-square', text: '−', 'aria-label': 'Slide a little towards blue', title: 'A little towards blue' });
     const plus = el('button', { type: 'button', class: 'spectro-square', text: '+', 'aria-label': 'Slide a little towards red', title: 'A little towards red' });
-    const slider = el('input', { type: 'range', class: 'spectro-hands-big', min: '0', step: '1', 'aria-label': 'Slide the reference lines' });
+    const slider = el('input', { type: 'range', class: 'spectro-hands-big', min: '0', step: '1', 'aria-label': single ? 'Slide the reference line' : 'Slide the reference lines' });
     const sliderRow = el('div', { class: 'spectro-hands-slide' }, minus, slider, plus);
     const ends = el('div', { class: 'spectro-hands-ends', 'aria-hidden': 'true' }, el('span', { text: '← Bluer' }), el('span', { text: 'Redder →' }));
-    const zoomRow = el('div', { class: 'spectro-hands-chips spectro-hands-zooms', role: 'group', 'aria-label': 'Zoom to a line' });
+    const zoomRow = el('div', { class: 'spectro-hands-chips spectro-hands-zooms', role: 'group', 'aria-label': 'Zoom to a line', hidden: single });
     const useBox = el('div', { class: 'spectro-hands-use' });
-    const root = el('div', { class: 'spectro-hands-pane' }, answer, working, hint, sliderRow, ends, zoomRow, useBox);
+    const none = para('No line here stands out clearly enough to line up. Try Measure one line.');
+    none.hidden = true;
+    const root = el('div', { class: 'spectro-hands-pane' }, answer, single ? workSteps : working, hint, none, sliderRow, ends, zoomRow, useBox);
     container.append(root);
 
     // ---------- The shift ----------
@@ -196,6 +258,7 @@ export function createSlide(container, api, { says }) {
     }
 
     function mainLine() {
+        if (single) return lines[0] || null;
         const f = 1 + zNow();
         if (grabbed && inView(grabbed.rest * f)) return grabbed;
         const wanted = target ? lines.find((l) => Math.abs(l.rest - target.at[0]) < 0.01) : null;
@@ -247,10 +310,25 @@ export function createSlide(container, api, { says }) {
         return r.d.beyondCz ? `z = ${zText(r.d.z, r.d.err_z)}` : `v = ${velocityText(r.d.v_kms, r.d.err_kms)}`;
     }
 
+    // The single line's sum, from where the student has put it: rest, observed, the difference, then the speed or z
+    function renderSteps(r) {
+        workSteps.hidden = !r;
+        if (!r) return;
+        const obs = r.line.rest * (1 + r.z);
+        const digits = Math.abs(r.d.dlambda_nm) < 1 ? 2 : 1;
+        workItems[0].textContent = `λ₀ = ${r.line.rest.toFixed(2)} nm: ${r.line.label} at rest`;
+        workItems[1].textContent = `λ = ${obs.toFixed(2)} nm: where you put it`;
+        workItems[2].textContent = `Δλ = λ − λ₀ = ${r.d.dlambda_nm >= 0 ? '+' : '−'}${Math.abs(r.d.dlambda_nm).toFixed(digits)} nm`;
+        const dl = Math.abs(r.d.dlambda_nm).toFixed(digits);
+        workItems[3].textContent = r.d.beyondCz
+            ? `z = Δλ ÷ λ₀ = ${dl} ÷ ${r.line.rest.toFixed(2)} = ${signed(r.d.z, 3)}`
+            : `v = c × Δλ ÷ λ₀ = ${sci(C_KMS, 3)} km/s × ${dl} ÷ ${r.line.rest.toFixed(2)} = ${r.d.v_kms < 0 ? '−' : '+'}${withCommas(Math.abs(r.d.v_kms))} km/s`;
+    }
+
     let useKey = '';
     function render() {
         const r = reading();
-        hint.hidden = !!r;
+        hint.hidden = !!r || (single && !lines.length);
         if (!r) {
             answer.textContent = 'Not moved yet';
             working.textContent = '';
@@ -260,6 +338,7 @@ export function createSlide(container, api, { says }) {
             working.hidden = false;
             working.textContent = `Moved ${nmText(r.d.dlambda_nm)} at ${r.line.label}, so ${r.d.beyondCz ? 'z = Δλ ÷ λ' : 'v = c × Δλ ÷ λ'}`;
         }
+        if (single) renderSteps(r);
         slider.setAttribute('aria-valuetext', r ? `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}` : 'Not moved');
         renderUse(r);
     }
@@ -434,11 +513,13 @@ export function createSlide(container, api, { says }) {
             taken.push([left, left + w]);
             plotLabel(ctx, theme, line.label, x, labelY, { within: pane });
         });
-        // What the lines are, top right, unless a name is there
-        const key = `${lampName(target ? target.lamp : '')} lines`;
+        // What the lines are, top right, unless a name is there. A single line is named on itself.
+        const key = single ? '' : `${lampName(target ? target.lamp : '')} lines`;
         const keyW = ctx.measureText(key).width + 8;
         const keyLeft = pane.x + pane.w - keyW - 3;
-        if (!taken.some(([a, b]) => keyLeft < b + 4 && keyLeft + keyW > a - 4)) plotLabel(ctx, theme, key, pane.x + pane.w - 6, labelY, { align: 'right', bold: false });
+        if (!key) {
+            // Nothing to say
+        } else if (!taken.some(([a, b]) => keyLeft < b + 4 && keyLeft + keyW > a - 4)) plotLabel(ctx, theme, key, pane.x + pane.w - 6, labelY, { align: 'right', bold: false });
         else plotLabel(ctx, theme, key, pane.x + pane.w - 6, labelY + 18, { align: 'right', bold: false });
         if (main && inView(main.rest * (1 + z))) {
             drawGrip(ctx, theme, plot.xOf(main.rest * (1 + z)), gripY(pane), { focused: !!drag });
@@ -494,10 +575,24 @@ export function createSlide(container, api, { says }) {
         settleSoon();
     });
 
+    // Zooms to show both where the best line is at rest and where the object's own line is, with room either side
+    function frameBest(animate) {
+        const line = lines[0];
+        if (!line) return;
+        framedBest = api.resolved.entity.code;
+        const a = Math.min(line.rest, line.obs);
+        const b = Math.max(line.rest, line.obs);
+        const room = Math.max(0.004, (3 * line.fwhm) / line.obs, 0.1 * (b / a - 1));
+        plot.setRange(Math.max(SPECTRUM_LO_NM, a * (1 - room)), Math.min(SPECTRUM_HI_NM, b * (1 + room)), { animate: animate && !reduceMotion() });
+        says.textContent = `Zoomed to ${line.label}. Drag the dashed line onto the object's line.`;
+    }
+
     return {
         enter() {
             active = true;
-            if (api.resolved && api.resolved.entity.kind === 'quasar' && framedQuasar !== api.resolved.entity.code) {
+            if (single) {
+                if (framedBest !== api.resolved.entity.code) frameBest(true);
+            } else if (api.resolved && api.resolved.entity.kind === 'quasar' && framedQuasar !== api.resolved.entity.code) {
                 // A quasar's lines are spread across the whole range, and the whole pattern slides
                 framedQuasar = api.resolved.entity.code;
                 plot.setRange(SPECTRUM_LO_NM, SPECTRUM_HI_NM, { animate: !reduceMotion() });
@@ -516,12 +611,28 @@ export function createSlide(container, api, { says }) {
             scale = scaleFor(resolved.entity);
             slider.max = String(scale.positions);
             slider.value = String(scale.pos(zNow()));
+            useKey = '';
+            if (single) {
+                const best = bestLineFor(api.getOverview(), { broad: resolved.entity.kind === 'quasar' });
+                lines = best ? [best] : [];
+                grabbed = best;
+                width = null;
+                none.hidden = !!best;
+                sliderRow.hidden = !best;
+                ends.hidden = !best;
+                if (active) {
+                    if (best) frameBest(false);
+                    render();
+                    settleSoon();
+                }
+                plot.redraw();
+                return;
+            }
             targets = targetsFor(resolved.entity, api.getOverview());
             const t = TARGETS.find((x) => x.id === targets.first);
             useLamp(t);
             hint.textContent = (api.getOverview() || {}).mode === 'emission' ? 'Drag the dashed lines onto the bright lines.' : 'Drag the dashed lines onto the dips.';
             renderTargets();
-            useKey = '';
             if (active) {
                 if (resolved.entity.kind === 'quasar' && framedQuasar !== resolved.entity.code) {
                     framedQuasar = resolved.entity.code;

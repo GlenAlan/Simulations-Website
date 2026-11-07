@@ -10,6 +10,7 @@ import { Rng } from '../core/rng.js';
 import { distance, plusMinus, sci, sig, withCommas } from '../core/format.js';
 import * as synth from '../spectra/synth.js';
 import { toolWords } from './spectrum/tools/index.js';
+import { newTurnOff, turnOffWords, drawTurnOff, turnOffGrip, turnOffValueText } from './turn_off.js';
 import {
     blackBodyCss, createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
     drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel,
@@ -160,7 +161,7 @@ const AGE_ERROR_PERCENT = 30;
 
 const plotted = new Map();   // code -> number shown beside the point
 let nextNumber = 1;
-let cluster = null;          // { code, type, points, turnOffLogL, suggestedLogL }
+let cluster = null;          // { code, type, points, turnOffLogL, placed }: the student places the turn-off (turn_off.js)
 let saveKey = null;
 let tab = null;              // The mounted tab's refresh, announce and focus
 
@@ -517,18 +518,8 @@ function mountHR(container, app) {
     const ageLine = el('p', { class: 'spectro-fig-readout', hidden: true });
     const turnOffLine = el('p', { class: 'spectro-fig-card-status', hidden: true });
     const clusterButton = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main', onclick: toggleCluster });
-    const suggestButton = el('button', {
-        type: 'button',
-        class: 'spectro-fig-button spectro-fig-quiet',
-        text: 'Suggest a turn-off',
-        hidden: true,
-        onclick: () => {
-            if (!cluster) return;
-            cluster.turnOffLogL = cluster.suggestedLogL;
-            refresh();
-        }
-    });
-    clusterCard.append(el('div', { class: 'spectro-fig-card-head' }, clusterTitle, el('div', { class: 'spectro-fig-actions' }, suggestButton, clusterButton)),
+    // No suggested turn-off: the student places it (turn_off.js)
+    clusterCard.append(el('div', { class: 'spectro-fig-card-head' }, clusterTitle, el('div', { class: 'spectro-fig-actions' }, clusterButton)),
         clusterStatus, ageLine, turnOffLine);
 
     // How the age comes out, under the diagram and out of the way until asked for
@@ -552,8 +543,7 @@ function mountHR(container, app) {
             announce('Cluster removed from the diagram.');
         } else {
             const points = clusterPoints(body);
-            const suggestedLogL = suggestTurnOff(points);
-            cluster = { code: body.code, type: body.cluster.type, points, turnOffLogL: suggestedLogL, suggestedLogL };
+            cluster = { code: body.code, type: body.cluster.type, points, ...newTurnOff() };
             announce(`${points.length} cluster members plotted.`);
         }
         refresh();
@@ -572,7 +562,6 @@ function mountHR(container, app) {
         clusterButton.classList.toggle('spectro-fig-quiet', !!showing);
         clusterStatus.textContent = `${body.cluster.n_stars} stars, all about as far away and as old as each other.`;
         clusterStatus.hidden = !!showing;
-        suggestButton.hidden = !showing;
         ageLine.hidden = !showing;
         turnOffLine.hidden = !showing;
         howAge.hidden = !showing;
@@ -580,30 +569,17 @@ function mountHR(container, app) {
     }
 
     function renderTurnOff() {
-        const { massMsun, ageGyr, T } = turnOffAge(cluster.turnOffLogL);
-        const L = 10 ** cluster.turnOffLogL;
-        ageLine.textContent = `Age ≈ ${ageText(ageGyr)} ± ${AGE_ERROR_PERCENT}%`;
-        turnOffLine.textContent = ageGyr > 15
-            ? 'That is longer than the Universe has existed (about 13.8 billion years), so the turn-off is probably higher.'
-            : `Turn-off near ${sig(T, 2)} K, ${sig(L, 2)} L☉. Drag the line to move it.`;
-        const working = [
-            `Mass: M ≈ (L ÷ 2)^(1/3.5) = ${sig(massMsun, 2)} M☉`,
-            `Age: t ≈ 10 billion years × M^−2.5 ≈ ${ageText(ageGyr)}`
-        ];
-        const notes = [
-            'A star about to leave the main sequence is roughly twice as bright as when it formed, hence L ÷ 2. The cluster is about as old as the lifetime of these stars.',
-            `Read the age as ± ${AGE_ERROR_PERCENT}%. These are rough rules, and on this sky's clusters they come out between about 0.8 and 1.4 times the catalogue age, with the line where Suggest puts it.`,
-            cluster.type === 'globular'
-                ? 'Globular clusters have lost their hot, bright stars, so the main sequence stops low down and red giants stand out.'
-                : 'Open clusters are usually young enough to keep hot, bright stars high on the main sequence.',
-            'Luminosities come from each star\'s brightness and the cluster\'s distance. Temperatures are catalogue values with a little noise, as nobody measures every star by hand.'
-        ];
+        const words = turnOffWords(cluster, turnOffAge(cluster.turnOffLogL), ageText, AGE_ERROR_PERCENT);
+        ageLine.textContent = words.age;
+        ageLine.hidden = !words.age;
+        turnOffLine.textContent = words.status;
         turnOffBox.replaceChildren(
-            ...working.map((line) => el('span', { text: line })),
-            ...notes.map((line) => el('span', { class: 'spectro-fig-working-note', text: line })));
+            ...(words.working || []).map((line) => el('span', { text: line })),
+            ...words.notes.map((line) => el('span', { class: 'spectro-fig-working-note', text: line })));
     }
 
     function setTurnOff(logL) {
+        cluster.placed = true;
         cluster.turnOffLogL = Math.max(TURN_OFF_MIN, Math.min(TURN_OFF_MAX, logL));
         renderTurnOff();
         figure.redraw();
@@ -689,7 +665,7 @@ function mountHR(container, app) {
         const count = plotted.size;
         const parts = [`H-R diagram, temperature falling to the right against luminosity on a log scale. ${count} of your own star${count === 1 ? '' : 's'} plotted.`];
         if (cluster) {
-            parts.push(`${cluster.type === 'globular' ? 'Globular' : 'Open'} cluster ${cluster.code} plotted with ${cluster.points.length} members, turn-off near ${sig(10 ** cluster.turnOffLogL, 2)} L☉.`);
+            parts.push(`${cluster.type === 'globular' ? 'Globular' : 'Open'} cluster ${cluster.code} plotted with ${cluster.points.length} members, ${cluster.placed ? `turn-off placed near ${sig(10 ** cluster.turnOffLogL, 2)} L☉` : 'turn-off not placed yet'}.`);
         }
         parts.push('Values are in the table under Show as table.');
         figure.setLabel(parts.join(' '));
@@ -956,20 +932,10 @@ function mountHR(container, app) {
             drawMarker(ctx, SHAPES[regionOf(p.T, p.L)], p.px, p.py, 3.25, { fill: blackBodyCss(p.T), stroke: theme.isDark ? theme.paper : theme.text, width: 0.75 });
         });
 
-        const y = sy(cluster.turnOffLogL);
-        ctx.save();
-        ctx.strokeStyle = theme.accent;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(rect.x, y);
-        ctx.lineTo(rect.x + rect.w, y);
-        ctx.stroke();
-        ctx.restore();
-        haloText(ctx, 'Turn-off (estimate)', rect.x + 6, y - 9, theme, { font: fontOf(theme, 12, 600) });
+        drawTurnOff(ctx, rect, sx, sy, theme, cluster);
         handle.hidden = false;
         handle.setAttribute('aria-valuenow', cluster.turnOffLogL.toFixed(2));
-        handle.setAttribute('aria-valuetext', `${sig(10 ** cluster.turnOffLogL, 2)} solar luminosities, age estimate ${ageText(turnOffAge(cluster.turnOffLogL).ageGyr)}`);
+        handle.setAttribute('aria-valuetext', turnOffValueText(cluster, turnOffAge(cluster.turnOffLogL), ageText));
     }
 
     function drawStudentStars(ctx, rect, sx, sy, theme, placer) {
@@ -1025,8 +991,10 @@ function mountHR(container, app) {
             button.style.top = `${box ? box.y + box.h / 2 : sy(region.at[1])}px`;
         });
         if (cluster) {
-            handle.style.left = `${rect.x + rect.w - 14}px`;
-            handle.style.top = `${sy(cluster.turnOffLogL)}px`;
+            // On the main sequence where the line crosses it, so dragging slides it up the sequence to the bend
+            const grip = turnOffGrip(rect, sx, sy, cluster, msTemperature);
+            handle.style.left = `${grip.x}px`;
+            handle.style.top = `${grip.y}px`;
         }
     }
 

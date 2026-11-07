@@ -2697,6 +2697,9 @@ body.sim-panel-sheet .spectro-sim .sim-controls-panel:has(.spectro-spectrum.is-p
 
 .spectro-hands-pane[hidden],
 .spectro-hands-mode-body[hidden],
+.spectro-hands-slide[hidden],
+.spectro-hands-ends[hidden],
+.spectro-hands-chips[hidden],
 .spectro-tool-body p[hidden] {
     display: none;
 }
