@@ -12,6 +12,7 @@
 import { bus, select, setBand, setLayer } from '../core/state.js';
 import { BANDS, BAND_INFO, BAND_HIDDEN_AT } from '../core/bands.js';
 import { isValidCode } from '../core/rng.js';
+import { withSeed } from '../core/seed.js';
 import { limitingMag, angularSeparation, MIN_FOV, MAX_FOV } from '../core/sky.js';
 import { drawMag, parallaxFactor } from '../core/depth.js';
 import { createVisited } from './visited.js';
@@ -76,6 +77,8 @@ export function parseBand(text) {
     return BAND_ALIASES[key] || null;
 }
 
+let skySeed = null;             // The sky's seed, for links (core/seed.js); set by initGoto
+
 // A link that opens the simulation on this object, optionally in this band. Only the Copy link button uses it:
 // browsing never touches the address bar or the history.
 export function linkFor(code, band) {
@@ -85,6 +88,7 @@ export function linkFor(code, band) {
     url.searchParams.set('goto', normaliseCode(code));
     const parsed = parseBand(band);
     if (parsed) url.searchParams.set('band', parsed);
+    withSeed(url, skySeed);                                 // Another sky's link has to say which sky
     return url.href;
 }
 
@@ -189,6 +193,7 @@ function untilDone(start) {
 
 export function initGoto(app) {
     const { engine, universe } = app;
+    skySeed = universe.seed;
     const canvas = engine.canvas;
     const region = document.getElementById('spectroTopLeft');
 

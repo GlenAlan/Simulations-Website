@@ -4,7 +4,7 @@
 
 import { isValidCode } from '../core/rng.js';
 import { hzEdges, keplerPeriodDays, fluxFromLuminosity, H0, C_KMS } from '../core/phys.js';
-import { MIN_ALT, MIN_FOV, azAltToVec3, limitingMag, galacticLatitude } from '../core/sky.js';
+import { MIN_ALT, MIN_FOV, azAltToVec3, limitingMag, galacticLatitude, angularSeparation } from '../core/sky.js';
 import { STAR_TABLE, RSUN_AU, luminosityFromRT, msLifetimeMyr } from './stellar.js';
 import { PLANET_TYPES, MIN_STELLAR_RADII } from './planets.js';
 import { spacingBetween } from './sky_layout.js';
@@ -224,6 +224,13 @@ function checkPlacement(u, fail) {
         if (body.bands.visible > 0.01 && body.brightness.mag > lim) fail(`${body.code} (${body.kind}) shows in visible light but has magnitude ${body.brightness.mag}`);
     });
 
+    // The target's host keeps the sky round it clear, so it isn't lost among landmarks (spec 9)
+    const host = unseal().target.host;
+    const hostBody = u.resolve(host.code).body;
+    u.bodies.forEach((b) => {
+        if (b !== hostBody && angularSeparation(b.sky.az, b.sky.alt, hostBody.sky.az, hostBody.sky.alt) < host.clear_deg - 0.2) fail(`${b.code} crowds the target's host`);
+    });
+
     const showing = u.bodies.filter((b) => b.bands.visible > 0.01 && b.brightness.mag <= limitingMag(DEFAULT_FOV)).length;
     if (showing < DEFAULT_ZOOM_RANGE[0] || showing > DEFAULT_ZOOM_RANGE[1]) fail(`${showing} bodies show at the default zoom`);
 
@@ -239,7 +246,10 @@ function checkStar(star, cls, code, fail) {
     const row = STAR_TABLE[cls];
     if (!row) return;
     if (!within(star.teff_K, row.T[0], row.T[1], 0.001)) fail(`${code} ${cls} has temperature ${star.teff_K}`);
-    if (!within(star.mass_Msun, row.M[0], row.M[1], 0.01)) fail(`${code} ${cls} has mass ${star.mass_Msun}`);
+    // A metal-poor giant is as old as the galaxy, so it can only be as heavy as the stars leaving the main sequence now, about
+    // 0.8 to 1 solar masses: below the table's giant row, which is drawn from younger giants
+    const lightest = cls === 'GIANT' && star.population === 'II' ? 0.8 : row.M[0];
+    if (!within(star.mass_Msun, lightest, row.M[1], 0.01)) fail(`${code} ${cls} has mass ${star.mass_Msun}`);
     if (!within(star.radius_Rsun, row.R[0], row.R[1], cls === 'WD' ? 2 : 0.1)) fail(`${code} ${cls} has radius ${star.radius_Rsun}`);
     // White dwarfs break the table's luminosity column on purpose: at 0.01 solar radii, Stefan-Boltzmann takes the
     // hottest to several solar luminosities, and the physics matters more than the column

@@ -11,6 +11,8 @@ import { angularRadiusDeg } from '../render/layers/overlays.js';
 import { helpSections } from '../content/help.js';
 import { initLegend } from './legend.js';
 import { initViewAids } from './view_aids.js';
+import { DEFAULT_SEED } from '../core/rng.js';
+import { SEED_MAX_LENGTH, cleanSeed, isDefaultSeed, pageForSeed, randomSeed, seedFromPage } from '../core/seed.js';
 
 function element(tag, className, text) {
     const el = document.createElement(tag);
@@ -444,6 +446,9 @@ function initContextBar(app) {
     hint.hidden = true;
     reading.append(zoomText, fovText);
     readout.append(reading, readingTip, hint);
+    // A sky other than the standard one says so, quietly, so that a class can tell if they are looking at different skies
+    const seed = seedFromPage();
+    if (!isDefaultSeed(seed)) readout.append(element('span', 'spectro-sky-tag', `Custom sky: seed ${seed}`));
 
     // Zooming is the way in. This is the way for a keyboard or anyone who'd rather press something.
     const enter = button('spectro-bar-button spectro-bar-quiet');
@@ -593,7 +598,42 @@ function initSettingsPage(app) {
             element('p', 'spectro-setting-note', 'Turn single-key shortcuts off if speech input or a stray key sets them off. They then work only while the sky itself has the focus.')
         );
 
-        container.append(qualityGroup, toggles);
+        // Which sky: a seed makes it, and the page reloads with ?seed=... to change it, since everything is built from the sky
+        const current = app.universe ? app.universe.seed : seedFromPage();
+        const sky = element('form', 'sim-control-group spectro-seed');
+        const skyLabel = element('label', '', 'Sky seed');
+        skyLabel.htmlFor = 'spectroSeed';
+        const seedRow = element('div', 'spectro-seed-row');
+        const field = element('input');
+        field.id = 'spectroSeed';
+        field.type = 'text';
+        field.value = current;
+        field.maxLength = SEED_MAX_LENGTH;
+        field.spellcheck = false;
+        field.autocomplete = 'off';
+        field.setAttribute('aria-describedby', 'spectroSeedNote');
+        const use = element('button', 'spectro-text-button', 'Use');
+        use.type = 'submit';
+        const fresh = button('spectro-text-button', 'New sky');
+        const standard = button('spectro-text-button', 'Default');
+        standard.hidden = isDefaultSeed(current);
+        seedRow.append(field, use, fresh, standard);
+        const seedNote = element('p', 'spectro-setting-note', 'Everyone who uses the same seed sees the same sky. Changing it reloads the page.');
+        seedNote.id = 'spectroSeedNote';
+        sky.append(skyLabel, seedRow, seedNote);
+        const goToSky = (seed) => {
+            const next = cleanSeed(seed) || DEFAULT_SEED;
+            if (next === current) field.value = current;
+            else window.location.assign(pageForSeed(next));
+        };
+        sky.addEventListener('submit', (event) => {
+            event.preventDefault();
+            goToSky(field.value);
+        });
+        fresh.addEventListener('click', () => goToSky(randomSeed()));
+        standard.addEventListener('click', () => goToSky(DEFAULT_SEED));
+
+        container.append(qualityGroup, toggles, sky);
 
         paintPage = () => {
             select.value = app.settings.quality;
