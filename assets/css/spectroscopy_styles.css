@@ -83,6 +83,182 @@
 
 /* === SYSTEM: the System tab and the system view's controls === */
 
+/* Small labels over the system view. They take no pointer events, so a drag on a label still reaches the canvas. */
+#spectroOverlay > .spectro-system-labels {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.spectro-system-label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 0.1em 0.4em;
+    font-size: 0.72em;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: #e8edf5;
+    background: rgba(8, 10, 16, 0.62);
+    border-radius: 3px;
+    will-change: transform;
+}
+
+.spectro-system-label[hidden] {
+    display: none;
+}
+
+.spectro-system-label.is-selected {
+    color: #ffffff;
+    background: rgba(8, 10, 16, 0.86);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+
+.spectro-system-hz-label {
+    color: #bdf5cf;
+    background: rgba(6, 22, 14, 0.76);
+}
+
+.spectro-system-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75em;
+}
+
+.spectro-system-tab [hidden] {
+    display: none !important;
+}
+
+.spectro-system-lead {
+    margin: 0;
+    color: var(--color-text);
+}
+
+.spectro-system-note,
+.sim-controls-content .spectro-system-note {
+    margin: 0;
+    font-size: 0.85em;
+    line-height: 1.45;
+    color: var(--color-text);
+}
+
+.spectro-system-time,
+.sim-controls-content .spectro-system-time {
+    margin: 0;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text);
+}
+
+.spectro-system-tab button.spectro-system-btn,
+.spectro-system-tab button.spectro-system-planet {
+    -webkit-appearance: none;
+    appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 44px;
+    height: auto;
+    margin: 0;
+    padding: 0.4em 0.8em;
+    font-size: 0.9em;
+    font-weight: 400;
+    line-height: 1.3;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: var(--sim-radius);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.spectro-system-tab button.spectro-system-primary {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.spectro-system-tab button.spectro-system-planet {
+    justify-content: space-between;
+    gap: 0.75em;
+    text-align: left;
+}
+
+@media (hover: hover) {
+    .spectro-system-tab button.spectro-system-btn:hover,
+    .spectro-system-tab button.spectro-system-planet:hover {
+        background-color: var(--color-bg-button-active-overlay);
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+.spectro-system-tab button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+/* The chosen planet is marked by a thick edge and a heavier code, not by colour alone */
+.spectro-system-tab button.spectro-system-planet[aria-current="true"] {
+    background-color: var(--color-bg-button-active-overlay);
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.spectro-system-planet[aria-current="true"] .spectro-system-code {
+    font-weight: 700;
+}
+
+.spectro-system-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.spectro-system-list li {
+    margin: 0;
+    padding: 0;
+}
+
+.spectro-system-code {
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-system-facts {
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.spectro-system-readout {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25em 0.9em;
+    margin: 0;
+    font-size: 0.9em;
+}
+
+.spectro-system-readout dt {
+    margin: 0;
+    font-weight: 400;
+    color: var(--color-text);
+}
+
+.spectro-system-readout dd {
+    margin: 0;
+    text-align: right;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--sim-value-color);
+}
+
 /* === end SYSTEM === */
 
 
