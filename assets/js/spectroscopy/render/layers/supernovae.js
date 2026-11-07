@@ -105,14 +105,14 @@ export function createSupernovaeLayer(engine, app) {
         // Each has its own outline: a Type Ia is close to round, a Type II lobed, and many have burst out on one side
         const blowAngle = rng.range(0, Math.PI * 2);
         const L = new THREE.Vector4(
-            isIa ? rng.range(0.05, 0.11) : rng.range(0.11, 0.2),
-            rng.chance(isIa ? 0.35 : 0.65) ? rng.range(0.10, 0.26) : 0,
+            isIa ? rng.range(0.10, 0.22) : rng.range(0.22, 0.42),
+            rng.chance(isIa ? 0.35 : 0.65) ? rng.range(0.12, 0.26) : 0,
             Math.cos(blowAngle),
             Math.sin(blowAngle)
         );
         // A Type II can be anything from thin, broken arcs to a web of filaments right across it
         const F = new THREE.Vector4(
-            isIa ? rng.range(0.03, 0.08) : rng.chance(0.3) ? rng.range(0.3, 0.6) : rng.range(0.05, 0.18),
+            isIa ? rng.range(0.01, 0.04) : rng.chance(0.3) ? rng.range(0.3, 0.6) : rng.range(0.05, 0.18),
             isIa ? rng.range(0.09, 0.14) : rng.range(0.14, 0.30),
             isIa ? rng.range(0.15, 0.4) : rng.range(0.05, 0.25),
             isIa ? 0 : rng.chance(0.25) ? rng.range(1.0, 2.0) : 0

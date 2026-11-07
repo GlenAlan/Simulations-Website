@@ -151,10 +151,11 @@ function emissionShape(body, palette) {
     const lanes = [];
     let cavity = 0;
     const wall = new THREE.Vector4(0, 0, 0, 0);
-    let squeeze = rng.range(0.6, 1);
+    let squeeze = rng.range(0.74, 1);
     let laneWidth = rng.range(0.08, 0.14);
     let rimGain = rng.range(1.0, 2.0);
     let frontDepth = 0.55 + dustiness * 0.8;
+    let gasGain = 1;    // A thin strip of gas has less of itself along the line of sight than a thick cloud has
 
     if (form === 'blister') {
         // The heart is off centre, away from the wall
@@ -216,11 +217,12 @@ function emissionShape(body, palette) {
         const lumps = 8;
         for (let i = 0; i < lumps; i++) {
             const t = -1 + (2 * i) / (lumps - 1);
-            blobs.push(at(t * 0.62, bend * (t * t - 0.4) * 0.45, z(), rng.range(0.11, 0.19) * (1 - 0.3 * Math.abs(t))));
+            blobs.push(at(t * 0.62, bend * (t * t - 0.4) * 0.45, z(), rng.range(0.13, 0.21) * (1 - 0.3 * Math.abs(t))));
         }
+        gasGain = 2.0;
         const hu = rng.range(-0.3, 0.3);
         stars.push(at(hu, bend * (hu * hu * 2.6 - 0.4) * 0.45 + rng.range(-0.12, 0.12), 0.05, power * 0.85));
-        squeeze = rng.range(0.32, 0.5);
+        squeeze = rng.range(0.42, 0.6);
         rimGain = rng.range(0.6, 1.2);
     }
 
@@ -242,7 +244,7 @@ function emissionShape(body, palette) {
         rot,
         A: new THREE.Vector4(rng.range(0.2, 0.45), rng.range(0.9, 1.4), 0.3 + dustiness * 1.1, frontDepth),
         B: new THREE.Vector4(cavity, (0.6 * (0.035 + palette.excitation * 0.09)) * rng.range(0.6, 1.6), rimGain, laneWidth),
-        C: new THREE.Vector4(0.72, 0.55, 0.8, 0.25),
+        C: new THREE.Vector4(0.72 * gasGain, 0.55 * gasGain, 0.8, 0.25),
         D: wall
     };
     return { program: 'emission', params };
@@ -298,7 +300,7 @@ function darkShape(body) {
         off: new THREE.Vector3(rng.next(), rng.next(), rng.next()),
         rot: randomRotation(rng),
         A: new THREE.Vector4(rng.range(0.28, 0.52), rng.range(0.95, 1.35), rng.range(0.75, 0.95), 0.5 + dustiness * 0.7),
-        B: new THREE.Vector4(Math.cos(light), Math.sin(light), rng.range(0.10, 0.28), rng.range(0.5, 1.0)),
+        B: new THREE.Vector4(Math.cos(light), Math.sin(light), rng.range(3.0, 4.6), rng.range(0.5, 1.0)),
         C: new THREE.Vector4(1.0, 1.0, 0.75, 0)
     };
     return { program: 'dust', params };
@@ -367,8 +369,9 @@ function spriteColours(body, palette) {
         return { a: blue, b: pale };
     }
     if (type === 'dark') {
-        // No lines of its own: only the galaxy's light, reddened, from dust thin enough to let it out again
-        return { a: [0.095, 0.066, 0.048], b: [0.17, 0.115, 0.08] };
+        // No lines of its own: only the galaxy's light, reddened, from dust thin enough to let it out again; and the
+        // colour of the band's star clouds behind it, for the haze that gives it something to hide
+        return { a: [0.085, 0.066, 0.054], b: [0.135, 0.155, 0.225] };
     }
     // In an emission nebula hydrogen far outshines oxygen, whatever the line ratio says of the hottest gas alone. A heart
     // of oxygen as bright as the hydrogen around it would add up to plain white.
@@ -512,13 +515,13 @@ const SPRITE_VERTEX = /* glsl */`
         vFlatten = 1.0;
         if (aKind < 0.5) {
             // Brighter nebulae stand out from fainter ones, so that the sky has a hierarchy
-            float rank = clamp(pow(10.0, -0.2 * (aMag - 4.5)), 0.5, 1.25);
+            float rank = clamp(pow(10.0, -0.2 * (aMag - 4.5)), 0.62, 1.2);
             vGain = rank * mix(1.0, 0.30, small);
             vDim = mix(1.0, 0.4, small);
             vBlur = mix(1.0, 3.0, small * small);
             vFlatten = mix(1.0, 0.62, small);
         } else if (aKind < 1.5) {
-            vGain = mix(1.0, 0.40, tiny);
+            vGain = mix(1.0, 0.32, tiny);
             vDim = mix(1.0, 0.6, tiny);
             vBlur = mix(1.0, 2.4, tiny);
         } else if (aKind < 2.5) {
@@ -698,6 +701,13 @@ export function createNebulaeLayer(engine, app) {
                     vec3 h = vColA * hf;
                     h.gb *= mix(0.55, 1.45, smoothstep(0.0, 0.5, hf));
                     vec3 o = vColB * of;
+                    if (vKind < 0.5) {
+                        // Only where oxygen comes close to matching hydrogen, as it does right beside the hottest stars,
+                        // does it win: a small heart of pale teal
+                        float teal = smoothstep(0.55, 0.95, of / (hf + 0.03));
+                        h *= mix(1.0, 0.6, teal);
+                        o *= mix(1.0, 1.45, teal);
+                    }
                     if (vKind > 2.5) {
                         // Nitrogen dominates a planetary's outer edge, which warms it. Its faint inner gas is lit hardest
                         // of all, and looks bluer than its bright walls.
@@ -731,7 +741,7 @@ export function createNebulaeLayer(engine, app) {
                     col += ramp(uBandTint[4], xr * vStrengthX) * uBandW[4];
                 }
                 // Infrared: the dust that blocks visible light is what glows
-                float ir = dust * (vKind > 0.5 && vKind < 1.5 ? 2.6 : 1.7) + hyd * 0.2;
+                float ir = (vKind > 1.5 && vKind < 2.5 ? dust * 1.1 : dust * (vKind > 0.5 && vKind < 1.5 ? 2.6 : 1.7) + hyd * 0.2);
                 col += ramp(uBandTint[1], ir * vStrength.y * vGain) * uBandW[1];
                 // Ultraviolet: the hot gas near the stars, heavily dimmed by dust. Reflection nebulae scatter it strongly
                 float uvScatter = vKind > 0.5 && vKind < 1.5 ? 1.5 : 0.28;
@@ -739,8 +749,8 @@ export function createNebulaeLayer(engine, app) {
                 col += ramp(uBandTint[3], uvLight * vStrength.w * vGain) * uBandW[3];
 
                 // A soft stand-in until the bake arrives, then a quick fade across to it
-                float stand = exp(-r2 * 3.5) * smoothstep(1.0, 0.6, sqrt(r2)) * 0.08;
-                vec3 waiting = (vColA + vColB) * stand * vStrength.z * uBandW[2];
+                float stand = exp(-r2 * 5.0) * smoothstep(1.0, 0.5, sqrt(r2)) * 0.05;
+                vec3 waiting = (vColA + vColB) * stand * vGain * vStrength.z * uBandW[2];
                 col = mix(waiting, col, vReady);
 
                 // Tiny grain so faint gradients don't band on an 8-bit screen
@@ -846,26 +856,29 @@ export function createNebulaeLayer(engine, app) {
             if (changed) readyAttr.needsUpdate = true;
         },
         // A click anywhere on a nebula selects it, once it shows in this band at this zoom. So does a click on anything
-        // in it that looks like a star, and on the sky when the view is inside a nebula too big for its centre to be seen.
+        // in it that looks like a star. Zoomed into one, its centre may be off the screen, where a pick can't find it: then
+        // the candidate is the biggest circle round the middle of the view that still lies on the nebula.
         picks(frame) {
             const out = [];
             frame.camera.getWorldDirection(forward);
+            const pxPerRad = frame.pxPerRad / frame.dpr;
             let viewAt = null;
             for (let i = 0; i < n; i++) {
                 const { body, tanHalf, bodyTan, stars: inside, frame: f } = items[i];
                 const strength = body.bands[frame.band] || 0;
                 if (strength <= 0.01) continue;
-                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: (bodyTan * frame.pxPerRad * 1.05) / frame.dpr });
+                out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: bodyTan * pxPerRad * 1.05 });
                 const across = 2 * tanHalf * frame.pxPerRad;
                 for (let j = 0; j < inside.length; j++) {
                     const s = inside[j];
                     if (across > s.fadeLo && s.shows[frame.band] > 0.01) out.push({ code: body.code, az: s.az, alt: s.alt, radiusPx: 0 });
                 }
                 const d = forward.x * f.c[0] + forward.y * f.c[1] + forward.z * f.c[2];
-                const sep = Math.acos(Math.min(1, d));
-                if (d > 0 && Math.tan(sep) < bodyTan) {
+                if (d <= 0) continue;
+                const off = Math.tan(Math.acos(Math.min(1, d)));
+                if (off < bodyTan * 1.05) {
                     if (!viewAt) viewAt = vec3ToAzAlt(forward.x, forward.y, forward.z);
-                    out.push({ code: body.code, az: viewAt.az, alt: viewAt.alt, radiusPx: Math.hypot(frame.width, frame.height) });
+                    out.push({ code: body.code, az: viewAt.az, alt: viewAt.alt, radiusPx: (bodyTan * 1.05 - off) * pxPerRad });
                 }
             }
             return out;

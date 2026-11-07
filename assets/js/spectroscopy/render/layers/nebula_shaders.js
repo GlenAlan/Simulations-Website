@@ -299,11 +299,11 @@ void main() {
         float sheet = ridge(s);
         sheet *= sheet;
         sheet *= sheet;
-        sheet *= sheet;
 
         vec3 Pu = vec3(xy, z);
         float U = ionisation(Pu);
-        float lit = U / (U + 6.0);
+        // Falls away steeply from the stars, so that only a small heart is near white and most of the gas is red
+        float lit = U / (U + 13.0);
         lit *= sqrt(lit);
         float heart = sat(U * 0.022);
 
@@ -315,7 +315,7 @@ void main() {
             wall = mix(0.10, 1.0, smoothstep(uB.x * 0.58, uB.x * 1.02, r0)) * (1.0 + 1.2 * exp(-wd * wd));
         }
 
-        float g = em * wall * (0.42 + 1.9 * sheet) * (0.05 + lit) * (1.0 + 0.7 * heart);
+        float g = em * wall * (0.50 + 1.1 * sheet) * (0.09 + lit) * (1.0 + 0.7 * heart);
         // Close to the stars oxygen is ionised twice and adds its teal to the hydrogen's rose. Together they read pale.
         float zone = smoothstep(0.25, 1.0, U * uB.y);
         La += T * g * ds;
@@ -371,14 +371,15 @@ void main() {
     gl_FragColor = packed((1.0 - exp(-La * uC.x)) * v, (1.0 - exp(-Lo * uC.y)) * v, (1.0 - exp(-Ld * uC.z)) * v, (1.0 - T * Tf) * v);
 }`;
 
-// Dark clouds: dust in front of whatever is behind them. Only the opacity is much use on the band; off it, where there
-// is little to hide, thin dust shows by the faint brown light it scatters from the whole galaxy.
+// Dark clouds: dust in front of whatever is behind them. Off the bright part of the band there is little to hide, so a
+// dark cloud is drawn with what it would hide: a faint haze of star clouds behind it, of which it hides its share. Thin
+// dust also shows by the faint brown light it scatters from the whole galaxy.
 export const DUST_FRAG = /* glsl */`
 ${COMMON}
 uniform vec4 uBlob[8];      // Lumps strung along the cloud's shape: position, radius
 uniform vec4 uA;            // Flow warp, edge roughness, fine fraying, optical depth
-uniform vec4 uB;            // Direction of the brightest light nearby, rim gain, wisps
-uniform vec4 uC;            // Output gains: thin dust, rim, cold dust
+uniform vec4 uB;            // Direction of the brightest light nearby, how far its haze reaches, wisps
+uniform vec4 uC;            // Output gains: thin dust, haze, cold dust
 
 float envelope(vec2 p) {
     float e = 0.0;
@@ -400,7 +401,8 @@ void main() {
     vec2 xw = xy + (flow.xy + flow2.xy * 0.5) * uA.x;
 
     float coarse = noiseAt(vec3(xw * 0.66, 0.13) + uOff.yzx).g;
-    float fine = detail(vec3(xw * 1.9, 0.71) + uOff.zyx);
+    // Only half the flow reaches the finest detail, or it would all be combed the same way like hair
+    float fine = detail(vec3((xy + (xw - xy) * 0.45) * 1.9, 0.71) + uOff.zyx);
     float d = dustField(xw, coarse, fine);
     // Fine threads reaching out from the cloud
     float wn = noiseAt(vec3(xw * 1.15 + flow2.xy * 0.6 + fine * 0.05, 0.57) + uOff).b;
@@ -409,18 +411,20 @@ void main() {
     wisp *= wisp;
     wisp *= wisp;
     // The column density of dust is log-normal: no edge anywhere, only dust that thickens and frays at every scale
-    float tau = 0.55 * exp(d * 3.1) * (1.0 + wisp * uB.w);
+    float tau = 0.62 * exp(d * 2.5) * (1.0 + wisp * uB.w);
     float T = exp(-tau * uA.w);
 
     // Thin dust shows by the light it scatters; thick dust swallows it, and lets out only enough to show its structure
-    float scatter = tau * exp(-tau * 0.8) + 0.16 * (1.0 - exp(-tau));
+    float scatter = tau * exp(-tau * 1.1) + 0.05 * (1.0 - exp(-tau));
     float thin = min(scatter, 1.0) * (0.25 + 1.5 * coarse) * exp(fine * 1.3);
-    float coarse2 = noiseAt(vec3((xw + uB.xy * 0.03) * 0.66, 0.13) + uOff.yzx).g;
-    float rim = sat((d - dustField(xw + uB.xy * 0.03, coarse2, fine)) * 5.0) * exp(-abs(d) * 2.4);
     float cold = (1.0 - exp(-tau * 0.24)) * (0.4 + 0.6 * exp(fine * 1.3));
+    // Behind it all, a soft patch of star clouds, gone long before the sprite's edge. The dust hides it.
+    vec2 hz = xw + uB.xy * 0.16;
+    float clouds = noiseAt(vec3(xw * 0.31, 0.47) + uOff.zxy).r;
+    float haze = exp(-dot(hz, hz) * uB.z) * smoothstep(0.26, 0.62, clouds + 0.1 * fine) * T;
 
     float v = smoothstep(1.02, 0.74, length(xy + flow.xy * 0.35));
-    gl_FragColor = packed(thin * uC.x * v, rim * uB.z * uC.y * v, cold * uC.z * v, (1.0 - T) * v);
+    gl_FragColor = packed(thin * uC.x * v, haze * uC.y * v, cold * uC.z * v, (1.0 - T) * v);
 }`;
 
 // Planetary nebulae: an optically thin shell around a white dwarf. Hot [O III] gas sits inside, cooler hydrogen
@@ -480,15 +484,15 @@ void main() {
             o3 += barrel * smoothstep(R0 + 0.07, R0 - 0.07, rho) * knots * 1.3;
             ha += barrel * smoothstep(R0 - 0.08, R0 + 0.07, rho) * knots * 1.15;
             float bubble = exp(-pow(rw / (R0 * 0.95), 4.0));
-            o3 += bubble * 0.09;
-            ha += bubble * 0.012;
+            o3 += bubble * 0.055;
+            ha += bubble * 0.008;
             if (shape > 2.5) {
                 // A second, tilted ring inside the first, and a broken arc of old gas outside both
                 vec3 o2 = vec3(o.x, o.y * 0.82 - o.z * 0.57, o.y * 0.57 + o.z * 0.82);
                 float rho2 = length(o2.xy + wob.xy * 0.05);
-                float t2 = gaussAbout(rho2, R0 * 0.70, 0.075) * exp(-pow(o2.z / 0.34, 2.0));
-                o3 += t2 * knots * 0.75;
-                ha += t2 * knots * 0.42;
+                float t2 = gaussAbout(rho2, R0 * 0.72, 0.05) * exp(-pow(o2.z / 0.26, 2.0));
+                o3 += t2 * knots * 0.42;
+                ha += t2 * knots * 0.26;
                 float arc = gaussAbout(rw, R0 * 1.55, 0.045) * smoothstep(-0.25, 0.65, dot(dir, vec3(0.66, 0.71, 0.24)));
                 ha += arc * (0.35 + spoke) * 0.42;
             }
@@ -534,7 +538,7 @@ void main() {
             float shell = gaussAbout(rw, R0 * 1.12, 0.07 + 0.09 * towards);
             ha += shell * towards * towards * knots * 1.05;
             o3 += gaussAbout(rw, R0 * 0.98, 0.06) * towards * knots * 0.26;
-            o3 += exp(-pow(rw / (R0 * 1.0), 4.0)) * 0.035;
+            o3 += exp(-pow(rw / (R0 * 1.0), 4.0)) * 0.016;
             dust += shell * towards * 0.1;
         }
         // Every planetary has a very faint, old halo of gas shed earlier in the star's life
@@ -556,8 +560,18 @@ void main() {
     vec2 dir2d = xy / rho2d;
     float rays = detail(vec3(dir2d * 2.6, rho2d * 1.7) + uOff);
     float streaks = exp(rays * 0.75 * knotty * smoothstep(R0 * 0.45, R0 * 0.85, rho2d));
-    La *= streaks;
-    Lo *= mix(1.0, streaks, 0.7);
+    // And knots finer than any step of the ray, once per pixel. Each octave much fainter than the last, or it is static
+    float fineKnots = 0.0;
+    float amp = 1.0;
+    vec3 fp = vec3(xy * 1.9, 0.61) + uOff.yzx;
+    for (int i = 0; i < uOctaves; i++) {
+        fineKnots += amp * (textureLod(tNoise, fp, 0.0).b - 0.5);
+        amp *= 0.5;
+        fp = OCT * fp * 2.43 + 0.37;
+    }
+    float mottle = exp(fineKnots * (0.5 + 1.1 * knotty));
+    La *= streaks * mottle;
+    Lo *= mix(1.0, streaks, 0.7) * mix(1.0, mottle, 0.6);
     gl_FragColor = packed(1.0 - exp(-La * uC.x), 1.0 - exp(-Lo * uC.y), 1.0 - exp(-Ld * uC.z), 1.0 - exp(-tauSum * 2.5));
 }`;
 
@@ -578,7 +592,7 @@ float sq(float x) { return x * x; }
 
 // How far the shock is from round in this direction, as a share of its radius
 float outline(vec3 dir) {
-    float lobes = (noiseAt(dir * 0.105 + uOff.zxy).r - 0.5) * 2.0 * uL.x;
+    float lobes = (noiseAt(dir * 0.17 + uOff.zxy).r - 0.5) * 2.0 * uL.x;
     float blow = max(0.0, dot(dir.xy, uL.zw));
     blow *= blow;
     return lobes + uL.y * blow * blow;
@@ -656,7 +670,7 @@ void main() {
     float threads = (s1 + 0.7 * s2) * (0.25 + 0.75 * strand) * (1.0 + 2.2 * max(0.0, fineW)) + 0.55 * s3 * strand;
 
     float inward = u < 1.0 ? exp(-sq((1.0 - u) / uF.y)) : exp(-sq((u - 1.0) / 0.028));
-    float arcs = mix(uF.z, 1.0, smoothstep(0.36, 0.60, noiseAt(vec3(dir2 * 0.19, 0.77) + uOff.yzx).b));
+    float arcs = mix(uF.z, 1.0, smoothstep(0.42, 0.62, noiseAt(vec3(dir2 * 0.22, 0.77) + uOff.yzx).b));
     float limbBar = 0.42 + 0.95 * sq(dot(dir2, uAxis.xy));
     float knots = noiseAt(vec3(xy * 0.9, 0.53) + uOff.zxy).a;
     float fil = threads * inward * arcs * limbBar * (0.55 + 1.1 * knots);
@@ -674,13 +688,14 @@ void main() {
             * smoothstep(Rs * 0.72, Rs * 0.98, abs(along)) * smoothstep(Rs * 1.26, Rs * 1.04, abs(along));
     }
 
-    // The shock itself: the thinnest strands of all, right at the outside edge
-    float s4 = pow(ridge(noiseAt(vec3(dir2 * 0.28 + w2.xz * 0.04, uw * 5.2) + uOff.zxy).b), 13.0);
-    float shock = s4 * exp(-sq((u - 0.985) / 0.042)) * arcs * limbBar;
+    // The shock itself: the thinnest strands of all, right at the outside edge, in bundles that run along the limb
+    float s4 = pow(ridge(noiseAt(vec3(dir2 * 0.28 + w2.xz * 0.04, uw * 5.2) + uOff.zxy).b), 9.0);
+    float s5 = pow(ridge(noiseAt(vec3(dir2 * 0.5 - w2.xy * 0.03, uw * 11.0) + uOff.xzy).r), 12.0);
+    float shock = (s4 + 0.7 * s5) * (0.4 + 0.6 * strand) * (1.0 + 2.0 * max(0.0, fineW)) * exp(-sq((u - 0.975) / 0.06)) * arcs * limbBar;
 
     // The filled look of the ray's own shell belongs to a young remnant: older ones show only its limb in visible light
-    float hollow = mix(0.32, 1.0, smoothstep(0.55, 0.96, u)) * smoothstep(1.14, 1.0, u) * 0.6 * (0.35 + 1.3 * knots);
+    float hollow = mix(0.12, 1.0, smoothstep(0.66, 0.98, u)) * smoothstep(1.12, 1.0, u) * 0.34 * (0.35 + 1.3 * knots) * mix(0.4, 1.0, arcs);
 
-    gl_FragColor = packed(1.0 - exp(-(L0 * hollow + shock * 1.1) * uC.x), 1.0 - exp(-fil * uC.y), 1.0 - exp(-L2 * uC.z), 0.0);
+    gl_FragColor = packed(1.0 - exp(-(L0 * hollow + shock * 1.6) * uC.x), 1.0 - exp(-fil * uC.y), 1.0 - exp(-L2 * uC.z), 0.0);
     gl_FragColor.a = sqrt(1.0 - exp(-L3 * uC.w));
 }`;
