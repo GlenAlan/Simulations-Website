@@ -743,8 +743,7 @@ function localGalaxyInfo(entity, block) {
         rarity: 'Rare: only a couple of big galaxies lie this close to our own.',
         catalogue: clean([
             row('Shape', capital(words(block.morphology))),
-            row('Redshift, z', isNum(block.z) ? block.z.toFixed(4) : null),
-            row('Radial velocity', velocityText(entity.radial_velocity_kms)),
+            row(shiftLabel(entity.radial_velocity_kms), velocityText(entity.radial_velocity_kms, block.z)),
             row('Distance', distanceText(entity.distance_pc)),
             row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
             row('Central black hole', entity.nucleus ? entity.nucleus.code : null),
