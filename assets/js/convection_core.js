@@ -458,6 +458,36 @@ const colorLUT = new Uint8Array(COLOR_LEVELS * 3);
     }
 })();
 
+// SOLVER: the GPU version of the solver below (convection_gpu.js, WebGL2) when the browser can run it,
+// which is fast enough for a 256x256 grid; otherwise the CPU solver below. ?solver=cpu in the address
+// forces the CPU solver. The GPU solver's shaders take a moment to build after the page loads; until
+// then the fluid stays at rest (drawn by the CPU renderer).
+let gpuSolver = null;
+(function createGpuSolver() {
+    if (typeof window.createConvectionGpuSolver !== 'function') return;
+    if (new URLSearchParams(window.location.search).get('solver') === 'cpu') return;
+    try {
+        gpuSolver = window.createConvectionGpuSolver({
+            n: N, dt: physicsDt, diffusion: diff, buoyancy: buoyancyCoeff, ambientTemp, referenceN, colorLUT,
+        });
+    } catch (err) {
+        console.warn('Convection: GPU solver unavailable, using the CPU solver', err);
+        gpuSolver = null;
+    }
+})();
+const cpuGridSizes = [48, 64, 96, 128];
+const gpuGridSizes = [48, 64, 96, 128, 256];
+
+// The GPU solver's WebGL context can be lost (a driver reset, say): carry on with the CPU solver
+function switchToCpuSolver() {
+    gpuSolver = null;
+    const selector = document.getElementById('convectionGridSizeSelector');
+    if (selector) Array.from(selector.options).forEach((option) => { if (!cpuGridSizes.includes(+option.value)) option.remove(); });
+    const newN = cpuGridSizes.includes(N) ? N : cpuGridSizes[cpuGridSizes.length - 1];
+    window.convectionSimulation.setSize(newN);
+    if (selector) selector.value = String(newN);
+}
+
 // Outline of the brush: under an idle mouse, and around every pointer that is heating or cooling
 function drawBrushOutlines() {
     if (!showBrushGuides || (!hoverPointer && activePointers.size === 0)) return;
@@ -483,6 +513,14 @@ function drawBrushOutlines() {
 
 function renderDensity() {
     if (!ctx) return;
+    if (gpuSolver && gpuSolver.ready()) {
+        // The GPU solver draws the N x N cells into its own canvas, scaled up here like the CPU's image
+        gpuSolver.render();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(gpuSolver.canvas, 0, 0, canvas.width, canvas.height);
+        drawBrushOutlines();
+        return;
+    }
     if (!offscreenCanvas) {
         offscreenCanvas = document.createElement('canvas');
         offscreenCanvas.width = N;
@@ -523,12 +561,10 @@ function renderDensity() {
 // Adds heat (sign = +1) or removes it (sign = -1) around a point given as a fraction of the canvas
 // width/height. The radius is a percentage of the box width, so the brush covers the same area (and
 // adds the same heat per second) at every grid size.
-function applyHeatBrush(xFrac, yFrac, sign) {
+function applyHeatBrush(pointer) {
   const r = heatRadius / 100 * N;
   const rSq = r*r, twiceRSq = 2*rSq, reach = Math.floor(r);
-  const ci = Math.floor(xFrac * N) + 1;
-  const cj = N - Math.floor(yFrac * N);
-  const amount = sign * heatAmpMult * baseHeatAmp * heatAmp;
+  const [ci, cj, amount] = brushSpot(pointer);
   for (let dj = -reach; dj <= reach; dj++) {
     const jj = cj + dj;
     if (jj < 1 || jj > N) continue;
@@ -540,12 +576,40 @@ function applyHeatBrush(xFrac, yFrac, sign) {
     }
   }
 }
+// A brush's centre cell (i, j) and the heat it adds per step there
+function brushSpot(pointer) {
+  return [Math.floor(pointer.x * N) + 1, N - Math.floor(pointer.y * N), pointer.sign * heatAmpMult * baseHeatAmp * heatAmp];
+}
+// Depth of the cooled surface layer: 3 cells on the 64x64 reference grid (the same physical depth at
+// every grid size)
+function surfaceCoolingRows() {
+  return Math.max(1, Math.round(3 * N / referenceN));
+}
+// The same step on the GPU solver
+function simulateGpu() {
+  const brushes = [];
+  activePointers.forEach((pointer) => brushes.push(brushSpot(pointer)));
+  const r = heatRadius / 100 * N;
+  gpuSolver.step({
+    visc,
+    viscSweeps: diffusionIterations(physicsDt * visc * N * N),
+    heatSweeps: diffusionIterations(physicsDt * diff * N * N),
+    coolBase: coolAmpMult * coolRate / 100,
+    coolRows: surfaceCoolingRows(),
+    brushes,
+    brushRSq: r * r,
+  });
+}
 function simulate() {
+  if (gpuSolver) {
+    if (gpuSolver.ready()) simulateGpu();
+    return;
+  }
   const n = N, sz = size;
   dens_prev.fill(0);
 
   // Heat or cool around every active pointer (mouse, fingers, pen)
-  activePointers.forEach((pointer) => applyHeatBrush(pointer.x, pointer.y, pointer.sign));
+  activePointers.forEach(applyHeatBrush);
 
   prev_avg_density = avg_density;
 
@@ -594,9 +658,8 @@ function simulate() {
     }
   }
 
-  // Surface cooling: a layer 3 cells deep on the 64x64 reference grid (the same physical depth at
-  // every grid size) loses heat, most strongly right at the surface
-  const coolRows = Math.max(1, Math.round(3 * n / referenceN));
+  // Surface cooling: the surface layer loses heat, most strongly right at the surface
+  const coolRows = surfaceCoolingRows();
   for (let k = 0; k < coolRows; k++) {
     const j_cool = n - k;
     const currentGradient = 1.0 / (1 + k * referenceN / n); // 1, 1/2, 1/3 on the 64x64 grid
@@ -620,7 +683,22 @@ function updateFPS(timestamp) {
     frameCount = 0; lastFpsUpdate = timestamp;
   }
 }
+// GPU solver: simulate() only queues work, which the GPU does after this frame's script has run, so it
+// can't be timed like the CPU solver. Instead each frame checks whether the GPU is keeping up (it has
+// finished the work of the frame before last, and this frame came on time): if it is, and the last frame
+// wanted more steps than the limit allowed, the limit rises by one; if not, it drops by a quarter.
+let gpuStepLimit = 4;
+let gpuLimitReached = false;
+let refreshMs = 1000 / 60; // the shortest recent time between frames: the display's refresh period
+function updateGpuStepLimit(frameMs) {
+  if (frameMs > 0) refreshMs = frameMs < refreshMs ? frameMs : refreshMs + 0.01 * (frameMs - refreshMs);
+  if (!gpuSolver.caughtUp() || frameMs > 1.25 * refreshMs) gpuStepLimit = Math.max(1, Math.floor(gpuStepLimit * 0.75));
+  else if (gpuLimitReached) gpuStepLimit++;
+  gpuLimitReached = false;
+  return gpuStepLimit;
+}
 function step(timestamp) {
+  if (gpuSolver && gpuSolver.lost) switchToCpuSolver();
   if (!ctx && canvas) ctx = canvas.getContext('2d'); // Attempt to get context if lost
   if (!ctx) {
       console.warn("Convection_core: Canvas context not available in step. Retrying animation frame.");
@@ -634,25 +712,33 @@ function step(timestamp) {
   const deltaTime = (timestamp - lastTimestamp) / 1000;
   lastTimestamp = timestamp;
   const cappedDeltaTime = Math.min(deltaTime, 0.1);
-  accumulatedTime += cappedDeltaTime * timeScale;
+  const gpuRunning = gpuSolver !== null && gpuSolver.ready();
+  // While the GPU solver's shaders are still building the fluid waits at rest
+  accumulatedTime = gpuSolver && !gpuRunning ? 0 : accumulatedTime + cappedDeltaTime * timeScale;
   const physicsInterval = 1.0 / targetPhysicsRate;
   const physicsStart = performance.now();
+  const stepLimit = gpuRunning ? updateGpuStepLimit(deltaTime * 1000) : Infinity;
+  let steps = 0;
   while (accumulatedTime >= physicsInterval) {
     const stepStart = performance.now();
     simulate();
+    steps++;
     const stepEnd = performance.now();
     physicsStepMs += 0.1 * ((stepEnd - stepStart) - physicsStepMs);
     accumulatedTime -= physicsInterval;
-    if (accumulatedTime >= physicsInterval && stepEnd - physicsStart + physicsStepMs > maxPhysicsMsPerFrame) {
+    if (accumulatedTime >= physicsInterval && (steps >= stepLimit || stepEnd - physicsStart + physicsStepMs > maxPhysicsMsPerFrame)) {
       accumulatedTime = 0; // Can't keep up: drop the backlog rather than spiral into ever longer frames
+      gpuLimitReached = steps >= stepLimit;
       break;
     }
   }
+  if (gpuRunning) avg_density = gpuSolver.averageTemperature();
   updateAverageDisplay();
 
   if (canvas.width > 0 && canvas.height > 0) {
     renderDensity();
   }
+  if (gpuRunning) gpuSolver.endFrame();
   updateFPS(timestamp);
   requestAnimationFrame(step);
 }
@@ -718,6 +804,10 @@ function reinitializeArrays(newN) {
     prev_avg_density = ambientTemp;
 
     // Reset any other necessary simulation state related to grid size
+    if (gpuSolver) {
+        gpuSolver.resize(N);
+        gpuStepLimit = 4; // a step's cost changes with the grid size
+    }
     if (offscreenCanvas) {
         offscreenCanvas.width = N;
         offscreenCanvas.height = N;
@@ -739,8 +829,10 @@ window.convectionSimulation = {
         return N; // N is the current grid size
     },
     getAvailableGridSizes: function() {
-        return [48, 64, 96, 128]; // Define the available grid sizes
+        return gpuSolver ? gpuGridSizes : cpuGridSizes;
     },
+    get solver() { return gpuSolver ? 'gpu' : 'cpu'; },
+    get gpuSolver() { return gpuSolver; },
     reset: resetSimulation // Expose the reset function
 };
 
@@ -758,6 +850,7 @@ function resetSimulation() {
     viscousDeltaV.fill(0);
     divergence.fill(0);
     dens0.fill(ambientTemp);
+    if (gpuSolver) gpuSolver.reset();
 
     // Reset other relevant state variables. Pressed pointers are kept: they reflect what the user is
     // physically holding down, and are released by their own pointerup/pointercancel events.
