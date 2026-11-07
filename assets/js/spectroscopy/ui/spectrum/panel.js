@@ -31,6 +31,25 @@ import { createPlot, WAVELENGTH_PRESETS } from './plot.js';
 import { createRefPicker, shiftShort } from './refs.js';
 import { linkToolNames, listTools, toolWords } from './tools/index.js';
 
+// Temporary, while the owner chooses a layout: ?panel=a, b or c. Without it the tab is as it was.
+const VARIANT = (() => {
+    const asked = (new URLSearchParams(location.search).get('panel') || '').toLowerCase();
+    return ['a', 'b', 'c'].includes(asked) ? asked : '';
+})();
+
+// What each tool is called in the layouts on trial: the question it answers, a shorter one, and the law or method it uses
+const ASKS = {
+    wien: { q: 'How hot?', s: 'How hot?', icon: 'fa-thermometer-half' },
+    doppler: { q: 'How\'s it moving?', s: 'Moving?', icon: 'fa-arrows-alt-h' },
+    'line-zoom': { q: 'How fast a spin?', s: 'Spin?', icon: 'fa-sync-alt' },
+    photometer: { q: 'How bright?', s: 'How bright?', icon: 'fa-sun' },
+    'time-series': { q: 'What changes?', s: 'Over time', icon: 'fa-wave-square' },
+    'stars-shown': { q: 'Whose light?', s: 'Whose light?', icon: 'fa-star' },
+    'light-curve': { q: 'How does it fade?', s: 'Fading?', icon: 'fa-chart-line' },
+    'pulse-timing': { q: 'How fast a pulse?', s: 'Pulses?', icon: 'fa-heartbeat' },
+    'subtract-star': { q: 'What\'s left?', s: 'Star gone', icon: 'fa-minus-circle' }
+};
+
 const FULL_RANGE = { lo: SPECTRUM_LO_NM, hi: SPECTRUM_HI_NM, R: R_OVERVIEW };
 const OVERVIEW_MIN_RATIO = 1.002;    // About 1.3 nm at Hα, which is 20 samples at overview resolution
 const ZOOM_MIN_RATIO = 1.0001;       // About 0.07 nm at Hα, which is 20 samples at line-zoom resolution
@@ -163,6 +182,139 @@ function createSpectrumPanel(app, container) {
     ]);
     instrument.appendChild(help);
 
+    // ---------- The layouts on trial ----------
+
+    let afterPinned = null;
+    let onModeSet = null;
+    function dressChip(chip, id, words) {
+        const asks = ASKS[id] || { q: words.short, s: words.short, icon: 'fa-circle' };
+        chip.classList.add('spectro-flat');
+        if (VARIANT === 'b') {
+            chip.replaceChildren(
+                make('span', { class: 'spectro-chip-q', text: asks.q }),
+                make('span', { class: 'spectro-chip-law', text: words.short })
+            );
+        } else if (VARIANT === 'c') {
+            chip.title = `${words.short}: ${words.about}`;
+            chip.replaceChildren(
+                make('span', { class: `icon solid ${asks.icon}`, 'aria-hidden': 'true' }),
+                make('span', { class: 'spectro-chip-q', text: asks.s })
+            );
+        }
+    }
+
+    if (VARIANT) {
+        const sim = document.querySelector('.spectro-sim');
+        sim.dataset.panel = VARIANT;
+        const coarse = matchMedia('(pointer: coarse)').matches;
+        plot.setChrome({
+            ruler: false,
+            axisTitle: false,
+            titleH: coarse ? 44 : 26,
+            bodyShare: 0.58,
+            refTitle: false,
+            flux: 'gutter',
+            tags: true,
+            overlayRows: 2,
+            top: VARIANT === 'c' ? (coarse ? 44 : 32) : 0
+        });
+        plot.readout.style.display = 'none';
+
+        const rangeEl = presetRow.parentElement;
+
+        // The wide views and the line views, as words
+        const SHORT = { full: 'Full', lya: 'Ly-α', cahk: 'Ca H&K' };
+        const wide = make('div', { class: 'spectro-range-group' });
+        const lines = make('div', { class: 'spectro-range-group spectro-range-lines' });
+        presetButtons.forEach(({ preset, button }, i) => {
+            button.className = 'spectro-flat';
+            button.setAttribute('aria-label', preset.title);
+            if (SHORT[preset.id]) button.textContent = SHORT[preset.id];
+            (i < 4 ? wide : lines).appendChild(button);
+        });
+        presetRow.append(wide, lines);
+        [autoButton, zoomOut, zoomIn].forEach((b) => b.classList.add('spectro-flat'));
+
+        // The pane's own headers, on the plot
+        const bodyHead = make('div', { class: 'spectro-pane-head spectro-pane-body' });
+        const refHead = make('div', { class: 'spectro-pane-head spectro-pane-ref' });
+        plot.stage.append(bodyHead, refHead);
+        const { parts } = picker;
+        parts.label.classList.add('spectro-sr-only');
+        parts.optionsRow.style.display = 'none';
+        parts.shiftSummary.style.display = 'none';
+
+        const flat = (text, title) => make('button', { type: 'button', class: 'spectro-flat', text, title, 'aria-pressed': 'false' });
+        const overlayToggle = flat('Overlay', 'Draw the reference over the object, dashed, on its own scale');
+        const labelsToggle = flat('Labels', 'Name the lines on both spectra');
+        const shiftToggle = flat('Shift', 'Slide the reference along the wavelength axis');
+        overlayToggle.addEventListener('click', () => setMode(plot.getMode() === 'overlay' ? 'stacked' : 'overlay'));
+        labelsToggle.addEventListener('click', () => {
+            parts.labelsInput.click();
+            labelsToggle.setAttribute('aria-pressed', parts.labelsInput.checked ? 'true' : 'false');
+        });
+        shiftToggle.addEventListener('click', () => {
+            parts.shiftDetails.open = !parts.shiftDetails.open;
+            shiftToggle.setAttribute('aria-pressed', parts.shiftDetails.open ? 'true' : 'false');
+        });
+        onModeSet = (mode) => overlayToggle.setAttribute('aria-pressed', mode === 'overlay' ? 'true' : 'false');
+        const ownScale = make('span', { class: 'spectro-own-scale', text: 'own scale' });
+        refHead.append(
+            make('div', { class: 'spectro-ref-flat' }, [parts.box, parts.prev, parts.next, ownScale]),
+            make('div', { class: 'spectro-ref-opts' }, [overlayToggle, labelsToggle, shiftToggle])
+        );
+        plot.onLayout((l, mode) => {
+            const place = (el, y) => {
+                el.style.top = `${y}px`;
+                el.style.left = `${l.left}px`;
+                el.style.width = `${l.plotW}px`;
+                el.style.height = `${l.titleH}px`;
+            };
+            place(bodyHead, l.body.titleY);
+            place(refHead, l.refRowY);
+            refHead.classList.toggle('is-overlay', mode === 'overlay' && !!l.ref);
+            refHead.classList.toggle('is-none', !l.ref);
+        });
+
+        // What opens now and then goes with the plot, and takes its room from it
+        const extras = make('div', { class: 'spectro-extras' }, [parts.tRow, parts.frameButton, parts.refNote, parts.shiftDetails, parts.list]);
+        const dialSlot = make('div', { class: 'spectro-dial-slot' });
+        const orbitClass = pinnedHost;
+        afterPinned = () => {
+            const orbit = orbitClass.querySelector('.spectro-orbit');
+            if (orbit && orbit.children[1]) dialSlot.replaceChildren(orbit.children[1]);
+        };
+
+        if (VARIANT === 'a') {
+            // Tools as a line of words, the plot, the scale on its axis, then whatever's opened
+            toolBar.prepend(make('span', { class: 'spectro-tool-label', text: 'Measure' }));
+            bodyHead.appendChild(zoomGroup);
+            head.append(rangeEl, pinnedHost, extras);
+            instrument.append(toolsEl, dialSlot, refHost, note, help);
+        } else if (VARIANT === 'b') {
+            // A wider drawer: all of it fits on a thin line above and a thin line below
+            bodyHead.appendChild(pinnedHost);
+            head.append(rangeEl, extras);
+            instrument.append(toolsEl, dialSlot, refHost, note, help);
+        } else {
+            // The plot is the panel: it runs edge to edge and carries its own scale. What opens goes between it and the tools.
+            plot.stage.prepend(rangeEl);
+            bodyHead.append(pinnedHost, zoomGroup);
+            const helpButton = make('button', { type: 'button', class: 'spectro-flat spectro-help-button', 'aria-label': 'About these wavelengths', title: 'About these wavelengths', 'aria-pressed': 'false' }, [
+                make('span', { class: 'icon solid fa-question-circle', 'aria-hidden': 'true' }),
+                make('span', { class: 'spectro-chip-q', text: 'Help' })
+            ]);
+            helpButton.addEventListener('click', () => {
+                help.open = !help.open;
+                helpButton.setAttribute('aria-pressed', help.open ? 'true' : 'false');
+            });
+            toolBar.appendChild(helpButton);
+            help.prepend(note);
+            const area = make('div', { class: 'spectro-area' }, [toolsEl, extras, dialSlot, help]);
+            instrument.append(area, refHost, toolBar);
+        }
+    }
+
     // The part of the drawer that scrolls. Only it moves: anything else would take the whole page, and the sky, with it.
     function scrollerOf() {
         let scroller = root.parentElement;
@@ -178,6 +330,7 @@ function createSpectrumPanel(app, container) {
 
     function setMode(mode) {
         plot.setMode(mode);
+        if (onModeSet) onModeSet(mode);
         stackedButton.setAttribute('aria-pressed', mode === 'stacked' ? 'true' : 'false');
         overlayButton.setAttribute('aria-pressed', mode === 'overlay' ? 'true' : 'false');
     }
@@ -591,6 +744,7 @@ function createSpectrumPanel(app, container) {
             make('span', { text: words.short }),
             make('span', { class: 'spectro-tool-x', 'aria-hidden': 'true', text: '×' })
         ]);
+        if (VARIANT) dressChip(chip, tool.id, words);
         const body = make('div', { class: 'spectro-tool-body' });
         const panel = make('div', { id: panelId, class: 'spectro-tool-panel', role: 'region', 'aria-label': tool.label, tabIndex: -1, hidden: true }, [body]);
         row = { tool, words, chip, panel, body, instance: null, open: false, wanted: false };
@@ -628,6 +782,7 @@ function createSpectrumPanel(app, container) {
             if (applies && !instance) {
                 instance = tool.mount(pinnedHost, panelApi);
                 pinned.set(tool.id, instance);
+                if (afterPinned) afterPinned();
             } else if (!applies && instance) {
                 pinned.delete(tool.id);
                 instance.dispose();

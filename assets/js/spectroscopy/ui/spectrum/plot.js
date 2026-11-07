@@ -316,6 +316,11 @@ export function createPlot(container, opts = {}) {
     let labelsOn = false;
     let cursorNm = null;
 
+    // How the plot dresses itself. The panel can take over the words around the panes and put real controls there instead.
+    const chrome = { ruler: true, axisTitle: true, titleH: 15, bodyShare: 0.54, refTitle: true, flux: 'right', tags: false, top: 0, overlayRows: 1 };
+    const layoutFns = new Set();
+    let layoutKey = '';
+
     let cssW = 0;
     let cssH = 0;
     let dpr = 1;
@@ -399,24 +404,25 @@ export function createPlot(container, opts = {}) {
         const left = 34;
         const right = 10;
         const plotW = Math.max(10, cssW - left - right);
-        const rulerH = compact ? 0 : 15;
-        const titleH = 15;
+        const rulerH = chrome.top + (compact || !chrome.ruler ? 0 : 15);
+        const titleH = chrome.titleH;
         const stripH = compact ? 10 : 13;
         const stripGap = 2;
         const paneGap = compact ? 4 : 7;
-        const axisH = compact ? 20 : 34;
+        const axisH = compact || !chrome.axisTitle ? 20 : 34;
         const base = { x: left, w: plotW, stripH };
         let body;
         let ref = null;
         if (mode === 'overlay' || !hasRef()) {
             const strips = hasRef() ? 2 : 1;
-            const h = Math.max(20, cssH - rulerH - titleH - strips * (stripH + stripGap) - axisH);
-            const y = rulerH + titleH;
+            const rows = chrome.overlayRows;
+            const h = Math.max(20, cssH - rulerH - rows * titleH - strips * (stripH + stripGap) - axisH);
+            const y = rulerH + rows * titleH;
             body = { ...base, titleY: rulerH, y, h, stripY: y + h + stripGap };
-            if (hasRef()) ref = { ...base, titleY: rulerH, y, h, stripY: body.stripY + stripH + stripGap };
+            if (hasRef()) ref = { ...base, titleY: rulerH + (rows - 1) * titleH, y, h, stripY: body.stripY + stripH + stripGap };
         } else {
             const free = Math.max(40, cssH - rulerH - 2 * titleH - 2 * (stripH + stripGap) - paneGap - axisH);
-            const bodyH = Math.round(free * 0.54);
+            const bodyH = Math.round(free * chrome.bodyShare);
             const refH = free - bodyH;
             const y0 = rulerH + titleH;
             body = { ...base, titleY: rulerH, y: y0, h: bodyH, stripY: y0 + bodyH + stripGap };
@@ -425,6 +431,7 @@ export function createPlot(container, opts = {}) {
         }
         const last = ref || body;
         return {
+            refRowY: ref ? ref.titleY : rulerH + (chrome.overlayRows - 1) * titleH,
             left,
             right: left + plotW,
             plotW,
@@ -890,11 +897,18 @@ export function createPlot(container, opts = {}) {
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'right';
         ctx.fillStyle = tokens.ink;
-        const unitWidth = unit ? ctx.measureText(unit).width : 0;
-        if (unit && pane.w > 200) ctx.fillText(unit, pane.x + pane.w, y);
+        const right = chrome.flux === 'right';
+        const unitWidth = unit && right ? ctx.measureText(unit).width : 0;
+        if (unit && right && pane.w > 200) ctx.fillText(unit, pane.x + pane.w, y);
         ctx.textAlign = 'left';
-        const room = pane.w - (unit && pane.w > 200 ? unitWidth + 10 : 0) - 12;
+        if (!right) {
+            ctx.font = fontOf(10.5);
+            ctx.fillText('flux', 6, y);
+            ctx.font = fontOf(11);
+        }
+        const room = pane.w - (unit && right && pane.w > 200 ? unitWidth + 10 : 0) - 12;
         const x = drawKey(pane.x, y, which === 'body' ? tokens.body : tokens.ref, which === 'ref');
+        if (which === 'ref' && !chrome.refTitle) return;
         ctx.font = fontOf(11.5, 700);
         ctx.fillStyle = tokens.ink;
         ctx.fillText(ellipsize(s.label || (which === 'body' ? 'This object' : 'Reference'), room), x, y);
@@ -904,6 +918,17 @@ export function createPlot(container, opts = {}) {
         const y = pane.titleY + layout.titleH / 2 + 0.5;
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
+        if (chrome.overlayRows === 2) {
+            // A row each: the reference's name is the panel's own control, in the row beside this key
+            const x0 = drawLineKey(pane.x, y, tokens.body, false);
+            ctx.font = fontOf(11.5, 700);
+            ctx.fillStyle = tokens.ink;
+            ctx.fillText(ellipsize(series.body.label || 'This object', pane.w * 0.5), x0, y);
+            ctx.font = fontOf(10.5);
+            ctx.fillText('flux', 6, y);
+            drawLineKey(pane.x, layout.ref.titleY + layout.titleH / 2 + 0.5, tokens.ref, true);
+            return;
+        }
         const half = pane.w * 0.42;
         let x = drawLineKey(pane.x, y, tokens.body, false);
         ctx.font = fontOf(11.5, 700);
@@ -984,7 +1009,7 @@ export function createPlot(container, opts = {}) {
             const x = Math.max(layout.left - 30, Math.min(tick.x - w / 2, layout.right + 8 - w));
             ctx.fillText(tick.label, x, y + 6);
         });
-        if (!layout.compact) {
+        if (!layout.compact && chrome.axisTitle) {
             ctx.textAlign = 'center';
             ctx.fillText(scale.isLog ? 'Wavelength (log scale)' : 'Wavelength', 0.5 * (layout.left + layout.right), y + 20);
         }
@@ -1093,6 +1118,11 @@ export function createPlot(container, opts = {}) {
         scale = wavelengthScale(lo, hi, layout.left, layout.plotW);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssW, cssH);
+        const nextKey = [layout.body.titleY, layout.refRowY, !!layout.ref, layout.titleH, layout.left, layout.plotW, mode, layout.compact].join();
+        if (nextKey !== layoutKey) {
+            layoutKey = nextKey;
+            layoutFns.forEach((fn) => fn(layout, mode));
+        }
 
         ctx.font = fontOf(11);
         const ticks = wavelengthTicks(scale, (t) => ctx.measureText(t).width);
@@ -1139,7 +1169,25 @@ export function createPlot(container, opts = {}) {
             drawStrip(refPane, ref);
         }
         drawCapNote(bodyPane, body);
+        if (chrome.flux !== 'right' && stacked) {
+            drawOverlayUnit(bodyPane, body);
+            if (hasRef()) drawOverlayUnit(layout.ref, ref);
+        }
         drawAxis(ticks);
+        if (!chrome.axisTitle && scale.isLog) {
+            const pane = layout.ref || layout.body;
+            ctx.font = fontOf(10.5);
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            const text = 'log scale';
+            const w = ctx.measureText(text).width;
+            ctx.fillStyle = tokens.well;
+            ctx.globalAlpha = 0.8;
+            ctx.fillRect(pane.x + pane.w - w - 6, pane.y + pane.h - 15, w + 6, 14);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = tokens.ink;
+            ctx.fillText(text, pane.x + pane.w - 3, pane.y + pane.h - 8);
+        }
 
         overlays.forEach((fn) => {
             ctx.save();
@@ -1204,6 +1252,25 @@ export function createPlot(container, opts = {}) {
             c.lineWidth = 1.5;
             c.fill();
             c.stroke();
+            if (!chrome.tags) return;
+            // The value right beside the point it belongs to, so no line of the panel has to be kept for it
+            const words = sig(v, 3);
+            c.font = fontOf(11, 700);
+            const tw = c.measureText(words).width + 8;
+            let tx = x + 7;
+            if (tx + tw > pane.x + pane.w) tx = x - 7 - tw;
+            const ty = Math.max(pane.y + 1, Math.min(pane.y + pane.h - 17, y - 8));
+            c.fillStyle = tokens.well;
+            c.globalAlpha = 0.86;
+            c.beginPath();
+            if (c.roundRect) c.roundRect(tx, ty, tw, 16, 3);
+            else c.rect(tx, ty, tw, 16);
+            c.fill();
+            c.globalAlpha = 1;
+            c.fillStyle = tokens.ink;
+            c.textAlign = 'center';
+            c.textBaseline = 'middle';
+            c.fillText(words, tx + tw / 2, ty + 8.5);
         };
         dot('body', tokens.body);
         if (hasRef()) dot('ref', tokens.ref);
@@ -1753,6 +1820,19 @@ export function createPlot(container, opts = {}) {
     const api = {
         el: root,
         canvas,
+        stage,
+        readout,
+        // Temporary, while the panel's layouts are being compared: see panel.js
+        setChrome(next) {
+            Object.assign(chrome, next);
+            layout = null;
+            layoutKey = '';
+            redraw();
+        },
+        onLayout(fn) {
+            layoutFns.add(fn);
+            return () => layoutFns.delete(fn);
+        },
         setSpectrum(sp, label) { setSeries(series.body, sp, label); },
         setReference(sp, label) { setSeries(series.ref, sp || null, label); },
         setMode(next) {

@@ -559,6 +559,8 @@ export function createRefPicker(container, { beside = null, onChange = () => {},
 
     const api = {
         el: root,
+        // Temporary, while the panel's layouts are being compared: see panel.js
+        parts: { label, row, box, input, opener, prev, next, list, status, tRow, labelsInput, optionsRow, shiftDetails, shiftSummary, frameButton, refNote },
         state() {
             const item = itemOf(state.id);
             return { id: state.id, item, T: state.T, z: state.z, shift_kms: state.z * C_KMS, labels: state.labels };
