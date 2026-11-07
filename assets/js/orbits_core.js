@@ -1078,6 +1078,7 @@
     function fmtTime(yr) {
         // (the clock goes below zero when time runs backwards past the start)
         const a = Math.abs;
+        if (scene.minutes) { const m = (yr * YEAR_S) / 60; return { v: a(m) < 1000 ? m.toFixed(1) : fmtWhole(m), u: 'min' }; }
         if (timeInSeconds()) {
             const s = yr * YEAR_S;
             return { v: a(s) < 100 ? s.toFixed(2) : a(s) < 1000 ? s.toFixed(1) : fmtWhole(s), u: 's' };
@@ -1090,6 +1091,10 @@
     }
     // A duration in s, days or years; precise keeps trailing zeros (a measured period: "1.00 yr")
     function fmtDuration(yr, precise) {
+        if (scene.minutes && yr * YEAR_S >= 60) {
+            const m = (yr * YEAR_S) / 60;
+            return m < 300 ? `${m.toFixed(precise ? 1 : 0)} min` : m < 2880 ? `${(m / 60).toFixed(1)} h` : `${(m / 1440).toFixed(1)} days`;
+        }
         if (timeInSeconds() || yr * YEAR_S < 600) {
             const s = yr * YEAR_S;
             if (s < 1) return `${precise ? s.toFixed(3) : +s.toFixed(3)} s`;
@@ -2189,6 +2194,7 @@
 
     function touching(a, b) {
         if (a.held || b.held || (a.grp && a.grp === b.grp)) return false;
+        if (scene.cannon && (a.kind === 'probe' || b.kind === 'probe')) return false;   // (see "Newton's cannon")
         if (a.kep && (a.kep === b.kep || a.kep.b === b)) return a.kep.touch;
         if (b.kep && b.kep.b === a) return b.kep.touch;
         const reach = (a.R + b.R) / AU_KM;
@@ -4611,6 +4617,7 @@
             simTime += timeDir * dt;
             acc -= dt;
             steps++;
+            if (scene.cannon) cannonStep();   // (see "Newton's cannon")
             if (checkMerges()) { refreshBodyLists(); }
             if (checkTides()) {
                 // (every one that passed its limit in this step: a body going round its host may not be near it by the next)
@@ -5089,6 +5096,7 @@
         nextSampleT = sampleDt;
         fitBox(def.box, false);
         skySceneLoaded(def);
+        cannonSceneLoaded(def);
         refreshBodyLists();
         updateTrailLabel();
         resetCharts();
@@ -8175,6 +8183,7 @@
         drawCometTails(C);
         drawGravityUnder(C, subj);   // (Hill sphere, Roche limit and pull lines: see "Mutual gravity made visible")
         drawBodies(C);
+        if (scene.cannon) drawCannon(C);   // (see "Newton's cannon")
         drawLagrangePoints(C);
         if (settings.com) drawCentreOfMass(C);   // small: on top, so a star at the centre doesn't hide it
         drawArrows(C);
@@ -8594,7 +8603,7 @@
             } else {
                 drawBody(b, x, y, r, C);
             }
-            if ((b.id === selectedId || b === popBody) && !cleanRender) {
+            if ((b.id === selectedId || b === popBody) && !cleanRender && !(scene.cannon && b.id === cannon.quiet && b !== popBody)) {
                 ctx.strokeStyle = b === popBody ? colours().text : C.subtle;
                 ctx.lineWidth = 1.2;
                 ctx.setLineDash([3, 3]);
@@ -8647,7 +8656,7 @@
         return knot;
     }
     function drawLabels(C) {
-        if (!settings.labels) return;
+        if (!settings.labels || scene.cannon) return;   // (Newton's cannon names its own paths)
         const fs = clamp(Math.min(viewW, viewH) / 42, 11, 13);
         // What the canvas's edges carry (the cards, the arrow key, the scale bar, the "Viewed from" chip):
         // a name goes there only if it has nowhere else to go (and the chosen body's, never if it can help it)
@@ -9097,7 +9106,7 @@
         let n = 0;
         for (const b of bodies) if (!b.grp && !b.minor) n++;
         sizeArrows(n);
-        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0 || !!scene.sky || !!scene.progress;   // (the sky scene: only the planet it follows, or its loops are lost among them. A moon forming: the chosen body only)
+        arrowsBusy = n > ARROWS_ALL_MAX || arrowBack === 0 || !!scene.sky || !!scene.progress || !!scene.cannon;   // (the sky scene: only the planet it follows, or its loops are lost among them. A moon forming: the chosen body only)
     }
 
     const gasHeld = new Set();
@@ -9106,6 +9115,7 @@
         const subj = bodyById(selectedId);
         let drewF = false, drewV = false;
         countArrows();
+        if (scene.cannon && selectedId === cannon.quiet) return;   // (see "Newton's cannon")
         // (a torn-apart body's pieces only get arrows when one is chosen. What gas goes round gets none: the gas's
         // pull on it, unevenly spread, only swings a long arrow about and draws the eye from the gas)
         if (settings.forces) {
@@ -9720,6 +9730,7 @@
     }
     function drawArrowLegend(C) {
         legend.shown = false;
+        if (scene.cannon) return;   // (no numbers beside what is hardly ever drawn there)
         if (cleanRender || !bodies.length || !(settings.velocities || settings.forces)) return;
         const now = performance.now(), same = keyWake.scene === scene;
         // (a new scene's arrows are its own: the last one's don't count for the moment)
@@ -10090,7 +10101,7 @@
         }
         edges.noteLeft = Infinity;
         if (now < sizeNote.until) {
-            const note = settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
+            const note = scene.cannon ? 'Earth to scale, cannon not' : settings.realistic ? 'Sizes to scale' : 'Sizes not to scale';
             ctx.textAlign = 'right';
             ctx.fillText(note, visR - pad - 2, y0 + 2);
             edges.noteLeft = visR - pad - 2 - ctx.measureText(note).width;
@@ -11211,6 +11222,7 @@
         const perSecond = speed * rate();   // simulated years per real second
         if (timeInSeconds()) {
             const s = perSecond * YEAR_S;
+            if (scene.minutes) return `${fig2(s / 60)} min a second`;
             return s >= 0.01 ? `${fig2(s)} s a second` : `${fig2(s * 1000)} ms a second`;
         }
         const days = timeUnit() === 'd';
@@ -11968,6 +11980,7 @@
     const speedUnit = (v) => (v * AUYR_KMS < 0.1 ? { label: 'm/s', f: SPEED_UNITS['m/s'] } : { label: 'km/s', f: SPEED_UNITS['km/s'] });
     const distUnit = (au) => (scene.units === 'km' || au < 0.01 ? { label: 'km', f: DIST_UNITS.km } : { label: 'AU', f: 1 });
     function periodUnit(yr) {
+        if (scene.minutes) return { label: 'min', f: TIME_UNITS.min };
         if (timeInSeconds() || yr * YEAR_S < 600) return { label: 's', f: TIME_UNITS.s };
         if (timeUnit() === 'd' || yr < 0.1) return { label: 'days', f: TIME_UNITS.d };
         return { label: 'yr', f: 1 };
@@ -12737,6 +12750,7 @@
     }
 
     function usualHint() {
+        if (scene && scene.cannon) return cannonPrompt();
         const v = settings.velocities, tap = coarse(), dragged = learnt.includes('d');
         let h = dragged ? '' : '<strong>Drag</strong> a body into space. ';
         if (!learnt.includes('a')) {
@@ -13713,6 +13727,10 @@
             missionNote('<strong>Mission rules:</strong> time only runs forwards. Undo takes a burn back.');
             on = false;
         }
+        if (on && scene.cannon) {
+            historyNote('<strong>Time runs forwards here,</strong> so the paths stay drawn. Undo takes a shot back.');
+            on = false;
+        }
         const dir = on ? -1 : 1;
         if (dir !== timeDir) {
             timeDir = dir;
@@ -14068,6 +14086,7 @@
             if (b) {
                 if (popBody && popBody !== b) closePopover();
                 selectBody(b.id);
+                cannon.quiet = null;   // (pressed: Newton's cannon shows its arrows)
                 if (dbl) setFrame(frameId === b.id ? null : b.id);
             } else if (pickOffMark(d)) {
                 lastTap.quick = false;   // (a pointer is chosen, not viewed from)
@@ -15012,7 +15031,8 @@
             // (a rotating frame: the body its body fr orbits, and the line's direction on the screen)
             ro: turnSetup(),
             // (a scene with a start date: that date, so its calendar comes back with it)
-            jd: SCENES[s.scene] && SCENES[s.scene].dated ? s.startJD : undefined
+            jd: SCENES[s.scene] && SCENES[s.scene].dated ? s.startJD : undefined,
+            cn: cannonSetup(s)   // (Newton's cannon: the shots' paths)
         };
     }
 
@@ -15102,7 +15122,8 @@
             trail: Number.isInteger(sca[3]) && sca[3] >= 0 && sca[3] < TRAIL_STEPS.length ? sca[3] : (def.trail !== undefined ? def.trail : 4),
             com: !!sca[4],
             zoom: fin(vw[0], 0) > 0 ? clamp(vw[0], 1e-7, 1e7) : 0.4, panX: fin(vw[1], 0), panY: fin(vw[2], 0),
-            startJD: fin(d.jd, 0) > 0 ? clamp(d.jd, JD_MIN, JD_MAX) : 0
+            startJD: fin(d.jd, 0) > 0 ? clamp(d.jd, JD_MIN, JD_MAX) : 0,
+            cannon: def.cannon ? readCannon(d.cn, ids) : null
         };
         const set = {
             sp: fin(raw.sp, 0) > 0 ? clamp(raw.sp, SPEED_STOPS[0], SPEED_STOPS[SPEED_STOPS.length - 1]) : settings.speed,
@@ -15917,7 +15938,8 @@
             forceRef, vRef, energyExp, trail: settings.trailIndex, com: settings.com,
             zoom: view.zoom, panX: view.panX, panY: view.panY,
             startJD: startDate.jd,   // (the start date of a scene that has one)
-            mission: missionSnapshot()   // (the fuel used and the burns, so undo gives fuel back)
+            mission: missionSnapshot(),   // (the fuel used and the burns, so undo gives fuel back)
+            cannon: cannonSnapshot()   // (Newton's cannon: the shots' paths)
         });
     }
 
@@ -16013,6 +16035,7 @@
         syncEccentricity(true);
         updateTrailLabel();
         missionRestore(s.mission, how);
+        cannonRestore(s.cannon);
         hist.restoring = false;
     }
 
@@ -17237,7 +17260,7 @@
     // Is this edit off limits in a mission? Shows a friendly note if so. Aiming the probe's own arrow is
     // allowed, and stops the clock while it is aimed (a held body stays put while time runs).
     function missionRefuse(what, b) {
-        if (!mission.def) return false;
+        if (!mission.def) return cannonRefuse(what, b);
         const craft = !!b && b.id === mission.craftId, own = mission.def.own || 'your probe';
         if (what === 'aim' && craft && !missionIsOver()) {
             if (!paused) { setPaused(true); mission.aimPaused = true; }
@@ -19611,6 +19634,509 @@
         wellInfo: () => Object.assign({ on: settings.well, cost: well.cost, count: well.count, wait: well.wait }, well.info || {})
     });
     bindWell();
+
+    // ------------------------------------------------------------------
+    // Newton's cannon, his own thought experiment (A Treatise of the System of the World, 1728): a cannon on a
+    //   mountain so tall that it is above the air. The faster the shot, the farther it falls before it lands, until
+    //   the ground curves away as fast as it falls: it is always falling, but it keeps missing. Faster still, it
+    //   swings out on a wider ellipse, and past the escape speed it never comes back.
+    //   A true-size Earth in km, and the cannon 100 km up (the Karman line, the usual edge of space. This simulation
+    //   has no air anyway; in the real thin air up there, an orbit this low would soon come down). The speeds are worked
+    //   out for that height from the file's G and Earth's mass: sqrt(GM/r) = 7.85 km/s to go round, sqrt(2GM/r) = 11.10
+    //   km/s to escape, a lap in 86.3 minutes. (The textbook's 7.9 and 11.2 km/s are the same formulas at the ground.)
+    //   The mountain and the cannon are a mark, larger than life whenever 100 km is only a few px; the muzzle is at the
+    //   true height.
+    //   Each shot is a real body, a probe's mass (800 kg), moved by the same gravity and the same steps as everything
+    //   else. They can't touch each other (see touching); their pull on Earth, and on each other, is some 22 orders
+    //   of magnitude too small to matter. A swarm scene, so they are plain dots with no names or arrows unless chosen.
+    //   A shot that reaches the ground stops there with a small mark (cannonStep): not through mergeBodies or collide, so
+    //   Earth stays exactly as it was, whatever Merge and Realistic physics are set to.
+    //   Its path is kept here, not in the trails: the points it really went through, relative to Earth, until it lands,
+    //   leaves, or has gone once round (cannon.shots, drawn by drawCannon). They are part of the edit history's snapshots,
+    //   so Undo takes a shot back and Run again fires the last one again, and of a link and the autosave, as at most
+    //   CANNON_LINK_PTS points of each path in whole km. Restart clears them. Run backwards is off in this scene: paths that
+    //   stay drawn have no way to un-draw themselves, and Undo does the same job.
+    // ------------------------------------------------------------------
+    const CANNON_H = 100;                 // km: how high the cannon is
+    const CANNON_LAP = TAU * Math.sqrt(Math.pow((KINDS.earth.R + CANNON_H) / AU_KM, 3) / (G * KINDS.earth.m));   // yr: once round from there (8 s on screen at 1x: a Tref of 0.75 of it)
+    const CANNON_MAX = 12;                // paths kept (past this, the oldest goes)
+    const CANNON_FAR = 30000 / AU_KM;     // well out of the view: what has become of a shot is said by here, and one not coming back stops being followed
+    const CANNON_STEP = 0.02;             // a new path point after moving this share of its distance from Earth (about a degree)
+    const CANNON_LINK_PTS = 90;
+    const CANNON_FIRST = 6;               // km/s: the speed the slider starts on
+    // The slider's stops, km/s (with the graze, circular and escape speeds among them). Nearly every stop draws something
+    // new, so they are closest where the range changes fastest: 7 km/s lands 2,240 km away, and 7.8 km/s 11,660 km.
+    const CANNON_LANDS = [3, 4, 5, 6, 6.5, 7, 7.25, 7.5, 7.7, 7.8], CANNON_ROUND = [8, 8.25, 8.5, 9, 9.5, 10, 10.5, 11], CANNON_OUT = [11.5, 12, 13, 15, 20];
+    const cannon = {
+        on: false,
+        shots: [],                        // { id (its body, while it flies; else 0), v (km/s), color, text, pts, n, swept (radians round Earth), full (gone once round), end (1 landed, 2 left), said, t0 }
+        stops: [], stop: 0,               // the slider's speeds, and which
+        m: 0, R: 0, vg: 0, vc: 0, ve: 0,  // Earth as they were worked out for, and the speeds that grazes, goes round, escapes
+        quiet: null,                      // the body chosen by the scene, for the readouts: no arrows or ring for it, until pressed (a ring round Earth would look like a path)
+        boxes: new Float64Array(4 * (CANNON_MAX + 2))
+    };
+    // (minutes: the clock and periods read in minutes, as a low orbit's do; underneath, its time is in seconds)
+    SCENES.cannon = {
+        units: 'km', time: 's', minutes: true, Tref: 0.75 * CANNON_LAP, cannon: true, swarm: true, noClock: true, subject: 0, trail: 0, vref: 7.85 / AUYR_KMS,
+        box: [-9500, 9500, -13000, 9000].map((v) => v / AU_KM),
+        tip: () => cannonPrompt(),
+        bodies: [{ kind: 'earth' }]
+    };
+
+    const cannonEarth = () => { for (const b of bodies) if (b.kind === 'earth') return b; return null; };
+    const cannonSpeedText = (v) => `${+v.toFixed(2)} km/s`;
+    function cannonMix(c1, c2, t) {
+        const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+        const ch = (s) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t).toString(16).padStart(2, '0');
+        return `#${ch(16)}${ch(8)}${ch(0)}`;
+    }
+    // A path's colour says what kind it is: warm, it lands; green to blue, it goes round; violet to pink, it leaves
+    function cannonColour(i) {
+        const S = cannon.stops, g = S.findIndex((v) => v >= cannon.vg), e = S.findIndex((v) => v >= cannon.ve);
+        if (i < g) return cannonMix('#ff5f52', '#ffd166', i / Math.max(1, g - 1));
+        if (i < e) return cannonMix('#9be35f', '#38bdf8', (i - g) / Math.max(1, e - g - 1));
+        return cannonMix('#b68cff', '#ff7ad9', (i - e) / Math.max(1, S.length - e - 1));
+    }
+
+    // The speeds and the slider's stops for Earth as it is (its menu can change it; for the true one, round numbers)
+    function cannonSync(E) {
+        if (E.m === cannon.m && E.R === cannon.R) return;
+        const was = cannon.stops.length ? cannon.stops[cannon.stop] / (cannon.vc / cannonVc0()) : CANNON_FIRST;
+        cannon.m = E.m; cannon.R = E.R;
+        const R = E.R / AU_KM, r = (E.R + CANNON_H) / AU_KM, mu = G * (E.m + KINDS.probe.m);
+        const vc = Math.sqrt(mu / r) * AUYR_KMS, ve = Math.SQRT2 * vc, k = vc / cannonVc0();
+        const vg = Math.sqrt(mu * (2 / r - 2 / (r + R))) * AUYR_KMS, g = Math.ceil(vg * 100) / 100;   // (going round, closest at the ground: a = (r + R) / 2)
+        cannon.vg = vg; cannon.vc = vc; cannon.ve = ve;
+        const scaled = (list) => list.map((v) => v * (Math.abs(k - 1) < 1e-9 ? 1 : k));
+        cannon.stops = scaled(CANNON_LANDS).filter((v) => v < vg).concat(g < vc ? [g] : [], [vc], scaled(CANNON_ROUND).filter((v) => v > vc && v < ve), [ve], scaled(CANNON_OUT));
+        let best = 0;
+        cannon.stops.forEach((v, i) => { if (Math.abs(v - was * k) < Math.abs(cannon.stops[best] - was * k)) best = i; });
+        cannon.stop = best;
+        cannonSyncUi(true);
+    }
+    const cannonVc0 = () => Math.sqrt(G * (KINDS.earth.m + KINDS.probe.m) / ((KINDS.earth.R + CANNON_H) / AU_KM)) * AUYR_KMS;
+
+    // (from loadScene) A new start clears the shots, in this scene or leaving it
+    function cannonSceneLoaded(def) {
+        cannon.shots = [];
+        cannonUi(!!def.cannon);
+        if (!def.cannon) return;
+        cannon.quiet = selectedId;
+        const E = cannonEarth(), r = (E.R + CANNON_H) / AU_KM, f = (G * KINDS.probe.m * E.m) / r;
+        forceRef = f / r;
+        energyExp = Math.floor(Math.log10(f * ENERGY_J));
+        cannonSync(E);
+        cannonSyncUi(false);
+    }
+
+    function cannonUi(on) {
+        if (cannon.on === on || !ui.cn) return;
+        cannon.on = on;
+        if (ui.simWrap) ui.simWrap.classList.toggle('orb-cannon-on', on);
+        if (ui.toolbar && !mission.def) ui.toolbar.setAttribute('aria-label', on ? 'The cannon' : 'Add bodies');
+        ui.cn.box.hidden = !on;
+    }
+
+    // ---- Firing ----
+    function cannonPoint(q, x, y) {
+        if (2 * q.n + 2 > q.pts.length) { const a = new Float64Array(2 * q.pts.length); a.set(q.pts); q.pts = a; }
+        q.pts[2 * q.n] = x; q.pts[2 * q.n + 1] = y;
+        q.n++;
+    }
+
+    function cannonFire() {
+        const E = cannonEarth();
+        if (!E || !scene.cannon || dragging()) return null;
+        flushEdit();
+        commitStep(snapshot(), { label: 'fire the cannon', target: null, key: 'fire' }, false);
+        // (at the escape speed, a billionth over, so that rounding can't leave it bound for ever on a far-off ellipse)
+        const v = cannon.stops[cannon.stop] * (cannon.stops[cannon.stop] === cannon.ve ? 1 + 1e-9 : 1), text = cannonSpeedText(v), r = (E.R + CANNON_H) / AU_KM;
+        // A path at this speed is drawn again, not drawn twice; and the oldest goes once there are too many
+        const same = cannon.shots.find((q) => q.text === text);
+        if (same) cannonForget(same);
+        if (cannon.shots.length >= CANNON_MAX) cannonForget(cannon.shots[0]);
+        const color = cannonColour(cannon.stop);
+        const b = newBody({ name: `${text} shot`, kind: 'probe', m: KINDS.probe.m, R: KINDS.probe.R, color });
+        // (fired in the same moment, a metre apart: in one place, their pull on each other would have no size)
+        let x0 = 0;
+        for (const q of cannon.shots) if (q.id && q.t0 === simTime) x0 += 1e-3 / AU_KM;
+        b.x = b.px = b.dx = E.x + x0; b.y = b.py = b.dy = E.y + r;
+        b.vx = b.pvx = E.vx + v / AUYR_KMS; b.vy = b.pvy = E.vy;
+        bodies.push(b);
+        clearTrail(b);
+        const q = { id: b.id, v, color, text, pts: new Float64Array(256), n: 0, swept: 0, full: false, end: 0, said: false, t0: simTime };
+        cannonPoint(q, x0, r);
+        cannon.shots.push(q);
+        computeForces();
+        computePrimaries();
+        refreshBodyLists();
+        selectBody(b.id);
+        cannon.quiet = b.id;
+        flashes.push({ x: E.x, y: E.y + r, t: performance.now(), color, r0: 1.5, grow: 9 });
+        clearHint('note');
+        if (paused) setPaused(false);
+        cannonSyncUi(false);
+        return b;
+    }
+
+    // A shot and its path, gone (its flight, if it is still flying)
+    function cannonForget(q) {
+        const i = cannon.shots.indexOf(q);
+        if (i >= 0) cannon.shots.splice(i, 1);
+        const b = q.id ? bodyById(q.id) : null;
+        if (b) cannonDrop(b);
+    }
+
+    // A flight over: if it was the chosen body, the choice passes to the newest still flying, if any
+    function cannonDrop(b) {
+        if (selectedId === b.id) {
+            const E = cannonEarth();
+            let next = E ? E.id : null;
+            for (const q of cannon.shots) if (q.id && q.id !== b.id) next = q.id;
+            selectBody(next);
+            cannon.quiet = next;
+        }
+        removeBody(b, null);
+        computeForces();
+    }
+
+    // ---- In flight ----
+    // After each step, before any merging. The ground is reached along the ball's own orbit: where it ended the step
+    // inside Earth, or where it passed its closest point during the step (a lone ball's exact drift covers about a degree).
+    function cannonStep() {
+        const E = cannonEarth();
+        if (!E) return;
+        for (const q of cannon.shots) {
+            if (!q.id) continue;
+            const b = bodyById(q.id);
+            if (!b) { q.id = 0; continue; }   // (deleted from its menu: the path stays as far as it got)
+            if (b.held) continue;
+            if (b.kep) b.kep.touch = false;   // (the ground is seen to here)
+            const x0 = b.px - E.px, y0 = b.py - E.py, x = b.x - E.x, y = b.y - E.y, r = hyp(x, y);
+            const reach = (E.R + b.R) / AU_KM;
+            let hit = r < reach ? elementsOf(b, E) : null;
+            if (!hit && x0 * (b.pvx - E.pvx) + y0 * (b.pvy - E.pvy) < 0 && x * (b.vx - E.vx) + y * (b.vy - E.vy) >= 0) {
+                const el = elementsOf(b, E);
+                if (el.p / (1 + el.e) < reach) hit = el;
+            }
+            if (hit) { cannonLand(q, b, E, hit, x0, y0, reach); continue; }
+            q.swept += Math.abs(Math.atan2(x0 * y - y0 * x, x0 * x + y0 * y));
+            if (!q.full) {
+                const k = 2 * q.n - 2;
+                if (hyp(x - q.pts[k], y - q.pts[k + 1]) > CANNON_STEP * r) cannonPoint(q, x, y);
+                if (q.swept >= TAU) { cannonPoint(q, x, y); q.full = true; }
+            }
+            if (!q.said && (q.swept >= Math.PI || r > CANNON_FAR)) cannonSayOrbit(q, b, E);
+            if (r > CANNON_FAR && elementsOf(b, E).energy >= 0) {
+                cannonPoint(q, x, y);
+                q.id = 0; q.end = 2;
+                cannonDrop(b);
+                cannonSyncUi(false);
+            }
+        }
+    }
+
+    // Where its orbit crosses the ground on the way in (relElements: w points to the closest point, h the way round)
+    function cannonLand(q, b, E, el, x0, y0, reach) {
+        const nu = Math.acos(clamp((el.p / reach - 1) / Math.max(el.e, 1e-12), -1, 1));
+        const a = el.w + (el.h < 0 ? nu : -nu), lx = reach * Math.cos(a), ly = reach * Math.sin(a);
+        q.swept += Math.abs(Math.atan2(x0 * ly - y0 * lx, x0 * lx + y0 * ly));
+        cannonPoint(q, lx, ly);
+        q.id = 0; q.end = 1;
+        cannonDrop(b);
+        flashes.push({ x: E.x + lx, y: E.y + ly, t: performance.now(), color: q.color, r0: 1.5, grow: 9 });
+        const km = q.swept * E.R, far = (Math.round(km / 10) * 10).toLocaleString('en-US');
+        if (km > 0.25 * TAU * E.R) cannonSay(q, 'So close:', ` it lands ${far} km away.`);
+        else cannonSay(q, 'Too slow:', ` it hits the ground, ${far} km away.`);
+        cannonSyncUi(false);
+    }
+
+    // Half way round without landing (past its closest point, so it never will), or far out of the view
+    function cannonSayOrbit(q, b, E) {
+        const el = elementsOf(b, E), above = (el.p / (1 + el.e)) * AU_KM - E.R;
+        if (el.energy >= 0) cannonSay(q, 'Gone:', ' fast enough to escape.');
+        else if (el.a * (1 + el.e) > CANNON_FAR) cannonSay(q, 'Not quite gone:', ` it comes back in ${fmtDuration(el.T)}.`);
+        else if (above < 50) cannonSay(q, 'Just missed:', ` it skims ${Math.round(above)} km above the ground, and keeps going.`);
+        else if (el.e < 0.01) cannonSay(q, 'It keeps falling, and keeps missing.', ` Once round takes ${fmtDuration(el.T)}.`);
+        else cannonSay(q, 'Still falling, still missing.', ` A wider orbit, once round in ${fmtDuration(el.T)}.`);
+        refreshHint();
+    }
+
+    // What became of a shot. (If another has been fired since, which one this is about)
+    function cannonSay(q, bold, rest) {
+        q.said = true;
+        const newest = q === cannon.shots[cannon.shots.length - 1];
+        eventNote(newest ? bold : `${q.text}, ${bold.charAt(0).toLowerCase()}${bold.slice(1)}`, rest, 7000);
+    }
+
+    // What to try next: the tip and the usual hint in this scene
+    function cannonPrompt() {
+        if (!cannonEarth()) return 'No Earth, no cannon. Restart brings it back.';
+        let round = false, out = false;
+        for (const q of cannon.shots) { if (q.v >= cannon.ve) out = true; else if (q.v >= cannon.vg) round = true; }
+        if (!cannon.shots.length) return 'Choose a speed and fire. Can you make a shot that never lands?';
+        if (!round && !out) return 'Faster! Can you make a shot that never lands?';
+        if (!out) return 'It never lands. Now, how fast before it never comes back?';
+        return round ? 'Try the speeds in between, and compare the paths.' : 'Too fast to come back. Try a slower shot that stays.';
+    }
+
+    // ---- Undo, redo, run again, links ----
+    // (Paths only grow, past the end a copy knows about, so finished or not they can be shared until put back)
+    const cannonSnapshot = () => (scene.cannon ? cannon.shots.map((q) => Object.assign({}, q)) : null);
+
+    function cannonRestore(list) {
+        cannon.shots = (list || []).map((q) => {
+            const c = Object.assign({}, q);
+            if (c.id) { c.pts = new Float64Array(Math.max(256, 4 * q.n)); c.pts.set(q.pts.subarray(0, 2 * q.n)); }
+            return c;
+        });
+        cannonUi(!!scene.cannon);
+        if (!scene.cannon) return;
+        if (timeDir < 0) setReverse(false, true);
+        cannon.quiet = selectedId;
+        clearHint('note');
+        const E = cannonEarth();
+        if (E) cannonSync(E);
+        cannonSyncUi(false);
+    }
+
+    // In a link: [body id or 0, km/s, colour, end, how far round, said, [x, y, then each next point's step from the last, in km]]
+    function cannonSetup(s) {
+        if (!s.cannon) return undefined;
+        return s.cannon.map((q) => {
+            const every = Math.max(1, Math.ceil(q.n / CANNON_LINK_PTS)), pts = [];
+            let px = 0, py = 0;
+            const add = (i) => { const x = Math.round(q.pts[2 * i] * AU_KM), y = Math.round(q.pts[2 * i + 1] * AU_KM); pts.push(x - px, y - py); px = x; py = y; };
+            for (let i = 0; i < q.n - 1; i += every) add(i);
+            add(q.n - 1);
+            return [q.id, q.v, q.color, q.end, +q.swept.toFixed(5), q.said ? 1 : 0, pts];
+        });
+    }
+
+    // Read back and checked, like the rest of a setup (ids: the bodies it has)
+    function readCannon(rows, ids) {
+        if (!Array.isArray(rows)) return [];
+        const out = [];
+        for (const r of rows.slice(-CANNON_MAX)) {
+            if (!Array.isArray(r) || r.length !== 7 || !Array.isArray(r[6]) || r[6].length < 2 || r[6].length % 2 || r[6].length > 4 * CANNON_LINK_PTS) continue;
+            if (!(r[1] > 0 && r[1] < 1e6) || !Number.isFinite(r[4]) || !r[6].every(Number.isFinite) || typeof r[2] !== 'string' || !/^#[0-9a-f]{6}$/i.test(r[2])) continue;
+            const n = r[6].length / 2, pts = new Float64Array(Math.max(256, 4 * n));
+            let x = 0, y = 0;
+            for (let i = 0; i < n; i++) { x += r[6][2 * i]; y += r[6][2 * i + 1]; pts[2 * i] = x / AU_KM; pts[2 * i + 1] = y / AU_KM; }
+            const id = ids.has(r[0]) ? r[0] : 0;
+            out.push({ id, v: r[1], color: r[2], text: cannonSpeedText(r[1]), pts, n, swept: Math.abs(r[4]), full: Math.abs(r[4]) >= TAU, end: id ? 0 : r[3] === 1 ? 1 : r[3] === 2 ? 2 : 0, said: !!r[5], t0: -1 });
+        }
+        return out;
+    }
+
+    // In this scene a drag moves the view, not Earth or a ball, and Earth stays
+    function cannonRefuse(what, b) {
+        if (!scene.cannon) return false;
+        if (what === 'move' || (what === 'aim' && b && b.id === cannon.quiet)) return true;
+        if (what === 'delete' && b && b.kind === 'earth') { historyNote('<strong>The cannon needs its Earth.</strong> Restart clears the shots.'); return true; }
+        return false;
+    }
+
+    // ---- Drawing ----
+    // Over Earth: the paths, the landing marks, the balls, the cannon on its mountain, and each path's speed
+    function drawCannon(C) {
+        const E = cannonEarth();
+        if (!E) return;
+        cannonSync(E);
+        const c = turn.c, s = turn.s, ox = sx(E.dx), oy = sy(E.dy);   // (a rotating view turns them too)
+        const shots = cannon.shots;
+        ctx.lineWidth = clamp(1.7 * sizeScale, 1.3, 2.2);
+        for (const q of shots) {
+            const P = q.pts;
+            ctx.strokeStyle = bodyStroke(q.color, C.dark);
+            ctx.beginPath();
+            ctx.moveTo(ox + (c * P[0] - s * P[1]) * scale, oy - (s * P[0] + c * P[1]) * scale);
+            for (let i = 1; i < q.n; i++) {
+                const x = P[2 * i], y = P[2 * i + 1];
+                ctx.lineTo(ox + (c * x - s * y) * scale, oy - (s * x + c * y) * scale);
+            }
+            const b = q.id && !q.full ? bodyById(q.id) : null;
+            if (b) ctx.lineTo(sx(b.dx), sy(b.dy));
+            ctx.stroke();
+            if (q.end === 2) cannonGoneMark(q, ox, oy, c, s);
+        }
+        // Landing marks and the balls: dots with a thin edge in the background's colour, to stand out where paths meet
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = C.bg;
+        for (const q of shots) {
+            const b = q.id ? bodyById(q.id) : null;
+            if (!b && q.end !== 1) continue;
+            const k = 2 * q.n - 2;
+            const x = b ? sx(b.dx) : ox + (c * q.pts[k] - s * q.pts[k + 1]) * scale, y = b ? sy(b.dy) : oy - (s * q.pts[k] + c * q.pts[k + 1]) * scale;
+            ctx.fillStyle = bodyStroke(q.color, C.dark);
+            ctx.beginPath();
+            ctx.arc(x, y, (b ? 3.4 : 2.4) * clamp(sizeScale, 0.8, 1.1), 0, TAU);
+            ctx.fill();
+            ctx.stroke();
+        }
+        cannonMark(C, E, ox, oy, c, s);
+        if (settings.labels && !cleanRender) cannonLabels(C, E, ox, oy, c, s);
+    }
+
+    // A shot no longer followed is still going: its path, seen by zooming out, ends in an arrowhead
+    function cannonGoneMark(q, ox, oy, c, s) {
+        const P = q.pts, k = 2 * q.n - 2, x = P[k], y = P[k + 1], ax = P[k - 2], ay = P[k - 1];
+        const X = ox + (c * x - s * y) * scale, Y = oy - (s * x + c * y) * scale;
+        if (X < visL - 12 || X > visR + 12 || Y < -12 || Y > viewH + 12) return;
+        const a = Math.atan2(-(s * (x - ax) + c * (y - ay)), c * (x - ax) - s * (y - ay)), L = 7;
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.moveTo(X, Y);
+        ctx.lineTo(X - L * Math.cos(a - 0.45), Y - L * Math.sin(a - 0.45));
+        ctx.lineTo(X - L * Math.cos(a + 0.45), Y - L * Math.sin(a + 0.45));
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // The mountain, its peak where the muzzle is, 100 km up: at least a few px of it, so at most zooms larger than life
+    // (it stands in Earth's disc then, and the true height still shows above the ground). Its gun points along the shots.
+    function cannonMark(C, E, ox, oy, c, s) {
+        const r = (E.R + CANNON_H) / AU_KM, z = 1.25 * clamp(sizeScale, 0.8, 1.1);
+        const h = Math.max((CANNON_H / AU_KM) * scale, 10 * z), w = Math.max(1.2 * h, 11 * z);
+        ctx.save();
+        ctx.translate(ox - s * r * scale, oy - c * r * scale);
+        ctx.rotate(-turn.phi);
+        ctx.fillStyle = C.dark ? '#8f8778' : '#7a7263';
+        ctx.beginPath();
+        ctx.moveTo(-w, h); ctx.lineTo(0, 0); ctx.lineTo(w, h);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = C.dark ? '#f2f2ee' : '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(-0.3 * w, 0.3 * h); ctx.lineTo(0, 0); ctx.lineTo(0.3 * w, 0.3 * h);
+        ctx.closePath();
+        ctx.fill();
+        // The gun: a barrel with its muzzle at the point the shots start from, on a wheel
+        ctx.fillStyle = C.dark ? '#d5dae2' : '#3d434d';
+        ctx.strokeStyle = C.bg;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, -1.6 * z); ctx.lineTo(-11 * z, -2.6 * z); ctx.lineTo(-11 * z, 2.2 * z); ctx.lineTo(0, 1.6 * z);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(-6.5 * z, 2.6 * z, 2.6 * z, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Each path's speed, at the visible point of it farthest round from the cannon (so a lander's at its end, an orbit's on
+    // the far side, and one that leaves where it goes off the canvas), outwards from Earth and clear of the others
+    function cannonLabels(C, E, ox, oy, c, s) {
+        const fs = clamp(Math.min(viewW, viewH) / 44, 10.5, 13), B = cannon.boxes;
+        ctx.font = font(fs);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = hexA(C.bg, 0.8);
+        // Left of the gun (the shots go right), up and away from Earth
+        const r = (E.R + CANNON_H) / AU_KM, mx = ox - s * r * scale, my = oy - c * r * scale, name = `Cannon, ${CANNON_H} km up`, nw = nameWidth(name, fs);
+        const nl = mx - 20 - nw, nt = my - fs - 6;
+        B[0] = nl; B[1] = nt; B[2] = nl + nw; B[3] = nt + fs;
+        ctx.fillStyle = C.label;
+        ctx.strokeText(name, nl, nt);
+        ctx.fillText(name, nl, nt);
+        let placed = 1;
+        // (those that have settled first: one still moving keeps clear of them, not the other way round)
+        for (let k = 2 * cannon.shots.length - 1; k >= 0; k--) {
+            const q = cannon.shots[k % cannon.shots.length], P = q.pts;
+            if ((q.id !== 0 && !q.full) !== (k < cannon.shots.length)) continue;
+            let best = 2, ax = 0, ay = 0;
+            for (let i = 0; i < q.n; i++) {
+                const x = P[2 * i], y = P[2 * i + 1];
+                const X = ox + (c * x - s * y) * scale, Y = oy - (s * x + c * y) * scale;
+                if (X < visL + 6 || X > visR - 6 || Y < 6 || Y > viewH - 6) continue;
+                const round = y / hyp(x, y);   // (the cannon is straight up: 1 beside it, -1 on the far side)
+                if (round < best) { best = round; ax = X; ay = Y; }
+            }
+            if (best > 0.9999) continue;   // (none of it in view, or only just out of the muzzle)
+            const dx = ax - ox, dy = ay - oy, d = hyp(dx, dy) || 1, ux = dx / d, uy = dy / d, w = nameWidth(q.text, fs);
+            let box = null;
+            for (let t = 0; t < 8; t++) {
+                box = labelBox(ax + ux * (6 + t * (fs + 3)), ay + uy * (6 + t * (fs + 3)), ux, uy, w, fs);
+                let free = true;
+                for (let i = 0; i < placed && free; i++) free = !(box.l < B[4 * i + 2] && box.r > B[4 * i] && box.t < B[4 * i + 3] && box.b > B[4 * i + 1]);
+                if (free) break;
+            }
+            B[4 * placed] = box.l; B[4 * placed + 1] = box.t; B[4 * placed + 2] = box.r; B[4 * placed + 3] = box.b;
+            placed++;
+            // (words need more contrast than lines on a light background)
+            ctx.fillStyle = C.dark ? q.color : bodyStroke(bodyStroke(q.color, false), false);
+            ctx.strokeText(q.text, box.l, box.t);
+            ctx.fillText(q.text, box.l, box.t);
+        }
+    }
+
+    // ---- The console: in the palette's place in this scene ----
+    function buildCannonConsole() {
+        if (!ui.toolbar) return;
+        const B = document.createElement('section');
+        B.className = 'orb-cannon';
+        B.id = 'cannonConsole';
+        B.hidden = true;
+        B.setAttribute('aria-label', 'The cannon');
+        B.innerHTML = '<label class="orb-cn-read" for="cannonSpeed"><span>Speed</span><strong id="cannonVal"></strong></label>'
+            + '<input type="range" id="cannonSpeed" min="0" max="1" step="1" value="0" aria-label="Speed of the shot">'
+            + '<div class="orb-cn-zones" id="cannonZones" aria-hidden="true"><span>Lands</span><span>Goes round</span><span>Gone</span></div>'
+            + '<div class="orb-cn-btns"><button type="button" class="orb-cn-fire" id="cannonFire" title="Fire the cannon (or Enter on the slider)">Fire</button>'
+            + '<button type="button" class="orb-cn-clear" id="cannonClear" title="Clear the paths: the same as Restart">Clear</button></div>';
+        ui.toolbar.prepend(B);
+        ui.cn = { box: B, val: byId('cannonVal'), speed: byId('cannonSpeed'), zones: byId('cannonZones'), fire: byId('cannonFire'), clear: byId('cannonClear') };
+        // (a button pressed with the pointer leaves the focus where it was, so Space still plays and pauses)
+        B.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('button')) e.preventDefault(); });
+        ui.cn.speed.addEventListener('input', () => { cannon.stop = clamp(+ui.cn.speed.value | 0, 0, cannon.stops.length - 1); cannonSyncUi(false); });
+        ui.cn.speed.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!e.repeat) cannonFire(); } });
+        ui.cn.fire.addEventListener('click', cannonFire);
+        ui.cn.clear.addEventListener('click', () => { if (ui.reset) ui.reset.click(); });
+    }
+
+    // whole: the slider's stops have changed too
+    function cannonSyncUi(whole) {
+        const N = ui.cn;
+        if (!N) return;
+        N.fire.disabled = !cannonEarth();
+        if (!cannon.stops.length) return;
+        if (whole) {
+            const S = cannon.stops, last = S.length - 1;
+            N.speed.max = String(last);
+            const a = S.findIndex((v) => v >= cannon.vg) / last, b = S.findIndex((v) => v >= cannon.ve) / last;
+            N.box.style.setProperty('--orb-cn-a', `calc(8px + (100% - 16px) * ${a.toFixed(4)})`);
+            N.box.style.setProperty('--orb-cn-b', `calc(8px + (100% - 16px) * ${b.toFixed(4)})`);
+            N.zones.style.gridTemplateColumns = `${(100 * a).toFixed(2)}% ${(100 * (b - a)).toFixed(2)}% minmax(0, 1fr)`;
+            N.speed.title = `From ${CANNON_H} km up, above the air: ${cannon.vc.toFixed(2)} km/s to go round, ${cannon.ve.toFixed(2)} km/s to escape`;
+        }
+        if (+N.speed.value !== cannon.stop) N.speed.value = String(cannon.stop);
+        const v = cannon.stops[cannon.stop], text = v === cannon.vc ? `${v.toFixed(2)} km/s, a circle` : v === cannon.ve ? `${v.toFixed(2)} km/s, escape` : cannonSpeedText(v);
+        setText(N.val, text);
+        N.speed.setAttribute('aria-valuetext', text);
+        N.clear.classList.toggle('is-unused', !cannon.shots.length);   // (its place is kept, so Fire doesn't move under a finger)
+        refreshHint();
+    }
+
+    Object.assign(window.orbitsSimulation, {
+        // Fire at the slider's stop nearest v km/s (the speed is its own stop, so vc and ve can be asked for exactly)
+        cannonFire(v) {
+            let best = 0;
+            cannon.stops.forEach((s, i) => { if (Math.abs(s - v) < Math.abs(cannon.stops[best] - v)) best = i; });
+            cannon.stop = best;
+            cannonSyncUi(false);
+            const b = cannonFire();
+            return b ? b.name : null;
+        },
+        cannonInfo: () => ({
+            vg: cannon.vg, vc: cannon.vc, ve: cannon.ve, h: CANNON_H, lap: CANNON_LAP, stops: cannon.stops.slice(), stop: cannon.stop,
+            shots: cannon.shots.map((q) => ({ id: q.id, v: q.v, text: q.text, color: q.color, n: q.n, swept: q.swept, end: q.end, said: q.said, full: q.full, last: [q.pts[2 * q.n - 2] * AU_KM, q.pts[2 * q.n - 1] * AU_KM] })),
+            kms: cannon.shots.map((q) => Array.from(q.pts.subarray(0, 2 * q.n)).map((v) => v * AU_KM))
+        })
+    });
+    buildCannonConsole();
 
     // ------------------------------------------------------------------
     // Start
