@@ -3,19 +3,21 @@
 //
 //   wienPeak(spectrum)                  -> { peak_nm, T_K, err_K, belowRange, aboveRange, fit: { T_K, amp } | null }
 //                                          spectrum must cover the whole range: panelApi.getOverview(), whatever the plot shows
-//   lineCentre(spectrum, nearNm, opts?) -> { centre_nm, err_nm, depth, fwhm_nm, type, continuum, height, sn } | null
-//   lineWidth(spectrum, nearNm, opts?)  -> { fwhm_nm, fwhm_kms, velocity_kms, err_kms, unresolved, limit_kms, shape, ... } | null
+//   lineCentre(spectrum, nearNm, opts?) -> { centre_nm, err_nm, depth, fwhm_nm, type, continuum, height, sn, moved_nm, jumped } | null
+//   lineWidth(spectrum, nearNm, opts?)  -> { fwhm_nm, fwhm_kms, velocity_kms, err_kms, unresolved, noReading, limit_kms, base_kms, pressure_kms, shape, ... } | null
 //   dopplerFrom(centreNm, restNm, errNm?) -> { dlambda_nm, z, v_kms, err_kms, err_z, beyondCz }
 //   fitOrbit(points)                    -> { period_days, err_period_days, K_kms, err_K_kms, gamma_kms, cycles } | null
 //   massFunction, minimumUnseenMass, pairMasses: the sums that turn a period and a speed swing into masses
 //
-// opts: { searchNm (how far from nearNm the line may be), type ('abs'|'em', if known) }
+// opts: { searchNm (how far from nearNm the line may be), type ('abs'|'em', if known), hydrogen (true for a hydrogen line, whose
+//         pressure wings can be as wide as its whole width) }
 //
 // Uncertainties are stated so that they cover the true error, not just the scatter: each also allows for what lines,
 // blends and the fit's shape do, as checked against every star in the sky.
 
 import { AU, C_KMS, G, M_SUN, WIEN_B, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../core/phys.js';
 import { blackBodyPeak } from './peak.js';
+import { makeProfile, profileAt } from './kernel.js';
 
 const WIEN_NM_K = WIEN_B * 1e9;
 const FWHM_PER_SIGMA = 2.3548;
@@ -144,7 +146,7 @@ export function wienCurveAt(fit, nm) {
 const LINE_WINDOW_PX = 36;       // Half-width of the first look around a line, in samples
 const LINE_WINDOW_MAX_PX = 1200;
 const CENTRE_FLOOR_RES = 0.04;   // A line's centre can't be trusted better than this share of a resolution element
-const CENTRE_FLOOR_WIDTH = 0.06; // ... or this share of its own width, because neighbours lean on it
+const CENTRE_FLOOR_WIDTH = 0.012; // ... or this share of its own width, because neighbours lean on it
 const LINE_SCALES = [1, 3, 7, 15, 31]; // Half-widths of the smoothing tried on a line, in samples
 const LINE_CLEAR_SIGMA = 7;      // How many standard deviations of noise a line must clear before no more smoothing is needed
 
@@ -289,6 +291,57 @@ function fitGaussian(y, c0, h0, s0, half, basin) {
     return { c, h, s, errC: Math.sqrt(Math.max(0, cov.inv00 * variance)), errS: Math.sqrt(Math.max(0, cov.inv22 * variance)) };
 }
 
+const DIP_COMPARABLE = 0.8;      // A dip this share as deep as the deepest in reach could as well be the one meant
+const DIP_CLEAR_SIGMA = 4;       // Standard deviations a smaller dip must clear to count as a dip at all
+const DIP_SEPARATE = 0.3;        // How far the spectrum must climb between two dips for them to be two, as a share of the depth
+
+// Looks through the dips between samples from and to of a smoothed profile. Returns the deepest of those near the click's
+// sample, and the others the student might have meant: smaller dips the click was nearer to, and any about as deep.
+function dipNearestClick(profile, from, to, click, smooth, sigma) {
+    const list = Array.from(profile).sort((x, y) => x - y);
+    const level = quantileSorted(list, 0.8);
+    const reach = 2 * smooth + 1;
+    const dips = [];
+    let deepest = 0;
+    for (let i = from; i <= to; i++) {
+        const value = profile[i];
+        let lowest = true;
+        for (let j = Math.max(0, i - reach); j <= Math.min(profile.length - 1, i + reach) && lowest; j++) {
+            if (profile[j] < value) lowest = false;
+        }
+        if (!lowest) continue;
+        const amp = level - value;
+        if (amp <= 0) continue;
+        dips.push({ i, amp });
+        if (amp > deepest) deepest = amp;
+    }
+    if (!dips.length) {
+        let at = from;
+        for (let i = from; i <= to; i++) if (profile[i] < profile[at]) at = i;
+        return { at, passed: [], rivals: [] };
+    }
+    const lowest = dips.reduce((a, b) => (b.amp > a.amp ? b : a));
+    // About as deep, and a separate dip: the spectrum climbs well out of it before reaching the deepest. Noise on the floor of
+    // one wide dip doesn't count.
+    const rival = (dip) => {
+        if (dip === lowest || dip.amp < DIP_COMPARABLE * deepest) return false;
+        let top = -Infinity;
+        for (let i = Math.min(dip.i, lowest.i); i <= Math.max(dip.i, lowest.i); i++) if (profile[i] > top) top = profile[i];
+        return top - profile[dip.i] >= DIP_SEPARATE * dip.amp;
+    };
+    let best = lowest;
+    dips.forEach((dip) => {
+        if (rival(dip) && Math.abs(dip.i - click) < Math.abs(best.i - click)) best = dip;
+    });
+    const noise = (DIP_CLEAR_SIGMA * sigma) / Math.sqrt(2 * smooth + 1);
+    const away = Math.abs(best.i - click);
+    const passed = dips
+        .filter((dip) => dip !== best && (rival(dip) || dip === lowest || (dip.amp >= noise && Math.abs(dip.i - click) < away)))
+        .map((dip) => dip.i);
+    const rivals = dips.filter((dip) => dip !== best && (rival(dip) || dip === lowest)).map((dip) => dip.i);
+    return { at: best.i, passed, rivals };
+}
+
 // Finds the line at a wavelength: its type, a continuum under it, and its depth profile. Grows its window until the line
 // fits well inside it.
 function findLine(spectrum, nearNm, opts = {}) {
@@ -340,6 +393,16 @@ function findLine(spectrum, nearNm, opts = {}) {
             }
             if (clear >= LINE_CLEAR_SIGMA) break;
         }
+        // Of the dips about as deep as the deepest in reach, the one nearest the click: a click on Ca II H means H, not K. A caller
+        // that says what kind of line it wants is following a known line through time, not asking what a click meant.
+        let others = [];
+        let rivals = [];
+        if (type === 'abs' && !opts.type) {
+            const picked = dipNearestClick(profile, Math.max(0, i0 - searchPx - a), Math.min(b - a - 1, i0 + searchPx - a), i0 - a, smooth, sigma);
+            centreIndex = picked.at + a;
+            others = picked.passed.map((i) => wl[i + a]);
+            rivals = picked.rivals.map((i) => wl[i + a]);
+        }
         // The continuum, keeping clear of the middle of the window
         const gap = Math.round(half * 0.4);
         const cont = sideContinuum(flux, centreIndex - half, centreIndex + half + 1, centreIndex, gap, sigma, type === 'em');
@@ -364,7 +427,7 @@ function findLine(spectrum, nearNm, opts = {}) {
             half = Math.min(half * 2, LINE_WINDOW_MAX_PX);
             continue;
         }
-        return { a, b, sigma, at, height, y, ys, cont, type, left, right, step, half, basin };
+        return { a, b, sigma, at, height, y, ys, cont, type, left, right, step, half, basin, passedOver: others, rivals };
     }
     return null;
 }
@@ -408,30 +471,186 @@ function measureLine(spectrum, line) {
     };
 }
 
+// How far a click may be off and still be on the line it means, as a share of the search: about a pixel on the plot
+const CLICK_SLACK = 1.5 / 7;
+const RIVAL_CLOSE = 3 / 7;       // Two deep dips this close on the plot, under 3 pixels, can't be told apart by clicking
+
+// A line's centre. moved_nm says how far that is from the click. If the search passed over a smaller dip nearer the click to get
+// here, or another deep dip is too close on the plot to tell from this one (jumped), the student may have meant that one,
+// so the uncertainty runs out to cover how far off it is.
 export function lineCentre(spectrum, nearNm, opts = {}) {
     const line = findLine(spectrum, nearNm, opts);
     if (!line || !significant(line)) return null;
-    return measureLine(spectrum, line);
+    const out = measureLine(spectrum, line);
+    const moved = Math.abs(out.centre_nm - nearNm);
+    const search = opts.searchNm ?? 0;
+    const crowded = line.rivals.some((nm) => Math.abs(nm - out.centre_nm) < RIVAL_CLOSE * search);
+    const jumped = crowded || (line.passedOver.length > 0 && moved > CLICK_SLACK * search);
+    const reach = jumped ? Math.max(...line.passedOver.map((nm) => Math.abs(nm - out.centre_nm))) : 0;
+    return { ...out, moved_nm: moved, jumped, err_nm: Math.hypot(out.err_nm, reach) };
 }
 
 // ---------- Line width ----------
 
 // A rotating star's line is 1.56 v sin i wide at half depth (limb darkening 0.6). Its steep sides and flat bottom make a
 // fitted Gaussian come out about 0.9 of that.
-const ROTATION_FWHM = 1.41;
-// What a metal line is wide with no rotation at all, as a FWHM: the heat of the gas, small-scale motions and a little pressure.
-// It is taken off, along with the instrument's own width, in quadrature.
-const LINE_BASE_KMS = 5.3;
+export const ROTATION_FWHM = 1.41;
+// Heat and small-scale motions in a metal line (km/s, as a standard deviation). Nearly the same in every star.
+const LINE_GAS_SIGMA = 1.4;
+// A reading has to clear this share of the limit before it counts: the spec's "about 3 to 5 km/s" is where a line stops telling.
+const RESOLVED_SHARE = 0.8;
+// Past this share of the speed, or of the limit if it reads below that, the line is too noisy to give any answer
+const NOISY_SHARE = 0.45;
+const NOISY_LIMIT_SHARE = 0.6;
+// Past about this a star would fly apart (the fastest in this sky turns at 300). A wider "at most" says the dip isn't one star's
+// line, or is all pressure.
+export const FASTEST_SPIN_KMS = 400;
 
 // The smallest rotation a resolving power can show: a good part of its resolution, and never under 5 km/s
 export function rotationLimitKms(R) {
     return Math.max(5, (0.8 * C_KMS) / R / 2);
 }
 
+const FIT_SPINS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 17, 20, 24, 28, 33, 40, 48, 56, 65, 80, 100, 120, 140, 160, 190, 220, 260, 300, 350, 400, 480];
+const FIT_PRESSURES = [0, 0.3, 0.6, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25, 32, 40, 50, 65, 80, 100, 130, 170, 220, 300, 400, 500];
+// A narrow line can take finer steps, and needs them: a step in pressure is otherwise made up for by a false spin
+const FIT_PRESSURES_FINE = [0, 0.3, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.6, 6.3, 7, 8, 9, 10, 11, 12.5, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63];
+const FIT_SAMPLES = 320;
+const FIT_REACH_KMS = 30;
+const FIT_REACH_WIDTHS = 1.5;
+const FIT_WIDE_FROM_KMS = 60;
+const FIT_WIDE_TO_KMS = 150;
+const fitProfiles = new Map();
+
+function fitProfile(vsini, a, R) {
+    const key = `${vsini}|${a}|${R}`;
+    let prof = fitProfiles.get(key);
+    if (!prof) {
+        prof = makeProfile({ sigma: LINE_GAS_SIGMA, a, vsini, R });
+        if (fitProfiles.size > 900) fitProfiles.clear();
+        fitProfiles.set(key, prof);
+    }
+    return prof;
+}
+
+// Splits a line's width into rotation and pressure from its shape: rotation gives steep sides and a flat bottom, and pressure
+// a sharp core on long wings. Tries each pair of the two against the line, with its depth and a level offset left free, and
+// returns the best spin and pressure and how far the spin can move before the fit gets clearly worse.
+function fitBroadening(line, centreIndex, R, widthKms, opts = {}) {
+    const dv = C_KMS * line.step;
+    // The core and its shoulders: further out, a wide line's wings are mostly its neighbours
+    const reach = Math.max(6, Math.max(FIT_REACH_KMS, FIT_REACH_WIDTHS * widthKms) / dv);
+    const lo = Math.max(line.basin.from, Math.ceil(centreIndex - reach));
+    const hi = Math.min(line.basin.to, Math.floor(centreIndex + reach));
+    const stride = Math.max(1, Math.ceil((hi - lo + 1) / FIT_SAMPLES));
+    const xs = [];
+    const ys = [];
+    for (let i = lo; i <= hi; i += stride) {
+        xs.push(Math.abs(i - centreIndex) * dv);
+        ys.push(line.y[i]);
+    }
+    const n = xs.length;
+    if (n < 5) return null;
+    let sy = 0;
+    let syy = 0;
+    for (let k = 0; k < n; k++) {
+        sy += ys[k];
+        syy += ys[k] * ys[k];
+    }
+    const spins = FIT_SPINS.filter((v) => v <= Math.max(3, widthKms * 1.1));
+    // A very wide line is mostly rotation: pressure that wide would be its neighbours' doing, unless it's hydrogen
+    const wide = Math.min(1, Math.max(0, (widthKms - FIT_WIDE_FROM_KMS) / (FIT_WIDE_TO_KMS - FIT_WIDE_FROM_KMS)));
+    const pressureShare = opts.hydrogen ? 0.8 : 0.8 - 0.5 * wide;
+    const pressures = (widthKms < FIT_WIDE_FROM_KMS ? FIT_PRESSURES_FINE : FIT_PRESSURES).filter((a) => a <= Math.max(1, widthKms * pressureShare));
+    const bestAt = new Float64Array(spins.length).fill(Infinity);
+    let best = Infinity;
+    let bestSpin = 0;
+    let bestA = 0;
+    spins.forEach((v, iv) => {
+        pressures.forEach((a) => {
+            const prof = fitProfile(v, a, R);
+            let sm = 0;
+            let smm = 0;
+            let smy = 0;
+            for (let k = 0; k < n; k++) {
+                const m = profileAt(prof, xs[k]);
+                sm += m;
+                smm += m * m;
+                smy += m * ys[k];
+            }
+            const det = n * smm - sm * sm;
+            if (!(det > 0)) return;
+            const h = (n * smy - sm * sy) / det;
+            const o = (sy - h * sm) / n;
+            if (!(h > 0)) return;
+            const rss = syy - h * smy - o * sy;
+            if (rss < bestAt[iv]) bestAt[iv] = rss;
+            if (rss < best) {
+                best = rss;
+                bestSpin = iv;
+                bestA = a;
+            }
+        });
+    });
+    if (!Number.isFinite(best)) return null;
+    // A curve through the best spin and its neighbours, for a value between the steps
+    let spin = spins[bestSpin];
+    if (bestSpin > 0 && bestSpin < spins.length - 1) {
+        const x0 = spins[bestSpin - 1];
+        const x1 = spins[bestSpin];
+        const x2 = spins[bestSpin + 1];
+        const y0 = bestAt[bestSpin - 1];
+        const y1 = bestAt[bestSpin];
+        const y2 = bestAt[bestSpin + 1];
+        const d0 = (y1 - y0) / (x1 - x0);
+        const d1 = (y2 - y1) / (x2 - x1);
+        const curve = (d1 - d0) / (x2 - x0);
+        if (curve > 0) spin = Math.max(x0, Math.min(x2, 0.5 * (x0 + x1) - d0 / (2 * curve)));
+    }
+    // The noise per sample, or more if the shape really doesn't fit
+    const scatter = Math.max(line.sigma * line.sigma, best / Math.max(1, n - 4));
+    const worse = best + scatter;
+    let low = spins[bestSpin];
+    let high = spins[bestSpin];
+    for (let k = bestSpin; k >= 0 && bestAt[k] <= worse; k--) low = spins[k];
+    for (let k = bestSpin; k < spins.length && bestAt[k] <= worse; k++) high = spins[k];
+    if (bestSpin > 0 && low === spins[bestSpin]) low = spin - (spins[bestSpin] - spins[bestSpin - 1]) * Math.min(1, scatter / Math.max(1e-30, bestAt[bestSpin - 1] - best));
+    if (bestSpin < spins.length - 1 && high === spins[bestSpin]) high = spin + (spins[bestSpin + 1] - spins[bestSpin]) * Math.min(1, scatter / Math.max(1e-30, bestAt[bestSpin + 1] - best));
+    return { spin, a: bestA, err: 0.5 * (high - low) };
+}
+
+// Samples averaged in groups: the same light in fewer, cleaner samples
+function binned(spectrum, k) {
+    const count = Math.floor(spectrum.wl.length / k);
+    const wl = new Float64Array(count);
+    const flux = new Float64Array(count);
+    for (let i = 0; i < count; i++) {
+        let sum = 0;
+        for (let j = 0; j < k; j++) sum += spectrum.flux[i * k + j];
+        flux[i] = sum / k;
+        wl[i] = spectrum.wl[i * k] * (spectrum.wl[1] / spectrum.wl[0]) ** ((k - 1) / 2);
+    }
+    return { wl, flux, snr: spectrum.snr, mode: spectrum.mode };
+}
+
+// The line itself, or, at high resolution, the same line from the binned samples if it is a broad one. A fast rotator's lines
+// spread over hundreds of samples, each too noisy to follow, and there's no sharp detail to lose by binning them.
+function lineToMeasure(spectrum, nearNm, opts) {
+    const R = resolvingPower(spectrum);
+    if (R >= BIN_FROM_R && spectrum.wl.length >= 8 * BIN_SAMPLES) {
+        const coarse = binned(spectrum, BIN_SAMPLES);
+        const broad = findLine(coarse, nearNm, opts);
+        if (broad && significant(broad) && (broad.right - broad.left) * broad.step * C_KMS >= BROAD_LINE_KMS) {
+            return { line: broad, from: coarse };
+        }
+    }
+    return { line: findLine(spectrum, nearNm, opts), from: spectrum };
+}
+
 export function lineWidth(spectrum, nearNm, opts = {}) {
-    const line = findLine(spectrum, nearNm, opts);
+    const { line, from } = lineToMeasure(spectrum, nearNm, opts);
     if (!line || !significant(line)) return null;
-    const centre = measureLine(spectrum, line);
+    const centre = measureLine(from, line);
     const R = resolvingPower(spectrum);
     const instrument = C_KMS / R;
     const fwhmKms = (centre.fwhm_nm / centre.centre_nm) * C_KMS;
@@ -453,11 +672,18 @@ export function lineWidth(spectrum, nearNm, opts = {}) {
     }
 
     const limit = rotationLimitKms(R);
-    const excess = fwhmKms * fwhmKms - instrument * instrument - LINE_BASE_KMS * LINE_BASE_KMS;
-    const velocity = excess > 0 ? Math.sqrt(excess) / ROTATION_FWHM : 0;
-    // The fit's own error, half a resolution element and a share of the answer for what neighbours and wings add
-    const fitErr = (centre.err_fwhm_nm / centre.centre_nm) * C_KMS;
-    const err = Math.hypot((1.8 * fitErr) / ROTATION_FWHM, 0.5 * instrument, 0.12 * velocity);
+    // The line's centre, as a position in the window
+    const centreIndex = Math.log(centre.centre_nm / from.wl[line.a]) / line.step;
+    const split = fitBroadening(line, centreIndex, R, fwhmKms, opts);
+    const fitted = split ? split.spin : 0;
+    const pressureKms = split ? 2 * split.a : 0;
+    // What the line would be wide with no spin at all: never less than the instrument and the gas's heat. The speed then follows
+    // from it, so that the sum on screen gives the speed on screen.
+    const narrowest = Math.hypot(instrument, FWHM_PER_SIGMA * LINE_GAS_SIGMA);
+    const baseKms = Math.max(narrowest, Math.sqrt(Math.max(0, fwhmKms * fwhmKms - (ROTATION_FWHM * fitted) ** 2)));
+    const velocity = Math.sqrt(Math.max(0, fwhmKms * fwhmKms - baseKms * baseKms)) / ROTATION_FWHM;
+    // The fit's own error, some of a resolution element and a share of the answer for what neighbours and wings add
+    const err = Math.hypot(split ? split.err : 0, 0.25 * instrument, 0.1 * velocity);
     return {
         fwhm_nm: centre.fwhm_nm,
         fwhm_kms: fwhmKms,
@@ -470,11 +696,34 @@ export function lineWidth(spectrum, nearNm, opts = {}) {
         instrument_kms: instrument,
         velocity_kms: velocity,
         err_kms: err,
-        unresolved: velocity < limit,
+        unresolved: velocity < RESOLVED_SHARE * limit,
         limit_kms: limit,
+        noReading: err > Math.max(NOISY_SHARE * velocity, NOISY_LIMIT_SHARE * limit),
+        base_kms: baseKms,
+        pressure_kms: pressureKms,
         shape,
         wingRatio
     };
+}
+
+const ZOOM_MIN_WINDOW_KMS = 90;     // The narrowest view: wide enough for a narrow line and some continuum either side
+const ZOOM_WINDOW_PER_WIDTH = 4;    // Half the view, as a multiple of the line's width
+const PICK_WANDER_KMS = 40;         // How far a listed line can seem to sit from where it's listed before the dip is a neighbour's
+
+// Where line zoom should look for a line at nearNm: the overview's width sets how far to zoom. With a listed line it always has an
+// answer, though the overview may not show it: a thin line can be too shallow to find there, or sit on a much wider neighbour.
+// Returns { centre_nm, half_nm, search_nm } for the view and the search within it, or null.
+export function lineZoomWindow(overview, nearNm, opts = {}) {
+    const { line, searchNm } = opts;
+    const seen = overview ? lineWidth(overview, nearNm, { searchNm, hydrogen: opts.hydrogen }) : null;
+    const trusted = seen && (!line
+        || (Math.abs(seen.centre_nm - nearNm) / nearNm) * C_KMS < Math.max(PICK_WANDER_KMS, 0.25 * seen.fwhm_kms));
+    if (!trusted && !line) return null;
+    const centre = trusted ? seen.centre_nm : nearNm;
+    const halfKms = Math.max(ZOOM_MIN_WINDOW_KMS, ZOOM_WINDOW_PER_WIDTH * (trusted ? seen.fwhm_kms : 0));
+    const half = (centre * halfKms) / C_KMS;
+    const near = (centre * 6) / C_KMS;
+    return { centre_nm: centre, half_nm: half, search_nm: Math.min(half * 0.3, Math.max(trusted ? seen.fwhm_nm : 0, near)) };
 }
 
 // Lines that pressure widens a lot, so they say little about rotation: hydrogen and helium, and the resonance lines of
@@ -491,34 +740,99 @@ export function hasLongWings(line) {
     return WINGED_LINES.some(([species, nm]) => species === line.species && Math.abs(nm - line.rest_nm) < 0.15);
 }
 
-// The lines that show a star's rotation best: thin metal lines with clear space around them, in a part of the spectrum
-// with plenty of light. Takes an overview spectrum; returns entries of its lines, best first.
+// How wide a star's own lines are at this resolution, as a FWHM. Blends only ever make a dip wider, so it goes by the narrower
+// of what the deepest lines measure.
+function typicalWidthKms(spectrum, thin) {
+    const widths = thin
+        .filter((line) => line.obs_nm >= 380 && line.obs_nm <= 1000)
+        .sort((a, b) => b.depth - a.depth)
+        .slice(0, 15)
+        .map((line) => lineWidth(spectrum, line.obs_nm, { searchNm: line.obs_nm * 0.0015 }))
+        .filter(Boolean)
+        .map((w) => w.fwhm_kms)
+        .sort((a, b) => a - b);
+    return widths.length ? quantileSorted(widths, 0.25) : 0;
+}
+
+const BAND_HEAD_CLEAR_KMS = 1300;   // The step at a molecular band's head throws off a line this close to it, at overview resolution
+const FAST_SHARPENS = 0.92;         // About 50 km/s: thin lines this wide are all rotation, and their neighbours matter more
+const VERY_FAST_SHARPENS = 0.84;    // About 65 km/s: rotation now outweighs pressure in stronger lines too
+const FAST_WINGED_LINES_KMS = 200;  // With only stronger lines to go by: a dense star's pressure alone takes them to about 150
+const WIDTH_PER_SPIN = 2.5;
+const BIN_FROM_R = 50000;
+const BIN_SAMPLES = 8;
+const BROAD_LINE_KMS = 120;
+const ROTATION_LINE_MIN_SNR = 20;   // At the line's own wavelength
+const ROTATION_LINE_SIGNAL = 15;    // Standard deviations at which a line is half way to as good as any
+const ROTATION_LINE_SIGNAL_MIN = 8; // Fewer than this, and a thin line is lost in the noise
+const HYDROGEN_ONLY_SNR = 60;       // A star showing only hydrogen this clearly is hot and spinning: anything fainter just hides its other lines
+
+// The lines that show a star's rotation best, for the spectrum's S/N. A slow star's are thin metal lines with clear space around
+// them, in a part of the spectrum with plenty of light, and any line that sits on the head of a molecular band is left out.
+// A fast star's thin lines are smeared into each other, so there it is strong lines standing clear of their neighbours, helium's
+// and magnesium's among them, since rotation now outweighs their pressure. Takes an overview spectrum; returns entries of its
+// lines (or zoomLines), best first. Ca II K and H are never offered, and hydrogen only if nothing else shows.
 export function suggestRotationLines(spectrum, count = 3) {
-    const { wl, flux, lines } = spectrum;
+    const { wl, flux, lines, zoomLines } = spectrum;
     if (!lines || !lines.length) return [];
     let top = 0;
     for (let i = 0; i < flux.length; i += 40) if (flux[i] > top) top = flux[i];
-    const absorption = lines.filter((l) => !l.band && l.type !== 'em' && l.obs_nm > 330 && l.obs_nm < 1100);
+    const inRange = (l) => !l.band && l.type !== 'em' && l.obs_nm > 330 && l.obs_nm < 1300;
+    const listed = lines.filter(inRange);
+    const faint = (zoomLines || []).filter(inRange);
+    const metals = listed.filter((l) => l.species !== 'H I' && l.species !== 'Ca II');
+    const thin = metals.concat(faint).filter((l) => !hasLongWings(l));
+    const width = typicalWidthKms(spectrum, thin.length ? thin : metals);
+    const onlyHydrogen = !metals.length && spectrum.snr >= HYDROGEN_ONLY_SNR;
+    // Sharpening the instrument deepens a thin line a lot, unless rotation is what sets its width
+    const sharpens = thin.length >= 3 ? median(thin.map((l) => (l.depth_zoom ?? l.depth) / Math.max(1e-6, l.depth))) : Infinity;
+    const fast = onlyHydrogen || (thin.length >= 3 ? sharpens < FAST_SHARPENS : width >= FAST_WINGED_LINES_KMS);
+    const veryFast = onlyHydrogen || (thin.length >= 3 ? sharpens < VERY_FAST_SHARPENS : fast);
+    const all = fast ? listed : listed.concat(faint);
+    const heads = lines.filter((l) => l.band && l.head_nm !== undefined && l.depth > 0.02);
+    const shown = (line) => line.depth_zoom ?? line.depth;
+    const signalOf = (line, i) => (fast ? line.depth : shown(line)) * spectrum.snr * Math.sqrt(Math.max(0, flux[i]) / top);
+    // A slow star needs a thin line that stands clear of the noise. Without one, the sodium and potassium resonance lines are
+    // next best: their pressure can be told apart from a spin of more than a few km/s, though what they give is a limit.
+    const thinLineShows = !fast && thin.some((line) => signalOf(line, Math.min(wl.length - 1, lowerBound(wl, line.obs_nm))) >= ROTATION_LINE_SIGNAL_MIN);
+    const usable = (line) => {
+        if (line.species === 'Ca II') return !hasLongWings(line);
+        if (line.species === 'H I') return onlyHydrogen;
+        if (!hasLongWings(line)) return true;
+        return veryFast || (!thinLineShows && !fast && (line.species === 'K I' || line.species === 'Na I'));
+    };
+    // The neighbours that count: anything at all comparable in depth, once the star's lines are this wide
+    const need = fast ? WIDTH_PER_SPIN * width : 300;
     const scored = [];
-    absorption.forEach((line) => {
-        if (hasLongWings(line) || line.depth < 0.02) return;
+    all.forEach((line) => {
+        if (!usable(line)) return;
         const i = Math.min(wl.length - 1, lowerBound(wl, line.obs_nm));
-        if (flux[i] < 0.03 * top) return;
+        if (!(spectrum.snr * Math.sqrt(Math.max(0, flux[i]) / top) >= ROTATION_LINE_MIN_SNR)) return;
+        if (heads.some((h) => (Math.abs(h.head_nm - line.obs_nm) / line.obs_nm) * C_KMS < BAND_HEAD_CLEAR_KMS)) return;
         // How far to the nearest line that could disturb this one, as a speed
         let clear = Infinity;
-        absorption.forEach((other) => {
+        listed.forEach((other) => {
             if (other === line || other.depth < 0.25 * line.depth) return;
-            clear = Math.min(clear, (Math.abs(other.obs_nm - line.obs_nm) / line.obs_nm) * C_KMS);
+            const apart = (Math.abs(other.obs_nm - line.obs_nm) / line.obs_nm) * C_KMS;
+            // A much stronger line reaches much further, on its wings
+            const reach = fast && hasLongWings(other) && other.depth > 2 * line.depth ? width : 0;
+            clear = Math.min(clear, Math.max(0, apart - reach));
         });
-        const roomy = Math.min(1, clear / 300);
-        const strong = Math.min(line.depth, 0.5);
-        // A line in the visible is where a student is looking already, and a line with plenty of light on it reads best
+        const roomy = Math.min(1, clear / need);
+        // How far the line stands above the noise at its own wavelength, which a deep line in plenty of light reads best
+        const signal = signalOf(line, i);
+        if (!fast && thinLineShows && signal < ROTATION_LINE_SIGNAL_MIN) return;
+        // A line in the visible is where a student is looking already
         const handy = line.obs_nm >= 380 && line.obs_nm <= 750 ? 1 : 0.6;
-        const light = Math.sqrt(flux[i] / top);
-        scored.push({ line, score: strong * roomy * roomy * handy * light });
+        scored.push({ line, score: (signal / (signal + ROTATION_LINE_SIGNAL)) * roomy * roomy * handy });
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, count).map((s) => s.line);
+    // The stars of a multiple system each list the same line
+    const unique = [];
+    scored.forEach(({ line }) => {
+        if (!unique.some((u) => Math.abs(u.rest_nm - line.rest_nm) < 0.05)) unique.push(line);
+    });
+    return unique.slice(0, count);
 }
 
 // The lines best for following through time, given the overview spectrum of each star to be followed. Sharp, deep lines with

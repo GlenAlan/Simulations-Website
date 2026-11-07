@@ -103,6 +103,10 @@ uniform float uBandStrength;
 uniform float uReveal;
 uniform float uDetail;      // Surface patterns fade out when too small on screen to do anything but shimmer
 uniform float uSpotDetail;
+uniform float uLane;        // 0: broad lanes, as cool stars have. 1: thin, warm lanes round brighter cells
+uniform float uJitter;      // How far the cells' centres wander. Much past a quarter, close views show where the search for the nearest stops
+uniform vec3 uLaneColour;
+uniform float uFine;        // A finer grain inside the cells, once they're big enough on screen to hold one
 varying vec3 vN;
 varying vec3 vWorld;
 varying vec3 vWorldN;
@@ -120,7 +124,7 @@ vec2 cells(vec3 p, float boil) {
                 vec3 o = vec3(float(i), float(j), float(k));
                 vec3 c = ip + o;
                 vec4 h = textureLod(tNoise, (c.xy + c.z * vec2(37.0, 17.0) + 0.5) / 256.0, 0.0);
-                vec3 d = o + 0.5 + 0.42 * sin(boil + 6.2831 * h.rba) - fp;
+                vec3 d = o + 0.5 + uJitter * sin(boil + 6.2831 * h.rba) - fp;
                 float q = dot(d, d);
                 if (q < f1) {
                     f2 = f1;
@@ -171,11 +175,25 @@ void main() {
     float slow = uAnim * uBoil;
     q += (vec3(vnoise(q * 0.6 + 11.0), vnoise(q * 0.6 + 23.0), vnoise(q * 0.6 + 37.0)) - 0.5) * 0.9;
 
+    float laneShade = 0.0;
 #if QUALITY >= 1
     vec2 f = cells(q, slow);
     float lanes = smoothstep(0.0, uCellSoft, f.y - f.x);
     float body = smoothstep(0.95, 0.05, f.x);
     float grain = mix(lanes * 0.72 + body * 0.28, body, uGrainBody);
+    if (uLane > 0.0) {
+        float shade = 1.0 - lanes;
+        float laned = lanes * 0.82 + 0.3 * smoothstep(0.85, 0.0, f.x);
+        // Close to, a star's surface is finer grain all the way down: the big cells sink to a mottle, and the small ones show
+        if (uFine > 0.0) {
+            vec2 g = cells(q * 3.4 + 17.0, slow * 1.5);
+            float fine = smoothstep(0.0, uCellSoft, g.y - g.x);
+            laned = mix(laned, (fine * 0.82 + 0.3 * smoothstep(0.85, 0.0, g.x)) * (0.86 + 0.14 * lanes), uFine);
+            shade = mix(shade, (1.0 - fine) * 0.8, uFine);
+        }
+        laneShade = uLane * shade;
+        grain = mix(grain, laned, uLane);
+    }
 #else
     // Low quality: ridged noise instead of true cells
     float n0 = vnoise(q * 1.4 + vec3(0.0, 0.0, slow * 0.4));
@@ -190,7 +208,7 @@ void main() {
     bright += uDetail * uContrast * 0.22 * (vnoise(q * 3.7 + slow * 0.3) - 0.5);
 #endif
 
-    vec3 colour = uColour;
+    vec3 colour = mix(uColour, uLaneColour, laneShade * uDetail);
 
     // Starspots: dark centres inside a less dark edge, in bands either side of the equator
     if (uSpots > 0.0 && uSpotDetail > 0.0) {
@@ -295,16 +313,18 @@ void main() {
     gl_FragColor = vec4(bandColour(uColour) * g * uGlow, 1.0);
 }`;
 
-// How bright the disc is before tone mapping. Any brighter and the colour and the granulation both wash out to white;
-// the corona and the engine's bloom carry the glare instead.
+// How bright the disc is before tone mapping. Any brighter and a cool star's colour and granulation wash out to white;
+// the corona and the engine's bloom carry the glare instead. From about G upwards the disc must outshine its corona.
 function surfaceBrightness(T) {
-    if (T < 5800) return 0.72 + (0.12 * (Math.max(T, 2400) - 2400)) / 3400;
-    return 0.84 + (1.4 * (Math.min(T, 50000) - 5800)) / 44200;
+    if (T < 4800) return 0.72 + (0.12 * (Math.max(T, 2400) - 2400)) / 3400;
+    if (T < 5800) return 0.805 + (0.145 * (T - 4800)) / 1000;
+    if (T < 20000) return 0.95 + (0.65 * (T - 5800)) / 14200;
+    return 1.6 + (0.6 * (Math.min(T, 50000) - 20000)) / 30000;
 }
 
 // Extra saturation, for the same reason: the tone curve pales whatever it compresses. A true G star's black-body colour
 // is nearly white, so cool stars need the most help to read as yellow, orange and red.
-function surfaceColour(T) {
+export function surfaceColour(T) {
     const k = 2.7 - 1.4 * Math.min(1, Math.max(0, (T - 6000) / 2000));
     return blackBodyRGB(T).map((c) => c ** k);
 }
@@ -316,9 +336,11 @@ export function starLook(star) {
     const hot = Math.min(1, Math.max(0, (T - 7500) / 22500));   // 0 at A/F, 1 at the hottest O stars
     const warm = Math.min(1, Math.max(0, (6800 - T) / 3000));   // 0 at F, 1 at mid-M
     const giant = stage === 'giant' || stage === 'supergiant';
+    const lane = giant ? 0 : Math.min(1, Math.max(0, (T - 4800) / 800));
     const look = {
         cellScale: 30 - warm * 9,
-        cellSoft: 0.5,
+        cellSoft: 0.5 - lane * 0.24,
+        lane,
         grainBody: 0,
         contrast: 0.44 - hot * 0.2,
         super: 0.3,
@@ -366,7 +388,12 @@ export function starLook(star) {
         look.corona.rmax = red ? 3.0 : 4.2;
         look.intensity = surfaceBrightness(T);
     }
-    if (stage === 'white_dwarf') {
+    // Hot stars: the first glow outside the edge mustn't compete with the disc
+    if (T > 9000) look.corona.a1 *= 0.6;
+    if (stage === 'white_dwarf' || stage === 'neutron_star') {
+        const neutron = stage === 'neutron_star';
+        look.lane = 0;
+        look.cellSoft = 0.5;
         look.cellScale = 90;
         look.contrast = 0.05;
         look.super = 0.04;
@@ -374,9 +401,9 @@ export function starLook(star) {
         look.spots = 0;
         look.limbU = 0.25;
         look.limbV = 0;
-        look.intensity = 7 + Math.min(1, T / 40000) * 11;
+        look.intensity = neutron ? 16 : 7 + Math.min(1, T / 40000) * 11;
         look.spin = 0;
-        look.corona = { a1: 2.6, h1: 0.14, a2: 0.34, h2: 0.42, turb: 0, flow: 0, freq: 3, rmax: 4.4, spike: 0.9 };
+        look.corona = { a1: 2.6, h1: 0.14, a2: 0.34, h2: 0.42, turb: 0, flow: 0, freq: 3, rmax: 4.4, spike: neutron ? 1.4 : 0.9 };
         look.glowSharp = 22;
     }
     return look;
@@ -394,6 +421,10 @@ function sphereFor(quality) {
 const quadGeometry = new THREE.PlaneGeometry(2, 2);
 const qualityDefine = (q) => (q === 'low' ? 0 : q === 'high' ? 2 : 1);
 
+// A system is always drawn in true colour: bands are for the sky (see the band bar). These shaders share a uniform block
+// with the sky's, so this takes the place of the sky's band weights in each of them.
+export const TRUE_COLOUR = { uBandW: { value: [0, 0, 1, 0, 0] } };
+
 export function createStar(starData, opts = {}) {
     const look = starLook(starData);
     const rng = new Rng(hashString(opts.seed || 'star'));
@@ -401,6 +432,9 @@ export function createStar(starData, opts = {}) {
     const colour = new THREE.Color(...surfaceColour(starData.teff_K));
     const limbColour = new THREE.Color(...surfaceColour(starData.teff_K * 0.8));
     const spotColour = new THREE.Color(...surfaceColour(starData.teff_K * 0.68));
+    const laneColour = new THREE.Color(...surfaceColour(starData.teff_K * 0.74));
+    // A hot star's glow is the star's own colour; only a cool star's edge is seen reddened by what's above it
+    const coronaColour = starData.teff_K > 5000 ? colour : limbColour;
     const noise = { value: getNoiseTexture() };
     const bandStrength = { value: 1 };
     const reveal = { value: 1 };
@@ -413,7 +447,12 @@ export function createStar(starData, opts = {}) {
         fragmentShader: SURFACE_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            ...TRUE_COLOUR,
             tNoise: noise,
+            uLane: { value: look.lane },
+            uJitter: { value: 0.42 - 0.17 * look.lane },
+            uLaneColour: { value: laneColour },
+            uFine: { value: 0 },
             uTideAxis: { value: new THREE.Vector3(1, 0, 0) },
             uTide: { value: 0 },
             uCusp: { value: 0 },
@@ -455,13 +494,14 @@ export function createStar(starData, opts = {}) {
         fragmentShader: CORONA_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            ...TRUE_COLOUR,
             tNoise: noise,
             uCentre: { value: new THREE.Vector3() },
             uRadius: { value: 1 },
             uRmax: { value: c.rmax },
             uQuad: { value: c.rmax },
             uColour: { value: colour },
-            uLimbColour: { value: limbColour },
+            uLimbColour: { value: coronaColour },
             uAnim: anim,
             uA1: { value: c.a1 },
             uH1: { value: c.h1 },
@@ -492,6 +532,7 @@ export function createStar(starData, opts = {}) {
         fragmentShader: GLOW_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            ...TRUE_COLOUR,
             uPx: { value: 30 },
             uColour: { value: colour },
             uGlow: { value: 0 },
@@ -536,11 +577,18 @@ export function createStar(starData, opts = {}) {
             }
             surfaceMaterial.uniforms.uRot.value = rot;
             // A small star is mostly glare: fade its fine detail and lift its brightness
+            // ... and so must a star going round fast, or close to the camera: its pattern would race over the screen,
+            // with more cells passing any one spot in a second than the eye can follow
             const cellPx = s.pxRadius / look.cellScale;
-            surfaceMaterial.uniforms.uDetail.value = THREE.MathUtils.smoothstep(cellPx, 1.6, 4);
-            surfaceMaterial.uniforms.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70);
+            const cellsPerSecond = (s.pxPerSecond || 0) / Math.max(cellPx, 1);
+            const still = (1 - (s.blur || 0)) * (1 - THREE.MathUtils.smoothstep(cellsPerSecond, 1.5, 3));
+            surfaceMaterial.uniforms.uDetail.value = THREE.MathUtils.smoothstep(cellPx, 1.6, 4) * still;
+            surfaceMaterial.uniforms.uFine.value = look.lane * THREE.MathUtils.smoothstep(cellPx, 12, 32);
+            surfaceMaterial.uniforms.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70) * still;
+            coronaMaterial.uniforms.uTurb.value = c.turb * still;
             surfaceMaterial.uniforms.uIntensity.value = look.intensity * (1 + 0.15 * (1 - THREE.MathUtils.smoothstep(s.pxRadius, 12, 70)));
             reveal.value = s.reveal;
+            group.visible = s.reveal > 0.001;
             corona.quaternion.copy(s.camera.getWorldQuaternion(qCam));
             coronaMaterial.uniforms.uCentre.value.copy(group.position);
             // The glow ends at a set distance from the star's centre measured along the ray, and seen from close by
@@ -550,7 +598,7 @@ export function createStar(starData, opts = {}) {
             const half = reach / Math.sqrt(Math.max(0.03, 1 - (reach / Math.max(d, 1e-6)) ** 2));
             corona.scale.setScalar(half);
             coronaMaterial.uniforms.uQuad.value = half / api.radius;
-            glowMaterial.uniforms.uGlow.value = s.pointGlow * Math.min(6, look.intensity + 1) * bandStrength.value;
+            glowMaterial.uniforms.uGlow.value = s.pointGlow * Math.min(6, look.intensity + 1);
             glowMaterial.uniforms.uPx.value = s.glowPx;
         },
         dispose() {

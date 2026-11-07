@@ -138,6 +138,16 @@ export function makeProfile({ sigma = 1, a = 0, vsini = 0, R = 0 }) {
     return { table, dv, n, vmax, tail: a > 0 ? table[n] * vmax * vmax : 0, peak: table[0] };
 }
 
+// How deep a line of unit intrinsic depth comes out at another resolving power: an estimate from its widths, for working out
+// which lines a higher resolution would bring out, without drawing them
+export function peakAtResolution({ sigma = 1, a = 0, vsini = 0, R = 0 }) {
+    const sigmaInst = R > 0 ? C_KMS / (FWHM_PER_SIGMA * R) : 0;
+    const intrinsic = voigtShape(sigma, a);
+    const seen = voigtShape(Math.hypot(sigma, sigmaInst), a);
+    const spread = 1.56 * vsini;
+    return (intrinsic.area / seen.area) * (seen.f / Math.hypot(seen.f, spread));
+}
+
 export function profileAt(prof, v) {
     const x = v / prof.dv;
     if (x >= prof.n) return prof.tail > 0 ? prof.tail / (v * v) : 0;

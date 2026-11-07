@@ -406,9 +406,12 @@ export function createOverlaysLayer(engine, app) {
                 canvas.width = w;
                 canvas.height = h;
             }
+            // The system view draws its own marks. The canvas goes altogether, as under software rendering a canvas that has
+            // only been cleared can go on showing an older picture, and no ring or reticle from the sky may show in there.
+            canvas.style.display = inSky ? '' : 'none';
             ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
             ctx.clearRect(0, 0, frame.width, frame.height);
-            if (!inSky) return; // The system view draws its own marks
+            if (!inSky) return;
 
             const inset = barInsets(frame);
             if (layers.galacticBand) drawGalacticBand(frame, view, inset);

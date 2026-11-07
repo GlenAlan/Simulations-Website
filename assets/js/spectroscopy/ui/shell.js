@@ -86,21 +86,26 @@ function initBandBar(app) {
         // The name holds the words on the button, so asking for "IR" by voice still finds it
         const { short, label } = BAND_INFO[band];
         b.setAttribute('aria-label', short === label ? label : `${short}, ${label}`);
-        b.title = `Show the sky in ${label}`;
-        b.addEventListener('click', () => setBand(band));
+        b.addEventListener('click', () => { if (app.view === 'sky') setBand(band); });
         bar.appendChild(b);
         return b;
     });
 
+    // Bands are a way of looking at the sky: a system is always drawn as it would look to the eye
     function paint() {
+        const inSky = app.view === 'sky';
         buttons.forEach((b) => {
             const on = b.dataset.band === app.band;
             b.setAttribute('aria-checked', on ? 'true' : 'false');
             b.tabIndex = on ? 0 : -1;
+            b.title = inSky ? `Show the sky in ${BAND_INFO[b.dataset.band].label}` : 'Bands show in the sky view';
+            if (inSky) b.removeAttribute('aria-disabled');
+            else b.setAttribute('aria-disabled', 'true');
         });
     }
 
     bar.addEventListener('keydown', (e) => {
+        if (app.view !== 'sky') return;
         const i = BANDS.indexOf(app.band);
         let next = -1;
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % BANDS.length;
@@ -114,6 +119,7 @@ function initBandBar(app) {
     });
 
     bus.on('band', paint);
+    bus.on('view', paint);
     paint();
 }
 
@@ -136,6 +142,8 @@ function habitableZoneState(app) {
     const system = app.system;
     if (!system || typeof system.hzAvailable !== 'function') return { available: true, reason: '' };
     const code = app.view === 'system' ? undefined : (systemCodeFor(app, app.selected) || undefined);
+    // Nothing chosen yet, so nothing to say no about: it can be set ahead of going in
+    if (app.view !== 'system' && !code) return { available: true, reason: '' };
     const status = system.hzAvailable(code);
     if (!status || status.ok) return { available: true, reason: '' };
     return { available: false, reason: status.reason || HZ_REASON };
@@ -199,6 +207,8 @@ function initLayersMenu(app, topRight) {
         shiftKey.hidden = !app.layers.shiftTint;
         const hz = habitableZoneState(app);
         inputs.habitableZone.disabled = !hz.available;
+        // The switch says what's on show: there's no zone here, whatever it's set to for the systems that have one
+        if (!hz.available) inputs.habitableZone.checked = false;
         const hzLabel = menu.querySelector(`label[for="${inputs.habitableZone.id}"]`);
         hzLabel.title = hz.available ? LAYER_ROWS.find((row) => row.name === 'habitableZone').tip : hz.reason;
         hzNote.textContent = hz.reason;
@@ -255,14 +265,11 @@ function zoomWords(fov) {
     return { zoom: `Zoom ${shown}×`, fov: `${degrees}° field of view` };
 }
 
-// The body whose planetary system this selection leads to, or null. The system view has the last word on what can be
-// entered: anything with planets, and the two hard-coded multiple stars, which are worth it for their orbits alone.
+// The code of the system this selection leads to, or null. The system view has the last word on what can be entered.
 function systemCodeFor(app, resolved) {
-    if (!resolved) return null;
-    const body = resolved.body;
-    if (app.system && app.system.hasSystemView) return app.system.hasSystemView(body) ? body.code : null;
-    const showcase = body.architecture === 'figure_eight' || body.architecture === 'double_double';
-    return (body.planets && body.planets.length) || showcase ? body.code : null;
+    if (!resolved || !app.system || !app.system.systemOf) return null;
+    const system = app.system.systemOf(resolved);
+    return system ? system.code : null;
 }
 
 function initContextBar(app) {
@@ -293,10 +300,16 @@ function initContextBar(app) {
     function paint() {
         const inSystem = app.view === 'system';
         const code = inSystem ? null : systemCodeFor(app, app.selected);
+        // Hiding the button that has focus would drop it to the page: pass it to the one taking its place
+        const held = [enter, back].find((b) => b === document.activeElement);
         readout.hidden = inSystem;
         back.hidden = !inSystem;
         enter.hidden = !code;
         if (code) enter.setAttribute('aria-label', `Enter system ${code}`);
+        if (held && held.hidden) {
+            const next = !back.hidden ? back : !enter.hidden ? enter : app.engine.canvas;
+            next.focus({ preventScroll: true });
+        }
     }
 
     bus.on('select', paint);
