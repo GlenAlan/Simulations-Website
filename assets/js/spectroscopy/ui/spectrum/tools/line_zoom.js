@@ -17,8 +17,11 @@ import { el } from '../../plot2d.js';
 import { actionRow, fill, overlayTheme, para, plotLabel, resultLine, searchNmAt, statusBox } from './common.js';
 import { borrowReference, drawGrip, handTheme, HAND_DASH, plotGrab, reachOf } from './hands_on.js';
 
-// The lines a giant and a dwarf differ in most: pressure sets their width. Named so that every star offers the same ones.
-const PRESSURE_LINES = ['Hα', 'Na D₂', 'Ca II K'];
+// The lines a giant and a dwarf differ in most: pressure sets their width. Named so that every star offers the same ones, each
+// zoomed to the same span of speeds on every star, so that one star's line can be set beside another's by eye.
+const PRESSURE_LINES = ['Na D₂', 'Hα', 'Ca II K'];
+const PRESSURE_VIEW_KMS = { 'Na D₂': 250, 'Hα': 1500, 'Ca II K': 1500 };
+const PRESSURE_WORDS = 'Wide wings here come from pressure: denser stars, wider lines.';
 const SPIN_RULES_FROM_KMS = 100;
 const MOST_SPIN_KMS = 400;
 const SLIDER_STEPS = 1000;
@@ -193,6 +196,8 @@ function mount(container, api) {
     const chips = el('div', { class: 'spectro-hands-chips', role: 'group', 'aria-label': 'Line' });
     const answer = el('p', { class: 'spectro-tool-answer' });
     const widthLine = el('p', { class: 'spectro-tool-line' });
+    const pressureNote = para(PRESSURE_WORDS);
+    pressureNote.hidden = true;
     const hint = para('Widen the dashed line until it matches.');
     const slider = el('input', { type: 'range', class: 'spectro-hands-big', min: '0', max: String(SLIDER_STEPS), step: '1', value: '0', 'aria-label': 'Spin of the dashed line' });
     const ends = el('div', { class: 'spectro-hands-ends', 'aria-hidden': 'true' }, el('span', { text: 'No spin' }), el('span', { text: 'Faster →' }));
@@ -201,7 +206,7 @@ function mount(container, api) {
     const result = statusBox();
     const historyEl = el('div', { class: 'spectro-tool-measured', hidden: true });
     const says = el('p', { class: 'spectro-sr-only', role: 'status' });
-    container.append(chips, answer, widthLine, hint, sliderBox, checkBox, result, historyEl, says);
+    container.append(chips, answer, widthLine, pressureNote, hint, sliderBox, checkBox, result, historyEl, says);
 
     const started = plot.getRange();
     // The dashed line is the comparison here, so the reference stands aside and the star's line has the whole plot, with the
@@ -248,15 +253,26 @@ function mount(container, api) {
         return list;
     }
 
+    // A star's pressure-wide lines, which tell a dense dwarf from a thin giant. Spin reads best from a thin line.
+    function isPressureLine(l) {
+        return !!l && !!api.resolved && isStarLike(api.resolved.entity) && PRESSURE_LINES.includes(l.label);
+    }
+
     function renderChips(list) {
-        chips.replaceChildren(...list.map((l) => el('button', {
+        const chip = (l) => el('button', {
             type: 'button',
             class: 'spectro-hands-chip',
             'aria-pressed': line && same(line, l) ? 'true' : 'false',
             text: shortName(l),
-            'aria-label': `${lineName(l)}: zoom in on it`,
+            'aria-label': `${lineName(l)}${isPressureLine(l) ? ', widened by pressure' : ''}: zoom in on it`,
             onclick: () => choose(l)
-        })));
+        });
+        const thin = list.filter((l) => !isPressureLine(l));
+        // In the same order on every star and whichever is on show, so the buttons don't move under the pointer
+        const wide = list.filter(isPressureLine).sort((a, b) => PRESSURE_LINES.indexOf(a.label) - PRESSURE_LINES.indexOf(b.label));
+        chips.replaceChildren(
+            ...thin.map(chip),
+            ...(wide.length ? [el('span', { class: 'spectro-hands-chipgroup', text: 'Pressure', 'aria-hidden': 'true' }), ...wide.map(chip)] : []));
         chips.hidden = list.length < 2;
     }
 
@@ -267,9 +283,11 @@ function mount(container, api) {
         widthKms = null;
         checkKey = '';
         const overview = api.getOverview();
-        // A galaxy's black hole's broad line needs a wide view, with continuum either side (spectra/extragalactic.js)
+        // A galaxy's black hole's broad line needs a wide view, with continuum either side (spectra/extragalactic.js). A pressure
+        // line is shown across the same speeds on every star, so a dwarf's wide wings and a giant's thin line can be told by eye.
         const view = l.broad ? { centre_nm: l.obs_nm, half_nm: l.obs_nm * BROAD_LINE_HALF }
-            : lineZoomWindow(overview, l.obs_nm, { line: l, searchNm: l.obs_nm * 0.0015, hydrogen: l.species === 'H I' });
+            : isPressureLine(l) ? { centre_nm: l.obs_nm, half_nm: (l.obs_nm * PRESSURE_VIEW_KMS[l.label]) / C_KMS }
+                : lineZoomWindow(overview, l.obs_nm, { line: l, searchNm: l.obs_nm * 0.0015, hydrogen: l.species === 'H I' });
         if (view) api.setResolution('zoom', { lo_nm: view.centre_nm - view.half_nm, hi_nm: view.centre_nm + view.half_nm });
         twin = null;
         renderChips(offered());
@@ -337,6 +355,7 @@ function mount(container, api) {
             const w = lineWidth({ wl: twin.wl, flux, snr: Infinity, mode: 'absorption' }, shape.centre, { searchNm: shape.centre * 0.0006, hydrogen: line.species === 'H I' });
             widthKms = w ? w.fwhm_kms : false;
             render();
+            if (!touched && isPressureLine(line)) record();
         }, 150);
     }
 
@@ -375,6 +394,7 @@ function mount(container, api) {
         const star = isStarLike(entity);
         sliderBox.hidden = !star || !line;
         hint.hidden = !star || !line || touched;
+        if (!star || !line) pressureNote.hidden = true;
         if (!line) {
             answer.textContent = '';
             widthLine.textContent = '';
@@ -393,8 +413,13 @@ function mount(container, api) {
         ensureTwin();
         if (!shape) shape = measureShape();
         if (twin !== before || (widthKms === null && shape)) measureWidthSoon();
-        answer.textContent = spinText();
-        widthLine.textContent = widthKms === false ? '' : `${shortName(line)}: ${widthWords()} wide`;
+        const widthText = widthKms === false ? '' : `${shortName(line)}: ${widthWords()} wide`;
+        // On a pressure line, its width is the reading, for setting one star beside another; spin is read from a thin line
+        const pressure = isPressureLine(line);
+        pressureNote.hidden = !pressure;
+        if (pressure) hint.hidden = true;
+        answer.textContent = pressure ? widthText : spinText();
+        widthLine.textContent = pressure ? spinText() : widthText;
         slider.setAttribute('aria-valuetext', `${spinText()}${typeof widthKms === 'number' ? `, ${kmsText(widthKms)} km/s wide` : ''}`);
         renderCheck();
     }
@@ -468,13 +493,16 @@ function mount(container, api) {
 
     // ---------- Widths so far ----------
 
+    // A pressure line's width is kept as soon as it's shown, so two stars' can be set side by side without widening anything
     function record() {
-        if (!line || !touched || typeof widthKms !== 'number') {
-            if (line && touched && widthKms === null) recordTimer = setTimeout(record, RECORD_AFTER_MS);
+        const kept = touched || isPressureLine(line);
+        if (!line || !kept || typeof widthKms !== 'number') {
+            if (line && kept && widthKms === null) recordTimer = setTimeout(record, RECORD_AFTER_MS);
             return;
         }
         const code = api.resolved.entity.code;
-        const entry = { code, line: shortName(line), width: widthKms, spin: spin < limitKms() ? `< ${Math.round(limitKms())}` : kmsText(spin) };
+        const spinShown = !touched ? '' : spin < limitKms() ? `< ${Math.round(limitKms())}` : kmsText(spin);
+        const entry = { code, line: shortName(line), width: widthKms, spin: spinShown };
         const at = history.findIndex((h) => h.code === code && h.line === entry.line);
         if (at >= 0) history[at] = entry;
         else history.push(entry);
