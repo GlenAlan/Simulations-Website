@@ -354,6 +354,8 @@ function resolvedStarData(list) {
         data.depths[i] = s.depth;
         data.pcs[i] = s.pc;
     });
+    // The brightest of them in any band: until the zoom's limit reaches that, none is drawn, and nothing need be
+    data.topGlow = stars.reduce((m, s) => Math.max(m, ...s.bandA), 0);
     return data;
 }
 
@@ -744,7 +746,11 @@ export function createGalaxiesLayer(engine, app) {
         update(frame) {
             const dt = frame.dt || 0;
             if (coreSprites) coreSprites.material.uniforms.uDpr.value = frame.dpr;
-            if (resolved) resolved.material.uniforms.uDpr.value = frame.dpr;
+            if (resolved) {
+                resolved.material.uniforms.uDpr.value = frame.dpr;
+                // Off in the wide sky, where none of them shows yet, so they cost nothing there. A flight draws them as it nears.
+                resolved.mesh.visible = app.view !== 'sky' || resolvedData.topGlow * 10 ** (0.4 * (limitingMag(frame.fov) - 6)) >= MIN_GLOW * 0.5;
+            }
             frame.camera.getWorldDirection(forward);
             if (Math.abs(frame.fov - lastFov) > frame.fov * 0.001) stillFor = 0;
             else stillFor += Math.max(dt, 0.008);
