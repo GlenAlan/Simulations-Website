@@ -8,7 +8,7 @@ import { bus } from '../../core/state.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB, planck, SIGMA } from '../../core/phys.js';
 import { limitingMag } from '../../core/sky.js';
-import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, memberDirection, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 
 const RAD = Math.PI / 180;
@@ -216,6 +216,7 @@ export function createClustersLayer(engine, app) {
         fragmentShader: /* glsl */`
             varying vec2 vP;
             uniform vec2 uSeed;
+            ${LOOP_ZERO_GLSL}
             float h21(vec2 p) {
                 vec3 q = fract(vec3(p.xyx) * 0.1031);
                 q += dot(q, q.yzx + 33.33);
@@ -229,7 +230,7 @@ export function createClustersLayer(engine, app) {
             }
             float fbm(vec2 p) {
                 float a = 0.5, s = 0.0;
-                for (int i = 0; i < 6; i++) {
+                for (int i = 0; i < 6 + uLoopZero; i++) {
                     s += a * vn(p);
                     a *= 0.5;
                     p = mat2(0.8, 0.6, -0.6, 0.8) * p * 2.05 + 7.1;
@@ -254,10 +255,19 @@ export function createClustersLayer(engine, app) {
     const bakeScene = new THREE.Scene();
     bakeScene.add(bakeQuad);
     const bakeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const hazeStep = { next: 0 };
+    const hazeStep = { next: 0, ready: false, run: 0 };
+
+    function compileHaze() {
+        const run = ++hazeStep.run;
+        hazeStep.ready = false;
+        engine.compileInBackground(bakeScene, bakeCamera).then(() => {
+            if (run === hazeStep.run) hazeStep.ready = true;
+        });
+    }
+    if (hazy.length) compileHaze();
 
     function bakeNextHaze() {
-        if (hazeStep.next >= hazy.length) return false;
+        if (!hazeStep.ready || hazeStep.next >= hazy.length || !engine.bakesAllowed()) return false;
         const c = hazy[hazeStep.next++];
         const x = (c.hazeIndex % hazeCols) * HAZE_TILE;
         const y = Math.floor(c.hazeIndex / hazeCols) * HAZE_TILE;
@@ -529,7 +539,18 @@ export function createClustersLayer(engine, app) {
     const unsubscribe = [
         bus.on('highlight', ({ code }) => setRing(code)),
         bus.on('deselect', () => setRing(null)),
-        bus.on('select', ({ code }) => { if (code !== ringCode) setRing(null); })
+        bus.on('select', ({ code }) => { if (code !== ringCode) setRing(null); }),
+        // The haze went with the context: back to none, until it has baked again
+        bus.on('gl-restored', () => {
+            const amounts = glowGeometry.attributes.aHazeAmount;
+            hazy.forEach((c) => {
+                c.hazeBaked = false;
+                amounts.array[clusters.indexOf(c)] = 0;
+            });
+            amounts.needsUpdate = true;
+            hazeStep.next = 0;
+            if (hazy.length) compileHaze();
+        })
     ];
 
     const forward = new THREE.Vector3();

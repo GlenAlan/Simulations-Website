@@ -11,7 +11,7 @@ import { Rng } from '../../core/rng.js';
 import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
 import { GALACTIC_CENTRE_AZ } from '../../core/bands.js';
 import { blackBodyRGB } from '../../core/phys.js';
-import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 
 const RAD = Math.PI / 180;
 const SKY_RADIUS = 1000;
@@ -21,6 +21,7 @@ const DENSITY_MAP_SIZE = 512;       // Baked first, at once: shown until the ful
 const DETAIL_SIZE = 512;
 const TILE_PX = 256;                // The bake is spread over frames, one tile of about this size at a time
 const SKY_GAIN = 1.6;               // The texture stores sqrt(colour / SKY_GAIN)
+const MILKY_WAY_FADE_S = 0.8;       // How long the Milky Way takes to come up once its first bake is there
 
 const FIELD_STARS = { low: 12000, medium: 34000, high: 64000 };
 const FIELD_STARS_MAX = FIELD_STARS.high;
@@ -53,6 +54,7 @@ uvec3 pcg3d(uvec3 v) {
 const BAKE_FRAGMENT = /* glsl */`
     ${DOME_GLSL}
     ${HASH_GLSL}
+    ${LOOP_ZERO_GLSL}
     uniform vec3 uPole;
     uniform vec3 uCentre;
     uniform vec3 uEast;
@@ -62,24 +64,27 @@ const BAKE_FRAGMENT = /* glsl */`
         uvec3 h = pcg3d(uvec3(p + 65536));
         return vec3(h >> 8u) / 8388608.0 - 1.0;
     }
+    // The eight corners of the cell in a loop rather than written out, for the compiler's sake: see LOOP_ZERO_GLSL
     float gnoise(vec3 p) {
         vec3 fl = floor(p);
         ivec3 i = ivec3(fl);
         vec3 f = p - fl;
         vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-        return mix(
-            mix(mix(dot(gradient(i), f), dot(gradient(i + ivec3(1, 0, 0)), f - vec3(1, 0, 0)), u.x),
-                mix(dot(gradient(i + ivec3(0, 1, 0)), f - vec3(0, 1, 0)), dot(gradient(i + ivec3(1, 1, 0)), f - vec3(1, 1, 0)), u.x), u.y),
-            mix(mix(dot(gradient(i + ivec3(0, 0, 1)), f - vec3(0, 0, 1)), dot(gradient(i + ivec3(1, 0, 1)), f - vec3(1, 0, 1)), u.x),
-                mix(dot(gradient(i + ivec3(0, 1, 1)), f - vec3(0, 1, 1)), dot(gradient(i + ivec3(1, 1, 1)), f - vec3(1, 1, 1)), u.x), u.y),
-            u.z);
+        float sum = 0.0;
+        for (int c = 0; c < 8 + uLoopZero; c++) {
+            ivec3 o = ivec3(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+            vec3 fo = vec3(o);
+            vec3 w = mix(1.0 - u, u, fo);
+            sum += w.x * w.y * w.z * dot(gradient(i + o), f - fo);
+        }
+        return sum;
     }
     // Turned a little each octave, so the noise lattice doesn't show as lines
     const mat3 TURN = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
     float fbm(vec3 p, int octaves) {
         float sum = 0.0;
         float amp = 0.55;
-        for (int i = 0; i < octaves; i++) {
+        for (int i = 0; i < octaves + uLoopZero; i++) {
             sum += amp * gnoise(p);
             p = TURN * p * 2.07 + vec3(1.7, 9.2, 3.1);
             amp *= 0.52;
@@ -91,7 +96,7 @@ const BAKE_FRAGMENT = /* glsl */`
         float sum = 0.0;
         float amp = 0.55;
         float weight = 1.0;
-        for (int i = 0; i < octaves; i++) {
+        for (int i = 0; i < octaves + uLoopZero; i++) {
             float v = 1.0 - abs(gnoise(p) * 1.6);
             v *= v;
             sum += amp * v * weight;
@@ -226,6 +231,7 @@ const SKY_FRAGMENT = /* glsl */`
     ${HASH_GLSL}
     uniform sampler2D tSky;
     uniform sampler2D tDetail;
+    uniform float uMilkyWay;        // Fades the bake in when it first arrives
     uniform float uVisibleAmount;
     uniform vec3 uDeepFade;
     uniform vec3 uDetailFade;       // Coarse detail, fine detail, and how much glow is left
@@ -254,6 +260,7 @@ const SKY_FRAGMENT = /* glsl */`
         vec3 d = normalize(vDir);
         vec2 uv = domeUv(d);
         vec4 tex = texture2D(tSky, uv);
+        tex.rgb *= uMilkyWay;
         vec3 col = tex.rgb * tex.rgb * ${SKY_GAIN.toFixed(3)};
         vec2 dome = (uv - 0.5) * 2.0 * DOME_R;
 
@@ -298,8 +305,9 @@ const SKY_FRAGMENT = /* glsl */`
         gl_FragColor = vec4(col * uVisibleAmount, 1.0);
     }`;
 
-// The Milky Way bake: a density map at once, then the full-size texture over the next frames
-function createSkyBake(renderer) {
+// The Milky Way bake: a density map first, then the full-size texture over the next frames
+function createSkyBake(engine) {
+    const { renderer } = engine;
     const pole = azAltToVec3(GALACTIC_POLE.az, GALACTIC_POLE.alt);
     // The bulge sits where the band passes the centre's azimuth, the same frame the other bands' skies use (band_sky.js)
     const centreAlt = Math.atan2(
@@ -365,25 +373,40 @@ function createSkyBake(renderer) {
     let job = null;         // { target, size, tiles, tile, next, count }
     let doneSize = 0;
 
+    // Compile without blocking: the first bake waits for this, and the sky is up and can be dragged meanwhile
+    function compile() {
+        const programs = new THREE.Scene();
+        [material, detailMaterial].forEach((m) => {
+            const mesh = new THREE.Mesh(geometry, m);
+            mesh.frustumCulled = false;
+            programs.add(mesh);
+        });
+        return engine.compileInBackground(programs, camera);
+    }
+
     function drawDetail() {
+        const previous = renderer.getRenderTarget();
         quad.material = detailMaterial;
         detail.texture.generateMipmaps = true;
         renderer.setRenderTarget(detail);
         renderer.render(scene, camera);
         quad.material = material;
+        renderer.setRenderTarget(previous);
     }
 
+    // Reading it back doesn't wait for the GPU: resolves with the pixels, or null if the bake was restarted meanwhile
     function drawDensityMap() {
+        const previous = renderer.getRenderTarget();
         const target = makeTarget(DENSITY_MAP_SIZE, false);
         renderer.setRenderTarget(target);
         renderer.render(scene, camera);
-        const pixels = new Uint8Array(DENSITY_MAP_SIZE * DENSITY_MAP_SIZE * 4);
-        renderer.readRenderTargetPixels(target, 0, 0, DENSITY_MAP_SIZE, DENSITY_MAP_SIZE, pixels);
-        renderer.setRenderTarget(null);
+        renderer.setRenderTarget(previous);
         if (shown) shown.dispose();
         shown = target;
         doneSize = DENSITY_MAP_SIZE;
-        return pixels;
+        const pixels = new Uint8Array(DENSITY_MAP_SIZE * DENSITY_MAP_SIZE * 4);
+        return renderer.readRenderTargetPixelsAsync(target, 0, 0, DENSITY_MAP_SIZE, DENSITY_MAP_SIZE, pixels)
+            .then(() => (shown === target ? pixels : null), () => null);
     }
 
     function want(size) {
@@ -402,8 +425,10 @@ function createSkyBake(renderer) {
         job.next += 1;
         const last = job.next >= count;
         target.texture.generateMipmaps = last;
+        const previous = renderer.getRenderTarget();
         renderer.setRenderTarget(target);
         renderer.render(scene, camera);
+        renderer.setRenderTarget(previous);
         if (last) {
             target.scissorTest = false;
             target.texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
@@ -423,6 +448,7 @@ function createSkyBake(renderer) {
     }
 
     return {
+        compile,
         drawDetail,
         drawDensityMap,
         want,
@@ -461,8 +487,9 @@ function densityLookup(pixels) {
 }
 
 // The decorative star field: tens of thousands of faint points that can't be selected. They're in random order,
-// so a lower graphics level just draws fewer of them.
-function createFieldStars(pixels) {
+// so a lower graphics level just draws fewer of them. This places them a few milliseconds at a time: placeSome(ms)
+// returns the finished field when the last one is in, and null until then.
+function fieldStarPlacer(pixels) {
     const rng = new Rng('skycore-field-stars');
     const lookup = densityLookup(pixels);
     const n = FIELD_STARS_MAX;
@@ -483,32 +510,39 @@ function createFieldStars(pixels) {
     }
 
     let placed = 0;
-    while (placed < n) {
-        // Even over the dome, down to a little below the horizon
-        const y = rng.range(-0.04, 1);
-        const a = rng.range(0, Math.PI * 2);
-        const r = Math.sqrt(1 - y * y);
-        const x = r * Math.cos(a);
-        const z = r * Math.sin(a);
-        const { lum, clear } = lookup(x, y, z);
-        // Density follows the band's light, thinned where dust hides the stars behind it
-        const keep = (0.10 + 2.6 * lum * lum + 0.9 * lum) * (0.12 + 0.88 * clear);
-        if (rng.next() > keep) continue;
-        positions[placed * 3] = x * SKY_RADIUS;
-        positions[placed * 3 + 1] = y * SKY_RADIUS;
-        positions[placed * 3 + 2] = z * SKY_RADIUS;
-        // Many faint, few bright
-        mags[placed] = 4.6 + 9.4 * rng.next() ** 0.6;
-        seeds[placed] = rng.next();
-        // Mostly orange and yellow suns with some blue-white, weighted towards cool as real star counts are
-        const tone = Math.floor(63 * rng.next() ** 1.5 * (0.75 + 0.25 * rng.next()));
-        const colour = palette[tone];
-        colours[placed * 3] = colour[0];
-        colours[placed * 3 + 1] = colour[1];
-        colours[placed * 3 + 2] = colour[2];
-        placed += 1;
-    }
+    return function placeSome(budgetMs) {
+        const started = performance.now();
+        while (placed < n) {
+            if ((placed & 1023) === 0 && performance.now() - started > budgetMs) return null;
+            // Even over the dome, down to a little below the horizon
+            const y = rng.range(-0.04, 1);
+            const a = rng.range(0, Math.PI * 2);
+            const r = Math.sqrt(1 - y * y);
+            const x = r * Math.cos(a);
+            const z = r * Math.sin(a);
+            const { lum, clear } = lookup(x, y, z);
+            // Density follows the band's light, thinned where dust hides the stars behind it
+            const keep = (0.10 + 2.6 * lum * lum + 0.9 * lum) * (0.12 + 0.88 * clear);
+            if (rng.next() > keep) continue;
+            positions[placed * 3] = x * SKY_RADIUS;
+            positions[placed * 3 + 1] = y * SKY_RADIUS;
+            positions[placed * 3 + 2] = z * SKY_RADIUS;
+            // Many faint, few bright
+            mags[placed] = 4.6 + 9.4 * rng.next() ** 0.6;
+            seeds[placed] = rng.next();
+            // Mostly orange and yellow suns with some blue-white, weighted towards cool as real star counts are
+            const tone = Math.floor(63 * rng.next() ** 1.5 * (0.75 + 0.25 * rng.next()));
+            const colour = palette[tone];
+            colours[placed * 3] = colour[0];
+            colours[placed * 3 + 1] = colour[1];
+            colours[placed * 3 + 2] = colour[2];
+            placed += 1;
+        }
+        return fieldStars(positions, colours, mags, seeds);
+    };
+}
 
+function fieldStars(positions, colours, mags, seeds) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('aColour', new THREE.BufferAttribute(colours, 3, true));
@@ -745,20 +779,20 @@ export function createBackgroundLayer(engine, app) {
     const { renderer, scene } = engine;
     if (!renderer) return { id: 'background', update() {} };
 
-    const bake = createSkyBake(renderer);
-    bake.drawDetail();
-    const field = createFieldStars(bake.drawDensityMap());
-    scene.add(field.points);
+    const bake = createSkyBake(engine);
     const horizon = buildHorizon();
     scene.add(horizon.mesh);
+    let field = null;
+    let placer = null;
 
     // The dome itself: one big triangle whose corners are camera rays
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
     const material = skyMaterial({
         uniforms: {
-            tSky: { value: bake.texture() },
+            tSky: { value: null },
             tDetail: { value: bake.detailTexture() },
+            uMilkyWay: { value: 0 },
             uVisibleAmount: { value: 1 },
             uDeepFade: { value: new THREE.Vector3(0, 0, 0) },
             uDetailFade: { value: new THREE.Vector3(0, 0, 1) },
@@ -779,18 +813,34 @@ export function createBackgroundLayer(engine, app) {
     dome.renderOrder = ORDER.background;
     scene.add(dome);
 
-    function applyQuality(level) {
-        field.geometry.setDrawRange(0, FIELD_STARS[level]);
-        bake.want(BAKE_SIZE[level]);
+    // Until the first bake the dome is a dark sky with no Milky Way in it. The bake's program can take a moment to compile.
+    let bakeReady = false;
+    let bakeRun = 0;
+    function startBake() {
+        const run = ++bakeRun;
+        bakeReady = false;
+        bake.compile().then(() => {
+            if (run !== bakeRun) return null;
+            bake.drawDetail();
+            return bake.drawDensityMap();
+        }).then((pixels) => {
+            if (run !== bakeRun || !pixels) return;
+            bakeReady = true;
+            bake.want(BAKE_SIZE[app.qualityLevel]);
+            if (!field) placer = fieldStarPlacer(pixels);
+        });
     }
-    applyQuality(app.qualityLevel);
+    startBake();
+
+    function applyQuality(level) {
+        if (field) field.geometry.setDrawRange(0, FIELD_STARS[level]);
+        if (bakeReady) bake.want(BAKE_SIZE[level]);
+    }
 
     const unbindQuality = bus.on('quality', ({ level }) => applyQuality(level));
     const unbindRestored = bus.on('gl-restored', () => {
         bake.restart();
-        bake.drawDetail();
-        bake.drawDensityMap();
-        bake.want(BAKE_SIZE[app.qualityLevel]);
+        startBake();
     });
 
     // A layer of deep stars fades in when its grid cells are big enough on screen to hold a star
@@ -803,17 +853,31 @@ export function createBackgroundLayer(engine, app) {
     return {
         id: 'background',
         update(frame) {
-            bake.step();
+            if (bake.busy() && engine.bakesAllowed()) bake.step();
+            if (placer) {
+                field = placer(4);
+                if (field) {
+                    placer = null;
+                    field.geometry.setDrawRange(0, FIELD_STARS[app.qualityLevel]);
+                    scene.add(field.points);
+                }
+            }
             const visible = frame.bandW[2];
             const skyFade = material.uniforms.uSkyFade.value;
             const amount = visible * skyFade;
             dome.visible = amount > 0.002;
-            field.points.visible = dome.visible;
+            if (field) field.points.visible = dome.visible;
             horizon.mesh.visible = skyFade > 0.002;
-            if (!dome.visible) return;
             const u = material.uniforms;
+            if (bake.texture()) {
+                u.tSky.value = bake.texture();
+                u.uMilkyWay.value = frame.reduceMotion ? 1 : Math.min(1, u.uMilkyWay.value + frame.dt / MILKY_WAY_FADE_S);
+            } else {
+                u.tSky.value = null;
+                u.uMilkyWay.value = 0;
+            }
+            if (!dome.visible) return;
             u.uVisibleAmount.value = amount;
-            u.tSky.value = bake.texture();
             u.uDpr.value = frame.dpr;
             const tanY = Math.tan(frame.fov * RAD * 0.5);
             u.uTan.value.set(tanY * (frame.width / frame.height), tanY);
@@ -831,17 +895,25 @@ export function createBackgroundLayer(engine, app) {
                 low ? 0 : smooth(9, 3, frame.fov),
                 0.42 + 0.58 * smooth(1.5, 25, frame.fov)
             );
-            field.material.uniforms.uDpr.value = frame.dpr;
-            field.material.uniforms.uFieldAmount.value = visible;
+            if (field) {
+                field.material.uniforms.uDpr.value = frame.dpr;
+                field.material.uniforms.uFieldAmount.value = visible;
+            }
         },
         busy: () => bake.busy(),            // For tests: is the full-size bake still going?
         bakedSize: () => bake.size(),
         dispose() {
+            bakeRun += 1;
             unbindQuality();
             unbindRestored();
-            [dome, field.points, horizon.mesh].forEach((o) => scene.remove(o));
-            [geometry, field.geometry, horizon.geometry].forEach((g) => g.dispose());
-            [material, field.material, horizon.material].forEach((m) => m.dispose());
+            [dome, horizon.mesh].forEach((o) => scene.remove(o));
+            [geometry, horizon.geometry].forEach((g) => g.dispose());
+            [material, horizon.material].forEach((m) => m.dispose());
+            if (field) {
+                scene.remove(field.points);
+                field.geometry.dispose();
+                field.material.dispose();
+            }
             bake.dispose();
         }
     };

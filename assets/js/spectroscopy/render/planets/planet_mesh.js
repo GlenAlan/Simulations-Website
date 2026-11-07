@@ -5,12 +5,17 @@
 // Small or at Low quality, a planet draws from a cube map baked once from its own shader, spread over a few frames.
 // Large on screen, it works out its surface per pixel. Both output linear HDR for the engine's tone mapping.
 //
+// The bake's and the live program's compile can take seconds on Windows, and drawing with an unfinished one would freeze
+// the page, so a planet never waits for them on screen. It starts as a flat disc in its average colours, drawn by the
+// small baked program; the bake fades in over that once it's done, and the live program takes over once it has compiled.
+//
 // Also on the returned object: look (the appearanceFrom block) and setOpacity(0..1) for fading in.
 // opts: quality (overrides frame.quality), timeScale (of the decorative spin), renderer (found by itself otherwise).
-// warmPlanetShaders(renderer, camera) can compile the programs ahead of the first system, without blocking.
+// warmPlanetShaders(renderer) compiles what every planet shares, and warmPlanetBakes(renderer, planets) what these planets
+// will need, without blocking.
 
 import * as THREE from 'three';
-import { app } from '../../core/state.js';
+import { app, bus } from '../../core/state.js';
 import { appearanceFrom, ringProfile } from './appearance.js';
 import {
     liveBodyFragment, bakeFragment, BAKED_BODY_FRAGMENT, BODY_VERTEX, BAKE_VERTEX,
@@ -58,12 +63,95 @@ const FACES = [
 
 const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 
-// Bakes share a budget of pixels per frame, so that entering a system does not stall on several at once. A small
-// planet's cube takes a frame or two; a large one's is spread over twelve.
+// Bakes share a budget of pixels per frame, so that entering a system does not stall on several at once. It follows
+// what the GPU is getting through, and a face that won't fit is drawn a few rows at a time.
 let bakeFrame = null;
 let bakedPixelsThisFrame = 0;
 let budgetResetQueued = false;
-const BAKE_PIXELS_PER_FRAME = 131072;
+const BAKE_PIXELS_MIN = 8192;
+const BAKE_PIXELS_MAX = 262144;
+let bakePixelsPerFrame = 65536;
+
+const BAKE_FADE_S = 0.4;
+
+const BLENDED_BODY = { transparent: true, premultipliedAlpha: true, depthWrite: true, toneMapped: false };
+const BLENDED_SHELL = { side: THREE.BackSide, transparent: true, premultipliedAlpha: true, depthWrite: false, toneMapped: false };
+const BLENDED_RING = { side: THREE.DoubleSide, transparent: true, premultipliedAlpha: true, depthWrite: false, toneMapped: false };
+const BAKE_FLAGS = { depthTest: false, depthWrite: false, toneMapped: false };
+
+// Which parts of the surface shader this planet can use: the rest are left out of its programs (see planet_glsl.js)
+export function planetFeatures(look) {
+    const defines = {};
+    const on = (name, value) => {
+        if (value > 0) defines[name] = 1;
+    };
+    if (look.solid) {
+        const s = look.solid;
+        on('P_MARIA', s.maria);
+        on('P_RIDGES', s.ridges);
+        on('P_CANYONS', s.canyons);
+        on('P_DUNES', s.dunes);
+        on('P_CRACKS', s.cracks);
+        on('P_PLAINS', s.plains);
+        on('P_LAVA', s.lava);
+        on('P_DAY_MELT', s.dayMelt);
+        on('P_CRATERS', s.craters > 0.002 && !(s.lava > 0) ? 1 : 0); // Melt takes every crater with it
+        on('P_FROST', s.frost);
+        on('P_LIQUID', s.oceanFraction);
+        on('P_VEGETATION', s.vegetation);
+        on('P_CAP', s.cap);
+        on('P_CLOUDS', look.clouds.opacity);
+        on('P_VEIL', look.clouds.veil);
+    } else {
+        on('P_CIRRUS', look.envelope.cirrus);
+    }
+    return defines;
+}
+
+// Compiles a program in the background and holds on to it, with a material that's never drawn. Three.js frees a program
+// when the last material using it goes, which would mean compiling it all over again for the next planet of that kind.
+// A real material with the same source and flags picks up the same program. Returns { ready }.
+const keptPrograms = new Map();
+
+function keepProgram(renderer, key, params) {
+    let kept = keptPrograms.get(key);
+    if (kept) return kept;
+    sharedGeometry();
+    kept = { ready: false };
+    keptPrograms.set(key, kept);
+    const scene = new THREE.Scene();
+    const mesh = new THREE.Mesh(bakeQuad, new THREE.ShaderMaterial(params));
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    const compiling = app.engine ? app.engine.compileInBackground(scene, bakeCamera) : renderer.compileAsync(scene, bakeCamera);
+    compiling.then(() => {
+        kept.ready = true;
+    }, () => {
+        kept.ready = true;  // Let it be found out when it's drawn, where its error will show
+    });
+    return kept;
+}
+
+// They went with the context
+bus.on('gl-restored', () => keptPrograms.clear());
+
+function keepBake(renderer, model, defines) {
+    return keepProgram(renderer, `bake:${model}:${Object.keys(defines).join()}`, {
+        ...BAKE_FLAGS,
+        defines,
+        vertexShader: BAKE_VERTEX,
+        fragmentShader: bakeFragment(model)
+    });
+}
+
+function keepLive(renderer, model, defines) {
+    return keepProgram(renderer, `live:${model}:${Object.keys(defines).join()}`, {
+        ...BLENDED_BODY,
+        defines,
+        vertexShader: BODY_VERTEX,
+        fragmentShader: liveBodyFragment(model)
+    });
+}
 
 function jetIndex(lat, bandN, phase) {
     const warped = lat + 0.05 * Math.sin(lat * 6 + phase) + 0.03 * Math.sin(lat * 11 + phase * 2.3);
@@ -169,23 +257,19 @@ function makeRingTexture(look) {
     return tex;
 }
 
-// Compiles the planet programs without blocking, where the browser allows it, so that the first planet in a system does
-// not stall the flight in. Optional: call it once when the sim has loaded. Three.js keeps the programs by their source.
-export function warmPlanetShaders(renderer, camera) {
-    sharedGeometry();
-    const scene = new THREE.Scene();
-    const flags = { transparent: true, premultipliedAlpha: true, depthWrite: true, toneMapped: false };
-    const materials = [
-        new THREE.ShaderMaterial({ ...flags, vertexShader: BODY_VERTEX, fragmentShader: liveBodyFragment('solid') }),
-        new THREE.ShaderMaterial({ ...flags, vertexShader: BODY_VERTEX, fragmentShader: liveBodyFragment('envelope') }),
-        new THREE.ShaderMaterial({ ...flags, vertexShader: BODY_VERTEX, fragmentShader: BAKED_BODY_FRAGMENT }),
-        new THREE.ShaderMaterial({ ...flags, depthWrite: false, side: THREE.BackSide, vertexShader: SHELL_VERTEX, fragmentShader: SHELL_FRAGMENT }),
-        new THREE.ShaderMaterial({ vertexShader: BAKE_VERTEX, fragmentShader: bakeFragment('solid'), depthTest: false, depthWrite: false, toneMapped: false }),
-        new THREE.ShaderMaterial({ vertexShader: BAKE_VERTEX, fragmentShader: bakeFragment('envelope'), depthTest: false, depthWrite: false, toneMapped: false })
-    ];
-    materials.forEach((material) => scene.add(new THREE.Mesh(shellGeometry, material)));
-    const finish = () => materials.forEach((material) => material.dispose());
-    return renderer.compileAsync(scene, camera).then(finish, finish);
+// The small programs every planet uses. Optional: call it when the sim has loaded and nothing else is going on.
+export function warmPlanetShaders(renderer) {
+    keepProgram(renderer, 'baked', { ...BLENDED_BODY, vertexShader: BODY_VERTEX, fragmentShader: BAKED_BODY_FRAGMENT });
+    keepProgram(renderer, 'shell', { ...BLENDED_SHELL, vertexShader: SHELL_VERTEX, fragmentShader: SHELL_FRAGMENT });
+    keepProgram(renderer, 'ring', { ...BLENDED_RING, vertexShader: RING_VERTEX, fragmentShader: RING_FRAGMENT });
+}
+
+// The bake programs these planets will need, for when one of them is about to be visited
+export function warmPlanetBakes(renderer, planets) {
+    planets.forEach((planet) => {
+        const look = appearanceFrom(planet, planet.host_teff_K);
+        keepBake(renderer, look.model, planetFeatures(look));
+    });
 }
 
 export function createPlanetMesh(planet, hostTeffK, opts = {}) {
@@ -195,6 +279,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
     const r = look.rings;
     const isSolid = look.model === 'solid';
     const timeScale = opts.timeScale ?? 1;
+    const defines = planetFeatures(look);
 
     const pattern = patternUniforms(look);
     const ringTexture = r ? makeRingTexture(look) : null;
@@ -241,40 +326,50 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         uHasEmit: { value: look.emission.on ? 1 : 0 }
     };
 
-    const blendedBody = {
-        vertexShader: BODY_VERTEX,
-        transparent: true,
-        premultipliedAlpha: true,
-        depthWrite: true,
-        toneMapped: false
-    };
     const liveMaterial = new THREE.ShaderMaterial({
-        ...blendedBody,
+        ...BLENDED_BODY,
+        defines,
+        vertexShader: BODY_VERTEX,
         fragmentShader: liveBodyFragment(look.model),
         uniforms: { ...shading, ...pattern }
     });
-    let bakedMaterial = null;   // Made when first needed
+    // Draws the bake when there is one, and until then a flat disc in the planet's average colours
+    const flatAlbedo = isSolid
+        ? new THREE.Vector3(...look.solid.rockMain).lerp(new THREE.Vector3(...look.solid.deepWater), look.solid.oceanFraction)
+        : new THREE.Vector3(...look.envelope.zone).lerp(new THREE.Vector3(...look.envelope.belt), 0.5);
+    const bakedMaterial = new THREE.ShaderMaterial({
+        ...BLENDED_BODY,
+        vertexShader: BODY_VERTEX,
+        fragmentShader: BAKED_BODY_FRAGMENT,
+        uniforms: {
+            ...shading,
+            tSurface: { value: null },
+            tExtras: { value: null },
+            uBakeTexel: { value: 2 / 128 },
+            uBakeMix: { value: 0 },
+            uFlatAlbedo: { value: flatAlbedo },
+            uFlatCloud: { value: look.clouds.opacity * 0.4 },
+            uCloudAlt: { value: look.clouds.altitude },
+            uCloudOpacity: { value: look.clouds.opacity }
+        }
+    });
 
     const object3d = new THREE.Group();
     const tilt = new THREE.Group();
     tilt.rotation.set(look.tiltDeg * Math.PI / 180, 0, look.tiltDeg * 0.37 * Math.PI / 180);
     object3d.add(tilt);
 
-    const body = new THREE.Mesh(bodyGeometry, liveMaterial);
+    const body = new THREE.Mesh(bodyGeometry, bakedMaterial);
     tilt.add(body);
 
     let shell = null;
     let shellMaterial = null;
     if (a.on) {
         shellMaterial = new THREE.ShaderMaterial({
+            ...BLENDED_SHELL,
             vertexShader: SHELL_VERTEX,
             fragmentShader: SHELL_FRAGMENT,
-            uniforms: { ...shared, uShellR: { value: a.top } },
-            side: THREE.BackSide,
-            transparent: true,
-            premultipliedAlpha: true,
-            depthWrite: false,
-            toneMapped: false
+            uniforms: { ...shared, uShellR: { value: a.top } }
         });
         shell = new THREE.Mesh(shellGeometry, shellMaterial);
         shell.scale.setScalar(a.top);
@@ -288,18 +383,14 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         ringGeometry = new THREE.RingGeometry(r.inner * 0.995, r.outer * 1.005, 192, 1);
         ringGeometry.rotateX(-Math.PI / 2);
         ringMaterial = new THREE.ShaderMaterial({
+            ...BLENDED_RING,
             vertexShader: RING_VERTEX,
             fragmentShader: RING_FRAGMENT,
             uniforms: {
                 ...shared,
                 uRingCol: { value: v3(r.colour) },
                 uRingDark: { value: v3(r.colourDark) }
-            },
-            side: THREE.DoubleSide,
-            transparent: true,
-            premultipliedAlpha: true,
-            depthWrite: false,
-            toneMapped: false
+            }
         });
         ring = new THREE.Mesh(ringGeometry, ringMaterial);
         tilt.add(ring);
@@ -332,12 +423,14 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
 
     // --- Baking ---
     let bakeMaterial = null;
+    let bakeProgram = null;
+    let liveProgram = null;
     let baked = null;      // { surface, extras, size } when ready
-    let bakeJob = null;    // { surface, extras, size, step } while in progress
+    let bakeJob = null;    // { surface, extras, size, step, row } while in progress
 
     function startBake(size) {
         const params = {
-            generateMipmaps: true,
+            generateMipmaps: false, // Turned on for the last row of each map: its mipmaps only need making once
             minFilter: THREE.LinearMipmapLinearFilter,
             magFilter: THREE.LinearFilter,
             depthBuffer: false
@@ -346,13 +439,20 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
             surface: new THREE.WebGLCubeRenderTarget(size, { ...params, type: THREE.HalfFloatType }),
             extras: new THREE.WebGLCubeRenderTarget(size, { ...params, type: THREE.UnsignedByteType }),
             size,
-            step: 0
+            step: 0,
+            row: 0
         };
     }
 
     function runBakeStep(glRenderer, quality, frame) {
+        if (!bakeProgram) bakeProgram = keepBake(glRenderer, look.model, defines);
+        if (!bakeProgram.ready) return;
+        const engine = app.engine;
+        if (engine && !engine.bakesAllowed()) return;
         if (!bakeMaterial) {
             bakeMaterial = new THREE.ShaderMaterial({
+                ...BAKE_FLAGS,
+                defines,
                 vertexShader: BAKE_VERTEX,
                 fragmentShader: bakeFragment(look.model),
                 uniforms: {
@@ -361,10 +461,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
                     uFace: { value: FACES[0] },
                     uLayer: { value: 0 },
                     uBakePx: { value: 0.01 }
-                },
-                depthTest: false,
-                depthWrite: false,
-                toneMapped: false
+                }
             });
         }
         // A new frame resets the budget; so does the browser's next frame, in case a caller reuses one frame object.
@@ -372,6 +469,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         if (frame !== bakeFrame) {
             bakeFrame = frame;
             bakedPixelsThisFrame = 0;
+            if (engine) bakePixelsPerFrame = engine.bakePace(bakePixelsPerFrame, BAKE_PIXELS_MIN, BAKE_PIXELS_MAX);
         }
         if (!budgetResetQueued) {
             budgetResetQueued = true;
@@ -387,17 +485,29 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         pattern.uOct.value = QUALITY[quality].bakeOct;
         bakeMaterial.uniforms.uBakePx.value = 2.2 / bakeJob.size;
         bakeMesh.material = bakeMaterial;
-        const facePixels = bakeJob.size * bakeJob.size;
-        // Always one face at least, so that the largest size still gets done
-        while (bakeJob.step < 12 && (bakedPixelsThisFrame === 0 || bakedPixelsThisFrame + facePixels <= BAKE_PIXELS_PER_FRAME)) {
+        const { size } = bakeJob;
+        // Always a row or two at least, so that the largest size still gets done
+        while (bakeJob.step < 12 && (bakedPixelsThisFrame === 0 || bakedPixelsThisFrame + size * 8 <= bakePixelsPerFrame)) {
             const layer = bakeJob.step < 6 ? 0 : 1;
             const face = bakeJob.step % 6;
+            const room = Math.floor((bakePixelsPerFrame - bakedPixelsThisFrame) / size);
+            const rows = Math.min(size - bakeJob.row, Math.max(2, room));
+            const target = layer === 0 ? bakeJob.surface : bakeJob.extras;
+            const lastOfMap = face === 5 && bakeJob.row + rows >= size;
+            target.texture.generateMipmaps = lastOfMap;
+            target.scissorTest = true;
+            target.scissor.set(0, bakeJob.row, size, rows);
             bakeMaterial.uniforms.uFace.value = FACES[face];
             bakeMaterial.uniforms.uLayer.value = layer;
-            glRenderer.setRenderTarget(layer === 0 ? bakeJob.surface : bakeJob.extras, face);
+            glRenderer.setRenderTarget(target, face);
             glRenderer.render(bakeScene, bakeCamera);
-            bakedPixelsThisFrame += facePixels;
-            bakeJob.step++;
+            target.texture.generateMipmaps = false;
+            bakedPixelsThisFrame += size * rows;
+            bakeJob.row += rows;
+            if (bakeJob.row >= size) {
+                bakeJob.row = 0;
+                bakeJob.step++;
+            }
         }
         glRenderer.setRenderTarget(previous, previousFace, previousMip);
         pattern.uOct.value = savedOct;
@@ -411,25 +521,24 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         }
         baked = bakeJob;
         bakeJob = null;
-        if (!bakedMaterial) {
-            bakedMaterial = new THREE.ShaderMaterial({
-                ...blendedBody,
-                fragmentShader: BAKED_BODY_FRAGMENT,
-                uniforms: {
-                    ...shading,
-                    tSurface: { value: baked.surface.texture },
-                    tExtras: { value: baked.extras.texture },
-                    uBakeTexel: { value: 2 / baked.size },
-                    uCloudAlt: { value: look.clouds.altitude },
-                    uCloudOpacity: { value: look.clouds.opacity }
-                }
-            });
-        } else {
-            bakedMaterial.uniforms.tSurface.value = baked.surface.texture;
-            bakedMaterial.uniforms.tExtras.value = baked.extras.texture;
-            bakedMaterial.uniforms.uBakeTexel.value = 2 / baked.size;
-        }
+        baked.surface.scissorTest = false;
+        baked.extras.scissorTest = false;
+        bakedMaterial.uniforms.tSurface.value = baked.surface.texture;
+        bakedMaterial.uniforms.tExtras.value = baked.extras.texture;
+        bakedMaterial.uniforms.uBakeTexel.value = 2 / baked.size;
     }
+
+    // Nothing baked survives a lost context: back to the flat disc until it has baked again
+    const offRestored = bus.on('gl-restored', () => {
+        baked = null;
+        bakeJob = null;
+        bakeProgram = null;
+        liveProgram = null;
+        bakeMix = 0;
+        bakedMaterial.uniforms.uBakeMix.value = 0;
+        bakedMaterial.uniforms.tSurface.value = null;
+        bakedMaterial.uniforms.tExtras.value = null;
+    });
 
     function bakeSizeFor(px) {
         if (px < 96) return 128;
@@ -453,10 +562,13 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
 
     // --- Time ---
     let clock = 0;
-    let useBaked = false;
+    let useBaked = true;
+    let bakeMix = 0;
+
+    let fixedQuality = opts.quality;
 
     function update(frame, sunDirWorld) {
-        const quality = opts.quality || (frame && frame.quality) || 'medium';
+        const quality = fixedQuality || (frame && frame.quality) || 'medium';
         const q = QUALITY[quality] || QUALITY.medium;
         if (frame && !frame.reduceMotion) clock += (frame.dt || 0) * timeScale;
 
@@ -485,12 +597,16 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         shared.uAtmSteps.value = q.steps;
         if (shell) shell.visible = q.shell;
 
-        // Live or baked, with a margin so that it does not flip back and forth at the threshold
+        // Live or baked, with a margin so that it does not flip back and forth at the threshold. Live has to wait for its
+        // program, and the bake stands in until then, however large the planet is.
         const px = pixelDiameter || (quality === 'low' ? 64 : 0);
         const margin = useBaked ? 1.2 : 0.85;
         const wantBaked = px > 0 && px < q.liveAbovePx * margin;
+        const wantLive = px > 0 && !wantBaked;
+        if (wantLive && !liveProgram && renderer) liveProgram = keepLive(renderer, look.model, defines);
+        const liveReady = wantLive && liveProgram && liveProgram.ready;
 
-        if (renderer && wantBaked) {
+        if (renderer && (wantBaked || (wantLive && !liveReady))) {
             const size = measured ? bakeSizeFor(px) : Math.min(256, bakeSizeFor(px));
             const have = bakeJob ? bakeJob.size : baked ? baked.size : 0;
             if (have < size) {
@@ -503,15 +619,18 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         }
         if (renderer && bakeJob) runBakeStep(renderer, quality, frame);
 
-        useBaked = wantBaked && !!baked;
+        if (baked && bakeMix < 1) {
+            bakeMix = frame && frame.reduceMotion ? 1 : Math.min(1, bakeMix + ((frame && frame.dt) || 0) / BAKE_FADE_S);
+            bakedMaterial.uniforms.uBakeMix.value = bakeMix;
+        }
+
+        useBaked = !liveReady;
         if (!bakeJob && !useBaked && !isSolid) pattern.uJetT.value = clock * look.spinRate * look.envelope.jetSpeed * 0.12;
         if (isSolid && !bakeJob && !useBaked) pattern.uFlow.value = clock * 0.03;
 
         if (!isSolid) placeStorms(pattern.uJetT.value);
 
         body.material = useBaked ? bakedMaterial : liveMaterial;
-        // At Low the costly live program is never built: a planet waits out its short bake unseen, rings and all
-        tilt.visible = useBaked || !(quality === 'low' && renderer);
     }
 
     function setOpacity(value) {
@@ -519,8 +638,9 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
     }
 
     function dispose() {
+        offRestored();
         liveMaterial.dispose();
-        if (bakedMaterial) bakedMaterial.dispose();
+        bakedMaterial.dispose();
         if (bakeMaterial) bakeMaterial.dispose();
         if (shellMaterial) shellMaterial.dispose();
         if (ringMaterial) ringMaterial.dispose();
@@ -536,5 +656,10 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
 
     update({ dt: 0, quality: opts.quality || 'medium', reduceMotion: true }, null);
 
-    return { object3d, update, dispose, setOpacity, look };
+    // What's already baked stays up: it's only baked again if a different level wants it larger
+    function setQuality(level) {
+        fixedQuality = level;
+    }
+
+    return { object3d, update, dispose, setOpacity, setQuality, look };
 }

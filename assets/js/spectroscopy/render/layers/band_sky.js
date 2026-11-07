@@ -7,17 +7,21 @@
 //
 // All four are baked once, one per channel, into a single texture indexed by galactic longitude and latitude. Each frame is
 // then a texture read on one sphere, skipped entirely in the visible band. Latitudes are squeezed so that the band gets most of
-// the texture's rows. The bake is spread over the first few frames, so it can't stall the page on a slow GPU.
+// the texture's rows. The bake is spread over many frames, sized to the GPU, so it can't stall the page.
 
 import * as THREE from 'three';
+import { bus } from '../../core/state.js';
 import { Rng } from '../../core/rng.js';
 import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
 import { BAND_INFO, GALACTIC_CENTRE_AZ } from '../../core/bands.js';
-import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 
 const RAD = Math.PI / 180;
 const LAT_SCALE_DEG = 18;           // Latitudes well inside this get most of the texture's rows
-const BAKE_STRIPS = 8;              // Frames the bake is spread over
+const STRIP_ROWS_MIN = 8;           // The bake's strips are sized to suit the GPU, between these
+const STRIP_ROWS_MAX = 128;
+const BAKE_START_DELAY_S = 4;       // How long after loading the bake waits, unless these bands are asked for first
+const GLOW_FADE_S = 0.5;
 const CMB_FADE_S = 0.6;
 const CMB_GLOW = 0.022;             // Faint: enough to lift the whole radio sky, not enough to wash it out
 
@@ -51,6 +55,7 @@ const BAKE_FRAGMENT = /* glsl */`
 precision highp float;
 varying vec2 vUv;
 ${LAT_GLSL}
+${LOOP_ZERO_GLSL}
 
 // Hash without sine, so every GPU draws the same sky
 vec3 hash33(vec3 p) {
@@ -59,20 +64,24 @@ vec3 hash33(vec3 p) {
     return fract((p.xxy + p.yxx) * p.zyx) * 2.0 - 1.0;
 }
 
+// The eight corners of the cell in a loop rather than written out, for the compiler's sake: see LOOP_ZERO_GLSL
 float noise(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    return mix(mix(mix(dot(hash33(i), f), dot(hash33(i + vec3(1, 0, 0)), f - vec3(1, 0, 0)), u.x),
-                   mix(dot(hash33(i + vec3(0, 1, 0)), f - vec3(0, 1, 0)), dot(hash33(i + vec3(1, 1, 0)), f - vec3(1, 1, 0)), u.x), u.y),
-               mix(mix(dot(hash33(i + vec3(0, 0, 1)), f - vec3(0, 0, 1)), dot(hash33(i + vec3(1, 0, 1)), f - vec3(1, 0, 1)), u.x),
-                   mix(dot(hash33(i + vec3(0, 1, 1)), f - vec3(0, 1, 1)), dot(hash33(i + vec3(1, 1, 1)), f - vec3(1, 1, 1)), u.x), u.y), u.z) * 1.6;
+    float sum = 0.0;
+    for (int c = 0; c < 8 + uLoopZero; c++) {
+        vec3 o = vec3(float(c & 1), float((c >> 1) & 1), float((c >> 2) & 1));
+        vec3 w = mix(1.0 - u, u, o);
+        sum += w.x * w.y * w.z * dot(hash33(i + o), f - o);
+    }
+    return sum * 1.6;
 }
 
 float fbm(vec3 p, int octaves) {
     float sum = 0.0;
     float amp = 0.5;
-    for (int i = 0; i < octaves; i++) {
+    for (int i = 0; i < octaves + uLoopZero; i++) {
         sum += amp * noise(p);
         p = p * 2.03 + vec3(11.7, 3.1, 7.9);
         amp *= 0.5;
@@ -263,7 +272,8 @@ export function createBandSkyLayer(engine, app) {
     const size = app.settings.quality === 'low' ? 1024 : 2048;
     const glow = createGlowTarget(size);
 
-    // The bake: a full-screen quad into the texture, one strip a frame
+    // The bake: a full-screen quad into the texture, a strip at a time. Nothing here shows in the visible band, which is
+    // where every student starts, so all of it waits until the sky has settled, or until it's first needed.
     const bakeMaterial = new THREE.ShaderMaterial({
         depthTest: false,
         depthWrite: false,
@@ -275,24 +285,47 @@ export function createBandSkyLayer(engine, app) {
     const bakeScene = new THREE.Scene();
     const bakeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     bakeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bakeMaterial));
-    let stripsDone = 0;
+    let bakeState = 'waiting';      // 'waiting', then 'compiling', 'baking' and 'done'
+    let rowsDone = 0;
+    let rowsPerStep = STRIP_ROWS_MIN;
+    let wokenAt = performance.now() + BAKE_START_DELAY_S * 1000;
+    let glowFade = 0;
+
+    function startCompiling() {
+        bakeState = 'compiling';
+        engine.compileInBackground(bakeScene, bakeCamera).then(() => {
+            if (bakeState === 'compiling') bakeState = 'baking';
+        });
+    }
 
     function bakeNextStrip() {
+        rowsPerStep = engine.bakePace(rowsPerStep, STRIP_ROWS_MIN, STRIP_ROWS_MAX);
+        const rows = Math.min(Math.round(rowsPerStep), glow.height - rowsDone);
         const previousTarget = renderer.getRenderTarget();
-        const rowsPerStrip = glow.height / BAKE_STRIPS;
         glow.scissorTest = true;
-        glow.scissor.set(0, Math.round(stripsDone * rowsPerStrip), glow.width, Math.ceil(rowsPerStrip));
+        glow.scissor.set(0, rowsDone, glow.width, rows);
         renderer.setRenderTarget(glow);
         renderer.render(bakeScene, bakeCamera);
         renderer.setRenderTarget(previousTarget);
-        stripsDone++;
-        if (stripsDone === BAKE_STRIPS) disposeBake();
+        rowsDone += rows;
+        if (rowsDone >= glow.height) {
+            bakeState = 'done';
+            disposeBake();  // Only frees the program: after a lost context it's simply compiled again
+        }
     }
 
     function disposeBake() {
         bakeMaterial.dispose();
         bakeScene.children[0].geometry.dispose();
     }
+
+    const offRestored = bus.on('gl-restored', () => {
+        bakeState = 'waiting';
+        rowsDone = 0;
+        glowFade = 0;
+        skyMesh.material.uniforms.uGlowFade.value = 0;
+        wokenAt = performance.now();
+    });
 
     const toGalactic = new THREE.Matrix3().set(
         basis.x[0], basis.x[1], basis.x[2],
@@ -307,6 +340,7 @@ export function createBandSkyLayer(engine, app) {
         side: THREE.BackSide,
         uniforms: {
             tGlow: { value: glow.texture },
+            uGlowFade: { value: 0 },
             uToGalactic: { value: toGalactic },
             uCmb,
             uLow: { value: GLOW_BANDS.map((b) => new THREE.Vector3(...BAND_INFO[b].ramp.low)) },
@@ -322,6 +356,7 @@ export function createBandSkyLayer(engine, app) {
             ${BAND_GLSL}
             ${LAT_GLSL}
             uniform sampler2D tGlow;
+            uniform float uGlowFade;
             uniform mat3 uToGalactic;
             uniform float uCmb;
             uniform vec3 uLow[4];
@@ -338,7 +373,7 @@ export function createBandSkyLayer(engine, app) {
                 vec3 d = normalize(vDir);
                 vec3 g = uToGalactic * d;
                 vec2 uv = vec2(atan(g.y, g.x) / (2.0 * PI) + 0.5, latToV(asin(clamp(g.z, -1.0, 1.0)) / RAD));
-                vec4 glow = texture2D(tGlow, uv) * GAIN;
+                vec4 glow = texture2D(tGlow, uv) * GAIN * uGlowFade;
                 vec3 c = ramp(glow.r, uLow[0], uHigh[0]) * uBandW[0];
                 c += ramp(glow.g, uLow[1], uHigh[1]) * uBandW[1];
                 c += ramp(glow.b, uLow[2], uHigh[2]) * uBandW[3];     // uBandW[2] is the visible band, background.js's
@@ -360,10 +395,15 @@ export function createBandSkyLayer(engine, app) {
 
     return {
         id: 'band_sky',
-        bakeProgress: () => stripsDone / BAKE_STRIPS,
+        bakeProgress: () => rowsDone / glow.height,
         update(frame) {
-            if (stripsDone < BAKE_STRIPS) bakeNextStrip();
             const showing = frame.bandW[2] < 0.999;
+            if (bakeState === 'waiting' && (showing || performance.now() >= wokenAt)) startCompiling();
+            if (bakeState === 'baking' && engine.bakesAllowed(!showing)) bakeNextStrip();
+            if (bakeState === 'done' && glowFade < 1) {
+                glowFade = frame.reduceMotion ? 1 : Math.min(1, glowFade + frame.dt / GLOW_FADE_S);
+                skyMesh.material.uniforms.uGlowFade.value = glowFade;
+            }
             skyMesh.visible = showing;
             sources.visible = showing;
             const target = app.layers.cmb ? 1 : 0;
@@ -375,13 +415,14 @@ export function createBandSkyLayer(engine, app) {
             }
         },
         dispose() {
+            offRestored();
             engine.scene.remove(skyMesh);
             engine.scene.remove(sources);
             skyGeometry.dispose();
             skyMesh.material.dispose();
             sources.geometry.dispose();
             sources.material.dispose();
-            if (stripsDone < BAKE_STRIPS) disposeBake();
+            disposeBake();
             glow.dispose();
         }
     };

@@ -40,15 +40,51 @@ function attempt(name, fn) {
     }
 }
 
-function boot() {
+const FIRST_FRAME_WAIT_MS = 500;
+
+// Lets the browser draw and answer the pointer before more is started, if a bit of this has run on for long enough
+const SLICE_MS = 12;
+let sliceStart = 0;
+
+function breathe() {
+    if (performance.now() - sliceStart < SLICE_MS) return null;
+    return new Promise((resolve) => {
+        const go = () => {
+            sliceStart = performance.now();
+            resolve();
+        };
+        if (document.hidden) setTimeout(go, 0); // A hidden tab has no frames to wait for
+        else requestAnimationFrame(() => setTimeout(go, 0));
+    });
+}
+
+// The sky is drawn and can be dragged before anything else is started. Everything after it joins as it becomes ready.
+async function boot() {
+    sliceStart = performance.now();
     const canvas = document.getElementById('simulationCanvas');
-    app.universe = generateUniverse();
     app.engine = createEngine(canvas);
     createDrawer();
 
     const engine = app.engine;
-    [
-        ['background', createBackgroundLayer],
+    const addLayer = (name, create) => {
+        const layer = attempt(`layer: ${name}`, () => create(engine, app));
+        if (layer) engine.addLayer(layer);
+    };
+
+    // First the page's own controls, which also give the canvas its final size, so that nothing jumps once the sky is up
+    attempt('shell', () => initShell(app));
+    engine.resize();
+    addLayer('background', createBackgroundLayer);
+    engine.start();
+    // Building the universe is the one long job here: let the sky appear first
+    await Promise.race([engine.firstFrame, new Promise((resolve) => setTimeout(resolve, FIRST_FRAME_WAIT_MS))]);
+    sliceStart = 0;
+    await breathe();    // And that frame has to reach the screen
+
+    app.universe = generateUniverse();
+    await breathe();
+
+    const layers = [
         ['band sky', createBandSkyLayer],
         ['nebulae', createNebulaeLayer],
         ['supernovae', createSupernovaeLayer],
@@ -63,19 +99,25 @@ function boot() {
         ['rogue planets', createRoguePlanetsLayer],
         ['home planets', createHomePlanetsLayer],
         ['overlays', createOverlaysLayer]
-    ].forEach(([name, create]) => {
-        const layer = attempt(`layer: ${name}`, () => create(engine, app));
-        if (layer) engine.addLayer(layer);
-    });
+    ];
+    for (const [name, create] of layers) {
+        addLayer(name, create);
+        await breathe();
+    }
 
-    attempt('system view', () => initSystemView(app));
-    attempt('shell', () => initShell(app));
-    attempt('overview tab', () => initOverviewTab(app));
-    attempt('spectrum tab', () => initSpectrumTab(app));
-    attempt('H-R tab', () => initHRTab(app));
-    attempt('Hubble tab', () => initHubbleTab(app));
-    attempt('go to', () => initGoto(app));
-    attempt('keyboard', () => initKeyboard(app));
+    const inits = [
+        ['system view', initSystemView],
+        ['overview tab', initOverviewTab],
+        ['spectrum tab', initSpectrumTab],
+        ['H-R tab', initHRTab],
+        ['Hubble tab', initHubbleTab],
+        ['go to', initGoto],
+        ['keyboard', initKeyboard]
+    ];
+    for (const [name, init] of inits) {
+        attempt(name, () => init(app));
+        await breathe();
+    }
 
     // Clicking the sky selects what's under the pointer; clicking empty sky leaves the selection alone
     bus.on('skyclick', ({ code }) => { if (code) select(code); });
@@ -83,7 +125,6 @@ function boot() {
     // For tests and the browser console
     window.__spectro = { app, bus, select };
 
-    engine.start();
     bus.emit('ready', {});
 }
 

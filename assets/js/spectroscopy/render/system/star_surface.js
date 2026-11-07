@@ -119,7 +119,7 @@ vec2 cells(vec3 p, float boil) {
             for (int i = 0; i < 2; i++) {
                 vec3 o = vec3(float(i), float(j), float(k));
                 vec3 c = ip + o;
-                vec4 h = texture2D(tNoise, (c.xy + c.z * vec2(37.0, 17.0) + 0.5) / 256.0);
+                vec4 h = textureLod(tNoise, (c.xy + c.z * vec2(37.0, 17.0) + 0.5) / 256.0, 0.0);
                 vec3 d = o + 0.5 + 0.42 * sin(boil + 6.2831 * h.rba) - fp;
                 float q = dot(d, d);
                 if (q < f1) {
@@ -145,7 +145,7 @@ float spotField(vec3 p, float amount) {
             for (int i = 0; i < 2; i++) {
                 vec3 o = vec3(float(i), float(j), float(k));
                 vec3 c = ip + o + 31.0;
-                vec4 h = texture2D(tNoise, (c.xy + c.z * vec2(37.0, 17.0) + 0.5) / 256.0);
+                vec4 h = textureLod(tNoise, (c.xy + c.z * vec2(37.0, 17.0) + 0.5) / 256.0, 0.0);
                 float size = (h.b - (1.0 - amount)) / max(amount, 0.01);
                 if (size <= 0.0) continue;
                 vec3 d = o + 0.5 + 0.8 * (h.rag - 0.5) - fp;

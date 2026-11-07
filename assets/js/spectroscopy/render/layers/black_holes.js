@@ -24,6 +24,7 @@ const STAR_ORBIT = R_OUT * 2.5;
 const REVEAL_LO = 5;        // Device pixels of disc radius where the hole starts to appear...
 const REVEAL_HI = 14;       // ...and where it has fully arrived
 const MAX_HEROES = 4;       // Holes drawn in detail at once. They are far apart, so this is never reached in practice
+const LENS_FADE_S = 0.5;    // How long the lens takes to come up if its programs are only just ready
 const JET_DEG = 7;          // Jet length as a multiple of the disc's on-sky diameter
 const DEEP_STARS = 1500;    // Faint stars around a hole, so that at high zoom there is something to bend
 
@@ -173,7 +174,7 @@ const LENS_FRAGMENT = /* glsl */`
 
         // Visible: the temperature sets the colour and the observed temperature is shifted by g
         float T = max(uDiscT * Tn * g * (1.0 + 0.5 * spot), 2300.0);
-        vec3 bb = pow(texture2D(tBody, vec2(log(clamp(T, 1000.0, 40000.0) / 1000.0) / log(40.0), 0.5)).rgb, vec3(1.2));
+        vec3 bb = pow(textureLod(tBody, vec2(log(clamp(T, 1000.0, 40000.0) / 1000.0) / log(40.0), 0.5), 0.0).rgb, vec3(1.2));
         float g3 = g * g * g;
         vec3 visible = bb * (2.0 * pow(f, 1.3) * g3 * d + 1.2 * spot * inner);
 
@@ -228,7 +229,7 @@ const LENS_FRAGMENT = /* glsl */`
                 if (float(k) >= uOrders) break;
                 float psi = psi0 + float(k) * PI;
                 if (psi >= psiEnd) break;
-                float u = texture2D(tRay, vec2(tx, tableY(psi / psiEnd))).r;
+                float u = textureLod(tRay, vec2(tx, tableY(psi / psiEnd)), 0.0).r;
                 if (u < 1.0 / uROut || u > 1.0 / (uRIn * 0.95)) continue;
                 float r = 1.0 / u;
                 vec3 P = vec3(sin(psi) * dir, cos(psi));
@@ -355,6 +356,7 @@ function createLensPass() {
     lensScene.add(lensMesh);
 
     return {
+        compile: (engine) => Promise.all([engine.compileInBackground(copyScene, camera), engine.compileInBackground(lensScene, camera)]),
         copy(renderer, input) {
             copyMaterial.uniforms.tInput.value = input;
             renderer.render(copyScene, camera);
@@ -821,7 +823,25 @@ export function createBlackHolesLayer(engine, app) {
             hero.stars = createDeepStars(engine, starGeo, dprUniform);
             frontScene.add(hero.stream, hero.companion);
         });
+        compileLens();
     }
+
+    // The lens waits for its programs, as drawing with unfinished ones would hold the page up. Until they're ready
+    // the hole just stays as it was, and then the bending of the sky comes up over the next moment.
+    let lensReady = false;
+    let lensFade = 0;
+    let lensRun = 0;
+    function compileLens() {
+        const run = ++lensRun;
+        lensReady = false;
+        lensFade = 0;
+        Promise.all([lens.compile(engine), engine.compileInBackground(frontScene)]).then(() => {
+            if (run === lensRun) lensReady = true;
+        });
+    }
+    const offRestored = bus.on('gl-restored', () => {
+        if (lens) compileLens();
+    });
 
     function placeHero(hero, bh, reveal, pxPerM) {
         hero.bh = bh;
@@ -846,7 +866,7 @@ export function createBlackHolesLayer(engine, app) {
             const pxPerM = radiusPx / R_OUT;
             const reach = (LENS_EDGE * pxPerM * 2);
             if (Math.abs(v.x) > 1 + reach / w || Math.abs(v.y) > 1 + reach / h) continue;
-            const reveal = smoothstep(REVEAL_LO, REVEAL_HI, radiusPx) * sharedUniforms.uSkyFade.value;
+            const reveal = smoothstep(REVEAL_LO, REVEAL_HI, radiusPx) * sharedUniforms.uSkyFade.value * lensFade;
             if (heroCount < MAX_HEROES) {
                 placeHero(heroes[heroCount++], bh, reveal, pxPerM);
             } else {
@@ -947,10 +967,12 @@ export function createBlackHolesLayer(engine, app) {
     return {
         id: 'black_holes',
         update(frame) {
+            if (lensReady && lensFade < 1) lensFade = frame.reduceMotion ? 1 : Math.min(1, lensFade + frame.dt / LENS_FADE_S);
             collectHeroes(frame);
             dprUniform.value = frame.dpr;
             if (heroCount > 0) ensureBuilt();
             if (!lens) return;
+            if (!lensReady) heroCount = 0;
             for (let i = 0; i < MAX_HEROES; i++) {
                 const hero = heroes[i];
                 if (i < heroCount) {
@@ -985,7 +1007,9 @@ export function createBlackHolesLayer(engine, app) {
             return pickList;
         },
         dispose() {
+            lensRun += 1;
             unsubscribe();
+            offRestored();
             effect.isActive = () => false;
             if (glows) {
                 engine.scene.remove(glows);

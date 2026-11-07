@@ -200,7 +200,8 @@ export function createSupernovaeLayer(engine, app) {
                 vFlash = aFlashCol * vis + uBandTint[0] * radio + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr;
                 float total = vis + radio + ir + uv + xr;
                 float dprScale = clamp(uViewport.y / 900.0, 0.8, 2.0);
-                float glowPx = (5.0 + 85.0 * sqrt(total)) * dprScale;
+                // Bright, but a point of light: at its peak it shouldn't be the largest thing in the sky
+                float glowPx = (4.0 + 34.0 * sqrt(total)) * dprScale;
                 vGlowPx = glowPx;
                 float half_ = max(aHalf, glowPx / uPxPerRad);
                 vQ = position.xy * half_ / aHalf;
@@ -305,8 +306,8 @@ export function createSupernovaeLayer(engine, app) {
                 }
                 const shape = i * 4;
                 if (stage.shape[shape + 2] > 0.02) {
-                    const half = item.tanHalf * stage.shape[shape];
-                    baker.considerSprite(item.job, item.c[0], item.c[1], item.c[2], item.r[0], item.r[1], item.r[2], item.n[0], item.n[1], item.n[2], half);
+                    item.job.half = item.tanHalf * stage.shape[shape];
+                    baker.considerSprite(item.job, item.c, item.r, item.n);
                 }
             }
             if (changed) readyAttr.needsUpdate = true;

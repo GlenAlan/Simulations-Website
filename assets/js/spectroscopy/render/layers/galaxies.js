@@ -6,6 +6,7 @@
 // zoom. The rule is softer than the one for stars, since a galaxy is a small jewel in the wide sky, not a point.
 
 import * as THREE from 'three';
+import { bus } from '../../core/state.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { limitingMag } from '../../core/sky.js';
 import { bandMagnitudes } from '../../data/band_table.js';
@@ -123,7 +124,17 @@ export function createGalaxiesLayer(engine, app) {
     const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
     const rows = Math.max(1, Math.ceil(n / cols));
     const atlas = createBakeTarget(cols * TILE, rows * TILE);
-    const baker = createGalaxyBaker(renderer);
+    const baker = createGalaxyBaker(engine);
+    let bakerReady = false;
+    let compileRun = 0;
+    function compileBaker() {
+        const run = ++compileRun;
+        bakerReady = false;
+        baker.compile().then(() => {
+            if (run === compileRun) bakerReady = true;
+        });
+    }
+    compileBaker();
 
     const galaxies = bodies.map((body, i) => {
         const basis = tangentBasis(body.sky.az, body.sky.alt);
@@ -405,6 +416,23 @@ export function createGalaxiesLayer(engine, app) {
         }
     }
 
+    // Every bake went with the context, and the programs with them
+    const offRestored = bus.on('gl-restored', () => {
+        job = null;
+        jobDone = null;
+        heroes.forEach((h) => {
+            h.baking = false;
+            h.wanted = false;
+            releaseHero(h);
+        });
+        galaxies.forEach((g) => {
+            g.baked = false;
+            g.tileFade = 0;
+        });
+        baker.releaseScratch();
+        compileBaker();
+    });
+
     const layer = {
         id: 'galaxies',
         update(frame) {
@@ -414,10 +442,10 @@ export function createGalaxiesLayer(engine, app) {
             else stillFor += Math.max(dt, 0.008);
             lastFov = frame.fov;
 
-            if (app.view === 'sky') {
+            if (app.view === 'sky' && bakerReady) {
                 chooseHeroes(frame);
                 if (!job) pickWork(frame);
-                if (job) stepJob();
+                if (job && engine.bakesAllowed()) stepJob();
             }
 
             // Fades add up to one, since drawing is additive: first a baked tile comes in, then a large picture takes over
@@ -479,6 +507,8 @@ export function createGalaxiesLayer(engine, app) {
         },
 
         dispose() {
+            compileRun += 1;
+            offRestored();
             heroes.forEach((h) => {
                 releaseHero(h);
                 scene.remove(h.mesh);
