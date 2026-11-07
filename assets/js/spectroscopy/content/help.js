@@ -21,7 +21,7 @@ const USING_THE_SKY = `<ol>
     <li><strong>Zoom in.</strong> Use Enter system on a star with planets, and click a planet to open it.</li>
 </ol>
 <p>Each panel has <strong>Catalogue values</strong>, the true numbers for checking yourself. Work it out first, then look.</p>
-<p>Labels, the grid and the other extras are in <strong>Layers</strong>. Two of them help a long search: <strong>Visited systems</strong> ticks the systems you have been in, and <strong>Stars with planets</strong> marks the stars worth going into. Everything has its own code, and <strong>Copy link</strong> makes a link that opens that object, so a teacher can send you straight there.</p>`;
+<p>Labels, the grid and the other extras are in <strong>Layers</strong>. Two of them help a long search: <strong>Visited systems</strong> ticks the systems you have been in, and <strong>Stars with planets</strong> marks the stars known to have them. Everything has its own code, and <strong>Copy link</strong> makes a link that opens that object, so a teacher can send you straight there.</p>`;
 
 const KEYBOARD = definitions([
     [`${key('←')} ${key('→')} ${key('↑')} ${key('↓')}`, 'Look around'],

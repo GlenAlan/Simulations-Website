@@ -529,11 +529,11 @@ export function initGoto(app) {
         const stillCurrent = () => id === flightId;
         const systemCode = systemCodeOf(resolved);
         const inItsSystem = () => !!systemCode && app.view === 'system' && app.systemCode === systemCode;
-        const leave = () => untilDone((onDone) => app.system.exit({ onDone }));
-        const goIn = () => untilDone((onDone) => app.system.enter(systemCode, { onDone, focus: false }));
+        const leaveSystem = () => untilDone((onDone) => app.system.exit({ onDone }));
+        const goIntoSystem = () => untilDone((onDone) => app.system.enter(systemCode, { onDone, focus: false }));
 
         if (inItsSystem()) {
-            await goIn(); // Nothing to do if it's open, and if it's on the way out this turns it round
+            await goIntoSystem(); // Nothing to do if it's open, and if it's on the way out this turns it round
             if (!stillCurrent()) return false;
             if (!inItsSystem()) return false;
             // As a row in the System tab does: a star's code goes back to the whole system or on to that star
@@ -542,7 +542,7 @@ export function initGoto(app) {
             return true;
         }
         if (app.view === 'system' && app.system) {
-            await leave();
+            await leaveSystem();
             if (!stillCurrent()) return false;
         }
 
@@ -552,11 +552,11 @@ export function initGoto(app) {
         // Enter system pressed on the way, while the panel still showed the object being left: they meant this one
         const pressedEnter = app.view === 'system';
         if (pressedEnter && !inItsSystem()) {
-            await leave();
+            await leaveSystem();
             if (!stillCurrent()) return false;
         }
         if ((path === 'planet' || pressedEnter) && systemCode && engine.renderer) {
-            await goIn();
+            await goIntoSystem();
             if (!stillCurrent()) return false;
             if (!inItsSystem()) return false; // Esc on the way in called the whole thing off
             if (path === 'planet') app.system.focusPlanet(entity.code);

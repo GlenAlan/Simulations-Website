@@ -115,6 +115,11 @@ export function initViewAids(app) {
         const cosHalf = Math.cos(Math.min(89, half) * RAD);
         const pxPerDeg = RAD * (frame.pxPerRad / frame.dpr);
         const seen = limitingMag(view.fov) - IN_VIEW_MARGIN;
+        // Whatever the student has picked counts, however faint: the selection ring is round it
+        if (app.selected && engine.bodyShows(app.selected.body)) {
+            const p = engine.projectBody(app.selected.body);
+            if (p && p.onScreen) return true;
+        }
         const touches = (p, r) => !!p && p.x + r >= 0 && p.x - r <= frame.width && p.y + r >= 0 && p.y - r <= frame.height;
         for (let i = 0; i < items.length; i++) {
             const { body, dir, reach, tail } = items[i];

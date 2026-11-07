@@ -3688,12 +3688,55 @@ html:not(.dark-mode) .spectro-sim .spectro-layers-menu {
     font-family: inherit;
 }
 
+/* Four text sizes in the panel, in place of the ten that had grown between its sections: 12 and 13.5 px here, the panel's
+   body size and the object's title. Glyph buttons such as + and - keep their own. */
+#simulationControlsPanel .spectro-title-sub,
+#simulationControlsPanel .spectro-ov-label,
+#simulationControlsPanel .spectro-readout-hint,
+#simulationControlsPanel .spectro-system-facts,
+.spectro-sim .sim-control-group-label {
+    font-size: 12px;
+}
+
+#simulationControlsPanel .spectro-tab,
+#simulationControlsPanel .spectro-tool-x,
+#simulationControlsPanel .spectro-ref-label,
+#simulationControlsPanel .spectro-seg-button,
+#simulationControlsPanel .spectro-text-button,
+#simulationControlsPanel .spectro-fig-rowlabel,
+#simulationControlsPanel .spectro-fig-rowvalue,
+#simulationControlsPanel .spectro-fig-measure,
+#simulationControlsPanel .spectro-fig-hintline,
+#simulationControlsPanel .spectro-fig-hint,
+#simulationControlsPanel .spectro-fig-tool,
+#simulationControlsPanel .spectro-system-lead,
+#simulationControlsPanel .spectro-system-note {
+    font-size: 13.5px;
+}
+
+@container (min-width: 341px) {
+    #simulationControlsPanel .spectro-tool-chip {
+        font-size: 13.5px;
+    }
+}
+
+.spectro-sim .spectro-readout-hint {
+    opacity: 1;
+}
+
+/* The site's light body weight goes thin and pale at these sizes on a light panel */
+html:not(.dark-mode) .spectro-sim .sim-controls-panel,
+html:not(.dark-mode) .spectro-sim .spectro-layers-menu {
+    font-weight: 400;
+}
+
 /* Small text at full strength */
 .spectro-sim .sim-control-group-label {
     opacity: 1;
 }
 
 .spectro-sim .sim-checkbox-group.sim-chips input[type="checkbox"] + label {
+    font-size: 13.5px;
     opacity: 1;
 }
 

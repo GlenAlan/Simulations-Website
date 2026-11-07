@@ -206,10 +206,13 @@ export function initKeyboard(app) {
         if (!skyHasKeys(target) && !hopFromPanel) return;
 
         if (app.view !== 'sky') {
-            // The system view steers its own camera; the sky waits where it was left
-            if (key === 'Enter' && target === canvas && objectPanelOpen()) {
+            // The system view steers its own camera, and hears its keys only from the sky. A hop from the panel is passed on
+            // to it, and the focus stays where it is.
+            if (hopFromPanel && target !== canvas) {
                 e.preventDefault();
-                app.drawer.focusContent();
+                const fromPanel = drawerBody.contains(target);
+                canvas.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+                if (fromPanel && !drawerBody.contains(document.activeElement)) app.drawer.focusContent();
             }
             return;
         }
