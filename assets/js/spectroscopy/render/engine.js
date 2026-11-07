@@ -877,12 +877,20 @@ export function createEngine(canvas) {
         // the slew goes, as the drawer opening for the same click can move the axis meanwhile. opts.axis: it's the axis's own.
         let aim = null;
         let to = { az: target.az ?? view.az, alt: target.alt ?? view.alt };
+        // Near the zenith, an axis off the middle may not be able to bring the target to the middle at all: the camera would
+        // have to tip over the top. Then the axis goes back to the middle on the way, which nobody sees while the sky moves.
+        let toCentre = null;
         if (!opts.axis) {
             const centre = centreDir();
             aim = { az: target.az ?? centre.az, alt: target.alt ?? centre.alt };
+            if (lensOffset() && !middleReaches(aim, toFov)) toCentre = { x: lens.x, y: lens.y, k: 0 };
             to = axisFor(aim, toFov);
         }
         if (duration <= 0) {
+            if (toCentre) {
+                moveLens(toCentre, 1);
+                to = axisFor(aim, toFov);
+            }
             placeView(to.az, to.alt, toFov);
             zoomGoal = view.fov;
             slew = null;
@@ -891,7 +899,7 @@ export function createEngine(canvas) {
             return;
         }
         if (app.settings.reduceMotion) {
-            slew = { dip: true, jumped: false, aim, toAz: to.az, toAlt: to.alt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
+            slew = { dip: true, jumped: false, aim, toCentre, toAz: to.az, toAlt: to.alt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
             return;
         }
         const dAz = ((((to.az - view.az + 540) % 360) + 360) % 360) - 180;
@@ -906,7 +914,27 @@ export function createEngine(canvas) {
             const p = project(aim.az, aim.alt);
             if (p && p.onScreen) glide = { x: p.x - width / 2, y: p.y - height / 2 };
         }
-        slew = { from: { ...view }, aim, dAz, dAlt, toFov, midFov: glide ? null : midFov, glide, t: 0, duration, onDone: opts.onDone };
+        slew = { from: { ...view }, aim, toCentre, dAz, dAlt, toFov, midFov: glide ? null : midFov, glide, t: 0, duration, onDone: opts.onDone };
+    }
+
+    // Can the middle of the canvas be brought onto this direction, with the lens as it is? See rayThrough and solveAxis.
+    function middleReaches(aim, fov) {
+        const r = rayThrough(width / 2, height / 2, fov);
+        if (Math.abs(Math.sin(aim.alt * RAD)) > Math.hypot(r.y, r.f) - 1e-9) return false;
+        const axis = axisPutting(aim.az, aim.alt, width / 2, height / 2, fov);
+        return axis.alt <= ALT_MAX && axis.alt >= ALT_SLEW_MIN;
+    }
+
+    // Takes the lens's offset back towards none, to k of the way: by steps, so that the drawer can still move it meanwhile
+    function moveLens(state, k) {
+        lens.x -= state.x * (k - state.k);
+        lens.y -= state.y * (k - state.k);
+        state.k = k;
+        if (k >= 1) {
+            if (Math.abs(lens.x) < 0.01) lens.x = 0;
+            if (Math.abs(lens.y) < 0.01) lens.y = 0;
+        }
+        projectionDirty = true;
     }
 
     // A glide's view at k of the way: the zoom eases in log steps as any flight's does, and the target sits on the straight
@@ -948,16 +976,19 @@ export function createEngine(canvas) {
             dipToBlack = Math.abs(1 - slew.t * 2);
             if (slew.t >= 0.5 && !slew.jumped) {
                 slew.jumped = true;
+                if (slew.toCentre) moveLens(slew.toCentre, 1);
                 const to = slew.aim ? axisFor(slew.aim, slew.toFov) : { az: slew.toAz, alt: slew.toAlt };
                 placeView(to.az, to.alt, slew.toFov);
                 zoomGoal = view.fov;
             }
         } else if (slew.glide) {
+            if (slew.toCentre) moveLens(slew.toCentre, easeInOut(slew.t));
             const to = glideView(easeInOut(slew.t));
             placeView(to.az, to.alt, to.fov);
         } else {
             const k = easeInOut(slew.t);
             const { from, midFov, toFov } = slew;
+            if (slew.toCentre) moveLens(slew.toCentre, k);
             if (slew.aim) {
                 const to = axisFor(slew.aim, toFov);
                 slew.dAz = ((((to.az - from.az + 540) % 360) + 360) % 360) - 180;
