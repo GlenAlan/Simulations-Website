@@ -162,6 +162,8 @@ export function createFigure(parent, { label, height, draw }) {
     }
 
     new ResizeObserver(() => { if (wrap.clientWidth !== width) redraw(); }).observe(wrap);
+    // If the graphics process restarts, the browser gives the canvas back empty
+    canvas.addEventListener('contextrestored', redraw);
     new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     return {

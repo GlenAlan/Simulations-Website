@@ -1788,7 +1788,8 @@ export function initSystemView(app) {
     function enter(code, opts = {}) {
         const resolved = app.universe.resolve(code);
         const body = systemBodyOf(resolved);
-        if (!body) {
+        // With the graphics gone for now, a flight could never finish: the panels still work, and the sky is where it was
+        if (!body || engine.isContextLost()) {
             if (opts.onDone) opts.onDone();
             return false;
         }
@@ -1930,9 +1931,9 @@ export function initSystemView(app) {
         // A zoom under way gives way to Esc, the button or a link, and from here it's a flight on the clock
         const wasHand = !!hand;
         hand = null;
-        if (mode === 'exit' && !wasHand) return;
-        if (mode === 'load') {
-            // Never got started: just put everything back
+        if (mode === 'exit' && !wasHand && !engine.isContextLost()) return;
+        if (mode === 'load' || engine.isContextLost()) {
+            // Never got started, or there are no frames to fly with: just put everything back
             tNorm = 0;
             finishExit();
             return;
@@ -2015,6 +2016,10 @@ export function initSystemView(app) {
         else setTimeout(warmSmallPrograms, 1500);
     });
     bus.on('gl-restored', warmSmallPrograms);
+    // A flight in or out can't go on without frames: back to the sky, so the panel and the scene agree while it's dark
+    bus.on('gl-lost', () => {
+        if (mode === 'load' || mode === 'enter' || mode === 'exit') exit();
+    });
     // A system kept ready has lost what it compiled
     bus.on('gl-restored', () => {
         if (mode !== 'sky' || !model) return;

@@ -13,8 +13,9 @@
 // Each frame: sky scene -> overlay passes -> post effects (all HDR) -> bloom -> tone map, vignette, sRGB, dither.
 // If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
 //
-// If the browser takes the graphics context away and later gives it back, the engine emits bus 'gl-restored'. Whatever
-// a layer baked into a render target is gone by then, so a layer that bakes should listen and bake again.
+// If the browser takes the graphics context away the engine emits bus 'gl-lost', and if it later gives it back,
+// 'gl-restored'. Whatever a layer baked into a render target is gone by then, so a layer that bakes should listen and
+// bake again.
 //
 // Compiling a shader can take seconds on Windows, and drawing with one that isn't finished freezes the page until it is.
 // So anything added to engine.scene waits unseen until its program has compiled, then fades in by its uSkyFade: see
@@ -111,6 +112,44 @@ function supportsHalfFloatTarget(renderer) {
     return renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
 }
 
+// What the canvas area says when there's no sky. The advice has to fit the case: once the graphics card has had to be
+// reset under a page, Chrome refuses WebGL to that site until the browser is restarted, and reloading only shows the
+// same black. So a loss is noted, and a failure to start soon after one is taken for that.
+const GL_TEXT = {
+    blocked: 'The browser has switched off graphics for this site after a problem with the graphics card. To bring the sky back, close the browser completely (every window) and open it again. The Go to box and the object panels still work.',
+    disabled: "Graphics (WebGL) are switched off in this browser, perhaps by your school's settings, so the sky can't be drawn. The Go to box and the object panels still work.",
+    old: "This browser can't draw the sky, because it doesn't have WebGL 2. An up-to-date Chrome, Edge, Firefox or Safari can. The Go to box and the object panels still work.",
+    failed: "This device can't draw the sky, because WebGL 2 isn't available or is turned off. Try turning on hardware acceleration in your browser's settings, or use another browser. If the sky worked here before, close the browser completely and open it again. The Go to box and the object panels still work.",
+    lost: 'The graphics card needed a moment. The sky will come back on its own if it can. The Go to box and the object panels still work.',
+    gone: "The browser has stopped this page's graphics after a problem with the graphics card. To bring the sky back, close the browser completely (every window) and open it again. The Go to box and the object panels still work."
+};
+const LOST_KEY = 'spectro-gl-lost';
+const LOST_REMEMBER_MS = 12 * 3600 * 1000;  // A failure this soon after a loss is taken to be the browser's block
+const LOST_GIVE_UP_S = 10;                  // A context not back by then isn't coming back
+
+function rememberLoss(on) {
+    try {
+        if (on) localStorage.setItem(LOST_KEY, String(Date.now()));
+        else localStorage.removeItem(LOST_KEY);
+    } catch (err) { /* Storage may be off: the message is then a little less sure */ }
+}
+
+function lostRecently() {
+    try {
+        const at = Number(localStorage.getItem(LOST_KEY));
+        return at > 0 && Date.now() - at < LOST_REMEMBER_MS;
+    } catch (err) {
+        return false;
+    }
+}
+
+function noContextText(status) {
+    if (/caused context loss|was blocked/i.test(status)) return GL_TEXT.blocked;
+    if (typeof WebGL2RenderingContext === 'undefined') return GL_TEXT.old;
+    if (/enterprise policy|commandline switch/i.test(status)) return GL_TEXT.disabled;
+    return lostRecently() ? GL_TEXT.blocked : GL_TEXT.failed;
+}
+
 // A message in the canvas area, for when the sky can't be drawn at all
 function showCanvasMessage(canvas, text) {
     const host = canvas.parentElement;
@@ -143,12 +182,17 @@ export function wheelZoomStep(e) {
 
 export function createEngine(canvas) {
     let renderer = null;
+    let creationStatus = '';    // The browser's reason, if it gives one
+    const onCreationError = (e) => { creationStatus = e.statusMessage || creationStatus; };
+    canvas.addEventListener('webglcontextcreationerror', onCreationError);
     try {
         renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: false });
+        rememberLoss(false);
     } catch (err) {
         console.warn('[spectroscopy] WebGL is not available:', err);
-        showCanvasMessage(canvas, "This device can't draw the sky, because WebGL 2 isn't available or is turned off. Try turning on hardware acceleration in your browser's settings, or use another browser. The Go to box and the object panels still work.");
+        showCanvasMessage(canvas, noContextText(creationStatus));
     }
+    canvas.removeEventListener('webglcontextcreationerror', onCreationError);
     if (renderer) {
         renderer.setClearColor(0x000000, 1);
         renderer.toneMapping = THREE.NoToneMapping;
@@ -393,6 +437,8 @@ export function createEngine(canvas) {
 
     function compileInBackground(target, targetCamera = camera) {
         if (!renderer) return Promise.resolve();
+        // Nothing compiles without a context. Whoever asked compiles again on 'gl-restored', as with jobs the loss cut short
+        if (contextLost) return new Promise(() => {});
         return new Promise((resolve) => {
             compileJobs.push({ materials: [...renderer.compile(target, targetCamera)], resolve });
         });
@@ -831,7 +877,7 @@ export function createEngine(canvas) {
         velocity.az = 0;
         velocity.alt = 0;
         zoomAnchor = null;
-        const duration = renderer ? opts.duration ?? 1.5 : 0; // With no frames to fly through, it only has to get there
+        const duration = renderer && !contextLost ? opts.duration ?? 1.5 : 0; // With no frames to fly through, it only has to get there
         const toFov = target.fov ?? view.fov;
         // The target goes in the middle of the canvas, wherever the lens has the camera's axis, and it's worked out again as
         // the slew goes, as the drawer opening for the same click can move the axis meanwhile. opts.axis: it's the axis's own.
@@ -1490,7 +1536,7 @@ export function createEngine(canvas) {
         canvas.addEventListener('wheel', (e) => {
             if (app.view !== 'sky') return;
             e.preventDefault();
-            if (slew) return;
+            if (slew || contextLost) return;
             const step = wheelZoomStep(e);
             const point = canvasPoint(e);
             if (zoomIntake && zoomIntake(step, point, 'wheel')) return;
@@ -1536,17 +1582,31 @@ export function createEngine(canvas) {
             else wake();
         });
 
-        // Layers listen for 'gl-restored' to bake again whatever lived only on the GPU
+        // Layers listen for 'gl-restored' to bake again whatever lived only on the GPU. Without frames nothing can fly, so a
+        // flight under way lands at once, and 'gl-lost' tells the system view to do the same: Go to and the panels go on
+        // working, and the scene they describe is the one that comes back.
+        let giveUpTimer = 0;
         canvas.addEventListener('webglcontextlost', (e) => {
             e.preventDefault(); // Without this the browser never gives the context back
             contextLost = true;
             sleep();
             gpu.fence = null;   // It went with the context
             gpu.behind = 0;
-            showCanvasMessage(canvas, 'The graphics card needed a moment. The sky will come back on its own if it can; if it stays dark, reload the page.');
+            rememberLoss(true);
+            showCanvasMessage(canvas, GL_TEXT.lost);
+            clearTimeout(giveUpTimer);
+            giveUpTimer = setTimeout(() => { if (contextLost) showCanvasMessage(canvas, GL_TEXT.gone); }, LOST_GIVE_UP_S * 1000);
+            if (slew) slewTo({ az: slew.toAz ?? slew.from.az + slew.dAz, alt: slew.toAlt ?? slew.from.alt + slew.dAlt, fov: slew.toFov }, { duration: 0, onDone: slew.onDone });
+            zoomGoal = view.fov;
+            zoomAnchor = null;
+            document.body.classList.add('spectro-no-sky');  // Hides Enter system, which can't work until it's back
+            bus.emit('gl-lost', {});
         });
         canvas.addEventListener('webglcontextrestored', () => {
             contextLost = false;
+            clearTimeout(giveUpTimer);
+            rememberLoss(false);
+            document.body.classList.remove('spectro-no-sky');
             hideCanvasMessage(canvas);
             readmitAll();
             compileChain();
@@ -1577,7 +1637,7 @@ export function createEngine(canvas) {
         setZoomIntake(fn) { zoomIntake = fn; },
         // With only one thing in play and a long way down to go, a wheel covers the distance in fewer notches
         setWheelBoost(k) { wheelBoost = k; },
-        offerZoom: (step, point, kind) => !!(zoomIntake && zoomIntake(step, point, kind)),
+        offerZoom: (step, point, kind) => !contextLost && !!(zoomIntake && zoomIntake(step, point, kind)),
         // What's left of the last zoom step, as a change in log field of view, and the sky stops there
         takeZoomLeft() {
             const left = Math.log(zoomGoal / view.fov);
@@ -1639,6 +1699,7 @@ export function createEngine(canvas) {
         currentFrame,
         resize,
         renderOnce: () => { if (renderer && !contextLost) renderOnce(0.016); }, // For tests: draw one frame now
+        isContextLost: () => contextLost,   // The browser has taken the graphics away for now: see 'gl-lost' and 'gl-restored'
         firstFrame,                 // A promise: the sky has been drawn once. Never settles if it can't be drawn at all.
         compileInBackground,        // compileInBackground(sceneOrObject, camera?): see "Programs" above. Resolves when ready.
         // Should a layer's bake go ahead this frame? See "Bakes" above
