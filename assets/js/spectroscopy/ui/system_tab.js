@@ -37,6 +37,11 @@ function row(list, label, value) {
 // A sentence on what's here. With nothing going round it, that includes what there is to do, if this device can show it.
 function summaryOf(model, canView) {
     const { body } = model;
+    if (body.kind === 'nucleus') {
+        return body.nucleus.active
+            ? 'The giant black hole at the centre of its galaxy, feeding: gas spirals in on a blazing disc. A few stars orbit close by.'
+            : 'The giant black hole at the centre of its galaxy. It is quiet, with almost no gas falling in. A few stars orbit close by.';
+    }
     if (body.black_hole) return 'A black hole and the star going round it. Gas from the star falls onto the disc.';
     if (body.neutron_star) {
         return body.neutron_star.pulsar

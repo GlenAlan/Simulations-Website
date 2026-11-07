@@ -81,7 +81,7 @@ function tToSlider(T, min, max) {
 export function shiftSettings(entity) {
     const kind = entity ? entity.kind : '';
     if (kind === 'quasar') return { unit: 'z', min: -0.1, max: 5, step: 0.001 };
-    if (kind === 'galaxy') return { unit: 'kms', min: -2000, max: 100000, step: 10 };
+    if (kind === 'galaxy' || kind === 'nucleus') return { unit: 'kms', min: -2000, max: 100000, step: 10 };
     if (kind === 'supernova') return { unit: 'kms', min: -30000, max: 30000, step: 10 };
     return { unit: 'kms', min: -500, max: 500, step: 1 };
 }

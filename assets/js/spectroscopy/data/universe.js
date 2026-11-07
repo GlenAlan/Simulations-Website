@@ -12,6 +12,7 @@
 //   deep: true marks the further, fainter bodies added behind the first sky (data/quotas.js SKY_SCALE). They rank for
 //   depth among their own kind's (core/depth.js); nothing else need treat them differently.
 //   A star or multi-star body may also have comets[], comets of its own (data/exocomets.js), which resolve with path 'comet'.
+//   A galaxy may have nucleus, its central black hole (data/nuclei.js), which resolves with path 'nucleus'.
 //   Radial velocities come from data/motions.js, once the sky is laid out.
 //
 // generateUniverse(seed) -> { seed, bodies[], cometTailAz, cometSun, counts, resolve(code), allCodes() }
@@ -34,6 +35,7 @@ import { unseal } from './sealed.js';
 import { bandStrengths } from './band_table.js';
 import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion } from './quotas.js';
 import { assignVelocities } from './motions.js';
+import { addNuclei, nucleusEntities } from './nuclei.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
@@ -494,6 +496,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const fixedMotion = new Set([target.host.code, ...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK']);
     assignVelocities(sky, root.fork('motions'), fixedMotion);
 
+    // ---------- Black holes at the centres of galaxies ----------
+    // A stream and codes of their own, drawn after every other code, and after the motions they copy (data/nuclei.js)
+    addNuclei(root.fork('nuclei'), sky, coder('nuclei'));
+
     const all = sky.concat(home);
 
     // Last of all, because band strengths read every other field. Band strengths are cached by temperature, so the first
@@ -520,6 +526,8 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     bandsOf(all.filter((body) => firstSet.has(body) || body.kind === 'home_planet'));
     bandsOf(second);
     all.forEach((body) => (body.comets || []).forEach((comet) => { comet.bands = bandStrengths(comet); }));
+    // After everything else's, so that nothing they put in the band table's caches can change anyone else's
+    all.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
 
     const byCode = new Map();
     const register = (entity, body, path) => byCode.set(entity.code, { entity, body, path });
@@ -529,6 +537,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         (body.comets || []).forEach((comet) => register(comet, body, 'comet'));
         (body.stars || []).forEach((star) => register(star, body, 'component'));
         if (body.black_hole) register(body.black_hole.companion, body, 'component');
+        if (body.nucleus) {
+            register(body.nucleus, body, 'nucleus');
+            body.nucleus.nucleus.stars.forEach((star) => register(star, body, 'component'));
+        }
         if (body.cluster) {
             body.cluster.members.forEach((member) => {
                 if (member.stars) {

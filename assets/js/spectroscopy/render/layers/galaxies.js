@@ -4,22 +4,41 @@
 //
 // Sky rule: the fainter a galaxy is, the dimmer it starts, and it comes up as the limiting magnitude falls with
 // zoom. The rule is softer than the one for stars, since a galaxy is a small jewel in the wide sky, not a point.
+//
+// A galaxy whose central black hole is feeding (data/nuclei.js) has a point of light at its middle, drawn as a star is.
+// Close in, that point is picked for itself and a click further out on the galaxy picks the galaxy, as with a cluster's
+// stars; and a zoom on it carries on into the hole (nucleusFov, for render/system/zoom_into.js).
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
-import { limitingMag } from '../../core/sky.js';
+import { limitingMag, MIN_FOV } from '../../core/sky.js';
 import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
-import { bandMagnitudes } from '../../data/band_table.js';
+import { bandMagnitudes, bandSkyBrightness } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
+import { createSprites } from './stars.js';
+import { MIN_GLOW } from '../engine.js';
 
 const RAD = Math.PI / 180;
 const TILE = 128;                  // Pixels per galaxy in the atlas
 const HERO_SLOTS = 2;              // At most this many galaxies have their own large picture at once
 const HERO_CAP = { low: 640, medium: 1280, high: 2048 };
 const HERO_LINGER_S = 15;          // Keep a large picture this long after it goes out of use, in case of a return
+
+// A feeding black hole's point can be picked on its own once its galaxy is this big on screen (radius, CSS pixels)...
+const NUCLEUS_OPENS_PX = 150;
+const NUCLEUS_OPENS_AT_LIMIT_PX = 30;   // ...or this big, zoomed in as far as the sky goes
+const NUCLEUS_LIMIT_SHARE = 1.05;       // That far, as a share of the narrowest view
+const NUCLEUS_REACH_PX = 7;             // Within this of the point is a direct hit on it
+const CORE_SHOWS = 0.01;                // How strong the point must be in a band to be picked there
+const NUCLEUS_ENTER_SHARE = 0.6;        // A zoom carries on into the hole once its galaxy's radius is this share of the view's height
+const BAND_INDEX = { radio: 0, ir: 1, visible: 2, uv: 3, xray: 4 };
+const CORE_BANDS = ['ir', 'visible', 'uv'];    // A feeding hole's point is drawn as a star is, in these bands
+const CORE_BLUE = [0.8, 0.88, 1];       // A hot disc in view
+const CORE_DUSTY = [1, 0.72, 0.5];      // Light that has come through dust is reddened
+const CORE_LIFT = [25, 4];              // How much brighter the point is drawn than its own light (type 1, type 2)
 
 const VERT = /* glsl */`
     ${BAND_GLSL}
@@ -86,6 +105,15 @@ const FRAG = /* glsl */`
         gl_FragColor = vec4(colour * edge * uSkyFade, 1.0);
     }`;
 
+// Is a feeding hole's point drawn in this band at this zoom? Radio and X-rays: its galaxy's point. Otherwise its own star-like
+// sprite, by the stars' rule (render/layers/stars.js skyGlow). One hidden by its dust (type 2) is only a faint knot there,
+// but a click on its galaxy's bright middle, close in, still means it.
+function coreShows(core, band, lim) {
+    if (band === 0) return core.point[0] > CORE_SHOWS;
+    if (band === 4) return core.point[1] > CORE_SHOWS;
+    return core.hidden || core.glow[band - 1] * 10 ** (0.4 * (lim - 6)) >= MIN_GLOW;
+}
+
 function quadGeometry(count) {
     const geometry = new THREE.InstancedBufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
@@ -120,6 +148,87 @@ function writeInstance(geometry, i, g, rect) {
     geometry.attributes.aMagB.array[i] = g.magB;
     geometry.attributes.aDepth.array[i] = g.body.depth;
     ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB', 'aDepth'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
+}
+
+// A feeding black hole whose disc is in view outshines its galaxy's middle many times over, as a point. Once the galaxy is big
+// enough on screen for that middle to be a bright blur, the point's diffraction spikes reach out past it, as the telescope's
+// optics make them for any point that bright: that is what tells it apart. Two thin quads each, like the stars' spikes
+// (render/layers/stars.js), with their length set by how big the galaxy is drawn.
+const SPIKE_FROM_PX = [30, 170];    // Galaxy radius on screen (device pixels) over which they grow in
+const SPIKE_SHARE = 0.5;            // Their reach, as a share of that radius...
+const SPIKE_MOST_PX = 240;          // ...up to this
+const SPIKE_LIGHT = { visible: 3.5, uv: 5 };
+
+function createCoreSpikes(cores) {
+    const count = cores.length;
+    const geometry = new THREE.InstancedBufferGeometry();
+    const arms = [];
+    [0, 1].forEach((arm) => arms.push(-1, -1, arm, 1, -1, arm, 1, 1, arm, -1, 1, arm));
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(arms), 3));
+    geometry.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+    const centres = new Float32Array(count * 3);
+    const majors = new Float32Array(count);
+    const depths = new Float32Array(count);
+    const light = new Float32Array(count * 2);
+    cores.forEach((g, i) => {
+        centres.set(g.centre, i * 3);
+        majors[i] = g.body.galaxy.size_deg / 2;
+        depths[i] = g.body.depth;
+        const typeOne = g.body.nucleus.nucleus.type === 1;
+        light.set(typeOne ? [SPIKE_LIGHT.visible * g.light, SPIKE_LIGHT.uv * g.light] : [0, 0], i * 2);
+    });
+    geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
+    geometry.setAttribute('aMajor', new THREE.InstancedBufferAttribute(majors, 1));
+    geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aLight', new THREE.InstancedBufferAttribute(light, 2));
+    geometry.instanceCount = count;
+    const material = skyMaterial({
+        vertexShader: /* glsl */`
+            ${BAND_GLSL}
+            attribute vec3 aCentre;
+            attribute float aMajor;
+            attribute float aDepth;
+            attribute vec2 aLight;
+            varying vec2 vUv;
+            varying vec3 vColour;
+            const float ANGLE = 0.46;   // The stars' spikes' angle: they come from the telescope, not the source
+            void main() {
+                float majorPx = radians(aMajor) * uPxPerRad * depthP(aDepth);
+                float scale = uViewport.y / 800.0;
+                float grow = smoothstep(${SPIKE_FROM_PX[0].toFixed(1)} * scale, ${SPIKE_FROM_PX[1].toFixed(1)} * scale, majorPx);
+                float amount = grow * (aLight.x * uBandW[2] + aLight.y * uBandW[3]) * uSkyFade;
+                if (amount <= 0.002) {
+                    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+                    return;
+                }
+                float len = min(${SPIKE_SHARE.toFixed(2)} * majorPx, ${SPIKE_MOST_PX.toFixed(1)} * scale) * grow;
+                float width = 3.4 * max(scale, 1.0);
+                vColour = bandColour(vec3(0.82, 0.9, 1.0)) * amount;
+                vUv = position.xy;
+                float angle = ANGLE + position.z * 1.5707963;
+                vec2 axis = vec2(cos(angle), sin(angle));
+                vec2 side = vec2(-axis.y, axis.x);
+                vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                clip.xy *= depthP(aDepth);
+                clip.xy += (axis * position.x * len + side * position.y * width) * 2.0 / uViewport * clip.w;
+                gl_Position = clip;
+            }`,
+        fragmentShader: /* glsl */`
+            varying vec2 vUv;
+            varying vec3 vColour;
+            void main() {
+                float along = abs(vUv.x);
+                float across = exp(-vUv.y * vUv.y * 22.0);
+                vec3 reach = pow(max(1.0 - along, 0.0) * vec3(1.0), vec3(1.7, 2.4, 3.3));
+                float falloff = 1.0 / (1.0 + along * along * 18.0);
+                vec3 ripple = 1.0 + 0.22 * cos(along * 26.0 + vec3(0.0, 2.1, 4.2));
+                gl_FragColor = vec4(vColour * reach * ripple * across * falloff, 1.0);
+            }`
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = ORDER.stars + 1;
+    return { mesh, geometry, material };
 }
 
 export function createGalaxiesLayer(engine, app) {
@@ -228,6 +337,50 @@ export function createGalaxiesLayer(engine, app) {
         nucleusMag[i] = g.mag;
         nucleusColour.set(g.recipe.kind === 2 ? [0.75, 0.85, 1] : [1, 0.82, 0.58], i * 3);
     });
+
+    // A feeding black hole (data/nuclei.js) is far too small ever to be more than a point, so it is drawn as the stars are,
+    // by its own brightness in each band: with its disc in view (type 1) a blazing blue-white point that outshines the
+    // bulge's middle, spikes and all, brightest in ultraviolet; with its dust in the way (type 2) a faint knot that glows in
+    // infrared. Its X-rays and radio are the galaxy's own point's, above.
+    const cores = galaxies.filter((g) => g.body.nucleus && g.body.nucleus.nucleus.active);
+    const coreData = {
+        count: cores.length,
+        centres: new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cores.length) * 3), 3),
+        colours: new Float32Array(Math.max(1, cores.length) * 3),
+        bandA: new Float32Array(Math.max(1, cores.length) * 4),
+        bandB: new Float32Array(Math.max(1, cores.length)),
+        seeds: new Float32Array(Math.max(1, cores.length)),
+        soft: new Float32Array(Math.max(1, cores.length)),
+        depths: new Float32Array(Math.max(1, cores.length)),
+        flux: new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cores.length)).fill(1), 1),
+        split: new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cores.length) * 2), 2),
+        spike: new Float32Array(Math.max(1, cores.length))
+    };
+    cores.forEach((g, i) => {
+        const hole = g.body.nucleus;
+        const typeOne = hole.nucleus.type === 1;
+        coreData.centres.array.set(g.centre, i * 3);
+        coreData.colours.set(typeOne ? CORE_BLUE : CORE_DUSTY, i * 3);
+        // Drawn brighter than its share of the light alone would make it: it sits on its galaxy's bright middle, and a
+        // student must see it there as a point of its own
+        const glow = CORE_BANDS.map((band) => bandSkyBrightness(hole, band) * (typeOne ? CORE_LIFT[0] : CORE_LIFT[1]));
+        coreData.bandA.set([0, ...glow], i * 4);
+        coreData.seeds[i] = (i * 0.618) % 1;
+        coreData.soft[i] = 0.8;
+        coreData.depths[i] = g.body.depth;
+        coreData.spike[i] = 0;      // Its own spikes, below, go by how big its galaxy is drawn
+        // What it shows in each band, for picking what's drawn: X-rays and radio are the galaxy's point's
+        g.core = { code: hole.code, glow, point: [nucleusBandA[g.index * 4], nucleusBandB[g.index]], hidden: !typeOne };
+    });
+    const coreSprites = cores.length ? createSprites(coreData) : null;
+    const coreSpikes = cores.length ? createCoreSpikes(cores) : null;
+    if (coreSprites) {
+        scene.add(coreSprites.mesh);
+        scene.add(coreSpikes.mesh);
+    }
+    const applyCoreQuality = (level) => { if (coreSpikes) coreSpikes.mesh.visible = level !== 'low'; };
+    applyCoreQuality(app.qualityLevel);
+    const offCoreQuality = bus.on('quality', ({ level }) => applyCoreQuality(level));
     const nucleusGeometry = new THREE.BufferGeometry();
     nucleusGeometry.setAttribute('position', new THREE.BufferAttribute(nucleusPositions, 3));
     nucleusGeometry.setAttribute('aBandA', new THREE.BufferAttribute(nucleusBandA, 4));
@@ -451,6 +604,7 @@ export function createGalaxiesLayer(engine, app) {
         id: 'galaxies',
         update(frame) {
             const dt = frame.dt || 0;
+            if (coreSprites) coreSprites.material.uniforms.uDpr.value = frame.dpr;
             frame.camera.getWorldDirection(forward);
             if (Math.abs(frame.fov - lastFov) > frame.fov * 0.001) stillFor = 0;
             else stillFor += Math.max(dt, 0.008);
@@ -492,6 +646,8 @@ export function createGalaxiesLayer(engine, app) {
             const out = [];
             const pxPerDeg = (frame.pxPerRad * RAD) / frame.dpr;
             const lim = limitingMag(frame.fov);
+            const band = BAND_INDEX[app.band];
+            const atLimit = frame.fov <= MIN_FOV * NUCLEUS_LIMIT_SHARE;
             for (let i = 0; i < n; i++) {
                 const g = galaxies[i];
                 const { body } = g;
@@ -499,6 +655,11 @@ export function createGalaxiesLayer(engine, app) {
                 if (revealGain(g.mags[app.band], lim) < 0.03) continue;
                 const pxPerDegHere = pxPerDeg * parallaxFactor(body.depth, frame.fov);
                 const major = body.galaxy.size_deg / 2;
+                // Close in on a feeding black hole's galaxy, its point answers for itself, ahead of the galaxy round it
+                const majorPx = major * pxPerDegHere;
+                if (g.core && coreShows(g.core, band, lim) && (majorPx >= NUCLEUS_OPENS_PX || (atLimit && majorPx >= NUCLEUS_OPENS_AT_LIMIT_PX))) {
+                    out.push({ code: g.core.code, az: body.sky.az, alt: body.sky.alt, radiusPx: NUCLEUS_REACH_PX, depth: body.depth });
+                }
                 if (major * pxPerDegHere < 14) {
                     out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth: body.depth });
                     continue;
@@ -514,6 +675,18 @@ export function createGalaxiesLayer(engine, app) {
                 });
             }
             return out;
+        },
+
+        // The field of view at which a zoom on a galaxy's black hole carries on into it (render/system/zoom_into.js): once its
+        // galaxy fills the view. A small, far galaxy never does, so for that it's the narrowest view.
+        nucleusFov(code) {
+            const g = galaxies.find((x) => x.core && x.core.code === code) || galaxies.find((x) => x.body.nucleus && x.body.nucleus.code === code);
+            if (!g) return MIN_FOV;
+            const major = g.body.galaxy.size_deg / 2;
+            // Near enough for a view this narrow: pixels per degree ~ height / fov
+            let fov = major / NUCLEUS_ENTER_SHARE;
+            for (let k = 0; k < 4; k++) fov = (major * parallaxFactor(g.body.depth, fov)) / NUCLEUS_ENTER_SHARE;
+            return Math.max(MIN_FOV, fov);
         },
 
         // For tests: is everything that's wanted baked?
@@ -539,6 +712,13 @@ export function createGalaxiesLayer(engine, app) {
             atlas.dispose();
             baker.dispose();
             lobes.dispose();
+            offCoreQuality();
+            [coreSprites, coreSpikes].forEach((part) => {
+                if (!part) return;
+                scene.remove(part.mesh);
+                part.geometry.dispose();
+                part.material.dispose();
+            });
         }
     };
 

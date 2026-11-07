@@ -13,6 +13,7 @@ import { componentStates, cometTailAU, eclipsingOrbits } from './orbits.js';
 import { systemProblems } from './dynamics.js';
 import { crossesPlanet, MAX_ECC } from './exocomets.js';
 import { unseal } from './sealed.js';
+import { nucleusEntities, nucleusProblems } from './nuclei.js';
 
 const RAD = Math.PI / 180;
 const DEFAULT_FOV = 80;
@@ -98,6 +99,7 @@ function everyCode(u) {
         (body.comets || []).forEach((c) => codes.push(c.code));
         (body.stars || []).forEach((s) => codes.push(s.code));
         if (body.black_hole) codes.push(body.black_hole.companion.code);
+        nucleusEntities(body).forEach((e) => codes.push(e.code));
         if (body.cluster) {
             body.cluster.members.forEach((m) => {
                 codes.push(m.code);
@@ -194,6 +196,7 @@ function checkBands(u, fail) {
         (body.stars || []).forEach(check);
         if (body.planet) check(body.planet);
         if (body.black_hole) check(body.black_hole.companion);
+        nucleusEntities(body).forEach(check);
     });
 }
 
@@ -274,6 +277,7 @@ function checkStars(u, fail) {
         if (body.star) checkStar(body.star, classKey(body.star), body.code, fail);
         (body.stars || []).forEach((s) => checkInnerStar(s.star, s.code, fail));
         if (body.black_hole) checkInnerStar(body.black_hole.companion.star, body.black_hole.companion.code, fail);
+        if (body.nucleus) body.nucleus.nucleus.stars.forEach((s) => checkInnerStar(s.star, s.code, fail));
         if (body.cluster) {
             body.cluster.members.forEach((m) => {
                 checkInnerStar(m.star, m.code, fail);
@@ -500,5 +504,6 @@ export function validateUniverse(u) {
     checkMulti(u, fail);
     checkDynamics(u, fail);
     checkDeepSky(u, fail);
+    nucleusProblems(u, fail);
     return failures;
 }

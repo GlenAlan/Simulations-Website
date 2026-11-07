@@ -75,6 +75,7 @@ const OFFERED = {
     star: ['halpha', 'cahk', 'nad'],
     galaxy: ['cahk', 'mgb', 'nad', 'halpha', 'oiii'],
     quasar: ['lya', 'civ', 'mgii', 'halpha'],
+    nucleus: ['halpha', 'hbeta', 'oiii', 'cahk', 'nad'],
     nebula: ['halpha', 'hbeta', 'oiii']
 };
 const MOST_TARGETS = 3;

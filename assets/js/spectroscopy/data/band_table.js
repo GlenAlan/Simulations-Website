@@ -241,6 +241,18 @@ function quasarStrengths(body) {
     };
 }
 
+// A galaxy's central black hole (data/nuclei.js). Feeding, its hot disc is brightest in ultraviolet and X-rays, warm dust
+// round it glows in infrared, and a radio-loud one's jets shine in radio. Seen through that dust (type 2), the disc's
+// visible and ultraviolet light is hidden, the infrared is all the stronger and the hardest X-rays still get out. A quiet one
+// shows next to nothing.
+function nucleusStrengths(body) {
+    const n = body.nucleus;
+    const radio = n.radio_loud ? 0.9 : 0.06;
+    if (!n.active) return { radio: 0.02, ir: 0, visible: 0, uv: 0, xray: 0.01 };
+    if (n.type === 1) return { radio, ir: 0.6, visible: 0.45, uv: 1, xray: 0.9 };
+    return { radio, ir: 1, visible: 0.08, uv: 0.05, xray: 0.7 };
+}
+
 function rogueStrengths(body) {
     const T = body.rogue_planet.teff_K ?? 100;
     return { radio: 0, ir: 0.25 + 0.5 * smooth(40, 400, T), visible: 0, uv: 0, xray: 0 };
@@ -317,6 +329,7 @@ export function bandStrengths(body) {
         case 'black_hole': return tidy(blackHoleStrengths(body));
         case 'galaxy': return tidy(galaxyStrengths(body));
         case 'quasar': return tidy(quasarStrengths(body));
+        case 'nucleus': return tidy(nucleusStrengths(body));
         case 'rogue_planet': return tidy(rogueStrengths(body));
         case 'comet': return tidy(cometStrengths(body));
         case 'supernova': return tidy(supernovaBandsAt(body.supernova, body.supernova.phase0_days ?? 0));
@@ -463,6 +476,14 @@ function skyMags(body, s) {
         case 'galaxy': {
             // Lobes and active nuclei aren't starlight, so their brightness doesn't follow the galaxy's visible magnitude
             const m = exoticMags(mag, s, { radio: 0, ir: -1, uv: 0, xray: 0 });
+            m.radio = 2.4 + magOf(s.radio);
+            m.xray = 3 + magOf(s.xray);
+            return m;
+        }
+        case 'nucleus': {
+            // Its radio and X-rays are its galaxy's, which a galaxy only has from its nucleus. Infrared and ultraviolet go
+            // with its own visible point, by their strengths against it.
+            const m = exoticMags(mag - magOf(Math.max(s.visible, 1e-3)), s, { radio: 0, ir: 0, uv: 0, xray: 0 });
             m.radio = 2.4 + magOf(s.radio);
             m.xray = 3 + magOf(s.xray);
             return m;
