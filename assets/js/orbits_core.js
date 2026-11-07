@@ -17718,8 +17718,6 @@
     }
 
     // ---- Firing ----
-    const cannonNewest = () => { for (let i = cannon.shots.length - 1; i >= 0; i--) if (cannon.shots[i].id) return cannon.shots[i]; return null; };
-
     function cannonPoint(q, x, y) {
         if (2 * q.n + 2 > q.pts.length) { const a = new Float64Array(2 * q.pts.length); a.set(q.pts); q.pts = a; }
         q.pts[2 * q.n] = x; q.pts[2 * q.n + 1] = y;
@@ -17727,10 +17725,8 @@
     }
 
     function cannonFire() {
-        const E = cannonEarth(), last = cannon.shots[cannon.shots.length - 1];
+        const E = cannonEarth();
         if (!E || !scene.cannon || dragging()) return null;
-        // (two fired in the same moment would start in the same place, where their pull on each other has no size)
-        if (last && last.id && last.t0 === simTime) { if (paused) setPaused(false); return null; }
         flushEdit();
         commitStep(snapshot(), { label: 'fire the cannon', target: null, key: 'fire' }, false);
         // (at the escape speed, a billionth over, so that rounding can't leave it bound for ever on a far-off ellipse)
@@ -17741,12 +17737,15 @@
         if (cannon.shots.length >= CANNON_MAX) cannonForget(cannon.shots[0]);
         const color = cannonColour(cannon.stop);
         const b = newBody({ name: `${text} shot`, kind: 'probe', m: KINDS.probe.m, R: KINDS.probe.R, color });
-        b.x = b.px = b.dx = E.x; b.y = b.py = b.dy = E.y + r;
+        // (fired in the same moment, a metre apart: in one place, their pull on each other would have no size)
+        let x0 = 0;
+        for (const q of cannon.shots) if (q.id && q.t0 === simTime) x0 += 1e-3 / AU_KM;
+        b.x = b.px = b.dx = E.x + x0; b.y = b.py = b.dy = E.y + r;
         b.vx = b.pvx = E.vx + v / AUYR_KMS; b.vy = b.pvy = E.vy;
         bodies.push(b);
         clearTrail(b);
         const q = { id: b.id, v, color, text, pts: new Float64Array(256), n: 0, swept: 0, full: false, end: 0, said: false, t0: simTime };
-        cannonPoint(q, 0, r);
+        cannonPoint(q, x0, r);
         cannon.shots.push(q);
         computeForces();
         computePrimaries();
@@ -17807,7 +17806,7 @@
                 if (hyp(x - q.pts[k], y - q.pts[k + 1]) > CANNON_STEP * r) cannonPoint(q, x, y);
                 if (q.swept >= TAU) { cannonPoint(q, x, y); q.full = true; }
             }
-            if (!q.said && (q.swept >= Math.PI || r > CANNON_FAR)) cannonSayOrbit(q, b, E, r);
+            if (!q.said && (q.swept >= Math.PI || r > CANNON_FAR)) cannonSayOrbit(q, b, E);
             if (r > CANNON_FAR && elementsOf(b, E).energy >= 0) {
                 cannonPoint(q, x, y);
                 q.id = 0; q.end = 2;
@@ -17827,22 +17826,27 @@
         cannonDrop(b);
         flashes.push({ x: E.x + lx, y: E.y + ly, t: performance.now(), color: q.color, r0: 1.5, grow: 9 });
         const km = q.swept * E.R, far = (Math.round(km / 10) * 10).toLocaleString('en-US');
-        if (km > 0.25 * TAU * E.R) eventNote('So close:', ` it lands ${far} km away.`, 7000);
-        else eventNote('Too slow:', ` it hits the ground, ${far} km away.`, 7000);
-        q.said = true;
+        if (km > 0.25 * TAU * E.R) cannonSay(q, 'So close:', ` it lands ${far} km away.`);
+        else cannonSay(q, 'Too slow:', ` it hits the ground, ${far} km away.`);
         cannonSyncUi(false);
     }
 
     // Half way round without landing (past its closest point, so it never will), or far out of the view
-    function cannonSayOrbit(q, b, E, r) {
-        q.said = true;
+    function cannonSayOrbit(q, b, E) {
         const el = elementsOf(b, E), above = (el.p / (1 + el.e)) * AU_KM - E.R;
-        if (el.energy >= 0) eventNote('Gone:', ' fast enough to escape.', 7000);
-        else if (el.a * (1 + el.e) > CANNON_FAR) eventNote('Not quite gone:', ` it comes back in ${fmtDuration(el.T)}.`, 7000);
-        else if (above < 50) eventNote('Just missed:', ` it skims ${Math.round(above)} km above the ground, and keeps going.`, 7000);
-        else if (el.e < 0.01) eventNote('It keeps falling, and keeps missing.', ` Once round takes ${fmtDuration(el.T)}.`, 7000);
-        else eventNote('Still falling, still missing:', ` a wider orbit, once round in ${fmtDuration(el.T)}.`, 7000);
+        if (el.energy >= 0) cannonSay(q, 'Gone:', ' fast enough to escape.');
+        else if (el.a * (1 + el.e) > CANNON_FAR) cannonSay(q, 'Not quite gone:', ` it comes back in ${fmtDuration(el.T)}.`);
+        else if (above < 50) cannonSay(q, 'Just missed:', ` it skims ${Math.round(above)} km above the ground, and keeps going.`);
+        else if (el.e < 0.01) cannonSay(q, 'It keeps falling, and keeps missing.', ` Once round takes ${fmtDuration(el.T)}.`);
+        else cannonSay(q, 'Still falling, still missing.', ` A wider orbit, once round in ${fmtDuration(el.T)}.`);
         refreshHint();
+    }
+
+    // What became of a shot. (If another has been fired since, which one this is about)
+    function cannonSay(q, bold, rest) {
+        q.said = true;
+        const newest = q === cannon.shots[cannon.shots.length - 1];
+        eventNote(newest ? bold : `${q.text}, ${bold.charAt(0).toLowerCase()}${bold.slice(1)}`, rest, 7000);
     }
 
     // What to try next: the tip and the usual hint in this scene
@@ -18023,7 +18027,7 @@
         // (those that have settled first: one still moving keeps clear of them, not the other way round)
         for (let k = 2 * cannon.shots.length - 1; k >= 0; k--) {
             const q = cannon.shots[k % cannon.shots.length], P = q.pts;
-            if ((q.id && !q.full) !== (k < cannon.shots.length)) continue;
+            if ((q.id !== 0 && !q.full) !== (k < cannon.shots.length)) continue;
             let best = 2, ax = 0, ay = 0;
             for (let i = 0; i < q.n; i++) {
                 const x = P[2 * i], y = P[2 * i + 1];
@@ -18076,7 +18080,9 @@
     // whole: the slider's stops have changed too
     function cannonSyncUi(whole) {
         const N = ui.cn;
-        if (!N || !cannon.stops.length) return;
+        if (!N) return;
+        N.fire.disabled = !cannonEarth();
+        if (!cannon.stops.length) return;
         if (whole) {
             const S = cannon.stops, last = S.length - 1;
             N.speed.max = String(last);
@@ -18090,8 +18096,6 @@
         const v = cannon.stops[cannon.stop], text = v === cannon.vc ? `${v.toFixed(2)} km/s, a circle` : v === cannon.ve ? `${v.toFixed(2)} km/s, escape` : cannonSpeedText(v);
         setText(N.val, text);
         N.speed.setAttribute('aria-valuetext', text);
-        const E = cannonEarth();
-        N.fire.disabled = !E;
         N.clear.classList.toggle('is-unused', !cannon.shots.length);   // (its place is kept, so Fire doesn't move under a finger)
         refreshHint();
     }
