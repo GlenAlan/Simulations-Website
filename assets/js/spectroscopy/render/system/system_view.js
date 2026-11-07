@@ -29,7 +29,7 @@ import { announce as say } from '../../ui/drawer.js';
 import {
     FRAME, ORBITS_PER_SECOND, ORBITS_PER_SECOND_REDUCED, buildModel, createSizes, createSmear, drawnSizes, hasSystemView,
     hzStatus, layout, ringRadius, starRadius, planetRadius, planetOrbitPoints, planetPhase, childOrbitPoints,
-    figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf
+    figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf, sightDirection
 } from './system_model.js';
 import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, handSkyLog, handOffCentre } from './transition.js';
 import { createZoomInto } from './zoom_into.js';
@@ -225,7 +225,7 @@ export function initSystemView(app) {
 
         let beams = null;
         if (model.body.neutron_star && model.body.neutron_star.pulsar) {
-            beams = createPulsarBeams(model.body.neutron_star);
+            beams = createPulsarBeams(model.body, sightDirection(model));   // Turning as the sky shows it
             group.add(beams.object);
         }
 
@@ -1241,7 +1241,7 @@ export function initSystemView(app) {
             if (tide) {
                 const q = positions.nodes.get(tide.other);
                 tmp.set(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
-                const isDonor = model.stream && model.stream.donor === i;
+                const isDonor = model.stream && !model.stream.wind && model.stream.donor === i;   // A wind's star keeps its shape
                 star.setTide(tmp.x, tmp.y, tmp.z, Math.max(tide.stretch, isDonor ? 0.07 : 0), isDonor ? 0.3 : 0);
             }
             if (star.setCompanion && model.stream) {

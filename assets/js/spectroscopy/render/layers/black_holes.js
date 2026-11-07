@@ -588,8 +588,11 @@ function createDeepStars(engine, geometry, dprUniform) {
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir * ${SKY_RADIUS}.0, 1.0);
                 gl_Position.xy *= depthP(uDepth);
                 float cut = mix(0.08, 1.05, smoothstep(0.5, 3.0, uFov));
-                // Without the background stars, only those the hole is seen to bend: a click on those finds the hole
-                float shown = smoothstep(cut - 0.05, cut + 0.1, aStar.z) * step(dot(aStar.xy, aStar.xy), uKeepDeg * uKeepDeg);
+                // Without the background stars, only those the hole is seen to bend: a click on those finds the hole. They
+                // thin out towards that reach, each star at its own distance, so they never end at the rim of a disc
+                float own = fract(sin(dot(aStar.xy, vec2(12.9898, 78.233))) * 43758.5453);
+                float reach = uKeepDeg * mix(0.3, 1.0, own);
+                float shown = smoothstep(cut - 0.05, cut + 0.1, aStar.z) * smoothstep(reach, reach * 0.7, length(aStar.xy));
                 float edge = exp(-dot(aStar.xy, aStar.xy) * 1.6);
                 float amount = uBandW[2] + 0.5 * uBandW[1] + 0.35 * uBandW[3] + 0.08 * uBandW[4] + 0.03 * uBandW[0];
                 vLight = bandColour(aColour) * (0.28 + 2.4 * aStar.z * aStar.z) * shown * edge * uReveal * amount * uSkyFade;

@@ -2,29 +2,16 @@
 // the spin, like a lighthouse. The geometry is real: each beam's axis is tilted from the spin axis, and the beam crosses
 // our line of sight once a turn, which is what makes the pulse. In radio they are beacons at every zoom.
 //
-// Flashing is capped for photosensitive viewers. See pulseDisplay below. Nothing flashes at all with Reduce motion.
+// Flashing is capped for photosensitive viewers, by the rule the system view's beams share: see pulseDisplay in
+// exotic_common.js. Nothing flashes at all with Reduce motion.
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
-import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
+import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, pulsarSpin, HELD_ANGLE, PULSAR_BEAM_SLOPE } from './exotic_common.js';
 
-const MAX_FLASH_HZ = 2.8;     // Stays below three flashes a second, the accepted limit for photosensitive viewers
-const SHIMMER_BELOW_S = 0.25; // Pulses faster than this are drawn as a shimmer: the eye couldn't follow them anyway
-
-// How a pulse period is shown. { rate: turns a second shown on screen, depth: 0..1 how far the light swings }.
-// Slow pulsars run at their true rate. Fast ones are slowed to the cap, and the fastest barely vary at all, spinning
-// faster on screen the faster they really are, so that the order is still right.
-export function pulseDisplay(periodS) {
-    if (!periodS) return { rate: 0, depth: 0 };
-    const f = 1 / periodS;
-    if (periodS < SHIMMER_BELOW_S) {
-        const fastness = Math.max(0, Math.min(1, Math.log10(SHIMMER_BELOW_S / periodS) / 2.4));
-        return { rate: 1.1 + 1.2 * fastness, depth: 0.16 };
-    }
-    return { rate: Math.min(f, MAX_FLASH_HZ), depth: 1 - 0.35 * smoothstep(1, MAX_FLASH_HZ, f) };
-}
+export { pulseDisplay } from './exotic_common.js';
 
 export function createNeutronStarsLayer(engine, app) {
     const bodies = app.universe.bodies.filter((b) => b.kind === 'neutron_star' && b.neutron_star);
@@ -45,13 +32,11 @@ export function createNeutronStarsLayer(engine, app) {
         const rng = bodyRng(body, 'pulsar');
         const v = skyBasis(body.sky.az, body.sky.alt).centre;
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
-        // The beam's tilt from the spin axis, and the spin axis placed so that the beam sweeps across us
-        // Very small tilts are drawn a little larger, or the beam would never be seen side-on
-        const tilt = Math.max(24, Math.min(80, info.magnetic_tilt_deg ?? rng.range(30, 62))) * DEG;
-        const roll = rng.range(0, Math.PI * 2);
-        spins.set([Math.sin(tilt) * Math.cos(roll), Math.sin(tilt) * Math.sin(roll), Math.cos(tilt)], i * 3);
-        const show = info.pulsar ? pulseDisplay(info.pulse_period_s) : { rate: 0, depth: 0 };
-        pulses.set([show.rate, show.depth, tilt, rng.range(0, Math.PI * 2)], i * 4);
+        // The beam's tilt from the spin axis, and the spin axis placed so that the beam sweeps across us, as the system
+        // view has them too
+        const spin = pulsarSpin(body, rng);
+        spins.set(spin.axis, i * 3);
+        pulses.set([spin.rate, spin.depth, spin.tilt, spin.phase], i * 4);
         infos.set([rng.range(0.11, 0.17), info.pulsar ? 1 : 0, info.gamma ? 1 : 0, rng.next()], i * 4);
         thermals.set(blackBodyRGB(Math.min(40000, info.teff_K || 30000)), i * 3);
         bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
@@ -88,8 +73,8 @@ export function createNeutronStarsLayer(engine, app) {
             varying vec4 vWeights;    // Radio, visible, UV, X-ray
             void main() {
                 float turning = aPulse.x * uTime * uTwinkle * 6.2831853 + aPulse.w;
-                // With Reduce motion the beams hold still, seen side-on, and the light is steady
-                float angle = uTwinkle > 0.5 ? turning : 1.3;
+                // With Reduce motion the beams hold still, seen side-on, and the light is steady (pulsarAngle)
+                float angle = uTwinkle > 0.5 ? turning : ${HELD_ANGLE.toFixed(2)};
                 float tilt = aPulse.z;
                 vec3 e1 = (vec3(0.0, 0.0, 1.0) - aSpin * cos(tilt)) / sin(tilt);
                 vec3 e2 = cross(aSpin, e1);
@@ -145,7 +130,7 @@ export function createNeutronStarsLayer(engine, app) {
                 if (u <= 0.0) return 0.0;
                 float v = dot(p, vec2(-ax.y, ax.x));
                 float len = 0.08 + 0.85 * s;
-                float w = u * 0.13 / max(s, 0.2) + 0.006;
+                float w = u * ${PULSAR_BEAM_SLOPE.toFixed(2)} / max(s, 0.2) + 0.006;
                 float across = v / w;
                 float fade = u / len;
                 return exp(-across * across * 1.3) * exp(-fade * fade * 2.6) * (0.45 + 0.75 * a.z + 0.3);

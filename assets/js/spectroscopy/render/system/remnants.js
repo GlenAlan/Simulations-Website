@@ -9,7 +9,7 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { hashString, Rng } from '../../core/rng.js';
 import { sharedUniforms } from '../shared.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from '../layers/bh_geodesic.js';
-import { exoticNoise } from '../layers/exotic_common.js';
+import { exoticNoise, bodyRng, pulsarSpin, pulsarAngle, pulsarBeam, PULSAR_BEAM_SLOPE } from '../layers/exotic_common.js';
 import { HOLE_DISC, JET_BANDS, BEAM_BANDS, BEAM_TRUE, bandRgb, falseTint } from './band_look.js';
 
 // Lengths in units of the hole's mass M, as on the sky. The radius the system view gives a hole is its disc's outer edge.
@@ -333,9 +333,6 @@ void main() {
     gl_FragColor = vec4(uColour * fade * rim * knots * uAmount, 1.0);
 }`;
 
-// The real thing turns too fast to draw, and would flash. These sweep gently, at one speed for every pulsar.
-const BEAM_TURNS_PER_S = 0.12;
-
 // Two cones from a point, one each way along y: { object, setColour(rgb), update({ dt, reveal, reduceMotion, scale }) }
 function createBeams({ radius, length, knots, sides }) {
     const geometry = new THREE.ConeGeometry(radius, length, sides, 1, true);
@@ -382,22 +379,31 @@ function createBeams({ radius, length, knots, sides }) {
     };
 }
 
-export function createPulsarBeams(ns) {
-    const beams = createBeams({ radius: 0.13, length: 1, knots: 0, sides: 28 });
-    const spin = new THREE.Group();
-    const axis = new THREE.Group();
-    axis.rotation.z = ((ns.magnetic_tilt_deg || 30) * Math.PI) / 180;
-    axis.add(beams.object);
-    spin.add(axis);
-    let angle = 0;
+// The pulsar the sky shows, turning the same way at the same moment (pulsarSpin in layers/exotic_common.js): the same tilt,
+// beam width and turns a second, on the shared clock. sight is the unit vector towards us, where the flight in starts: the
+// sky's view of the pulsar is laid along it, so whenever the sky shows a pulse, the beam here points back along the flight.
+export function createPulsarBeams(body, sight) {
+    const beams = createBeams({ radius: PULSAR_BEAM_SLOPE, length: 1, knots: 0, sides: 28 });
+    const spin = pulsarSpin(body, bodyRng(body, 'pulsar'));
+    // The sky's frame at the pulsar (right, up, towards us) in this world: up is the world's up, square to the line of sight
+    const z = new THREE.Vector3(...sight).normalize();
+    const y = new THREE.Vector3(0, 1, 0).addScaledVector(z, -z.y).normalize();
+    const x = new THREE.Vector3().crossVectors(y, z);
+    const toWorld = (v) => new THREE.Vector3().addScaledVector(x, v[0]).addScaledVector(y, v[1]).addScaledVector(z, v[2]);
+    const local = { ...spin, axis: toWorld(spin.axis).toArray(), e1: toWorld(spin.e1).toArray(), e2: toWorld(spin.e2).toArray() };
+    const along = [0, 0, 0];
+    const pointing = new THREE.Vector3();
+    const Y = new THREE.Vector3(0, 1, 0);
     const rgb = [0, 0, 0];
     return {
-        object: spin,
+        object: beams.object,
         // Radio first; some pulsars sweep X-rays too. In visible light they stay the stylised beams they were.
         setBand(w) { beams.setColour(bandRgb(w, BEAM_TRUE, BEAM_BANDS, rgb)); },
-        update({ dt, reveal, reduceMotion, radius }) {
-            if (!reduceMotion) angle += dt * BEAM_TURNS_PER_S * Math.PI * 2;
-            spin.rotation.y = angle;
+        update({ reveal, radius }) {
+            const angle = pulsarAngle(spin, sharedUniforms.uTime.value, sharedUniforms.uTwinkle.value < 0.5);
+            pulsarBeam(local, angle, along);
+            // The beams lie along the object's y axis
+            beams.object.quaternion.setFromUnitVectors(Y, pointing.fromArray(along).normalize());
             beams.update({ dt: 0, reveal, reduceMotion: true, scale: radius * 7 });
         },
         dispose: beams.dispose

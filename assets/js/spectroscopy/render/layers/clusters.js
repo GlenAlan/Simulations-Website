@@ -10,7 +10,7 @@ import { bus } from '../../core/state.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB, planck, SIGMA } from '../../core/phys.js';
 import { limitingMag, MIN_FOV } from '../../core/sky.js';
-import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor, DEPTH_TABLE } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, memberDirection, revealGain, REVEAL_GLSL } from './sky_tangent.js';
@@ -39,7 +39,12 @@ const LIGHT_RATE = 0.072;           // ...and each magnitude above that multipli
 const LIGHT_MOST = 1.6;
 const GLOBULAR_GIANTS = 1.6;        // A globular's stars have its glow to stand out from
 const FAR_OFF_LIGHT = 0.3;          // A cluster's stars are held back to this share while it's small, so they don't catch the eye first...
-const FAR_OFF_PX = [20, 90];        // ...until this many CSS pixels per degree
+const FAR_OFF_PX = [8, 40];         // ...until this many CSS pixels per degree: by a field of view of about 20 degrees an open cluster is a loose group
+// The most a member may show is what this layer drew before depth and the deeper sky (the build at ed2d659), at the room
+// it has on screen now: nothing is drawn bigger or brighter than it was, however the reveal above lights it. That look was
+// set by each star's magnitude against its cluster's brightest, gently compressed...
+const WAS_COMPRESS = 0.12;          // ...by 10 to this power per magnitude...
+const WAS_FLOOR = 0.1;              // ...and never below this
 const SMUDGE_LIGHT = 0.03;          // Too faint to see one by one, an open cluster's stars still add up to a smudge...
 const SMUDGE_FROM_PX2 = 4;          // ...while each has less than this much of the screen to itself (square CSS pixels)...
 const SMUDGE_TO_PX2 = 30;           // ...and none by this much
@@ -104,6 +109,16 @@ function memberLight(above) {
     return smoothstep(SHOW_FROM, SHOW_BY, above) * Math.min(LIGHT_MOST, LIGHT_AT_START * 10 ** (LIGHT_RATE * Math.max(above - SHOW_FROM, 0)));
 }
 
+// The shader's cap on a member's visible light, for picking: its look before depth (see WAS_COMPRESS)
+function lightWas(visible, rel, share, spread, gain) {
+    return (rel * visible) ** (2.2 + (1 - 2.2) * spread) * gain * (0.5 + 1.4 * spread) * share;
+}
+
+// A member's light as it was against its cluster's brightest
+function wasLight(mag, brightest) {
+    return Math.max(WAS_FLOOR, 10 ** (-WAS_COMPRESS * (mag - brightest)));
+}
+
 // Where a binary member's two stars are on the sky, as offsets from its cluster. Stylised as a multiple's are (binaries.js):
 // the true direction between them, at a made-up distance, so they come apart well into the zoom. rho turns the pair on the sky.
 function pairSpots(member, rho, tDays) {
@@ -129,7 +144,7 @@ function pairSpots(member, rho, tDays) {
 }
 
 // What picking needs to know about each member, and each star of a pair. Built the first time a click comes near the cluster.
-function pickTable(c, points, bandA, bandB, memberBoost) {
+function pickTable(c, points, bandA, bandB, memberBoost, memberCap) {
     const { body } = c;
     const entry = (i) => {
         const point = points[i];
@@ -141,6 +156,8 @@ function pickTable(c, points, bandA, bandB, memberBoost) {
             depth: point.entity.depth,
             mag: Math.min(drawMag(point.entity), FAINTEST_DRAWN),
             starLight: memberBoost[i],
+            rel: memberCap[i * 2],
+            share: memberCap[i * 2 + 1],
             visible: bandA[i * 4 + 2],
             radio: bandA[i * 4],
             ir: bandA[i * 4 + 1],
@@ -167,6 +184,7 @@ function pickTable(c, points, bandA, bandB, memberBoost) {
             az: member.sky.az,
             alt: member.sky.alt,
             mag: Math.min(a.mag, b.mag),
+            share: 1,
             visible: Math.max(a.visible, b.visible),
             radio: Math.max(a.radio, b.radio),
             ir: Math.max(a.ir, b.ir),
@@ -231,11 +249,20 @@ export function createClustersLayer(engine, app) {
     const memberInfo = new Float32Array(memberCount * 3); // Its magnitude as drawn, its cluster's sky area per member, and its cluster's magnitude
     const memberBoost = new Float32Array(memberCount);
     const memberDepth = new Float32Array(memberCount);
+    const memberCap = new Float32Array(memberCount * 2);  // Its light as it was against its cluster's brightest, and its share of a pair's
     clusters.forEach((c) => {
         const { members, radius_deg: radius } = c.body.cluster;
         c.areaPerMember = (Math.PI * radius * radius) / Math.max(1, members.length) / (c.globular ? 5 : 1);
+        c.brightest = members.reduce((m, s) => Math.min(m, s.brightness.mag), Infinity);
+        // How much depth has shrunk it: 1 at depth 0 (see core/depth.js)
+        c.shrunk = 1 - DEPTH_TABLE.cluster.kSize * c.body.depth;
     });
     points.forEach(({ c, member, entity, spot }, w) => {
+        // A pair's two stars share the light the one point had, by mass: so while they are drawn as one, the middle of their
+        // light is their centre of mass (pairSpots), where the pair is picked and ringed
+        const mass = (star) => star.star.mass_Msun;
+        const share = member.stars ? mass(entity) / (mass(member.stars[0]) + mass(member.stars[1])) : 1;
+        memberCap.set([wasLight(member.brightness.mag, c.brightest), share], w * 2);
         const { body } = c;
         const v = offsetVector(c.basis, spot.x, spot.y);
         positions.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], w * 3);
@@ -266,6 +293,7 @@ export function createClustersLayer(engine, app) {
     memberGeometry.setAttribute('aInfo', new THREE.BufferAttribute(memberInfo, 3));
     memberGeometry.setAttribute('aBoost', new THREE.BufferAttribute(memberBoost, 1));
     memberGeometry.setAttribute('aDepth', new THREE.BufferAttribute(memberDepth, 1));
+    memberGeometry.setAttribute('aCap', new THREE.BufferAttribute(memberCap, 2));
     const memberMaterial = skyMaterial({
         uniforms: { uDpr },
         vertexShader: /* glsl */`
@@ -278,6 +306,7 @@ export function createClustersLayer(engine, app) {
             attribute vec3 aInfo;
             attribute float aBoost;
             attribute float aDepth;
+            attribute vec2 aCap;
             varying vec3 vColour;
             float memberLight(float above) {
                 return smoothstep(${SHOW_FROM.toFixed(2)}, ${SHOW_BY.toFixed(2)}, above)
@@ -294,19 +323,30 @@ export function createClustersLayer(engine, app) {
                 float farOff = mix(${FAR_OFF_LIGHT.toFixed(2)}, 1.0, smoothstep(${FAR_OFF_PX[0].toFixed(1)}, ${FAR_OFF_PX[1].toFixed(1)}, pxPerDeg / uDpr));
                 float strong = max(memberLight(uLimitMag + ${MEMBER_HEAD_START.toFixed(2)} - aInfo.x) * aBoost * farOff, smudge) * aBandA.z * uBandW[2];
                 float grey = dot(aColour, vec3(0.3, 0.55, 0.15));
-                vec3 c = max(mix(vec3(grey), aColour, 1.3), 0.0) * strong
-                    + uBandTint[0] * uBandW[0] * aBandA.x
+                vec3 tint = max(mix(vec3(grey), aColour, 1.3), 0.0);
+                vec3 bands = uBandTint[0] * uBandW[0] * aBandA.x
                     + uBandTint[1] * uBandW[1] * aBandA.y * mix(0.5, 1.0, spread) * 2.2
                     + uBandTint[3] * uBandW[3] * aBandA.w * mix(0.5, 1.0, spread) * 2.2
                     + uBandTint[4] * uBandW[4] * aBandB * 3.0;
+                vec3 c = tint * strong + bands;
+                // Never bigger or brighter than it was before depth (see WAS_COMPRESS). Read at the room it has now, which
+                // depth has only made less, so a far cluster is drawn as that look would draw it further off
+                float was = pow(aCap.x * aBandA.z, mix(2.2, 1.0, spread)) * revealGain(aInfo.z) * mix(0.5, 1.9, spread) * aCap.y * uBandW[2];
+                vec3 cWas = tint * was + bands;
+                float peakWas = max(cWas.r, max(cWas.g, cWas.b));
                 float peak = max(c.r, max(c.g, c.b));
+                if (peak > peakWas) {
+                    c *= peakWas / peak;
+                    peak = peakWas;
+                }
                 vColour = c;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                 gl_Position.xy *= depthP(aDepth);
                 // A few bright stars and many faint ones. Going in they swell a little, as if you were getting closer
                 float zoom = clamp(pow(pxPerDeg / (8.0 * uDpr), 0.25), 1.0, 2.4);
                 float size = (1.2 + 4.2 * pow(min(peak, 3.0), 0.8)) * zoom * uDpr;
-                gl_PointSize = peak < ${DRAWN_PEAK.toFixed(3)} ? 0.0 : size;
+                float sizeWas = (1.3 + 2.6 * sqrt(min(peakWas, 2.0))) * clamp(pow(pxPerDeg / 8.0, 0.3), 1.0, 3.2) * uDpr;
+                gl_PointSize = peak < ${DRAWN_PEAK.toFixed(3)} ? 0.0 : min(size, sizeWas);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -435,7 +475,8 @@ export function createClustersLayer(engine, app) {
         aKind: new Float32Array(n * 2),
         aRect: new Float32Array(n * 4),
         aHazeAmount: new Float32Array(n),
-        aDepth: new Float32Array(n)
+        aDepth: new Float32Array(n),
+        aShrunk: new Float32Array(n)
     };
     clusters.forEach((c, i) => {
         const { body } = c;
@@ -465,13 +506,14 @@ export function createClustersLayer(engine, app) {
         glowData.aBandB[i] = body.bands.xray * light;
         glowData.aKind.set([c.globular ? 1 : 0, drawMag(body)], i * 2);
         glowData.aDepth[i] = body.depth;
+        glowData.aShrunk[i] = c.shrunk;
         if (c.hazeIndex >= 0) {
             const x = (c.hazeIndex % hazeCols) * HAZE_TILE;
             const y = Math.floor(c.hazeIndex / hazeCols) * HAZE_TILE;
             glowData.aRect.set([(x + 1) / hazeAtlas.width, (y + 1) / hazeAtlas.height, (HAZE_TILE - 2) / hazeAtlas.width, (HAZE_TILE - 2) / hazeAtlas.height], i * 4);
         }
     });
-    Object.entries({ aCentre: 3, aU: 3, aV: 3, aColour: 3, aBandA: 4, aBandB: 1, aKind: 2, aRect: 4, aHazeAmount: 1, aDepth: 1 }).forEach(([name, size]) => {
+    Object.entries({ aCentre: 3, aU: 3, aV: 3, aColour: 3, aBandA: 4, aBandB: 1, aKind: 2, aRect: 4, aHazeAmount: 1, aDepth: 1, aShrunk: 1 }).forEach(([name, size]) => {
         glowGeometry.setAttribute(name, new THREE.InstancedBufferAttribute(glowData[name], size));
     });
     glowGeometry.instanceCount = n;
@@ -490,6 +532,7 @@ export function createClustersLayer(engine, app) {
             attribute vec4 aRect;
             attribute float aHazeAmount;
             attribute float aDepth;
+            attribute float aShrunk;
             varying vec2 vP;
             varying vec2 vUv;
             varying vec3 vColour;
@@ -504,13 +547,15 @@ export function createClustersLayer(engine, app) {
                 vColour = aColour;
                 vBand = vec4(aBandA.x, aBandA.y, aBandA.z * revealGain(aKind.y), aBandA.w);
                 vGlobular = aKind.x;
-                // Once the stars can be told apart they carry the cluster, and the glow eases back
                 float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth);
-                vResolved = 1.0 - 0.45 * smoothstep(60.0, 400.0, px);
+                // How big it would be at this zoom without depth: the glow is never brighter than it was then
+                float pxWas = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad / aShrunk;
+                // Once the stars can be told apart they carry the cluster, and the glow eases back
+                vResolved = 1.0 - 0.45 * smoothstep(60.0, 400.0, pxWas);
                 // A little leftover gas, seen from afar. It's only ever a small cloud, and close to it would be a blur
                 vHaze = aHazeAmount * (1.0 - smoothstep(70.0, 240.0, px));
                 // While tiny, a broader glow is what makes it read as a ball and not a dot
-                vSpread = 1.0 + 3.5 * (1.0 - smoothstep(8.0, 40.0, px));
+                vSpread = 1.0 + 3.5 * (1.0 - smoothstep(8.0, 40.0, pxWas));
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(aCentre + position.x * aU + position.y * aV, 1.0);
                 gl_Position.xy *= depthP(aDepth);
             }`,
@@ -596,6 +641,8 @@ export function createClustersLayer(engine, app) {
         const col = new Float32Array(DECOR_MAX * 3);
         const lum = new Float32Array(DECOR_MAX);
         const rc = 0.17 * (core / 0.25);
+        // A tighter core packs more of them into the middle: each is fainter, so the middle is no brighter than it was
+        const packed = Math.min(1, (core / 0.25) ** 2);
         for (let i = 0; i < DECOR_MAX; i++) {
             // A Plummer sphere, seen from outside: it just thins out, with no edge to stop at
             let r;
@@ -612,7 +659,7 @@ export function createClustersLayer(engine, app) {
             const kind = rng.next();
             const tint = kind < 0.72 ? [1, 0.8, 0.52] : kind < 0.9 ? [1, 0.92, 0.75] : [1, 0.55, 0.28];
             col.set(tint, i * 3);
-            lum[i] = 0.1 + 0.9 * rng.next() ** 6;
+            lum[i] = (0.1 + 0.9 * rng.next() ** 6) * packed;
         }
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -742,7 +789,9 @@ export function createClustersLayer(engine, app) {
                 }
                 if (!c.decor) c.decor = buildDecor(c);
                 c.decor.points.visible = true;
-                c.decor.geometry.setDrawRange(0, count);
+                // Depth draws it smaller, so fewer of them: as many to the square pixel as there were without depth
+                const scale = c.shrunk * parallaxFactor(c.body.depth, frame.fov);
+                c.decor.geometry.setDrawRange(0, Math.max(1, Math.round(count * scale * scale)));
                 c.decor.material.uniforms.uFade.value = Math.min(1, (radiusPx - 34) / 120);
             }
         },
@@ -788,13 +837,16 @@ export function createClustersLayer(engine, app) {
                 const smudge = c.globular ? 0 : (1 - smoothstep(SMUDGE_FROM_PX2, SMUDGE_TO_PX2, room))
                     * Math.max(0.2, Math.min(1, room / SMUDGE_STACKED_PX2)) * SMUDGE_LIGHT * revealGain(drawMag(body), lim);
                 const farOff = FAR_OFF_LIGHT + (1 - FAR_OFF_LIGHT) * smoothstep(FAR_OFF_PX[0], FAR_OFF_PX[1], pxPerDeg);
-                if (!c.table) c.table = pickTable(c, points, bandA, bandB, memberBoost);
+                if (!c.table) c.table = pickTable(c, points, bandA, bandB, memberBoost, memberCap);
+                const gain = revealGain(drawMag(body), lim);
                 let any = false;
                 // One point of light, standing for itself if there's room, and for the cluster if not
                 const offer = (m, room) => {
                     let light;
-                    if (band === 'visible') light = Math.max(memberLight(lim + MEMBER_HEAD_START - m.mag) * m.starLight * farOff, smudge) * m.visible;
-                    else if (band === 'ir' || band === 'uv') light = m[band] * (0.5 + 0.5 * spread) * 2.2;
+                    if (band === 'visible') {
+                        light = Math.max(memberLight(lim + MEMBER_HEAD_START - m.mag) * m.starLight * farOff, smudge) * m.visible;
+                        light = Math.min(light, lightWas(m.visible, m.rel, m.share, spread, gain));
+                    } else if (band === 'ir' || band === 'uv') light = m[band] * (0.5 + 0.5 * spread) * 2.2;
                     else light = m[band] * (band === 'xray' ? 3 : 1);
                     if (light < DRAWN_PEAK) return;
                     any = true;
