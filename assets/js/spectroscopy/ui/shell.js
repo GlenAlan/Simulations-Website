@@ -1,10 +1,10 @@
 // The frame around the sky: the canvas fit, band switcher, Layers menu, Help, Settings, the context bar and the
 // slot for the legend. Everything here is a thin bar at an edge of the sky; only the bars take pointer events.
 
-import { bus, setBand, setLayer, setSetting } from '../core/state.js';
+import { bus, select, setBand, setLayer, setSetting } from '../core/state.js';
 import { announce } from './drawer.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
-import { DEFAULT_VIEW } from '../core/sky.js';
+import { DEFAULT_VIEW, MIN_FOV } from '../core/sky.js';
 import { parallaxFactor } from '../core/depth.js';
 import { drawnSky } from '../render/layers/sky_tangent.js';
 import { angularRadiusDeg } from '../render/layers/overlays.js';
@@ -373,6 +373,30 @@ function initLayersMenu(app, topRight) {
 }
 
 // ---------- Context bar: the zoom, and the way into or out of a planetary system ----------
+const ZOOM_HINT_FROM_AFAR = 'Zoom in on it to visit';
+const ZOOM_HINT_ON_THE_WAY = 'Keep zooming to go in';
+const ZOOM_WAIT = 'Getting the system ready';
+const ZOOM_HINT_MS = 6000;
+const ZOOM_HINT_KEY = 'spectroZoomHintSeen';
+
+// A browser that won't store this just shows the hint once a visit
+let hintSeenNow = false;
+function hintWasSeen() {
+    if (hintSeenNow) return true;
+    try {
+        return localStorage.getItem(ZOOM_HINT_KEY) === '1';
+    } catch (err) {
+        return false;
+    }
+}
+
+function markHintSeen() {
+    hintSeenNow = true;
+    try {
+        localStorage.setItem(ZOOM_HINT_KEY, '1');
+    } catch (err) { /* Remembered for this visit, as above */ }
+}
+
 function zoomWords(fov) {
     const zoom = DEFAULT_VIEW.fov / fov;
     const shown = zoom >= 10 ? String(Math.round(zoom)) : zoom.toFixed(1);
@@ -403,14 +427,21 @@ function initContextBar(app) {
     readingTip.hidden = true;
     const zoomText = element('span', 'spectro-zoom-value');
     const fovText = element('span', 'spectro-zoom-fov');
+    const hint = element('span', 'spectro-zoom-hint');
+    hint.hidden = true;
     reading.append(zoomText, fovText);
-    readout.append(reading, readingTip);
+    readout.append(reading, readingTip, hint);
 
-    const enter = button('spectro-bar-button');
+    // Zooming is the way in. This is the way for a keyboard or anyone who'd rather press something.
+    const enter = button('spectro-bar-button spectro-bar-quiet');
     enter.append(iconSpan('fa-search-plus'), element('span', '', 'Enter system'));
     const back = button('spectro-bar-button');
     back.append(iconSpan('fa-arrow-left'), element('span', '', 'Back to sky'));
-    bar.append(readout, enter, back);
+    // Zooming in opens no panel, so this says where you are and opens its panel
+    const here = button('spectro-bar-button spectro-bar-quiet');
+    const hereWords = element('span');
+    here.append(iconSpan('fa-info-circle'), hereWords);
+    bar.append(readout, enter, back, here);
 
     enter.addEventListener('click', () => {
         const resolved = app.selected;
@@ -420,9 +451,16 @@ function initContextBar(app) {
         app.system.enter(code, { onDone: planet ? () => app.system.focusPlanet(planet) : undefined });
     });
     back.addEventListener('click', () => { if (app.system) app.system.exit(); });
+    here.addEventListener('click', () => { if (app.systemCode) select(app.systemCode); });
+
+    function panelShowsSystem() {
+        const shown = app.selected;
+        return !!shown && app.drawer.isOpen() && app.drawer.currentView() === 'object'
+            && (shown.body.code === app.systemCode || shown.entity.code === app.systemCode);
+    }
 
     function paint() {
-        const inSystem = app.view === 'system';
+        const inSystem = app.view === 'system' && !app.system.isOpening();
         const code = inSystem ? null : systemCodeFor(app, app.selected);
         // Hiding the button that has focus would drop it to the page: pass it to the one taking its place
         const held = [enter, back].find((b) => b === document.activeElement);
@@ -430,6 +468,11 @@ function initContextBar(app) {
         back.hidden = !inSystem;
         enter.hidden = !code;
         if (code) enter.setAttribute('aria-label', `Enter system ${code}`);
+        here.hidden = !inSystem || panelShowsSystem();
+        if (inSystem && app.systemCode) {
+            hereWords.textContent = `System ${app.systemCode}`;
+            here.setAttribute('aria-label', `Open the panel for system ${app.systemCode}`);
+        }
         if (held && held.hidden) {
             const next = !back.hidden ? back : !enter.hidden ? enter : app.engine.canvas;
             next.focus({ preventScroll: true });
@@ -439,11 +482,37 @@ function initContextBar(app) {
     bus.on('select', paint);
     bus.on('deselect', paint);
     bus.on('view', paint);
+    bus.on('drawer', paint);
     paint();
+
+    // Once ever, as the student first gets somewhere it would help: choosing a star that can be visited, or zooming on one
+    let hintTimer = 0;
+    function offerHint(words) {
+        if (hintTimer || hintWasSeen()) return;
+        markHintSeen();
+        hint.textContent = words;
+        hint.hidden = false;
+        hintTimer = setTimeout(() => { hint.hidden = true; }, ZOOM_HINT_MS);
+    }
+    bus.on('select', () => { if (app.view === 'sky' && systemCodeFor(app, app.selected)) offerHint(ZOOM_HINT_FROM_AFAR); });
+    bus.on('zoomaim', () => offerHint(ZOOM_HINT_ON_THE_WAY));
+    // Not a hint but a state of things, for as long as it lasts
+    bus.on('zoomwait', ({ waiting }) => {
+        hint.textContent = ZOOM_WAIT;
+        hint.hidden = !waiting;
+    });
+    // Going in shows it's understood, so the hint needn't stay or come again
+    bus.on('view', ({ view }) => {
+        if (view !== 'system') return;
+        markHintSeen();
+        hint.hidden = true;
+    });
 
     // Written only when the words change, so the bar isn't laid out again every frame
     let lastFov = -1;
-    return function updateZoom(fov) {
+    return function updateZoom(frameFov) {
+        // The start of a zoom into a system goes on past the limit of the student's own zoom
+        const fov = Math.max(MIN_FOV, frameFov);
         if (Math.abs(fov - lastFov) < 0.005) return;
         lastFov = fov;
         const words = zoomWords(fov);

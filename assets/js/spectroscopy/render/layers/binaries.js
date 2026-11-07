@@ -488,6 +488,26 @@ export function createBinariesLayer(engine, app) {
             points.material.uniforms.uDpr.value = frame.dpr;
             spikes.material.uniforms.uDpr.value = frame.dpr;
         },
+        // The first split of this system: where each part is drawn just now, in degrees from its centre (east, up), and
+        // which stars it is, as indices into body.stars
+        firstSplit(code) {
+            const system = byCode.get(code);
+            return system ? system.tree.children.map((node) => ({ x: node.x, y: node.y, stars: node.stars })) : null;
+        },
+        // The field of view that shows this system's closest stars apart, or 0 for one the layer doesn't draw
+        fovApart(code, frame) {
+            const system = byCode.get(code);
+            if (!system) return 0;
+            let tightest = Infinity;
+            const walk = (node) => {
+                if (node.sepSelf > 0) tightest = Math.min(tightest, node.sepSelf);
+                node.children.forEach(walk);
+            };
+            walk(system.tree);
+            if (tightest === Infinity) return 0;
+            const fov = (tightest * frame.height * frame.dpr) / SPLIT_HI;
+            return fov * parallaxFactor(system.body.depth, fov);
+        },
         // Where one star of a system is drawn at this zoom: the point it's part of, for as long as it hasn't come apart
         componentSky(code, frame) {
             const resolved = app.universe.resolve(code);

@@ -3788,6 +3788,37 @@ body.sim-panel-sheet .spectro-instrument.has-tool:not(.has-own-figure) .spectro-
 /* === end BINARY === */
 
 
+/* === ZOOM: the way into a system by zooming, and what the context bar says about it === */
+.spectro-zoom-hint {
+    font-weight: 400;
+    opacity: 0.85;
+}
+
+.spectro-zoom-hint[hidden] {
+    display: none;
+}
+
+/* It takes the place of the field of view for its few seconds, so the bar stays clear of the legend */
+.spectro-zoom-hint:not([hidden]) {
+    margin-left: -0.3em;
+}
+
+.spectro-zoom:has(.spectro-zoom-hint:not([hidden])) .spectro-zoom-fov {
+    display: none;
+}
+
+/* Zooming is the way in: the buttons for it step back */
+.spectro-bar-button.spectro-bar-quiet {
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.86) !important;
+}
+
+@media (hover: hover) {
+    .spectro-bar-button.spectro-bar-quiet:hover {
+        color: #ffffff !important;
+    }
+}
+/* === end ZOOM === */
 /* === KEYS: contrast and focus, shared across the panels. Last, so that these win over each section's own === */
 .spectro-sim {
     --spectro-control-line: #8c8c8c;   /* 3.1:1 on the panel, 3.4:1 on a box */

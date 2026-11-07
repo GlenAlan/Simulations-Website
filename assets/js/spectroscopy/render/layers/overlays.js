@@ -7,6 +7,7 @@ import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { signed, withCommas } from '../../core/format.js';
 import { drawnSky } from './sky_tangent.js';
+import { sharedUniforms } from '../shared.js';
 
 const RAD = Math.PI / 180;
 const BAND_EDGE_DEG = 14;          // How far either side of the galactic plane the highlight's edges sit
@@ -449,7 +450,10 @@ export function createOverlaysLayer(engine, app) {
         update(frame) {
             const view = engine.getView();
             const layers = app.layers;
-            const inSky = frame.view === 'sky';
+            // Marks stay on what they mark as a flight begins, and go as the sky does
+            const inFlight = frame.view !== 'sky' && !!app.system && app.system.skyShows() && sharedUniforms.uSkyFade.value > 0.01;
+            const inSky = frame.view === 'sky' || inFlight;
+            canvas.style.opacity = inFlight ? sharedUniforms.uSkyFade.value.toFixed(3) : '';
             const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
             // A star of a multiple moves as its system's clock runs, and comes apart from its partner as the view zooms
             const marked = app.selected ? drawnSky(engine, app.selected) : null;

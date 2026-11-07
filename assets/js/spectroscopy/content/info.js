@@ -212,7 +212,7 @@ function planetsNote(body) {
     if (!count) return null;
     return {
         heading: 'Planets',
-        text: `${count === 1 ? 'One planet orbits' : `${count} planets orbit`} here. Use Enter system to fly in. The periods and radii of the orbits follow Kepler's third law, r³/T² = GM/4π².`
+        text: `${count === 1 ? 'One planet orbits' : `${count} planets orbit`} here. Zoom in on the star to go and see them. The periods and radii of the orbits follow Kepler's third law, r³/T² = GM/4π².`
     };
 }
 

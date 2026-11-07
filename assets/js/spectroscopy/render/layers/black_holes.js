@@ -874,7 +874,9 @@ export function createBlackHolesLayer(engine, app) {
     // Keep the biggest holes on screen, without allocating
     function collectHeroes(frame) {
         heroCount = 0;
-        if (frame.view !== 'sky' || sharedUniforms.uSkyFade.value < 0.01) return;
+        // A flight into the system goes on showing it as the sky fades, so that it doesn't vanish as the flight begins
+        const shows = frame.view === 'sky' || (app.system && app.system.skyShows());
+        if (!shows || sharedUniforms.uSkyFade.value < 0.01) return;
         const w = frame.width * frame.dpr;
         const h = frame.height * frame.dpr;
         for (let i = 0; i < holes.length; i++) {
@@ -989,6 +991,14 @@ export function createBlackHolesLayer(engine, app) {
 
     return {
         id: 'black_holes',
+        // Which way the companion is drawn from the hole, as an angle on the screen, so a flight can start the same way round
+        companionAngle(code) {
+            const bh = byCode.get(code);
+            if (!bh) return null;
+            const c = Math.cos(bh.thetaC);
+            const s = Math.sin(bh.thetaC);
+            return Math.atan2(bh.e1.y * c + bh.e2.y * s, bh.e1.x * c + bh.e2.x * s);
+        },
         update(frame) {
             if (lensReady && lensFade < 1) lensFade = frame.reduceMotion ? 1 : Math.min(1, lensFade + frame.dt / LENS_FADE_S);
             collectHeroes(frame);
