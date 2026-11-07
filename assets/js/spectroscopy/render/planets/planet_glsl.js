@@ -885,6 +885,7 @@ uniform float uRegolith;
 uniform float uWrap;
 uniform float uIsEnvelope;
 uniform float uRelief;
+uniform float uLimbDark;
 uniform vec3 uCloudCol;
 uniform vec3 uCloudShade;
 uniform vec3 uEmitCool;
@@ -906,7 +907,9 @@ vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float coverage, v
     vec3 L = uSun;
     vec3 gradB = rotY(s.grad, -uSpin) + extraGrad;
     gradB -= P * dot(gradB, P);
-    vec3 N = normalize(P - gradB * uRelief * 0.12);
+    // Relief fades out at the limb, where tilted normals would go dark in bites out of a clean round edge
+    float facing = max(dot(P, -rd), 0.0);
+    vec3 N = normalize(P - gradB * uRelief * 0.12 * smoothstep(0.0, 0.3, facing));
     float muS = dot(P, L);
     float NL = max(dot(N, L), 0.0);
     float NV = max(dot(N, -rd), 0.015);
@@ -932,7 +935,7 @@ vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float coverage, v
     if (uIsEnvelope > 0.0) {
         // A thick cloud top: soft-edged terminator and limb darkening (Minnaert)
         float wrapped = max((dot(N, L) + uWrap) / (1.0 + uWrap), 0.0);
-        diffuse = pow(wrapped, 0.95) * pow(max(NV, 0.04), 0.14);
+        diffuse = pow(wrapped, 0.95) * pow(max(NV, 0.04), uLimbDark);
     } else {
         // Bare regolith barely darkens towards the limb, as on the Moon (Lommel-Seeliger); air and ground, like Lambert
         float ls = 2.0 * NL / (NL + NV + 0.02);
@@ -940,6 +943,11 @@ vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float coverage, v
     }
 
     vec3 col = s.albedo * sunAt * diffuse * (1.0 - s.shadow * 0.72);
+
+    // Starlight from the rest of the sky, so that a night side is never a hole, and a thin edge to keep its outline by
+    float nightSide = 1.0 - smoothstep(-0.1, 0.25, muS);
+    col += s.albedo * uSunCol * 0.035;
+    col += uSunCol * pow(1.0 - facing, 7.0) * 0.07 * nightSide;
 
     if (s.water > 0.002 || s.sheen > 0.002) {
         // Sun glint on open water: a tight core with a wide warm sheen round it. Smooth ice gets a weak broad gleam.
@@ -978,6 +986,8 @@ vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float coverage, v
             // A bright haze near the limb stands in for light scattered more than once
             vec3 lost = 1.0 - exp(-(uBetaR + uBetaM) * column);
             added *= mix(0.45, 1.0, lost.g);
+            // Thin air gets a lot of gain so as to show at the limb. Over the middle of the disc that only tints the ground.
+            added *= 1.0 - 0.65 * smoothstep(2.1, 2.7, uAtmGain) * smoothstep(0.25, 0.85, facing);
             added += lost * lost * uRimCol * uHazeGlow * smoothstep(-0.06, 0.45, muS);
             col = col * mix(through, vec3(1.0), 0.45) + added;
         }

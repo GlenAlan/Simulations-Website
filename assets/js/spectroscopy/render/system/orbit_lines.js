@@ -4,9 +4,83 @@
 //   const line = createOrbitLine(points, { closed, width, colour, opacity, soft, trail });
 //   points are [x, y, z] in the line's own space; scale and place line.object as needed.
 //   line.set({ draw, head, opacity, width, trail }): draw is how much of the loop shows, measured back from head.
+//   line.withGeometry(opts) makes another line over the same points with its own look: a smear under a thin line, say.
+//
+//   const glow = createOrbitGlow(points, colour);
+//   glow.set({ radius, amount, count }): a star's light averaged over its orbit, as many soft discs round it. It's for when
+//   the star is wide beside its orbit, where a ribbon would fold over itself. radius is in world units.
 
 import * as THREE from 'three';
 import { sharedUniforms } from '../shared.js';
+
+const GLOW_VERTEX = /* glsl */`
+attribute vec3 aPoint;
+uniform float uRadius;
+varying vec2 vQ;
+void main() {
+    vQ = position.xy;
+    vec4 view = modelViewMatrix * vec4(aPoint, 1.0);
+    view.xy += position.xy * uRadius * 2.2;
+    gl_Position = projectionMatrix * view;
+}`;
+
+const GLOW_FRAGMENT = /* glsl */`
+uniform vec3 uColour;
+uniform float uAmount;
+varying vec2 vQ;
+void main() {
+    float d = length(vQ);
+    float g = exp(-d * d * 5.3) * (1.0 - smoothstep(0.75, 1.0, d));
+    gl_FragColor = vec4(uColour * g * uAmount, 1.0);
+}`;
+
+const GLOW_POINTS = 96;
+const glowQuad = new THREE.PlaneGeometry(2, 2);
+
+export function createOrbitGlow(points, colour) {
+    // In bit-reversed order, so that the first few of them, however few, are spread evenly round the loop
+    const place = new Float32Array(GLOW_POINTS * 3);
+    for (let i = 0; i < GLOW_POINTS; i++) {
+        let reversed = 0;
+        for (let bit = 0, x = i; bit < 7; bit++, x >>= 1) reversed = (reversed << 1) | (x & 1);
+        const p = points[Math.floor((reversed / 128) * points.length)];
+        place.set(p, i * 3);
+    }
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.setIndex(glowQuad.getIndex());
+    geometry.setAttribute('position', glowQuad.getAttribute('position'));
+    geometry.setAttribute('aPoint', new THREE.InstancedBufferAttribute(place, 3));
+    geometry.instanceCount = GLOW_POINTS;
+    const material = new THREE.ShaderMaterial({
+        toneMapped: false,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: GLOW_VERTEX,
+        fragmentShader: GLOW_FRAGMENT,
+        uniforms: {
+            uColour: { value: new THREE.Color(...colour) },
+            uAmount: { value: 0 },
+            uRadius: { value: 1 }
+        }
+    });
+    const object = new THREE.Mesh(geometry, material);
+    object.frustumCulled = false;
+    object.renderOrder = 3;
+    object.visible = false;
+    return {
+        object,
+        set({ radius, amount, count }) {
+            material.uniforms.uRadius.value = radius;
+            material.uniforms.uAmount.value = amount;
+            geometry.instanceCount = Math.min(GLOW_POINTS, count);
+        },
+        dispose() {
+            geometry.dispose();
+            material.dispose();
+        }
+    };
+}
 
 const VERTEX = /* glsl */`
 attribute vec3 aPrev;
@@ -57,7 +131,7 @@ void main() {
         : 1.0 - smoothstep(halfW - 0.5, halfW + 0.5, abs(vEdge));
     // How far behind the head this point is, as a fraction of the loop
     float back = fract(uHead - vU);
-    a *= 1.0 - smoothstep(uDraw - 0.015, uDraw, back);
+    if (uDraw < 0.999) a *= 1.0 - smoothstep(uDraw - 0.015, uDraw, back);
     float t = uTrail > 0.0 ? mix(1.0, 1.0 + uTrail, pow(1.0 - back, 5.0)) : 1.0;
     gl_FragColor = vec4(uColour * uOpacity * t * a, 1.0);
 }`;
@@ -97,7 +171,10 @@ export function createOrbitLine(points, opts = {}) {
     geometry.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
     geometry.setAttribute('aU', new THREE.BufferAttribute(u, 1));
     geometry.setIndex(indices);
+    return lineOver(geometry, opts, true);
+}
 
+function lineOver(geometry, opts, ownsGeometry) {
     const material = new THREE.ShaderMaterial({
         toneMapped: false,
         transparent: true,
@@ -131,8 +208,9 @@ export function createOrbitLine(points, opts = {}) {
             if (values.width !== undefined) un.uWidth.value = values.width;
             if (values.trail !== undefined) un.uTrail.value = values.trail;
         },
+        withGeometry: (nextOpts) => lineOver(geometry, nextOpts, false),
         dispose() {
-            geometry.dispose();
+            if (ownsGeometry) geometry.dispose();
             material.dispose();
         }
     };
