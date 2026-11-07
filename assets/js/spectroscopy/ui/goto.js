@@ -17,7 +17,7 @@ import { isValidCode } from '../core/rng.js';
 import { withSeed } from '../core/seed.js';
 import { limitingMag, angularSeparation, MIN_FOV, MAX_FOV } from '../core/sky.js';
 import { drawMag, parallaxFactor } from '../core/depth.js';
-import { bandMagnitude } from '../data/band_table.js';
+import { bandMagnitude, bandStrengths } from '../data/band_table.js';
 import { createVisited } from './visited.js';
 import { createSearchMarksLayer } from '../render/layers/search_marks.js';
 import { drawnSky } from '../render/layers/sky_tangent.js';
@@ -157,6 +157,21 @@ function fovAtDepth(fov, depth) {
 
 function strongestBand(bands) {
     return BANDS.reduce((best, band) => (bands[band] > bands[best] ? band : best), 'visible');
+}
+
+// A cluster's member shows by its own light, not the cluster's: an orange dwarf among hot blue stars is lost in ultraviolet.
+// A lone member has no strengths of its own stored, so they're worked out the first time they're wanted.
+const memberBands = new WeakMap();
+function bandsOf({ entity, body, path }) {
+    if (path !== 'member') return body.bands;
+    if (entity.bands) return entity.bands;
+    if (!entity.star) return body.bands;
+    let bands = memberBands.get(entity);
+    if (!bands) {
+        bands = bandStrengths(entity);
+        memberBands.set(entity, bands);
+    }
+    return bands;
 }
 
 function animationFrames(n) {
@@ -482,10 +497,11 @@ export function initGoto(app) {
         return bands[app.band] <= BAND_HIDDEN_AT;
     }
 
-    function isHidden({ body, path }) {
+    function isHidden(resolved) {
+        const { body, path } = resolved;
         if (path === 'planet' || path === 'comet') return false; // Not drawn on the sky at all: the flight ends in its system, whatever the band
         // Faint in this band, or too faint to be drawn in it at any zoom (a dim red dwarf in ultraviolet)
-        const bands = body.bands;
+        const bands = bandsOf(resolved);
         const unseen = isFaintInBand(bands) || !engine.bodyShows(body, limitingMag(MIN_FOV));
         return unseen && strongestBand(bands) !== app.band;
     }
@@ -706,7 +722,7 @@ export function initGoto(app) {
         const inOpenSystem = app.view === 'system' && app.systemCode === systemCodeOf(resolved);
         if (!inOpenSystem && isHidden(resolved)) {
             const hiddenIn = app.band;
-            const strongest = strongestBand(body.bands);
+            const strongest = strongestBand(bandsOf(resolved));
             input.value = entity.code;
             const choice = await askToSwitch(hiddenIn, strongest);
             if (id !== flightId || choice === 'cancel') return false;
