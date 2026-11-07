@@ -3,6 +3,8 @@
 //
 //   GLOSSARY[term]              one sentence
 //   termHtml(term, label?)      one wrapped term, as an HTML string
+//   tipHtml(label, definition)  the same tip for words that aren't in the glossary, such as a row's label
+//   codeHtml(code, { fly })     an object's code as a button. ui/info_tab.js answers its click, for the whole drawer.
 //   glossaryHtml(text, opts?)   plain text to HTML, with known terms wrapped. Each term is wrapped once only;
 //                               pass the same { seen: new Set() } to several calls to keep that true across a panel.
 
@@ -25,13 +27,17 @@ export const GLOSSARY = {
     // Temperature and light
     'black body': 'An ideal object that absorbs all light and glows with a spectrum set only by its temperature.',
     "Wien's law": 'A hotter black body peaks at a shorter wavelength: λmax = b/T, with b = 2.898 × 10⁻³ m K.',
+    'λmax': "The wavelength where a black body's curve is at its highest. Wien's law turns it into a temperature: T = b/λmax.",
 
     // Motion
     'Doppler shift': "A change in a wave's wavelength caused by motion along your line of sight.",
     'redshift': 'A shift of lines to longer wavelengths, measured as z = Δλ/λ₀, as the source moves away or space stretches.',
     'blueshift': 'A shift of lines to shorter wavelengths, showing the source is moving towards you.',
     'radial velocity': 'Speed along your line of sight, positive when moving away.',
-    'v sin i': "How fast a star's surface spins along your line of sight, which is less than the true speed v unless you see it edge-on.",
+    'Δλ': 'How far a line has moved from where it sits in the lab: Δλ = λ − λ₀. Positive means towards the red.',
+    'z': 'Redshift: how far a line has moved, as a fraction of its lab wavelength, z = Δλ/λ₀. It is negative for a blueshift.',
+    'v = cz': 'Speed from redshift, where c is the speed of light. It only works well below about z = 0.1, so past that, quote z instead.',
+    'v sin i': "The part of a star's spin that you can measure. v is the true speed of its equator, and i is the tilt of its spin axis from your line of sight: 90° means you see it side-on, and 0° pole-on. Only motion towards or away from you shifts light, so you measure v × sin i, which is never more than v.",
     'rotational broadening': 'Even, symmetric widening of every line, because one side of a spinning star comes towards you as the other moves away.',
     'pressure broadening': 'Widening of lines because atoms in dense gas are constantly jostled by their neighbours.',
 
@@ -97,7 +103,7 @@ export const GLOSSARY = {
     'equilibrium temperature': 'How warm a planet would be if it simply balanced the starlight it absorbs against the heat it radiates, with no greenhouse warming.',
     'habitable zone': "The range of distances from a star where a planet's surface could be warm enough for liquid water.",
     'biosignature': "A gas or mix of gases in a planet's air that is hard to explain without life.",
-    'red edge': 'A sharp rise in reflected light just beyond the red, which plants make on Earth.',
+    'red edge': "A sharp rise in reflected light just past the red end of the visible, at about 700 to 750 nm. Earth's plants absorb visible light for photosynthesis but reflect near-infrared strongly, so a planet with something similar on its surface could show the same step.",
 
     // Comets
     'coma': 'The cloud of gas and dust round the nucleus of a comet.',
@@ -126,14 +132,15 @@ const ALIASES = {
     'solar mass': 'M☉'
 };
 
-const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
 // Surface form -> term. A lower-case word also matches with a capital, at the start of a sentence.
 const LOOKUP = new Map();
 function addForm(form, term) {
     LOOKUP.set(form, term);
-    if (form[0] !== form[0].toUpperCase()) LOOKUP.set(form[0].toUpperCase() + form.slice(1), term);
+    // A single letter stays as it is: a capital Z means something else
+    if (form.length > 1 && form[0] !== form[0].toUpperCase()) LOOKUP.set(form[0].toUpperCase() + form.slice(1), term);
 }
 Object.keys(GLOSSARY).forEach((term) => addForm(term, term));
 Object.entries(ALIASES).forEach(([form, term]) => addForm(form, term));
@@ -201,6 +208,14 @@ function ensureTip() {
         if (e.key === 'Escape' && !tip.hidden) {
             hideTip();
             e.stopPropagation();
+            return;
+        }
+        // A term is announced as a button, so Enter and Space bring its tip back after Esc has dismissed it
+        const term = termOf(e);
+        if (term && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            if (tip.hidden) showTip(term);
+            else hideTip();
         }
     }, true);
     // Tabbing to a term can scroll the drawer, in which case the tip follows it
@@ -212,11 +227,21 @@ function ensureTip() {
     }, true);
 }
 
-export function termHtml(term, label = term) {
+// role="button" gives the term a role and takes its name from the words: an abbr that can be focused has neither
+export function tipHtml(label, definition) {
     ensureTip();
+    return `<abbr class="spectro-term" role="button" tabindex="0" data-tip="${escapeHtml(definition)}" aria-describedby="${TIP_ID}">${escapeHtml(label)}</abbr>`;
+}
+
+export function termHtml(term, label = term) {
     const definition = GLOSSARY[term] ?? GLOSSARY[ALIASES[term]];
     if (!definition) return escapeHtml(label);
-    return `<abbr class="spectro-term" tabindex="0" data-tip="${escapeHtml(definition)}" aria-describedby="${TIP_ID}">${escapeHtml(label)}</abbr>`;
+    return tipHtml(label, definition);
+}
+
+export function codeHtml(code, { fly = false } = {}) {
+    const safe = escapeHtml(code);
+    return `<button type="button" class="spectro-code" data-code="${safe}"${fly ? ' data-fly' : ''} aria-label="${fly ? 'Go to' : 'Select'} ${safe}">${safe}</button>`;
 }
 
 export function glossaryHtml(text, { seen = new Set() } = {}) {

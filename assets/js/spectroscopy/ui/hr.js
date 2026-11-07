@@ -238,7 +238,8 @@ function mountHR(container, app) {
     container.appendChild(root);
 
     const caption = el('p', { class: 'spectro-fig-caption', tabindex: '-1' });
-    root.appendChild(caption);
+    const findHint = el('p', { class: 'spectro-fig-hintline', text: 'To find a kind of star, go by colour: pale yellow is about G, orange about K. Of two orange stars, the much brighter is probably a giant.' });
+    root.append(caption, findHint);
 
     const figure = createFigure(root, {
         label: 'H-R diagram',
@@ -570,6 +571,7 @@ function mountHR(container, app) {
         if (cluster) bits.push(`${cluster.type === 'globular' ? 'globular' : 'open'} cluster ${cluster.code}, ${cluster.points.length} stars`);
         caption.textContent = bits.length ? `Plotted: ${bits.join(' and ')}.` : 'Measure a star in Spectrum, then add it here.';
         legend.hidden = !bits.length;
+        findHint.hidden = !!bits.length;
 
         list.update(studentPoints().map((p) => ({
             key: p.code,

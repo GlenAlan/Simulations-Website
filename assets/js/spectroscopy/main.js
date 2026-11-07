@@ -28,6 +28,8 @@ import { initOverviewTab } from './ui/overview.js';
 import { initSpectrumTab } from './ui/spectrum/panel.js';
 import { initHRTab } from './ui/hr.js';
 import { initHubbleTab } from './ui/hubble.js';
+import { initInfoTab } from './ui/info_tab.js';
+import { initSkyHints } from './ui/sky_hints.js';
 import { initGoto } from './ui/goto.js';
 import { initKeyboard } from './ui/keyboard.js';
 
@@ -111,6 +113,8 @@ async function boot() {
         ['spectrum tab', initSpectrumTab],
         ['H-R tab', initHRTab],
         ['Hubble tab', initHubbleTab],
+        ['info tab', initInfoTab],
+        ['sky hints', initSkyHints],
         ['go to', initGoto],
         ['keyboard', initKeyboard]
     ];

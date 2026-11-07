@@ -147,6 +147,7 @@ export const REFERENCE_GROUPS = [
             T_min_K: 1000,
             T_max_K: 50000,
             T_default_K: 5800,
+            note: "The smooth glow of a hot, dense object, set by its temperature. A star's surface and the filament of an incandescent lamp both come close to it.",
             keywords: ['black body', 'blackbody', 'planck', 'wien', 'continuum', 'temperature', 'thermal']
         }]
     }

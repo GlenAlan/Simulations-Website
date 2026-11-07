@@ -10,7 +10,7 @@
 // Bus events sent: 'goto' { code } as a flight sets off, 'highlight' { code } when a cluster member is reached.
 
 import { bus, select, setBand, setLayer } from '../core/state.js';
-import { BANDS, BAND_INFO } from '../core/bands.js';
+import { BANDS, BAND_INFO, BAND_HIDDEN_AT } from '../core/bands.js';
 import { isValidCode } from '../core/rng.js';
 import { limitingMag, angularSeparation, MIN_FOV, MAX_FOV } from '../core/sky.js';
 
@@ -26,8 +26,7 @@ const FLIGHT_S = 1.5;
 const MEMBER_ZOOM_S = 0.8;
 const SYSTEM_STEP_LIMIT_MS = 12000; // A system transition that never reports back mustn't strand the selection
 
-const HIDDEN_AT_OR_BELOW = 0.03;    // A band strength this small draws nothing a student could make out
-const FRAME_MARGIN = 1.7;           // An extended object fills about 60% of the view
+const FRAME_MARGIN = 1.7;          // An extended object fills about 60% of the view
 const POINT_FOV_DEG = 10;
 const CLOSE_POINT_FOV_DEG = { binary: 4, multiple: 4, black_hole: 4 }; // Pairs need a tighter view to come apart
 const SPLIT_PX = 20;                // Device pixels apart at which the sky draws a multiple's stars separately
@@ -422,7 +421,7 @@ export function initGoto(app) {
     }
 
     function isFaintInBand(body) {
-        return body.bands[app.band] <= HIDDEN_AT_OR_BELOW;
+        return body.bands[app.band] <= BAND_HIDDEN_AT;
     }
 
     function isHidden({ body, path }) {
