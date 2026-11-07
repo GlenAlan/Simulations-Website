@@ -51,8 +51,10 @@ export function createRadioLobes(engine, sources) {
             varying vec2 vP;
             varying vec4 vParams;
             varying vec4 vShape;
+            varying float vResolved;    // 0 while it's too small on screen to be drawn as anything but two soft dots
             void main() {
                 vP = position.xy;
+                vResolved = smoothstep(10.0, 30.0, length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth));
                 vParams = aParams;
                 vShape = aShape;
                 vec3 world = aCentre + position.x * aU + position.y * aV;
@@ -65,6 +67,7 @@ export function createRadioLobes(engine, sources) {
             varying vec2 vP;
             varying vec4 vParams;
             varying vec4 vShape;
+            varying float vResolved;
             float fall(float a, float b, float x) {
                 return 1.0 - smoothstep(b, a, x);
             }
@@ -117,6 +120,13 @@ export function createRadioLobes(engine, sources) {
                 float fat = vShape.w;
                 vec2 off = vec2(vParams.y, vParams.z) + side * 3.1;
                 vec2 l = vec2(x, p.y);
+                // Too few pixels for a jet and hot spots: they'd only be broken sticks. So two soft dots, and no more
+                vec2 dot1 = (l - vec2(tip - fat * 0.8, 0.0)) / max(fat * 1.3, 0.2);
+                float dots = 1.1 * exp(-dot(dot1, dot1));
+                if (vResolved <= 0.0) {
+                    gl_FragColor = vec4(uBandTint[0] * uBandW[0] * dots * vParams.x * fall(1.0, 0.86, length(vP)) * uSkyFade, 1.0);
+                    return;
+                }
                 float light = lobe(l, tip, fat, off);
                 // The jet: narrow, knotted, and brighter on the side coming towards us
                 float width = 0.0022 + 0.0075 * x;
@@ -129,6 +139,7 @@ export function createRadioLobes(engine, sources) {
                 // The bright core the jets come from
                 vec2 c = vP / 0.009;
                 light += 3.5 * exp(-dot(c, c));
+                light = mix(dots, light, vResolved);
                 float edge = fall(1.0, 0.86, length(vP));
                 vec3 colour = uBandTint[0] * uBandW[0] * light * edge * vParams.x;
                 gl_FragColor = vec4(colour * uSkyFade, 1.0);

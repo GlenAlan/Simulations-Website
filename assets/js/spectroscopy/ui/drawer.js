@@ -205,10 +205,16 @@ export function createDrawer() {
                 b.id = `spectroTab-${t.id}`;
                 b.textContent = t.label;
                 b.setAttribute('role', 'tab');
-                b.setAttribute('aria-controls', `spectroPanel-${t.id}`);
+                if (t.el) b.setAttribute('aria-controls', t.el.id); // Only once it exists: panels mount when first needed
                 b.addEventListener('click', () => selectTab(t.id));
                 return b;
             }));
+            // A hidden panel must not name a tab this object doesn't have
+            tabs.forEach((t) => {
+                if (!t.el) return;
+                if (list.includes(t)) t.el.setAttribute('aria-labelledby', `spectroTab-${t.id}`);
+                else t.el.removeAttribute('aria-labelledby');
+            });
         }
         [...tabBar.children].forEach((b) => {
             const on = b.id === `spectroTab-${current}`;
@@ -243,6 +249,8 @@ export function createDrawer() {
         tab.el.setAttribute('aria-labelledby', `spectroTab-${tab.id}`);
         tab.el.hidden = true;
         body.appendChild(tab.el);
+        const button = document.getElementById(`spectroTab-${tab.id}`);
+        if (button) button.setAttribute('aria-controls', tab.el.id);
         tab.instance = tab.mount(tab.el);
     }
 

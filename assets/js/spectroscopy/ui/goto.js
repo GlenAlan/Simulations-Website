@@ -10,12 +10,14 @@
 // Bus events sent: 'goto' { code } as a flight sets off, 'highlight' { code } when a cluster member is reached.
 
 import { bus, select, setBand, setLayer } from '../core/state.js';
-import { BANDS, BAND_INFO } from '../core/bands.js';
+import { BANDS, BAND_INFO, BAND_HIDDEN_AT } from '../core/bands.js';
 import { isValidCode } from '../core/rng.js';
 import { limitingMag, angularSeparation, MIN_FOV, MAX_FOV } from '../core/sky.js';
 import { drawMag, parallaxFactor } from '../core/depth.js';
+import { createVisited } from './visited.js';
+import { createSearchMarksLayer } from '../render/layers/search_marks.js';
 
-const RECENT_MAX = 10;
+const RECENT_MAX = 30;         // The list scrolls, and a search visits far more than the 10 first planned
 const SUGGEST_MAX = 8;
 const GUTTER_PX = 8;
 const MIN_LIST_PX = 136;       // Three rows, however little canvas is left below the box
@@ -27,8 +29,7 @@ const FLIGHT_S = 1.5;
 const MEMBER_ZOOM_S = 0.8;
 const SYSTEM_STEP_LIMIT_MS = 12000; // A system transition that never reports back mustn't strand the selection
 
-const HIDDEN_AT_OR_BELOW = 0.03;    // A band strength this small draws nothing a student could make out
-const FRAME_MARGIN = 1.7;           // An extended object fills about 60% of the view
+const FRAME_MARGIN = 1.7;          // An extended object fills about 60% of the view
 const POINT_FOV_DEG = 10;
 const CLOSE_POINT_FOV_DEG = { binary: 4, multiple: 4, black_hole: 4 }; // Pairs need a tighter view to come apart
 const SPLIT_PX = 20;                // Device pixels apart at which the sky draws a multiple's stars separately
@@ -233,13 +234,36 @@ export function initGoto(app) {
     const stayButton = root.querySelector('.spectro-goto-stay');
     const message = root.querySelector('.spectro-goto-message');
 
-    const recents = [];         // Codes, newest first. In memory only: there is no saved progress
+    app.visited = createVisited(app);
+    engine.addLayer(createSearchMarksLayer(engine, app));
+
+    // With no way to draw, a system could never finish opening: the panels still work, and that's all that's offered
+    if (!engine.renderer && app.system) {
+        document.body.classList.add('spectro-no-sky');
+        app.system.enter = (code, opts = {}) => {
+            if (opts.onDone) opts.onDone();
+            return false;
+        };
+    }
+
+    const recents = [];         // Codes, newest first. In memory only: the only thing kept is which systems were visited
     let rows = [];              // What the dropdown is showing: [{ code, kind, recent }]
     let activeRow = -1;
     let flightId = 0;           // Each new flight bumps this, and an older flight's remaining steps then stop
     let answerPrompt = null;    // Set while the band prompt is waiting for an answer
     let compact = false;
     let returnTo = null;        // Where Esc puts the focus back
+
+    // The code the system view opens for this selection, or null if it opens nothing
+    function systemCodeOf(resolved) {
+        const system = app.system;
+        if (!system) return null;
+        if (system.systemOf) {
+            const opened = system.systemOf(resolved);
+            return opened ? opened.code : null;
+        }
+        return system.hasSystemView(resolved.body) ? resolved.body.code : null;
+    }
 
     // --- Recent and autocomplete ---
 
@@ -286,7 +310,7 @@ export function initGoto(app) {
         const add = (code, recent) => {
             if (found.has(code)) return;
             const resolved = universe.resolve(code);
-            if (resolved && matches(resolved, query)) found.set(code, { code, kind: kindInWords(resolved), recent });
+            if (resolved && matches(resolved, query)) found.set(code, { code, kind: kindInWords(resolved), recent, visited: app.visited.has(systemCodeOf(resolved)) });
         };
         recents.forEach((code) => add(code, true));
         if (!query) return [...found.values()]; // An empty box offers Recent alone
@@ -309,7 +333,8 @@ export function initGoto(app) {
         li.setAttribute('aria-selected', 'false');
         li.dataset.code = row.code;
         li.append(textSpan('spectro-goto-code', row.code), textSpan('spectro-goto-kind', row.kind));
-        if (row.recent) li.append(textSpan('spectro-goto-recent', 'Recent'));
+        if (row.visited) li.append(textSpan('spectro-goto-recent', '✓ Visited'));
+        else if (row.recent) li.append(textSpan('spectro-goto-recent', 'Recent'));
         return li;
     }
 
@@ -431,7 +456,7 @@ export function initGoto(app) {
     }
 
     function isFaintInBand(body) {
-        return body.bands[app.band] <= HIDDEN_AT_OR_BELOW;
+        return body.bands[app.band] <= BAND_HIDDEN_AT;
     }
 
     function isHidden({ body, path }) {
@@ -487,30 +512,57 @@ export function initGoto(app) {
         return app.band === 'visible' ? fovShowingMag(mag, fov) : fov;
     }
 
+    // The view and the panel are always about the same thing. Selecting something outside the open system, from the H-R
+    // list say, leaves for the sky and brings it into view.
+    bus.on('select', ({ resolved }) => {
+        if (app.view !== 'system' || !app.system || app.systemCode === systemCodeOf(resolved)) return;
+        const id = ++flightId;
+        app.system.exit({
+            onDone() {
+                if (id === flightId) slew(frameFor(resolved));
+            }
+        });
+    });
+
     async function fly(resolved, id) {
         const { entity, body, path } = resolved;
         const stillCurrent = () => id === flightId;
+        const systemCode = systemCodeOf(resolved);
+        const inItsSystem = () => !!systemCode && app.view === 'system' && app.systemCode === systemCode;
+        const leaveSystem = () => untilDone((onDone) => app.system.exit({ onDone }));
+        const goIntoSystem = () => untilDone((onDone) => app.system.enter(systemCode, { onDone, focus: false }));
 
-        if (app.view === 'system' && app.systemCode === body.code) {
-            if (path === 'planet') app.system.focusPlanet(entity.code);
+        if (inItsSystem()) {
+            await goIntoSystem(); // Nothing to do if it's open, and if it's on the way out this turns it round
+            if (!stillCurrent()) return false;
+            if (!inItsSystem()) return false;
+            // As a row in the System tab does: a star's code goes back to the whole system or on to that star
+            app.system.focusPlanet(path === 'planet' || path === 'component' ? entity.code : null);
             select(entity.code);
             return true;
         }
         if (app.view === 'system' && app.system) {
-            await untilDone((onDone) => app.system.exit({ onDone }));
+            await leaveSystem();
             if (!stillCurrent()) return false;
         }
 
         await slew(frameFor(resolved));
         if (!stillCurrent()) return false;
 
-        if (path === 'planet' && app.system) {
-            await untilDone((onDone) => app.system.enter(body.code, { onDone }));
+        // Enter system pressed on the way, while the panel still showed the object being left: they meant this one
+        const pressedEnter = app.view === 'system';
+        if (pressedEnter && !inItsSystem()) {
+            await leaveSystem();
             if (!stillCurrent()) return false;
-            app.system.focusPlanet(entity.code);
+        }
+        if ((path === 'planet' || pressedEnter) && systemCode && engine.renderer) {
+            await goIntoSystem();
+            if (!stillCurrent()) return false;
+            if (!inItsSystem()) return false; // Esc on the way in called the whole thing off
+            if (path === 'planet') app.system.focusPlanet(entity.code);
         }
         select(entity.code);
-        if (path === 'member') {
+        if (path === 'member' && app.view === 'sky') {
             // Selected before the zoom, and the zoom waits a few frames, so that the shell has looked at the selection
             // (it brings it back on screen if it has gone) and won't start a slew of its own during the zoom.
             await animationFrames(3);
@@ -553,7 +605,7 @@ export function initGoto(app) {
             setLayer('homePlanets', true);
             note = 'Home planets were off, so they are on now.';
         }
-        const inOpenSystem = app.view === 'system' && app.systemCode === body.code;
+        const inOpenSystem = app.view === 'system' && app.systemCode === systemCodeOf(resolved);
         if (!inOpenSystem && isHidden(resolved)) {
             const hiddenIn = app.band;
             const strongest = strongestBand(body);
@@ -652,7 +704,8 @@ export function initGoto(app) {
         if (e.key === 'Escape') {
             cancelPrompt();
             clearMessage();
-        } else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !isTextEntry(document.activeElement)) {
+        } else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !isTextEntry(document.activeElement)
+            && !document.body.classList.contains('is-menu-visible')) {
             e.preventDefault(); // So the / isn't typed into the box, and Firefox's quick find stays shut
             focusBox();
         }

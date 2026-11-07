@@ -53,11 +53,14 @@ export const app = {
         labels: false,
         shiftTint: false,
         habitableZone: false,
-        cmb: false
+        cmb: false,
+        visited: false,     // Marks over the sky to help a search: see render/layers/search_marks.js
+        planetHosts: false
     },
     settings: {
         quality: 'auto', // 'auto'|'low'|'medium'|'high'
-        reduceMotion: prefersReducedMotion()
+        reduceMotion: prefersReducedMotion(),
+        singleKeys: true // Turned off, / [ ] + - and F only work with the sky itself focused: see ui/keyboard.js
     },
     qualityLevel: 'medium' // What is actually being rendered
 };

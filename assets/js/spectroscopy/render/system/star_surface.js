@@ -103,10 +103,11 @@ uniform float uBandStrength;
 uniform float uReveal;
 uniform float uDetail;      // Surface patterns fade out when too small on screen to do anything but shimmer
 uniform float uSpotDetail;
-uniform float uLane;        // 0: broad lanes, as cool stars have. 1: thin, warm lanes round brighter cells
+uniform float uLane;        // 0: the big cells of an M dwarf or a giant. 1: fine, soft granulation, as on the Sun
 uniform float uJitter;      // How far the cells' centres wander. Much past a quarter, close views show where the search for the nearest stops
 uniform vec3 uLaneColour;
-uniform float uFine;        // A finer grain inside the cells, once they're big enough on screen to hold one
+uniform float uGrainA;      // Granules per star radius just now, and how far the view has gone to three times as many
+uniform float uGrainMix;
 varying vec3 vN;
 varying vec3 vWorld;
 varying vec3 vWorldN;
@@ -138,6 +139,24 @@ vec2 cells(vec3 p, float boil) {
     return sqrt(vec2(f1, f2));
 }
 #endif
+
+// Hot gas welling up: brightest in the middle of a granule, falling away gently to the lane between two. Billowing noise:
+// the distance of smooth noise from its middle value swells into soft domes, and rounding off the bottom of that leaves
+// a shallow valley between them, with no line in it anywhere.
+float billow(float n) {
+    float x = 2.0 * n - 1.0;
+    return pow(x * x + 0.05, 0.38);
+}
+
+float granule(vec3 p, float boil) {
+#if QUALITY >= 1
+    p += (vec3(vnoise(p * 0.5 + 11.0), vnoise(p * 0.5 + 23.0), vnoise(p * 0.5 + 37.0)) - 0.5) * 0.5;
+    float fine = billow(vnoise(p.zxy * 2.13 + vec3(7.1, 3.7, boil * 1.4)));
+#else
+    float fine = 0.55;
+#endif
+    return 0.72 * billow(vnoise(p + vec3(0.0, 0.0, boil))) + 0.28 * fine;
+}
 
 // Round spots on a sparse jittered grid: positive inside a spot, 1 at its centre, 0 at its rim, negative beyond
 float spotField(vec3 p, float amount) {
@@ -175,37 +194,35 @@ void main() {
     float slow = uAnim * uBoil;
     q += (vec3(vnoise(q * 0.6 + 11.0), vnoise(q * 0.6 + 23.0), vnoise(q * 0.6 + 37.0)) - 0.5) * 0.9;
 
+    // Granulation has the same look at every zoom: closer in, there's a finer grain to find. It's measured from the star's
+    // own surface and not from the seed, as such big numbers would lose their precision.
+    vec3 G = (P - uSeed) * uGrainA + fract(uSeed * 0.37) * 200.0;
     float laneShade = 0.0;
+    float grain = 0.55;
+    if (uLane < 0.999) {
 #if QUALITY >= 1
-    vec2 f = cells(q, slow);
-    float lanes = smoothstep(0.0, uCellSoft, f.y - f.x);
-    float body = smoothstep(0.95, 0.05, f.x);
-    float grain = mix(lanes * 0.72 + body * 0.28, body, uGrainBody);
-    if (uLane > 0.0) {
-        float shade = 1.0 - lanes;
-        float laned = lanes * 0.82 + 0.3 * smoothstep(0.85, 0.0, f.x);
-        // Close to, a star's surface is finer grain all the way down: the big cells sink to a mottle, and the small ones show
-        if (uFine > 0.0) {
-            vec2 g = cells(q * 3.4 + 17.0, slow * 1.5);
-            float fine = smoothstep(0.0, uCellSoft, g.y - g.x);
-            laned = mix(laned, (fine * 0.82 + 0.3 * smoothstep(0.85, 0.0, g.x)) * (0.86 + 0.14 * lanes), uFine);
-            shade = mix(shade, (1.0 - fine) * 0.8, uFine);
-        }
-        laneShade = uLane * shade;
-        grain = mix(grain, laned, uLane);
-    }
+        vec2 f = cells(q, slow);
+        float lanes = smoothstep(0.0, uCellSoft, f.y - f.x);
+        float body = smoothstep(0.95, 0.05, f.x);
+        grain = mix(lanes * 0.72 + body * 0.28, body, uGrainBody);
 #else
-    // Low quality: ridged noise instead of true cells
-    float n0 = vnoise(q * 1.4 + vec3(0.0, 0.0, slow * 0.4));
-    float grain = 1.0 - abs(2.0 * n0 - 1.0);
-    grain = smoothstep(0.1, 0.95, grain);
+        // Low quality: ridged noise instead of true cells
+        float n0 = vnoise(q * 1.4 + vec3(0.0, 0.0, slow * 0.4));
+        grain = smoothstep(0.1, 0.95, 1.0 - abs(2.0 * n0 - 1.0));
 #endif
+    }
+    if (uLane > 0.0) {
+        float gas = granule(G, slow);
+        if (uGrainMix > 0.0) gas = mix(gas, granule((P - uSeed) * uGrainA * 3.0 + fract(uSeed * 0.37) * 200.0, slow), uGrainMix);
+        laneShade = uLane * (1.0 - gas) * 0.5;
+        grain = mix(grain, gas, uLane);
+    }
 
     float mott = fbm3(P * uCellScale * 0.23 + vec3(0.0, slow * 0.08, 0.0));
     float bright = 1.0 + uDetail * uContrast * (grain - 0.55) + mix(0.3, 1.0, uDetail) * uSuper * (mott - 0.5);
 
 #if QUALITY >= 2
-    bright += uDetail * uContrast * 0.22 * (vnoise(q * 3.7 + slow * 0.3) - 0.5);
+    bright += uDetail * uContrast * 0.22 * (vnoise(mix(q * 3.7, G * 3.1, uLane) + slow * 0.3) - 0.5);
 #endif
 
     vec3 colour = mix(uColour, uLaneColour, laneShade * uDetail);
@@ -336,14 +353,16 @@ export function starLook(star) {
     const hot = Math.min(1, Math.max(0, (T - 7500) / 22500));   // 0 at A/F, 1 at the hottest O stars
     const warm = Math.min(1, Math.max(0, (6800 - T) / 3000));   // 0 at F, 1 at mid-M
     const giant = stage === 'giant' || stage === 'supergiant';
-    const lane = giant ? 0 : Math.min(1, Math.max(0, (T - 4800) / 800));
+    // From K upwards a dwarf's granules are far too small to see one by one from here. M dwarfs keep their big bold cells.
+    const lane = giant ? 0 : Math.min(1, Math.max(0, (T - 3900) / 700));
     const look = {
         cellScale: 30 - warm * 9,
-        cellSoft: 0.5 - lane * 0.24,
+        cellSoft: 0.5,
         lane,
+        grainGain: 1 - 0.35 * hot,
         grainBody: 0,
         contrast: 0.44 - hot * 0.2,
-        super: 0.3,
+        super: 0.3 - lane * 0.16,
         boil: 0.45 + hot * 0.7,
         spots: warm > 0.08 ? 0.12 + warm * 0.5 : 0,
         spotFreq: 4.8 - warm * 1.6,
@@ -425,6 +444,12 @@ const qualityDefine = (q) => (q === 'low' ? 0 : q === 'high' ? 2 : 1);
 // with the sky's, so this takes the place of the sky's band weights in each of them.
 export const TRUE_COLOUR = { uBandW: { value: [0, 0, 1, 0, 0] } };
 
+// Fine granulation: never fewer than this many granules to the star's radius, and as the view closes in, the finer sizes
+// that keep them about this many pixels across. Each size is three times finer than the last, and fades in over it.
+const GRANULES_PER_RADIUS = 40;
+const GRANULE_PX = 9;
+const GRANULE_STEP = 3;
+
 export function createStar(starData, opts = {}) {
     const look = starLook(starData);
     const rng = new Rng(hashString(opts.seed || 'star'));
@@ -452,7 +477,8 @@ export function createStar(starData, opts = {}) {
             uLane: { value: look.lane },
             uJitter: { value: 0.42 - 0.17 * look.lane },
             uLaneColour: { value: laneColour },
-            uFine: { value: 0 },
+            uGrainA: { value: GRANULES_PER_RADIUS },
+            uGrainMix: { value: 0 },
             uTideAxis: { value: new THREE.Vector3(1, 0, 0) },
             uTide: { value: 0 },
             uCusp: { value: 0 },
@@ -579,12 +605,25 @@ export function createStar(starData, opts = {}) {
             // A small star is mostly glare: fade its fine detail and lift its brightness
             // ... and so must a star going round fast, or close to the camera: its pattern would race over the screen,
             // with more cells passing any one spot in a second than the eye can follow
-            const cellPx = s.pxRadius / look.cellScale;
+            const u = surfaceMaterial.uniforms;
+            let cellPx = s.pxRadius / look.cellScale;
+            let detail = THREE.MathUtils.smoothstep(cellPx, 1.6, 4);
+            if (look.lane > 0) {
+                const level = Math.max(0, Math.log(s.pxRadius / (GRANULE_PX * GRANULES_PER_RADIUS)) / Math.log(GRANULE_STEP));
+                const whole = Math.floor(level);
+                u.uGrainA.value = GRANULES_PER_RADIUS * GRANULE_STEP ** whole;
+                u.uGrainMix.value = level - whole;
+                const granulePx = s.pxRadius / u.uGrainA.value;
+                cellPx += (granulePx - cellPx) * look.lane;
+                detail += (THREE.MathUtils.smoothstep(granulePx, 0.9, 5) - detail) * look.lane;
+                // A faint mottling from far off, and clearer the closer you get to the surface
+                const closeness = THREE.MathUtils.smoothstep(s.pxRadius, 150, 900);
+                u.uContrast.value = look.contrast + ((0.13 + 0.15 * closeness) * look.grainGain - look.contrast) * look.lane;
+            }
             const cellsPerSecond = (s.pxPerSecond || 0) / Math.max(cellPx, 1);
             const still = (1 - (s.blur || 0)) * (1 - THREE.MathUtils.smoothstep(cellsPerSecond, 1.5, 3));
-            surfaceMaterial.uniforms.uDetail.value = THREE.MathUtils.smoothstep(cellPx, 1.6, 4) * still;
-            surfaceMaterial.uniforms.uFine.value = look.lane * THREE.MathUtils.smoothstep(cellPx, 12, 32);
-            surfaceMaterial.uniforms.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70) * still;
+            u.uDetail.value = detail * still;
+            u.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70) * still;
             coronaMaterial.uniforms.uTurb.value = c.turb * still;
             surfaceMaterial.uniforms.uIntensity.value = look.intensity * (1 + 0.15 * (1 - THREE.MathUtils.smoothstep(s.pxRadius, 12, 70)));
             reveal.value = s.reveal;

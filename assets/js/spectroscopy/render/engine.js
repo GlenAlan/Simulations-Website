@@ -713,7 +713,7 @@ export function createEngine(canvas) {
         velocity.az = 0;
         velocity.alt = 0;
         zoomAnchor = null;
-        const duration = opts.duration ?? 1.5;
+        const duration = renderer ? opts.duration ?? 1.5 : 0; // With no frames to fly through, it only has to get there
         const toAz = target.az ?? view.az;
         const toAlt = target.alt ?? view.alt;
         const toFov = target.fov ?? view.fov;

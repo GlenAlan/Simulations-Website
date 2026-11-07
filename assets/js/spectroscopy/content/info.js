@@ -1,10 +1,16 @@
 // The plain-language notes for every object. Pure: no DOM.
-//   infoFor(resolved) -> { title, kindLabel, summary, notes: [{ heading, text }], rarity, catalogue: [{ label, value }] }
+//   infoFor(resolved) -> { title, kindLabel, lead, next: { label, tab, tool? }, summary, notes: [{ heading, text }], rarity,
+//                          catalogue: [{ label, value }] }
 //
-// title, kindLabel, summary, notes and rarity are on show, so they must not give away what the student is meant
+// lead and next are what the Overview shows: one short sentence and the obvious thing to do. Everything else is for the
+// Info tab, which is where any new words belong.
+//
+// title, kindLabel, lead, summary, notes and rarity are on show, so they must not give away what the student is meant
 // to work out. They say what kind of thing this is, what to look for and which tool answers it, and stay the same
-// whatever the object's class, temperature or composition. The true values live only in `catalogue`, behind its
-// expander. A planet's type and make-up always come from the data, never from words kept here.
+// whatever the object's class, temperature or composition. The one exception is a rogue planet's note on bands, which
+// goes by temperature, because a cold one has none to show and its spectrum says so at a glance. The true values live
+// only in `catalogue`, behind its expander. A planet's type and make-up always come from the data, never from words
+// kept here.
 //
 // The real data may add fields or lack them, so every value is checked and a row with no value is left out.
 
@@ -82,6 +88,8 @@ function isWhiteDwarf(star) {
 
 function spectralType(star) {
     if (isWhiteDwarf(star)) return star.wd_type ? `${star.wd_type} white dwarf` : 'White dwarf';
+    // The data's own text where it has one: a carbon star's C and a barium star's Ba aren't in its class letter
+    if (star.spectral_type) return star.spectral_type;
     if (!star.class) return null;
     return `${star.class}${isNum(star.subclass) ? star.subclass : ''}${star.luminosity_class ? ` ${star.luminosity_class}` : ''}`;
 }
@@ -178,7 +186,7 @@ const STAR_NOTES = [
     },
     {
         heading: 'Slow spinners',
-        text: 'Fast spins show in the overview; slow ones need Line zoom. Below about 5 km/s the tool reads "unresolved (< 5 km/s)". That means too slow for this instrument to measure, not that the star has stopped spinning.'
+        text: 'Fast spins show in the full spectrum; slow ones need Line zoom. Below about 5 km/s the tool reads "unresolved (< 5 km/s)". That means too slow for this instrument to measure, not that the star has stopped spinning.'
     }
 ];
 
@@ -214,6 +222,7 @@ function starInfo({ entity }) {
     const star = entity.star;
     return {
         kindLabel: 'Star',
+        lead: 'A star: its light tells you how hot it is, what it is made of and how it is moving.',
         summary: 'A star. Its light tells you how hot it is, what it is made of and how it is moving. Open the Spectrum tab to start.',
         notes: present(planetsNote(entity), ...starNotes(star)),
         rarity: STAR_RARITY,
@@ -228,6 +237,7 @@ function clusterMemberInfo({ entity, body }) {
     const ofCluster = parent ? `the cluster ${parent}` : 'its cluster';
     return {
         kindLabel: clusterType ? `Star in ${clusterType === 'open' ? 'an open' : `a ${words(clusterType)}`} cluster` : 'Star in a cluster',
+        lead: 'One star of a cluster, born at about the same time as the others.',
         summary: `One star of ${ofCluster}. It has its own spectrum, and it was born at about the same time as the others there.`,
         notes: [
             { heading: 'Its cluster', text: 'Every star in a cluster is about the same age and distance, so differences between them come mostly from mass. Use the cluster H-R diagram to see where this one sits.' },
@@ -245,6 +255,7 @@ function componentInfo({ entity, body }) {
     if (body?.kind === 'black_hole') {
         return {
             kindLabel: 'Companion star',
+            lead: 'The star you can see in a black hole system.',
             summary: `The star you can see in the black hole system${code}. Its lines swing back and forth as it orbits something massive and dark.`,
             notes: [
                 { heading: 'Why it matters', text: 'This star is the only way to weigh its unseen partner. Use Time series to follow its lines, read the period and the speed, then go to Kepler\'s third law.' },
@@ -256,9 +267,10 @@ function componentInfo({ entity, body }) {
     }
     return {
         kindLabel: 'Star in a multiple system',
+        lead: 'One star of a multiple system, taken on its own.',
         summary: `One star of the system${code}, seen on its own. Its lines shift back and forth as it orbits.`,
         notes: [
-            { heading: 'Its system', text: 'Taken alone, this star\'s lines are much easier to follow than in the combined spectrum. Use Time series to read how they swing, then compare with the other stars.' },
+            { heading: 'Its system', text: 'From far off it is seen as one point with its companions. Taken alone, this star\'s lines are much easier to follow than in the combined spectrum. Use Time series to read how they swing, then compare with the other stars.' },
             ...starNotes(star)
         ],
         rarity: MULTIPLE_RARITY,
@@ -306,6 +318,7 @@ function systemRows(body) {
 function figureEightInfo(entity) {
     return {
         kindLabel: 'Figure-eight triple star',
+        lead: 'Three equal stars chasing one another round a single figure-eight path.',
         summary: 'Three equal stars chasing one another round a single figure-eight path. None of them is "the outer one": they share the orbit equally.',
         notes: [
             { heading: 'A perfect solution', text: 'Most real triples are hierarchical: a close pair with a third star far out. This is something else: an exact solution of the three-body problem, found by computer by Cris Moore in 1993 and proved by Chenciner and Montgomery in 2000.' },
@@ -321,6 +334,7 @@ function figureEightInfo(entity) {
 function doubleDoubleInfo(entity) {
     return {
         kindLabel: 'Double-double star',
+        lead: 'Two close pairs of stars, with the pairs orbiting each other far apart.',
         summary: 'Two close pairs of stars, with the pairs orbiting each other at a great distance. It looks like one point at first. Zoom in and it becomes two, and each of those is itself a binary.',
         notes: [
             { heading: 'Like Epsilon Lyrae', text: 'The real "Double Double", about 160 light-years away in Lyra, is a pair of stars in binoculars, and a small telescope splits each of them again. Its pairs take centuries to orbit. These are much closer together, so their lines change over days.' },
@@ -337,6 +351,7 @@ function multipleInfo({ entity }) {
     if (entity.architecture === 'double_double') return doubleDoubleInfo(entity);
     return {
         kindLabel: 'Binary or multiple star',
+        lead: 'Two or more stars bound by gravity, too close together to split by eye.',
         summary: 'Two or more stars bound by gravity, too close together to split by eye. The spectrum can split them. Watch how the lines move, and work out how many stars there are.',
         notes: present(
             planetsNote(entity),
@@ -421,13 +436,14 @@ function orbitAndSizeNote(block, hostText) {
 
 const REFLECTED_NOTE = {
     heading: 'Reflected light',
-    text: "A planet shines mainly by reflecting its star's light, so its spectrum is the star's, dimmed by its albedo, with bites taken out by any gases in its air. Use Subtract star to remove the star, then compare what is left with the molecule references."
+    text: "A planet shines mainly by reflecting its star's light, so its spectrum is the star's, dimmed by its albedo, with bites taken out by any gases in its air. Use Subtract star to remove the star, then compare what is left with the molecule references. A surface can leave its mark too, as plants do on Earth with the red edge."
 };
 
 function planetInfo({ entity, body }) {
     const host = entity.host || body?.code;
     return {
         kindLabel: 'Exoplanet',
+        lead: 'A planet in another star system.',
         summary: `A planet${host ? ` orbiting ${host}` : ''}. Make a first guess from how it looks, then test that guess with its spectrum.`,
         notes: present(
             orbitAndSizeNote(entity, host),
@@ -455,6 +471,7 @@ function homePlanetInfo({ entity }) {
     const name = entity.name || 'This planet';
     return {
         kindLabel: 'Home planet',
+        lead: 'A planet of our own Solar System.',
         summary: `${name}, a planet of our own Solar System, shining by reflected sunlight. It keeps its real name, but its place in this sky is made up.`,
         notes: present(
             orbitAndSizeNote(block, 'the Sun (never shown in this sky)'),
@@ -466,14 +483,25 @@ function homePlanetInfo({ entity }) {
     };
 }
 
+// Above about 200 K every rogue planet shows molecular bands before the 5 µm edge of the spectrum. Below that hardly any do.
+const ROGUE_BANDS_FROM_K = 200;
+
+function rogueBandsNote(block) {
+    if (isNum(block.teff_K) && block.teff_K < ROGUE_BANDS_FROM_K) {
+        return { heading: 'Clues in the infrared', text: 'This one is so cold that almost all of its glow lies beyond the 5 µm edge of the spectrum, so it may have no bands to show you. Warmer rogue planets show dark bands from the gases in their air, and those can be compared with the molecule references to find out what kind of planet each one is.' };
+    }
+    return { heading: 'Clues in the infrared', text: 'Dark bands in the glow come from gases in its air. Compare them with the molecule references to find out what kind of planet it is.' };
+}
+
 function roguePlanetInfo({ entity }) {
     const block = entity.rogue_planet || {};
     return {
         kindLabel: 'Rogue planet',
+        lead: 'A planet with no star, showing only in infrared from its own faint warmth.',
         summary: 'A planet with no star. With nothing to reflect, it shows only in infrared, from its own faint warmth. Switch to IR to find it.',
         notes: [
-            { heading: 'Thermal glow', text: 'All you can see is the heat left over from its formation, close to a black body curve. It is so cold that the peak lies far into the infrared, perhaps beyond the 5 µm edge of the spectrum.' },
-            { heading: 'Clues in the infrared', text: 'Dark bands in the glow come from gases in its air. Compare them with the molecule references to find out what kind of planet it is.' },
+            { heading: 'Thermal glow', text: 'All you can see is the heat left over from its formation, close to a black body curve. It is so cold that the peak lies far into the infrared, beyond the 5 µm edge of the spectrum.' },
+            rogueBandsNote(block),
             { heading: 'How it got loose', text: 'Rogue planets are thought to be thrown out of young planetary systems by close passes with bigger planets. Some may have formed alone.' }
         ],
         rarity: 'Nobody knows how many there are. Estimates, from brief microlensing events, range from about one to about 20 per star.',
@@ -495,6 +523,7 @@ function cometInfo({ entity }) {
     const lines = Array.isArray(block.emission_lines) ? block.emission_lines : [];
     return {
         kindLabel: 'Comet',
+        lead: 'A lump of ice and dust, warmed by the Sun until it grows a glowing head and two tails.',
         summary: 'A lump of ice and dust, warmed by the Sun until it grows a glowing head and two tails. Every comet here points the same way, away from a Sun that is below the horizon and never shown.',
         notes: [
             { heading: 'Two kinds of light', text: 'Its spectrum mixes sunlight reflected off dust, with the Sun\'s dark lines, and bright emission from gas in the coma. This is a chance to see reflection and emission side by side.' },
@@ -535,6 +564,7 @@ function nebulaInfo({ entity }) {
     if (block.type === 'planetary') {
         return {
             kindLabel: 'Planetary nebula',
+            lead: 'A glowing shell of gas puffed off by a dying star.',
             summary: 'A glowing shell of gas puffed off by a dying star. It has nothing to do with planets: the name stuck because these round discs looked like planets through early telescopes.',
             notes: [
                 { heading: 'An emission spectrum', text: "Thin gas, lit by the hot star at the centre, gives bright lines on a dark background, not a continuum (Kirchhoff's rules). Compare it with the element and ionised references to find out what the gas is." },
@@ -548,6 +578,7 @@ function nebulaInfo({ entity }) {
     if (block.type === 'dark') {
         return {
             kindLabel: 'Dark nebula',
+            lead: 'A cold, dense cloud of dust and gas that blocks the light behind it.',
             summary: 'A cold, dense cloud of dust and gas. You see it only because it blocks the light of what lies behind it. Switch to infrared to see into it.',
             notes: [
                 { heading: 'Why it is dark', text: 'Dust grains absorb and scatter visible light, blue more than red, so what gets through is dimmed and reddened.' },
@@ -561,6 +592,7 @@ function nebulaInfo({ entity }) {
     // Emission and reflection nebulae read the same: telling them apart is the student's job
     return {
         kindLabel: 'Nebula',
+        lead: 'A huge cloud of gas and dust.',
         summary: "A huge cloud of gas and dust. Is it making its own light or scattering someone else's? Open the Spectrum tab to find out.",
         notes: [
             { heading: 'Bright lines or borrowed light?', text: "Bright lines on a dark background mean hot, thin gas making its own light: an emission spectrum (Kirchhoff's rules). A continuum with dark lines, copied from a nearby star, means dust is scattering starlight." },
@@ -581,6 +613,7 @@ function clusterInfo({ entity }) {
         { heading: 'Each star on its own', text: 'Every member has its own code and spectrum. Zoom in, select one and analyse it like any other star.' }
     ];
     const common = {
+        next: { label: 'Open the H-R tab to start', tab: 'hr' },
         notes,
         catalogue: clean([
             row('Type', block.type ? `${capital(words(block.type))} cluster` : null),
@@ -593,6 +626,7 @@ function clusterInfo({ entity }) {
         return {
             ...common,
             kindLabel: 'Globular cluster',
+            lead: 'A dense ball of stars held together by gravity, all born at about the same time.',
             summary: 'A dense ball of stars held together by gravity, all born at about the same time. Compare its H-R diagram with an open cluster\'s.',
             rarity: 'The Milky Way has only about 150 to 200 of these.'
         };
@@ -601,13 +635,15 @@ function clusterInfo({ entity }) {
         return {
             ...common,
             kindLabel: 'Open cluster',
-            summary: 'A loose group of stars, all born at about the same time from one cloud. Zoom in to go among them and pick one out. Compare its H-R diagram with a globular cluster\'s.',
+            lead: 'A loose group of stars, all born at about the same time from one cloud. Zoom in to go among them and pick one out.',
+            summary: 'A loose group of stars, all born at about the same time from one cloud. Compare its H-R diagram with a globular cluster\'s.',
             rarity: 'Thousands are known in the Milky Way. Most drift apart within a few hundred million years.'
         };
     }
     return {
         ...common,
         kindLabel: 'Star cluster',
+        lead: 'A group of stars, all born at about the same time from one cloud.',
         summary: 'A group of stars, all born at about the same time from one cloud.',
         rarity: 'Thousands of star clusters are known in the Milky Way.'
     };
@@ -625,6 +661,7 @@ function neutronStarInfo({ entity }) {
     ];
     return {
         kindLabel: pulsar ? 'Pulsar' : 'Neutron star',
+        lead: `The collapsed core left by a supernova, ${pulsar ? 'flashing like a lighthouse' : 'about 20 km across'}.`,
         summary: `The collapsed core left by a supernova: more mass than the Sun, in a ball about 20 km across.${pulsar ? ' This one flashes like a lighthouse.' : ''}`,
         notes,
         rarity: 'The Milky Way may hold several hundred million to a billion. Only a few thousand are known, nearly all as pulsars.',
@@ -650,6 +687,7 @@ function galaxyInfo({ entity }) {
     const shape = MORPHOLOGY_NOTE[block.morphology] ? capital(block.morphology) : null;
     return {
         kindLabel: shape ? `${shape} galaxy` : 'Galaxy',
+        lead: 'Billions of stars, too far away to pick out one by one.',
         summary: 'Billions of stars, too far away to pick out one by one. Their light adds up to a single spectrum, and its redshift tells you how fast the galaxy is moving away.',
         notes: present(
             { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Doppler tool. Above about z = 0.1, v = cz starts to fail, so quote z too." },
@@ -679,6 +717,7 @@ function blackHoleInfo({ entity }) {
     const companion = block.companion;
     return {
         kindLabel: 'Black hole',
+        lead: 'Something so massive and compact that not even light can escape it.',
         summary: 'You cannot see the hole itself. What you can see is a companion star swinging round something massive and dark, and gas glowing in X-rays as it falls in.',
         notes: present(
             { heading: 'Weighing the unseen', text: `Select the companion${companion?.code ? `, ${companion.code},` : ''} and use Time series to read its period T and its speed v. If the companion is much the lighter of the two, M ≈ v³T/(2πG). You don't know the tilt of the orbit, so this is a minimum mass.` },
@@ -711,7 +750,9 @@ function supernovaInfo({ entity }) {
     const phase = block.phase0_days;
     return {
         kindLabel: 'Supernova',
-        summary: "A star exploding. For a few weeks it can shine about as brightly as a whole galaxy. Press play in its panel to watch its light and spectrum change, then decide which type it is.",
+        lead: 'A star exploding, for a few weeks about as bright as a whole galaxy.',
+        next: { label: 'Play its light curve', tab: 'spectrum', tool: 'light-curve' },
+        summary: 'A star exploding. For a few weeks it can shine about as brightly as a whole galaxy. Watch its light and spectrum change, then decide which type it is.',
         notes: [
             { heading: 'Which type?', text: 'Type Ia: no hydrogen lines, and a strong Si II line near 615 nm. Type II: strong hydrogen Balmer lines with P Cygni profiles. Compare the spectrum with the H and Si II references.' },
             { heading: 'P Cygni profiles', text: 'An expanding shell makes a bright emission peak with a blueshifted dark dip beside it. The dip comes from the gas in front, rushing towards you. The peak comes from the gas round the sides.' },
@@ -733,10 +774,11 @@ function quasarInfo({ entity }) {
     const block = entity.quasar || {};
     return {
         kindLabel: 'Quasar',
+        lead: 'The blazing core of a very distant galaxy, looking like a faint star.',
         summary: 'It looks like a faint star, but it is the blazing core of a very distant galaxy, powered by gas falling into a supermassive black hole.',
         notes: [
             { heading: 'A huge redshift', text: 'The bright lines (Hα, Hβ, Mg II and Lyman-α) have moved so far that they are hard to recognise at first: λ = (1 + z)λ₀. Lyman-α sits at 121.6 nm in the lab, deep in the ultraviolet, but here it can land in visible light. Try matching the pattern of spacings.' },
-            { heading: 'Where v = cz fails', text: 'At a redshift this large, v = cz would give a speed faster than light. The light has been stretched by the expansion of space on its way here, so quote z itself.' },
+            { heading: 'Where v = cz fails', text: 'v = cz only works for small redshifts. It fails badly at a redshift this large, and above z = 1 it would even give a speed faster than light. The light has been stretched by the expansion of space on its way here, so quote z itself.' },
             { heading: 'Broad bright lines', text: 'Gas close to the black hole moves at thousands of km/s, so Doppler shifts spread its emission lines very wide. Compare them with the narrow lines of a nebula.' }
         ],
         rarity: 'Very rare: very roughly 1 in 100,000 galaxies hosts one today. That is only a rough figure, and it depends on how bright counts as a quasar. They were far more common about 10 billion years ago.',
@@ -754,6 +796,7 @@ function quasarInfo({ entity }) {
 function unknownInfo({ entity }) {
     return {
         kindLabel: capital(words(entity.kind)) || 'Object',
+        lead: 'An object in this sky.',
         summary: 'An object in this sky. Open the Spectrum tab to see what its light can tell you.',
         notes: [],
         rarity: '',
@@ -780,8 +823,11 @@ const BUILDERS = {
     quasar: quasarInfo
 };
 
+// The first thing a student needs telling, for nearly everything in the sky
+const START_WITH_SPECTRUM = { label: 'Open the Spectrum tab to start', tab: 'spectrum' };
+
 export function infoFor(resolved) {
     const entity = resolved?.entity || {};
     const build = BUILDERS[entity.kind] || unknownInfo;
-    return { title: entity.name || entity.code || 'Unknown object', ...build({ ...resolved, entity }) };
+    return { title: entity.name || entity.code || 'Unknown object', next: START_WITH_SPECTRUM, ...build({ ...resolved, entity }) };
 }

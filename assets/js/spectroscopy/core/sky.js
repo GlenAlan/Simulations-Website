@@ -8,7 +8,7 @@ const RAD = Math.PI / 180;
 export const MIN_ALT = 5;              // Every body sits above this altitude
 export const DEFAULT_VIEW = { az: 200, alt: 32, fov: 80 };
 export const MIN_FOV = 0.4;            // Vertical field of view limits (degrees)
-export const MAX_FOV = 110;
+export const MAX_FOV = 100;             // Any wider and a flat view smears the sky at the frame's edges
 
 // The galactic plane is the great circle whose pole is here: it rises to 90 - |pole alt| at its highest
 export const GALACTIC_POLE = { az: 115, alt: 38 };

@@ -1397,11 +1397,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
     border-top: 1px solid var(--color-border);
 }
 
-/* (the Body and Gravity tabs have nothing to step) */
-.orb-pop-step.is-idle {
-    display: none;
-}
-
 /* The arrow keys only matter with a keyboard */
 @media (hover: none), (pointer: coarse) {
     .orb-keys-note {
@@ -1513,7 +1508,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
 /* ---------- Undo, redo and "run again" ----------
    Undo and redo sit beside "Fit view": icons at the end of the hint's row under the canvas, two
-   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart. */
+   labelled buttons in the column beside it. "Run again" is in the info bar, next to Restart, once it
+   has something to do. */
 .orb-history {
     display: flex;
     gap: 6px;
@@ -1534,11 +1530,6 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 
 .orb-history-text {
     display: none;
-}
-
-/* A greyed-out button still shows where it is */
-.sim-info-actions .orb-rewind:disabled {
-    opacity: 0.35;
 }
 
 /* Narrow screens: the buttons leave the hint less width, so it gets a third line (or a line and a
@@ -1721,7 +1712,8 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 }
 
 /* The rest of the buttons keep to the row's far end, with the clock between them and the scene */
-.orbits-sim .sim-info-actions > .sim-show-charts-label {
+.orbits-sim .sim-info-actions > .orb-rewind,
+.orbits-sim.orb-mission-on .sim-info-actions > .sim-show-charts-label {
     margin-left: auto;
 }
 
@@ -1826,16 +1818,19 @@ body.sim-fullscreen-active .orbits-sim .sim-aspect-ratio-box {
 @media screen and (min-width: 1000px) and (min-height: 541px) and (pointer: fine) {
     .orbits-sim .stats-container {
         flex-wrap: nowrap;
+        min-width: 0;
     }
 
     .orbits-sim .stats-container > .orb-subject {
         flex: 1 1 15em;
     }
 
-    /* (Settings docked beside the bar can leave it too narrow for one row. The canvas's size doesn't
-       depend on the bar's height, so here the readouts may wrap.) */
-    body.sim-panel-active.sim-panel-side .orbits-sim .stats-container {
-        flex-wrap: wrap;
+    /* (Settings docked beside the bar can leave it too narrow for one row: only in a window held upright,
+       as the bar has its own layout in a narrow one held sideways, at the end of this file.) */
+    @media (max-width: 1279px) {
+        body.sim-panel-active.sim-panel-side .orbits-sim .stats-container {
+            flex-wrap: wrap;
+        }
     }
 
     /* (and in a narrower window the scene takes a row of its own, above the buttons) */
@@ -2118,7 +2113,7 @@ html.dark-mode .orb-date-input {
 /* ---------- Missions ----------
    Only while a mission is loaded: the console in the palette's place (the goal, how it is going, the
    fuel, the engine and the clock), and a card over the canvas for the outcome, the list of missions and
-   "How it works". In the settings, under the scene list, a button into the missions. */
+   "How it works". */
 .orbits-sim.orb-mission-on .orb-palette,
 .orbits-sim.orb-mission-on .orb-toolbar-label {
     display: none;
@@ -2588,7 +2583,7 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 
 /* Under the canvas (portrait): as few rows as it will go in, as the canvas gets what is left of the
    screen. The fuel and the time share one, the engine's four buttons another, the way the arrow keys
-   lie ("Engine: hold to fire" is for screen readers here: the hint line says it). */
+   lie ("Engine: hold to fire" is for screen readers here: with hints on, the hint line says it). */
 @media not all and (orientation: landscape) and (min-width: 640px) {
     .orb-console {
         display: grid;
@@ -2908,99 +2903,6 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
     }
 }
 
-/* The settings' way into the missions */
-.sim-controls-content .orb-mission-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5em;
-    width: 100%;
-    height: 34px;
-    margin: 0.5em 0 0;
-    padding: 0 0.8em;
-    font-size: 0.85em;
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: 0;
-    text-transform: none;
-    background-color: var(--color-bg);
-    box-shadow: inset 0 0 0 1px var(--color-border);
-}
-
-.sim-controls-content .orb-mission-btn .icon {
-    color: var(--color-accent);
-}
-
-.sim-controls-content .orb-mission-btn + .orb-note {
-    margin-top: 0.3em;
-}
-
-@media (hover: hover) {
-    .sim-controls-content .orb-mission-btn:hover {
-        box-shadow: inset 0 0 0 1px var(--color-accent);
-    }
-}
-
-@media (pointer: coarse) {
-    .sim-controls-content .orb-mission-btn {
-        height: 40px;
-    }
-}
-
-/* Under the scene list, two other ways to start, side by side: the missions and a random system */
-.sim-controls-content .orb-scene-row {
-    display: flex;
-    gap: 6px;
-    margin: 0.5em 0 0;
-}
-
-.sim-controls-content .orb-scene-row .orb-mission-btn,
-.sim-controls-content .orb-scene-row #randomSystemBtn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5em;
-    flex: 1 1 auto;
-    width: auto;
-    min-width: 0;
-    height: 34px;
-    margin: 0;
-    padding: 0 0.8em;
-    font-size: 0.85em;
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: 0;
-    text-transform: none;
-    white-space: nowrap;
-    background-color: var(--color-bg);
-    box-shadow: inset 0 0 0 1px var(--color-border);
-}
-
-.sim-controls-content .orb-scene-row .icon {
-    color: var(--color-accent);
-}
-
-.sim-controls-content .orb-scene-row button:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 1px;
-}
-
-.sim-controls-content .orb-scene-row + .orb-note {
-    margin-top: 0.3em;
-}
-
-@media (hover: hover) {
-    .sim-controls-content .orb-scene-row button:hover {
-        box-shadow: inset 0 0 0 1px var(--color-accent);
-    }
-}
-
-@media (pointer: coarse) {
-    .sim-controls-content .orb-scene-row .orb-mission-btn,
-    .sim-controls-content .orb-scene-row #randomSystemBtn {
-        height: 42px;
-    }
-}
 
 /* ---------- Finding your way: the "Bodies" list, zoom to an orbit, the keyboard, the help ----------
    The list is a collapsed group in the settings (like "More options"); its rows are placed by the
@@ -4290,5 +4192,838 @@ dialog.orb-help::backdrop {
             max-width: 10px;
             max-height: 10px;
         }
+    }
+
+    /* (with Settings docked on a small screen: the column's heading can go, for another row) */
+    @container orb-tools (max-height: 400px) {
+        .orb-toolbar-label {
+            display: none;
+        }
+    }
+}
+
+/* A column too short for all its chips says so (see paletteCut) */
+@media (orientation: landscape) and (min-width: 640px) {
+    .orb-toolbar.has-more {
+        grid-template-rows: auto minmax(0, auto) auto auto auto;
+        grid-template-areas: "label label" "palette palette" "more more" "history fit" "hint hint";
+    }
+}
+
+.orb-toolbar .orb-palette-more {
+    grid-area: more;
+    flex: 0 0 auto;
+    height: 18px;
+    margin-top: -4px;
+    font-size: 0.72em;
+    opacity: 0.85;
+}
+
+.orbits-sim.orb-mission-on .orb-toolbar .orb-palette-more {
+    display: none;
+}
+
+.orb-toolbar .orb-palette-more[hidden] {
+    display: none;
+}
+
+.orb-toolbar .orb-palette-more.is-back .icon {
+    display: inline-block;
+    transform: rotate(180deg);
+}
+
+@media (pointer: coarse) {
+    .orb-toolbar .orb-palette-more {
+        height: 30px;
+    }
+}
+
+/* (the longest name of all the chips) */
+.orb-chip[data-kind="sgra"] .orb-chip-name {
+    letter-spacing: -0.05em;
+}
+
+/* "Rotate with it" joins the body menu's row: the two views on one line, the rest on the next */
+.orb-pop-actions {
+    flex-wrap: wrap;
+}
+
+.orb-pop-actions #popLock,
+.orb-pop-actions #popTurn {
+    flex: 1 1 45%;
+}
+
+/* ...and the list's row, which has room for all five only as words in the docked settings */
+.orb-bodies-actions.is-tight button .icon {
+    display: none;
+}
+
+.orb-bodies-actions.is-tight button[data-act="zoom"] .icon,
+.orb-bodies-actions.is-tight button[data-act="delete"] .icon {
+    display: inline-block;
+}
+
+.orb-bodies-actions.is-tight button[data-act="zoom"] {
+    flex: 0 0 auto;
+    width: calc(var(--orb-bl-act, 42px) - 8px);
+    padding: 0;
+}
+
+.orb-bodies-actions.is-tight .orb-act-word {
+    display: none;
+}
+
+/* ---------- A switch that belongs to the one above it (shows only while that is on) ---------- */
+.sim-checkbox-group input[type="checkbox"] + label.orb-subswitch {
+    margin-left: 0.55em;
+    padding-left: 1.5em;
+    font-size: 0.9em;
+    border-left: 2px solid var(--color-border);
+    border-radius: 0;
+}
+
+.sim-checkbox-group input[type="checkbox"][hidden] + label.orb-subswitch {
+    display: none;
+}
+
+/* ---------- The body's menu: moved by its title row (see "Moving the menu" in orbits_core.js) ---------- */
+.orb-popover .orb-pop-grip {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    margin-left: auto;
+    padding: 0;
+    color: var(--color-text);
+    background: transparent;
+    box-shadow: none;
+    opacity: 0.55;
+    cursor: inherit;
+    touch-action: none;
+}
+
+.orb-popover:not(.is-sheet):not(.is-side) .orb-pop-head {
+    cursor: grab;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.orb-popover:not(.is-sheet):not(.is-side) input.orb-pop-name {
+    flex: 0 1 auto;
+    width: auto;
+    cursor: text;
+}
+
+.orb-popover.is-moving,
+.orb-popover.is-moving .orb-pop-head {
+    cursor: grabbing;
+}
+
+/* As a sheet it stays put, so nothing says it moves */
+.orb-popover.is-sheet .orb-pop-grip,
+.orb-popover.is-side .orb-pop-grip {
+    display: none;
+}
+
+@media (hover: hover) {
+    .orb-popover .orb-pop-grip:hover {
+        opacity: 1;
+    }
+}
+
+@media (pointer: coarse) {
+    .orb-popover .orb-pop-grip {
+        width: 40px;
+        height: 40px;
+    }
+}
+
+/* An off-screen pointer under the mouse: a click chooses its body */
+#simulationCanvas.orb-can-pick {
+    cursor: pointer;
+}
+
+/* The 3rd law's graph, beside the others while that law is on. It takes a line of its own when three
+   side by side would be too narrow, and comes first when they stack: it's what the law's switch asked for. */
+.orb-k3-box[hidden] {
+    display: none;
+}
+
+@media (min-width: 601px) {
+    body:not(.sim-fullscreen-active) #charts-container .sim-charts-row {
+        flex-wrap: wrap;
+    }
+
+    body:not(.sim-fullscreen-active) #charts-container .chart-box {
+        flex-basis: 260px;
+    }
+}
+
+#charts-container .orb-k3-axes {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    height: auto;
+    min-height: 26px;
+    margin: 0;
+    padding: 0.15em 0.6em;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.2;
+    letter-spacing: 0;
+    text-transform: none;
+    background-color: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+#charts-container .orb-k3-axes[aria-pressed="true"] {
+    box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+#charts-container .orb-k3-axes:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (hover: hover) {
+    #charts-container .orb-k3-axes:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+@media (pointer: coarse) {
+    #charts-container .orb-k3-axes {
+        top: 2px;
+        right: 2px;
+        min-height: 40px;
+        min-width: 40px;
+    }
+}
+
+@media (max-width: 600px) {
+    body:not(.sim-fullscreen-active) #charts-container .orb-k3-box {
+        order: -1;
+        height: 280px;
+    }
+}
+
+/* Fullscreen keeps a small space for the graphs: where a third wouldn't fit, the two there are keep it
+   (leaving fullscreen brings this one back) */
+@media (max-width: 800px), (max-height: 600px) {
+    body.sim-fullscreen-active #charts-container .orb-k3-box {
+        display: none;
+    }
+}
+
+/* ---------- The bar: only what has something to say ----------
+   A box with no value goes (see settleReadouts). One that loses its value mid-run keeps its place, blank,
+   so nothing moves. The same for a graph with nothing to draw: the other takes the row. */
+.orbits-sim .stats-container > .stats-box[hidden],
+#charts-container .chart-box[hidden] {
+    display: none;
+}
+
+.orbits-sim .stats-container > .stats-box.is-blank {
+    visibility: hidden;
+}
+
+/* ---------- A random system's hint ----------
+   Under the canvas, on a narrow screen, the line grows if it must, to keep its New system button in sight. */
+@media (orientation: portrait), (max-width: 639px) {
+    .orb-hint:has(.orb-hint-newsys) {
+        display: block;
+        height: auto;
+        min-height: 4.5em;
+        -webkit-line-clamp: unset;
+        line-clamp: unset;
+    }
+}
+
+/* ---------- The top of the settings ----------
+   The start date, in a dated scene, and then Realistic physics: it changes the physics, not what is shown. */
+.sim-controls-content > .orb-date[hidden] + .sim-control-group {
+    padding-top: 0;
+    border-top: 0;
+}
+
+/* ---------- Bar buttons with nothing to do yet ----------
+   Step while paused, Run again once there is a change to go back to. Hidden, each keeps its place, at the
+   clock's end or the other buttons' start, so no press of Pause or Run again moves anything under the
+   pointer, and on a phone the row's two gaps are one, between the clock and the rest. */
+#pauseBtn[aria-pressed="false"] + #stepBtn,
+.sim-info-actions .orb-rewind.is-idle {
+    visibility: hidden;
+}
+
+/* (a mission's grid of buttons has no Pause to keep still: it closes up) */
+@media screen and (max-width: 700px), (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on #pauseBtn[aria-pressed="false"] + #stepBtn {
+        display: none;
+    }
+}
+
+/* ---------- The scene list: headings, in bold, over plain names ---------- */
+.sim-info-actions .orb-scene-pick optgroup {
+    font-style: normal;
+    font-weight: 700;
+    color: var(--color-text);
+    background: var(--color-bg-alt);
+}
+
+.sim-info-actions .orb-scene-pick option {
+    font-weight: 400;
+}
+
+/* ---------- Missions: only what a mission can use ----------
+   (the pull on the chosen body can't be changed in a mission: the body's Gravity tab still has it) */
+.orbits-sim.orb-mission-on .orb-force-box {
+    display: none;
+}
+
+/* (the body's menu: what can't be changed in a mission isn't shown, see missionLockMenu) */
+.orb-popover.is-mission #popCircular,
+.orb-popover.is-mission #popDelete,
+.orb-popover.is-mission #popTurn:disabled,
+.orb-popover.is-mission #popTabOrbit,
+.orb-popover.is-mission.is-other #popTabVel,
+.orb-popover.is-mission #popMass,
+.orb-popover.is-mission #popRadius {
+    display: none;
+}
+
+/* (what's left of its buttons shares one row) */
+.orb-popover.is-mission .orb-pop-actions {
+    flex-wrap: nowrap;
+}
+
+.orb-popover.is-mission .orb-pop-actions #popLock,
+.orb-popover.is-mission .orb-pop-actions #popTurn {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* (a shorter screen, beside the canvas: the line takes room only when it has something to say) */
+@media (orientation: landscape) and (min-width: 640px) and (min-height: 541px) and (max-height: 820px) {
+    .orbits-sim.orb-mission-on .orb-hint {
+        min-height: 0;
+        height: auto;
+    }
+}
+
+/* (and all of the console fits above three lines of it, however short the canvas: 1024x700, say. Touch
+   screens keep their finger-sized buttons, and the console scrolls.) */
+@media (orientation: landscape) and (min-width: 640px) and (min-height: 641px) and (max-height: 820px) and (pointer: fine) {
+    .orbits-sim.orb-mission-on .orb-toolbar {
+        gap: 4px;
+    }
+
+    .orb-console {
+        gap: 2px;
+    }
+
+    .orb-console .orb-mc-burn,
+    .orb-console .orb-mc-play,
+    .orb-console .orb-mc-skip,
+    .orb-console .orb-mc-retry {
+        height: 28px;
+    }
+
+    .orb-console .orb-mc-fine,
+    .orb-console .orb-mc-links button {
+        height: 20px;
+        min-height: 20px;
+    }
+}
+
+/* (while a won mission's card is up, Next is on the card: Retry has the row to itself) */
+@media not all and (orientation: landscape) and (min-width: 640px) {
+    .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
+        grid-column: 1 / span 2;
+    }
+}
+
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
+        grid-area: auto / 1 / auto / -1;
+    }
+}
+
+/* ---------- Newton's cannon ----------
+   Only in that scene: in the palette's place, the speed and Fire (and Clear, once there is something to clear).
+   Its slider's track shows what each speed does, in the colours of the paths. */
+.orbits-sim.orb-cannon-on .orb-palette,
+.orbits-sim.orb-cannon-on .orb-toolbar-label,
+.orbits-sim.orb-cannon-on #reverseBtn {
+    display: none;
+}
+
+.orb-cannon {
+    grid-area: palette;
+    flex: 1 1 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "read btns" "slider btns" "zones btns";
+    align-items: center;
+    gap: 0 10px;
+    min-width: 0;
+    padding: 1px 2px;
+}
+
+.orb-cannon[hidden] {
+    display: none;
+}
+
+.orb-cn-read {
+    grid-area: read;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px;
+    margin: 0;
+    font-size: 1em;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.orb-cn-read strong {
+    font-weight: 700;
+}
+
+.orb-cannon input[type="range"] {
+    grid-area: slider;
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 26px;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+    touch-action: pan-y;
+}
+
+.orb-cannon input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, #ff7a5c 0 var(--orb-cn-a, 40%), #52d4b0 var(--orb-cn-a, 40%) var(--orb-cn-b, 80%), #c88bf0 var(--orb-cn-b, 80%) 100%);
+}
+
+.orb-cannon input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, #ff7a5c 0 var(--orb-cn-a, 40%), #52d4b0 var(--orb-cn-a, 40%) var(--orb-cn-b, 80%), #c88bf0 var(--orb-cn-b, 80%) 100%);
+}
+
+.orb-cannon input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    margin-top: -6px;
+    border-radius: 50%;
+    background: var(--color-text);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-text);
+}
+
+.orb-cannon input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-text);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-text);
+}
+
+.orb-cannon input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.orb-cannon input[type="range"]:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.orb-cn-zones {
+    grid-area: zones;
+    display: grid;
+    grid-template-columns: 40% 40% minmax(0, 1fr);
+    margin-top: -3px;
+    font-size: 0.82em;
+    line-height: 1.2;
+    white-space: nowrap;
+    opacity: 0.8;
+}
+
+.orb-cn-zones span:nth-child(2) {
+    text-align: center;
+}
+
+.orb-cn-zones span:nth-child(3) {
+    text-align: right;
+}
+
+/* (under the canvas, Fire on the outside, by the thumb) */
+.orb-cn-btns {
+    grid-area: btns;
+    display: flex;
+    flex-direction: row-reverse;
+    gap: 6px;
+    align-self: stretch;
+    align-items: stretch;
+}
+
+.orb-toolbar .orb-cn-fire,
+.orb-toolbar .orb-cn-clear {
+    min-height: 44px;
+    padding: 0 0.7em;
+    touch-action: manipulation;
+}
+
+.orb-toolbar .orb-cn-fire {
+    min-width: 76px;
+    font-size: 1.15em;
+    font-weight: 700;
+    color: #16181c !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+.orb-toolbar .orb-cn-fire:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.orb-toolbar .orb-cn-clear.is-unused {
+    visibility: hidden;
+}
+
+/* (a finger's worth) */
+@media (pointer: coarse) {
+    .orb-cannon input[type="range"] {
+        height: 38px;
+    }
+
+    .orb-cannon input[type="range"]::-webkit-slider-thumb {
+        width: 26px;
+        height: 26px;
+        margin-top: -10px;
+    }
+
+    .orb-cn-zones {
+        margin-top: -8px;
+    }
+}
+
+/* (beside the canvas: one above the other, in the column's width) */
+@media (orientation: landscape) and (min-width: 640px) {
+    .orb-cannon {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "read" "slider" "zones" "btns";
+        align-content: start;
+    }
+
+    /* (the slider says what it is, and the column has room for the number and its name, not the word as well) */
+    .orb-cn-read span {
+        display: none;
+    }
+
+    .orb-cn-btns {
+        flex-direction: column;
+        margin-top: 10px;
+    }
+
+    .orb-toolbar .orb-cn-fire {
+        min-height: 52px;
+    }
+
+    .orb-toolbar .orb-cn-clear {
+        min-height: 36px;
+    }
+}
+
+/* (a phone on its side: the narrowest column of all. The track's colours say it without the words) */
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orb-cn-zones {
+        display: none;
+    }
+
+    .orb-cn-btns {
+        margin-top: 4px;
+    }
+}
+
+/* ---------- The help on a screen no finger can touch: no gestures ----------
+   They are no use there, and they made the help scroll. (any-pointer, so a laptop with a touch screen,
+   whose main pointer is its mouse, keeps them; a browser that can't tell keeps them too.) */
+@media not all and (any-pointer: coarse) {
+    .orb-help-touch {
+        display: none;
+    }
+}
+
+/* (and in a shorter window, slimmer rows, so the keys alone fit in it too) */
+@media (max-height: 760px) {
+    .orb-help dl > div {
+        padding: 3px 0;
+    }
+}
+
+/* ---------- The body's menu: Goes round, Push it and Step folded under one line ----------
+   The Velocity tab's speed and direction stay open; these are less often wanted and took half a phone.
+   Styled like the settings' folds, with what it holds on the line. */
+.orb-pop-more {
+    margin-top: 6px;
+    border-top: 1px solid var(--color-border);
+}
+
+/* (nothing in it can be used: alone in space, or another body than the probe in a mission) */
+.orb-pop-more:not(:has(button:enabled)) {
+    display: none;
+}
+
+.orb-pop-more > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-height: 34px;
+    padding: 0 2px;
+    font-size: 0.9em;
+    list-style: none;
+    cursor: pointer;
+    border-radius: 4px;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.orb-pop-more > summary::-webkit-details-marker {
+    display: none;
+}
+
+.orb-pop-more > summary::after {
+    content: '\f078';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    font-size: 0.8em;
+    line-height: 1;
+    transition: transform 0.2s ease;
+}
+
+.orb-pop-more[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.orb-pop-more > summary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+@media (hover: hover) {
+    .orb-pop-more > summary:hover {
+        color: var(--color-accent);
+    }
+}
+
+.orb-pop-more-state {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.9em;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.75;
+}
+
+.orb-pop-more[open] .orb-pop-more-state {
+    visibility: hidden;
+}
+
+/* (open, its rows follow the line as the fields above do; the first one has the line above it) */
+.orb-pop-more > .orb-field:first-of-type {
+    margin-top: 0;
+}
+
+.orb-pop-more .orb-pop-step {
+    padding-top: 0;
+    margin-top: 6px;
+    border-top: 0;
+}
+
+.orb-pop-more[open] {
+    padding-bottom: 2px;
+}
+
+.orb-popover.is-sheet .orb-pop-more > summary,
+.orb-popover.is-side .orb-pop-more > summary {
+    font-size: 1em;
+}
+
+@media (pointer: coarse) {
+    .orb-pop-more > summary {
+        min-height: 42px;
+    }
+}
+
+/* ---------- Settings, or the graphs, docked in a narrower window ----------
+   The width is then what limits the canvas, so the readouts' rows under it did nothing but squeeze the
+   palette and leave the screen half used. The readouts go (shutting Settings or the graphs brings them back,
+   and the body's menu and the Bodies list say much of it). The scene, the body's Edit and the speed share a
+   row, the buttons have the next, and the palette's column runs the height of the canvas and the bar. The
+   canvas may be taller than 16:10, up to about square, so all three columns end level at the foot of the
+   screen: the view goes by its 16:10 part (--orb-view-wide: viewSide in orbits_core.js). With both open the
+   graphs go under a 16:10 canvas, which leaves them in view. */
+@media (orientation: landscape) and (min-width: 1000px) and (max-width: 1279px) and (min-height: 541px) {
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .simulation-display-container {
+        grid-template-rows: auto auto;
+        grid-template-areas: "tools canvas" "tools info";
+        width: 100%;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-canvas-wrapper {
+        max-width: none;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        max-width: none;
+    }
+
+    body.sim-panel-active.sim-panel-side:not(.charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        --orb-view-wide: 1;
+        height: min(var(--sim-canvas-max-h), 0.95 * (100vw - 2 * var(--sim-page-gutter) - var(--sim-panel-width) - 1em - var(--orb-side-w) - var(--orb-side-gap)));
+        aspect-ratio: auto;
+    }
+
+    /* (eight buttons, each three of these wide, under the scene, the body and the speed) */
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-bar {
+        display: grid;
+        grid-template-columns: repeat(24, minmax(0, 1fr));
+        gap: 4px 2px;
+        padding: 4px;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .stats-container,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-action-buttons-overlay {
+        display: contents;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .stats-container > .stats-box,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .orb-subject-around {
+        display: none;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .orb-scene-pick {
+        grid-area: 1 / 1 / auto / span 12;
+        margin: 0;
+        min-width: 0;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .stats-container > .orb-subject {
+        grid-area: 1 / 13 / auto / span 7;
+        justify-content: center;
+        max-width: none;
+        padding: 0 2px;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .orb-subject-name {
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .orb-speed {
+        grid-area: 1 / 20 / auto / span 5;
+        margin: 0 4px;
+    }
+
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-icon-button,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-reset-button,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-show-charts-label,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-fullscreen-toggle,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim .sim-info-actions .sim-panel-toggle-button {
+        grid-row: 2;
+        grid-column: span 3;
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* (a mission has only four of them) */
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-icon-button,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-show-charts-label,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-fullscreen-toggle,
+    body:is(.sim-panel-active.sim-panel-side, .charts-visible):not(.sim-fullscreen-active) .orbits-sim.orb-mission-on .sim-info-actions .sim-panel-toggle-button {
+        grid-column: span 6;
+    }
+}
+
+/* ---------- The graphs beside the canvas ----------
+   Under it they scrolled the page, and the canvas's top with its cards went out of view. In a column beside
+   it (the canvas gives up width, as for Settings, and keeps its height, so nothing moves up or down) canvas
+   and graphs fit on the screen together. However many graphs there are, they share the column's height, which
+   is that of the canvas and the bar. With Settings open too there is no room for the column: the graphs stay
+   under the canvas, and the page scrolls only as far as keeps the canvas's top in view (setChartsVisible). */
+@media (orientation: landscape) and (min-width: 1000px) and (min-height: 541px) {
+    .orbits-sim {
+        --orb-graphs-w: clamp(280px, 24vw, 420px);
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .simulation-main-content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) var(--orb-graphs-w);
+        column-gap: var(--orb-side-gap);
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .simulation-display-container {
+        grid-area: 1 / 1;
+        width: 100%;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .sim-canvas-wrapper {
+        max-width: none;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .sim-aspect-ratio-box {
+        --orb-view-wide: 1;
+        max-width: none;
+        height: min(var(--sim-canvas-max-h), 0.95 * (100vw - 2 * var(--sim-page-gutter) - var(--orb-graphs-w) - 2 * var(--orb-side-gap) - var(--orb-side-w)));
+        aspect-ratio: auto;
+    }
+
+    /* (its size comes from the row, never the other way round, whatever a graph draws) */
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim #charts-container {
+        grid-area: 1 / 2;
+        display: flex !important;
+        flex-direction: column;
+        gap: var(--orb-side-gap);
+        width: auto;
+        margin: 0;
+        contain: size;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .sim-charts-row {
+        display: contents;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim #charts-container .chart-box {
+        flex: 1 1 0;
+        min-height: 0;
+        height: auto;
+        overflow: hidden;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .orb-chart-actions {
+        flex: 0 0 auto;
+        margin: 0;
+    }
+
+    body.charts-visible:not(.sim-panel-active):not(.sim-fullscreen-active) .orbits-sim .description-area {
+        grid-column: 1 / -1;
     }
 }

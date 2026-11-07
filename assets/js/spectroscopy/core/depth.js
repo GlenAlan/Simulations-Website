@@ -30,8 +30,10 @@ const LIGHT_SHARE = 0.5;    // How much of its depth_dim_mag an extended object 
 
 // near and far: the depth of the nearest and furthest of a kind, by real distance. kSize: how much the furthest shrinks.
 // kDim: how many magnitudes fainter the furthest is. A kind with neither already dims with real distance in its magnitude.
+// byMag ranks by apparent brightness instead, for a kind whose distance and magnitude have nothing to do with each other: a
+// comet's looks are all that say how near it is, and with its biggest among its faintest they read as one flat layer.
 export const DEPTH_TABLE = {
-    comet: { near: 0, far: 1, kSize: 0.7, kDim: 2.5 },
+    comet: { near: 0, far: 1, kSize: 0.7, kDim: 2.5, byMag: true },
     nebula: { near: 0, far: 1, kSize: 0.5, kDim: 1.5 },
     cluster: { near: 0, far: 1, kSize: 0.5, kDim: 1.5 },
     galaxy: { near: 0.2, far: 1, kSize: 0.45, kDim: 1.5 },
@@ -67,7 +69,8 @@ export function depthLight(entity) {
 
 // Nearest first. A row of one sits at its kind's near end. Ties go by code, so the order never depends on the list's.
 function rankDepths(list, row) {
-    const sorted = list.slice().sort((a, b) => a.distance_pc - b.distance_pc || (a.code < b.code ? -1 : 1));
+    const rank = row.byMag ? (body) => body.brightness.mag : (body) => body.distance_pc;
+    const sorted = list.slice().sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
     const last = Math.max(1, sorted.length - 1);
     sorted.forEach((body, i) => { body.depth = row.near + ((row.far - row.near) * i) / last; });
 }
