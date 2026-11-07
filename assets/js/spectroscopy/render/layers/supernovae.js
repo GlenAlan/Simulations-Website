@@ -12,6 +12,7 @@ import { bus } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
+import { supernovaBandsAt } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, lineRGB } from './nebula_bake.js';
 
@@ -24,54 +25,22 @@ const smooth = (a, b, x) => {
     return t * t * (3 - 2 * t);
 };
 
-// Visible light against time, as a fraction of the peak. Type Ia rises and falls quickly; Type II holds a long
-// plateau while its hydrogen recombines, then drops
-export function supernovaVisibleLight(type, t) {
-    if (type === 'Ia') {
-        if (t < -18) return 0;
-        if (t < 0) return ((t + 18) / 18) ** 2;
-        return 10 ** (-0.4 * (Math.min(t, 30) * 0.085 + Math.max(0, t - 30) * 0.018));
-    }
-    if (t < -10) return 0;
-    if (t < 0) return ((t + 10) / 10) ** 1.5;
-    const plateau = 0.6 * (1 - Math.exp(-t / 15)) + t * 0.002;
-    const drop = 2.5 * smooth(95, 125, t);
-    const tail = Math.max(0, t - 125) * 0.0098;
-    return 10 ** (-0.4 * (plateau + drop + tail));
-}
-
-// The magnitude of the bright point at this time: for stars.js, which draws it
-export function supernovaCoreMag(body, tDays) {
-    const light = supernovaVisibleLight(body.supernova.type, body.supernova.phase0_days + tDays);
-    return light > 1e-5 ? body.supernova.peak_mag - 2.5 * Math.log10(light) : 99;
-}
-
 function shellRadius(t) {
     if (t <= 0) return 0.03;
     return Math.min(1, Math.max(0.03, 1.15 * (t / (t + 220)) ** 0.8));
 }
 
-// Everything that changes with time, written straight into the instance arrays
-function writeStage(a, i, type, t) {
-    const isIa = type === 'Ia';
-    const R = shellRadius(t);
-    const fil = smooth(90, 420, t);
-    const shellOn = smooth(12, 80, t);
-    const flashVis = supernovaVisibleLight(type, t);
-    a.shape.set([R, fil, shellOn, flashVis], i * 4);
-    // Flash in the other bands: radio afterglow rising slowly, infrared lagging the peak, ultraviolet and X-rays short
-    const uvRise = t < -6 ? 0 : t < 0 ? (t + 6) / 6 : Math.exp(-t / (isIa ? 13 : 8));
-    const xFlash = Math.exp(-(((t + 1) / (isIa ? 2.5 : 3.5)) ** 2)) * (isIa ? 0.55 : 1);
-    const irFlash = t < -8 ? 0 : t < 20 ? ((t + 8) / 28) ** 2 : Math.exp(-(t - 20) / 90);
-    const radioFlash = smooth(0, 70, t) * Math.exp(-Math.max(0, t) / 420);
-    a.flash.set([radioFlash, irFlash, uvRise, xFlash], i * 4);
-    // The shell in each band: radio and X-rays grow as the shock sweeps up gas; ultraviolet is the shock front itself
-    a.shell.set([
-        smooth(25, 280, t),
-        smooth(15, 110, t) * (0.65 + 0.35 * Math.exp(-t / 600)),
-        smooth(20, 120, t) * (0.8 + 0.2 * Math.exp(-t / 800)),
-        smooth(40, 300, t)
-    ], i * 4);
+// Everything that changes with time, written straight into the instance arrays. How bright each band is comes from
+// the band table, the one source for that; this only decides where that light is: early on it is all in the point,
+// and later it is all in the shell. Returns the point's share of its peak light, for the sprite in stars.js.
+function writeStage(a, i, sn, t) {
+    const isIa = sn.type === 'Ia';
+    const bands = supernovaBandsAt(sn, t);
+    const inShell = smooth(12, 80, t);
+    const inFlash = 1 - inShell;
+    a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * inShell, bands.visible * inFlash], i * 4);
+    a.flash.set([bands.radio * inFlash, bands.ir * inFlash, bands.uv * inFlash, bands.xray * inFlash], i * 4);
+    a.shell.set([bands.radio * inShell, bands.ir * inShell, bands.uv * inShell, bands.xray * inShell], i * 4);
     // Colour of the flash: a cooling black body. Type II starts hotter and ends redder, on its hydrogen plateau
     const hot = isIa ? 11500 : 19000;
     const cool = isIa ? 5600 : 4400;
@@ -86,6 +55,7 @@ function writeStage(a, i, type, t) {
         warm[1] * young + late[1] * (1 - young),
         warm[2] * young + late[2] * (1 - young)
     ], i * 3);
+    return bands.visible * inFlash;
 }
 
 export function createSupernovaeLayer(engine, app) {
@@ -98,8 +68,7 @@ export function createSupernovaeLayer(engine, app) {
     const aN = f(3);
     const aRect = f(4);
     const aFilCol = f(3);
-    const aBandA = f(4);
-    const aPack = f(4); // Half-size, job id, peak magnitude, X-ray strength: packed, as WebGL allows only 16 attributes
+    const aPack = f(3); // Half-size, job id, peak magnitude: packed, as WebGL allows only 16 attributes
     const aReady = f(1);
     const stage = { shape: f(4), flash: f(4), shell: f(4), flashCol: f(3), sheetCol: f(3), lateSheet: [] };
 
@@ -132,7 +101,7 @@ export function createSupernovaeLayer(engine, app) {
         const lop = isIa ? 0.02 : 0.08;
         const S = new THREE.Vector4(0.74, isIa ? rng.range(0.035, 0.05) : rng.range(0.07, 0.10), isIa ? rng.range(0.03, 0.05) : rng.range(0.10, 0.16), isIa ? 0 : 1);
         const asym = new THREE.Vector4(rng.range(-lop, lop), rng.range(-lop, lop), rng.range(-lop, lop), isIa ? rng.range(0.06, 0.1) : rng.range(0.16, 0.26));
-        const C = new THREE.Vector4(isIa ? 1.5 : 1.15, isIa ? 2.6 : 2.4, 1.2, isIa ? 2.2 : 1.8);
+        const C = new THREE.Vector4(isIa ? 1.5 : 0.95, isIa ? 1.1 : 1.5, 1.2, isIa ? 2.2 : 1.8);
         const job = baker.addJob({
             program: 'remnant',
             dir: c,
@@ -151,8 +120,7 @@ export function createSupernovaeLayer(engine, app) {
         aR.set(r, i * 3);
         aN.set(nn, i * 3);
         aRect.set(job.rect, i * 4);
-        aBandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
-        aPack.set([tanHalf, job.id, sn.peak_mag, body.bands.xray], i * 4);
+        aPack.set([tanHalf, job.id, sn.peak_mag], i * 3);
         // Filaments: Balmer-dominated and pale for Type Ia, deep red with [N II] and [S II] for Type II. The sheet
         // and ejecta: blue-white for a Type Ia's fast shock, oxygen teal for a Type II's oxygen-rich ejecta
         const filament = isIa
@@ -160,8 +128,8 @@ export function createSupernovaeLayer(engine, app) {
             : [hydrogen[0] * 0.55 + nitrogenSulphur[0] * 0.55, 0.06 + rng.range(0, 0.06), 0.06];
         aFilCol.set(filament, i * 3);
         stage.lateSheet.push(isIa ? [0.55, 0.72, 1.0] : [oxygen[0] + 0.05, oxygen[1] * 0.85, oxygen[2] * 0.95]);
-        writeStage(stage, i, sn.type, sn.phase0_days);
-        items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, t: sn.phase0_days });
+        const pointShare = writeStage(stage, i, sn, sn.phase0_days);
+        items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, bands: supernovaBandsAt(sn, sn.phase0_days), pointShare, pointDirty: true });
         byCode.set(body.code, i);
     });
 
@@ -179,8 +147,7 @@ export function createSupernovaeLayer(engine, app) {
     inst('aN', aN, 3);
     inst('aRect', aRect, 4);
     inst('aFilCol', aFilCol, 3);
-    inst('aBandA', aBandA, 4);
-    inst('aPack', aPack, 4);
+    inst('aPack', aPack, 3);
     const readyAttr = inst('aReady', aReady, 1, true);
     const stageAttrs = [
         inst('aShape', stage.shape, 4, true),
@@ -201,8 +168,7 @@ export function createSupernovaeLayer(engine, app) {
             attribute vec3 aN;
             attribute vec4 aRect;
             attribute vec3 aFilCol;
-            attribute vec4 aBandA;
-            attribute vec4 aPack;
+            attribute vec3 aPack;
             attribute float aReady;
             attribute vec4 aShape;
             attribute vec4 aFlash;
@@ -222,16 +188,15 @@ export function createSupernovaeLayer(engine, app) {
             varying float vGlowPx;
             void main() {
                 float aHalf = aPack.x;
-                float aBandB = aPack.w;
                 SET_HERO(aPack.y)
                 // How bright the event looks from here, in the same terms as stars.js uses for its point
                 float over = clamp(pow(10.0, -0.4 * (aPack.z - uLimitMag)), 0.0, 400.0);
                 float seen = min(1.0, sqrt(over) / 5.0);
-                float vis = aShape.w * seen * aBandA.z * uBandW[2];
-                float radio = aFlash.x * aBandA.x * uBandW[0];
-                float ir = aFlash.y * aBandA.y * uBandW[1];
-                float uv = aFlash.z * aBandA.w * uBandW[3];
-                float xr = aFlash.w * aBandB * uBandW[4];
+                float vis = aShape.w * seen * uBandW[2];
+                float radio = aFlash.x * uBandW[0];
+                float ir = aFlash.y * uBandW[1];
+                float uv = aFlash.z * uBandW[3];
+                float xr = aFlash.w * uBandW[4];
                 vFlash = aFlashCol * vis + uBandTint[0] * radio + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr;
                 float total = vis + radio + ir + uv + xr;
                 float dprScale = clamp(uViewport.y / 900.0, 0.8, 2.0);
@@ -244,8 +209,8 @@ export function createSupernovaeLayer(engine, app) {
                 vFilCol = aFilCol;
                 vSheetCol = aSheetCol;
                 vShape = aShape;
-                vShell = vec4(aShell.x * aBandA.x, aShell.y * aBandA.y, aShape.z * aBandA.z, aShell.z * aBandA.w);
-                vShellX = aShell.w * aBandB;
+                vShell = vec4(aShell.x, aShell.y, aShape.z, aShell.z);
+                vShellX = aShell.w;
                 vReady = aReady;
                 vec3 world = (aCentre + (aR * position.x + aN * position.y) * half_) * ${SKY_RADIUS.toFixed(1)};
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
@@ -282,7 +247,7 @@ export function createSupernovaeLayer(engine, app) {
                 float age = vShape.y;
 
                 // A young shell is bright and smooth; as it sweeps up gas it fades into threads
-                vec3 col = (vSheetCol * sheet * (1.15 - 0.72 * age) + vFilCol * fil * (0.25 + 1.5 * age)) * 1.6 * vShell.z * uBandW[2];
+                vec3 col = (vSheetCol * sheet * (1.15 - 0.72 * age) + vFilCol * fil * (0.25 + 1.5 * age)) * 2.5 * vShell.z * uBandW[2];
                 col += ramp(uBandTint[0], sync * 2.9 * vShell.x) * uBandW[0];
                 col += ramp(uBandTint[1], (sheet * 0.9 + hot * 0.25 + fil * 0.6) * 1.8 * vShell.y) * uBandW[1];
                 col += ramp(uBandTint[3], (sheet * 1.2 + fil * 1.1) * 1.5 * vShell.w) * uBandW[3];
@@ -306,8 +271,11 @@ export function createSupernovaeLayer(engine, app) {
         const i = byCode.get(code);
         if (i === undefined) return;
         const item = items[i];
-        item.t = item.body.supernova.phase0_days + tDays;
-        writeStage(stage, i, item.body.supernova.type, item.t);
+        const sn = item.body.supernova;
+        const t = sn.phase0_days + tDays;
+        item.pointShare = writeStage(stage, i, sn, t);
+        item.pointDirty = true;
+        item.bands = supernovaBandsAt(sn, t);
         stageAttrs.forEach((attr) => { attr.needsUpdate = true; });
     });
 
@@ -317,8 +285,14 @@ export function createSupernovaeLayer(engine, app) {
             baker.beginFrame(frame);
             let changed = false;
             const step = frame.dt > 0 ? frame.dt / 0.5 : 1;
+            // The bright point is drawn by the stars layer, which is created after this one, so it's looked up here
+            const stars = engine.getLayer('stars');
             for (let i = 0; i < n; i++) {
                 const item = items[i];
+                if (item.pointDirty && stars) {
+                    item.pointDirty = false;
+                    if (stars.setSpriteFlux) stars.setSpriteFlux(item.body.code, item.pointShare);
+                }
                 if (item.job.ready && item.shown < 1) {
                     item.shown = frame.reduceMotion ? 1 : Math.min(1, item.shown + step);
                     aReady[i] = item.shown;
@@ -336,8 +310,8 @@ export function createSupernovaeLayer(engine, app) {
         picks(frame) {
             const out = [];
             for (let i = 0; i < n; i++) {
-                const { body, tanHalf } = items[i];
-                if ((body.bands[frame.band] || 0) <= 0.01) continue;
+                const { body, tanHalf, bands } = items[i];
+                if ((bands[frame.band] || 0) <= 0.01) continue;
                 const shape = i * 4;
                 if (stage.shape[shape + 2] < 0.05) continue;
                 const radiusPx = (tanHalf * stage.shape[shape] * 0.74 * frame.pxPerRad) / frame.dpr;

@@ -17,7 +17,7 @@ import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, zonePalette } from './nebula_bake.js';
 
 const SKY_RADIUS = 1000;
-const SPRITE_MARGIN = 1.12;   // The sprite is a little larger than the nebula, so its wisps fade out before the edge
+const SPRITE_MARGIN = 1.38;   // The gas fills about two thirds of the sprite, with wisps fading out before its edge
 const DRAW_ORDER = { dark: 0, reflection: 1, emission: 2, planetary: 3 };
 
 const RAD = Math.PI / 180;
@@ -187,13 +187,13 @@ function embeddedStars(body, shape, frame, half, rect, out) {
     if (type === 'planetary') {
         // The central white dwarf: tiny and very hot, so stronger in the ultraviolet than in visible light
         const teff = body.nebula.central_star ? body.nebula.central_star.teff_K : rng.range(60000, 120000);
-        add(0, 0, 0, Math.min(teff, 40000), 2.4, 1.1, 0.05, 3.0, 0.9, 14, 50);
+        add(0, 0, 0, Math.min(teff, 40000), 2.4, 1.1, 0.05, 8.0, 2.0, 14, 50);
         return;
     }
     const lit = shape.params.stars.filter((s) => s.w > 0);
     lit.forEach((s, i) => {
         add(s.x, s.y, s.z, type === 'reflection' ? rng.range(12000, 22000) : rng.range(26000, 42000),
-            i === 0 ? 3.6 : 2.8, i === 0 ? 1.5 : 1.0, 0.45, 3.6, 0.9, 22, 90);
+            i === 0 ? 3.6 : 2.8, i === 0 ? 1.5 : 1.0, 0.45, 9.0, 1.5, 22, 90);
     });
     const r2 = (type === 'emission' ? 0.72 : 0.6) ** 2;
     const young = type === 'emission' ? rng.int(26, 48) : type === 'reflection' ? rng.int(6, 12) : rng.int(5, 12);
@@ -373,15 +373,15 @@ export function createNebulaeLayer(engine, app) {
                     float sd = s.b * s.b;
                     float radio = (sh + so * 0.7) * 3.2 + sd * 0.5;
                     col += ramp(uBandTint[0], radio * vStrength.x) * uBandW[0];
-                    float xr = (so * 1.1 + sh * 0.25) * 1.2;
+                    float xr = (so * 1.1 + sh * 0.25) * 3.6;
                     col += ramp(uBandTint[4], xr * vStrengthX) * uBandW[4];
                 }
                 // Infrared: the dust that blocks visible light is what glows
-                float ir = dust * 3.4 + hyd * 0.22;
+                float ir = dust * 2.6 + hyd * 0.2;
                 col += ramp(uBandTint[1], ir * vStrength.y) * uBandW[1];
                 // Ultraviolet: the hot gas near the stars, heavily dimmed by dust. Reflection nebulae scatter it strongly
                 float uvScatter = vKind > 0.5 && vKind < 1.5 ? 1.5 : 0.28;
-                float uvLight = (oxy * 1.1 + hyd * uvScatter) * 1.5;
+                float uvLight = (oxy * 1.1 + hyd * uvScatter) * 2.4;
                 col += ramp(uBandTint[3], uvLight * vStrength.w) * uBandW[3];
 
                 // Dust blocks visible and ultraviolet light, but much less of the infrared, and almost no radio

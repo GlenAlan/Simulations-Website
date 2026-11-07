@@ -211,6 +211,7 @@ function createBaker(engine, app) {
         renderer.setRenderTarget(null);
         atlas.texture.generateMipmaps = false;
         atlasUniform.value = atlas.texture;
+        heroUniforms.uAtlasPx.value = atlas.width;
     }
 
     const jobs = [];
@@ -235,7 +236,8 @@ function createBaker(engine, app) {
     // Hero images. Heroes are allocated the first time one is wanted, so an unzoomed sky costs nothing for them
     const heroUniforms = {
         uHeroA: { value: null }, uHeroARect: { value: new THREE.Vector4(0, 0, 1, 1) }, uHeroAK: { value: 0 }, uHeroAId: { value: -1 },
-        uHeroB: { value: null }, uHeroBRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uHeroBK: { value: 0 }, uHeroBId: { value: -1 }
+        uHeroB: { value: null }, uHeroBRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uHeroBK: { value: 0 }, uHeroBId: { value: -1 },
+        uAtlasPx: { value: 1 }
     };
     let heroPx = 0;
     let heroTargets = null;
@@ -321,10 +323,16 @@ function createBaker(engine, app) {
         cand.across = across;
     }
 
-    // Which part of the sprite the hero should cover for this view, as a square in sprite units
+    // Which part of the sprite the hero should cover for this view, as a square in sprite units. Only the part of
+    // the view that lies on the sprite counts. It is never so small that the image would be minified more than
+    // twofold, as heroes have no mipmaps.
     const want = { cx: 0, cy: 0, h: 1 };
     function heroWindow(c) {
-        let h = Math.max(c.hv, c.hh) * 1.14;
+        const x0 = Math.max(-1, c.vx - c.hh);
+        const x1 = Math.min(1, c.vx + c.hh);
+        const y0 = Math.max(-1, c.vy - c.hv);
+        const y1 = Math.min(1, c.vy + c.hv);
+        let h = Math.max(Math.max(x1 - x0, y1 - y0) * 0.5 * 1.14, heroPx / (2 * c.across));
         if (h > 0.72) {
             want.cx = 0;
             want.cy = 0;
@@ -333,20 +341,29 @@ function createBaker(engine, app) {
         }
         h = Math.max(0.012, h);
         want.h = h;
-        want.cx = Math.max(-1 + h, Math.min(1 - h, c.vx));
-        want.cy = Math.max(-1 + h, Math.min(1 - h, c.vy));
+        want.cx = Math.max(-1 + h, Math.min(1 - h, (x0 + x1) * 0.5));
+        want.cy = Math.max(-1 + h, Math.min(1 - h, (y0 + y1) * 0.5));
     }
 
     function windowCoversView(slot, c) {
         if (slot.h >= 1) return true;
-        return Math.abs(c.vx - slot.cx) + c.hh <= slot.h * 1.02 && Math.abs(c.vy - slot.cy) + c.hv <= slot.h * 1.02;
+        const m = slot.h * 1.02;
+        return Math.max(-1, c.vx - c.hh) >= slot.cx - m && Math.min(1, c.vx + c.hh) <= slot.cx + m
+            && Math.max(-1, c.vy - c.hv) >= slot.cy - m && Math.min(1, c.vy + c.hv) <= slot.cy + m;
+    }
+
+    // Would baking the wanted window give much the same image as this slot already holds?
+    function sameWindow(slot) {
+        return Math.abs(slot.h - want.h) < want.h * 0.1 && Math.abs(slot.cx - want.cx) < want.h * 0.1 && Math.abs(slot.cy - want.cy) < want.h * 0.1;
     }
 
     function heroSatisfied(slot, c) {
         if (slot.job !== c.job) return false;
-        const density = 1 / slot.h;
-        const best = 1 / want.h;
-        return density >= best * 0.72 && density <= best * 2.4 && windowCoversView(slot, c);
+        if (sameWindow(slot)) return true; // Without this, a view that can't be improved would rebake for ever
+        const texelsPerPx = heroPx / (slot.h * c.across);
+        const sharpEnough = texelsPerPx >= Math.min(0.7, (heroPx / (want.h * c.across)) * 0.72);
+        const notTooFine = slot.h >= 1 || texelsPerPx <= 2.4;
+        return sharpEnough && notTooFine && windowCoversView(slot, c);
     }
 
     function updateHero(frame) {
@@ -604,7 +621,7 @@ function createBaker(engine, app) {
             const keep = budget;
             budget = 1e12;
             updateHero(frame);
-            while (doWork(frame)) updateHero(frame);
+            for (let i = 0; i < 16 && doWork(frame); i++) updateHero(frame);
             budget = keep;
             syncHeroUniforms();
             flushing = false;
@@ -648,8 +665,29 @@ uniform vec4 uHeroARect;
 uniform vec4 uHeroBRect;
 uniform float uHeroAK;
 uniform float uHeroBK;
+uniform float uAtlasPx;
 varying float vHeroA;
 varying float vHeroB;
+
+// A small bake blown up with plain bilinear filtering shows its grid. While it is magnified this is a B-spline filter
+// instead, made from four bilinear fetches
+vec4 atlasSmooth(vec2 uv) {
+    vec2 st = uv * uAtlasPx - 0.5;
+    vec2 f = fract(st);
+    vec2 i = st - f;
+    vec2 f2 = f * f;
+    vec2 f3 = f2 * f;
+    vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    vec2 w3 = f3 / 6.0;
+    vec2 g0 = w0 + w1;
+    vec2 g1 = w2 + w3;
+    vec2 h0 = (i - 0.5 + w1 / g0) / uAtlasPx;
+    vec2 h1 = (i + 1.5 + w3 / g1) / uAtlasPx;
+    return g0.y * (g0.x * textureLod(tAtlas, vec2(h0.x, h0.y), 0.0) + g1.x * textureLod(tAtlas, vec2(h1.x, h0.y), 0.0))
+        + g1.y * (g0.x * textureLod(tAtlas, vec2(h0.x, h1.y), 0.0) + g1.x * textureLod(tAtlas, vec2(h1.x, h1.y), 0.0));
+}
 
 float windowMask(vec2 w) {
     vec2 e = smoothstep(vec2(0.0), vec2(0.025), w) * smoothstep(vec2(0.0), vec2(0.025), 1.0 - w);
@@ -658,7 +696,14 @@ float windowMask(vec2 w) {
 
 // q is the position in the sprite (-1..1), cellUv the same position in the atlas
 vec4 fetchBaked(vec2 q, vec2 cellUv) {
-    vec4 t = texture2D(tAtlas, cellUv);
+    vec2 dx = dFdx(cellUv);
+    vec2 dy = dFdy(cellUv);
+    vec4 t;
+    if (max(dot(dx, dx), dot(dy, dy)) * uAtlasPx * uAtlasPx < 0.5) {
+        t = atlasSmooth(cellUv);
+    } else {
+        t = textureGrad(tAtlas, cellUv, dx, dy);
+    }
     if (vHeroB > 0.5) {
         vec2 w = (q - uHeroBRect.xy) / (2.0 * uHeroBRect.zw) + 0.5;
         t = mix(t, texture2D(uHeroB, w), windowMask(w) * uHeroBK);

@@ -144,7 +144,7 @@ void main() {
         float sheet = 1.0 - abs(2.0 * sheetN - 1.0);
         sheet *= sheet;
         sheet *= sheet * sheet;
-        float faint = smoothstep(-0.45, 0.15, f) * edge * 0.05;
+        float faint = smoothstep(-0.5, 0.15, f) * edge * 0.085;
 
         vec3 pw = p + w * 0.6;
         vec3 dq = qw * 0.95 + vec3(0.53, 0.11, 0.29);
@@ -365,7 +365,8 @@ void main() {
         vec3 dir = c / (r + 1e-4);
 
         // Rayleigh-Taylor fingers push the shock in and out by a different amount in each direction
-        float rp = r + (cell - 0.5) * uS.z + (n - 0.5) * uS.z * 0.8;
+        float lobes = kind > 0.5 ? (w.x + w.y - w.z) * 0.20 : 0.0;
+        float rp = r + (cell - 0.5) * uS.z + (n - 0.5) * uS.z * 0.8 + lobes;
         float d = (rp - Rs) / uS.y;
         float shell = exp(-d * d);
 
@@ -387,7 +388,7 @@ void main() {
         float ejecta = 0.0;
         if (kind > 0.5) {
             // Massive stars leave clumps of oxygen-rich ejecta inside, and two faint jets along the spin axis
-            ejecta = smoothstep(0.60, 0.86, cell) * smoothstep(Rs * 0.88, Rs * 0.35, r) * 0.9;
+            ejecta = smoothstep(0.64, 0.86, cell) * smoothstep(Rs * 0.88, Rs * 0.35, r) * 0.42;
             float along = dot(c, uAxis);
             float off = length(c - uAxis * along);
             float jet = exp(-pow(off / 0.05, 2.0)) * smoothstep(Rs * 0.8, Rs, abs(along)) * smoothstep(Rs * 1.3, Rs * 1.05, abs(along));
@@ -403,5 +404,6 @@ void main() {
         L2 += hot * edge * ds;
         L3 += sync * edge * ds;
     }
-    gl_FragColor = vec4(sqrt(sat(L0 * uC.x)), sqrt(sat(L1 * uC.y)), sqrt(sat(L2 * uC.z)), sqrt(sat(L3 * uC.w)));
+    gl_FragColor = packed(1.0 - exp(-L0 * uC.x), 1.0 - exp(-L1 * uC.y), 1.0 - exp(-L2 * uC.z), 0.0);
+    gl_FragColor.a = sqrt(1.0 - exp(-L3 * uC.w));
 }`;
