@@ -167,7 +167,8 @@ function mountOverview(container) {
             const word = bandWord(bands[band]);
             value.textContent = word;
             meter.dataset.level = String(bandLevel(bands[band]));
-            chip.setAttribute('aria-label', `${BAND_INFO[band].label}: ${word.toLowerCase()}`);
+            const { short, label } = BAND_INFO[band];
+            chip.setAttribute('aria-label', `${short === label ? label : `${short}, ${label}`}: ${word}`);
         });
     }
 

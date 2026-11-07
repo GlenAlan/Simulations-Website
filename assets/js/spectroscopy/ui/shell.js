@@ -80,8 +80,10 @@ function initBandBar(app) {
         const b = button('spectro-band-btn', BAND_INFO[band].short);
         b.dataset.band = band;
         b.setAttribute('role', 'radio');
-        b.setAttribute('aria-label', BAND_INFO[band].label);
-        b.title = `Show the sky in ${BAND_INFO[band].label}`;
+        // The name holds the words on the button, so asking for "IR" by voice still finds it
+        const { short, label } = BAND_INFO[band];
+        b.setAttribute('aria-label', short === label ? label : `${short}, ${label}`);
+        b.title = `Show the sky in ${label}`;
         b.addEventListener('click', () => setBand(band));
         bar.appendChild(b);
         return b;
@@ -194,7 +196,7 @@ function initLayersMenu(app, topRight) {
         const hz = habitableZoneState(app);
         inputs.habitableZone.disabled = !hz.available;
         const hzLabel = menu.querySelector(`label[for="${inputs.habitableZone.id}"]`);
-        hzLabel.title = hz.available ? LAYER_ROWS[5].tip : hz.reason;
+        hzLabel.title = hz.available ? LAYER_ROWS.find((row) => row.name === 'habitableZone').tip : hz.reason;
         hzNote.textContent = hz.reason;
         hzNote.hidden = hz.available;
         if (hz.available) inputs.habitableZone.removeAttribute('aria-describedby');
@@ -246,7 +248,7 @@ function zoomWords(fov) {
     const zoom = DEFAULT_VIEW.fov / fov;
     const shown = zoom >= 10 ? String(Math.round(zoom)) : zoom.toFixed(1);
     const degrees = fov >= 10 ? Math.round(fov) : Number(fov.toFixed(fov >= 1 ? 1 : 2));
-    return { zoom: `Zoom ${shown}×`, fov: `${degrees}° field of view`, spoken: `Zoom ${shown} times, field of view ${degrees} degrees` };
+    return { zoom: `Zoom ${shown}×`, fov: `${degrees}° field of view` };
 }
 
 // The body whose planetary system this selection leads to, or null. The system view has the last word on what can be
@@ -290,7 +292,7 @@ function initContextBar(app) {
         readout.hidden = inSystem;
         back.hidden = !inSystem;
         enter.hidden = !code;
-        if (code) enter.setAttribute('aria-label', `Enter the system of ${code}`);
+        if (code) enter.setAttribute('aria-label', `Enter system ${code}`);
     }
 
     bus.on('select', paint);
@@ -408,8 +410,10 @@ function initHelpPage(app, topRight) {
     help.setAttribute('aria-pressed', 'false');
 }
 
-// ---------- An object shouldn't vanish under the drawer that opened for it ----------
+// ---------- An object shouldn't vanish under the drawer that opened for it, or sit behind a bar ----------
 function keepSelectionInView(app) {
+    const BARS = ['spectroTopLeft', 'spectroBandBar', 'spectroTopRight', 'spectroContextBar', 'spectroLegend'];
+    const CLEARANCE = 16;
     bus.on('select', () => {
         // After the drawer has opened and the canvas has taken its new size
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -418,8 +422,16 @@ function keepSelectionInView(app) {
             const { az, alt } = app.selected.body.sky;
             const p = engine.project(az, alt);
             const frame = engine.currentFrame();
-            const margin = Math.min(64, frame.width * 0.12);
-            if (p && p.x > margin && p.x < frame.width - margin && p.y > margin && p.y < frame.height - margin) return;
+            const onSky = p && p.x > CLEARANCE && p.x < frame.width - CLEARANCE && p.y > CLEARANCE && p.y < frame.height - CLEARANCE;
+            if (onSky) {
+                const sky = document.getElementById('simulationCanvas').getBoundingClientRect();
+                const behindBar = BARS.some((id) => {
+                    const r = document.getElementById(id).getBoundingClientRect();
+                    return r.width > 0 && p.x > r.left - sky.left - CLEARANCE && p.x < r.right - sky.left + CLEARANCE
+                        && p.y > r.top - sky.top - CLEARANCE && p.y < r.bottom - sky.top + CLEARANCE;
+                });
+                if (!behindBar) return;
+            }
             engine.slewTo({ az, alt }, { duration: 0.5 });
         }));
     });

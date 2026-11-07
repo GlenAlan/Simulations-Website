@@ -443,9 +443,16 @@ body.sim-fullscreen-active .spectro-sim .sim-aspect-ratio-box {
     }
 }
 
-/* On a phone with the sheet open the sky is a small preview: the band switcher still says which band it is in */
+/* With a drawer open on a phone the sky is a small preview, and the legend would cover its centre. The band
+   switcher still says which band it is in. */
 @container spectro-sky (max-width: 520px) {
     body.sim-panel-sheet.sim-panel-active #spectroLegend {
+        display: none;
+    }
+}
+
+@media (max-height: 540px) {
+    body.sim-panel-active #spectroLegend {
         display: none;
     }
 }
