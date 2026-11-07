@@ -1491,6 +1491,531 @@
 
 
     // ===================================================================== [graphs-custom]
+    // Graphs of speed and of vertical velocity against time: one line for each of the last few particles, in its
+    // charge colour (dashes and shades tell two of a kind apart), time measured from each one's own launch. Points
+    // are recorded whether or not the graphs are open, so opening them after a shot still shows it. The axes suit
+    // the selected particle, and a faint band shows when that particle was in a field.
+    // Then the custom particle: its charge and mass sliders in More options.
+    const GRAPH_LINES = 5;        // Particles with a line
+    const GRAPH_REC_S = 1 / 30;   // Real seconds between recorded points
+    const GRAPH_DRAW_S = 0.1;     // Real seconds between chart updates
+    const GRAPH_MAX_PTS = 1200;   // Points kept per line (beyond this every other one goes)
+    const GRAPH_DASHES = [[], [7, 4], [2, 3], [12, 4, 3, 4], [4, 7]];
+    const GRAPH_SHADES = [0, 0.35, 0.15, 0.45, 0.25]; // Towards white in dark mode, black in light mode
+    const GRAPH_NAMES = { proton: 'Proton', electron: 'Electron', alpha: 'Alpha', neutron: 'Neutron', custom: 'Custom' };
+
+    const graphs = {
+        tracks: [],               // { p, label, sign, slot, t: [], v: [], vy: [], f: [] (in a field), done, hidden }
+        seen: new WeakSet(),      // Particles already given a line (or passed over)
+        counts: {},               // Lines per particle type since the restart, for the names
+        slots: { pos: 0, neg: 0, neutral: 0 }, // Lines per charge colour, for the dash and shade
+        charts: null,
+        recTimer: 0,
+        lastDraw: 0,
+        dirty: true,
+        lastSelected: null,
+        view: { ref: null, f: 1e6, unit: 'µs', vUnit: 'm/s', vf: 1 }, // What the charts show now
+    };
+    const graphsToggle = $('showCharts');
+    const graphsBox = $('charts-container');
+
+    function graphColors() {
+        const dark = isDarkMode();
+        return {
+            text: dark ? '#e0e0e0' : '#585858',
+            grid: dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+            band: dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.055)',
+            shade: dark ? '#ffffff' : '#000000',
+            pal: makePalette(dark),
+        };
+    }
+
+    function graphMix(a, b, f) {
+        const ch = (h, i) => parseInt(h.slice(1 + 2 * i, 3 + 2 * i), 16);
+        return `rgb(${[0, 1, 2].map((i) => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * f)).join(', ')})`;
+    }
+
+    function graphLineColor(tr, c) {
+        const base = tr.sign === 'pos' ? c.pal.pos : tr.sign === 'neg' ? c.pal.neg : c.pal.neutral;
+        return graphMix(base, c.shade, GRAPH_SHADES[tr.slot]);
+    }
+
+    // 1, 1.5, 2, 3, 4, 5, 6, 8 or 10 times a power of ten, at least v
+    function graphNiceCeil(v) {
+        if (!(v > 0)) return 1;
+        const b = Math.pow(10, Math.floor(Math.log10(v)));
+        const m = v / b;
+        return ([1, 1.5, 2, 3, 4, 5, 6, 8, 10].find((s) => m <= s * 1.0001) || 10) * b;
+    }
+
+    function graphTimeUnit(s) {
+        if (s < 1e-6) return { f: 1e9, name: 'ns' };
+        if (s < 1e-3) return { f: 1e6, name: 'µs' };
+        return { f: 1e3, name: 'ms' };
+    }
+
+    // Simulated seconds a particle takes to cross the box after a REF_V launch: sets which lines share a time axis
+    function graphTimescale(p) {
+        return PLATE_L / refSpeedFor(p.qe, p.m);
+    }
+
+    function graphInField(p) {
+        return p.state === 'free' && (insideE(p.x, p.y) || insideB(p.x, p.y)) ? 1 : 0;
+    }
+
+    function graphPush(tr, t, v, vy, f) {
+        tr.t.push(t);
+        tr.v.push(v);
+        tr.vy.push(vy);
+        tr.f.push(f);
+        if (tr.t.length > GRAPH_MAX_PTS) {
+            // A long flight (a circle that never leaves the field): keep every other point, so all of it stays
+            ['t', 'v', 'vy', 'f'].forEach((k) => { tr[k] = tr[k].filter((x, i, a) => i % 2 === 0 || i === a.length - 1); });
+        }
+        graphs.dirty = true;
+    }
+
+    function graphRecord(tr) {
+        const p = tr.p;
+        const n = tr.t.length;
+        if (n && !(p.t > tr.t[n - 1])) return;
+        const ended = p.state === 'stopped' || p.state === 'gone';
+        // (a particle stopped on a plate sits on its edge: it was in the field until then)
+        graphPush(tr, p.t, ended ? p.speedAtEnd : Math.hypot(p.vx, p.vy), p.vy, ended && n ? tr.f[n - 1] : graphInField(p));
+    }
+
+    function graphStart(p) {
+        graphs.seen.add(p);
+        if (p.ghost) return;
+        const key = p.type;
+        const sign = p.qe > 0 ? 'pos' : p.qe < 0 ? 'neg' : 'neutral';
+        graphs.counts[key] = (graphs.counts[key] || 0) + 1;
+        const tr = {
+            p, sign,
+            label: `${GRAPH_NAMES[key] || p.name} ${graphs.counts[key]}`,
+            slot: graphs.slots[sign]++ % GRAPH_DASHES.length,
+            t: [], v: [], vy: [], f: [], done: false, hidden: false,
+        };
+        if (p.t > 0 && (p.state === 'gun' || p.state === 'free')) {
+            // First seen a frame after its launch: step back to t = 0 with the force it feels now
+            const fo = forcesOn(p);
+            const vy = p.vy - ((fo.fey + fo.fby) / p.m) * p.t;
+            const vx = p.vx - ((fo.fex + fo.fbx) / p.m) * p.t;
+            graphPush(tr, 0, Math.hypot(vx, vy), vy, graphInField(p));
+        }
+        graphRecord(tr);
+        graphs.tracks.push(tr);
+        while (graphs.tracks.length > GRAPH_LINES) graphs.tracks.shift();
+    }
+
+    function graphClear() {
+        graphs.tracks = [];
+        graphs.counts = {};
+        graphs.slots = { pos: 0, neg: 0, neutral: 0 };
+        graphs.recTimer = 0;
+        graphs.dirty = true;
+        graphRefresh(true);
+    }
+
+    function graphsShown() {
+        return !!(graphs.charts && graphsBox && graphsBox.style.display !== 'none');
+    }
+
+    // Shades the times the reference particle spent in a field, and says what the band is where there's room
+    const graphBands = {
+        id: 'chGraphBands',
+        beforeDatasetsDraw(chart) {
+            const tr = graphs.view.ref;
+            if (!tr || tr.hidden || tr.t.length < 2) return;
+            const a = chart.chartArea;
+            const xs = chart.scales.x;
+            const c = graphColors();
+            const g = chart.ctx;
+            const n = tr.t.length;
+            const at = (t) => xs.getPixelForValue(t * graphs.view.f);
+            g.save();
+            g.beginPath();
+            g.rect(a.left, a.top, a.right - a.left, a.bottom - a.top);
+            g.clip();
+            let start = -1;
+            for (let j = 0; j <= n; j++) {
+                const on = j < n && tr.f[j] === 1;
+                if (on && start < 0) start = j;
+                if (on || start < 0) continue;
+                // (edges halfway between the points either side)
+                const x0 = at(start > 0 ? (tr.t[start - 1] + tr.t[start]) / 2 : tr.t[0]);
+                const x1 = at(j < n ? (tr.t[j - 1] + tr.t[j]) / 2 : tr.t[n - 1]);
+                start = -1;
+                if (x1 <= a.left || x0 >= a.right || x1 - x0 < 1) continue;
+                g.fillStyle = c.band;
+                g.fillRect(x0, a.top, x1 - x0, a.bottom - a.top);
+                const l = Math.max(x0, a.left);
+                const room = Math.min(x1, a.right) - l - 8;
+                g.font = `11px ${Chart.defaults.font.family}`;
+                const text = [`${tr.label} in field`, 'in field'].find((s) => g.measureText(s).width <= room);
+                if (text) {
+                    g.fillStyle = c.text;
+                    g.globalAlpha = 0.75;
+                    g.textAlign = 'left';
+                    g.textBaseline = 'top';
+                    g.fillText(text, l + 4, a.top + 3);
+                    g.globalAlpha = 1;
+                }
+            }
+            g.restore();
+        },
+    };
+
+    // What to do when there's nothing to plot
+    const graphEmpty = {
+        id: 'chGraphEmpty',
+        afterDraw(chart) {
+            if (graphs.tracks.length) return;
+            const a = chart.chartArea;
+            const g = chart.ctx;
+            g.save();
+            g.fillStyle = graphColors().text;
+            g.font = `13px ${Chart.defaults.font.family}`;
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText('Fire or drop a particle to plot it', (a.left + a.right) / 2, (a.top + a.bottom) / 2);
+            g.restore();
+        },
+    };
+
+    function graphFmt(v) {
+        return String(+v.toPrecision(3));
+    }
+
+    // A tick label with as many decimals as the spacing has, and never "-0.0"
+    function graphTickText(v, step) {
+        const d = step ? (String(+step.toPrecision(6)).split('.')[1] || '').length : 1;
+        return (Math.abs(v) < (step || 1) * 1e-6 ? 0 : v).toFixed(d);
+    }
+
+    function makeGraph(id, speed) {
+        const el = $(id);
+        if (!el || typeof Chart === 'undefined') return null;
+        const c = graphColors();
+        const axis = (title, extra) => Object.assign({
+            type: 'linear',
+            ticks: { color: c.text, maxTicksLimit: 7 },
+            grid: { color: c.grid },
+            title: { display: true, text: title, color: c.text },
+        }, extra);
+        return new Chart(el, {
+            type: 'line',
+            data: { datasets: [] },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false, parsing: false, normalized: true,
+                interaction: { mode: 'nearest', intersect: false },
+                plugins: {
+                    legend: {
+                        // Hide or show a particle's line on both graphs
+                        onClick: (e, item) => {
+                            const tr = graphs.tracks[item.datasetIndex];
+                            if (!tr) return;
+                            tr.hidden = !tr.hidden;
+                            graphs.dirty = true;
+                            graphRefresh(true);
+                        },
+                        // (a short stretch of each line, dashes and all, in the order the particles were launched)
+                        labels: {
+                            color: c.text, usePointStyle: true, pointStyleWidth: 26, boxHeight: 8,
+                            generateLabels: (chart) => Chart.defaults.plugins.legend.labels.generateLabels(chart).map((item) => {
+                                const d = chart.data.datasets[item.datasetIndex];
+                                return Object.assign(item, { lineDash: d.borderDash, lineWidth: d.borderWidth, lineCap: 'butt' });
+                            }),
+                            sort: (a, b) => a.datasetIndex - b.datasetIndex,
+                        },
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => (items.length ? `${graphFmt(items[0].parsed.x)} ${graphs.view.unit}` : ''),
+                            label: (item) => `${item.dataset.label}: ${graphFmt(item.parsed.y)} ${graphs.view.vUnit}`,
+                        },
+                    },
+                },
+                scales: {
+                    x: axis('Time since launch (µs)', { min: 0, max: 1 }),
+                    y: axis(speed ? 'Speed (m/s)' : 'Vertical velocity (m/s)', {
+                        min: speed ? 0 : -1, max: 1,
+                        ticks: { color: c.text, maxTicksLimit: 7, callback(v) { return graphTickText(v, this.options.ticks.stepSize); } },
+                    }),
+                },
+            },
+            plugins: [graphBands, graphEmpty],
+        });
+    }
+
+    // A tidy tick spacing at least v: 1, 2, 2.5 or 5 times a power of ten
+    function graphStep(v) {
+        if (!(v > 0)) return 1;
+        const b = Math.pow(10, Math.floor(Math.log10(v)));
+        return ([1, 2, 2.5, 5, 10].find((s) => v / b <= s * 1.0001) || 10) * b;
+    }
+
+    function graphRebuild() {
+        const c = graphColors();
+        const tracks = graphs.tracks;
+        // The axes follow the selected particle (or the newest) and the lines on the same timescale: an electron's
+        // whole flight is over before a proton has left the launcher, so with a proton selected the electron's line
+        // is a spike at the start that runs off the top
+        const ref = tracks.find((tr) => tr.p === selected) || tracks[tracks.length - 1] || null;
+        const scale = ref ? graphTimescale(ref.p) : 0;
+        const near = (tr) => !tr.hidden && (!ref || (graphTimescale(tr.p) / scale > 1 / 3 && graphTimescale(tr.p) / scale < 3));
+        let tMax = 0;
+        if (ref) {
+            // (the time to the end of the selected flight, or of a finished one: one at rest in a field goes on forever)
+            tMax = Math.max(ref.t[ref.t.length - 1] || 0, 0.25 * scale);
+            for (const tr of tracks) if (tr.done && near(tr)) tMax = Math.max(tMax, tr.t[tr.t.length - 1]);
+        }
+        if (!(tMax > 0)) tMax = 1e-6;
+        const unit = graphTimeUnit(tMax);
+        const xMax = graphNiceCeil(tMax * unit.f);
+        const tLimit = (xMax / unit.f) * 1.0001;
+        // Velocities in a power of ten of m/s, from what those lines do in view
+        let vMax = 0;
+        let vyLo = 0;
+        let vyHi = 0;
+        for (const tr of tracks) {
+            if (!near(tr)) continue;
+            for (let i = 0; i < tr.t.length && tr.t[i] <= tLimit; i++) {
+                vMax = Math.max(vMax, tr.v[i]);
+                vyLo = Math.min(vyLo, tr.vy[i]);
+                vyHi = Math.max(vyHi, tr.vy[i]);
+            }
+        }
+        const exp = vMax > 0 ? Math.floor(Math.log10(vMax)) : 0;
+        const vf = Math.pow(10, -exp);
+        const vUnit = exp === 0 ? 'm/s' : `×10${sup(exp)} m/s`;
+        // Speed from zero, so a steady speed is a flat line, not one magnified until rounding shows; vertical
+        // velocity with a little room either side of what it does
+        const vTop = vMax * vf * 1.06;
+        const vStep = graphStep(vTop / 5);
+        const yRanges = {
+            v: vMax > 0 ? { min: 0, max: Math.ceil(vTop / vStep - 1e-9) * vStep, step: vStep } : { min: 0, max: 1, step: 0.2 },
+            vy: { min: -1, max: 1, step: 0.5 },
+        };
+        if (vyHi > vyLo) {
+            const lo = vyLo * vf;
+            const hi = vyHi * vf;
+            const pad = 0.06 * (hi - lo);
+            const step = graphStep((hi - lo + 2 * pad) / 5);
+            yRanges.vy = { min: Math.floor((lo - pad) / step) * step, max: Math.ceil((hi + pad) / step) * step, step };
+        }
+        graphs.view = { ref, f: unit.f, unit: unit.name, vUnit, vf };
+        const names = tracks.map((tr) => tr.label).join(', ');
+        [[graphs.charts.speed, 'v', 'Speed'], [graphs.charts.vy, 'vy', 'Vertical velocity']].forEach(([chart, key, title]) => {
+            if (!chart) return;
+            const ds = chart.data.datasets;
+            ds.length = tracks.length;
+            tracks.forEach((tr, i) => {
+                const color = graphLineColor(tr, c);
+                const sel = tr.p === selected;
+                const vals = tr[key];
+                ds[i] = Object.assign(ds[i] || {}, {
+                    label: tr.label,
+                    data: tr.t.map((t, j) => ({ x: t * unit.f, y: vals[j] * vf })),
+                    borderColor: color,
+                    backgroundColor: color,
+                    borderDash: GRAPH_DASHES[tr.slot],
+                    borderWidth: sel ? 3 : 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 3,
+                    pointHitRadius: 6,
+                    pointStyle: 'line',
+                    tension: 0,
+                    hidden: tr.hidden,
+                    order: sel ? 0 : 1,
+                });
+            });
+            const sx = chart.options.scales.x;
+            const sy = chart.options.scales.y;
+            const yr = yRanges[key];
+            sx.max = xMax;
+            sx.title.text = `Time since launch (${unit.name})`;
+            sy.min = yr.min;
+            sy.max = yr.max;
+            sy.ticks.stepSize = yr.step;
+            // (on two lines when the plot is too short for one: fullscreen, phones)
+            const full = `${title} (${vUnit})`;
+            const area = chart.chartArea;
+            chart.ctx.save();
+            chart.ctx.font = `${Chart.defaults.font.size}px ${Chart.defaults.font.family}`;
+            const fits = !area || chart.ctx.measureText(full).width <= area.bottom - area.top;
+            chart.ctx.restore();
+            sy.title.text = fits ? full : [title, `(${vUnit})`];
+            chart.update('none');
+            const label = `Graph of ${title.toLowerCase()} against time since launch${names ? ` for ${names}` : ''}`;
+            if (chart.canvas.getAttribute('aria-label') !== label) chart.canvas.setAttribute('aria-label', label);
+        });
+    }
+
+    function graphRefresh(now) {
+        if (!graphsShown() || !graphs.dirty) return;
+        const t = performance.now();
+        if (!now && t - graphs.lastDraw < GRAPH_DRAW_S * 1000) return;
+        graphs.lastDraw = t;
+        graphs.dirty = false;
+        graphRebuild();
+    }
+
+    function graphRecolor() {
+        if (!graphs.charts) return;
+        const c = graphColors();
+        [graphs.charts.speed, graphs.charts.vy].forEach((chart) => {
+            if (!chart) return;
+            chart.options.plugins.legend.labels.color = c.text;
+            ['x', 'y'].forEach((axis) => {
+                chart.options.scales[axis].ticks.color = c.text;
+                chart.options.scales[axis].grid.color = c.grid;
+                chart.options.scales[axis].title.color = c.text;
+            });
+        });
+        graphs.dirty = true;
+        graphRefresh(true);
+    }
+
+    function setGraphsVisible(visible) {
+        if (!graphsBox) return;
+        graphsBox.style.display = visible ? 'block' : 'none';
+        document.body.classList.toggle('charts-visible', visible);
+        if (visible && !graphs.charts) graphs.charts = { speed: makeGraph('speedChart', true), vy: makeGraph('vyChart', false) };
+        if (visible) {
+            graphs.dirty = true;
+            graphRefresh(true);
+        }
+    }
+
+    // ---- Custom particle: charge -3e..+3e, mass on a log slider 0.0005 u..250 u
+    const CUSTOM_M_MIN = 0.0005; // u
+    const CUSTOM_M_MAX = 250;
+    const CUSTOM_STEPS = 1000;
+    const customQSlider = $('customQSlider');
+    const customMSlider = $('customMSlider');
+    const customGroup = $('customGroup');
+
+    const massToSlider = (u) => Math.round((CUSTOM_STEPS * Math.log(u / CUSTOM_M_MIN)) / Math.log(CUSTOM_M_MAX / CUSTOM_M_MIN));
+
+    // A slider position as a mass in u: a whole number when one is within half a step, so 2 u and 4 u can be
+    // set exactly; otherwise rounded to 3 significant figures
+    function sliderToMass(v) {
+        const u = CUSTOM_M_MIN * Math.pow(CUSTOM_M_MAX / CUSTOM_M_MIN, v / CUSTOM_STEPS);
+        const half = Math.pow(CUSTOM_M_MAX / CUSTOM_M_MIN, 0.5 / CUSTOM_STEPS);
+        const n = Math.round(u);
+        if (n >= 1 && u < n * half && u > n / half) return n;
+        return +u.toPrecision(3);
+    }
+
+    const customMassText = (u) => u.toPrecision(3);
+    const customChargeText = (q) => (q > 0 ? `+${q}` : q < 0 ? `−${-q}` : '0');
+
+    function setCustomType(q, u) {
+        const t = PARTICLE_TYPES.custom;
+        t.q = q;
+        t.m = u * U_MASS;
+        t.name = `Custom (${q === 0 ? 'no charge' : `${customChargeText(q)}e`}, ${customMassText(u)} u)`;
+        setText('customQVal', customChargeText(q));
+        setText('customMVal', customMassText(u));
+        if (customQSlider) customQSlider.setAttribute('aria-valuetext', q === 0 ? 'no charge' : `${q > 0 ? 'plus' : 'minus'} ${Math.abs(q)} e`);
+        if (customMSlider) customMSlider.setAttribute('aria-valuetext', `${customMassText(u)} atomic mass units`);
+        const swatch = $('customSwatch');
+        if (swatch) {
+            swatch.textContent = chargeLabel(q);
+            swatch.className = `ch-swatch ${q > 0 ? 'ch-swatch-pos' : q < 0 ? 'ch-swatch-neg' : 'ch-swatch-neutral'}`;
+            if (swatch.parentElement) swatch.parentElement.title = t.name;
+        }
+    }
+
+    // Moving either slider makes the custom particle what fires next
+    function customFromSliders() {
+        setCustomType(parseInt(customQSlider.value, 10), sliderToMass(parseFloat(customMSlider.value)));
+        setParticle('custom');
+    }
+
+    features.push({
+        init() {
+            if (customQSlider && customMSlider) {
+                const t = PARTICLE_TYPES.custom;
+                customQSlider.value = t.q;
+                customMSlider.value = massToSlider(t.m / U_MASS);
+                setCustomType(t.q, t.m / U_MASS);
+                customQSlider.addEventListener('input', customFromSliders);
+                customMSlider.addEventListener('input', customFromSliders);
+            }
+            // Choosing the Custom chip opens its settings
+            const chip = document.querySelector('#particleGroup .ch-chip[data-particle="custom"]');
+            if (chip && customGroup) {
+                chip.addEventListener('click', () => {
+                    const more = customGroup.closest('details');
+                    if (more && !more.open) more.open = true;
+                    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    customGroup.scrollIntoView({ block: 'nearest', behavior: smooth ? 'smooth' : 'auto' });
+                });
+            }
+            if (graphsToggle) {
+                graphsToggle.addEventListener('change', () => setGraphsVisible(graphsToggle.checked));
+                setGraphsVisible(graphsToggle.checked);
+            }
+            // Recolour the graphs when the light/dark theme changes
+            new MutationObserver(graphRecolor).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+            Object.assign(window.chargesSim, {
+                // Set the custom particle as its sliders would (and select it)
+                setCustom(q, u) {
+                    if (customQSlider) customQSlider.value = q;
+                    if (customMSlider) customMSlider.value = massToSlider(u);
+                    setCustomType(q, u);
+                    setParticle('custom');
+                },
+                sliderToMass,
+                graphs: {
+                    get tracks() {
+                        return graphs.tracks.map((tr) => ({ label: tr.label, slot: tr.slot, done: tr.done, hidden: tr.hidden, t: tr.t.slice(), v: tr.v.slice(), vy: tr.vy.slice(), f: tr.f.slice() }));
+                    },
+                    get view() { return { unit: graphs.view.unit, vUnit: graphs.view.vUnit, ref: graphs.view.ref && graphs.view.ref.label }; },
+                    refresh() {
+                        graphs.dirty = true;
+                        graphRefresh(true);
+                    },
+                },
+            });
+        },
+        reset() {
+            graphClear();
+        },
+        onSetup(name) {
+            graphClear();
+            // Thomson could see only the spot: no speeds or times, and the beam isn't a custom particle
+            const thomson = name === 'thomson';
+            const label = graphsToggle && graphsToggle.closest('label');
+            if (label) label.style.display = thomson ? 'none' : '';
+            if (thomson && graphsToggle && graphsToggle.checked) {
+                graphsToggle.checked = false;
+                setGraphsVisible(false);
+            }
+            if (customGroup) customGroup.hidden = thomson;
+        },
+        frame(realDt) {
+            if (settings.setup === 'thomson') return;
+            // New particles get a line (the oldest line goes)
+            for (const p of particles) if (!graphs.seen.has(p)) graphStart(p);
+            graphs.recTimer += realDt;
+            const due = graphs.recTimer >= GRAPH_REC_S;
+            if (due) graphs.recTimer = 0;
+            for (const tr of graphs.tracks) {
+                if (tr.done) continue;
+                const ended = tr.p.state === 'stopped' || tr.p.state === 'gone';
+                if (due || ended) graphRecord(tr);
+                if (ended) tr.done = true;
+            }
+            if (selected !== graphs.lastSelected) {
+                graphs.lastSelected = selected;
+                graphs.dirty = true;
+            }
+            graphRefresh(false);
+        },
+    });
 
 
     // ===================================================================== end [graphs-custom]

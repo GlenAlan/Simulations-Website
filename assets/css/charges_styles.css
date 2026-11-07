@@ -485,7 +485,10 @@ html.dark-mode .charges-sim {
 
 
 /* ---------- [graphs-custom] ---------- */
-
+/* Graphs: a little taller than the default, to leave the plot room under a legend of five particles */
+body:not(.sim-fullscreen-active) .charges-sim #charts-container .chart-box {
+    height: 260px;
+}
 
 /* ---------- end [graphs-custom] ---------- */
 
