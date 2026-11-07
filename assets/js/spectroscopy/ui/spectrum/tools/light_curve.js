@@ -19,7 +19,8 @@ const SPEED = 10;
 
 function dayText(phase) {
     const days = Math.round(phase);
-    return days === 0 ? 'at peak' : days < 0 ? `${-days} days before peak` : `${days} days after peak`;
+    const count = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
+    return days === 0 ? 'at peak' : days < 0 ? `${count(-days)} before peak` : `${count(days)} after peak`;
 }
 
 function mountSupernova(container, api) {
