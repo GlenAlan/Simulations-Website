@@ -542,12 +542,12 @@
         ctx.lineWidth = 1;
         ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
         ctx.setLineDash([]);
-        // Denser symbols for a stronger field
-        const cols = Math.round(4 + 8 * bFraction());
+        // Denser symbols for a stronger field, never closer than about 26 px
+        const cols = Math.min(Math.round(3 + 6 * bFraction()), Math.max(3, Math.floor((x1 - x0) / 26)));
         const spacing = (x1 - x0) / cols;
         const rows = Math.max(2, Math.round((y1 - y0) / spacing));
         const yStep = (y1 - y0) / rows;
-        const r = clamp(spacing * 0.2, 3, 7);
+        const r = clamp(spacing * 0.17, 3, 6.5);
         ctx.strokeStyle = pal.bSym;
         ctx.fillStyle = pal.bSym;
         ctx.lineWidth = 1.3;

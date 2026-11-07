@@ -141,13 +141,13 @@ html.dark-mode .charges-sim {
     font-size: 0.85em;
 }
 
-/* A strength slider with its direction button */
+/* A strength slider with its direction button. No min-width: 0 here, so when two of them don't fit beside the
+   field switch (Both fields) they wrap onto a row of their own instead of squeezing their values into the buttons. */
 .ch-strength {
     display: flex;
     align-items: center;
     gap: 0.6em;
     flex: 1 1 20em;
-    min-width: 0;
 }
 
 .ch-strength[hidden] {
@@ -159,7 +159,6 @@ html.dark-mode .charges-sim {
     align-items: center;
     gap: 0.7em;
     flex: 1 1 auto;
-    min-width: 0;
     margin: 0;
     font-size: 1em;
     font-weight: 400;
@@ -181,7 +180,7 @@ html.dark-mode .charges-sim {
     appearance: none;
     display: block;
     flex: 1 1 auto;
-    min-width: 5em;
+    min-width: 7em;
     height: var(--ch-btn-h);
     margin: 0;
     padding: 0;
