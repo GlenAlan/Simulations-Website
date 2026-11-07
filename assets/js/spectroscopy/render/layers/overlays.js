@@ -388,8 +388,12 @@ export function createOverlaysLayer(engine, app) {
         const p = engine.project(at.az, at.alt, at.depth);
         if (!p) return;
         const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr) * parallaxFactor(body.depth, frame.fov);
-        const point = spread < POINT_FRAME_PX;
-        const r = point ? POINT_FRAME_PX : spread * 1.04;
+        // A bright star's glare spreads well past its point: the frame goes round that, not inside it. Magnitudes above
+        // where a star starts to be drawn, as stars.js has them
+        const glare = entity === body ? Math.max(0, 1.0857 * Math.log(Math.max(engine.glowOf(body), 0.05)) + 3.25 - 3) * 2.2 : 0;
+        const pointR = POINT_FRAME_PX + Math.min(glare, 24);
+        const point = spread < pointR;
+        const r = point ? pointR : spread * 1.12;
         // Off the view, unless its frame still reaches in. Wider than the view, and the view is all it: nothing to mark.
         if (p.x + r < 0 || p.x - r > frame.width || p.y + r < 0 || p.y - r > frame.height) return;
         if ((p.x - r < 0 && p.x + r > frame.width) || (p.y - r < 0 && p.y + r > frame.height)) return;
@@ -400,7 +404,7 @@ export function createOverlaysLayer(engine, app) {
         const top = Math.max(inset, p.y - r);
         const bottom = Math.min(frame.height - inset, p.y + r);
         if (right - left < 8 || bottom - top < 8) return;
-        const arm = point ? 4.5 : Math.max(7, Math.min(22, (right - left) * 0.16, (bottom - top) * 0.16));
+        const arm = point ? 4.5 + (r - POINT_FRAME_PX) * 0.2 : Math.max(7, Math.min(22, (right - left) * 0.16, (bottom - top) * 0.16));
 
         const trace = () => {
             ctx.beginPath();
