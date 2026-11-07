@@ -5,8 +5,8 @@
 // at (Recent). universe.allCodes() is never listed, so a code can't be fished out by typing its first letters.
 //
 // app.goto = { goto(code, opts), recent(), focus(), linkFor(code, band) }
-//   goto(code, { band }) sets the band if given, then flies. Its promise gives true once the object is selected, and
-//   false if the code is unknown or the flight was called off or replaced by a newer one.
+//   goto(code, { band }) sets the band if given, then flies. Its promise gives true when the flight is over and the
+//   object selected, and false if the code is unknown or the flight was called off or replaced by a newer one.
 // Bus events sent: 'goto' { code } as a flight sets off, 'highlight' { code } when a cluster member is reached.
 
 import { bus, select, setBand, setLayer } from '../core/state.js';
