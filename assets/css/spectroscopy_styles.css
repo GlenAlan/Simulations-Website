@@ -3378,6 +3378,15 @@ body.sim-panel-sheet .spectro-instrument.has-tool:not(.has-own-figure) .spectro-
     display: none;
 }
 
+/* It takes the place of the field of view for its few seconds, so the bar stays clear of the legend */
+.spectro-zoom-hint:not([hidden]) {
+    margin-left: -0.3em;
+}
+
+.spectro-zoom:has(.spectro-zoom-hint:not([hidden])) .spectro-zoom-fov {
+    display: none;
+}
+
 /* Zooming is the way in: the buttons for it step back */
 .spectro-bar-button.spectro-bar-quiet {
     font-weight: 400;
