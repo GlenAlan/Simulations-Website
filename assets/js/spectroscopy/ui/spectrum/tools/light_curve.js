@@ -175,6 +175,7 @@ function mountSupernova(container, api) {
 
 const ORBITS_SHOWN = 2;
 const LAST_SLIDER_FRACTION = 0.9995;
+const LEAST_SPAN = 0.1;          // The least share of the light the brightness axis spans
 
 function shortDuration(days) {
     return days < 2 ? `${sig(days * 24, 2)} hours` : `${sig(days, 2)} days`;
@@ -212,8 +213,10 @@ function mountEclipse(container, api) {
         yTitle: 'Brightness',
         range: () => {
             if (!curve) return { xLo: 0, xHi: 1, yLo: 0, yHi: 1 };
-            const dip = 1 - curve.lowest;
-            return { xLo: 0, xHi: ORBITS_SHOWN * curve.period_days, yLo: curve.lowest - 0.15 * dip, yHi: 1 + 0.15 * dip };
+            // Never less than a tenth of the light from top to bottom, so that a dip of a few hundredths of a per cent looks as
+            // slight as it is, and not as deep as one of 30%
+            const dip = Math.max(1 - curve.lowest, LEAST_SPAN);
+            return { xLo: 0, xHi: ORBITS_SHOWN * curve.period_days, yLo: 1 - 1.15 * dip, yHi: 1 + 0.15 * dip };
         },
         paint(ctx, frame, rect, sx, sy) {
             if (!curve) return;
