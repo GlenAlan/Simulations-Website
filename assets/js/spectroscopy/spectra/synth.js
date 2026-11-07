@@ -63,12 +63,10 @@ function thermalBody(T, grid, snr, note) {
 function buildSpectrum(entity, grid, opts) {
     const o = { ...opts };
     switch (entity.kind) {
-    case 'planet': {
-        const host = parentOf(entity, opts);
-        return planetSpectrum(entity, grid, o, host || undefined, null);
-    }
+    case 'planet':
+        return planetSpectrum(entity, grid, o, parentOf(entity, opts), null);
     case 'home_planet':
-        return planetSpectrum(entity.planet, grid, o, undefined, entity);
+        return planetSpectrum(entity.planet, grid, o, null, entity);
     case 'rogue_planet':
         return roguePlanetSpectrum(entity, grid);
     case 'comet':
@@ -82,8 +80,8 @@ function buildSpectrum(entity, grid, opts) {
     case 'quasar':
         return quasarSpectrum(entity, grid);
     case 'neutron_star':
-        return thermalBody(entity.neutron_star.teff_K ?? 1e6, grid, SNR_MIN + 2,
-            'This object is far too faint to show any lines: only a very faint, hot thermal glow, rising towards the ultraviolet. Neutron stars are better found in radio and X-rays.');
+        return thermalBody(entity.neutron_star.teff_K ?? 1e6, grid, snrFromFlux(effectiveFlux(entity.brightness)),
+            'This object is too faint to show any lines: only a very faint, hot thermal glow, rising towards the ultraviolet. Neutron stars are better found in radio and X-rays.');
     default: {
         const made = starSpectrum(entity, grid, o);
         return made || thermalBody(6000, grid, SNR_MIN, 'This object has no measurable spectrum of its own.');
@@ -199,17 +197,11 @@ export function autoRange(entity) {
 
 function trueFlux(entity, opts) {
     if (entity.kind === 'supernova') {
-        const phase = (entity.supernova.phase0_days ?? 0) + (opts.t ?? 0);
-        const mag = supernovaMag(entity, phase);
-        return Number.isFinite(mag) ? MAG0_FLUX_WM2 * 10 ** (-0.4 * mag) : 0;
-    }
-    if (entity.kind === 'home_planet') return effectiveFlux(entity.brightness);
-    if (entity.kind === 'planet' && !entity.brightness) {
-        // Starlight caught by the planet and sent back: only what's reflected is worth a reading at this distance
-        const host = parentOf(entity, opts);
-        const earthRadiusAU = 4.26e-5;
-        const hostFlux = host ? fluxOf(host, opts) : 0;
-        return hostFlux * (entity.albedo ?? 0.3) * (((entity.radius_Rearth ?? 1) * earthRadiusAU) / (entity.orbit_AU || 1)) ** 2;
+        // The stored flux is for t = 0; it follows the light curve from there
+        const mag = supernovaMag(entity, opts.t ?? 0);
+        if (!Number.isFinite(mag)) return 0;
+        const now = supernovaMag(entity, 0);
+        return (entity.brightness?.flux_Wm2 ?? MAG0_FLUX_WM2 * 10 ** (-0.4 * now)) * 10 ** (-0.4 * (mag - now));
     }
     if (entity.brightness && entity.brightness.flux_Wm2 !== undefined) return entity.brightness.flux_Wm2;
     return fluxOf(entity, opts);

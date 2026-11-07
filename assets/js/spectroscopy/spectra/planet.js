@@ -8,24 +8,26 @@ import { C_KMS } from '../core/phys.js';
 import { LINES } from '../data/lines.js';
 import { MOLECULES } from '../data/molecules.js';
 import { bb, planckPeakInRange, makeProfile, mulLine, mulBand, snrFromFlux, effectiveFlux } from './kernel.js';
-import { renderStars, starPartsOf, parentOf, SOLAR_STAR, fluxOf } from './stellar.js';
+import { renderStars, starPartsOf, SOLAR_STAR } from './stellar.js';
 
 const SOLAR_RADIUS_AU = 0.00465;
 
-// Column of gas (ppm x bar) that gives a band half its full strength. Bands differ hugely in strength: a few ppm of
-// methane shows at 3.3 um, while oxygen needs tens of thousands. Strength then grows slowly, as a saturating band does.
+// Column of gas (ppm x bar) that gives a band about two thirds of its full strength. Bands differ hugely in strength: a few
+// ppm of methane shows at 3.3 um, while oxygen needs tens of thousands. Strength then grows slowly, as a saturating band does.
 const HALF_COLUMN = {
-    H2O: 3000, CO2: 20000, CH4: 5, NH3: 100, O2: 50000, O3: 1, CO: 100, SO2: 100, N2O: 1, TiO: 1, VO: 1, SiO: 10, H2S: 100
+    H2O: 3000, CO2: 20000, CH4: 5, NH3: 100, O2: 50000, O3: 1, CO: 100, SO2: 100, N2O: 1, TiO: 1, SiO: 10
 };
 
-// A column of gas in ppm x bar, from mixing ratio and how much atmosphere the light passes through. In a giant, light
-// only reaches down to the cloud tops, so its deep pressure doesn't count.
+// In a giant, light only reaches down to the cloud tops, so its deep pressure doesn't count
 function bandStrength(gas, ppm, pressureBar) {
     const column = ppm * Math.min(pressureBar, 5);
     return 1 - Math.exp(-Math.sqrt(column / (HALF_COLUMN[gas] ?? 1000)));
 }
 
 const ATOM_SPECIES = { Na: 'Na I', K: 'K I', Li: 'Li I', Ca: 'Ca I', Fe: 'Fe I' };
+
+// What a surface's ice field means, as the molecules that show it
+const ICE_MOLECULES = { water: ['H2O_ice'], methane_nitrogen: ['CH4_ice', 'N2_ice'], H2O: ['H2O_ice'], CH4: ['CH4_ice'] };
 
 function gasesOf(planet) {
     const out = new Map();
@@ -34,7 +36,16 @@ function gasesOf(planet) {
     return out;
 }
 
-// A surface or cloud deck's reflectance at a wavelength, before scaling to the planet's albedo
+// A surface's reflectance at a wavelength, by its rock type
+function groundReflectance(rock, lam) {
+    if (rock === 'iron_oxide') return 0.1 + 0.25 * Math.min(1, Math.max(0, (lam - 420) / 330));
+    if (rock === 'basalt') return 0.09 + 0.02 * Math.min(1, lam / 1000);
+    if (rock === 'iron') return 0.12 + 0.05 * Math.min(1, lam / 1500);
+    if (rock === 'molten') return 0.05;
+    return 0.24;
+}
+
+// Reflectance of the surface and clouds together, before scaling to the planet's albedo
 function reflectanceModel(planet) {
     const surface = planet.surface || {};
     const clouds = planet.clouds || {};
@@ -42,24 +53,22 @@ function reflectanceModel(planet) {
     const ocean = surface.ocean_fraction || 0;
     const land = 1 - ocean;
     const cover = Math.min(0.95, clouds.cover || 0);
-    const rock = String(surface.rock || 'silicate').toLowerCase();
+    const rock = surface.rock || 'silicate';
     const redEdge = surface.red_edge_nm;
     const iced = Boolean(surface.ice);
-    const blueCloud = clouds.kind === 'H2SO4';
-    const rayleigh = 0.14 * Math.min(1, pressure);
+    const blueDim = clouds.kind === 'H2SO4';
+    const dusty = clouds.kind === 'dust';
+    const giant = !surface.rock && pressure >= 10;
+    const rayleigh = (giant ? 0.3 : 0.14) * Math.min(1, pressure);
 
     return (lam) => {
         let ground;
         if (iced) {
             ground = 0.8;
-        } else if (rock.includes('iron') || rock.includes('oxide') || rock.includes('rust')) {
-            ground = 0.1 + 0.25 * Math.min(1, Math.max(0, (lam - 420) / 330));
-        } else if (rock.includes('basalt')) {
-            ground = 0.09 + 0.02 * Math.min(1, lam / 1000);
+        } else if (giant) {
+            ground = 0.5;
         } else {
-            ground = 0.24;
-        }
-        if (!iced) {
+            ground = groundReflectance(rock, lam);
             // Iron-bearing minerals dip broadly near 1 um and again near 2 um
             const dip1 = (lam - 1000) / 170;
             const dip2 = (lam - 2000) / 300;
@@ -67,8 +76,10 @@ function reflectanceModel(planet) {
         }
         let below = land * ground + ocean * (0.05 + 0.02 * Math.min(1, 450 / lam));
         // Life's red edge: a step up where vegetation stops absorbing
-        if (redEdge) below += land * 0.45 / (1 + Math.exp((redEdge - lam) / 9));
-        const deck = blueCloud ? 0.85 * Math.min(1, Math.max(0.25, (lam - 300) / 200)) : 0.8;
+        if (redEdge) below += (land * 0.45) / (1 + Math.exp((redEdge - lam) / 9));
+        let deck = 0.8;
+        if (blueDim) deck = 0.85 * Math.min(1, Math.max(0.25, (lam - 300) / 200));
+        if (dusty) deck = groundReflectance('iron_oxide', lam) * 1.3;
         const air = rayleigh * (450 / lam) ** 4;
         return cover * deck + (1 - cover) * below + air;
     };
@@ -87,42 +98,37 @@ function albedoFunction(planet) {
     return (lam) => scale * model(lam);
 }
 
-// Ice on the surface, as MOLECULES names it
-function iceKey(ice) {
-    const name = String(ice);
-    return [`${name}_ice`, `ice_${name}`, `${name}ice`, name].find((key) => MOLECULES[key]) || null;
-}
-
-// Absorption by the planet's own gases and ices, written into A, and the bands and lines it can show
+// Absorption by the planet's own gases and ices, written into A, and the features that are there to be seen
 function drawPlanetAbsorption(A, grid, planet, factor, gases = gasesOf(planet), pressure = planet.pressure_bar ?? 0) {
     const features = [];
     gases.forEach((ppm, gas) => {
+        if (pressure <= 0) return;
         const molecule = MOLECULES[gas];
         const atom = ATOM_SPECIES[gas];
-        if (molecule && pressure > 0) {
+        if (molecule) {
             const strength = bandStrength(gas, ppm, pressure);
             molecule.bands.forEach((band) => {
                 mulBand(A, grid, band, strength, factor);
                 features.push({ rest_nm: band.c, species: gas, label: molecule.label || gas, depth: strength * (band.d ?? 1), band: true, width_nm: band.w });
             });
         }
-        if (atom && LINES[atom] && pressure > 0) {
-            // Atoms in a hot atmosphere: narrow cores on far-reaching pressure wings
+        if (atom && LINES[atom]) {
+            // Atoms in a hot atmosphere: only the ground-state lines, narrow cores on far-reaching pressure wings
             const strength = 0.95 * (1 - Math.exp(-Math.sqrt(ppm * Math.min(pressure, 5))));
             const prof = makeProfile({ sigma: 3, a: 350, R: grid.R });
             LINES[atom].forEach((line) => {
-                const d = strength * Math.sqrt(line.s ?? 1);
+                if ((line.ei ?? 0) > 0.1 || line.forbidden) return;
+                const d = strength * (line.s ?? 1);
                 mulLine(A, grid, line.w * factor, d, prof);
-                features.push({ rest_nm: line.w, species: atom, label: line.label || atom, depth: d * prof.peak });
+                features.push({ rest_nm: line.w, species: atom, label: line.label || `${atom} ${line.w.toFixed(1)}`, depth: d * prof.peak });
             });
         }
     });
     const surface = planet.surface || {};
-    const ices = [].concat(surface.ice || []);
-    ices.forEach((ice) => {
-        const key = iceKey(ice);
-        if (!key) return;
+    const iceList = ICE_MOLECULES[surface.ice] || [];
+    iceList.forEach((key) => {
         const molecule = MOLECULES[key];
+        if (!molecule) return;
         molecule.bands.forEach((band) => {
             mulBand(A, grid, band, 0.8, factor);
             features.push({ rest_nm: band.c, species: key, label: molecule.label || key, depth: 0.8 * (band.d ?? 1), band: true, width_nm: band.w });
@@ -137,15 +143,16 @@ function withObservedWavelengths(features, grid, factor) {
         .filter((f) => f.obs_nm >= grid.lo && f.obs_nm <= grid.hi);
 }
 
-// Planets are very faint next to their stars, but a Year 12 student has to be able to find their bands, so these
-// spectra are as if from a telescope built for the job.
-const PLANET_MIN_SNR = 120;
+// Planets are very faint next to their stars, but a student has to be able to find their bands, so these spectra are as
+// if from a telescope built for the job. Only the brightest get better than this.
+const PLANET_MIN_SNR = 150;
 
+// hostEntity is the planet's host, or null for a home planet, which reflects a Sun-like star
 export function planetSpectrum(planet, grid, opts, hostEntity, ownBody) {
-    const isHome = !hostEntity;
-    const parts = isHome
-        ? [{ star: SOLAR_STAR, factor: 1 + (ownBody?.radial_velocity_kms ?? 0) / C_KMS, weight: 1, code: 'host' }]
-        : starPartsOf(hostEntity, { ...opts, parts: null });
+    const parts = hostEntity
+        ? starPartsOf(hostEntity, { ...opts, parts: null })
+        : [{ star: SOLAR_STAR, factor: 1 + (ownBody?.radial_velocity_kms ?? 0) / C_KMS, weight: 1, code: 'host' }];
+    if (!parts.length) parts.push({ star: SOLAR_STAR, factor: 1, weight: 1, code: 'host' });
     const host = renderStars(parts, grid);
     const factor = parts.length === 1 ? parts[0].factor : 1 + (hostEntity?.radial_velocity_kms ?? 0) / C_KMS;
     const a = planet.orbit_AU || 1;
@@ -186,12 +193,12 @@ export function planetSpectrum(planet, grid, opts, hostEntity, ownBody) {
     let note = 'Reflected starlight, then the planet\'s own heat in the infrared. Dips that the star does not have belong to the planet.';
     if (opts.subtractHost) {
         // Reflectance: 0.3 here means the planet returns 30% of the starlight. The host's lines cancel exactly.
-        note = 'The host star\'s light has been divided out. Flux here is the fraction of starlight the planet returns, so only its own features remain. Its own heat lifts the far right.';
+        note = 'The host star\'s light has been divided out, so only the planet\'s own features remain. Flux here is the fraction of starlight the planet returns. Its own heat lifts the far right.';
         for (let i = 0; i < n; i++) {
-            const hostLight = hostScale * Math.max(1e-30, host.flux[i]);
-            const hostCont = hostScale * Math.max(1e-30, host.continuum[i]);
-            flux[i] = albedo(wl[i] / factor) * A[i] + (thermal[i] * A[i]) / hostLight;
-            continuum[i] = baseAlbedo + thermal[i] / hostCont;
+            const hostLight = Math.max(1e-300, hostScale * host.flux[i]);
+            const hostCont = Math.max(1e-300, hostScale * host.continuum[i]);
+            flux[i] = albedo(wl[i] / factor) * A[i] + Math.min(1e3, (thermal[i] * A[i]) / hostLight);
+            continuum[i] = baseAlbedo + Math.min(1e3, thermal[i] / hostCont);
         }
     } else {
         for (let i = 0; i < n; i++) {
@@ -210,14 +217,12 @@ export function planetSpectrum(planet, grid, opts, hostEntity, ownBody) {
         });
     }
 
-    const brightness = effectiveFlux(planet.brightness || ownBody?.brightness);
-    const flux0 = brightness || (hostEntity ? fluxOf(hostEntity) * baseAlbedo * ((planet.radius_Rearth ?? 1) * 4.26e-5 / a) ** 2 : 0);
     return {
         flux,
         continuum,
         lines,
-        fRef: 1,
-        snr: Math.max(PLANET_MIN_SNR, snrFromFlux(flux0)),
+        fRef: opts.subtractHost ? baseAlbedo : 1,
+        snr: Math.max(PLANET_MIN_SNR, snrFromFlux(effectiveFlux(planet.brightness || ownBody?.brightness))),
         mode: 'reflection',
         note
     };
@@ -225,16 +230,16 @@ export function planetSpectrum(planet, grid, opts, hostEntity, ownBody) {
 
 // Rogue planets have no star: only their own heat, seen through their own gases
 const ROGUE_GASES = {
-    gas_giant: { H2O: 20, CH4: 3000, NH3: 300 },
-    sub_neptune: { H2O: 300, CH4: 2000, CO2: 200 },
-    ice_dwarf: { CH4: 500, H2O: 20 }
+    gas_giant: { H2O: 200, CH4: 3000 },
+    sub_neptune: { H2O: 100, CH4: 10000 },
+    ice_dwarf: { CH4: 70000, CO: 30000 }
 };
 
 export function roguePlanetSpectrum(body, grid) {
     const rogue = body.rogue_planet;
     const T = rogue.teff_K ?? 200;
     const factor = 1 + (body.radial_velocity_kms ?? 0) / C_KMS;
-    const planet = { atmosphere_pct: rogue.atmosphere_pct, atmosphere_ppm: rogue.atmosphere_ppm, surface: rogue.surface, pressure_bar: rogue.pressure_bar ?? 5 };
+    const planet = { atmosphere_pct: rogue.atmosphere_pct, atmosphere_ppm: rogue.atmosphere_ppm, surface: rogue.surface, pressure_bar: rogue.pressure_bar ?? 1 };
     const gases = gasesOf(planet);
     if (!gases.size) Object.entries(ROGUE_GASES[rogue.type] || ROGUE_GASES.gas_giant).forEach(([gas, ppm]) => gases.set(gas, ppm));
 
@@ -258,5 +263,3 @@ export function roguePlanetSpectrum(body, grid) {
         note: 'No visible light: this planet has no star to reflect, so it only glows faintly in the infrared from its own heat. Its peak lies beyond 5 µm.'
     };
 }
-
-export { parentOf };

@@ -6,6 +6,7 @@
 
 import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, C_KMS, C_MS, H, K_B, WIEN_B } from '../core/phys.js';
 import { hashString } from '../core/rng.js';
+import { bandShape, bandRange } from '../data/molecules.js';
 
 export const FWHM_PER_SIGMA = 2.35482;
 const LN2 = Math.LN2;
@@ -190,44 +191,11 @@ export function addLine(F, grid, obsNm, amp, prof) {
 
 // ---- Molecular bands ----
 
-// c = band centre (nm), w = full width (nm), shape:
-//   'gauss': a smooth dip; 'rot': the two lobes of a rotation-vibration band with a gap at the centre;
-//   'edge': a sharp band head with absorption fading away from it. Heads are on the blue side and fade to the red,
-//   as TiO's do, unless the band says head: 'red' (as C2's and CN's do).
-export function bandShape(band, lambdaNm) {
-    const { c, w } = band;
-    const shape = band.shape || 'gauss';
-    if (shape === 'rot') {
-        const lobe = (Math.abs(lambdaNm - c) - w / 4) / (w / 5.5);
-        return Math.exp(-0.5 * lobe * lobe);
-    }
-    if (shape === 'edge') {
-        const redHead = band.head === 'red';
-        const head = redHead ? c + w / 2 : c - w / 2;
-        const away = redHead ? head - lambdaNm : lambdaNm - head;
-        const sharp = 0.015 * w;
-        if (away < 0) {
-            const u = away / sharp;
-            return Math.exp(-0.5 * u * u);
-        }
-        return Math.exp(-away / (0.35 * w));
-    }
-    const u = (lambdaNm - c) / (w / FWHM_PER_SIGMA);
-    return Math.exp(-0.5 * u * u);
-}
-
-function bandSpan(band) {
-    if ((band.shape || 'gauss') === 'edge') {
-        return band.head === 'red'
-            ? [band.c + band.w / 2 - 2.4 * band.w, band.c + band.w / 2 + 0.06 * band.w]
-            : [band.c - band.w / 2 - 0.06 * band.w, band.c - band.w / 2 + 2.4 * band.w];
-    }
-    return [band.c - 1.8 * band.w, band.c + 1.8 * band.w];
-}
+// bandShape and bandRange are the molecules' own, so that plots and spectra agree on what each shape means.
 
 // Calls back with each pixel index and rest wavelength a band reaches. `factor` is 1 + z for the object carrying it.
 function eachBandPixel(grid, band, factor, fn) {
-    const [a, b] = bandSpan(band);
+    const [a, b] = bandRange(band);
     const lo = Math.max(0, Math.ceil((Math.log(a * factor) - grid.lnLo) / grid.step));
     const hi = Math.min(grid.n - 1, Math.floor((Math.log(b * factor) - grid.lnLo) / grid.step));
     for (let i = lo; i <= hi; i++) fn(i, grid.wl[i] / factor);
@@ -266,7 +234,7 @@ export function gaussAt(seed, bin) {
 const SNR_PER_ROOT_FLUX = 6.3e7;
 export const SNR_MIN = 6;
 export const SNR_MAX = 800;
-export const MAG0_FLUX_WM2 = 2.518e-8;
+export const MAG0_FLUX_WM2 = 2.5e-8;
 
 export function snrFromFlux(fluxWm2) {
     return Math.min(SNR_MAX, Math.max(SNR_MIN, SNR_PER_ROOT_FLUX * Math.sqrt(Math.max(0, fluxWm2))));

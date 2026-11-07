@@ -8,7 +8,7 @@
 
 import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, C_KMS, fluxFromLuminosity, wienPeakNm } from '../core/phys.js';
 import { app } from '../core/state.js';
-import { LINES } from '../data/lines.js';
+import { LINES, LINE_INFO } from '../data/lines.js';
 import { MOLECULES } from '../data/molecules.js';
 import { componentStates } from '../data/orbits.js';
 import { bb, planckPeak, planckPeakInRange, makeProfile, mulLine, mulBand, effectiveFlux, snrFromFlux } from './kernel.js';
@@ -22,60 +22,49 @@ function bell(T, peak, cool, hot) {
     return Math.exp((-x * x) / (2 * w * w));
 }
 
-// Peak K, cool and hot widths (dex), strength at the peak, atomic mass, Lorentz half-width at log g = 4.44 (km/s),
-// and how steeply that width follows gravity. Hydrogen's wings come from electrons, so they follow gravity less steeply.
-const row = (T, cool, hot, amp, m, a, k = 0.5) => ({ T, cool, hot, amp, m, a, k });
+// Peak K, cool and hot widths (dex), strength at the peak, Lorentz half-width at log g = 4.44 (km/s), and how steeply that
+// width follows gravity. Hydrogen's wings come from electrons, so they follow gravity less steeply than a metal line's.
+const row = (T, cool, hot, amp, a, k = 0.5) => ({ T, cool, hot, amp, a, k });
 const SPECIES = {
-    'H I': row(9500, 0.2, 0.32, 0.95, 1, 300, 0.22),
-    'He I': row(20000, 0.085, 0.16, 0.7, 4, 70, 0.3),
-    'He II': row(45000, 0.1, 0.25, 0.6, 4, 90, 0.3),
-    'Li I': row(4200, 0.1, 0.1, 0.15, 7, 2),
-    'C I': row(7500, 0.1, 0.12, 0.35, 12, 3),
-    'C II': row(18000, 0.09, 0.1, 0.35, 12, 4),
-    'C III': row(30000, 0.08, 0.1, 0.4, 12, 4),
-    'C IV': row(42000, 0.09, 0.14, 0.55, 12, 5),
-    'N I': row(9000, 0.09, 0.1, 0.3, 14, 3),
-    'N II': row(22000, 0.08, 0.09, 0.35, 14, 4),
-    'N III': row(34000, 0.08, 0.1, 0.4, 14, 4),
-    'N IV': row(40000, 0.08, 0.12, 0.4, 14, 4),
-    'N V': row(45000, 0.08, 0.14, 0.5, 14, 5),
-    'O I': row(7500, 0.12, 0.1, 0.5, 16, 3),
-    'O II': row(25000, 0.07, 0.09, 0.4, 16, 4),
-    'O III': row(38000, 0.07, 0.1, 0.35, 16, 4),
-    'Na I': row(3800, 0.13, 0.16, 0.95, 23, 8),
-    'Mg I': row(4500, 0.13, 0.16, 0.75, 24, 4),
-    'Mg II': row(9500, 0.16, 0.16, 0.6, 24, 6),
-    'Al I': row(4500, 0.12, 0.14, 0.4, 27, 3),
-    'Si I': row(5000, 0.12, 0.12, 0.3, 28, 3),
-    'Si II': row(12000, 0.12, 0.12, 0.45, 28, 4),
-    'Si III': row(20000, 0.08, 0.1, 0.4, 28, 4),
-    'Si IV': row(28000, 0.07, 0.1, 0.45, 28, 5),
-    'S II': row(15000, 0.1, 0.1, 0.2, 32, 3),
-    'K I': row(3200, 0.12, 0.12, 0.7, 39, 6),
-    'Ca I': row(3700, 0.11, 0.14, 0.75, 40, 4),
-    'Ca II': row(5000, 0.25, 0.13, 0.97, 40, 4),
-    'Sc II': row(6000, 0.12, 0.12, 0.25, 45, 2.5),
-    'Ti I': row(3500, 0.12, 0.1, 0.35, 48, 2.5),
-    'Ti II': row(6500, 0.13, 0.12, 0.35, 48, 2.5),
-    'V I': row(3500, 0.12, 0.1, 0.25, 51, 2.5),
-    'Cr I': row(4200, 0.12, 0.12, 0.45, 52, 2.5),
-    'Cr II': row(7500, 0.12, 0.12, 0.3, 52, 2.5),
-    'Mn I': row(4200, 0.12, 0.12, 0.45, 55, 2.5),
-    'Fe I': row(4500, 0.13, 0.15, 0.65, 56, 2),
-    'Fe II': row(7000, 0.13, 0.13, 0.5, 56, 2),
-    'Ni I': row(4800, 0.12, 0.13, 0.4, 59, 2),
-    'Sr II': row(5500, 0.13, 0.12, 0.4, 88, 2),
-    'Ba II': row(5000, 0.13, 0.12, 0.35, 137, 2)
+    'H I': row(9500, 0.2, 0.32, 0.95, 300, 0.22),
+    'He I': row(20000, 0.085, 0.16, 0.8, 70, 0.3),
+    'He II': row(45000, 0.1, 0.25, 0.75, 90, 0.3),
+    'Li I': row(4200, 0.1, 0.1, 0.15, 2),
+    'C I': row(7500, 0.1, 0.12, 0.45, 3),
+    'C II': row(18000, 0.09, 0.1, 0.5, 4),
+    'C III': row(30000, 0.08, 0.1, 0.55, 4),
+    'C IV': row(42000, 0.09, 0.14, 0.6, 5),
+    'N I': row(9000, 0.09, 0.1, 0.4, 3),
+    'N II': row(22000, 0.08, 0.09, 0.5, 4),
+    'N III': row(34000, 0.08, 0.1, 0.55, 4),
+    'N V': row(45000, 0.08, 0.14, 0.6, 5),
+    'O I': row(7500, 0.12, 0.1, 0.7, 3),
+    'O II': row(25000, 0.07, 0.09, 0.55, 4),
+    'O III': row(38000, 0.07, 0.1, 0.55, 4),
+    'Na I': row(3800, 0.13, 0.16, 0.95, 8),
+    'Mg I': row(4500, 0.13, 0.16, 0.85, 4),
+    'Mg II': row(9500, 0.16, 0.16, 0.8, 6),
+    'Si I': row(5000, 0.12, 0.12, 0.5, 3),
+    'Si II': row(12000, 0.12, 0.12, 0.7, 4),
+    'Si III': row(20000, 0.08, 0.1, 0.55, 4),
+    'Si IV': row(28000, 0.07, 0.1, 0.6, 5),
+    'K I': row(3200, 0.12, 0.12, 0.8, 6),
+    'Ca I': row(3700, 0.11, 0.14, 0.85, 4),
+    'Ca II': row(5000, 0.25, 0.13, 0.97, 4),
+    'Ti I': row(3500, 0.12, 0.1, 0.6, 2),
+    'Ti II': row(6500, 0.13, 0.12, 0.6, 2),
+    'Fe I': row(4500, 0.13, 0.15, 0.85, 2),
+    'Fe II': row(7000, 0.13, 0.13, 0.7, 2)
 };
 
 // The few strong lines whose wings run far past a normal metal line's: [species, rest nm, Lorentz half-width (km/s)]
 const WIDE_LINES = [
-    ['Ca II', 393.37, 500], ['Ca II', 396.85, 420], ['Ca II', 849.8, 60], ['Ca II', 854.21, 120], ['Ca II', 866.21, 90],
-    ['Ca I', 422.67, 60], ['Na I', 589.0, 16], ['Na I', 589.59, 13], ['K I', 766.49, 20], ['K I', 769.9, 15],
-    ['Mg I', 516.73, 18], ['Mg I', 517.27, 30], ['Mg I', 518.36, 40], ['Mg II', 279.55, 200], ['Mg II', 280.27, 170]
+    ['Ca II', 393.366, 500], ['Ca II', 396.847, 420], ['Ca II', 849.802, 60], ['Ca II', 854.209, 120], ['Ca II', 866.214, 90],
+    ['Ca I', 422.673, 60], ['Na I', 588.995, 16], ['Na I', 589.592, 13], ['K I', 766.49, 20], ['K I', 769.896, 15],
+    ['Mg I', 516.733, 18], ['Mg I', 517.268, 30], ['Mg I', 518.361, 40], ['Mg II', 279.553, 200], ['Mg II', 280.271, 170]
 ];
 
-function ionOf(species) {
+function elementOf(species) {
     return species.split(' ')[0];
 }
 
@@ -84,17 +73,44 @@ export function visibility(species, T) {
     return p ? p.amp * bell(T, p.T, p.cool, p.hot) : 0;
 }
 
-// How much of an element a star has, relative to the Sun. Z sets the overall level; metals_dex varies the mix.
+// How much of an element a star has, relative to the Sun. metals_dex already holds the star's overall level, so it is
+// not to be scaled by Z again; elements it doesn't list go with the overall level.
 function abundance(star, element) {
     const c = star.composition;
     if (!c) return 1;
     if (element === 'H') return (c.X ?? 0.71) / 0.71;
     if (element === 'He') return (c.Y ?? 0.27) / 0.27;
-    return ((c.Z ?? 0.02) / 0.02) * 10 ** ((c.metals_dex && c.metals_dex[element]) || 0);
+    const dex = c.metals_dex && c.metals_dex[element];
+    if (dex !== undefined) return 10 ** dex;
+    return c.metallicity_dex !== undefined ? 10 ** c.metallicity_dex : Math.max(c.Z ?? 0.02, 2e-7) / 0.02;
 }
 
 // Lines weaken more slowly than the abundance falls, as they do on a real curve of growth
 const abundanceDepth = (x) => x ** 0.6;
+
+// A line's strength s was set at the species' peak temperature. The visibility curve moves the whole species with
+// temperature; this moves one line against the species' main line by how much harder its lower level is to reach.
+// The cube root is because s is itself the cube root of gf e^(-Ei/kT).
+const BOLTZMANN_EV = 8.617e-5;
+const mainLineEnergy = new Map();
+
+function mainEnergyOf(species) {
+    if (!mainLineEnergy.has(species)) {
+        let best = null;
+        LINES[species].forEach((line) => {
+            if (line.w >= 300 && line.ei !== undefined && !line.forbidden && (!best || line.s > best.s)) best = line;
+        });
+        mainLineEnergy.set(species, best ? best.ei : 0);
+    }
+    return mainLineEnergy.get(species);
+}
+
+function boltzmannWeight(species, line, T) {
+    const info = LINE_INFO[species];
+    if (!info || line.ei === undefined) return 1;
+    const weight = Math.exp((-(line.ei - mainEnergyOf(species)) / BOLTZMANN_EV) * (1 / T - 1 / info.T_peak_K) / 3);
+    return Math.min(1.5, Math.max(0.15, weight));
+}
 
 export function isWhiteDwarf(star) {
     return star.stage === 'white_dwarf' || star.class === 'D' || Boolean(star.wd_type);
@@ -104,7 +120,7 @@ export function isWhiteDwarf(star) {
 function whiteDwarfStrength(species, star) {
     const T = star.teff_K;
     const type = star.wd_type || 'DA';
-    const el = ionOf(species);
+    const el = elementOf(species);
     if (type === 'DA') return el === 'H' ? 0.92 * bell(T, 14000, 0.3, 0.55) : 0;
     if (type === 'DB') {
         if (species === 'He I') return Math.max(0.2, 0.8 * bell(T, 20000, 0.18, 0.3));
@@ -133,11 +149,10 @@ function starBands(star) {
     const tio = 1 / (1 + Math.exp((T - 3450) / 170));
     return [
         ['TiO', 0.9 * tio * metal('Ti')],
-        ['VO', (0.7 / (1 + Math.exp((T - 2900) / 150))) * metal('Ti')],
-        ['CH', 0.7 * bell(T, 5000, 0.12, 0.12) * metal('C')],
+        ['CH', 0.5 * bell(T, 5000, 0.12, 0.12) * metal('C')],
         ['CN', 0.3 * bell(T, 4500, 0.1, 0.1) * metal('N')],
-        ['MgH', 0.45 * bell(T, 4000, 0.08, 0.08) * dwarfness * metal('Mg')],
-        ['CaH', 0.5 * bell(T, 3200, 0.07, 0.08) * dwarfness * metal('Ca')]
+        ['MgH', 0.4 * bell(T, 4000, 0.08, 0.08) * dwarfness * metal('Mg')],
+        ['CaH', 0.45 * bell(T, 3200, 0.07, 0.08) * dwarfness * metal('Ca')]
     ];
 }
 
@@ -162,29 +177,34 @@ function buildModel(star, R, sigmaExtra) {
     Object.keys(LINES).forEach((species) => {
         const p = SPECIES[species];
         if (!p) return;
-        const el = ionOf(species);
+        const el = elementOf(species);
         const strength = wd ? whiteDwarfStrength(species, star) : visibility(species, T) * abundanceDepth(abundance(star, el));
         if (strength < 0.004) return;
         // A metal line in a white dwarf is very broad, but hydrogen and helium are what really widen with gravity
         const gravity = Math.min(el === 'H' || el === 'He' ? 10 : 3, 10 ** (p.k * (logg - 4.44)));
-        const sigma = Math.hypot(0.0912 * Math.sqrt(T / p.m), MICRO_KMS, sigmaExtra);
+        const mass = LINE_INFO[species] ? LINE_INFO[species].mass_u : 40;
+        const sigma = Math.hypot(0.0912 * Math.sqrt(T / mass), MICRO_KMS, sigmaExtra);
         const wingScale = Math.sqrt(Math.min(1, strength));
         LINES[species].forEach((line) => {
-            if (line.forbidden || (line.label && line.label[0] === '[')) return; // Forbidden lines only form in thin gas
+            if (line.forbidden) return; // Forbidden lines only form in thin gas, never as absorption in a star
+            const lineS = line.s ?? 1;
             const lyman = el === 'H' && line.w < 200;
-            // Balmer lines stay strong far up the series, unless gravity dissolves the high levels, as in a white dwarf
-            const beta = el === 'H' ? (wd || lyman ? 0.4 : 0.2) : el === 'He' ? 0.35 : 0.5;
-            const s = (line.s ?? 1) ** beta;
+            // Gravity dissolves the high levels of hydrogen in a white dwarf, so its Balmer series stops early
+            if (wd && el === 'H' && !lyman && lineS < 0.3) return;
+            // Balmer lines stay strong far up the series, as saturated lines do
+            const s = el === 'H' && !lyman && !wd ? Math.sqrt(lineS) : lineS;
             // Ultraviolet resonance lines start from the ground state, where nearly all atoms sit, so they saturate early
-            const raw = line.w < 300 ? 0.95 * (1 - Math.exp(-5 * strength)) * s : strength * s;
+            const raw = line.w < 300
+                ? 0.95 * (1 - Math.exp(-5 * strength)) * s
+                : strength * s * boltzmannWeight(species, line, T);
             const d = Math.min(0.97, raw);
             if (d < 0.004) return;
             const wide = WIDE_LINES.find((w) => w[0] === species && Math.abs(w[1] - line.w) < 0.15);
             let a = (wide ? wide[2] : p.a) * gravity * wingScale;
-            if (el === 'H') a *= (line.s ?? 1) ** 0.25;
+            if (el === 'H') a *= lineS ** 0.75;
             if (lyman) a = Math.min(a, 700);
             const prof = shapeFor(sigma, a);
-            lines.push({ w: line.w, d, prof, species, label: line.label || species });
+            lines.push({ w: line.w, d, prof, species, label: line.label || `${species} ${line.w.toFixed(1)}` });
         });
     });
 
