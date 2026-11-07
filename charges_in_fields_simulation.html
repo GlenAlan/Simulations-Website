@@ -1,0 +1,305 @@
+<!DOCTYPE HTML>
+<!--
+	Phantom by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html lang="en">
+	<head>
+		<title>Charges in Fields Simulation | Physics Simulation | Simulations.Science</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+		<meta name="description" content="Interactive simulation of charged particles in uniform electric and magnetic fields: drop or fire protons, electrons and alpha particles between charged plates or through a magnetic field, then repeat Thomson's experiment." />
+		<meta name="keywords" content="charged particles, electric field, magnetic field, parallel plates, E = V/d, F = qvB, Thomson experiment, physics simulation, interactive science" />
+		<meta name="author" content="Simulations.Science" />
+		<meta name="robots" content="index, follow" />
+		<!-- [content] Open Graph, Twitter, canonical and structured data go here -->
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+		<script>
+			// Theme toggle script
+			(function() {
+				// Force dark mode by default, only change if explicitly set to light
+				var theme = 'dark'; // Default is dark
+				try {
+					var storedTheme = localStorage.getItem('theme');
+					// Only override if explicitly set to light
+					if (storedTheme === 'light') {
+						theme = 'light';
+					}
+				} catch (e) { /* Ignore */ }
+
+				if (theme === 'dark') {
+					document.documentElement.classList.add('dark-mode');
+				} else {
+					document.documentElement.classList.remove('dark-mode');
+				}
+			})();
+		</script>
+		<link rel="stylesheet" href="assets/css/main.css" />
+		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
+		<link rel="stylesheet" href="assets/css/charges_styles.css" />
+		<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+		<noscript><link rel="stylesheet" href="assets/css/noscript.css" /></noscript>
+	</head>
+	<body class="is-preload">
+		<!-- Wrapper -->
+			<div id="wrapper">
+
+				<!-- Header -->
+					<header id="header">
+						<div class="inner">
+							<!-- Logo -->
+								<a href="index.html" class="logo">
+									<span class="symbol"><img src="images/favicon.svg" alt="" /></span><span class="title">Simulations.Science</span>
+								</a>
+							<!-- Nav -->
+								<nav>
+									<ul>
+										<li>
+											<button id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+												<span class="icon solid fa-sun"><span class="label">Light Mode</span></span>
+												<span class="icon solid fa-moon" style="display:none;"><span class="label">Dark Mode</span></span>
+											</button>
+										</li>
+										<li><a href="#menu">Menu</a></li>
+									</ul>
+								</nav>
+						</div>
+					</header>
+
+				<!-- Menu -->
+					<nav id="menu">
+						<h2>Menu</h2>
+						<ul>
+							<li><a href="index.html">Home</a></li>
+							<li><a href="convection_simulation.html">Convection</a></li>
+							<li><a href="conduction_simulation.html">Conduction</a></li>
+							<li><a href="radiation_simulation.html">Radiation</a></li>
+							<li><a href="buoyancy_simulation.html">Buoyancy</a></li>
+							<li><a href="pressure_simulation.html">Pressure</a></li>
+							<li><a href="maxwell_demon_simulation.html">Maxwell's Demon</a></li>
+							<li><a href="nuclear_decay_simulation.html">Nuclear Decay</a></li>
+							<li><a href="relativity_simulation.html">Special Relativity</a></li>
+							<li><a href="orbits_simulation.html">Orbits &amp; Gravity</a></li>
+							<li><a href="charges_in_fields_simulation.html">Charges in Fields</a></li>
+							<li><a href="sitemap.html">Sitemap</a></li>
+						</ul>
+					</nav>
+
+				<!-- Main -->
+					<div id="main">
+						<div class="inner">
+							<h1 id="simulationTitle">Charges in Fields</h1>
+
+							<div class="simulation-area-wrapper charges-sim">
+								<div class="sim-controls-panel" id="simulationControlsPanel" role="region" aria-labelledby="simulationControlsPanelLabel">
+									<div class="sim-controls-header">
+										<h3 id="simulationControlsPanelLabel">Controls</h3>
+									</div>
+									<div class="sim-controls-content">
+										<div class="sim-control-group">
+											<p class="sim-control-group-label" id="setupLabel">Setup</p>
+											<div class="sim-select-container">
+												<select id="setupSelect" aria-labelledby="setupLabel" aria-describedby="setupHint">
+													<option value="free" selected>Free play</option>
+													<option value="thomson">Thomson's experiment</option>
+												</select>
+											</div>
+											<p class="ch-hint" id="setupHint">Drop a charge into a field, or fire one in.</p>
+										</div>
+
+										<div class="sim-control-group" id="particleGroup">
+											<p class="sim-control-group-label" id="particleLabel">Particle</p>
+											<div class="ch-chips" role="radiogroup" aria-labelledby="particleLabel">
+												<button type="button" class="ch-chip" role="radio" data-particle="proton" aria-checked="true"><span class="ch-swatch ch-swatch-pos" aria-hidden="true">+</span>Proton</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="electron" aria-checked="false"><span class="ch-swatch ch-swatch-neg" aria-hidden="true">&minus;</span>Electron</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="alpha" aria-checked="false"><span class="ch-swatch ch-swatch-pos" aria-hidden="true">2+</span>Alpha</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="neutron" aria-checked="false"><span class="ch-swatch ch-swatch-neutral" aria-hidden="true">0</span>Neutron</button>
+												<button type="button" class="ch-chip" role="radio" data-particle="custom" aria-checked="false"><span class="ch-swatch ch-swatch-pos" id="customSwatch" aria-hidden="true">+</span>Custom</button>
+											</div>
+										</div>
+
+										<!-- [thomson] beam group (Cathode rays | Hydrogen ions, cathode metal) goes here -->
+
+										<div class="sim-control-group" id="launchGroup">
+											<p class="sim-control-group-label" id="launcherLabel">Launch</p>
+											<div class="ch-seg ch-seg-panel" role="radiogroup" aria-labelledby="launcherLabel">
+												<button type="button" class="ch-seg-btn" role="radio" data-launcher="accelerator" aria-checked="true">Accelerator</button>
+												<button type="button" class="ch-seg-btn" role="radio" data-launcher="slingshot" aria-checked="false">Slingshot</button>
+											</div>
+											<label>Launch voltage: <span id="launchVVal" class="sim-value" style="--chars: 4">500</span> V
+												<input type="range" id="launchVSlider" min="0" max="2000" step="50" value="500">
+											</label>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="aimGuideToggle">
+												<label for="aimGuideToggle" title="A dashed line shows where the particle will go while you aim">Aim guide</label>
+											</div>
+										</div>
+
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Show</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="velocityToggle" checked>
+												<label for="velocityToggle"><span class="ch-key ch-key-velocity" aria-hidden="true"></span>Velocity</label>
+												<input type="checkbox" id="forceToggle" checked>
+												<label for="forceToggle"><span class="ch-key ch-key-force" aria-hidden="true"></span>Force</label>
+												<input type="checkbox" id="componentsToggle">
+												<label for="componentsToggle">Velocity components</label>
+												<input type="checkbox" id="rhrToggle">
+												<label for="rhrToggle">Right-hand rule</label>
+											</div>
+										</div>
+
+										<div class="sim-control-group">
+											<p class="sim-control-group-label">Measure</p>
+											<div class="sim-checkbox-group">
+												<input type="checkbox" id="gridToggle">
+												<label for="gridToggle">Grid (cm)</label>
+												<input type="checkbox" id="equipToggle">
+												<label for="equipToggle">Equipotentials</label>
+												<input type="checkbox" id="valuesToggle">
+												<label for="valuesToggle" title="Field, force, acceleration and radius for the selected particle">Values</label>
+											</div>
+										</div>
+
+										<details class="sim-controls-more">
+											<summary>More options</summary>
+											<div class="sim-control-group">
+												<label>Plate gap: <span id="gapVal" class="sim-value" style="--chars: 3">5.0</span> cm
+													<input type="range" id="gapSlider" min="2" max="8" step="0.1" value="5">
+												</label>
+												<label>Playback speed: <span id="playbackVal" class="sim-value" style="--chars: 3">1.0</span>&times;
+													<input type="range" id="playbackSlider" min="0.1" max="3" step="0.1" value="1">
+												</label>
+											</div>
+											<!-- [custom] custom particle controls (charge, mass) go here -->
+										</details>
+									</div>
+								</div>
+
+								<div class="simulation-main-content">
+									<div class="simulation-display-container">
+										<div class="sim-canvas-wrapper">
+											<div class="sim-aspect-ratio-box" style="--aspect-ratio: 2/1; --aspect-ratio-portrait: 4/3;">
+												<canvas id="simulationCanvas" class="sim-canvas" tabindex="0" role="img" aria-label="A box of uniform field between two charged plates, with a particle launcher on the left. Click the launcher or press Space to fire; tap the field to drop a charge at rest; arrow keys aim."></canvas>
+											</div>
+											<div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
+										</div>
+										<!-- The main controls, always in view: which field, how strong, and Fire -->
+										<div class="ch-toolbar" id="chToolbar">
+											<div class="ch-field" role="radiogroup" aria-labelledby="fieldLabel">
+												<span class="ch-toolbar-label" id="fieldLabel">Field</span>
+												<div class="ch-seg">
+													<button type="button" class="ch-seg-btn" role="radio" data-field="E" aria-checked="true">Electric</button>
+													<button type="button" class="ch-seg-btn" role="radio" data-field="B" aria-checked="false">Magnetic</button>
+													<button type="button" class="ch-seg-btn" role="radio" data-field="both" aria-checked="false">Both</button>
+												</div>
+											</div>
+											<div class="ch-strength" id="eStrength">
+												<label class="ch-slider">
+													<span class="ch-toolbar-label" id="plateVLabel">Plate voltage</span>
+													<input type="range" id="plateVSlider" min="0" max="1000" step="10" value="500" aria-labelledby="plateVLabel">
+													<span class="ch-slider-value"><span id="plateVVal" class="sim-value" style="--chars: 4">500</span> V</span>
+												</label>
+												<button type="button" class="ch-dir-btn" id="eDirBtn" title="Swap the plates" aria-label="Positive plate on top. Press to swap the plates"><span class="ch-dir-sym" aria-hidden="true">+</span><span class="ch-dir-text">on top</span></button>
+											</div>
+											<div class="ch-strength" id="bStrength" hidden>
+												<label class="ch-slider">
+													<span class="ch-toolbar-label" id="bLabel">Magnetic field</span>
+													<input type="range" id="bSlider" min="0" max="1000" step="1" value="0" aria-labelledby="bLabel">
+													<span class="ch-slider-value"><span id="bVal" class="sim-value" style="--chars: 5">200</span> mT</span>
+												</label>
+												<button type="button" class="ch-dir-btn" id="bDirBtn" title="Reverse the field" aria-label="Field into the page. Press to reverse it"><span class="ch-dir-sym" aria-hidden="true">&otimes;</span><span class="ch-dir-text">into page</span></button>
+											</div>
+											<button type="button" class="ch-fire" id="fireBtn" title="Fire (Space)"><span class="icon solid fa-bolt" aria-hidden="true"></span> Fire</button>
+										</div>
+										<!-- [thomson] the screen readout and q/m answer bar go here -->
+										<div class="sim-info-bar" id="statsBar">
+											<div class="stats-container" id="statsFree">
+												<div class="stats-box" title="The selected particle (tap one to select it)"><span class="ch-dot" id="selDot" aria-hidden="true"></span><strong id="selName">Proton</strong></div>
+												<div class="stats-box"><strong>Speed</strong> <span id="statSpeed" class="sim-value" style="--chars: 8">&ndash;</span> m/s</div>
+												<div class="stats-box"><strong>Energy</strong> <span id="statEnergy" class="sim-value" style="--chars: 4">&ndash;</span> <span id="statEnergyUnit">eV</span></div>
+												<div class="stats-box"><strong>Time</strong> <span id="statTime" class="sim-value" style="--chars: 4">&ndash;</span> <span id="statTimeUnit">ns</span></div>
+												<div class="stats-box ch-values" id="statEBox" hidden><strong><em>E</em></strong> <span id="statE" class="sim-value" style="--chars: 8">&ndash;</span> V/m</div>
+												<div class="stats-box ch-values" id="statBBox" hidden><strong><em>B</em></strong> <span id="statB" class="sim-value" style="--chars: 5">&ndash;</span> mT</div>
+												<div class="stats-box ch-values" id="statFBox" hidden><strong><em>F</em></strong> <span id="statF" class="sim-value" style="--chars: 9">&ndash;</span> N</div>
+												<div class="stats-box ch-values" id="statABox" hidden><strong><em>a</em></strong> <span id="statA" class="sim-value" style="--chars: 9">&ndash;</span> m/s&sup2;</div>
+												<div class="stats-box ch-values" id="statRBox" hidden><strong><em>r</em></strong> <span id="statR" class="sim-value" style="--chars: 5">&ndash;</span> cm</div>
+											</div>
+											<!-- [thomson] readouts for Thomson's experiment go here -->
+											<div class="sim-info-actions">
+												<button type="button" id="pauseBtn" class="sim-icon-button" aria-label="Pause" title="Pause (P)" aria-pressed="false">
+													<span class="icon solid fa-pause" aria-hidden="true"></span>
+												</button>
+												<button type="button" id="stepBtn" class="sim-icon-button" aria-label="Step forward" title="Step forward (.)" hidden>
+													<span class="icon solid fa-step-forward" aria-hidden="true"></span>
+												</button>
+												<label for="showCharts" class="sim-icon-button sim-show-charts-label" title="Graphs">
+													<input type="checkbox" id="showCharts" class="visually-hidden-checkbox" aria-label="Show graphs">
+													<span class="icon solid fa-chart-bar"></span>
+												</label>
+												<button type="button" id="resetSimulationBtn" class="sim-reset-button sim-icon-button" aria-label="Restart: clear the particles and trails" title="Restart">
+													<span class="icon solid fa-sync-alt"></span>
+												</button>
+											</div>
+										</div>
+										<div class="ch-live visually-hidden" id="chLive" aria-live="polite"></div>
+									</div>
+									<div id="charts-container" style="display: none;">
+										<div class="sim-charts-row">
+											<div class="chart-box">
+												<canvas id="speedChart" role="img" aria-label="Graph of speed against time for the most recent particles"></canvas>
+											</div>
+											<div class="chart-box">
+												<canvas id="vyChart" role="img" aria-label="Graph of vertical velocity against time for the most recent particles"></canvas>
+											</div>
+										</div>
+									</div>
+									<div class="sim-action-buttons-overlay">
+										<button type="button" class="sim-fullscreen-toggle" aria-label="Toggle fullscreen">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+										<button type="button" class="sim-panel-toggle-button" aria-label="Settings" aria-expanded="false" aria-controls="simulationControlsPanel">
+											<!-- Icon will be managed by simulation_ui.js -->
+										</button>
+									</div>
+
+									<details class="description-area">
+										<summary>About this simulation</summary>
+										<div class="description-content">
+											<!-- [content] the About text goes here -->
+											<p>What does a field do to a charge that is still, and to one that is moving?</p>
+										</div>
+									</details>
+								</div>
+							</div>
+						</div>
+					</div>
+
+				<!-- Footer -->
+					<footer id="footer">
+						<div class="inner">
+							<section>
+								<h2>Connect</h2>
+								<ul class="icons">
+									<li><a href="https://glen-alan.com/" class="icon solid style2 fa-globe"><span class="label">Website</span></a></li>
+									<li><a href="https://github.com/GlenAlan" class="icon brands style2 fa-github"><span class="label">GitHub</span></a></li>
+								</ul>
+							</section>
+							<ul class="copyright">
+								<li>&copy; Glen Pearce. All rights reserved</li><li>Web template from: <a href="http://html5up.net">HTML5 UP</a></li>
+							</ul>
+						</div>
+					</footer>
+			</div>
+
+		<!-- Scripts -->
+			<script src="assets/js/jquery.min.js"></script>
+			<script src="assets/js/browser.min.js"></script>
+			<script src="assets/js/breakpoints.min.js"></script>
+			<script src="assets/js/util.js"></script>
+			<script src="assets/js/main.js"></script>
+			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
+			<script src="assets/js/charges_core.js" defer></script> <!-- Simulation specific logic -->
+	</body>
+</html>

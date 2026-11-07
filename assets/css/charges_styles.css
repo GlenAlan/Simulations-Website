@@ -1,0 +1,497 @@
+/* --- Charges in Fields simulation page styles (loaded after simulation_styles.css) --- */
+
+.charges-sim {
+    --ch-btn-h: 34px;
+    --ch-pos: #d63c3c;
+    --ch-neg: #1f6fd1;
+    --ch-neutral: #7a7a7a;
+    --ch-velocity: #2a9d8f;
+    --ch-force: #e07b00;
+}
+
+html.dark-mode .charges-sim {
+    --ch-pos: #ff6b6b;
+    --ch-neg: #5aa9ff;
+    --ch-neutral: #b8b8b8;
+    --ch-velocity: #7bd0c1;
+    --ch-force: #ffa94d;
+}
+
+@media (pointer: coarse) {
+    .charges-sim {
+        --ch-btn-h: 40px;
+    }
+}
+
+#simulationCanvas:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+/* Screen-reader-only live region for hits */
+.ch-live {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ---------- Toolbar under the canvas: field switch, strength sliders, Fire ---------- */
+.ch-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 18px;
+    width: var(--sim-canvas-w);
+    max-width: 100%;
+    margin: 0.5em auto 0 auto;
+    padding: 5px 6px;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius, 6px);
+    font-size: 0.85em;
+    line-height: 1.3;
+}
+
+.ch-toolbar-label {
+    flex: 0 0 auto;
+    font-weight: 300;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.ch-field {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    flex: 0 0 auto;
+}
+
+/* Segmented switches (field in the toolbar, launcher in the panel) */
+.ch-seg {
+    display: flex;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.charges-sim .ch-seg-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 0;
+    height: var(--ch-btn-h);
+    min-width: 0;
+    margin: 0;
+    padding: 0 0.85em;
+    font-size: 0.95em;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .ch-seg-btn:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+.charges-sim .ch-seg-btn:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+.charges-sim .ch-seg-btn[aria-checked="true"] {
+    background-color: var(--color-accent);
+    color: #ffffff !important;
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-seg-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .charges-sim .ch-seg-btn[aria-checked="true"]:hover {
+        background-color: var(--color-accent-active);
+        box-shadow: none;
+    }
+}
+
+.charges-sim .ch-seg-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.ch-seg-panel {
+    margin: 0.5em 0 0.4em 0;
+}
+
+.ch-seg-panel .ch-seg-btn {
+    font-size: 0.85em;
+}
+
+/* A strength slider with its direction button */
+.ch-strength {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    flex: 1 1 20em;
+    min-width: 0;
+}
+
+.ch-strength[hidden] {
+    display: none;
+}
+
+.ch-toolbar .ch-slider {
+    display: flex;
+    align-items: center;
+    gap: 0.7em;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 1em;
+    font-weight: 400;
+}
+
+.ch-slider-value {
+    flex: 0 0 auto;
+    font-size: 1.05em;
+    white-space: nowrap;
+    color: var(--sim-value-color);
+}
+
+.ch-slider-value .sim-value {
+    font-weight: 700;
+}
+
+.ch-toolbar input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    flex: 1 1 auto;
+    min-width: 5em;
+    height: var(--ch-btn-h);
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+}
+
+.ch-toolbar input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, var(--color-accent) 0 var(--ch-fill, 0%), var(--sim-track) var(--ch-fill, 0%) 100%);
+}
+
+.ch-toolbar input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -7px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sim-track);
+}
+
+.ch-toolbar input[type="range"]::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+@media (pointer: coarse) {
+    .ch-toolbar input[type="range"]::-webkit-slider-thumb {
+        width: 26px;
+        height: 26px;
+        margin-top: -10px;
+    }
+
+    .ch-toolbar input[type="range"]::-moz-range-thumb {
+        width: 22px;
+        height: 22px;
+    }
+}
+
+/* Direction buttons (+ on top / below, into / out of the page) and Fire */
+.charges-sim .ch-dir-btn,
+.charges-sim .ch-fire {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35em;
+    flex: 0 0 auto;
+    height: var(--ch-btn-h);
+    margin: 0;
+    padding: 0 0.7em;
+    font-size: 0.9em;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .ch-dir-btn .ch-dir-sym {
+    font-size: 1.25em;
+    min-width: 1em;
+    text-align: center;
+}
+
+.charges-sim .ch-dir-btn .ch-dir-text {
+    font-weight: 400;
+}
+
+.charges-sim .ch-fire {
+    margin-left: auto;
+    padding: 0 1.1em;
+    color: #ffffff !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-dir-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .charges-sim .ch-fire:hover {
+        background-color: var(--color-accent-active);
+    }
+}
+
+.charges-sim .ch-dir-btn:focus-visible,
+.charges-sim .ch-fire:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.charges-sim .ch-fire:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* ---------- Panel: particle chips, hints, colour keys ---------- */
+.ch-hint {
+    margin-top: 0.45em !important;
+    opacity: 0.85;
+}
+
+.ch-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+    margin-top: 0.5em;
+}
+
+.charges-sim .ch-chip {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    height: auto;
+    min-height: 2.5em;
+    margin: 0;
+    padding: 0.3em 0.75em 0.3em 0.4em;
+    font-size: 0.85em;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1.2;
+    text-transform: none;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .ch-chip[aria-checked="true"] {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+    background-color: var(--color-bg-button-active-overlay, var(--color-bg));
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-chip:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .charges-sim .ch-chip[aria-checked="true"]:hover {
+        box-shadow: inset 0 0 0 2px var(--color-accent);
+    }
+}
+
+.charges-sim .ch-chip:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.ch-swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75em;
+    height: 1.75em;
+    padding: 0 0.25em;
+    box-sizing: border-box;
+    border-radius: 999px;
+    font-size: 0.85em;
+    font-weight: 700;
+    line-height: 1;
+    color: #ffffff;
+}
+
+.ch-swatch-pos {
+    background-color: var(--ch-pos);
+}
+
+.ch-swatch-neg {
+    background-color: var(--ch-neg);
+}
+
+.ch-swatch-neutral {
+    background-color: var(--ch-neutral);
+}
+
+/* Arrow colour keys beside the Show toggles */
+.ch-key {
+    display: inline-block;
+    width: 1.1em;
+    height: 3px;
+    margin-right: 0.45em;
+    vertical-align: middle;
+    border-radius: 2px;
+}
+
+.ch-key-velocity {
+    background-color: var(--ch-velocity);
+}
+
+.ch-key-force {
+    background-color: var(--ch-force);
+}
+
+/* Selected particle's colour dot in the info bar */
+.ch-dot {
+    display: inline-block;
+    width: 0.7em;
+    height: 0.7em;
+    margin-right: 0.35em;
+    border-radius: 50%;
+    vertical-align: -0.05em;
+    background-color: var(--ch-pos);
+}
+
+.stats-box[hidden] {
+    display: none;
+}
+
+/* ---------- Phones: the field switch fills one row, each slider another ---------- */
+@media (max-width: 600px) {
+    .ch-toolbar {
+        gap: 4px 10px;
+    }
+
+    .ch-field {
+        flex: 1 1 100%;
+    }
+
+    .ch-field .ch-seg {
+        flex: 1 1 auto;
+    }
+
+    .ch-strength {
+        flex: 1 1 100%;
+    }
+
+    .ch-toolbar .ch-slider .ch-toolbar-label {
+        display: none;
+    }
+
+    .charges-sim .ch-fire {
+        flex: 1 1 100%;
+        margin-left: 0;
+    }
+}
+
+/* =====================================================================
+   Feature sections. Each feature adds its styles inside its own block only.
+   ===================================================================== */
+
+/* ---------- [slingshot] ---------- */
+
+
+/* ---------- end [slingshot] ---------- */
+
+
+
+/* ---------- [thomson] ---------- */
+
+
+/* ---------- end [thomson] ---------- */
+
+
+
+/* ---------- [overlays] ---------- */
+
+
+/* ---------- end [overlays] ---------- */
+
+
+
+/* ---------- [graphs-custom] ---------- */
+
+
+/* ---------- end [graphs-custom] ---------- */
+
+
+
+/* ---------- [content] ---------- */
+
+
+/* ---------- end [content] ---------- */
