@@ -4243,55 +4243,6 @@ dialog.orb-help::backdrop {
     letter-spacing: -0.05em;
 }
 
-/* ---------- Discs and rings ---------- */
-.orb-pop-disc {
-    margin-top: 8px;
-}
-
-.orb-pop-disc button {
-    width: 100%;
-}
-
-.orb-pop-disc [hidden] {
-    display: none !important;
-}
-
-@media (pointer: coarse) {
-    .orb-pop-disc button {
-        height: 40px;
-    }
-}
-
-.orb-pop-disc .orb-pop-note {
-    margin: 4px 0 0;
-}
-
-.orb-pop-disc .orb-pop-fields + button {
-    margin-top: 6px;
-}
-
-/* (Saturn's chip: a tipped ring round its disc) */
-.orb-chip-disc.is-ringed {
-    position: relative;
-}
-
-.orb-chip-disc.is-ringed::after {
-    content: '';
-    position: absolute;
-    left: -45%;
-    right: -45%;
-    top: 26%;
-    bottom: 26%;
-    box-sizing: border-box;
-    border: 2px solid rgba(233, 220, 188, 0.85);
-    border-radius: 50%;
-    transform: rotate(-20deg);
-}
-
-html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
-    border-color: rgba(120, 100, 60, 0.85);
-}
-
 /* "Rotate with it" joins the body menu's row: the two views on one line, the rest on the next */
 .orb-pop-actions {
     flex-wrap: wrap;
