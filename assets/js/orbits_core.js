@@ -128,11 +128,13 @@
     // Sample bodies for the palette (and the scenes). Masses and radii are real (radii in km); the drawn
     // size is compressed unless realistic physics is on. The star remnants are drawn by their kind (a
     // black hole stays a black hole whatever its mass). info: the palette chip's tooltip; as: the kind of body it makes.
-    // (Sagittarius A*: 4.3 million suns, GRAVITY Collaboration 2022.)
+    // (Sagittarius A*: 4.3 million suns, GRAVITY Collaboration 2022. The supergiant is Betelgeuse: 764 solar radii, 16.5
+    // to 19 solar masses, Joyce et al. 2020, ApJ 902, 63.)
     const KINDS = {
         sun: { name: 'Sun', m: 1, R: 696000, color: '#ffd166', info: 'our star' },
         dwarf: { name: 'Red dwarf', m: 0.3, R: 210000, color: '#ff8a5c', info: 'the most common kind of star' },
         redgiant: { name: 'Red giant', m: 1.2, R: 3.0e7, color: '#ff6a48', info: 'an old star swollen to 43 times the Sun\'s size' },
+        supergiant: { name: 'Red supergiant', chip: 'Supergiant', as: 'redgiant', m: 17, R: 764 * 696000, color: '#ff5238', info: 'a heavy star near its end: Betelgeuse is about 760 times the Sun\'s size' },
         bluegiant: { name: 'Blue giant', m: 15, R: 4.6e6, color: '#9cc3ff', info: 'a hot, heavy, short-lived star' },
         browndwarf: { name: 'Brown dwarf', m: 0.05, R: 70000, color: '#b86b7f', info: 'too light to shine like a star: 52 Jupiters' },
         whitedwarf: { name: 'White dwarf', m: 0.6, R: 8700, color: '#e9f0ff', info: 'the Earth-sized core left by a star like the Sun' },
@@ -151,7 +153,7 @@
         probe: { name: 'Probe', m: 4e-28, R: 0.005, color: '#c3ccd8' }
     };
     const PALETTE = [
-        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'bluegiant', 'browndwarf'] },
+        { label: 'Stars', kinds: ['sun', 'dwarf', 'redgiant', 'supergiant', 'bluegiant', 'browndwarf'] },
         { label: 'Dead stars', kinds: ['whitedwarf', 'neutron', 'blackhole', 'sgra'] },
         { label: 'Planets', kinds: ['jupiter', 'neptune', 'earth', 'mars'] },
         { label: 'Moons and small bodies', kinds: ['moon', 'comet', 'asteroid', 'custom'] }
@@ -465,7 +467,7 @@
     const COLOUR_STEPS = 40;              // colours per factor of ten in mass (6% apart in mass, 3% in temperature)
     const DEEPEN = 1.3;
     const SUN_TINT_COOL = 0.35, SUN_TINT_HOT = 0.3;   // how far the Sun's yellow reaches (in ln T)
-    const KEEPS_LOOK = { redgiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, sgra: 1, custom: 1 };
+    const KEEPS_LOOK = { redgiant: 1, supergiant: 1, whitedwarf: 1, neutron: 1, blackhole: 1, sgra: 1, custom: 1 };
     const KIND_COLOUR = {};               // each kind's colour as first defined: the scenes were designed with these
     for (const k of Object.keys(KINDS)) KIND_COLOUR[k] = KINDS[k].color;
     const starColourCache = new Map();
@@ -3005,7 +3007,10 @@
     //   and the body in a tight orbit: which is how the close pairs seen today were made. A planet has too little orbit
     //   to do that. It is lost when the core's tide tears it (2.44 R (M_core / m)^(1/3)), or when it reaches the core.
     //   The core's mass is from the giant's radius, R = 3700 M_c^4 / (1 + M_c^3 + 1.75 M_c^4) R_sun (Joss, Rappaport & Lewis
-    //   1987, ApJ 319, 180), 0.335 solar masses at the palette's 43 R_sun, near there as M_c ~ R^0.26.
+    //   1987, ApJ 319, 180), 0.335 solar masses at the palette's 43 R_sun, near there as M_c ~ R^0.26. That is for a star
+    //   of low mass. A heavy star's core is helium, about 0.1 M^1.4 (which fits the means in Jones et al. 2015, MNRAS 447,
+    //   3115, table 4: 4.40, 6.53 and 8.82 solar masses for stars of 15, 20 and 25), too heavy to end as a white dwarf:
+    //   without its envelope it is a hot helium star, about the size of the Sun.
     // ------------------------------------------------------------------
     const ENV_CORE = 12000;               // km: the size of the core, a white dwarf of that mass
     const ENV_AL = 0.25;
@@ -3013,7 +3018,8 @@
     const ENV_BOOK = -5;                  // (among the body ids of groupEnergy)
     const ENV_LOG = 1 << 13, ENV_ROW = 5;
     const env = { log: null, n: 0, low: 0, key: null, told: -1 };
-    const coreMass = (H) => Math.min(0.9 * H.m, 0.335 * Math.pow(H.R / 3e7, 0.26));
+    const HEAVY_STAR = 8;                 // solar masses
+    const coreMass = (H) => Math.min(0.9 * H.m, H.m >= HEAVY_STAR ? 0.1 * Math.pow(H.m, 1.4) : 0.335 * Math.pow(H.R / 3e7, 0.26));
 
     // How close (AU) a and b are when they touch
     function contactReach(a, b) {
@@ -3120,15 +3126,29 @@
         const x0 = H.x, y0 = H.y, vx0 = H.vx, vy0 = H.vy;
         // (gas that leaves at a little over the escape speed from the surface, a third of it to spare)
         const vol = (KINDS.sun.R * KINDS.sun.R * KINDS.sun.R) / KINDS.sun.m;
-        const parts = throwDebris(H, whiteDwarfRadius(core), m0, m0 - core, H.x, H.y, H.vx, H.vy, null, Math.sqrt((2 * G * (f.m + m0 / 3)) / Rg), vol, ((h >>> 0) % 2147483646) + 1, H.color, grp,
+        const helium = core > CHANDRASEKHAR;
+        const parts = throwDebris(H, helium ? KINDS.sun.R : whiteDwarfRadius(core), m0, m0 - core, H.x, H.y, H.vx, H.vy, null, Math.sqrt((2 * G * (f.m + m0 / 3)) / Rg), vol, ((h >>> 0) % 2147483646) + 1, H.color, grp,
             { spread: Math.PI, bias: 0, n: DEBRIS_MAX, from: Rg, kind: 'custom' });
+        // A heavy envelope, thrown as a few lumps going as the star does, would fling what is left far away. But it is a shell
+        // far wider than the pair deep inside it, and goes on as the whole system does, leaving the pair to do the same:
+        // first the lumps take up their own unevenness, then what it takes for the pair to keep the system's velocity.
+        if (helium) {
+            let Md = 0;
+            for (const q of parts) Md += q.m;
+            const k = H.m / Md, Mp = H.m + f.m;
+            for (const q of parts) { q.x += k * (H.x - x0); q.y += k * (H.y - y0); q.vx += k * (H.vx - vx0); q.vy += k * (H.vy - vy0); }
+            const ux = (m0 * vx0 + f.m * f.vx) / M0 - (H.m * vx0 + f.m * f.vx) / Mp, uy = (m0 * vy0 + f.m * f.vy) / M0 - (H.m * vy0 + f.m * f.vy) / Mp;
+            H.x = x0; H.y = y0; H.vx = vx0 + ux; H.vy = vy0 + uy;
+            f.vx += ux; f.vy += uy;
+            for (const q of parts) { q.vx -= (Mp / Md) * ux; q.vy -= (Mp / Md) * uy; }
+        }
         // (what the debris's lumpiness did to the core, the body goes along with: the whole keeps its centre of mass and momentum)
-        const dx = H.x - x0, dy = H.y - y0, dvx = H.vx - vx0, dvy = H.vy - vy0, sh = f.m / M0;
+        const dx = H.x - x0, dy = H.y - y0, dvx = helium ? 0 : H.vx - vx0, dvy = helium ? 0 : H.vy - vy0, sh = f.m / M0;
         f.x += dx; f.y += dy; f.vx += dvx; f.vy += dvy;
         for (const q of [H, f].concat(parts)) { q.x -= sh * dx; q.y -= sh * dy; q.vx -= sh * dvx; q.vy -= sh * dvy; q.px = q.x; q.py = q.y; }
-        H.kind = 'whitedwarf';
-        H.color = KINDS.whitedwarf.color;
-        if (/^Red giant/.test(H.name)) H.name = uniqueName('White dwarf');
+        H.kind = helium ? 'bluegiant' : 'whitedwarf';
+        H.color = helium ? KINDS.bluegiant.color : KINDS.whitedwarf.color;
+        if (/^Red (super)?giant/.test(H.name)) H.name = uniqueName(helium ? 'Helium star' : 'White dwarf');
         H.track = f.track = null;
         const M1 = H.m + f.m, sc = Math.sqrt(M1 / M0);
         const cvx = (H.m * H.vx + f.m * f.vx) / M1, cvy = (H.m * H.vy + f.m * f.vy) / M1;
@@ -3140,7 +3160,7 @@
         computeForces();
         refreshBodyLists();
         updateHistoryUi();
-        if (!settings.stability) { clearHint('tip'); eventNote(`${it} blew off the envelope of ${them}`, ', leaving its core, a white dwarf.', 8000); }
+        if (!settings.stability) { clearHint('tip'); eventNote(`${it} blew off the envelope of ${them}`, helium ? ', leaving its hot helium core.' : ', leaving its core, a white dwarf.', 8000); }
     }
 
     // A white dwarf pushed past the limit, or set off by a head-on hit, goes off as a Type Ia supernova: all of it burns and
@@ -3703,6 +3723,7 @@
         for (const o of bodies) {
             if (o === b || o.grp) continue;
             const ex = o.dx - b.dx, ey = o.dy - b.dy, d2 = ex * ex + ey * ey;
+            if (d2 < R * R) continue;   // (inside it: no tide on it, as for a pass inside a red giant)
             const f = d2 > 0 ? o.m / (d2 * Math.sqrt(d2)) : 0;
             if (f > best) { best = f; c = o; }
         }
@@ -3761,6 +3782,9 @@
     // on the cubic through the positions and velocities at the ends of that step), and its direction is
     // that of the Runge-Lenz vector, the closest point of the osculating ellipse, at that moment
     // (interpolated between the step's ends: a Kepler orbit keeps it exactly, so the steps don't show).
+    // Close to a black hole that vector can say little: an orbit nearly round to Newton at its closest point has
+    // almost none, swinging wildly from one end of the step to the other, and a body slower than Newton's circle there
+    // has it pointing the other way. So then it is the direction of that closest point itself, or the vector turned round.
     // The turn between one passage and the next is compared with Einstein's value for that orbit (with
     // a (1 - e^2) = 2 r_min r_max / (r_min + r_max) from its measured closest and farthest distances).
     // When other bodies' pulls on it could matter (their tides add up to more than a fifth of
@@ -4075,7 +4099,11 @@
                 const w0 = lenzAngle(tr.x, tr.y, tr.vx, tr.vy, mu), w1 = lenzAngle(rx, ry, vx, vy, mu);
                 let dw = w1 - w0;
                 dw -= TAU * Math.round(dw / TAU);
-                notePericentre(tr, b, p, tr.t + s * h, w0 + s * dw, rp, rx * vy - ry * vx);
+                const at = Math.atan2(HY, HX);
+                let w = w0 + s * dw;
+                if (Math.abs(dw) > Math.abs(d)) w = at;   // (it turned further in this step than the body went round)
+                else if (Math.cos(w - at) < 0) w += Math.PI;
+                notePericentre(tr, b, p, tr.t + s * h, w, rp, rx * vy - ry * vx);
             }
             if (r > tr.apo) tr.apo = r;
         }
@@ -5328,11 +5356,12 @@
     }
 
     // The box q (relative to the frame origin), grown to hold the horizon of any black hole wider than it.
-    // (A very heavy one can be: then "Fit view" must show its edge, not just more of its inside.)
+    // (A very heavy one can be: then "Fit view" must show its edge, not just more of its inside. So must a giant of a
+    // good part of its size, as a supergiant can be.)
     function withHorizons(q) {
         const size = Math.max(q[1] - q[0], q[3] - q[2]);
         for (const b of bodies) {
-            if (b.kind !== 'blackhole' || b.R / AU_KM <= size) continue;
+            if (b.R / AU_KM <= (b.kind === 'blackhole' ? size : b.kind === 'redgiant' ? 0.2 * size : Infinity)) continue;
             const R = b.R / AU_KM, x = b.dx - F.x, y = b.dy - F.y;
             q[0] = Math.min(q[0], x - R); q[1] = Math.max(q[1], x + R);
             q[2] = Math.min(q[2], y - R); q[3] = Math.max(q[3], y + R);
@@ -7646,8 +7675,10 @@
         refreshBodyLists();
         selectBody(b.id);
         clearHint('note');   // (whatever it said before this)
+        // (a star far wider than the view: all there would be to see is its inside)
+        if (added && kind === 'supergiant' && (k.R / AU_KM) * scale > 0.45 * Math.min(visR - visL, viewH)) fitAll();
         // (Sagittarius A*, with something close enough to go round it faster than can be watched)
-        if (added && k.as) {
+        if (added && kind === 'sgra') {
             let near = Infinity;
             for (const q of bodies) if (q !== b) near = Math.min(near, hyp(q.x - b.x, q.y - b.y));
             if (TAU * Math.sqrt((near * near * near) / (G * b.m)) < sampleDt) showHint('tip', '<strong>4.3 million Suns:</strong> orbits this close are a blur. Slow time right down to watch one go round.');
@@ -7745,6 +7776,12 @@
                 // (zoomed in close it may land out of view, rather than inside the body and merge with it)
                 R = Math.max(0.7 * Math.min(spaceX, spaceY) / scale, 4 * (top.R + k.R) / AU_KM);
             }
+        }
+        // (a star as wide as this goes clear of everything, rather than swallowing it all at a tap. See addBody for the view)
+        if (kind === 'supergiant') {
+            let far = 0;
+            for (const b of bodies) far = Math.max(far, Math.hypot(b.dx - cx, b.dy - cy) + b.R / AU_KM);
+            R = far + 1.3 * k.R / AU_KM;
         }
         let best = null, bestD = -1;
         for (let i = 0; i < 24; i++) {
@@ -11189,7 +11226,7 @@
 
     function forceToNewtons(f) { return f * MSUN_KG * AU_M / (YEAR_S * YEAR_S); }
     // A body's name as it goes in a sentence. (Names with a number or letter on the end, "Star A", stay as they are)
-    const COMMON_NAMES = new Set(['Black hole', 'Neutron star', 'White dwarf', 'Red dwarf', 'Red giant', 'Blue giant', 'Brown dwarf', 'Star', 'Planet', 'Giant planet', 'Comet', 'Asteroid', 'Probe', 'Fragment', 'Gas', 'Debris']);
+    const COMMON_NAMES = new Set(['Black hole', 'Neutron star', 'White dwarf', 'Red dwarf', 'Red giant', 'Red supergiant', 'Helium star', 'Blue giant', 'Brown dwarf', 'Star', 'Planet', 'Giant planet', 'Comet', 'Asteroid', 'Probe', 'Fragment', 'Gas', 'Debris']);
     function theName(b) {
         if (b.name === 'Sun' || b.name === 'Moon') return `the ${b.name}`;
         return COMMON_NAMES.has(b.name) ? `the ${b.name.toLowerCase()}` : b.name;
