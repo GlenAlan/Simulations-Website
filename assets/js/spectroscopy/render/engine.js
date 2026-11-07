@@ -6,8 +6,9 @@
 //   picks(frame)?       extra pick candidates: [{ code, az, alt, radiusPx }]; see engine.pick
 //   dispose()?          free GPU resources
 //
-// frame = { t, dt, fov, pxPerRad, width, height, dpr, camera, band, bandW, quality, reduceMotion, view }
-// The frame passed to update() is reused every frame, so keep what you need rather than keeping the object.
+// frame = { serial, t, dt, fov, pxPerRad, width, height, dpr, camera, band, bandW, quality, reduceMotion, view }
+// The frame passed to update() is reused every frame, so keep what you need rather than keeping the object. To tell one
+// frame from the next, serial goes up by one each time.
 //
 // Each frame: sky scene -> overlay passes -> post effects (all HDR) -> bloom -> tone map, vignette, sRGB, dither.
 // If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
@@ -61,8 +62,10 @@ const QUALITY_LOAD_GRACE_S = 12;
 const PROGRAM_QUESTIONS_PER_FRAME = 6;  // How many programs may be asked whether they have compiled yet, each frame
 const JOIN_FADE_S = 0.5;                // How long something takes to fade in once its program is ready
 const WAITING_LAYER = 31;               // The three.js layer things wait in: the camera doesn't look at it
-const GPU_BEHIND_NO_BAKES = 3;          // Frames behind at which bakes wait for the GPU to catch up
-const BAKE_STARVE_MS = 500;             // But none waits longer than this
+const GPU_MAX_BEHIND = 3;               // Draw nothing new while the GPU has this many frames still to finish...
+const GPU_GIVE_UP_WAITING = 120;        // ...unless it has gone this many frames without an answer: the fence must be lost
+const GPU_BEHIND_FLAT_OUT = 3;          // A GPU this many frames behind has nothing to spare
+const BAKE_FLAT_OUT_EVERY = 3;          // So it bakes only every this many frames
 const BAKE_ONE_ONLY_ABOVE_S = 0.03;     // Frames slower than this have room for only one bake
 
 const BLOOM = {
@@ -472,47 +475,59 @@ export function createEngine(canvas) {
 
     // ---------- How far behind the GPU is ----------
 
-    // Requesting a frame doesn't wait for the GPU to finish the last one, so a slow GPU can fall seconds behind while
-    // the loop runs on at full speed, and everything feels as if it were under water. One fence at a time says how
-    // many frames it took to come back. Bakes hold off when it's slow, which is what keeps that queue from growing.
+    // Requesting a frame doesn't wait for the GPU to finish the last one, so a slow GPU can fall a second or more behind
+    // while the loop runs on at full speed, and then everything the student does shows up that much later. One fence
+    // at a time says how many frames it took to come back. The loop draws nothing new while the GPU is too far behind.
     const gpu = { fence: null, waited: 0, behind: 0 };
 
-    function meterGpu() {
+    function pollGpu() {
+        if (!gpu.fence) return;
         const gl = renderer.getContext();
-        if (gpu.fence) {
-            gpu.waited += 1;
-            if (gl.getSyncParameter(gpu.fence, gl.SYNC_STATUS) === gl.SIGNALED) {
-                gl.deleteSync(gpu.fence);
-                gpu.fence = null;
-                gpu.behind = gpu.waited;
-            } else if (gpu.waited > gpu.behind) {
-                gpu.behind = gpu.waited;
-            }
+        gpu.waited += 1;
+        if (gl.getSyncParameter(gpu.fence, gl.SYNC_STATUS) === gl.SIGNALED) {
+            gl.deleteSync(gpu.fence);
+            gpu.fence = null;
+            gpu.behind = gpu.waited;
+        } else if (gpu.waited > gpu.behind) {
+            gpu.behind = gpu.waited;
         }
-        if (!gpu.fence) {
-            gpu.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-            gpu.waited = 0;
-        }
+    }
+
+    function fenceFrame() {
+        if (gpu.fence) return;
+        const gl = renderer.getContext();
+        gpu.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gpu.waited = 0;
     }
 
     // ---------- Bakes ----------
 
-    // A layer asks before each piece of baking. Yes while the GPU is keeping up. Being asked marks the frame as one with
-    // baking in it, so that Auto doesn't count the cost of the bake against the machine.
+    // A layer asks before each piece of baking, and that marks the frame as one with baking in it, so that Auto doesn't
+    // count the bake's cost against the machine. A GPU with room to spare says yes to everyone. A slow one takes one bake
+    // a frame, with the layers taking turns, and one that is flat out only every few frames. lowPriority: only when no
+    // one else wants a turn, for something that doesn't show yet.
     let bakedThisFrame = false;
-    let bakesThisFrame = 0;
-    let lastBakeAt = 0;
     let lastRealDt = 0;
+    const bakeTurns = { asked: 0, askedBefore: 0, turn: 0, granted: false, frame: 0 };
 
-    function bakesAllowed() {
+    function nextBakeFrame() {
+        bakedThisFrame = false;
+        bakeTurns.askedBefore = bakeTurns.asked;
+        bakeTurns.asked = 0;
+        if (bakeTurns.granted) bakeTurns.turn += 1;
+        bakeTurns.granted = false;
+        bakeTurns.frame += 1;
+    }
+
+    function bakesAllowed(lowPriority = false) {
         bakedThisFrame = true;
-        const now = performance.now();
-        // A GPU that can never catch up still gets there in the end
-        if (gpu.behind >= GPU_BEHIND_NO_BAKES && now - lastBakeAt < BAKE_STARVE_MS) return false;
-        // When frames are already slow, one bake a frame, and whoever asks first goes first: layers ask in draw order
-        if (bakesThisFrame > 0 && lastRealDt > BAKE_ONE_ONLY_ABOVE_S) return false;
-        bakesThisFrame += 1;
-        lastBakeAt = now;
+        if (lowPriority && bakeTurns.askedBefore > 0) return false;
+        const index = bakeTurns.asked;
+        bakeTurns.asked += 1;
+        if (gpu.behind < 2 && lastRealDt <= BAKE_ONE_ONLY_ABOVE_S) return true;
+        if (gpu.behind >= GPU_BEHIND_FLAT_OUT && bakeTurns.frame % BAKE_FLAT_OUT_EVERY !== 0) return false;
+        if (index !== bakeTurns.turn % Math.max(1, bakeTurns.askedBefore)) return false;
+        bakeTurns.granted = true;
         return true;
     }
 
@@ -563,12 +578,13 @@ export function createEngine(canvas) {
     // Auto: measures in windows. It steps down when a window stays low, and only ever climbs to a level that
     // hasn't failed: a level it had to leave becomes the ceiling, which is what stops it oscillating.
     const engineStartedAt = performance.now();
-    const auto = { time: 0, frames: 0, bakeFrames: 0, skip: 1, lowWindows: 0, goodWindows: 0, stalls: 0, ceiling: 2 };
+    const auto = { time: 0, frames: 0, bakeFrames: 0, flatOutFrames: 0, skip: 1, lowWindows: 0, goodWindows: 0, stalls: 0, ceiling: 2 };
 
     function resetAuto(skip = 1) {
         auto.time = 0;
         auto.frames = 0;
         auto.bakeFrames = 0;
+        auto.flatOutFrames = 0;
         auto.skip = skip;
         auto.lowWindows = 0;
         auto.goodWindows = 0;
@@ -587,12 +603,15 @@ export function createEngine(canvas) {
         auto.time += realDt;
         auto.frames += 1;
         if (bakedThisFrame) auto.bakeFrames += 1;
+        if (gpu.behind >= GPU_BEHIND_FLAT_OUT) auto.flatOutFrames += 1;
         if (auto.time < QUALITY_WINDOW_S) return;
         const fps = auto.frames / auto.time;
         const bakeShare = auto.bakeFrames / auto.frames;
+        const flatOut = auto.flatOutFrames / auto.frames > 0.8;
         auto.time = 0;
         auto.frames = 0;
         auto.bakeFrames = 0;
+        auto.flatOutFrames = 0;
         auto.stalls = 0;
         if (auto.skip > 0) {
             auto.skip -= 1;
@@ -601,11 +620,12 @@ export function createEngine(canvas) {
         const index = LEVELS.indexOf(app.qualityLevel);
         const floor = QUALITY_DOWN_FPS[app.qualityLevel];
         // Loading bakes for some seconds, and a new view for a moment. Neither says how the machine will do afterwards, and
-        // a level lost to one would stay lost. Only a rate too low for the paced bakes to explain counts while they run,
-        // and more so once loading should be over: a machine still baking by then is a slow one, and needs the lower level.
+        // a level lost to one would stay lost. Bakes are paced to what the GPU can spare, though, so a GPU still flat out,
+        // or a rate too low for them to explain, is the machine's own. All the more once loading should be over: a machine
+        // still baking by then is a slow one, and needs the lower level the sooner.
         if (bakeShare > QUALITY_MAX_BAKE_SHARE) {
             const loading = performance.now() - engineStartedAt < QUALITY_LOAD_GRACE_S * 1000;
-            if (floor && fps < floor * (loading ? QUALITY_BAKE_FLOOR_LOADING : QUALITY_BAKE_FLOOR)) {
+            if (floor && (flatOut || fps < floor * (loading ? QUALITY_BAKE_FLOOR_LOADING : QUALITY_BAKE_FLOOR))) {
                 auto.lowWindows += 1;
                 auto.goodWindows = 0;
                 if (auto.lowWindows >= 2) stepDown();
@@ -614,8 +634,7 @@ export function createEngine(canvas) {
             }
             return;
         }
-        // A queue at the GPU means it's slower than the rate here shows
-        if (floor && (fps < floor || gpu.behind >= GPU_BEHIND_NO_BAKES + 1)) {
+        if (floor && fps < floor) {
             auto.lowWindows += 1;
             auto.goodWindows = 0;
             if (auto.lowWindows >= 2 || fps < floor * 0.66) stepDown();
@@ -944,7 +963,10 @@ export function createEngine(canvas) {
 
     // ---------- The frame ----------
 
+    let frameSerial = 0;
+
     function fillFrame(frame, dt) {
+        frame.serial = frameSerial;
         frame.t = elapsed;
         frame.dt = dt;
         frame.fov = view.fov;
@@ -970,6 +992,7 @@ export function createEngine(canvas) {
 
     function renderOnce(dt) {
         const started = performance.now();
+        frameSerial += 1;
         stepSlew(dt);
         stepCameraMotion(dt);
         if (bandFade < 1) {
@@ -1050,6 +1073,9 @@ export function createEngine(canvas) {
         rafId = 0;
         if (!running || contextLost || document.hidden) return;
         rafId = requestAnimationFrame(loop);
+        stepCompileJobs();
+        pollGpu();
+        if (gpu.fence && gpu.waited >= GPU_MAX_BEHIND && gpu.waited < GPU_GIVE_UP_WAITING) return;
         const realDt = Math.max(0, (now - lastNow) / 1000);
         const dt = Math.min(0.1, realDt);
         lastNow = now;
@@ -1060,17 +1086,15 @@ export function createEngine(canvas) {
             lastResizeAt = now;
             resize();
         }
-        stepCompileJobs();
         if (!chainReady) return;
-        bakedThisFrame = false;
-        bakesThisFrame = 0;
+        nextBakeFrame();
         lastRealDt = realDt;
         renderOnce(dt);
         if (firstFrameDrawn) {
             firstFrameDrawn();
             firstFrameDrawn = null;
         }
-        meterGpu();
+        fenceFrame();
         meterFps(realDt);
         measureAuto(realDt);
         checkHover(now);

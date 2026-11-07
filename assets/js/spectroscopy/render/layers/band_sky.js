@@ -399,7 +399,7 @@ export function createBandSkyLayer(engine, app) {
         update(frame) {
             const showing = frame.bandW[2] < 0.999;
             if (bakeState === 'waiting' && (showing || performance.now() >= wokenAt)) startCompiling();
-            if (bakeState === 'baking' && engine.bakesAllowed()) bakeNextStrip();
+            if (bakeState === 'baking' && engine.bakesAllowed(!showing)) bakeNextStrip();
             if (bakeState === 'done' && glowFade < 1) {
                 glowFade = frame.reduceMotion ? 1 : Math.min(1, glowFade + frame.dt / GLOW_FADE_S);
                 skyMesh.material.uniforms.uGlowFade.value = glowFade;

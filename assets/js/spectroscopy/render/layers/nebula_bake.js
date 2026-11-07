@@ -22,6 +22,7 @@ const NOISE_SIZE = 64;
 const HERO_FADE_S = 0.35;
 const FETCHES_PER_STEP = { cloud: 9, planetary: 7, remnant: 8 }; // Roughly, so strips can be sized by cost
 const START_BUDGET = 4e6;
+const ATLAS_PAID_FOR_SHARE = 0.25;  // With less than this baked, a fall in level starts again at the smaller size
 
 // Tiling noise: three fractal channels and one cellular. Built on the CPU from a fixed seed, so it is the same
 // on every load and every GPU, and sampled as a 3D texture because one fetch is far cheaper than computing noise
@@ -308,7 +309,7 @@ function createBaker(engine, app) {
     let frameAspect = 1;
     let framePxPerRad = 1;
 
-    let lastFrame = null;
+    let lastSerial = -1;
     let budget = START_BUDGET;  // Noise fetches per frame; tuned by frame time
     let flushing = false;
 
@@ -596,8 +597,8 @@ function createBaker(engine, app) {
 
     // Called at the top of every layer's update; it does its work once per frame
     function beginFrame(frame) {
-        if (frame === lastFrame) return;
-        lastFrame = frame;
+        if (frame.serial === lastSerial) return;
+        lastSerial = frame.serial;
         readFrame(frame);
         promoteCandidates();
         if (!atlas) createAtlas();
@@ -631,7 +632,12 @@ function createBaker(engine, app) {
     const offQuality = bus.on('quality', ({ level }) => {
         // A smaller bake is kept when the level falls, as it's already paid for. Rising from Low bakes larger
         const px = CELL_PX[level] || 256;
-        if (px > cellPx && atlas) {
+        if (px < cellPx && atlas && jobs.filter((job) => job.ready).length < jobs.length * ATLAS_PAID_FOR_SHARE) {
+            // Not much of the larger bake is paid for yet, and a machine that has just had to step down won't afford the rest
+            cellPx = px;
+            createAtlas();
+            resetJobs();
+        } else if (px > cellPx && atlas) {
             // Baked alongside: the old picture stays up until the new one is finished, rather than every nebula vanishing
             cellPx = px;
             if (atlas !== shownAtlas) atlas.dispose();
