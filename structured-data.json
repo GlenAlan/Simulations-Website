@@ -197,6 +197,24 @@
             "educationalLevel": "High School and Above",
             "isAccessibleForFree": true
           }
+        },
+        {
+          "@type": "ListItem",
+          "position": 10,
+          "item": {
+            "@type": "LearningResource",
+            "name": "Celestial Spectroscopy Simulation",
+            "description": "Stand under a night sky and read the light of stars, galaxies and planets to work out what they are and how they move",
+            "url": "https://simulations.science/spectroscopy_simulation.html",
+            "image": "https://simulations.science/images/spectroscopy.png",
+            "learningResourceType": "Simulation",
+            "audience": {
+              "@type": "EducationalAudience",
+              "educationalRole": ["student", "teacher", "researcher"]
+            },
+            "educationalLevel": "High School and Above",
+            "isAccessibleForFree": true
+          }
         }
       ]
     }
