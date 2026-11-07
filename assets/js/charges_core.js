@@ -1470,6 +1470,420 @@
     // =====================================================================
 
     // ===================================================================== [slingshot]
+    // A Y-shaped fork with an elastic band holding a particle of the chosen type. Pull the particle back and let go:
+    // it leaves the band's rest point opposite to the pull, already at full speed (there is no barrel). The launch
+    // speed is in proportion to the pull, so the launch voltage (qV = ½mv²) grows with the pull squared, up to
+    // SLING_V_MAX at a full pull. The pull snaps to 50 V steps; Shift slows it to a quarter for 10 V steps and an
+    // unsnapped aim. Tap the fork (or press Space or Fire) to launch at the slider's voltage along the current aim;
+    // drag the stem to move the fork. The fork turns to face where it aims.
+    const SLING_V_MAX = 2000;  // Launch voltage of a full pull (V)
+    const SLING_MIN_PULL = 8;  // A shorter pull is cancelled (CSS px)
+    const SLING_TAP = 6;       // A press that moves less than this is a tap (CSS px)
+    const SLING_FINE = 0.25;   // With Shift the pull follows the pointer at this fraction of its speed
+    const SLING_HINT = 'Pull the particle back and let go';
+
+    const sling = { x: -0.026, y: 0, angle: 0, homed: true }; // Band's rest point (m) and aim (rad, anticlockwise from +x)
+    let slingGuideUntil = 0;   // performance.now() time until which a keyboard aim shows the aim guide
+    let slingSnap = null;      // The band springing back after a shot: { t0, L0 }
+    let slingShotYet = false;  // The hint goes after the first shot
+
+    // Sizes in CSS px: half the gap between the prong tips, the depth of the fork to its crotch, the stem, the
+    // thickness of the prongs, and the longest pull
+    function slingSize() {
+        const a = clamp(scale * 0.0027, 13, 17);
+        return { a, c: a * 1.45, s: a * 1.35, w: clamp(a * 0.38, 5, 6.5), pullMax: clamp(scale * 0.014, 44, 90) };
+    }
+
+    // Where the fork stands until it is moved: where the accelerator sits, or further in on a narrow view, so that
+    // a full pull straight back stays in view
+    function slingHome() {
+        const room = (slingSize().pullMax + 12) / scale;
+        return { x: clamp(viewRect.x0 + room, -0.026, -0.012), y: 0 };
+    }
+
+    function slingPos() {
+        const p = sling.homed ? slingHome() : clampToView(sling.x, sling.y);
+        sling.x = p.x;
+        sling.y = p.y;
+        return p;
+    }
+
+    // The fork in canvas px: rest point r, forward f and n along the line between the prong tips
+    function slingGeometry() {
+        const z = slingSize();
+        const p = slingPos();
+        const rx = px(p.x);
+        const ry = py(p.y);
+        const fx = Math.cos(sling.angle);
+        const fy = -Math.sin(sling.angle); // Canvas y points down
+        const nx = -fy;
+        const ny = fx;
+        return {
+            ...z, rx, ry, fx, fy, nx, ny,
+            t1x: rx + nx * z.a, t1y: ry + ny * z.a, // Prong tips
+            t2x: rx - nx * z.a, t2y: ry - ny * z.a,
+            kx: rx - fx * z.c, ky: ry - fy * z.c,   // Crotch
+            ex: rx - fx * (z.c + z.s), ey: ry - fy * (z.c + z.s), // End of the stem
+        };
+    }
+
+    function slingVoltsForPull(len, pullMax, fine) {
+        const step = fine ? 10 : 50;
+        const raw = SLING_V_MAX * Math.pow(Math.min(len, pullMax) / pullMax, 2);
+        return clamp(Math.round(raw / step) * step, step, SLING_V_MAX);
+    }
+
+    function slingPullForVolts(volts, pullMax) {
+        return pullMax * Math.sqrt(clamp(volts, 0, SLING_V_MAX) / SLING_V_MAX);
+    }
+
+    function slingParticleRadius() {
+        const t = particleType(settings.particle);
+        return bodyRadius({ m: t.m, qe: t.q });
+    }
+
+    // Where a particle launched now starts, and how fast (for the aim guide)
+    function slingShot() {
+        const p = slingPos();
+        const t = particleType(settings.particle);
+        const v = launchSpeedFor(t.q, t.m, settings.launchV);
+        return { x: p.x, y: p.y, vx: Math.cos(sling.angle) * v, vy: Math.sin(sling.angle) * v };
+    }
+
+    // Launch from the band's rest point at full speed along the aim. opts.pull is how far the band was pulled
+    // (CSS px), for the snap back; opts also goes to addParticle.
+    function fireFromSling(volts = settings.launchV, key = settings.particle, opts = {}) {
+        const pos = slingPos();
+        const p = makeParticle(key, pos.x, pos.y);
+        const v = launchSpeedFor(p.qe, p.m, volts);
+        p.vx = Math.cos(sling.angle) * v;
+        p.vy = Math.sin(sling.angle) * v;
+        addParticle(p, opts);
+        const pull = opts.pull !== undefined ? opts.pull : slingPullForVolts(volts, slingSize().pullMax);
+        slingSnap = { t0: performance.now(), L0: pull };
+        if (!slingShotYet) {
+            slingShotYet = true;
+            if (hintOverride === SLING_HINT) hintOverride = null;
+        }
+        return p;
+    }
+
+    // 'pull' on the particle (or the band next to it), 'move' on the fork, or null
+    function slingHit(w, touch) {
+        const g = slingGeometry();
+        const r = slingParticleRadius();
+        const dx = w.cx - g.rx;
+        const dy = w.cy - g.ry;
+        const dP = Math.hypot(dx, dy);
+        // In the fork's own frame: x forward, y along n. Each prong is two segments through its curve's midpoint.
+        const lx = dx * g.fx + dy * g.fy;
+        const ly = dx * g.nx + dy * g.ny;
+        const mx = -g.c * 0.675;
+        const my = g.a * 0.75;
+        const dF = Math.min(
+            distToSegment(lx, ly, -g.c, 0, -g.c - g.s, 0),
+            distToSegment(lx, ly, 0, g.a, -g.c * 0.2, g.a), distToSegment(lx, ly, -g.c * 0.2, g.a, mx, my), distToSegment(lx, ly, mx, my, -g.c, 0),
+            distToSegment(lx, ly, 0, -g.a, -g.c * 0.2, -g.a), distToSegment(lx, ly, -g.c * 0.2, -g.a, mx, -my), distToSegment(lx, ly, mx, -my, -g.c, 0),
+        );
+        if (dP <= r + 3 || (dP < r + (touch ? 12 : 8) && dP < dF)) return 'pull';
+        if (dF < g.w / 2 + (touch ? 13 : 9)) return 'move';
+        return null;
+    }
+
+    // Undo a pull that wasn't fired: the aim and the launch voltage go back to what they were
+    function slingRestore(d) {
+        sling.angle = d.angle0;
+        if (settings.launchV !== d.volts0) {
+            settings.launchV = d.volts0;
+            settingsChanged();
+        }
+    }
+
+    // The pull is (rx, ry) in canvas px from the rest point to the pouch
+    function slingSetPull(d, rx, ry, fine) {
+        const g = slingGeometry();
+        if (settings.lockGeometry) {
+            // The aim is fixed: only the pull straight back counts
+            const back = Math.max(0, -(rx * g.fx + ry * g.fy));
+            rx = -g.fx * back;
+            ry = -g.fy * back;
+        }
+        const len = Math.min(Math.hypot(rx, ry), g.pullMax);
+        if (len < SLING_MIN_PULL) {
+            d.volts = 0;
+            d.drawL = len;
+            slingRestore(d);
+            return;
+        }
+        // The particle flies opposite to the pull: world y is canvas -y
+        if (!settings.lockGeometry) sling.angle = snapAngle(Math.atan2(ry, -rx), fine);
+        d.volts = slingVoltsForPull(len, g.pullMax, fine);
+        d.drawL = slingPullForVolts(d.volts, g.pullMax);
+        if (settings.launchV !== d.volts) {
+            settings.launchV = d.volts;
+            settingsChanged();
+        }
+    }
+
+    function drawSlingParticle(x, y, r, alpha) {
+        const t = particleType(settings.particle);
+        const label = chargeLabel(t.q);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = colorForCharge(t.q);
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = font(label.length > 1 ? r * 1.15 : r * 1.6, 700);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x, y + 0.5);
+        ctx.globalAlpha = 1;
+    }
+
+    launchers.slingshot = {
+        drag: null,
+        aiming() {
+            return !!(this.drag && this.drag.mode === 'pull' && this.drag.volts > 0) || performance.now() < slingGuideUntil;
+        },
+        fire() {
+            return fireFromSling();
+        },
+        shot: slingShot,
+        draw() {
+            const g = slingGeometry();
+            const d = this.drag;
+            const pulling = !!(d && d.mode === 'pull');
+            const now = performance.now();
+            const r = slingParticleRadius();
+            // How far the pouch is behind the rest point (px; negative: ahead of it, as the band springs back)
+            let back = 0;
+            if (pulling) back = d.drawL;
+            else if (slingSnap) {
+                const s = (now - slingSnap.t0) / 1000;
+                if (s < 0.5) back = slingSnap.L0 * Math.exp(-s / 0.035) * Math.cos((2 * Math.PI * s) / 0.1);
+                else slingSnap = null;
+            }
+            if (this.aiming()) drawAimGuide(slingShot());
+            // Fork: a Y lying along the aim, prongs forward, stem back
+            ctx.save();
+            ctx.translate(g.rx, g.ry);
+            ctx.rotate(Math.atan2(g.fy, g.fx));
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            const prongs = () => {
+                ctx.beginPath();
+                ctx.moveTo(0, -g.a);
+                ctx.lineTo(-g.c * 0.2, -g.a);
+                ctx.quadraticCurveTo(-g.c * 0.75, -g.a, -g.c, 0);
+                ctx.quadraticCurveTo(-g.c * 0.75, g.a, -g.c * 0.2, g.a);
+                ctx.lineTo(0, g.a);
+            };
+            const stem = () => {
+                ctx.beginPath();
+                ctx.moveTo(-g.c, 0);
+                ctx.lineTo(-g.c - g.s, 0);
+            };
+            ctx.strokeStyle = pal.gunEdge;
+            ctx.lineWidth = g.w + 2.4;
+            prongs();
+            ctx.stroke();
+            ctx.lineWidth = g.w * 1.3 + 2.4;
+            stem();
+            ctx.stroke();
+            ctx.strokeStyle = pal.gunFill;
+            ctx.lineWidth = g.w;
+            prongs();
+            ctx.stroke();
+            ctx.lineWidth = g.w * 1.3;
+            stem();
+            ctx.stroke();
+            ctx.restore();
+            // Band: from each tip to the pouch, which cups the back of the particle as it is pulled
+            const bx = g.rx - g.fx * back;
+            const by = g.ry - g.fy * back;
+            const rr = r + 1.5;
+            const cup = clamp(back / 12, 0, 1);
+            ctx.strokeStyle = isDarkMode() ? 'rgba(230, 230, 230, 0.85)' : 'rgba(45, 45, 45, 0.8)';
+            ctx.lineWidth = 2.6 - clamp(back / g.pullMax, 0, 1); // Thinner as it stretches
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            ctx.moveTo(g.t1x, g.t1y);
+            for (let i = 0; i <= 12; i++) {
+                const th = Math.PI / 2 + (Math.PI * i) / 12; // From the n side, round the back, to the -n side
+                const lf = rr * cup * Math.cos(th);
+                const ln = rr * Math.sin(th);
+                ctx.lineTo(bx + g.fx * lf + g.nx * ln, by + g.fy * lf + g.ny * ln);
+            }
+            ctx.lineTo(g.t2x, g.t2y);
+            ctx.stroke();
+            // The next particle settles into the pouch a moment after a shot
+            const shown = slingSnap ? clamp(((now - slingSnap.t0) / 1000 - 0.3) / 0.2, 0, 1) : 1;
+            if (shown > 0) drawSlingParticle(bx, by, r, shown);
+            if (pulling && d.volts > 0) {
+                // The launch voltage of this pull, beside the band on the side that is up on screen
+                let side = g.ny < 0 ? 1 : -1;
+                if (Math.abs(g.ny) < 0.2) side = g.nx > 0 ? 1 : -1;
+                const ux = side * g.nx;
+                const uy = side * g.ny;
+                const text = `${d.volts} V`;
+                ctx.font = font(fontPx + 1, 700);
+                const tw = ctx.measureText(text).width;
+                const dist = rr + (d.touch ? 30 : 12);
+                const lx = clamp(bx + ux * (dist + tw / 2), tw / 2 + 4, viewW - tw / 2 - 4);
+                const ly = clamp(by + uy * (dist + fontPx * 0.6), fontPx, viewH - fontPx);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = pal.bg;
+                ctx.strokeText(text, lx, ly);
+                ctx.fillStyle = pal.text;
+                ctx.fillText(text, lx, ly);
+            } else if (!pulling) {
+                // Launch voltage under the fork, as under the accelerator
+                const xs = [g.t1x, g.t2x, g.kx, g.ex];
+                const ys = [g.t1y, g.t2y, g.ky, g.ey];
+                const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+                let cy = Math.max(...ys) + g.w / 2 + 7;
+                let base = 'top';
+                if (cy + fontPx > viewH - 2) {
+                    cy = Math.min(...ys) - g.w / 2 - 7;
+                    base = 'bottom';
+                }
+                ctx.fillStyle = pal.muted;
+                ctx.font = font(fontPx, 400);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = base;
+                ctx.fillText(`${Math.round(settings.launchV)} V`, cx, cy);
+            }
+        },
+        hover(w) {
+            const hit = slingHit(w, false);
+            if (hit === 'pull') return 'grab';
+            if (hit === 'move') return settings.lockGeometry ? 'pointer' : 'move';
+            return null;
+        },
+        pointerDown(w, e) {
+            const touch = !!(e && e.pointerType === 'touch');
+            const hit = slingHit(w, touch);
+            if (!hit) return false;
+            if (hit === 'pull') {
+                slingSnap = null;
+                this.drag = {
+                    mode: 'pull', moved: false, touch, sx: w.cx, sy: w.cy,
+                    ax: w.cx, ay: w.cy, lx: w.cx, ly: w.cy, bx: 0, by: 0, // Pointer anchor, last pointer, pull at the anchor
+                    fine: !!(e && e.shiftKey), drawL: 0, volts: 0, angle0: sling.angle, volts0: settings.launchV,
+                };
+                canvas.style.cursor = 'grabbing';
+            } else {
+                const p = slingPos();
+                this.drag = { mode: 'move', moved: false, touch, sx: w.cx, sy: w.cy, dx: p.x - w.x, dy: p.y - w.y };
+            }
+            return true;
+        },
+        pointerMove(w, e) {
+            const d = this.drag;
+            if (!d) return;
+            if (!d.moved && Math.hypot(w.cx - d.sx, w.cy - d.sy) < SLING_TAP) return;
+            d.moved = true;
+            if (d.mode === 'move') {
+                if (settings.lockGeometry) return;
+                const c = clampToView(w.x + d.dx, w.y + d.dy);
+                sling.x = c.x;
+                sling.y = c.y;
+                sling.homed = false;
+                return;
+            }
+            const fine = !!(e && e.shiftKey);
+            if (fine !== d.fine) {
+                // Shift pressed or let go: carry on from where the pouch is, at the new rate
+                const k = d.fine ? SLING_FINE : 1;
+                let bx = d.bx + (d.lx - d.ax) * k;
+                let by = d.by + (d.ly - d.ay) * k;
+                const len = Math.hypot(bx, by);
+                const max = slingSize().pullMax;
+                if (len > max) {
+                    bx *= max / len;
+                    by *= max / len;
+                }
+                d.bx = bx;
+                d.by = by;
+                d.ax = d.lx;
+                d.ay = d.ly;
+                d.fine = fine;
+            }
+            d.lx = w.cx;
+            d.ly = w.cy;
+            const k = fine ? SLING_FINE : 1;
+            slingSetPull(d, d.bx + (w.cx - d.ax) * k, d.by + (w.cy - d.ay) * k, fine);
+        },
+        pointerUp(w, e, cancelled) {
+            const d = this.drag;
+            this.drag = null;
+            if (!d) return;
+            if (d.mode === 'pull' && (cancelled || (d.moved && !(d.volts > 0)))) {
+                slingRestore(d); // Too short a pull, or interrupted: nothing is launched
+                return;
+            }
+            if (cancelled) return;
+            if (!d.moved) fire();
+            else if (d.mode === 'pull') fireFromSling(d.volts, settings.particle, { pull: d.drawL });
+        },
+        keyAim(deg) {
+            const a = sling.angle + (deg * Math.PI) / 180;
+            sling.angle = Math.atan2(Math.sin(a), Math.cos(a));
+            slingGuideUntil = performance.now() + 1500;
+        },
+        reset() {
+            sling.homed = true;
+            sling.angle = 0;
+            slingSnap = null;
+        },
+    };
+
+    features.push({
+        // The hint line asks for a pull until the slingshot's first shot
+        onSettings() {
+            if (settings.launcher === 'slingshot') {
+                if (!slingShotYet && hintOverride === null) hintOverride = SLING_HINT;
+            } else if (hintOverride === SLING_HINT) {
+                hintOverride = null;
+            }
+        },
+        init() {
+            this.onSettings();
+            // Test hooks
+            Object.assign(window.chargesSim, {
+                sling, // { x, y, angle, homed }: the band's rest point (m) and aim (rad)
+                fireFromSling,
+                slingGeometry,
+                slingVoltsForPull: (len, fine) => slingVoltsForPull(len, slingSize().pullMax, fine),
+                slingPullForVolts: (volts) => slingPullForVolts(volts, slingSize().pullMax),
+                // Pull the particle by (dx, dy) canvas px from the rest point and let go (opts: shift, touch, hold)
+                slingPull(dx, dy, opts = {}) {
+                    const l = launchers.slingshot;
+                    const g = slingGeometry();
+                    const at = (cx, cy) => ({ cx, cy, x: wx(cx), y: wy(cy) });
+                    const ev = { pointerType: opts.touch ? 'touch' : 'mouse', shiftKey: !!opts.shift };
+                    if (!l.pointerDown(at(g.rx, g.ry), ev)) return null;
+                    for (let i = 1; i <= 8; i++) l.pointerMove(at(g.rx + (dx * i) / 8, g.ry + (dy * i) / 8), ev);
+                    const out = { volts: l.drag ? l.drag.volts : 0, angle: sling.angle, launchV: settings.launchV, particle: null };
+                    if (!opts.hold) {
+                        const id = nextId;
+                        l.pointerUp(at(g.rx + dx, g.ry + dy), ev, false);
+                        const last = particles[particles.length - 1];
+                        if (last && last.id >= id) out.particle = last;
+                    }
+                    return out;
+                },
+                slingRelease(cancel = false) {
+                    const l = launchers.slingshot;
+                    if (l.drag) l.pointerUp({ cx: 0, cy: 0, x: 0, y: 0 }, {}, cancel);
+                },
+            });
+        },
+    });
 
 
     // ===================================================================== end [slingshot]
