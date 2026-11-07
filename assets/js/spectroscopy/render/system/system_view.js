@@ -1324,6 +1324,7 @@ export function initSystemView(app) {
         beginIn(code, moving, kind) {
             enter(code, { hand: moving, focus: false });
             if (kind === 'touch') adoptFingers();
+            if (kind === 'key') keyZoom = -1;
         },
         beginOut(moving) {
             hand = moving;

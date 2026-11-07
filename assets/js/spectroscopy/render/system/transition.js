@@ -56,7 +56,7 @@ export function stagesAt(p, byHand = false, crowded = false) {
 // and back, and the student can carry on in to the surface. The sky goes on zooming at the speed the wheel had when the
 // move took over, then gathers pace, and the star comes in to the centre in screen terms, never first drifting outwards.
 
-export const HAND_LOG = 1.05;       // Zooming the whole move takes, as a log of the field of view: nine notches of a mouse wheel
+export const HAND_LOG = 0.9;        // Zooming the whole move takes, as a log of the field of view: seven or eight notches of a wheel
 export const HAND_ARRIVE = 0.8;     // Where in p the camera arrives
 const HAND_SKY_FACTOR = 16;         // How far the sky narrows
 const SKY_RUN = 0.66;               // Where in t the sky's zoom has finished. It has faded out by then.

@@ -245,7 +245,8 @@ function initLayersMenu(app, topRight) {
 }
 
 // ---------- Context bar: the zoom, and the way into or out of a planetary system ----------
-const ZOOM_HINT = 'Keep zooming to go in';
+const ZOOM_HINT_FROM_AFAR = 'Zoom in on it to visit';
+const ZOOM_HINT_ON_THE_WAY = 'Keep zooming to go in';
 const ZOOM_HINT_MS = 6000;
 const ZOOM_HINT_KEY = 'spectroZoomHintSeen';
 
@@ -292,7 +293,7 @@ function initContextBar(app) {
     readout.title = 'Field of view: how much of the sky fits from the bottom of the view to the top';
     const zoomText = element('span', 'spectro-zoom-value');
     const fovText = element('span', 'spectro-zoom-fov');
-    const hint = element('span', 'spectro-zoom-hint', ZOOM_HINT);
+    const hint = element('span', 'spectro-zoom-hint');
     hint.hidden = true;
     readout.append(zoomText, fovText, hint);
 
@@ -345,14 +346,15 @@ function initContextBar(app) {
 
     // Once ever, as the student first gets somewhere it would help: choosing a star that can be visited, or zooming on one
     let hintTimer = 0;
-    function offerHint() {
+    function offerHint(words) {
         if (hintTimer || hintWasSeen()) return;
         markHintSeen();
+        hint.textContent = words;
         hint.hidden = false;
         hintTimer = setTimeout(() => { hint.hidden = true; }, ZOOM_HINT_MS);
     }
-    bus.on('select', () => { if (app.view === 'sky' && systemCodeFor(app, app.selected)) offerHint(); });
-    bus.on('zoomaim', offerHint);
+    bus.on('select', () => { if (app.view === 'sky' && systemCodeFor(app, app.selected)) offerHint(ZOOM_HINT_FROM_AFAR); });
+    bus.on('zoomaim', () => offerHint(ZOOM_HINT_ON_THE_WAY));
     // Going in shows it's understood, so the hint needn't stay or come again
     bus.on('view', ({ view }) => {
         if (view !== 'system') return;
