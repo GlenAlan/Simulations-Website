@@ -6,14 +6,110 @@
 -->
 <html lang="en">
 	<head>
-		<title>Charges in Fields Simulation | Physics Simulation | Simulations.Science</title>
+		<title>Charges in Fields Simulation | Electric &amp; Magnetic Fields | Simulations.Science</title>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-		<meta name="description" content="Interactive simulation of charged particles in uniform electric and magnetic fields: drop or fire protons, electrons and alpha particles between charged plates or through a magnetic field, then repeat Thomson's experiment." />
-		<meta name="keywords" content="charged particles, electric field, magnetic field, parallel plates, E = V/d, F = qvB, Thomson experiment, physics simulation, interactive science" />
+		<meta name="description" content="Interactive physics simulation: drop or fire charges into uniform electric and magnetic fields, watch parabolas and circles, then repeat Thomson&#39;s experiment." />
+		<meta name="keywords" content="charged particles, electric field, magnetic field, parallel plates, uniform field, E = V/d, F = qE, F = qvB, right-hand rule, circular motion, cathode rays, Thomson&#39;s experiment, charge-to-mass ratio, discovery of the electron, physics simulation, interactive science" />
 		<meta name="author" content="Simulations.Science" />
 		<meta name="robots" content="index, follow" />
-		<!-- [content] Open Graph, Twitter, canonical and structured data go here -->
+
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://simulations.science/charges_in_fields_simulation.html" />
+		<meta property="og:title" content="Charges in Fields Simulation | Simulations.Science" />
+		<meta property="og:description" content="Drop a charge into an electric or magnetic field, or fire one in. Watch it fall in a parabola or turn in a circle, then measure what cathode rays are made of." />
+		<meta property="og:image" content="https://simulations.science/images/charges.png" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:url" content="https://simulations.science/charges_in_fields_simulation.html" />
+		<meta name="twitter:title" content="Charges in Fields Simulation | Simulations.Science" />
+		<meta name="twitter:description" content="Drop a charge into an electric or magnetic field, or fire one in. Watch it fall in a parabola or turn in a circle, then measure what cathode rays are made of." />
+		<meta name="twitter:image" content="https://simulations.science/images/charges.png" />
+
+		<!-- Canonical URL -->
+		<link rel="canonical" href="https://simulations.science/charges_in_fields_simulation.html" />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "LearningResource",
+			"name": "Charges in Fields Simulation",
+			"description": "An interactive simulation of charged particles in uniform electric and magnetic fields: drop a proton, electron or alpha particle in at rest or fire it in from an accelerator or a slingshot, and see it speed up in a straight line, curve in a parabola between charged plates or go round in a circle in a magnetic field, then balance the two fields as J. J. Thomson did to measure the charge-to-mass ratio of cathode rays.",
+			"provider": {
+				"@type": "Organization",
+				"name": "Simulations.Science",
+				"url": "https://simulations.science/"
+			},
+			"url": "https://simulations.science/charges_in_fields_simulation.html",
+			"audience": {
+				"@type": "EducationalAudience",
+				"educationalRole": ["student", "teacher"]
+			},
+			"learningResourceType": "Simulation",
+			"about": [
+				{
+					"@type": "Thing",
+					"name": "Uniform Electric Field",
+					"description": "The field between two parallel charged plates, the same everywhere between them, with strength E = V/d"
+				},
+				{
+					"@type": "Thing",
+					"name": "Force on a Charge in an Electric Field",
+					"description": "A charge q feels a force F = qE whether it is moving or not, and crossing a potential difference V it gains kinetic energy qV"
+				},
+				{
+					"@type": "Thing",
+					"name": "Projectile Motion of a Charge",
+					"description": "A charge fired across a uniform electric field keeps its sideways velocity and follows a parabola, like a ball thrown sideways under gravity"
+				},
+				{
+					"@type": "Thing",
+					"name": "Magnetic Force on a Moving Charge",
+					"description": "A charge moving across a magnetic field feels a force F = qvB sin theta at right angles to its velocity, given by the right-hand rule"
+				},
+				{
+					"@type": "Thing",
+					"name": "Circular Motion in a Magnetic Field",
+					"description": "The magnetic force changes a charge's direction but not its speed, so it moves in a circle of radius r = mv/(qB)"
+				},
+				{
+					"@type": "Thing",
+					"name": "Thomson's Experiment",
+					"description": "J. J. Thomson's 1897 measurement of the charge-to-mass ratio of cathode rays by balancing electric and magnetic deflections, which led to the discovery of the electron"
+				}
+			],
+			"educationalLevel": "High School and Above",
+			"image": "https://simulations.science/images/charges.png",
+			"interactivityType": "active",
+			"isAccessibleForFree": true,
+			"keywords": "charged particles, electric field, magnetic field, parallel plates, E = V/d, F = qE, F = qvB, right-hand rule, circular motion, parabola, cathode rays, Thomson's experiment, charge-to-mass ratio, electron, physics simulation"
+		}
+		</script>
+
+		<!-- BreadcrumbList structured data -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://simulations.science/"
+				},
+				{
+					"@type": "ListItem",
+					"position": 2,
+					"name": "Charges in Fields Simulation",
+					"item": "https://simulations.science/charges_in_fields_simulation.html"
+				}
+			]
+		}
+		</script>
 		<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
 		<script>
 			// Theme toggle script
@@ -267,8 +363,51 @@
 									<details class="description-area">
 										<summary>About this simulation</summary>
 										<div class="description-content">
-											<!-- [content] the About text goes here -->
-											<p>What does a field do to a charge that is still, and to one that is moving?</p>
+											<p>What does a field do to a charge at rest, and to one that is moving? An electric field pushes on both; a magnetic field pushes only on the moving one, and always sideways.</p>
+
+											<h4>What you're seeing</h4>
+											<ul>
+												<li>A 10&nbsp;cm box of uniform field: charged plates for <strong>Electric</strong>, crosses (into the page) or dots (out of it) for <strong>Magnetic</strong>, and no field outside.</li>
+												<li>Dots along a path are a strobe photo, at equal time steps. Teal arrows are velocity, orange the electric force, violet the magnetic force.</li>
+												<li>It runs in slow motion, slowed more for faster particles. The times shown are real.</li>
+												<li>The model: uniform fields with sharp edges, no gravity, motion in the page with <em>B</em> at right angles to it, and Newton&rsquo;s laws (speeds stay below 0.09<em>c</em>).</li>
+											</ul>
+
+											<h4>Key idea</h4>
+											<p><strong>Electric:</strong> between the plates <em>E</em>&nbsp;=&nbsp;<em>V</em>/<em>d</em> everywhere, and a charge feels <em>F</em>&nbsp;=&nbsp;<em>qE</em> (against the field lines if it is negative). From rest it speeds up in a straight line, and across a voltage <em>V</em> it gains <em>W</em>&nbsp;=&nbsp;<em>qV</em>&nbsp;=&nbsp;&frac12;<em>mv</em>&sup2;, which is how the launcher sets its speed. Fired across the field, it curves in a parabola, like a thrown ball.</p>
+											<p><strong>Magnetic:</strong> only a moving charge feels a force, <em>F</em>&nbsp;=&nbsp;<em>qvB</em>&nbsp;sin&nbsp;<em>&theta;</em>: only the part of its velocity across <em>B</em> counts. The force is at right angles to <em>v</em> and <em>B</em> (the right-hand rule, reversed for a negative charge), so it turns the charge without speeding it up. It goes round a circle: <em>qvB</em>&nbsp;=&nbsp;<em>mv</em>&sup2;/<em>r</em>, so <em>r</em>&nbsp;=&nbsp;<em>mv</em>/(<em>qB</em>).</p>
+
+											<h4>Thomson&rsquo;s experiment</h4>
+											<p>In 1897 J.&nbsp;J. Thomson asked what cathode rays, the glowing beams in a vacuum tube, are made of. In <em>Setup: Thomson&rsquo;s experiment</em> you see only what he could measure.</p>
+											<ol>
+												<li>Fields off: the spot is at zero.</li>
+												<li>Plates on: the spot moves a distance <em>y</em>.</li>
+												<li>Add <em>B</em> and tune it until the spot is back at zero (reverse <em>B</em> if it moves further away). Then <em>qE</em>&nbsp;=&nbsp;<em>qvB</em>, so <em>v</em>&nbsp;=&nbsp;<em>E</em>/<em>B</em>.</li>
+												<li>In step 2 the beam crossed the plates (<em>L</em>&nbsp;=&nbsp;10&nbsp;cm) in a time <em>L</em>/<em>v</em>, falling <em>y</em>&nbsp;=&nbsp;&frac12;(<em>qE</em>/<em>m</em>)(<em>L</em>/<em>v</em>)&sup2;. So <em>q</em>/<em>m</em>&nbsp;=&nbsp;2<em>yE</em>/(<em>B</em>&sup2;<em>L</em>&sup2;), or from the launch voltage, <em>q</em>/<em>m</em>&nbsp;=&nbsp;<em>v</em>&sup2;/(2<em>V</em>). Enter it and press Check.</li>
+											</ol>
+											<p>Then measure hydrogen ions, and try other cathode metals. How do the answers compare, and what do they say cathode rays are?</p>
+
+											<h4>Things to try</h4>
+											<ul>
+												<li>Drop a proton at rest in each field.</li>
+												<li>Halve the gap: does a dropped proton hit faster? (<em>E</em> doubles but the distance halves, so it still gains <em>qV</em>.)</li>
+												<li>Turn on <strong>Velocity components</strong>: in the electric field the sideways part never changes.</li>
+												<li>Compare an electron with a proton in each field: in <em>E</em> the same path, mirrored, but different times. In <em>B</em>?</li>
+												<li>Measure a circle with <strong>Grid (cm)</strong>, then double the launch voltage, then double <em>B</em>.</li>
+												<li>Sling a proton straight up against the field: it rises until the voltage it has crossed equals its launch voltage.</li>
+												<li>In the magnetic field, sling in different directions: the circle stays the same size.</li>
+												<li>With both fields on, tune <em>B</em> until the beam goes straight: that is Thomson&rsquo;s method.</li>
+												<li>Why ignore gravity? On a proton here, <em>qE</em> is about 10<sup>11</sup> times <em>mg</em>.</li>
+											</ul>
+
+											<h4>How to interact</h4>
+											<ul>
+												<li>Tap the field to drop a charge at rest. Tap a particle to select it; <strong>Values</strong>, in the settings, adds its <em>E</em>, <em>B</em>, <em>F</em>, <em>a</em> and <em>r</em>.</li>
+												<li>Fire: click or tap the launcher, press <span class="icon solid fa-bolt"></span> Fire or Space. Drag the launcher to move it and its round knob to aim; with the canvas focused, the arrow keys aim. Hold Shift for any angle when dragging, or fine steps with the keys.</li>
+												<li>Slingshot (Launch, in the settings): pull back and let go. A longer pull is a faster launch, in 50&nbsp;V steps (Shift for fine control). Drag its base to move it.</li>
+												<li>Drag a plate to change the gap. Under the canvas, choose the field, its strength and its direction.</li>
+												<li><span class="icon solid fa-pause"></span> pauses (P) and <span class="icon solid fa-step-forward"></span> then steps (.), <span class="icon solid fa-chart-bar"></span> shows graphs, <span class="icon solid fa-sync-alt"></span> restarts, <span class="icon solid fa-expand"></span> goes fullscreen and <span class="icon solid fa-cog"></span> opens the settings. Press F to show the frame rate.</li>
+											</ul>
 										</div>
 									</details>
 								</div>
