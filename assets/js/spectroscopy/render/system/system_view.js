@@ -29,7 +29,7 @@ import { announce as say } from '../../ui/drawer.js';
 import {
     FRAME, ORBITS_PER_SECOND, ORBITS_PER_SECOND_REDUCED, buildModel, createSizes, createSmear, drawnSizes, hasSystemView,
     hzStatus, layout, ringRadius, starRadius, planetRadius, planetOrbitPoints, planetPhase, childOrbitPoints,
-    figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf
+    figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf, sightDirection
 } from './system_model.js';
 import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, handSkyLog, handOffCentre } from './transition.js';
 import { createZoomInto } from './zoom_into.js';
@@ -221,7 +221,7 @@ export function initSystemView(app) {
 
         let beams = null;
         if (model.body.neutron_star && model.body.neutron_star.pulsar) {
-            beams = createPulsarBeams(model.body.neutron_star);
+            beams = createPulsarBeams(model.body, sightDirection(model));   // Turning as the sky shows it
             group.add(beams.object);
         }
 

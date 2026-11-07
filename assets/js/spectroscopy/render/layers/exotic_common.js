@@ -38,6 +38,66 @@ export function smoothstep(lo, hi, x) {
     return t * t * (3 - 2 * t);
 }
 
+// ---------- A pulsar's spin, the same on the sky (neutron_stars.js) and up close (system/remnants.js) ----------
+//
+// The rule for how fast a pulsar is shown turning. Real ones turn from about once a second to hundreds of times a second,
+// which would be a strobe, so both views slow them by the same rule, and show the same turn at the same moment:
+//   - Each turns at its true rate, but never more than MAX_TURNS_PER_S, once a second. On the sky one turn is one pulse,
+//     as the beam crosses our line of sight. Up close a beam sweeping over the screen passes a point two or three times a
+//     turn (two beams, each with two bright walls, swinging out and back), and three flashes a second is the most that
+//     photosensitive viewers can take, over the large part of the screen a close beam sweeps. So once a second it is.
+//   - The faster one really turns, the less its light swings on the sky, down to a faint shimmer below SHIMMER_BELOW_S.
+//   - With Reduce motion nothing turns: the beam holds still at HELD_ANGLE, seen side-on, and the light is steady.
+// The angle at a moment is turns a second x the shared clock (sharedUniforms.uTime) plus the pulsar's own start, so a
+// pulse on the sky is the beam pointing at the camera in the system view, and zooming in keeps the phase. The Pulse timing
+// tool reads the true period, never this.
+export const MAX_TURNS_PER_S = 1;
+const SHIMMER_BELOW_S = 0.25;
+export const HELD_ANGLE = 1.3;
+export const PULSAR_BEAM_SLOPE = 0.13;     // A beam's half-width per unit of its length, in both views
+
+// { rate: turns a second shown, depth: 0..1 how far the light swings on the sky }
+export function pulseDisplay(periodS) {
+    if (!periodS) return { rate: 0, depth: 0 };
+    const f = 1 / periodS;
+    const rate = Math.min(f, MAX_TURNS_PER_S);
+    if (periodS < SHIMMER_BELOW_S) {
+        const fastness = Math.max(0, Math.min(1, Math.log10(SHIMMER_BELOW_S / periodS) / 2.4));
+        return { rate, depth: 0.2 - 0.08 * fastness };
+    }
+    return { rate, depth: 1 - 0.35 * smoothstep(MAX_TURNS_PER_S, 1 / SHIMMER_BELOW_S, f) };
+}
+
+// Everything both views need to draw one pulsar's spin, from its own stream (rng = bodyRng(body, 'pulsar'), read in this
+// order, which the sky layer goes on reading after). In the frame of the view at the pulsar: x right, y up, z towards us.
+// The spin axis is tilted from our line of sight by the beam's own tilt, so the beam sweeps across us once a turn.
+export function pulsarSpin(body, rng) {
+    const info = body.neutron_star;
+    // Very small tilts are drawn a little larger, or the beam would never be seen side-on
+    const tilt = Math.max(24, Math.min(80, info.magnetic_tilt_deg ?? rng.range(30, 62))) * DEG;
+    const roll = rng.range(0, Math.PI * 2);
+    const show = info.pulsar ? pulseDisplay(info.pulse_period_s) : { rate: 0, depth: 0 };
+    const phase = rng.range(0, Math.PI * 2);
+    const axis = [Math.sin(tilt) * Math.cos(roll), Math.sin(tilt) * Math.sin(roll), Math.cos(tilt)];
+    // At angle 0 the beam points straight at us: e1 is the part of the line of sight square to the spin axis
+    const e1 = [-axis[0] * Math.cos(tilt) / Math.sin(tilt), -axis[1] * Math.cos(tilt) / Math.sin(tilt), (1 - axis[2] * Math.cos(tilt)) / Math.sin(tilt)];
+    const e2 = [axis[1] * e1[2] - axis[2] * e1[1], axis[2] * e1[0] - axis[0] * e1[2], axis[0] * e1[1] - axis[1] * e1[0]];
+    return { tilt, roll, rate: show.rate, depth: show.depth, phase, axis, e1, e2 };
+}
+
+// The beam's angle round the spin axis at a time on the shared clock, as the sky's shader works it out
+export function pulsarAngle(spin, timeS, still) {
+    return still ? HELD_ANGLE : spin.rate * timeS * Math.PI * 2 + spin.phase;
+}
+
+// Where the beam points at that angle, in the same frame as spin.axis
+export function pulsarBeam(spin, angle, out = [0, 0, 0]) {
+    const c = Math.cos(spin.tilt);
+    const s = Math.sin(spin.tilt);
+    for (let i = 0; i < 3; i++) out[i] = spin.axis[i] * c + (spin.e1[i] * Math.cos(angle) + spin.e2[i] * Math.sin(angle)) * s;
+    return out;
+}
+
 // A tiling noise texture, baked once, so the shaders pay one texture read per octave group instead of doing the
 // noise sums themselves. Mipmapped, so fine detail fades away cleanly when an object is small on screen.
 // R: soft clouds. G: ridged filaments. B: fine grain. A: soft clouds again, unrelated to R.

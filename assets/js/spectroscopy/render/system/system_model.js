@@ -380,16 +380,27 @@ function computeSizes(model) {
     }
 }
 
-// How a black hole's companion (star 1) feeds it (star 0), if at all: { donor, accretor, wind } or null. Filling its lobe at
-// closest approach (within the data's own 3%, see data/dynamics.js) makes a stream; short of that, only a star bright
-// enough to drive a strong wind loses gas the hole can catch.
+// How a black hole's companion (star 1) feeds it (star 0), if at all: { donor, accretor, wind } or null. The data says
+// (black_hole.feeding, see data/dynamics.js): 'roche' is a stream from a companion that fills its lobe, 'wind' a hot massive
+// star's wind, 'none' nothing. Without that field, the same from the orbit: filling the lobe at closest approach (within the
+// data's own 3%) makes a stream, and short of that only a star bright enough to drive a strong wind feeds it.
 const WIND_LSUN = 1e4;
 function holeFeed(hole) {
-    const star = hole.companion.star;
-    const lobe = rocheShare(star.mass_Msun / hole.mass_Msun) * hole.a_AU * (1 - (hole.ecc || 0));
-    if ((star.radius_Rsun * RSUN_AU) / lobe >= 0.97) return { donor: 1, accretor: 0, wind: false };
-    if (star.luminosity_Lsun >= WIND_LSUN) return { donor: 1, accretor: 0, wind: true };
-    return null;
+    let feeding = hole.feeding;
+    if (!feeding) {
+        const star = hole.companion.star;
+        const lobe = rocheShare(star.mass_Msun / hole.mass_Msun) * hole.a_AU * (1 - (hole.ecc || 0));
+        feeding = (star.radius_Rsun * RSUN_AU) / lobe >= 0.97 ? 'roche' : star.luminosity_Lsun >= WIND_LSUN ? 'wind' : 'none';
+    }
+    if (feeding === 'none') return null;
+    return { donor: 1, accretor: 0, wind: feeding === 'wind' };
+}
+
+// Towards us, from the system's centre: where the flight in starts (system_view.js beginFlight), on the true line of sight
+export function sightDirection(model) {
+    const el = (model.inclination === null ? 7 : Math.min(70, Math.max(4, 90 - model.inclination))) * (Math.PI / 180);
+    const az = model.sightAz;
+    return [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
 }
 
 export function starRadius(model, i, m) {
