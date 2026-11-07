@@ -1,0 +1,794 @@
+/* --- Charges in Fields simulation page styles (loaded after simulation_styles.css) --- */
+
+.charges-sim {
+    --ch-btn-h: 34px;
+    --ch-pos: #d63c3c;
+    --ch-neg: #1f6fd1;
+    --ch-neutral: #7a7a7a;
+    --ch-velocity: #2a9d8f;
+    --ch-force: #e07b00;
+}
+
+html.dark-mode .charges-sim {
+    --ch-pos: #ff6b6b;
+    --ch-neg: #5aa9ff;
+    --ch-neutral: #b8b8b8;
+    --ch-velocity: #7bd0c1;
+    --ch-force: #ffa94d;
+}
+
+@media (pointer: coarse) {
+    .charges-sim {
+        --ch-btn-h: 40px;
+    }
+}
+
+#simulationCanvas:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+/* Screen-reader-only live region for hits */
+.ch-live {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ---------- Toolbar under the canvas: field switch, strength sliders, Fire ---------- */
+.ch-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 18px;
+    width: var(--sim-canvas-w);
+    max-width: 100%;
+    margin: 0.5em auto 0 auto;
+    padding: 5px 6px;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius, 6px);
+    font-size: 0.85em;
+    line-height: 1.3;
+}
+
+.ch-toolbar-label {
+    flex: 0 0 auto;
+    font-weight: 300;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.ch-field {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    flex: 0 0 auto;
+}
+
+/* Segmented switches (field in the toolbar, launcher in the panel) */
+.ch-seg {
+    display: flex;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.charges-sim .ch-seg-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 0;
+    height: var(--ch-btn-h);
+    min-width: 0;
+    margin: 0;
+    padding: 0 0.85em;
+    font-size: 0.95em;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .ch-seg-btn:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+.charges-sim .ch-seg-btn:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+.charges-sim .ch-seg-btn[aria-checked="true"] {
+    background-color: var(--color-accent);
+    color: #ffffff !important;
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-seg-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .charges-sim .ch-seg-btn[aria-checked="true"]:hover {
+        background-color: var(--color-accent-active);
+        box-shadow: none;
+    }
+}
+
+.charges-sim .ch-seg-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.ch-seg-panel {
+    margin: 0.5em 0 0.4em 0;
+}
+
+.ch-seg-panel .ch-seg-btn {
+    font-size: 0.85em;
+}
+
+/* A strength slider with its direction button. No min-width: 0 here, so when two of them don't fit beside the
+   field switch (Both fields) they wrap onto a row of their own instead of squeezing their values into the buttons. */
+.ch-strength {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    flex: 1 1 20em;
+}
+
+.ch-strength[hidden] {
+    display: none;
+}
+
+.ch-toolbar .ch-slider {
+    display: flex;
+    align-items: center;
+    gap: 0.7em;
+    flex: 1 1 auto;
+    margin: 0;
+    font-size: 1em;
+    font-weight: 400;
+}
+
+.ch-slider-value {
+    flex: 0 0 auto;
+    font-size: 1.05em;
+    white-space: nowrap;
+    color: var(--sim-value-color);
+}
+
+.ch-slider-value .sim-value {
+    font-weight: 700;
+}
+
+.ch-toolbar input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    flex: 1 1 auto;
+    min-width: 7em;
+    height: var(--ch-btn-h);
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+}
+
+.ch-toolbar input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, var(--color-accent) 0 var(--ch-fill, 0%), var(--sim-track) var(--ch-fill, 0%) 100%);
+}
+
+.ch-toolbar input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -7px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--sim-track);
+}
+
+.ch-toolbar input[type="range"]::-moz-range-progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    border: 2px solid var(--color-bg-alt);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+.ch-toolbar input[type="range"]:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--color-bg-alt), 0 0 0 4px var(--color-accent);
+}
+
+@media (pointer: coarse) {
+    .ch-toolbar input[type="range"]::-webkit-slider-thumb {
+        width: 26px;
+        height: 26px;
+        margin-top: -10px;
+    }
+
+    .ch-toolbar input[type="range"]::-moz-range-thumb {
+        width: 22px;
+        height: 22px;
+    }
+}
+
+/* Direction buttons (+ on top / below, into / out of the page) and Fire */
+.charges-sim .ch-dir-btn,
+.charges-sim .ch-fire {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35em;
+    flex: 0 0 auto;
+    height: var(--ch-btn-h);
+    margin: 0;
+    padding: 0 0.7em;
+    font-size: 0.9em;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .ch-dir-btn .ch-dir-sym {
+    font-size: 1.25em;
+    min-width: 1em;
+    text-align: center;
+}
+
+.charges-sim .ch-dir-btn .ch-dir-text {
+    font-weight: 400;
+}
+
+.charges-sim .ch-fire {
+    margin-left: auto;
+    padding: 0 1.1em;
+    color: #ffffff !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-dir-btn:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .charges-sim .ch-fire:hover {
+        background-color: var(--color-accent-active);
+    }
+}
+
+.charges-sim .ch-dir-btn:focus-visible,
+.charges-sim .ch-fire:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.charges-sim .ch-fire:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* ---------- Panel: particle chips, hints, colour keys ---------- */
+.ch-hint {
+    margin-top: 0.45em !important;
+    opacity: 0.85;
+}
+
+.ch-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+    margin-top: 0.5em;
+}
+
+.charges-sim .ch-chip {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    height: auto;
+    min-height: 2.5em;
+    margin: 0;
+    padding: 0.3em 0.75em 0.3em 0.4em;
+    font-size: 0.85em;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1.2;
+    text-transform: none;
+    color: var(--color-text) !important;
+    background-color: var(--color-bg);
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .ch-chip[aria-checked="true"] {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+    background-color: var(--color-bg-button-active-overlay, var(--color-bg));
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-chip:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+
+    .charges-sim .ch-chip[aria-checked="true"]:hover {
+        box-shadow: inset 0 0 0 2px var(--color-accent);
+    }
+}
+
+.charges-sim .ch-chip:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.ch-swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75em;
+    height: 1.75em;
+    padding: 0 0.25em;
+    box-sizing: border-box;
+    border-radius: 999px;
+    font-size: 0.85em;
+    font-weight: 700;
+    line-height: 1;
+    color: #ffffff;
+}
+
+.ch-swatch-pos {
+    background-color: var(--ch-pos);
+}
+
+.ch-swatch-neg {
+    background-color: var(--ch-neg);
+}
+
+.ch-swatch-neutral {
+    background-color: var(--ch-neutral);
+}
+
+/* Arrow colour keys beside the Show toggles */
+.ch-key {
+    display: inline-block;
+    width: 1.1em;
+    height: 3px;
+    margin-right: 0.45em;
+    vertical-align: middle;
+    border-radius: 2px;
+}
+
+.ch-key-velocity {
+    background-color: var(--ch-velocity);
+}
+
+.ch-key-force {
+    background-color: var(--ch-force);
+}
+
+/* Selected particle's colour dot in the info bar */
+.ch-dot {
+    display: inline-block;
+    width: 0.7em;
+    height: 0.7em;
+    margin-right: 0.35em;
+    border-radius: 50%;
+    vertical-align: -0.05em;
+    background-color: var(--ch-pos);
+}
+
+.stats-box[hidden] {
+    display: none;
+}
+
+/* ---------- Phones: the field switch fills one row, each slider another ---------- */
+@media (max-width: 600px) {
+    .ch-toolbar {
+        gap: 4px 10px;
+    }
+
+    .ch-field {
+        flex: 1 1 100%;
+    }
+
+    .ch-field .ch-seg {
+        flex: 1 1 auto;
+    }
+
+    .ch-strength {
+        flex: 1 1 100%;
+    }
+
+    .ch-toolbar .ch-slider .ch-toolbar-label {
+        display: none;
+    }
+
+    .charges-sim .ch-fire {
+        flex: 1 1 100%;
+        margin-left: 0;
+    }
+}
+
+/* ---------- Short landscape screens (phones held sideways): the toolbar in a column beside the canvas ----------
+   A toolbar under the canvas would cost it a third of the screen's height (the relativity page does the same).
+   The column has a fixed width, so the display container is made that much wider than the canvas. */
+@media (orientation: landscape) and (max-height: 540px) {
+    .charges-sim {
+        --ch-side-w: 176px;
+        --ch-side-gap: 8px;
+        --ch-btn-h: 32px;
+    }
+
+    .charges-sim .simulation-display-container {
+        display: grid;
+        grid-template-columns: var(--ch-side-w) minmax(0, 1fr);
+        grid-template-areas: "tools canvas" "answer answer" "info info";
+        column-gap: var(--ch-side-gap);
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 2 / 1)) + 2px + var(--ch-side-w) + var(--ch-side-gap)));
+    }
+
+    .charges-sim .sim-canvas-wrapper {
+        grid-area: canvas;
+        min-width: 0;
+    }
+
+    .charges-sim .sim-info-bar {
+        grid-area: info;
+    }
+
+    .charges-sim .th-answer {
+        grid-area: answer;
+    }
+
+    .ch-toolbar {
+        grid-area: tools;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        align-self: start;
+        gap: 8px;
+        width: auto;
+        margin: 0;
+        padding: 6px;
+    }
+
+    .ch-field {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 3px;
+    }
+
+    .ch-field .ch-seg {
+        flex-direction: column;
+    }
+
+    .ch-field .ch-seg-btn {
+        flex: 0 0 auto;
+        justify-content: flex-start;
+    }
+
+    .charges-sim .ch-field .ch-seg-btn:first-child {
+        border-radius: 4px 4px 0 0;
+    }
+
+    .charges-sim .ch-field .ch-seg-btn:last-child {
+        border-radius: 0 0 4px 4px;
+    }
+
+    .ch-strength {
+        flex-direction: column;
+        align-items: stretch;
+        flex: 0 0 auto;
+        gap: 4px;
+    }
+
+    /* "Plate voltage  500 V" over the slider */
+    .ch-toolbar .ch-slider {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "label value" "slider slider";
+        align-items: center;
+        gap: 0 6px;
+        flex: 0 0 auto;
+    }
+
+    .ch-toolbar .ch-slider .ch-toolbar-label {
+        grid-area: label;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .ch-slider-value {
+        grid-area: value;
+    }
+
+    .ch-toolbar input[type="range"] {
+        grid-area: slider;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .charges-sim .ch-fire {
+        margin-left: 0;
+    }
+
+    /* Fullscreen: the grid fills the space above the fixed info bar */
+    body.sim-fullscreen-active .charges-sim .simulation-display-container {
+        grid-template-rows: minmax(0, 1fr) auto;
+        grid-template-areas: "tools canvas" "answer answer";
+        width: 100%;
+    }
+
+    body.sim-fullscreen-active .charges-sim .sim-canvas-wrapper {
+        height: 100%;
+    }
+}
+
+/* =====================================================================
+   Feature sections. Each feature adds its styles inside its own block only.
+   ===================================================================== */
+
+/* ---------- [slingshot] ---------- */
+
+
+/* ---------- end [slingshot] ---------- */
+
+
+
+/* ---------- [thomson] ---------- */
+/* Thomson's experiment: the q/m answer bar under the toolbar, the spot readout and the Beam on/off button */
+#statsFree[hidden],
+#statsThomson[hidden],
+.charges-sim .sim-show-charts-label[hidden],
+.th-answer[hidden] {
+    display: none !important;
+}
+
+.th-answer {
+    width: var(--sim-canvas-w);
+    max-width: 100%;
+    margin: 0.5em auto 0 auto;
+    padding: 5px 6px 5px 0.75em;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius, 6px);
+    font-size: 0.85em;
+    line-height: 1.3;
+}
+
+.th-answer-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 0.6em;
+    margin: 0;
+}
+
+.charges-sim .th-answer-label {
+    display: block;
+    flex: 0 0 auto;
+    margin: 0;
+    font-size: 1em;
+    font-weight: 400;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.charges-sim input.th-answer-input {
+    flex: 1 1 8em;
+    width: auto;
+    min-width: 6em;
+    max-width: 16em;
+    height: var(--ch-btn-h);
+    padding: 0 0.6em;
+    font-size: 1em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.charges-sim input.th-answer-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.charges-sim input.th-answer-input::placeholder {
+    color: var(--color-text);
+    opacity: 0.45;
+}
+
+.th-answer-unit {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.charges-sim .th-check,
+.charges-sim .th-reveal {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    height: var(--ch-btn-h);
+    margin: 0;
+    padding: 0 1.1em;
+    font-size: 0.9em;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    border-radius: 4px;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .th-check {
+    color: #ffffff !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+.charges-sim .th-reveal {
+    padding: 0 0.8em;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.charges-sim .th-reveal[hidden] {
+    display: none;
+}
+
+@media (hover: hover) {
+    .charges-sim .th-check:hover {
+        background-color: var(--color-accent-active);
+    }
+
+    .charges-sim .th-reveal:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+.charges-sim .th-check:focus-visible,
+.charges-sim .th-reveal:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+/* Feedback after Check, on the same row where it fits (so the canvas doesn't resize); empty until there's news */
+.charges-sim .th-feedback {
+    flex: 1 1 16em;
+    min-width: 0;
+    margin: 0;
+    padding: 0 0.2em;
+    font-size: 1em;
+    line-height: 1.35;
+    color: var(--color-text);
+}
+
+.charges-sim .th-feedback:empty {
+    flex-basis: 0;
+    padding: 0;
+}
+
+.th-spot-dir {
+    display: inline-block;
+    min-width: 2.4em;
+}
+
+/* The field strengths are the readings Thomson's experiment depends on: a slider row too narrow for its value and
+   direction button wraps onto its own line rather than letting them overlap */
+.charges-sim.th-active .ch-strength {
+    min-width: min-content;
+}
+
+/* Beam on/off (the Fire button in Thomson's experiment): filled while on, outlined while off */
+.charges-sim .ch-fire.th-beam-btn[aria-pressed="false"] {
+    color: var(--color-text) !important;
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-fire.th-beam-btn[aria-pressed="false"]:hover {
+        background-color: transparent;
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+/* iPhones zoom into inputs whose text is under 16px */
+@media (pointer: coarse) {
+    .charges-sim input.th-answer-input {
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 600px) {
+    .th-answer {
+        padding-left: 0.6em;
+    }
+
+    .charges-sim input.th-answer-input {
+        flex-basis: 5em;
+    }
+}
+
+/* ---------- end [thomson] ---------- */
+
+
+
+/* ---------- [overlays] ---------- */
+
+
+/* ---------- end [overlays] ---------- */
+
+
+
+/* ---------- [graphs-custom] ---------- */
+/* Graphs: a little taller than the default, to leave the plot room under a legend of five particles */
+body:not(.sim-fullscreen-active) .charges-sim #charts-container .chart-box {
+    height: 260px;
+}
+
+/* ---------- end [graphs-custom] ---------- */
+
+
+
+/* ---------- [content] ---------- */
+
+
+/* ---------- end [content] ---------- */
