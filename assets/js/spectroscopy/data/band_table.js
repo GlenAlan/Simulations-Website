@@ -12,6 +12,7 @@
 // so that the radio sky is a few striking beacons, the X-ray sky sparse with black holes the brightest, and so on.
 
 import { H, C_MS, K_B } from '../core/phys.js';
+import { bolometricCorrection } from './stellar.js';
 
 export const NOT_SEEN = 99;                // A band magnitude meaning "does not show in this band"
 const DEFAULT_LIMIT_MAG = 6;               // limitingMag() at the default field of view (core/sky.js)
@@ -340,23 +341,55 @@ function bolometricMag(star, distancePc, fallbackMag) {
     return 4.74 - 2.5 * Math.log10(star.luminosity_Lsun) + 5 * Math.log10(distancePc / 10);
 }
 
+// Ultraviolet is for the far UV, where a cool star's Planck curve has already fallen away, so the near UV that counts in its share
+// of the light is worth little: a Sun-like star loses three magnitudes more and a red dwarf four. A star hot enough that UV is its
+// strongest band (from about 9,600 K: see strengthsFromFractions) is brightest there on the sky too, its UV leading its visible
+// light by a little, and by up to 2.5 magnitudes at 30,000 K. A white dwarf's tiny surface is far hotter than its faint visible
+// light suggests, so it gains a little.
+const UV_STRONGEST_FROM_K = 9600;
+const WD_UV_GAIN = -2.5;
+
+function coolUvOffset(T) {
+    return 2 + 2 * (1 - smooth(4500, 7500, T));
+}
+
+function hotStarUv(mBol, T, share) {
+    const cool = mBol + magOf(share) + coolUvOffset(T);
+    const hot = mBol - bolometricCorrection(T) - (0.3 + 2.2 * smooth(UV_STRONGEST_FROM_K, 30000, T));
+    return cool + (hot - cool) * smooth(8000, UV_STRONGEST_FROM_K, T);
+}
+
 // A real star's band magnitudes: its bolometric magnitude plus the share of its light in that band. The offsets decide
-// how rich each star field is. Infrared gains a magnitude, so it holds the most stars of any band; ultraviolet loses
-// two, so only the hot stars show. A white dwarf's tiny surface is hot enough to stand out in ultraviolet and soft X-rays.
-// Radio and X-rays from an ordinary star are faint however close it is, so they stop at a ceiling: stars never compete
-// with the beacons and black holes of those skies.
+// how rich each star field is. Infrared gains a magnitude, so it holds the most stars of any band; ultraviolet is left
+// to the hot stars and white dwarfs. Radio and X-rays from an ordinary star are faint however close it is, so they stop at a
+// ceiling: stars never compete with the beacons and black holes of those skies.
 function starMags(star, distancePc, fallbackMag) {
     const mBol = bolometricMag(star, distancePc, fallbackMag);
-    const f = planckBandFractions(star.teff_K);
+    const T = star.teff_K;
+    const f = planckBandFractions(T);
     const extras = stellarExtras(star);
     const wd = isWhiteDwarf(star);
     const flares = isActiveMDwarf(star);
     return {
         ir: mBol + magOf(f.ir) - 1,
-        uv: flares ? mBol + magOf(0.03) + 2 : mBol + magOf(f.uv) + (wd ? -5 : 2),
+        uv: flares ? mBol + magOf(0.03) + coolUvOffset(T) : wd ? mBol + magOf(f.uv) + WD_UV_GAIN : hotStarUv(mBol, T, f.uv),
         radio: Math.max(flares ? 5.5 : 6.5, mBol + magOf(extras.radio) + (flares ? -3 : 3)),
         xray: Math.max(wd ? 4.5 : 5.5, mBol + magOf(extras.xray) + (wd ? -5 : 2))
     };
+}
+
+// A black hole's X-rays are the gas falling onto it, so they follow how much of its companion it can pull in: most when the star
+// nearly fills the space it has and the orbit is close, some from a hot star's wind, and more onto a heavier hole. A magnitude,
+// over about four from the most starved to the best fed.
+const BH_XRAY_FED = 0.6;           // The best fed: the sky's brightest
+const BH_XRAY_RANGE = 4;
+
+function blackHoleXray(bh) {
+    const companion = bh.companion.star;
+    const fill = (companion.radius_Rsun * 0.00465) / bh.a_AU;
+    const wind = 0.5 * smooth(9000, 20000, companion.teff_K);
+    const feed = Math.log10(fill) + wind + 0.5 * Math.log10(bh.mass_Msun / 10);
+    return BH_XRAY_FED + BH_XRAY_RANGE * (1 - clamp01((feed + 2.1) / 1.5));
 }
 
 function addMags(a, b) {
@@ -384,8 +417,10 @@ function skyMags(body, s) {
                 .reduce((a, b) => ({ radio: addMags(a.radio, b.radio), ir: addMags(a.ir, b.ir), uv: addMags(a.uv, b.uv), xray: addMags(a.xray, b.xray) }));
             if (body.interacting) {
                 const ref = stylisedMag(body, 300, 0.15);
-                m.xray = Math.min(m.xray, 3.2 + ref);
-                m.uv = Math.min(m.uv, 5.5 + ref);
+                // The closer the pair, the more gas passes between them
+                const shortest = Math.min(...(body.orbits || []).map((o) => o.period_days).filter((p) => p > 0), 3);
+                m.xray = Math.min(m.xray, 4.2 + ref + 0.9 * Math.log10(Math.max(0.1, shortest)));
+                m.uv = Math.min(m.uv, 7 + ref);
             }
             return m;
         }
@@ -395,10 +430,11 @@ function skyMags(body, s) {
             const companion = starMags(body.black_hole.companion.star, body.distance_pc, mag);
             const m = exoticMags(stylisedMag(body, 1000, 0.3), s, { radio: 3, ir: 0, uv: 5.6, xray: 1.1 });
             m.ir = companion.ir;
+            m.xray = stylisedMag(body, 1000, 0.1) + blackHoleXray(body.black_hole);
             return m;
         }
         case 'quasar':
-            return exoticMags(0, s, { radio: 1.2, ir: 4.2, uv: 2.6, xray: 2 });
+            return exoticMags(0, s, { radio: 1.2, ir: 4.2, uv: 5, xray: 2 });
         case 'supernova':
             return exoticMags(stylisedMag(body, 3000, 0.2), s, { radio: 3.2, ir: 2.6, uv: 2, xray: 1.6 });
         case 'rogue_planet': {
@@ -412,11 +448,13 @@ function skyMags(body, s) {
         case 'home_planet':
             return exoticMags(mag, s, { radio: 3, ir: 0, uv: 4, xray: 6 });
         case 'comet':
-            return exoticMags(mag, s, { radio: 2, ir: -1, uv: -1, xray: 4 });
+            return exoticMags(mag, s, { radio: 2, ir: -1, uv: 2, xray: 4 });
         case 'nebula':
-        case 'cluster':
             // Large objects keep the magnitude they have in visible light, with their strength in the band
-            return exoticMags(mag, s, { radio: -1, ir: -1, uv: 0, xray: 0 });
+            return exoticMags(mag, s, { radio: -1, ir: -1, uv: 1.5, xray: 0 });
+        case 'cluster':
+            // A cluster's UV and X-rays are spread over its whole width, where a star's are all in one point
+            return exoticMags(mag, s, { radio: -1, ir: -1, uv: 3.5, xray: 2 });
         case 'galaxy': {
             // Lobes and active nuclei aren't starlight, so their brightness doesn't follow the galaxy's visible magnitude
             const m = exoticMags(mag, s, { radio: 0, ir: -1, uv: 0, xray: 0 });

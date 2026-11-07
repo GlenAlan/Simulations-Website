@@ -23,6 +23,7 @@ import { keplerPeriodDays, fluxFromLuminosity, orbitalSpeedKms, H0, C_KMS, PC, A
 import { dp, luminosityFromRT, absoluteVisual, apparentMag, distanceForMag, fluxFromVisualMag, distanceModulus,
     makeClassStar, makeWhiteDwarf } from './stellar.js';
 import { supernovaBandsAt } from './band_table.js';
+import { gasGiantFit, subNeptuneMass } from './planets.js';
 
 function line(w, rel, label) {
     return { w, rel: dp(rel, 3), label };
@@ -257,15 +258,15 @@ export function makeRogue(rng, body, type) {
     let surface = { ocean_fraction: 0, rock: 'silicate', ice: null, red_edge_nm: null, subsurface_ocean: false };
     if (type === 'gas_giant') {
         teff = rng.range(120, 400);
-        radius = rng.range(7, 13);
-        mass = stable(rng.logRange(30, 2000), 3);
+        const drawnRadius = rng.range(7, 13);
+        ({ radius, mass } = gasGiantFit(drawnRadius, rng.logRange(30, 2000)));
         const H2 = rng.range(85, 87);
         pct = { H2: dp(H2, 2), He: dp(100 - H2, 2) };
         ppm = { CH4: dp(rng.range(1000, 4000), 1), H2O: dp(rng.range(50, 500), 1) };
     } else if (type === 'sub_neptune') {
         teff = rng.range(60, 180);
         radius = rng.range(1.8, 3.8);
-        mass = stable(2.7 * radius ** 1.3 * rng.range(0.8, 1.2), 3);
+        mass = subNeptuneMass(radius, rng.range(0.8, 1.2));
         const H2 = rng.range(80, 88);
         pct = { H2: dp(H2, 2), He: dp(99 - H2, 2), CH4: 1 };
         ppm = { H2O: dp(rng.range(20, 300), 1) };

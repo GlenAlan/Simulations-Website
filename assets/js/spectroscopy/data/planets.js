@@ -109,6 +109,52 @@ function rockyMass(rng, radius, density = 1) {
     return stable(density * radius ** 3.3 * rng.range(0.8, 1.2), 3);
 }
 
+// Radius goes up with mass only as far as Jupiter. Past that, gravity squeezes a heavier giant so hard that it stays the same size,
+// and just gets denser. In Earth masses and radii; Saturn and Jupiter are on the curve.
+const COLD_GIANT = [[30, 6.5], [95, 9.4], [318, 11.2], [1000, 11.3], [3000, 11]];
+
+function coldGiantRadius(mass) {
+    const last = COLD_GIANT.length - 2;
+    let i = 0;
+    while (i < last && mass > COLD_GIANT[i + 1][0]) i++;
+    const [m0, r0] = COLD_GIANT[i];
+    const [m1, r1] = COLD_GIANT[i + 1];
+    return r0 + (r1 - r0) * (Math.log(mass / m0) / Math.log(m1 / m0));
+}
+
+// Random draws that used to be a mass and a radius drawn apart, turned into a pair that fit. They stay as draws so that everything
+// generated after them, every code in the sky among it, stays as it was. The largest masses are drawn closer in: a planet of three
+// Jupiters is already 4 g/cm3, and beyond about ten it would be a brown dwarf.
+function massWithin(drawn, lo, hi, newHi) {
+    return lo * (drawn / lo) ** (Math.log(newHi / lo) / Math.log(hi / lo));
+}
+
+// drawnRadius and drawnMass are from rng.range(7, 13) and rng.logRange(30, 2000)
+export function gasGiantFit(drawnRadius, drawnMass) {
+    const mass = stable(massWithin(drawnMass, 30, 2000, 1000), 3);
+    const scatter = ((drawnRadius - 10) / 3) * 0.05;
+    return { mass, radius: coldGiantRadius(mass) * (1 + scatter) };
+}
+
+// drawnRadius and drawnMass are from rng.range(10, 20) and rng.logRange(100, 3000). A hot Jupiter is puffed up by its star's heat,
+// the more so if it is hot and not too heavy.
+function hotJupiterFit(drawnRadius, drawnMass, tGuess) {
+    const mass = stable(massWithin(drawnMass, 100, 3000, 1200), 3);
+    const heat = Math.min(1, Math.max(0, (tGuess - 900) / 1100));
+    const puff = ((drawnRadius - 10) / 10) * (0.1 + 0.55 * heat) * Math.min(1, Math.sqrt(400 / mass));
+    return { mass, radius: coldGiantRadius(mass) * (1 + puff) };
+}
+
+// scatter is from rng.range(0.8, 1.2)
+export function subNeptuneMass(radius, scatter) {
+    return stable(2 * radius ** 1.5 * (1 + 0.6 * (scatter - 1)), 3);
+}
+
+// drawnMass is from rng.range(12, 25). Uranus and Neptune are on the curve.
+function iceGiantMass(radius, drawnMass) {
+    return stable(17 * (radius / 3.88) ** 2 * (1 + 0.15 * ((drawnMass - 18.5) / 6.5)), 3);
+}
+
 // Everything but the orbit, by type. inHz is the numeric zone, whichever kind of host this is
 const BUILDERS = {
     sub_neptune(rng, inHz) {
@@ -120,7 +166,7 @@ const BUILDERS = {
         if (!inHz && rng.chance(0.35)) ppm.H2O = rng.range(50, 800);
         return {
             radius,
-            mass: stable(2.7 * radius ** 1.3 * rng.range(0.8, 1.2), 3),
+            mass: subNeptuneMass(radius, rng.range(0.8, 1.2)),
             albedo: rng.range(0.3, 0.5),
             pressure: 100,
             pct: { H2, He: 100 - H2 - CH4 - CO2, CH4, CO2 },
@@ -139,9 +185,9 @@ const BUILDERS = {
     },
     gas_giant(rng) {
         const H2 = rng.range(85, 87);
+        const drawnRadius = rng.range(7, 13);
         return {
-            radius: rng.range(7, 13),
-            mass: stable(rng.logRange(30, 2000), 3),
+            ...gasGiantFit(drawnRadius, rng.logRange(30, 2000)),
             albedo: rng.range(0.3, 0.6),
             pressure: 100,
             pct: { H2, He: 100 - H2 },
@@ -166,9 +212,10 @@ const BUILDERS = {
     ice_giant(rng) {
         const H2 = rng.range(78, 81);
         const CH4 = rng.range(1.5, 2.5);
+        const radius = rng.range(3.3, 5);
         return {
-            radius: rng.range(3.3, 5),
-            mass: rng.range(12, 25),
+            radius,
+            mass: iceGiantMass(radius, rng.range(12, 25)),
             albedo: rng.range(0.35, 0.5),
             pressure: 100,
             pct: { H2, He: 100 - H2 - CH4, CH4 }
@@ -221,9 +268,9 @@ const BUILDERS = {
         const H2 = rng.range(85, 86.5);
         const ppm = { Na: rng.range(2, 6), K: rng.range(0.2, 0.6), H2O: rng.range(200, 800), CO: rng.range(300, 900) };
         if (tGuess > 1700) ppm.TiO = rng.range(1, 5);
+        const drawnRadius = rng.range(10, 20);
         return {
-            radius: rng.range(10, 20),
-            mass: stable(rng.logRange(100, 3000), 3),
+            ...hotJupiterFit(drawnRadius, rng.logRange(100, 3000), tGuess),
             albedo: rng.range(0.03, 0.12),
             pressure: 100,
             pct: { H2, He: 100 - H2 },

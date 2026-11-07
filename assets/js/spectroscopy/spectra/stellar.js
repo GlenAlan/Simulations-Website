@@ -6,12 +6,12 @@
 //
 // Nothing here changes the continuum itself, which is why the Wien tool finds the star's true peak through the lines.
 
-import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, C_KMS, fluxFromLuminosity, wienPeakNm } from '../core/phys.js';
+import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, C_KMS, R_ZOOM, fluxFromLuminosity, wienPeakNm } from '../core/phys.js';
 import { app } from '../core/state.js';
 import { LINES, LINE_INFO } from '../data/lines.js';
 import { MOLECULES } from '../data/molecules.js';
 import { componentStates, visibleShares } from '../data/orbits.js';
-import { bb, planckPeak, planckPeakInRange, makeProfile, mulLine, mulBand, effectiveFlux, snrFromFlux } from './kernel.js';
+import { bb, planckPeak, planckPeakInRange, makeProfile, peakAtResolution, mulLine, mulBand, effectiveFlux, snrFromFlux } from './kernel.js';
 
 // ---- Which lines a star of a given temperature shows ----
 
@@ -85,8 +85,23 @@ function abundance(star, element) {
     return c.metallicity_dex !== undefined ? 10 ** c.metallicity_dex : Math.max(c.Z ?? 0.02, 2e-7) / 0.02;
 }
 
-// Lines weaken more slowly than the abundance falls, as they do on a real curve of growth
-const abundanceDepth = (x) => x ** 0.6;
+// Lines weaken more slowly than the abundance falls, as they do on a real curve of growth. Near the Sun's abundance every line
+// follows one gentle slope, and the most metal-poor star of Population I is still on it. Further down it depends how saturated
+// the line is, where x0 is how strong it would be at the Sun's abundance: a weak line keeps fading with its element, and a
+// saturated one is on the flat of the curve, where fifty times fewer atoms hardly change it. That is why a metal-poor G star
+// keeps its Ca II H and K and still classifies as a G star, while its thin metal lines are clearly weaker than the Sun's.
+const COG_SLOPE = 0.6;
+const COG_KNEE = 0.25;           // 10^-0.6, a little under: no star of Population I lies below it
+const COG_SLOPE_FLAT = 0.05;
+const COG_SATURATES_AT = 0.35;
+// A molecular band is a forest of thousands of saturated lines, so it sits well along the flat part whatever its depth
+const BAND_SATURATION = 0.7;
+
+function abundanceDepth(A, x0) {
+    if (A >= COG_KNEE) return A ** COG_SLOPE;
+    if (!(A > 0)) return 0;
+    return A ** (COG_SLOPE_FLAT + (COG_SLOPE - COG_SLOPE_FLAT) * Math.exp(-((x0 / COG_SATURATES_AT) ** 2)));
+}
 
 // A line's strength s was set at the species' peak temperature. The visibility curve moves the whole species with
 // temperature; this moves one line against the species' main line by how much harder its lower level is to reach.
@@ -139,20 +154,24 @@ function starBands(star) {
     const T = star.teff_K;
     const type = star.wd_type;
     if (isWhiteDwarf(star)) return type === 'DQ' ? [['C2', 0.9 * bell(T, 8000, 0.25, 0.2)]] : [];
-    const metal = (el) => abundanceDepth(abundance(star, el));
+    const metal = (el, x0) => x0 * abundanceDepth(abundance(star, el), BAND_SATURATION);
     const logg = star.logg ?? 4.44;
     const dwarfness = Math.min(1, Math.max(0, (logg - 3) / 1.5));
     if (star.peculiar === 'carbon') {
         const carbon = Math.min(1.1, 0.9 * bell(T, 3200, 0.2, 0.2));
         return [['C2', carbon], ['CN', 0.8 * bell(T, 3500, 0.2, 0.2)], ['CH', 0.8 * bell(T, 4000, 0.2, 0.2)]];
     }
-    const tio = 1 / (1 + Math.exp((T - 3450) / 170));
+    // The thin gas of a giant holds molecules together at a higher temperature than a dwarf's: TiO comes in about 250 K hotter in
+    // a giant, and CN is stronger. MgH and CaH go the other way, since hydrides need a dwarf's pressure: they are strong in a K
+    // dwarf and missing from a K giant, which is the plainest difference between the two in the visible.
+    const giantness = Math.min(1, Math.max(0, (4 - logg) / 1.5));
+    const tio = 1 / (1 + Math.exp((T - 3450 - 250 * giantness) / 170));
     return [
-        ['TiO', 0.9 * tio * metal('Ti')],
-        ['CH', 0.5 * bell(T, 4800, 0.12, 0.08) * metal('C')],
-        ['CN', 0.3 * bell(T, 4500, 0.1, 0.1) * metal('N')],
-        ['MgH', 0.4 * bell(T, 4000, 0.08, 0.08) * dwarfness * metal('Mg')],
-        ['CaH', 0.45 * bell(T, 3200, 0.07, 0.08) * dwarfness * metal('Ca')]
+        ['TiO', metal('Ti', 0.9 * tio)],
+        ['CH', metal('C', 0.5 * bell(T, 4800, 0.12, 0.08))],
+        ['CN', metal('N', 0.3 * (1 + 0.5 * giantness) * bell(T, 4500, 0.1, 0.1))],
+        ['MgH', metal('Mg', 0.4 * bell(T, 4000, 0.08, 0.08) * dwarfness)],
+        ['CaH', metal('Ca', 0.45 * bell(T, 3200, 0.07, 0.08) * dwarfness)]
     ];
 }
 
@@ -181,8 +200,11 @@ function buildModel(star, R, sigmaExtra) {
         if (!p) return;
         const el = elementOf(species);
         const light = el === 'H' || el === 'He';
-        const strength = wd ? whiteDwarfStrength(species, star) : visibility(species, T) * abundanceDepth(abundance(star, el));
-        if (strength < 0.004) return;
+        const seen = wd ? whiteDwarfStrength(species, star) : visibility(species, T);
+        const A = wd ? 1 : abundance(star, el);
+        // Most lines' wings shrink with the abundance, even when the core stays deep
+        const strength = seen * (wd ? 1 : abundanceDepth(A, 0));
+        if (seen * (wd ? 1 : abundanceDepth(A, seen)) < 0.004) return;
         const mass = LINE_INFO[species] ? LINE_INFO[species].mass_u : 40;
         const sigma = Math.hypot(0.0912 * Math.sqrt(T / mass), MICRO_KMS, sigmaExtra);
         const wingScale = Math.sqrt(Math.min(1, strength));
@@ -198,7 +220,8 @@ function buildModel(star, R, sigmaExtra) {
 
             // depth = visibility x abundance x the line's own share, levelling off as a line saturates. An ordinary
             // metal line's wings stay small, so its width at high resolution is mostly rotation and can be read as such.
-            const x = strength * lineS * boltzmannWeight(species, line, T);
+            const x0 = seen * lineS * boltzmannWeight(species, line, T);
+            const x = wd ? x0 : x0 * abundanceDepth(A, x0);
             const wide = WIDE_LINES.find((w) => w[0] === species && Math.abs(w[1] - line.w) < 0.15);
             let d;
             let a;
@@ -215,13 +238,21 @@ function buildModel(star, R, sigmaExtra) {
                 a = p.a * gravity(p.k) * wingScale;
             } else {
                 d = 1 - Math.exp(-3.5 * x);
+                // Ca II H and K are so far past saturation that a metal-poor star's still dominate their part of the spectrum
                 a = wide
-                    ? wide[2] * gravity(0.3) * wingScale
+                    ? wide[2] * gravity(0.3) * (wide[2] >= 400 ? Math.sqrt(Math.min(1, seen * abundanceDepth(A, 1))) : wingScale)
                     : p.a * gravity(p.k) * Math.min(1, (x / 0.15) ** 1.5);
             }
             d = Math.min(0.97, d);
             if (d < 0.004) return;
-            lines.push({ w: line.w, d, prof: shapeFor(sigma, a), species, label: line.label || `${species} ${line.w.toFixed(1)}` });
+            lines.push({
+                w: line.w,
+                d,
+                dZoom: d * peakAtResolution({ sigma, a, vsini, R: R_ZOOM }),
+                prof: shapeFor(sigma, a),
+                species,
+                label: line.label || `${species} ${line.w.toFixed(1)}`
+            });
         });
     });
 
@@ -322,13 +353,24 @@ export function renderStars(parts, grid) {
             const obs = line.w * part.factor;
             if (obs < grid.lo || obs > grid.hi) continue;
             const depth = line.d * line.prof.peak * (parts.length > 1 ? share(obs) : 1);
-            lines.push({ rest_nm: line.w, obs_nm: obs, species: line.species, label: line.label, depth, type: 'abs', code: part.code });
+            lines.push({ rest_nm: line.w, obs_nm: obs, species: line.species, label: line.label, depth, depth_zoom: line.dZoom, type: 'abs', code: part.code });
         }
         for (const b of model.bands) {
             const obs = b.band.c * part.factor;
             if (obs < grid.lo || obs > grid.hi) continue;
             const depth = Math.min(0.98, b.strength * (b.band.d ?? 1)) * (parts.length > 1 ? share(obs) : 1);
-            lines.push({ rest_nm: b.band.c, obs_nm: obs, species: b.key, label: b.label, depth, type: 'abs', code: part.code, band: true, width_nm: b.band.w });
+            lines.push({
+                rest_nm: b.band.c,
+                obs_nm: obs,
+                species: b.key,
+                label: b.label,
+                depth,
+                type: 'abs',
+                code: part.code,
+                band: true,
+                width_nm: b.band.w,
+                head_nm: b.band.head === undefined ? undefined : b.band.head * part.factor
+            });
         }
     });
     return { flux, continuum, lines, fRef: ref, norm };
