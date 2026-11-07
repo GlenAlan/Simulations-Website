@@ -393,10 +393,11 @@ function findLine(spectrum, nearNm, opts = {}) {
             }
             if (clear >= LINE_CLEAR_SIGMA) break;
         }
-        // Of the dips about as deep as the deepest in reach, the one nearest the click: a click on Ca II H means H, not K
+        // Of the dips about as deep as the deepest in reach, the one nearest the click: a click on Ca II H means H, not K. A caller
+        // that says what kind of line it wants is following a known line through time, not asking what a click meant.
         let others = [];
         let rivals = [];
-        if (type === 'abs') {
+        if (type === 'abs' && !opts.type) {
             const picked = dipNearestClick(profile, Math.max(0, i0 - searchPx - a), Math.min(b - a - 1, i0 + searchPx - a), i0 - a, smooth, sigma);
             centreIndex = picked.at + a;
             others = picked.passed.map((i) => wl[i + a]);
