@@ -18,6 +18,7 @@ const SUGGESTED_GALAXIES = 8;
 const RESIDUALS_HEIGHT = 120; // Extra height the residuals panel adds to the figure (px)
 const HEAVY_SHARE = 0.6;      // A galaxy with this much of the fit's weight is setting the line by itself
 const NEARBY_MPC = 50;        // Closer than this, a galaxy's own motion is a real part of its speed
+const LOCAL_GROUP_MPC = 3;    // Closer than this, a galaxy coming towards us is one of our own Local Group
 
 // ---------- Session state ----------
 
@@ -111,7 +112,12 @@ export function hubbleAdvice(points, useLog) {
             out.push(`One galaxy is setting this line: ${points[at].code}, at ${sig(points[at].dMpc, 3)} Mpc, carries ${Math.round(share * 100)}% of the weight. Without it, H₀ would be ${without}. More far galaxies would share the load.`);
         }
     }
-    const near = points.filter((p) => p.dMpc <= NEARBY_MPC);
+    // The exception: near enough that gravity wins over the expansion
+    const local = points.filter((p) => p.v < 0 && p.dMpc <= LOCAL_GROUP_MPC);
+    if (local.length) {
+        out.push(`${local[0].code} is coming towards us. It is so close that the pull between it and our galaxy beats the expansion: both belong to our Local Group.`);
+    }
+    const near = points.filter((p) => p.dMpc <= NEARBY_MPC && !local.includes(p));
     if (near.length >= 2) {
         const rates = near.map((p) => p.v / p.dMpc);
         out.push(`Nearby galaxies scatter: yours give v ÷ d from ${sig(Math.min(...rates), 2)} to ${sig(Math.max(...rates), 2)} km/s/Mpc. A galaxy's own motion through space matters most when its expansion speed is small, so far galaxies tell you more.`);

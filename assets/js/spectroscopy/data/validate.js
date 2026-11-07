@@ -14,6 +14,7 @@ import { systemProblems } from './dynamics.js';
 import { crossesPlanet, MAX_ECC } from './exocomets.js';
 import { unseal } from './sealed.js';
 import { nucleusEntities, nucleusProblems } from './nuclei.js';
+import { LOCAL_GROUP_GALAXIES, localGroupProblems } from './local_group.js';
 
 const RAD = Math.PI / 180;
 const DEFAULT_FOV = 80;
@@ -44,6 +45,9 @@ const TOTAL = {
         count: STAR_TABLE[c].count + DEEP.stars[c].count, withPlanets: STAR_TABLE[c].withPlanets + DEEP.stars[c].withPlanets
     }]))
 };
+// And the Local Group's spiral, on top of the quotas (data/local_group.js)
+TOTAL.counts.galaxy += LOCAL_GROUP_GALAXIES;
+TOTAL.galaxy.spiral += LOCAL_GROUP_GALAXIES;
 
 function hasWater(planet) {
     const pct = planet.atmosphere_pct || {};
@@ -515,5 +519,10 @@ export function validateUniverse(u) {
     checkDynamics(u, fail);
     checkDeepSky(u, fail);
     nucleusProblems(u, fail);
+    const sealed = unseal(u.seed);
+    localGroupProblems(u, fail, [
+        { code: sealed.target.host.code, clear: sealed.target.host.clear_deg },
+        ...[...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK'].map((code) => ({ code, clear: 0 }))
+    ]);
     return failures;
 }

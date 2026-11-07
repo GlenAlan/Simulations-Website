@@ -11,12 +11,14 @@
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
+import { Rng } from '../../core/rng.js';
+import { blackBodyRGB } from '../../core/phys.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { limitingMag, MIN_FOV } from '../../core/sky.js';
 import { drawMag, depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { bandMagnitudes, bandSkyBrightness } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
-import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
+import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
 import { createSprites } from './stars.js';
 import { MIN_GLOW } from '../engine.js';
@@ -39,6 +41,19 @@ const CORE_BANDS = ['ir', 'visible', 'uv'];    // A feeding hole's point is draw
 const CORE_BLUE = [0.8, 0.88, 1];       // A hot disc in view
 const CORE_DUSTY = [1, 0.72, 0.5];      // Light that has come through dust is reddened
 const CORE_LIFT = [25, 4];              // How much brighter the point is drawn than its own light (type 1, type 2)
+// The Local Group's spiral (data/local_group.js) is bright enough to see by eye, as a long glow with a star-like middle. While
+// it is small on screen its faint light is lifted by up to PRESENCE, and its bright light less, up to about PRESENCE_CAP, so
+// that its whole length shows and not only its bulge. The lift goes as it grows from PRESENCE_PX[0] to PRESENCE_PX[1] device
+// pixels across. Its middle's pinprick is CORE_PRESENCE times as bright as another galaxy's.
+const PRESENCE = 6;
+const PRESENCE_CAP = 2;
+const PRESENCE_PX = [40, 150];
+const CORE_PRESENCE = 2.4;
+// Near enough that its brightest stars can be seen one by one, close in: its blue and red supergiants, on its arms and through
+// its disc, come up as the zoom's limit passes their magnitudes, as any star does
+const RESOLVED = { blue: 2400, red: 400 };
+const RESOLVED_ABS_MAG = [-8.6, -6.4];  // The brightest of them, to about where they'd crowd into a haze
+const RESOLVED_REACH = 0.85;            // Inside this share of the galaxy's radius, which a click there always finds
 
 const VERT = /* glsl */`
     ${BAND_GLSL}
@@ -55,11 +70,13 @@ const VERT = /* glsl */`
     attribute float aFade;
     attribute float aDepth;
     attribute float aPc;
+    attribute float aPresence;
     varying vec2 vUv;
     varying vec2 vQ;
     varying vec4 vBand;
     varying float vXray;
     varying float vJewel;
+    varying float vPresence;
     void main() {
         // A flight that comes nearer one draws it bigger, and as bright across, until it passes right through
         vec3 centre = aCentre;
@@ -75,6 +92,7 @@ const VERT = /* glsl */`
         // Size on screen, in device pixels: the smaller it is, the harder it has to work to read as more than a blob
         float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth) * grow * 2.0;
         vJewel = fall(46.0, 10.0, px);
+        vPresence = 1.0 + (aPresence - 1.0) * fall(${PRESENCE_PX[1].toFixed(1)}, ${PRESENCE_PX[0].toFixed(1)}, px);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
         gl_Position.xy *= depthP(aDepth);
         if (aFade <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
@@ -90,6 +108,7 @@ const FRAG = /* glsl */`
     varying vec4 vBand;
     varying float vXray;
     varying float vJewel;
+    varying float vPresence;
     void main() {
         // Lean towards the sharper mipmap when small, so a tiny galaxy keeps its shape
         float bias = -1.1 * vJewel;
@@ -108,6 +127,8 @@ const FRAG = /* glsl */`
             + uBandTint[3] * uBandW[3] * ultraviolet * vBand.w * lift * 2.4
             + uBandTint[4] * uBandW[4] * aux.b * vXray * lift;
         float edge = fall(1.0, 0.94, max(abs(vQ.x), abs(vQ.y)));
+        // 1 for every galaxy but the Local Group's
+        colour *= vPresence / (1.0 + dot(colour, vec3(0.3, 0.55, 0.15)) * (vPresence - 1.0) / ${PRESENCE_CAP.toFixed(1)});
         gl_FragColor = vec4(colour * edge * uSkyFade, 1.0);
     }`;
 
@@ -140,6 +161,7 @@ function quadGeometry(count) {
     add('aFade', 1);
     add('aDepth', 1);
     add('aPc', 1);
+    add('aPresence', 1);
     geometry.instanceCount = count;
     return geometry;
 }
@@ -155,7 +177,8 @@ function writeInstance(geometry, i, g, rect) {
     geometry.attributes.aMagB.array[i] = g.magB;
     geometry.attributes.aDepth.array[i] = g.body.depth;
     geometry.attributes.aPc.array[i] = travelPc(g.body);
-    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB', 'aDepth', 'aPc'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
+    geometry.attributes.aPresence.array[i] = g.local ? PRESENCE : 1;
+    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB', 'aDepth', 'aPc', 'aPresence'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
 }
 
 // A feeding black hole whose disc is in view outshines its galaxy's middle many times over, as a point. Once the galaxy is big
@@ -245,6 +268,97 @@ function createCoreSpikes(cores) {
     return { mesh, geometry, material };
 }
 
+// The Local Group spiral's brightest stars one by one (RESOLVED), as sprite data for createSprites (render/layers/stars.js):
+// the blue supergiants on the same arms as its picture's own young stars (galaxy_bake.js onArm), the red ones through the
+// disc, each placed on the sky where its picture puts that spot. Each has its own magnitude in each band, so it comes up as
+// the zoom's limit reaches it, as a star does. Null if no galaxy is near enough.
+function resolvedStarData(list) {
+    const stars = [];
+    list.forEach((g) => {
+        const { body, recipe: r } = g;
+        const rng = new Rng(`resolved:${body.visual_seed}`);
+        const modulus = 5 * Math.log10(body.distance_pc / 10);
+        const half = body.galaxy.size_deg / 2;
+        const ci = Math.cos(r.incl);
+        const si = Math.sin(r.incl);
+        const pa = body.galaxy.position_angle_deg * RAD;
+        const r0 = Math.max(r.barLen, 0.09);
+        const expRadius = (rd, most) => -rd * Math.log(1 - rng.next() * (1 - Math.exp(-most / rd)));
+        const spot = (red) => {
+            for (let k = 0; k < 20; k++) {
+                let x;
+                let y;
+                let z;
+                if (!red || rng.chance(0.4)) {
+                    let rad = r0 * 0.9 + expRadius(r.rdY * 0.42, 0.6) + expRadius(r.rdY * 0.42, 0.6);
+                    const th = Math.log(rad / r0) / Math.tan(r.pitch) + (2 * Math.PI * Math.floor(rng.next() * r.arms) - r.phase) / r.arms
+                        + (rng.gauss() * 0.4) / r.arms;
+                    rad *= 1 + 0.05 * rng.gauss();
+                    x = rad * Math.cos(th);
+                    y = rad * Math.sin(th);
+                    z = rng.gauss() * 0.015;
+                } else {
+                    const rad = 0.08 + expRadius(r.rd, 0.8);
+                    const th = rng.range(0, 2 * Math.PI);
+                    x = rad * Math.cos(th);
+                    y = rad * Math.sin(th);
+                    z = rng.gauss() * 0.03;
+                }
+                const R = Math.hypot(x, y);
+                if (R > RESOLVED_REACH || R < r.bulgeRe * 1.6) continue;
+                y *= r.hand;
+                // Degrees along the position angle and square to it: the picture's x and y
+                const a = x * half;
+                const b = (y * ci - z * si) * half;
+                return offsetVector(g.basis, a * Math.sin(pa) - b * Math.cos(pa), a * Math.cos(pa) + b * Math.sin(pa));
+            }
+            return null;
+        };
+        const glow = (m) => (m >= 90 ? 0 : 10 ** (-0.4 * (m - 6)));
+        const add = (red) => {
+            const dir = spot(red);
+            if (!dir) return;
+            // Very many near the faint end, a few bright ones
+            const absV = RESOLVED_ABS_MAG[1] - (RESOLVED_ABS_MAG[1] - RESOLVED_ABS_MAG[0]) * rng.next() ** 2.5;
+            const T = red ? rng.range(3500, 4200) : rng.logRange(9000, 28000);
+            const mV = absV + modulus;
+            // A red supergiant is brightest in infrared and shows nothing in ultraviolet; a blue one is brighter there
+            const mIr = mV + (red ? -2.6 : 0.4);
+            const mUv = red ? 99 : mV - (T > 15000 ? 1.4 : 0.6);
+            stars.push({ dir, colour: blackBodyRGB(T), bandA: [0, glow(mIr), glow(mV), glow(mUv)], depth: body.depth, pc: travelPc(body) });
+        };
+        for (let i = 0; i < RESOLVED.blue; i++) add(false);
+        for (let i = 0; i < RESOLVED.red; i++) add(true);
+    });
+    const n = stars.length;
+    if (!n) return null;
+    const data = {
+        count: n,
+        centres: new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3),
+        colours: new Float32Array(n * 3),
+        bandA: new Float32Array(n * 4),
+        bandB: new Float32Array(n),
+        seeds: new Float32Array(n),
+        soft: new Float32Array(n).fill(1.3),
+        depths: new Float32Array(n),
+        pcs: new Float32Array(n),
+        flux: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1),
+        split: new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2),
+        spike: new Float32Array(n)
+    };
+    stars.forEach((s, i) => {
+        data.centres.array.set(s.dir.map((c) => c * SKY_RADIUS), i * 3);
+        data.colours.set(s.colour, i * 3);
+        data.bandA.set(s.bandA, i * 4);
+        data.seeds[i] = (i * 0.618034) % 1;
+        data.depths[i] = s.depth;
+        data.pcs[i] = s.pc;
+    });
+    // The brightest of them in any band: until the zoom's limit reaches that, none is drawn, and nothing need be
+    data.topGlow = stars.reduce((m, s) => Math.max(m, ...s.bandA), 0);
+    return data;
+}
+
 export function createGalaxiesLayer(engine, app) {
     const { renderer, scene } = engine;
     const bodies = app.universe.bodies.filter((b) => b.kind === 'galaxy');
@@ -287,6 +401,7 @@ export function createGalaxiesLayer(engine, app) {
             bandA: [body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light],
             bandB: body.bands.xray * light,
             recipe: galaxyRecipe(body),
+            local: !!body.galaxy.local_group,
             tileX: (i % cols) * TILE,
             tileY: Math.floor(i / cols) * TILE,
             baked: false,
@@ -346,7 +461,7 @@ export function createGalaxiesLayer(engine, app) {
         nucleusBandA.set([
             lobed ? body.bands.radio * g.light : 0,
             (g.recipe.starburst ? 0.5 : 0.15) * body.bands.ir * g.light,
-            body.bands.visible * g.light,
+            body.bands.visible * g.light * (g.local ? CORE_PRESENCE : 1),
             active ? 0.6 * body.bands.uv * g.light : 0
         ], i * 4);
         nucleusBandB[i] = active ? Math.max(0.5, body.bands.xray) * g.light : 0;
@@ -396,6 +511,9 @@ export function createGalaxiesLayer(engine, app) {
         scene.add(coreSprites.mesh);
         scene.add(coreSpikes.mesh);
     }
+    const resolvedData = resolvedStarData(galaxies.filter((g) => g.local));
+    const resolved = resolvedData ? createSprites(resolvedData) : null;
+    if (resolved) scene.add(resolved.mesh);
     const applyCoreQuality = (level) => { if (coreSpikes) coreSpikes.mesh.visible = level !== 'low'; };
     applyCoreQuality(app.qualityLevel);
     const offCoreQuality = bus.on('quality', ({ level }) => applyCoreQuality(level));
@@ -628,6 +746,11 @@ export function createGalaxiesLayer(engine, app) {
         update(frame) {
             const dt = frame.dt || 0;
             if (coreSprites) coreSprites.material.uniforms.uDpr.value = frame.dpr;
+            if (resolved) {
+                resolved.material.uniforms.uDpr.value = frame.dpr;
+                // Off in the wide sky, where none of them shows yet, so they cost nothing there. A flight draws them as it nears.
+                resolved.mesh.visible = app.view !== 'sky' || resolvedData.topGlow * 10 ** (0.4 * (limitingMag(frame.fov) - 6)) >= MIN_GLOW * 0.5;
+            }
             frame.camera.getWorldDirection(forward);
             if (Math.abs(frame.fov - lastFov) > frame.fov * 0.001) stillFor = 0;
             else stillFor += Math.max(dt, 0.008);
@@ -738,7 +861,7 @@ export function createGalaxiesLayer(engine, app) {
             baker.dispose();
             lobes.dispose();
             offCoreQuality();
-            [coreSprites, coreSpikes].forEach((part) => {
+            [coreSprites, coreSpikes, resolved].forEach((part) => {
                 if (!part) return;
                 scene.remove(part.mesh);
                 part.geometry.dispose();
