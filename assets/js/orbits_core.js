@@ -9131,6 +9131,7 @@
         const hotColour = C.dark ? mix(C.velocity, '#ffffff', 0.35) : bodyStroke(C.velocity, false);
         const fv = drawnFrameVelocity();
         for (const b of bodies) {
+            if (missionHidesTeal(b)) continue;
             if (!(settings.velocities || b.aim) || (b.held && !b.aim) || ((b.grp || b.minor || arrowsBusy) && b !== subj)) continue;
             const tip = velocityTip(b, fv);
             const x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -12333,12 +12334,13 @@
         const list = ui.popTabs.length ? ui.popTabs[0].parentElement : null;
         if (list) {
             list.addEventListener('keydown', (e) => {
-                const i = ui.popTabs.indexOf(document.activeElement), n = ui.popTabs.length;
+                const tabs = ui.popTabs.filter((t) => t.offsetParent !== null);   // (a mission hides some)
+                const i = tabs.indexOf(document.activeElement), n = tabs.length;
                 if (i < 0) return;
                 const j = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
                 if (j < 0) return;
                 e.preventDefault();
-                selectTab(TAB_OF[ui.popTabs[j].id], true);
+                selectTab(TAB_OF[tabs[j].id], true);
             });
         }
         // Typed fields: Enter or leaving the field applies; up and down step it
@@ -12765,7 +12767,8 @@
         // (an event note drawn on the canvas isn't said twice on screen: here it is for screen readers alone)
         const onCanvas = hints.note && hints.note.canvas && !mission.def;
         const said = onCanvas ? `<span class="orb-sr-only">${hintHtml(hints.note)}</span>` : '';
-        const h = hintHtml(hints.drag) || (mission.def ? hintHtml(hints.missionNote) || missionHint() : '')
+        // (a mission's line is its own: a drag's feedback, its notes, and its hints if they are on, or nothing)
+        const h = mission.def ? hintHtml(hints.drag) || hintHtml(hints.missionNote) || missionHint() || '' : hintHtml(hints.drag)
             || (onCanvas ? '' : hintHtml(hints.note))
             || said + (hintHtml(hints.tip) || (scene && scene.progress ? moonProgress() : '') || carryOnHint() || usualHint());
         if (h === hintKey) return;
@@ -12980,7 +12983,7 @@
     // The tip of the chosen body's velocity arrow at (x, y)? (Only when velocities are shown.)
     function onHandle(x, y, tol) {
         const b = bodyById(selectedId);
-        if (!settings.velocities || !b || b.held || bodies.length < 2) return null;
+        if (!settings.velocities || !b || b.held || bodies.length < 2 || missionHidesTeal(b)) return null;
         const h = handlePos(b);
         if (Math.hypot(h.x - x, h.y - y) > tol) return null;
         // the body itself wins inside its disc
@@ -12993,7 +12996,7 @@
         if (!settings.velocities || bodies.length < 2) return null;
         let best = null, bestD = tol;
         for (const b of bodies) {
-            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy) continue;
+            if (b.held || b.id === selectedId || b.grp || b.minor || arrowsBusy || missionHidesTeal(b)) continue;
             const tip = velocityTip(b);
             if (tip.len < 14 || !b.arrowV) continue;
             const dd = Math.hypot(tip.x - x, tip.y - y);
@@ -14994,7 +14997,7 @@
     // ------------------------------------------------------------------
     // Everything but the bodies (s: a snapshot)
     function setupHead(s) {
-        const st = settings;
+        const st = settingsForSetup();
         return {
             v: SETUP_VERSION, sc: s.scene, t: s.t, acc, sel: s.sel, fr: s.frame,
             vw: [s.zoom, s.panX, s.panY],
@@ -15226,6 +15229,7 @@
 
     function applySettings(set) {
         const check = (el, key, v) => { settings[key] = !!v; if (el) el.checked = settings[key]; };
+        if (mission.home) mission.home.arrows = null;   // (what these set is what leaving a mission now comes back to)
         paceZoom.was = 0;
         setSpeedValue(set.sp);
         check(ui.realistic, 'realistic', set.re);
@@ -16380,7 +16384,7 @@
     //   probe's velocity alone is a burn and is charged (cut short if the tank runs dry); anything else
     //   is put back, with a friendly note. Edits that would pass as burns but aren't (the Orbit tab,
     //   the eccentricity slider) and those keepView never sees (adding, deleting, dragging) are refused
-    //   where they start (missionRefuse), and their controls are greyed out (missionLockMenu,
+    //   where they start (missionRefuse), and their controls aren't shown (missionLockMenu,
     //   missionLockSidebar). Pushes are measured from the mission's reference body (Jupiter when being
     //   captured by it), whatever the probe's primary is.
     //   The fuel used and the burn log are part of the edit history's snapshots (missionSnapshot,
@@ -16678,6 +16682,7 @@
         gap2: Infinity, gapWas: Infinity,   // the distance to the target squared, this step and the last
         ahead: false,          // the target is short of the launch window (as of the last step)
         home: null,            // what to go back to on leaving (see missionKeepHome)
+        arrowsFor: null,       // the mission whose arrows are set up (see missionArrows)
         burst: 0, burstTimer: 0,       // delta-v of burns in quick succession (one announcement for them all)
         refusedAt: 0, refusedText: '',
         hintShown: '',         // the mission hint last put in the hint line
@@ -17200,13 +17205,13 @@
     function missionHintText() {
         const x = missionContext();
         mission.tell = null;
+        // (hints off, it says nothing: the switch is by the clock, and a failure's card has a hint of its own.
+        // A win's card says it all.)
+        if (!mission.hints || mission.status === 'won') return '';
         const orUndo = mission.log.length ? ', or undo your last burn' : '';
         if (!x) return mission.status === 'lost' ? `<strong>Retry</strong>${orUndo}.` : '';
-        if (mission.status === 'won') return `<strong>Mission complete!</strong> ${mission.def.n < MISSIONS.length ? 'On to the next one, or retry on less fuel.' : 'Can you beat your fuel?'}`;
         if (mission.status === 'lost') return `<strong>Retry</strong>${orUndo}${orUndo && ' and fly it differently'}.`;
         if (x.left <= 1e-6) return 'Out of fuel: you can only coast now.';
-        // (one line, whatever the clock is doing: a held burn stops it, and the words mustn't flicker)
-        if (!mission.hints) return 'Burn, watch the dashed path, and play on. Stuck? Turn on <strong>Hints</strong>.';
         return x.d.hint(x);
     }
     // (setHint's default during a mission: the mission's own hint)
@@ -17794,6 +17799,7 @@
             syncFrameUi();
             fitBox(def.scene.box, false);
         }
+        missionArrows(def);
         // Every mission starts at the same pace, and the arrow keys are for the engine from now on
         // (not for the scene list, if it was picked there with the mouse)
         missionSpeedRange(true);
@@ -17823,6 +17829,7 @@
         engineStop();
         missionSpeedRange(false);
         if (mission.home) setSpeedValue(mission.home.speed);
+        missionArrowsBack();
         Object.assign(mission, { def: null, status: 'off', pred: null, plan: null, tell: null, aimPaused: false, result: null, home: null });
         hideMissionPanel();
         missionUi(false);
@@ -17843,6 +17850,35 @@
         mission.home = missionByKey(settings.scene) ? { speed: settings.speed } : {
             snap: snapshot(), speed: settings.speed, paused, back: timeDir < 0, clean: hist.cleanLoad, turn: turnSetup(), stability: settings.stability, stabAuto: stab.auto
         };
+    }
+
+    // The arrows in a mission show only what the player can change. The pull arrows start off (the switch
+    // in the settings brings them back, for this mission and any retry of it) and only the probe has a teal
+    // arrow. The player's own settings wait in mission.home, and aren't what a link made meanwhile says.
+    function showArrows(forces, velocities) {
+        settings.forces = forces;
+        settings.velocities = velocities;
+        if (ui.forces) ui.forces.checked = forces;
+        if (ui.velocities) ui.velocities.checked = velocities;
+    }
+    function missionArrows(def) {
+        if (mission.arrowsFor === def) return;
+        mission.arrowsFor = def;
+        const h = mission.home;
+        if (h && !h.arrows) h.arrows = { forces: settings.forces, velocities: settings.velocities };
+        showArrows(false, true);
+    }
+    function missionArrowsBack() {
+        const a = mission.home && mission.home.arrows;
+        if (a) showArrows(a.forces, a.velocities);
+        mission.arrowsFor = null;
+    }
+    function missionHidesTeal(b) {
+        return mission.def !== null && b.id !== mission.craftId;
+    }
+    function settingsForSetup() {
+        const a = mission.def && mission.home && mission.home.arrows;
+        return a ? Object.assign({}, settings, a) : settings;
     }
 
     // Back to free play: the system as it was, its speed, its view, its way of time, running or paused.
@@ -17907,6 +17943,7 @@
         if (was !== def) {
             if (!was) { mission.home = { speed: settings.speed }; missionSpeedRange(true); setSpeedValue(1); }
             if (!turn.on) missionSpin(def);
+            missionArrows(def);
             missionUi(true);
             syncEccentricity(true);
         }
@@ -17936,23 +17973,25 @@
     }
 
     // ---- Locks on the menu and the sidebar ----
-    // (the end of updateEditor) In a mission the Orbit tab, mass, radius, Circular and Delete are greyed
-    // out, and for any body but the probe the Velocity tab too
+    // (the end of updateEditor) In a mission the menu shows only what can be changed (see orbits_styles.css):
+    // no Orbit tab, sliders for mass and radius, Circular or Delete, and for any body but the probe no
+    // Velocity tab. They are disabled too, so no key reaches them.
     function missionLockMenu(b) {
         const on = !!mission.def;
         if (!on && !mission.menuLocked) return;
         mission.menuLocked = on;
+        const craft = on && b.id === mission.craftId;
+        ui.pop.classList.toggle('is-mission', on);
+        ui.pop.classList.toggle('is-other', on && !craft);
         if (ui.popMass) ui.popMass.disabled = on;
         if (ui.popDelete) ui.popDelete.disabled = on;
         if (!on) return;
-        const craft = b.id === mission.craftId;
         for (const el of edit.orbitEls) el.disabled = true;
         if (!craft) for (const el of edit.velEls) el.disabled = true;
         if (ui.popRadius) ui.popRadius.disabled = true;
         if (ui.popCircular) ui.popCircular.disabled = true;
-        const why = craft ? 'Orbits change only by burns: use the Velocity tab.' : `Only ${mission.def.own || 'your probe'} has an engine: ${theName(b)} keeps to its path.`;
-        setText(ui.popOrbitShape, why);
-        if (!craft) setText(ui.popAngleNote, why);
+        // (the tab it was on has gone: the Velocity tab for the probe, as it opens, or Body)
+        if (edit.tab === 'orbit' || (edit.tab === 'vel' && !craft)) selectTab(craft ? 'vel' : 'body');
     }
     // (syncEccentricity) the eccentricity slider
     function missionLockSidebar() {
@@ -18177,7 +18216,8 @@
         E.playIcon.hidden = won;
         E.playIcon.classList.toggle('fa-play', !running);
         E.playIcon.classList.toggle('fa-pause', running);
-        E.play.hidden = st === 'lost';
+        // (the way on after a win is the card's while the card is up, this one's when it has been closed)
+        E.play.hidden = st === 'lost' || (won && (mission.panel === 'result' || !mission.resultShown));
         const s = over ? null : skipTarget(x);
         E.skip.hidden = !s && !mission.skip;
         E.skip.disabled = !!mission.skip;
@@ -18282,6 +18322,7 @@
         // (if the focus was in it, it goes back to the page rather than to nowhere)
         const had = P.contains(document.activeElement);
         P.hidden = true;
+        updateMissionConsole();
         if (had && byUser) document.activeElement.blur();
         if (byUser) resumeAfterAim();
     }

@@ -2585,7 +2585,7 @@ html:not(.dark-mode) .orb-console .orb-mc-burn .icon {
 
 /* Under the canvas (portrait): as few rows as it will go in, as the canvas gets what is left of the
    screen. The fuel and the time share one, the engine's four buttons another, the way the arrow keys
-   lie ("Engine: hold to fire" is for screen readers here: the hint line says it). */
+   lie ("Engine: hold to fire" is for screen readers here: with hints on, the hint line says it). */
 @media not all and (orientation: landscape) and (min-width: 640px) {
     .orb-console {
         display: grid;
@@ -4560,4 +4560,78 @@ html:not(.dark-mode) .orb-chip-disc.is-ringed::after {
 
 .sim-info-actions .orb-scene-pick option {
     font-weight: 400;
+}
+
+/* ---------- Missions: only what a mission can use ----------
+   (the pull on the chosen body can't be changed in a mission: the body's Gravity tab still has it) */
+.orbits-sim.orb-mission-on .orb-force-box {
+    display: none;
+}
+
+/* (the body's menu: what can't be changed in a mission isn't shown, see missionLockMenu) */
+.orb-popover.is-mission #popCircular,
+.orb-popover.is-mission #popDelete,
+.orb-popover.is-mission #popTurn:disabled,
+.orb-popover.is-mission #popTabOrbit,
+.orb-popover.is-mission.is-other #popTabVel,
+.orb-popover.is-mission #popMass,
+.orb-popover.is-mission #popRadius {
+    display: none;
+}
+
+/* (what's left of its buttons shares one row) */
+.orb-popover.is-mission .orb-pop-actions {
+    flex-wrap: nowrap;
+}
+
+.orb-popover.is-mission .orb-pop-actions #popLock,
+.orb-popover.is-mission .orb-pop-actions #popTurn {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* (a shorter screen, beside the canvas: the line takes room only when it has something to say) */
+@media (orientation: landscape) and (min-width: 640px) and (min-height: 541px) and (max-height: 820px) {
+    .orbits-sim.orb-mission-on .orb-hint {
+        min-height: 0;
+        height: auto;
+    }
+}
+
+/* (and all of the console fits above three lines of it, however short the canvas: 1024x700, say. Touch
+   screens keep their finger-sized buttons, and the console scrolls.) */
+@media (orientation: landscape) and (min-width: 640px) and (min-height: 641px) and (max-height: 820px) and (pointer: fine) {
+    .orbits-sim.orb-mission-on .orb-toolbar {
+        gap: 4px;
+    }
+
+    .orb-console {
+        gap: 2px;
+    }
+
+    .orb-console .orb-mc-burn,
+    .orb-console .orb-mc-play,
+    .orb-console .orb-mc-skip,
+    .orb-console .orb-mc-retry {
+        height: 28px;
+    }
+
+    .orb-console .orb-mc-fine,
+    .orb-console .orb-mc-links button {
+        height: 20px;
+        min-height: 20px;
+    }
+}
+
+/* (while a won mission's card is up, Next is on the card: Retry has the row to itself) */
+@media not all and (orientation: landscape) and (min-width: 640px) {
+    .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
+        grid-column: 1 / span 2;
+    }
+}
+
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 540px) {
+    .orbits-sim.orb-mission-on .orb-console .orb-mc-play[hidden] + .orb-mc-retry {
+        grid-area: auto / 1 / auto / -1;
+    }
 }
