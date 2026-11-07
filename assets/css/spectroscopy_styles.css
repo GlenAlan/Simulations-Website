@@ -52,11 +52,799 @@
 }
 
 /* === SHELL: top bars, band switcher, Layers, Help, Settings, context bar, legend === */
+.spectro-sim {
+    /* The bars sit on the night sky in either site theme, so they keep their own dark glass. White on this
+       still clears 4.5:1 with the brightest possible sky behind it. */
+    --spectro-glass: rgba(14, 16, 22, 0.66);
+    --spectro-glass-text: #f4f4f6;
+    --spectro-glass-line: rgba(255, 255, 255, 0.16);
+    --spectro-glass-hover: rgba(255, 255, 255, 0.13);
+    /* The accent as text or a thin line on a panel: the site's own pink is too pale on the light theme's panels */
+    --spectro-accent-text: #b8325c;
+    /* No info bar on this page: fullscreen must not keep room for one */
+    --sim-fullscreen-info-bar-height: 0px;
+}
+
+html.dark-mode .spectro-sim {
+    --spectro-accent-text: #f2849e;
+}
+
+/* The canvas fills the column. ui/shell.js measures this probe and sets --aspect-ratio from it. */
+.spectro-fit-probe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: var(--sim-canvas-max-h);
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.spectro-sim .sim-aspect-ratio-box {
+    background-color: #000000;
+    container: spectro-sky / inline-size;
+}
+
+.spectro-sim .sim-canvas:focus {
+    outline: none;
+}
+
+.spectro-sim .sim-canvas:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -3px;
+}
+
+/* Fullscreen: the sky takes every pixel the drawer leaves */
+body.sim-fullscreen-active .spectro-sim .simulation-main-content {
+    padding: 0;
+    gap: 0;
+}
+
+body.sim-fullscreen-active .spectro-sim .sim-aspect-ratio-box {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+}
+
+/* Frame rate: out of the way of the search box in the corner it usually takes */
+.spectro-sim .sim-fps-display {
+    top: auto;
+    left: auto;
+    right: 8px;
+    bottom: 8px;
+}
+
+/* The regions over the sky. Everything is in the outer rows and columns, so the middle stays clear. */
+#spectroOverlay {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+        "topleft band topright"
+        ". . ."
+        "bottom bottom bottom";
+    gap: 8px;
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+#spectroOverlay [hidden] {
+    display: none !important;
+}
+
+#spectroTopLeft {
+    grid-area: topleft;
+    justify-self: start;
+    align-self: start;
+    min-width: 0;
+    max-width: 100%;
+}
+
+#spectroBandBar {
+    grid-area: band;
+    justify-self: center;
+    align-self: start;
+}
+
+#spectroTopRight {
+    position: relative; /* The Layers menu lines up with this bar's right-hand edge */
+    grid-area: topright;
+    justify-self: end;
+    align-self: start;
+}
+
+/* These two share the bottom row, the legend keeping clear of the bar in the middle */
+#spectroContextBar {
+    grid-area: bottom;
+    justify-self: center;
+    align-self: end;
+}
+
+#spectroLegend {
+    grid-area: bottom;
+    justify-self: start;
+    align-self: end;
+    min-width: 0;
+    max-width: calc(50% - 175px);
+}
+
+#spectroTopLeft:empty,
+#spectroLegend:empty {
+    pointer-events: none;
+}
+
+.spectro-glass {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 2px;
+    box-sizing: border-box;
+    color: var(--spectro-glass-text);
+    background-color: var(--spectro-glass);
+    border: 1px solid var(--spectro-glass-line);
+    border-radius: var(--sim-radius);
+}
+
+/* Band switcher */
+.spectro-band-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0 0.75em;
+    border: 0;
+    border-radius: calc(var(--sim-radius) - 1px);
+    outline: none;
+    background: transparent;
+    background-clip: padding-box;
+    box-shadow: none;
+    color: var(--spectro-glass-text) !important;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease;
+}
+
+@media (hover: hover) {
+    .spectro-band-btn:hover {
+        color: var(--spectro-glass-text) !important;
+        background-color: var(--spectro-glass-hover);
+        box-shadow: none;
+    }
+}
+
+/* Chosen: filled, bold and announced as checked, so it never relies on colour */
+.spectro-band-btn[aria-checked="true"],
+.spectro-band-btn[aria-checked="true"]:hover {
+    background-color: var(--color-accent);
+    box-shadow: none;
+    color: #1c0f13 !important;
+    font-weight: 700;
+}
+
+.spectro-band-btn:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: -4px;
+}
+
+/* Buttons in the top-right row: the site's icon buttons, recoloured for the dark glass */
+#spectroTopRight .sim-icon-button,
+#spectroTopRight .sim-fullscreen-toggle,
+#spectroTopRight .sim-panel-toggle-button {
+    color: var(--spectro-glass-text) !important;
+}
+
+@media (hover: hover) {
+    #spectroTopRight .sim-icon-button:hover,
+    #spectroTopRight .sim-fullscreen-toggle:hover,
+    #spectroTopRight .sim-panel-toggle-button:hover {
+        color: #ffffff !important;
+        background-color: var(--spectro-glass-hover);
+    }
+}
+
+#spectroTopRight .sim-panel-toggle-button[aria-expanded="true"],
+#spectroTopRight .spectro-help-btn[aria-pressed="true"],
+#spectroTopRight .spectro-layers-btn[aria-expanded="true"] {
+    color: #ffffff !important;
+    background-color: rgba(242, 132, 158, 0.32);
+}
+
+#spectroTopRight button:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: -3px;
+}
+
+#spectroTopRight .sim-action-buttons-overlay {
+    position: static;
+    padding: 0;
+    background: none;
+    border: 0;
+}
+
+.spectro-sim .spectro-layers-btn {
+    width: auto;
+    gap: 0.45em;
+    padding: 0 0.7em;
+    font-family: inherit;
+    font-size: 13.5px;
+}
+
+.spectro-layers-btn .icon {
+    font-size: 16px;
+}
+
+/* The Layers menu is a small panel, so it follows the site's theme */
+.spectro-layers-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: -1px;
+    z-index: 7;
+    box-sizing: border-box;
+    width: min(19.5rem, calc(100cqw - 16px));
+    padding: 0.5em 0.9em 0.7em;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--color-text);
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.42);
+}
+
+.spectro-layers-menu .sim-checkbox-group input[type="checkbox"] + label {
+    min-height: 44px;
+}
+
+.spectro-layers-menu .sim-control-group-label {
+    margin: 0.75em 0 0.1em;
+    padding-top: 0.7em;
+    border-top: 1px solid var(--color-border);
+}
+
+.spectro-layer-note {
+    margin: 0.1em 0 0.35em;
+    font-size: 0.82em;
+    line-height: 1.4;
+    color: var(--color-text);
+}
+
+/* Context bar */
+.spectro-zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7em;
+    min-height: 44px;
+    padding: 0 0.7em;
+    box-sizing: border-box;
+    font-size: 13.5px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-zoom-value {
+    font-weight: 700;
+}
+
+.spectro-bar-button {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    min-width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0 0.9em;
+    border: 0;
+    border-left: 1px solid var(--spectro-glass-line);
+    border-radius: 0;
+    outline: none;
+    background: transparent;
+    box-shadow: none;
+    color: #ffffff !important;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease;
+}
+
+.spectro-zoom[hidden] + .spectro-bar-button,
+.spectro-zoom[hidden] + .spectro-bar-button + .spectro-bar-button {
+    border-left: 0;
+}
+
+@media (hover: hover) {
+    .spectro-bar-button:hover {
+        color: #ffffff !important;
+        background-color: var(--spectro-glass-hover);
+        box-shadow: none;
+    }
+}
+
+.spectro-bar-button:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: -3px;
+}
+
+.spectro-bar-button .icon {
+    font-size: 14px;
+}
+
+/* The sky gets narrower: beside a docked drawer, or on a tablet or phone */
+@container spectro-sky (max-width: 860px) {
+    /* Room gets tighter beside a docked drawer: the icon says it, and the name stays for screen readers and in the tooltip */
+    .spectro-layers-btn .spectro-layers-word {
+        display: none;
+    }
+
+    .spectro-sim .spectro-layers-btn {
+        width: 44px;
+        padding: 0;
+    }
+
+    .spectro-band-btn {
+        padding: 0 0.55em;
+    }
+}
+
+/* A narrower sky (a phone, or a tablet with the drawer docked): the switcher takes its own row, full width */
+@container spectro-sky (max-width: 720px) {
+    #spectroOverlay {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+        grid-template-areas:
+            "topleft topright"
+            "band band"
+            ". ."
+            "legend legend"
+            "context context";
+    }
+
+    #spectroBandBar {
+        justify-self: stretch;
+    }
+
+    #spectroContextBar {
+        grid-area: context;
+    }
+
+    #spectroLegend {
+        grid-area: legend;
+        max-width: 100%;
+    }
+
+    .spectro-band-btn {
+        flex: 1 1 0%;
+    }
+
+    .spectro-zoom-fov {
+        display: none;
+    }
+}
+
+/* With a drawer open on a phone the sky is a small preview, and the legend would cover its centre. The band
+   switcher still says which band it is in. */
+@container spectro-sky (max-width: 520px) {
+    body.sim-panel-sheet.sim-panel-active #spectroLegend {
+        display: none;
+    }
+}
+
+@media (max-height: 540px) {
+    body.sim-panel-active #spectroLegend {
+        display: none;
+    }
+}
+
+@container spectro-sky (max-width: 460px) {
+    .spectro-band-btn {
+        padding: 0 0.15em;
+        font-size: 12.5px;
+    }
+}
+
+body.spectro-reduce-motion #spectroOverlay *,
+body.spectro-reduce-motion .sim-controls-panel,
+body.spectro-reduce-motion .sim-controls-panel.panel-open {
+    transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #spectroOverlay * {
+        transition: none !important;
+    }
+}
+
+/* Off screen, for the "copy" fallback on browsers without the clipboard API */
+.spectro-copy-buffer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
 
 /* === end SHELL === */
 
 
 /* === DRAWER: tab bar and Overview === */
+/* A docked drawer stands as tall as the sky. A sheet keeps one height too, so changing tab never moves the sky. */
+body.sim-panel-side:not(.sim-fullscreen-active) .spectro-sim .sim-controls-panel.panel-open {
+    height: var(--spectro-sky-h, auto);
+    max-height: none;
+}
+
+body.sim-panel-sheet .spectro-sim .sim-controls-panel {
+    height: min(56vh, 34rem);
+}
+
+@supports (height: 100svh) {
+    body.sim-panel-sheet .spectro-sim .sim-controls-panel {
+        height: min(56svh, 34rem);
+    }
+}
+
+/* The sheet covers the bottom of the page, so the page needs that much spare length for the sky to scroll clear of it */
+body.sim-panel-sheet.sim-panel-active:not(.sim-fullscreen-active) #wrapper {
+    padding-bottom: min(56vh, 34rem);
+}
+
+.spectro-sim .sim-controls-header {
+    min-height: 54px;
+    padding-left: 1em;
+}
+
+/* Title: the code, and under it the kind */
+.spectro-sim .sim-controls-header h3 {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15em;
+}
+
+.spectro-title-main {
+    overflow-wrap: anywhere;
+}
+
+.spectro-sim .sim-controls-header h3.is-object {
+    font-size: 1em;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+h3.is-object .spectro-title-main {
+    font-size: 1.15em;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+}
+
+h3.is-object .spectro-title-sub {
+    font-size: 0.82em;
+    font-weight: 400;
+    line-height: 1.3;
+}
+
+.spectro-title-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 0;
+}
+
+.sim-controls-header .sim-icon-button:focus-visible,
+.sim-controls-header .sim-panel-close-button-insIDE:focus-visible {
+    outline: 2px solid var(--spectro-accent-text);
+}
+
+/* Tabs */
+.spectro-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    padding: 0 0.5em;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--color-border);
+    scrollbar-width: none;
+}
+
+.spectro-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.spectro-tab {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 0 0 auto;
+    min-width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0 0.8em;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    outline: none;
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-text) !important;
+    font-family: inherit;
+    font-size: 0.92em;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+    .spectro-tab:hover {
+        color: var(--color-text) !important;
+        background-color: var(--color-bg-button-active-overlay);
+        box-shadow: none;
+    }
+}
+
+/* Chosen: bold and underlined, not just coloured */
+.spectro-tab[aria-selected="true"] {
+    border-bottom-color: var(--spectro-accent-text);
+    font-weight: 700;
+}
+
+.spectro-tab:focus-visible {
+    outline: 2px solid var(--spectro-accent-text);
+    outline-offset: -2px;
+}
+
+#spectroDrawerBody select {
+    min-height: 44px;
+}
+
+#spectroDrawerBody .sim-controls-more > summary {
+    min-height: 44px;
+}
+
+/* Overview */
+#spectroPanel-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9em;
+}
+
+#spectroPanel-overview[hidden] {
+    display: none;
+}
+
+.spectro-relation {
+    margin: 0 0 0.2em;
+    font-size: 0.95em;
+}
+
+.spectro-link {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    min-width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0 0.3em;
+    border: 0;
+    outline: none;
+    background: transparent;
+    box-shadow: none;
+    color: var(--spectro-accent-text) !important;
+    font-family: inherit;
+    font-size: 1em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    text-decoration: underline;
+    text-transform: none;
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .spectro-link:hover {
+        color: var(--spectro-accent-text) !important;
+        background-color: var(--color-bg-button-active-overlay);
+        box-shadow: none;
+    }
+}
+
+.spectro-link:focus-visible {
+    outline: 2px solid var(--spectro-accent-text);
+    outline-offset: -2px;
+    border-radius: 3px;
+}
+
+.spectro-facts {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45em;
+    margin: 0;
+}
+
+.spectro-fact {
+    display: grid;
+    grid-template-columns: 6.2em minmax(0, 1fr);
+    gap: 0.6em;
+    align-items: baseline;
+    font-size: 0.95em;
+    line-height: 1.4;
+}
+
+.spectro-fact dt {
+    margin: 0;
+    font-weight: 400;
+}
+
+.spectro-fact dt[title] {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: help;
+}
+
+.spectro-fact dd {
+    margin: 0;
+    font-weight: 700;
+    color: var(--sim-value-color);
+    font-variant-numeric: tabular-nums;
+}
+
+#spectroDrawerBody .spectro-ov-label {
+    margin: 0 0 0.35em;
+    font-size: 0.82em;
+}
+
+.spectro-band-chips {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+}
+
+.spectro-band-chip {
+    -webkit-appearance: none;
+    appearance: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 58px;
+    height: auto;
+    margin: 0;
+    padding: 5px 1px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    outline: none;
+    background: var(--color-bg);
+    box-shadow: none;
+    color: var(--color-text) !important;
+    font-family: inherit;
+    font-size: 0.8em;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1.15;
+    text-transform: none;
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .spectro-band-chip:hover {
+        color: var(--color-text) !important;
+        background: var(--color-bg-button-active-overlay);
+        box-shadow: none;
+    }
+
+    .spectro-band-chip[aria-pressed="true"]:hover {
+        box-shadow: inset 0 0 0 1px var(--spectro-accent-text);
+    }
+}
+
+.spectro-band-chip[aria-pressed="true"] {
+    border-color: var(--spectro-accent-text);
+    box-shadow: inset 0 0 0 1px var(--spectro-accent-text);
+}
+
+.spectro-band-chip:focus-visible {
+    outline: 2px solid var(--spectro-accent-text);
+    outline-offset: 1px;
+}
+
+.spectro-band-chip-name {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* Three small steps, so strength reads at a glance and doesn't lean on colour */
+.spectro-band-chip-meter {
+    display: block;
+    width: 24px;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, currentColor var(--fill, 0%), var(--sim-track) var(--fill, 0%));
+}
+
+.spectro-band-chip-meter[data-level="1"] { --fill: 33%; }
+.spectro-band-chip-meter[data-level="2"] { --fill: 66%; }
+.spectro-band-chip-meter[data-level="3"] { --fill: 100%; }
+
+.spectro-ov-words {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7em;
+}
+
+#spectroDrawerBody .spectro-ov-words p {
+    font-size: 0.95em;
+    line-height: 1.5;
+}
+
+.spectro-ov-note h4 {
+    margin: 0 0 0.2em;
+    font-size: 0.95em;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    color: inherit;
+}
+
+#spectroDrawerBody .spectro-catalogue-hint {
+    margin: 0.2em 0 0.6em;
+}
+
+/* Settings and Help pages */
+.spectro-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9em;
+}
+
+.spectro-page[hidden] {
+    display: none;
+}
+
+.spectro-page .sim-control-group:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.spectro-page select {
+    width: 100%;
+}
+
+.spectro-page .sim-checkbox-group input[type="checkbox"] + label {
+    min-height: 44px;
+}
+
+.spectro-help-section:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
 
 /* === end DRAWER === */
 
@@ -67,6 +855,577 @@
 
 
 /* === SPECTRUM: the Spectrum tab === */
+
+/* Colours for the plot: read by ui/spectrum/plot.js. The two curves pass 3:1 on the plot's background in both themes
+   and stay apart under colour-blindness; each also has its own key mark and label. */
+.spectro-sim {
+    --spectro-plot-well: var(--color-bg);
+    --spectro-plot-grid: #dcdcdc;
+    --spectro-plot-body: #b3264f;
+    --spectro-plot-ref: #0b6bab;
+    --spectro-plot-uv: rgba(96, 60, 190, 0.075);
+    --spectro-plot-ir: rgba(190, 70, 30, 0.07);
+    --spectro-on: #b3264f;
+}
+
+html.dark-mode .spectro-sim {
+    --spectro-plot-grid: #3c3c3c;
+    --spectro-plot-body: #e35f85;
+    --spectro-plot-ref: #3f97d4;
+    --spectro-plot-uv: rgba(150, 120, 255, 0.11);
+    --spectro-plot-ir: rgba(255, 130, 80, 0.09);
+    --spectro-on: #f2849e;
+}
+
+.spectro-spectrum,
+.spectro-instrument {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55em;
+    min-width: 0;
+}
+
+.spectro-instrument[hidden],
+.spectro-empty[hidden],
+.spectro-note[hidden] {
+    display: none;
+}
+
+.spectro-empty {
+    padding: 1.1em 1em;
+    border: 1px dashed var(--color-border);
+    border-radius: var(--sim-radius);
+}
+
+.spectro-note,
+.spectro-hint {
+    color: var(--color-text);
+}
+
+.spectro-sr-only {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* The plot */
+.spectro-plot {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2em;
+    min-width: 0;
+}
+
+/* Tall enough to read, while leaving the reference picker on screen under it: 335px is what the drawer's own header,
+   tabs and the controls down to the picker take up */
+.spectro-plot-stage {
+    position: relative;
+    width: 100%;
+    height: clamp(230px, calc(100vh - var(--sim-above-h) - 335px), 460px);
+    border-radius: 4px;
+}
+
+body.sim-panel-sheet .spectro-plot-stage {
+    height: clamp(196px, 30vh, 300px);
+}
+
+@supports (height: 100svh) {
+    .spectro-plot-stage {
+        height: clamp(230px, calc(100svh - var(--sim-above-h) - 335px), 460px);
+    }
+
+    body.sim-panel-sheet .spectro-plot-stage {
+        height: clamp(196px, 30svh, 300px);
+    }
+}
+
+/* While the reference list is open the plot gives up its height to it, so a reference can be tried with both
+   spectra still in view */
+.spectro-spectrum.is-picking .spectro-plot-stage {
+    height: clamp(190px, calc(100vh - var(--sim-above-h) - 335px - 11.5em), 300px);
+}
+
+/* On a phone the Spectrum tab needs more of the screen than the sheet's usual height, to fit the plot and the picker */
+body.sim-panel-sheet #simulationControlsPanel:has(#spectroPanel-spectrum:not([hidden])) {
+    max-height: min(78vh, 46rem);
+}
+
+@supports (height: 100svh) {
+    body.sim-panel-sheet #simulationControlsPanel:has(#spectroPanel-spectrum:not([hidden])) {
+        max-height: min(78svh, 46rem);
+    }
+}
+
+.spectro-plot-canvas,
+.spectro-plot-cursor {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.spectro-plot-canvas {
+    cursor: crosshair;
+    outline: none;
+    border-radius: 4px;
+    touch-action: pan-y; /* Sideways drags and pinches are the plot's; up and down still scrolls the drawer */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.spectro-plot-canvas.is-dragging {
+    cursor: grabbing;
+}
+
+.spectro-plot-canvas:focus-visible {
+    outline: 2px solid var(--spectro-on);
+    outline-offset: 1px;
+}
+
+.spectro-plot-cursor {
+    pointer-events: none;
+}
+
+.spectro-readout {
+    display: flex;
+    align-items: baseline;
+    gap: 0.9em;
+    min-height: 1.5em;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 0.82em;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-readout-wl {
+    font-weight: 700;
+    color: var(--sim-value-color);
+}
+
+.spectro-readout-hint {
+    opacity: 0.85;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.spectro-key {
+    display: inline-block;
+    width: 0.62em;
+    height: 0.62em;
+    margin-right: 0.35em;
+    vertical-align: 0.02em;
+    box-sizing: border-box;
+}
+
+.spectro-key-body {
+    background-color: var(--spectro-plot-body);
+}
+
+.spectro-key-ref {
+    border: 2px solid var(--spectro-plot-ref);
+}
+
+/* Buttons here are small and quiet; the site's button is tall, uppercase and spaced out */
+.spectro-spectrum button {
+    height: 44px;
+    margin: 0;
+    padding: 0 0.7em;
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
+    background-color: transparent;
+    box-shadow: none;
+    color: var(--color-text) !important;
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+    .spectro-spectrum button:hover {
+        border-color: var(--spectro-on);
+        box-shadow: none;
+        color: var(--color-text) !important;
+    }
+}
+
+.spectro-spectrum button:focus-visible {
+    outline: 2px solid var(--spectro-on);
+    outline-offset: 1px;
+}
+
+.spectro-spectrum button[aria-pressed="true"] {
+    border-color: var(--spectro-on);
+    box-shadow: inset 0 0 0 1px var(--spectro-on);
+    background-color: var(--color-bg-button-active-overlay);
+    font-weight: 700;
+}
+
+.spectro-spectrum button.spectro-square {
+    flex: 0 0 auto;
+    width: 44px;
+    padding: 0;
+    font-size: 1.1em;
+    font-weight: 400;
+}
+
+.spectro-spectrum button.spectro-square .icon {
+    font-size: 0.72em;
+}
+
+.spectro-spectrum button.spectro-square .icon::before {
+    margin: 0;
+}
+
+.spectro-text-button {
+    flex: 0 0 auto;
+}
+
+.spectro-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+}
+
+.spectro-seg {
+    display: inline-flex;
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.spectro-spectrum .spectro-seg button {
+    border-radius: 0;
+}
+
+.spectro-spectrum .spectro-seg button:first-child {
+    border-radius: var(--sim-radius) 0 0 var(--sim-radius);
+}
+
+.spectro-spectrum .spectro-seg button:last-child {
+    margin-left: -1px;
+    border-radius: 0 var(--sim-radius) var(--sim-radius) 0;
+}
+
+.spectro-spectrum .spectro-seg button[aria-pressed="true"] {
+    position: relative;
+    z-index: 1;
+}
+
+.spectro-zoom {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 0.3em;
+}
+
+/* Wavelength range: one row that scrolls sideways when the drawer is narrow, and fades at an edge with more beyond */
+.spectro-presets {
+    display: flex;
+    gap: 0.3em;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    --fade-left: 0px;
+    --fade-right: 24px;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent 100%);
+    padding: 2px;
+    margin: -2px;
+}
+
+.spectro-presets::-webkit-scrollbar {
+    display: none;
+}
+
+.spectro-presets:not(.at-start) {
+    --fade-left: 24px;
+}
+
+.spectro-presets.at-end {
+    --fade-right: 0px;
+}
+
+.spectro-spectrum .spectro-presets .spectro-chip {
+    flex: 0 0 auto;
+    min-width: 44px;
+}
+
+.spectro-spectrum .sim-checkbox-group input[type="checkbox"] + label,
+.spectro-spectrum .spectro-more > summary {
+    min-height: 44px;
+}
+
+/* The reference picker */
+.spectro-ref-host {
+    margin-top: 0.15em;
+}
+
+.spectro-ref {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+    min-width: 0;
+}
+
+.sim-controls-content .spectro-ref-label {
+    font-size: 0.85em;
+    font-weight: 700;
+}
+
+.spectro-ref-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.3em;
+}
+
+.spectro-ref-box {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.spectro-spectrum input.spectro-ref-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 44px;
+    padding: 0 2.6em 0 0.7em;
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.95em;
+    text-overflow: ellipsis;
+}
+
+.spectro-spectrum input.spectro-ref-input:focus {
+    border-color: var(--spectro-on);
+    box-shadow: inset 0 0 0 1px var(--spectro-on);
+}
+
+.spectro-spectrum input.spectro-ref-input::placeholder {
+    color: var(--color-text);
+    opacity: 0.75;
+}
+
+.spectro-spectrum button.spectro-ref-open {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 40px;
+    padding: 0;
+    border: 0;
+    background: none;
+}
+
+.spectro-ref-open .icon {
+    display: inline-block;
+    font-size: 0.8em;
+    transition: transform 0.15s ease;
+}
+
+.spectro-ref-open .icon::before {
+    margin: 0;
+}
+
+.spectro-ref-open.is-open .icon {
+    transform: rotate(180deg);
+}
+
+.spectro-ref-list {
+    max-height: 12em;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius);
+    background-color: var(--color-bg);
+    scrollbar-width: thin;
+}
+
+.spectro-ref-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 0.4em 0.7em;
+    background-color: var(--color-bg-alt);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.72em;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    line-height: 1.3;
+    text-transform: uppercase;
+}
+
+.spectro-ref-option {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.2em 0.7em;
+    font-size: 0.95em;
+    line-height: 1.25;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+    .spectro-ref-option:hover {
+        background-color: var(--color-bg-subtle);
+    }
+}
+
+.spectro-ref-option.is-active {
+    background-color: var(--color-bg-button-active-overlay);
+    box-shadow: inset 0 0 0 1px var(--spectro-on);
+}
+
+.spectro-ref-option[aria-selected="true"] {
+    border-left-color: var(--spectro-on);
+    font-weight: 700;
+}
+
+.spectro-ref-empty {
+    padding: 0.8em 0.7em;
+    font-size: 0.9em;
+}
+
+.spectro-ref-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1em;
+}
+
+.spectro-value {
+    color: var(--sim-value-color);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Keep site-wide "accent coloured value" off these, whose contrast isn't enough on the light theme */
+.sim-controls-content label > .spectro-value {
+    color: var(--sim-value-color);
+}
+
+.spectro-more {
+    padding-top: 0.15em;
+}
+
+.spectro-more > summary > span:first-child {
+    flex: 1 1 auto;
+}
+
+.spectro-summary-value {
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-shift-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+}
+
+.spectro-shift-row input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+}
+
+.spectro-shift-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    min-height: 44px;
+}
+
+.spectro-shift-value {
+    font-size: 0.92em;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--sim-value-color);
+    font-variant-numeric: tabular-nums;
+}
+
+.spectro-help p + p {
+    margin-top: 0.6em;
+}
+
+/* Tools */
+.spectro-tools {
+    display: flex;
+    flex-direction: column;
+}
+
+.spectro-tool {
+    border-top: 1px solid var(--color-border);
+}
+
+.spectro-tool:first-child {
+    border-top: 0;
+}
+
+.spectro-tool[hidden] {
+    display: none;
+}
+
+.spectro-tool > summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.95em;
+    font-weight: 600;
+    border-radius: 4px;
+}
+
+.spectro-tool > summary::-webkit-details-marker {
+    display: none;
+}
+
+.spectro-tool > summary::after {
+    content: '\f078';
+    margin-left: auto;
+    padding: 0 0.35em;
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    font-size: 0.7em;
+    transition: transform 0.2s ease;
+}
+
+.spectro-tool[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.spectro-tool > summary:focus-visible {
+    outline: 2px solid var(--spectro-on);
+    outline-offset: 2px;
+}
+
+.spectro-tool-body {
+    padding-bottom: 0.7em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .spectro-ref-open .icon,
+    .spectro-tool > summary::after {
+        transition: none;
+    }
+}
 
 /* === end SPECTRUM === */
 
@@ -525,6 +1884,75 @@
 
 
 /* === PLAYBACK: the shared play, pause and speed control === */
+.spectro-playback {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.spectro-play {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    min-width: 6em;
+    height: 44px;
+    margin: 0;
+    padding: 0 0.9em;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    outline: none;
+    background: var(--color-bg);
+    box-shadow: none;
+    color: var(--color-text) !important;
+    font-family: inherit;
+    font-size: 0.95em;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: none;
+    cursor: pointer;
+}
+
+.spectro-play .icon {
+    width: 1em;
+    font-size: 0.85em;
+}
+
+@media (hover: hover) {
+    .spectro-play:hover {
+        color: var(--color-text) !important;
+        background: var(--color-bg-button-active-overlay);
+        box-shadow: none;
+    }
+}
+
+.spectro-play:focus-visible {
+    outline: 2px solid var(--spectro-accent-text);
+    outline-offset: 1px;
+}
+
+.spectro-playback select {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 7em;
+    height: 44px;
+    margin: 0;
+    padding: 0 2.2em 0 0.7em;
+    font-size: 0.95em;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.spectro-playback select:focus-visible {
+    outline: 2px solid var(--spectro-accent-text);
+    outline-offset: 1px;
+}
 
 /* === end PLAYBACK === */
 
@@ -795,5 +2223,13 @@
 
 
 /* === OVERLAYS: labels and markers over the sky === */
+/* Drawn over the sky, under the bars; drags go straight through it to the canvas */
+#spectroOverlay > .spectro-overlay-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
 
 /* === end OVERLAYS === */
