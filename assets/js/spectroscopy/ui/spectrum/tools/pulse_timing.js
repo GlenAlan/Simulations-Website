@@ -8,7 +8,7 @@ import { Rng } from '../../../core/rng.js';
 import { sig } from '../../../core/format.js';
 import { createPlayback } from '../../playback.js';
 import { el, fontOf } from '../../plot2d.js';
-import { createTimeFigure, para } from './common.js';
+import { createTimeFigure, figureTable, para } from './common.js';
 
 const SHOWN_PULSES = 5;          // How many periods fit across the trace
 const PULSE_WIDTH = 0.045;       // Width of a pulse as a share of the period
@@ -122,9 +122,13 @@ function mount(container, api) {
             ctx.fillText('one period', 0.5 * (a + b), y - 3);
         }
     });
-    figure.setLabel('Pulse trace: radio signal against time, with one sharp pulse each period.');
     const note = para('Each pulse is a beam from the spinning neutron star sweeping past, like a lighthouse. It turns once each period.');
     container.append(note);
+    const updateTable = figureTable(container, {
+        label: 'Pulse arrival times',
+        columns: ['Pulse', 'Arrives at (s)'],
+        rows: () => Array.from({ length: SHOWN_PULSES + 1 }, (_, i) => [String(i + 1), sig(i * period, 4)])
+    });
 
     function draw() {
         figure.redraw();
@@ -139,6 +143,8 @@ function mount(container, api) {
         const timed = timePulses(period, entity.code);
         const pulses = 1 / timed.period;
         answer.textContent = `Period = ${periodText(timed.period, timed.err, unit)}`;
+        figure.setLabel(`Pulse trace: radio signal against time, with one sharp pulse each period. ${answer.textContent}. The times are in the table under Show as table.`);
+        updateTable();
         const pulsesText = pulses >= 10 ? `${Math.round(pulses).toLocaleString('en-AU')} pulses each second` : `${sig(pulses, 3)} pulses each second`;
         tNow = 0;
         if (playback) {
