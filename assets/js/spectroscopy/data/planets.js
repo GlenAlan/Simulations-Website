@@ -1,0 +1,591 @@
+// Planets and their systems (spec 8.3). The habitable zone is worked out from luminosity for every host, even where
+// the panel's formula doesn't apply to it (giants, white dwarfs, multi-star systems), so that no random planet can
+// sit in one with water on it however the system is built.
+//
+// A planet:
+//   type          one of the keys of PLANET_TYPES, or an opaque id for a hard-coded type
+//   type_label    plain words, for the catalogue values
+//   host          the code of the body it orbits; orbit_centre_stars lists star indices if it circles only some of them
+//   surface       { ocean_fraction, rock, ice, red_edge_nm, subsurface_ocean }
+//                 rock: 'silicate'|'iron'|'basalt'|'iron_oxide'|'molten'; ice: null|'water'|'methane_nitrogen'
+//   clouds        { kind, cover }, kind: null|'H2O'|'H2SO4'|'NH3'|'dust'
+//   rings         null or { inner_Rp, outer_Rp, tilt_deg, opacity }
+//   T_surface_K   null for planets with no solid surface
+//   brightness    reflected starlight only: planets aren't drawn in the sky, but tools can read it
+
+import { stable } from '../core/rng.js';
+import { keplerPeriodDays, hzEdges, AU, R_EARTH, M_EARTH, M_SUN } from '../core/phys.js';
+import { dp, RSUN_AU } from './stellar.js';
+
+const EARTH_RADIUS_AU = R_EARTH / AU;
+const EARTH_MASS_MSUN = M_EARTH / M_SUN;
+
+export const PLANET_TYPES = {
+    sub_neptune: { share: 0.2, label: 'Sub-Neptune' },
+    rocky_airless: { share: 0.15, label: 'Rocky, airless' },
+    gas_giant: { share: 0.12, label: 'Gas giant' },
+    thin_co2: { share: 0.1, label: 'Thin CO₂ (Mars-like)' },
+    ice_giant: { share: 0.1, label: 'Ice giant' },
+    thick_co2: { share: 0.08, label: 'Thick CO₂ (Venus-like)' },
+    desert: { share: 0.07, label: 'Desert world' },
+    frozen_ocean: { share: 0.05, label: 'Frozen ocean world' },
+    hot_jupiter: { share: 0.05, label: 'Hot Jupiter' },
+    lava_world: { share: 0.04, label: 'Lava world' },
+    ice_dwarf: { share: 0.04, label: 'Ice dwarf' }
+};
+
+// How many planets a system has (spec 7.2): buckets with exact counts, a number drawn inside each
+export const PLANET_COUNT_BUCKETS = [
+    { share: 0.35, draw: () => 1 },
+    { share: 0.35, draw: (rng) => rng.int(2, 3) },
+    { share: 0.22, draw: (rng) => rng.int(4, 6) },
+    { share: 0.08, draw: (rng) => rng.weighted([[7, 5], [8, 4], [9, 1]]) }
+];
+
+// The closest orbit a planet is ever given, in stellar radii (spec: giants reach 4.65 AU, O stars 0.07 AU)
+export const MIN_STELLAR_RADII = 2.5;
+// Orbits inside these fractions of sqrt(L) are hot enough for each type: about 850 K and 950 K. Both are well under
+// 0.3 x the zone's inner edge (0.29 sqrt(L)), so the spec's placement rule holds for every host.
+const HOT_JUPITER_LIMIT = 0.1;
+const LAVA_LIMIT = 0.08;
+const HOT_LIMIT_SQRT_L = HOT_JUPITER_LIMIT;
+
+export function hostContext(body, info) {
+    const L = info.luminosity_Lsun;
+    return {
+        code: body.code,
+        L,
+        M: info.mass_Msun,
+        teff: info.teff_K,
+        rStarAU: info.radius_Rsun * RSUN_AU,
+        mainSequenceSingle: info.mainSequenceSingle,
+        hz: hzEdges(L),
+        sqrtL: Math.sqrt(L),
+        floorAU: info.floorAU,
+        rv: body.radial_velocity_kms,
+        distance: body.distance_pc,
+        flux: body.brightness.flux_Wm2,
+        mag: body.brightness.mag
+    };
+}
+
+function lowestOrbit(ctx) {
+    return Math.max(MIN_STELLAR_RADII * ctx.rStarAU, ctx.floorAU || 0);
+}
+
+// Which types an orbit may hold. Hot types go only inside the hot limit, and only where they clear the star: a gas
+// giant at the surface of a tiny red dwarf isn't an orbit. Cold types go only beyond the outer edge of the zone.
+function allowedTypes(a, ctx) {
+    const { hz, sqrtL } = ctx;
+    if (a < HOT_LIMIT_SQRT_L * sqrtL) {
+        const list = ['rocky_airless'];
+        const low = lowestOrbit(ctx);
+        if (a >= low + 80 * EARTH_RADIUS_AU) list.push('hot_jupiter');
+        if (a < LAVA_LIMIT * sqrtL && a >= low + 10 * EARTH_RADIUS_AU) list.push('lava_world');
+        return list;
+    }
+    if (a < hz.inner) {
+        const list = ['rocky_airless', 'thick_co2', 'sub_neptune', 'gas_giant'];
+        if (a > 0.6 * sqrtL) list.push('desert');
+        return list;
+    }
+    if (a <= hz.outer) return ['rocky_airless', 'thin_co2', 'desert', 'sub_neptune', 'gas_giant', 'thick_co2'];
+    const list = ['gas_giant', 'ice_giant', 'ice_dwarf', 'frozen_ocean', 'sub_neptune', 'rocky_airless'];
+    if (a < 4 * sqrtL) list.push('thin_co2');
+    if (a < 2.5 * sqrtL) list.push('desert');
+    return list;
+}
+
+// Chooses by how far each allowed type is behind its share of the planets so far, so the sky's totals land on the
+// table's shares even though each orbit can only hold some of the types
+function pickType(rng, a, ctx, tally) {
+    const weights = allowedTypes(a, ctx).map((type) => {
+        const due = PLANET_TYPES[type].share * (tally.total + 12) - (tally.counts[type] || 0);
+        return [type, Math.max(0.01, due)];
+    });
+    return rng.weighted(weights);
+}
+
+function rockyMass(rng, radius, density = 1) {
+    return stable(density * radius ** 3.3 * rng.range(0.8, 1.2), 3);
+}
+
+// Radius goes up with mass only as far as Jupiter. Past that, gravity squeezes a heavier giant so hard that it stays the same size,
+// and just gets denser. In Earth masses and radii; Saturn and Jupiter are on the curve.
+const COLD_GIANT = [[30, 6.5], [95, 9.4], [318, 11.2], [1000, 11.3], [3000, 11]];
+
+function coldGiantRadius(mass) {
+    const last = COLD_GIANT.length - 2;
+    let i = 0;
+    while (i < last && mass > COLD_GIANT[i + 1][0]) i++;
+    const [m0, r0] = COLD_GIANT[i];
+    const [m1, r1] = COLD_GIANT[i + 1];
+    return r0 + (r1 - r0) * (Math.log(mass / m0) / Math.log(m1 / m0));
+}
+
+// Random draws that used to be a mass and a radius drawn apart, turned into a pair that fit. They stay as draws so that everything
+// generated after them, every code in the sky among it, stays as it was. The largest masses are drawn closer in: a planet of three
+// Jupiters is already 4 g/cm3, and beyond about ten it would be a brown dwarf.
+function massWithin(drawn, lo, hi, newHi) {
+    return lo * (drawn / lo) ** (Math.log(newHi / lo) / Math.log(hi / lo));
+}
+
+// drawnRadius and drawnMass are from rng.range(7, 13) and rng.logRange(30, 2000)
+export function gasGiantFit(drawnRadius, drawnMass) {
+    const mass = stable(massWithin(drawnMass, 30, 2000, 1000), 3);
+    const scatter = ((drawnRadius - 10) / 3) * 0.05;
+    return { mass, radius: coldGiantRadius(mass) * (1 + scatter) };
+}
+
+// drawnRadius and drawnMass are from rng.range(10, 20) and rng.logRange(100, 3000). A hot Jupiter is puffed up by its star's heat,
+// the more so if it is hot and not too heavy.
+function hotJupiterFit(drawnRadius, drawnMass, tGuess) {
+    const mass = stable(massWithin(drawnMass, 100, 3000, 1200), 3);
+    const heat = Math.min(1, Math.max(0, (tGuess - 900) / 1100));
+    const puff = ((drawnRadius - 10) / 10) * (0.1 + 0.55 * heat) * Math.min(1, Math.sqrt(400 / mass));
+    return { mass, radius: coldGiantRadius(mass) * (1 + puff) };
+}
+
+// scatter is from rng.range(0.8, 1.2)
+export function subNeptuneMass(radius, scatter) {
+    return stable(2 * radius ** 1.5 * (1 + 0.6 * (scatter - 1)), 3);
+}
+
+// drawnMass is from rng.range(12, 25). Uranus and Neptune are on the curve.
+function iceGiantMass(radius, drawnMass) {
+    return stable(17 * (radius / 3.88) ** 2 * (1 + 0.15 * ((drawnMass - 18.5) / 6.5)), 3);
+}
+
+// Everything but the orbit, by type. inHz is the numeric zone, whichever kind of host this is
+const BUILDERS = {
+    sub_neptune(rng, inHz) {
+        const radius = rng.range(1.8, 3.8);
+        const H2 = rng.range(80, 88);
+        const CH4 = rng.range(0.5, 2);
+        const CO2 = rng.range(0.1, 1);
+        const ppm = {};
+        if (!inHz && rng.chance(0.35)) ppm.H2O = rng.range(50, 800);
+        return {
+            radius,
+            mass: subNeptuneMass(radius, rng.range(0.8, 1.2)),
+            albedo: rng.range(0.3, 0.5),
+            pressure: 100,
+            pct: { H2, He: 100 - H2 - CH4 - CO2, CH4, CO2 },
+            ppm
+        };
+    },
+    rocky_airless(rng) {
+        const radius = rng.range(0.3, 1.6);
+        return {
+            radius,
+            mass: rockyMass(rng, radius),
+            albedo: rng.range(0.06, 0.2),
+            pressure: 0,
+            surface: { rock: rng.weighted([['silicate', 6], ['iron', 2], ['basalt', 3]]) }
+        };
+    },
+    gas_giant(rng) {
+        const H2 = rng.range(85, 87);
+        const drawnRadius = rng.range(7, 13);
+        return {
+            ...gasGiantFit(drawnRadius, rng.logRange(30, 2000)),
+            albedo: rng.range(0.3, 0.6),
+            pressure: 100,
+            pct: { H2, He: 100 - H2 },
+            ppm: { CH4: rng.range(1000, 4000), NH3: rng.range(100, 700) }
+        };
+    },
+    thin_co2(rng) {
+        const radius = rng.range(0.4, 1.1);
+        const CO2 = rng.range(94, 96);
+        const N2 = rng.range(2, 4);
+        return {
+            radius,
+            mass: rockyMass(rng, radius, 0.75),
+            albedo: rng.range(0.15, 0.3),
+            pressure: stable(rng.logRange(0.003, 0.08), 3),
+            pct: { CO2, N2, Ar: 100 - CO2 - N2 },
+            surface: { rock: 'iron_oxide' },
+            clouds: { kind: 'dust', cover: rng.range(0, 0.15) },
+            opacity: 0.1
+        };
+    },
+    ice_giant(rng) {
+        const H2 = rng.range(78, 81);
+        const CH4 = rng.range(1.5, 2.5);
+        const radius = rng.range(3.3, 5);
+        return {
+            radius,
+            mass: iceGiantMass(radius, rng.range(12, 25)),
+            albedo: rng.range(0.35, 0.5),
+            pressure: 100,
+            pct: { H2, He: 100 - H2 - CH4, CH4 }
+        };
+    },
+    thick_co2(rng) {
+        const radius = rng.range(0.7, 1.2);
+        const CO2 = rng.range(95.5, 97);
+        return {
+            radius,
+            mass: rockyMass(rng, radius, 0.9),
+            albedo: rng.range(0.6, 0.8),
+            pressure: rng.range(30, 110),
+            pct: { CO2, N2: 100 - CO2 },
+            ppm: { SO2: rng.range(80, 300), H2SO4: rng.range(5, 50) },
+            surface: { rock: 'basalt' },
+            clouds: { kind: 'H2SO4', cover: 1 },
+            opacity: 100
+        };
+    },
+    desert(rng) {
+        const radius = rng.range(0.6, 1.4);
+        const CO2 = rng.range(15, 40);
+        const Ar = rng.range(1, 5);
+        const O2 = rng.chance(0.55) ? rng.range(0.1, 5) : 0;
+        const pct = { N2: 100 - CO2 - Ar - O2, CO2, Ar };
+        if (O2 > 0) pct.O2 = O2;
+        return {
+            radius,
+            mass: rockyMass(rng, radius, 0.9),
+            albedo: rng.range(0.25, 0.4),
+            pressure: stable(rng.logRange(0.2, 3), 3),
+            pct,
+            surface: { rock: 'silicate' },
+            clouds: { kind: 'dust', cover: rng.range(0.05, 0.35) },
+            opacity: 0.6
+        };
+    },
+    frozen_ocean(rng) {
+        const radius = rng.range(0.4, 1.2);
+        return {
+            radius,
+            mass: stable(0.6 * radius ** 3 * rng.range(0.85, 1.15), 3),
+            albedo: rng.range(0.6, 0.85),
+            pressure: 0,
+            surface: { rock: 'silicate', ice: 'water', subsurface_ocean: true }
+        };
+    },
+    hot_jupiter(rng, inHz, tGuess) {
+        const H2 = rng.range(85, 86.5);
+        const ppm = { Na: rng.range(2, 6), K: rng.range(0.2, 0.6), H2O: rng.range(200, 800), CO: rng.range(300, 900) };
+        if (tGuess > 1700) ppm.TiO = rng.range(1, 5);
+        const drawnRadius = rng.range(10, 20);
+        return {
+            ...hotJupiterFit(drawnRadius, rng.logRange(100, 3000), tGuess),
+            albedo: rng.range(0.03, 0.12),
+            pressure: 100,
+            pct: { H2, He: 100 - H2 },
+            ppm
+        };
+    },
+    lava_world(rng) {
+        const radius = rng.range(0.7, 1.7);
+        const Na = rng.range(50, 70);
+        const SiO = rng.range(15, 35);
+        return {
+            radius,
+            mass: rockyMass(rng, radius, 1.1),
+            albedo: rng.range(0.05, 0.15),
+            pressure: stable(rng.logRange(0.001, 0.1), 3),
+            pct: { Na, SiO, K: 100 - Na - SiO },
+            surface: { rock: 'molten' }
+        };
+    },
+    ice_dwarf(rng) {
+        const radius = rng.range(0.15, 0.6);
+        const CH4 = rng.range(2, 8);
+        const CO = rng.range(1, 5);
+        return {
+            radius,
+            mass: stable(0.3 * radius ** 3 * rng.range(0.85, 1.15), 3),
+            albedo: rng.range(0.5, 0.9),
+            pressure: stable(rng.logRange(0.00001, 0.001), 3),
+            pct: { N2: 100 - CH4 - CO, CH4, CO },
+            surface: { rock: 'silicate', ice: 'methane_nitrogen' }
+        };
+    }
+};
+
+function roundAll(values, places) {
+    const out = {};
+    Object.keys(values || {}).forEach((key) => { out[key] = dp(values[key], places); });
+    return out;
+}
+
+// Greenhouse warming from a rough optical depth; sqrt(sqrt()) keeps it exact in every browser
+function surfaceTemperature(tEq, opacity) {
+    return tEq * Math.sqrt(Math.sqrt(1 + 0.75 * opacity));
+}
+
+function equilibriumTemperature(L, a, albedo) {
+    return 278.5 * Math.sqrt(Math.sqrt(L * (1 - albedo))) / Math.sqrt(a);
+}
+
+function assemble(code, type, label, a, f, ctx, massForPeriod, extras) {
+    const periodDays = stable(keplerPeriodDays(a, massForPeriod), 6);
+    const hz = ctx.hz;
+    const tEq = stable(equilibriumTemperature(ctx.L, a, f.albedo), 4);
+    const reflected = f.albedo * ((f.radius * EARTH_RADIUS_AU) / (2 * a)) ** 2;
+    return {
+        code,
+        kind: 'planet',
+        type,
+        type_label: label,
+        host: ctx.code,
+        orbit_centre_stars: extras.orbit_centre_stars || null,
+        orbit_AU: a,
+        period_days: periodDays,
+        phase0: extras.phase0,
+        inclination_deg: extras.inclination_deg,
+        radius_Rearth: stable(f.radius, 4),
+        mass_Mearth: stable(f.mass, 4),
+        gravity_g: stable(f.mass / (f.radius * f.radius), 3),
+        albedo: dp(f.albedo, 3),
+        in_hz: ctx.mainSequenceSingle && a >= hz.inner && a <= hz.outer,
+        T_eq_K: tEq,
+        T_surface_K: f.tSurface,
+        pressure_bar: f.pressure,
+        day_length_h: dp(f.dayLength, 1),
+        tidally_locked: !!f.locked,
+        atmosphere_pct: f.pct,
+        atmosphere_ppm: f.ppm,
+        surface: f.surface,
+        clouds: f.clouds,
+        rings: f.rings || null,
+        host_teff_K: ctx.teff,
+        host_luminosity_Lsun: ctx.L,
+        host_mass_Msun: massForPeriod,
+        radial_velocity_kms: ctx.rv,
+        distance_pc: ctx.distance,
+        brightness: {
+            flux_Wm2: stable(ctx.flux * reflected, 4),
+            mag: dp(ctx.mag - 2.5 * Math.log10(reflected), 2)
+        },
+        bands: null,                 // Set last of all, from band_table.js
+        visual_seed: code
+    };
+}
+
+function makePlanet(rng, code, type, a, ctx) {
+    const inHz = a >= ctx.hz.inner && a <= ctx.hz.outer;
+    const tGuess = equilibriumTemperature(ctx.L, a, 0.1);
+    const raw = BUILDERS[type](rng, inHz, tGuess);
+    const tEq = equilibriumTemperature(ctx.L, a, raw.albedo);
+    const giant = type === 'gas_giant' || type === 'ice_giant' || type === 'hot_jupiter' || type === 'sub_neptune';
+    const locked = type === 'hot_jupiter' || type === 'lava_world' || a < 0.1 * ctx.sqrtL;
+    const period = keplerPeriodDays(a, ctx.M);
+    const f = {
+        radius: raw.radius,
+        mass: raw.mass,
+        albedo: raw.albedo,
+        pressure: stable(raw.pressure, 4),
+        locked,
+        dayLength: locked ? period * 24 : giant ? rng.range(8, 22) : rng.range(12, 200),
+        pct: roundAll(raw.pct, 2),
+        ppm: roundAll(raw.ppm, 2),
+        surface: { ocean_fraction: 0, rock: 'silicate', ice: null, red_edge_nm: null, subsurface_ocean: false, ...raw.surface },
+        clouds: raw.clouds ? { kind: raw.clouds.kind, cover: dp(raw.clouds.cover, 2) } : { kind: null, cover: 0 },
+        tSurface: giant ? null : dp(surfaceTemperature(tEq, raw.opacity || 0), 0)
+    };
+    if (type === 'gas_giant' && tEq < 300) f.clouds = { kind: 'NH3', cover: dp(rng.range(0.55, 0.95), 2) };
+    const ringChance = type === 'gas_giant' ? 0.28 : type === 'ice_giant' ? 0.15 : 0;
+    if (tEq < 350 && rng.chance(ringChance)) {
+        const inner = rng.range(1.25, 1.6);
+        f.rings = { inner_Rp: dp(inner, 2), outer_Rp: dp(inner * rng.range(1.25, 1.9), 2), tilt_deg: dp(rng.range(-28, 28), 1), opacity: dp(rng.range(0.25, 0.85), 2) };
+    }
+    return assemble(code, type, PLANET_TYPES[type].label, a, f, ctx, ctx.M, {
+        phase0: dp(rng.next(), 5),
+        inclination_deg: dp(rng.range(-3, 3), 2)
+    });
+}
+
+// A planet from fixed values, for the hard-coded systems. Only the orbit's phase is seeded.
+export function planetFromSpec(rng, spec, ctx, extras = {}) {
+    const massForPeriod = extras.massForPeriod ?? ctx.M;
+    const type = spec.type;
+    const f = {
+        radius: spec.radius_Rearth,
+        mass: spec.mass_Mearth,
+        albedo: spec.albedo,
+        pressure: spec.pressure_bar,
+        locked: !!spec.tidally_locked,
+        dayLength: spec.day_length_h,
+        pct: spec.atmosphere_pct || {},
+        ppm: spec.atmosphere_ppm || {},
+        surface: { ocean_fraction: 0, rock: 'silicate', ice: null, red_edge_nm: null, subsurface_ocean: false, ...spec.surface },
+        clouds: spec.clouds || { kind: null, cover: 0 },
+        rings: spec.rings || null,
+        tSurface: spec.T_surface_K ?? null
+    };
+    const label = spec.type_label || PLANET_TYPES[type].label;
+    return assemble(spec.code, type, label, spec.orbit_AU, f, ctx, massForPeriod, {
+        phase0: dp(rng.next(), 5),
+        inclination_deg: dp(rng.range(-3, 3), 2),
+        orbit_centre_stars: extras.orbit_centre_stars
+    });
+}
+
+// Orbits spaced by a ratio of 1.4 to 2.0. The first is drawn further out when there are few planets, so that lone
+// planets aren't all hot ones; none goes inside the host's lowest safe orbit. fixedAU, if given, keeps one orbit.
+function orbitLadder(rng, n, ctx, fixedAU) {
+    const low = lowestOrbit(ctx);
+    const orbits = [];
+    if (fixedAU) {
+        orbits.push(fixedAU);
+        let inner = fixedAU;
+        let outer = fixedAU;
+        while (orbits.length < n) {
+            const ratio = rng.range(1.4, 2);
+            if (rng.chance(0.4) && inner / ratio >= low) {
+                inner /= ratio;
+                orbits.unshift(stable(inner, 6));
+                inner = orbits[0];
+            } else {
+                outer *= ratio;
+                orbits.push(stable(outer, 6));
+                outer = orbits[orbits.length - 1];
+            }
+        }
+        return orbits;
+    }
+    const spread = n === 1 ? 9 : n <= 3 ? 3 : n <= 6 ? 1.2 : 0.6;
+    const lo = Math.max(0.03 * ctx.sqrtL, low);
+    // About one system in four starts close in, where the hot types live
+    const hotStart = rng.chance(0.25);
+    const hi = Math.max(lo * 1.5, Math.min((hotStart ? 0.09 : spread) * ctx.sqrtL, 100));
+    let a = stable(rng.logRange(lo, hi), 6);
+    orbits.push(a);
+    for (let i = 1; i < n; i++) {
+        a = stable(a * rng.range(1.4, 2), 6);
+        orbits.push(a);
+    }
+    return orbits;
+}
+
+// The random planets of one system. fixed = { orbit_AU, planet } keeps a hard-coded one in its place in the ladder.
+export function makeSystemPlanets(rng, nextCode, ctx, n, tally, fixed = null) {
+    const orbits = orbitLadder(rng, n, ctx, fixed ? fixed.orbit_AU : null);
+    const planets = orbits.map((a) => {
+        if (fixed && a === fixed.orbit_AU) {
+            addToTally(tally, fixed.planet.type);
+            return fixed.planet;
+        }
+        const type = pickType(rng, a, ctx, tally);
+        addToTally(tally, type);
+        return makePlanet(rng, nextCode(), type, a, ctx);
+    });
+    return settlePlanets(rng.fork('settle planets'), planets, ctx, fixed ? fixed.planet : null);
+}
+
+// ---------- Orbits a planet could really keep ----------
+// A planet closer to its star than its Roche limit is torn apart by the star's tides, and two planets closer than about
+// 3.5 times their shared Hill radius pull each other off their orbits (Gladman 1993). Each system is laid out first as it
+// always was, and then put right here, from a random stream of its own, so that no other number in the sky, and no code,
+// moves: a planet too close in moves out, and the ones beyond it make room.
+
+export const ROCHE_FLUID = 2.44;                 // A fluid body's Roche limit, in the planet's radii times (M_star / M_planet)^(1/3)
+export const HILL_SPACING = 2 * Math.sqrt(3);    // Gladman's least spacing of two planets, in their shared Hill radius
+export const ROCHE_ROOM = 1.02;                  // How far outside its Roche limit a planet is moved to, at the least
+export const HILL_ROOM = 1.02;                   // ...and how far outside Gladman's spacing
+export const MOVE_JITTER = 1.1;                  // A moved planet goes up to this much further out than it must
+const LADDER = [1.4, 2];                         // The spacing ratios orbitLadder draws from
+
+// The fluid Roche limit in AU for a planet round mass mStar (solar masses)
+export function rocheLimitAU(planet, mStar) {
+    return stable(ROCHE_FLUID * planet.radius_Rearth * EARTH_RADIUS_AU * Math.cbrt(mStar / (planet.mass_Mearth * EARTH_MASS_MSUN)), 6);
+}
+
+// Two neighbours' shared Hill radius, as a share of their mean orbit
+function hillShare(inner, outer, mStar) {
+    return Math.cbrt(((inner.mass_Mearth + outer.mass_Mearth) * EARTH_MASS_MSUN) / (3 * mStar));
+}
+
+// Their spacing in shared Hill radii
+export function hillSpacing(inner, outer, mStar) {
+    const mean = (inner.orbit_AU + outer.orbit_AU) / 2;
+    return stable((outer.orbit_AU - inner.orbit_AU) / (hillShare(inner, outer, mStar) * mean), 6);
+}
+
+// The least ratio of their orbits that keeps them `room` times Gladman's spacing apart: Infinity if none would
+export function hillRatio(inner, outer, mStar, room = HILL_ROOM) {
+    const x = (room * HILL_SPACING * hillShare(inner, outer, mStar)) / 2;
+    return x < 1 ? stable((1 + x) / (1 - x), 6) : Infinity;
+}
+
+// Whether a planet may still be what it is where it has been moved out to. The hot types keep to the spec's placement rule
+// for them. Any other is just a little colder there, as if it had formed further out; water is dealt with in moveOut.
+function suits(planet, a, ctx) {
+    if (planet.type === 'hot_jupiter' || planet.type === 'lava_world') return a < 0.1 || a < 0.3 * ctx.hz.inner;
+    return true;
+}
+
+const OPACITY = { thin_co2: 0.1, thick_co2: 100, desert: 0.6 };   // As in BUILDERS: how much each greenhouse warms
+
+// Moves a planet out to orbit a, putting right everything that follows from where it is
+function moveOut(rng, planet, a, ctx) {
+    planet.orbit_AU = stable(a, 6);
+    const period = keplerPeriodDays(planet.orbit_AU, planet.host_mass_Msun);
+    planet.period_days = stable(period, 6);
+    if (planet.tidally_locked) planet.day_length_h = dp(period * 24, 1);
+    const tEq = equilibriumTemperature(ctx.L, planet.orbit_AU, planet.albedo);
+    planet.T_eq_K = stable(tEq, 4);
+    if (planet.T_surface_K !== null) planet.T_surface_K = dp(surfaceTemperature(tEq, OPACITY[planet.type] || 0), 0);
+    const inZone = planet.orbit_AU >= ctx.hz.inner && planet.orbit_AU <= ctx.hz.outer;
+    planet.in_hz = ctx.mainSequenceSingle && inZone;
+    // Water only outside the zone, as BUILDERS gives it; a cooler giant has ammonia clouds, and a cooler hot Jupiter no TiO
+    if (inZone && planet.atmosphere_ppm && planet.atmosphere_ppm.H2O) delete planet.atmosphere_ppm.H2O;
+    if (planet.type === 'gas_giant' && tEq < 300 && planet.clouds.kind !== 'NH3') planet.clouds = { kind: 'NH3', cover: dp(rng.range(0.55, 0.95), 2) };
+    if (planet.atmosphere_ppm && planet.atmosphere_ppm.TiO && equilibriumTemperature(ctx.L, planet.orbit_AU, 0.1) <= 1700) delete planet.atmosphere_ppm.TiO;
+    const reflected = planet.albedo * ((planet.radius_Rearth * EARTH_RADIUS_AU) / (2 * planet.orbit_AU)) ** 2;
+    planet.brightness = { flux_Wm2: stable(ctx.flux * reflected, 4), mag: dp(ctx.mag - 2.5 * Math.log10(reflected), 2) };
+}
+
+// The orbits a system's planets need, inner first: each outside its Roche limit and clear of the one inside it, moving out
+// only what must move, and a planet beyond one that has moved at least the ladder's spacing from it. So a spacing is wider
+// than the ladder's only where a planet sits just outside the least orbit it could keep. fixed is a hard-coded planet, which
+// never moves: a planet crowding it from inside is dropped instead, as one that close would have been flung away.
+// -> { orbits } in AU, or { drop: index }
+function settledOrbits(rng, planets, ctx, fixed) {
+    const M = ctx.M;
+    const a = planets.map((p) => p.orbit_AU);
+    const moved = planets.map(() => false);
+    for (let i = 0; i < planets.length; i++) {
+        let need = ROCHE_ROOM * rocheLimitAU(planets[i], M);
+        if (i > 0) need = Math.max(need, a[i - 1] * hillRatio(planets[i - 1], planets[i], M));
+        if (i > 0 && moved[i - 1]) need = Math.max(need, a[i - 1] * LADDER[0]);
+        if (need <= a[i]) continue;
+        if (planets[i] === fixed) {
+            if (i > 0) return { drop: i - 1 };
+            continue;
+        }
+        a[i] = stable(need * rng.range(1, MOVE_JITTER), 6);
+        moved[i] = true;
+    }
+    return { orbits: a };
+}
+
+// Puts a system's planets where they can stay. A hot planet that would have to go too far out to be one is dropped, though
+// never the last one: it would have fallen into its star or been flung away. Returns the planets kept, inner first.
+function settlePlanets(rng, planets, ctx, fixed) {
+    let list = planets.slice();
+    for (let round = 0; round < planets.length; round++) {
+        const { drop, orbits } = settledOrbits(rng.fork(`round:${round}`), list, ctx, fixed);
+        if (drop !== undefined) {
+            list.splice(drop, 1);
+            continue;
+        }
+        const unsuited = list.findIndex((p, i) => orbits[i] !== p.orbit_AU && !suits(p, orbits[i], ctx));
+        if (unsuited >= 0 && list.length > 1) {
+            list.splice(unsuited, 1);
+            continue;
+        }
+        list.forEach((p, i) => { if (orbits[i] !== p.orbit_AU) moveOut(rng, p, orbits[i], ctx); });
+        return list;
+    }
+    return list;
+}
+
+export function addToTally(tally, type) {
+    if (PLANET_TYPES[type]) tally.counts[type] = (tally.counts[type] || 0) + 1;
+    tally.total++;
+}
