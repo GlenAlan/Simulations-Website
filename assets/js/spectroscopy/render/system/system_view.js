@@ -215,7 +215,7 @@ export function initSystemView(app) {
             group.add(star.group);
             return star;
         });
-        const dust = giant ? createDustRing(model.body, stars[0]) : null;
+        const dust = giant ? createDustRing(model.body, stars[0], quality) : null;
         if (dust) group.add(dust.object);
         // How each star shows in each band, and the flares of an active M dwarf
         const accretor = model.stream && !model.stream.ontoHole ? model.stream.accretor : -1;

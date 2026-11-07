@@ -185,8 +185,9 @@ function holeTextures() {
 
 const quadGeometry = new THREE.PlaneGeometry(2, 2);
 
-// opts: { seed, quality, jets, glow, flow, jetScale }. glow scales the disc's light, flow how fast its gas swirls round, and
-// jetScale the jets' length in the hole's radii: a galaxy's giant hole has a slower disc, dim if it's starved, and longer jets.
+// opts: { seed, quality, jets, glow, flow, jetScale, tilt }. glow scales the disc's light, flow how fast its gas swirls round,
+// jetScale the jets' length in the hole's radii, and tilt the disc's angle to the orbits' plane (radians): a galaxy's giant
+// hole has a slower disc, dim if it's starved, longer jets, and its disc lies in the plane its line of sight is measured from.
 export function createHole(starData, opts = {}) {
     const rng = new Rng(hashString(opts.seed || 'hole'));
     const { tRay, tEnd, tBody } = holeTextures();
@@ -231,8 +232,9 @@ export function createHole(starData, opts = {}) {
     const group = new THREE.Group();
     group.add(quad);
 
-    // The disc's plane is a little off the plane of the orbit: nothing makes the two agree
-    const tilt = rng.range(0.1, 0.4);
+    // The disc's plane is a little off the plane of the orbit: nothing makes the two agree. opts.tilt sets it instead.
+    const drawnTilt = rng.range(0.1, 0.4);
+    const tilt = opts.tilt ?? drawnTilt;
     const swing = rng.range(0, Math.PI * 2);
     const normal = new THREE.Vector3(Math.sin(tilt) * Math.cos(swing), Math.cos(tilt), Math.sin(tilt) * Math.sin(swing));
     const e1 = new THREE.Vector3(1, 0, 0).addScaledVector(normal, -normal.x).normalize();
