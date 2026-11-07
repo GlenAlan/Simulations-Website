@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { azAltToVec3 } from '../../core/sky.js';
 import { skyMaterial, BAND_GLSL } from '../shared.js';
+import { travelPc } from '../../core/depth.js';
 
 const SKY_RADIUS = 1000; // Sky objects sit on a sphere this far from the observer; only their direction matters
 
@@ -18,6 +19,7 @@ export function createSoftDiscLayer(engine, app, { id, kinds, sizeDeg, colour, o
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
     const depths = new Float32Array(n);
+    const pcs = new Float32Array(n);
     bodies.forEach((body, i) => {
         const v = azAltToVec3(body.sky.az, body.sky.alt);
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
@@ -25,12 +27,14 @@ export function createSoftDiscLayer(engine, app, { id, kinds, sizeDeg, colour, o
         bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
         bandB[i] = body.bands.xray;
         depths[i] = body.depth;
+        pcs[i] = travelPc(body);
     });
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aSize', new THREE.InstancedBufferAttribute(sizes, 1));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -42,14 +46,17 @@ export function createSoftDiscLayer(engine, app, { id, kinds, sizeDeg, colour, o
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute float aDepth;
+            attribute float aPc;
             varying vec2 vUv;
             varying float vAmount;
             void main() {
                 vUv = position.xy;
-                vAmount = bandAmount(aBandA, aBandB);
-                vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                vAmount = bandAmount(aBandA, aBandB) * travelThrough(near) * min(near * near, 1.0);
+                vec4 c = modelViewMatrix * vec4(centre, 1.0);
                 // Half the angular size, as a distance at the sky sphere's radius
-                float half_ = tan(radians(aSize) * 0.5) * length(c.xyz);
+                float half_ = tan(radians(aSize) * 0.5) * length(c.xyz) * travelSize(near);
                 c.xy += position.xy * half_;
                 gl_Position = projectionMatrix * c;
                 gl_Position.xy *= depthP(aDepth);

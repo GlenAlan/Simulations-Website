@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { azAltToVec3, vec3ToAzAlt, limitingMag } from '../../core/sky.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
 import { bandMagnitudes } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, instancedQuad, exoticNoise } from './exotic_common.js';
@@ -69,9 +69,9 @@ const COMET_COMMON = /* glsl */`
         float over = uLimitMag - mag;
         return smoothstep(-0.6, 0.6, over) * clamp(pow(10.0, -0.4 * (mag - 4.0)), 0.5, 1.4) * mix(0.45, 1.0, smoothstep(0.3, 2.6, over));
     }
-    // How long the tail is on screen, in CSS pixels
-    float tailOnScreen(float tailDeg, float depth) {
-        return radians(tailDeg) * uPxPerRad * depthP(depth) / uDpr;
+    // How long the tail is on screen, in CSS pixels. grow: how much a flight has changed its size (travelSize)
+    float tailOnScreen(float tailDeg, float depth, float grow) {
+        return radians(tailDeg) * uPxPerRad * depthP(depth) * grow / uDpr;
     }
     // In the other bands, as for a sprite in stars.js: from a little over 3 magnitudes below the zoom's limit, which is
     // when engine.bodyShows says it can be clicked
@@ -86,7 +86,8 @@ function createGlow(engine, comets) {
     const a = {
         centre: new Float32Array(n * 3), tail: new Float32Array(n * 3), normal: new Float32Array(n * 3),
         shape: new Float32Array(n * 4), extra: new Float32Array(n * 4), gas: new Float32Array(n * 3),
-        bandA: new Float32Array(n * 4), bandB: new Float32Array(n), depth: new Float32Array(n), mags: new Float32Array(n * 4)
+        bandA: new Float32Array(n * 4), bandB: new Float32Array(n), depth: new Float32Array(n), mags: new Float32Array(n * 4),
+        pc: new Float32Array(n)
     };
     comets.forEach((comet, i) => {
         const { body, basis } = comet;
@@ -96,6 +97,7 @@ function createGlow(engine, comets) {
         a.shape.set([body.comet.coma_deg, body.comet.tail_deg, body.comet.dust_ratio, comet.seed], i * 4);
         a.extra.set([comet.curve, drawMag(body), 0, 0], i * 4);
         a.depth[i] = body.depth;
+        a.pc[i] = travelPc(body);
         a.mags.set(comet.mags, i * 4);
         a.gas.set(comet.gas, i * 3);
         a.bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
@@ -110,6 +112,7 @@ function createGlow(engine, comets) {
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(a.bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(a.bandB, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(a.depth, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(a.pc, 1));
     geometry.setAttribute('aMags', new THREE.InstancedBufferAttribute(a.mags, 4));
 
     const material = skyMaterial({
@@ -127,6 +130,7 @@ function createGlow(engine, comets) {
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute float aDepth;
+            attribute float aPc;
             attribute vec4 aMags;     // Radio, IR, UV, X-ray, as drawn
             varying float vPxDeg;     // Degrees of this comet's sky in a device pixel
             varying vec2 vXY;         // Degrees from the nucleus: x along the tail, y across it
@@ -141,7 +145,11 @@ function createGlow(engine, comets) {
             void main() {
                 const float RAD = 0.0174533;
                 vEdge = position.xy;
-                float pxDeg = 1.0 / (uPxPerRad * depthP(aDepth) * RAD);
+                // Its shape is worked out in its own degrees, which a flight scales by grow
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float grow = travelSize(near);
+                float pxDeg = 1.0 / (uPxPerRad * depthP(aDepth) * grow * RAD);
                 vPxDeg = pxDeg;
                 float tail = aShape.y;
                 // At sky scale the coma is under a pixel across, yet the head must be what the eye goes to. So it never
@@ -150,7 +158,7 @@ function createGlow(engine, comets) {
                 float coma = max(aShape.x, headPx * pxDeg);
                 // A tail a few pixels wide is all at the same spot on the screen, so it's drawn fainter or it burns to white.
                 // One wider than the frame eases off too, or there is nothing to see but a pale wash
-                float tailPx = tailOnScreen(tail, aDepth);
+                float tailPx = tailOnScreen(tail, aDepth, grow);
                 float tailLight = mix(0.34, 1.0, smoothstep(50.0, 300.0, tailPx)) * mix(1.0, 0.3, smoothstep(900.0, 5000.0, tailPx));
                 // Zoomed right in, a coma wider than the frame would be a fog. So it thins out as it outgrows the view
                 float comaFills = smoothstep(0.04, 0.25, aShape.x / pxDeg / uViewport.y);
@@ -166,9 +174,10 @@ function createGlow(engine, comets) {
                 vCurve = aExtra.x;
                 vGas = aGas;
                 vHalo = halo;
-                vAmount = vec4(aBandA.x * uBandW[0] * bandShows(aMags.x), aBandA.y * uBandW[1] * bandShows(aMags.y), aBandA.z * uBandW[2] * cometShows(aExtra.y), aBandA.w * uBandW[3] * bandShows(aMags.z));
-                vXray = aBandB * uBandW[4] * bandShows(aMags.w);
-                vec3 dir = aCentre + (aTail * vXY.x + aNormal * vXY.y) * RAD * ${SKY_RADIUS}.0;
+                float light = travelThrough(near) * min(near * near, 1.0);
+                vAmount = vec4(aBandA.x * uBandW[0] * bandShows(aMags.x), aBandA.y * uBandW[1] * bandShows(aMags.y), aBandA.z * uBandW[2] * cometShows(aExtra.y), aBandA.w * uBandW[3] * bandShows(aMags.z)) * light;
+                vXray = aBandB * uBandW[4] * bandShows(aMags.w) * light;
+                vec3 dir = centre + (aTail * vXY.x + aNormal * vXY.y) * RAD * ${SKY_RADIUS}.0 * grow;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir, 1.0);
                 gl_Position.xy *= depthP(aDepth);
             }`,
@@ -296,7 +305,7 @@ function createParticles(engine, comets) {
     const a = {
         centre: new Float32Array(total * 3), tail: new Float32Array(total * 3), normal: new Float32Array(total * 3),
         shape: new Float32Array(total * 4), grain: new Float32Array(total * 4), band: new Float32Array(total * 3),
-        depth: new Float32Array(total), mags: new Float32Array(total * 2)
+        depth: new Float32Array(total), mags: new Float32Array(total * 2), pc: new Float32Array(total)
     };
     // Interleaved, so that drawing only the first part still gives every comet its share
     let k = 0;
@@ -310,6 +319,7 @@ function createParticles(engine, comets) {
             a.normal.set(basis.n, k * 3);
             a.shape.set([body.comet.coma_deg, body.comet.tail_deg, comet.curve, drawMag(body)], k * 4);
             a.depth[k] = body.depth;
+            a.pc[k] = travelPc(body);
             a.mags.set([comet.mags[1], comet.mags[2]], k * 2);
             // Start along the tail, sideways offset (more near the middle), dust (0) or ion (1), phase
             a.grain.set([rng.next(), rng.gauss(0, 0.55), isDust ? 0 : 1, rng.next()], k * 4);
@@ -325,6 +335,7 @@ function createParticles(engine, comets) {
     geometry.setAttribute('aGrain', new THREE.BufferAttribute(a.grain, 4));
     geometry.setAttribute('aBand', new THREE.BufferAttribute(a.band, 3));
     geometry.setAttribute('aDepth', new THREE.BufferAttribute(a.depth, 1));
+    geometry.setAttribute('aPc', new THREE.BufferAttribute(a.pc, 1));
     geometry.setAttribute('aMags', new THREE.BufferAttribute(a.mags, 2));
 
     const material = skyMaterial({
@@ -338,6 +349,7 @@ function createParticles(engine, comets) {
             attribute vec4 aGrain;
             attribute vec3 aBand;
             attribute float aDepth;
+            attribute float aPc;
             attribute vec2 aMags;     // IR, UV, as drawn
             varying vec3 vLight;
             void main() {
@@ -357,7 +369,10 @@ function createParticles(engine, comets) {
                     x = xd * tail * 0.82;
                     y = aShape.z * tail * 0.3 * xd * xd + aGrain.y * tail * (0.012 + 0.11 * xd) * 1.2;
                 }
-                vec3 dir = position + (aTail * x + aNormal * y) * RAD * ${SKY_RADIUS}.0;
+                vec3 centre = position;
+                float near = travel(centre, aPc);
+                float grow = travelSize(near);
+                vec3 dir = centre + (aTail * x + aNormal * y) * RAD * ${SKY_RADIUS}.0 * grow;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir, 1.0);
                 gl_Position.xy *= depthP(aDepth);
 
@@ -367,12 +382,12 @@ function createParticles(engine, comets) {
                 vec3 tint = isIon > 0.5 ? vec3(0.45, 0.68, 1.0) : vec3(1.0, 0.86, 0.62);
                 // At wide views the grains land on top of each other and would burn the tail to white, so they fade right
                 // out and leave it to the glow. Zoomed in they stand apart.
-                float apart = smoothstep(90.0, 340.0, tailOnScreen(tail, aDepth));
+                float apart = smoothstep(90.0, 340.0, tailOnScreen(tail, aDepth, grow));
                 float vis = aBand.y * uBandW[2] * cometShows(aShape.w) * apart * apart;
                 vec3 light = tint * vis
                     + uBandTint[1] * (uBandW[1] * aBand.x * (1.0 - isIon) * bandShows(aMags.x))
                     + uBandTint[3] * (uBandW[3] * aBand.z * isIon * 0.4 * bandShows(aMags.y));
-                vLight = light * along * life * flicker * 0.5 * uSkyFade;
+                vLight = light * along * life * flicker * 0.5 * uSkyFade * travelThrough(near) * min(near * near, 1.0);
                 gl_PointSize = (0.9 + 1.3 * aGrain.w * aGrain.w) * 1.5 * uDpr;
             }`,
         fragmentShader: /* glsl */`

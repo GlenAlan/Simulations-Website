@@ -6,6 +6,7 @@ import { azAltToVec3 } from '../../core/sky.js';
 import { bandSkyBrightness } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { MIN_GLOW } from '../engine.js';
+import { travelPc } from '../../core/depth.js';
 
 const SKY_RADIUS = 1000;
 
@@ -15,8 +16,10 @@ export function createRoguePlanetsLayer(engine, app) {
     const centres = new Float32Array(n * 3);
     const look = new Float32Array(n * 3);   // Infrared glow, size (0..1), warmth (0..1)
     const depths = new Float32Array(n);
+    const pcs = new Float32Array(n);
     bodies.forEach((body, i) => {
         depths[i] = body.depth;
+        pcs[i] = travelPc(body);
         const v = azAltToVec3(body.sky.az, body.sky.alt);
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         const rogue = body.rogue_planet || {};
@@ -31,6 +34,7 @@ export function createRoguePlanetsLayer(engine, app) {
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aLook', new THREE.InstancedBufferAttribute(look, 3));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -45,6 +49,7 @@ export function createRoguePlanetsLayer(engine, app) {
             attribute vec3 aCentre;
             attribute vec3 aLook;
             attribute float aDepth;
+            attribute float aPc;
             uniform float uDpr;
             varying vec2 vPx;
             varying vec3 vColour;
@@ -52,7 +57,9 @@ export function createRoguePlanetsLayer(engine, app) {
             varying float vAmount;
             varying float vQuad;
             void main() {
-                float glow = clamp(aLook.x * pow(10.0, 0.4 * (uLimitMag - 6.0)), 0.0, 400.0);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float glow = clamp(aLook.x * pow(10.0, 0.4 * (uLimitMag - 6.0)) * travelLight(near), 0.0, 400.0);
                 if (glow < ${MIN_GLOW.toFixed(3)} || uBandW[1] <= 0.001 || uSkyFade <= 0.0) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -70,7 +77,7 @@ export function createRoguePlanetsLayer(engine, app) {
                 // Warm against the band's false colour: the warmer the world, the more it leans to orange
                 vColour = mix(uBandTint[1], vec3(1.0, 0.52, 0.22), 0.15 + 0.25 * aLook.z);
                 vPx = position.xy * vQuad;
-                vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 clip = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 clip.xy *= depthP(aDepth);
                 clip.xy += vPx * 2.0 / uViewport * clip.w;
                 gl_Position = clip;

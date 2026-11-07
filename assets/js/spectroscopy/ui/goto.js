@@ -293,7 +293,7 @@ export function initGoto(app) {
         const frame = engine.currentFrame();
         const distances = new Map();
         const consider = (code, az, alt, depth) => {
-            const p = engine.project(az, alt, depth);
+            const p = engine.project(az, alt);
             if (p && p.onScreen) distances.set(code, Math.hypot(p.x - frame.width / 2, p.y - frame.height / 2));
         };
         universe.bodies.forEach((body) => {

@@ -35,6 +35,7 @@ export function nucleusSystem(nucleus, galaxy) {
             depth: galaxy.depth || 0,
             depth_dim_mag: nucleus.depth_dim_mag || 0,
             distance_pc: nucleus.distance_pc,
+            travel_pc: galaxy.travel_pc,    // What the sky draws its galaxy at, for a flight (core/depth.js)
             radial_velocity_kms: nucleus.radial_velocity_kms,
             brightness: nucleus.brightness,
             bands: nucleus.bands,

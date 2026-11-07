@@ -1,30 +1,35 @@
 // How far away things look. No DOM or WebGL here, so this loads in Node for tests.
 //
 // body.depth runs from 0 (as near as anything gets: exactly the look the sky had before depth existed) to 1 (the dome
-// behind everything). Depth only ever pushes things further away. It works three ways, all render-only:
+// behind everything). Depth only ever pushes things further away. It works two ways, both render-only and fixed:
 //   1. Static size: assignDepths shrinks the size fields once (see DEPTH_TABLE), so layers, picking and framing all agree.
 //   2. Faintness: body.depth_dim_mag. drawMag(body) is what to draw with. body.brightness stays true for the spectrum tools.
 //      The extended layers reveal things softly, so that alone wouldn't dim a bright one: they also multiply their light
 //      by depthLight(body).
-//   3. Zoom: parallaxFactor(depth, fov), or P. Below a field of view of 80 degrees further things zoom more slowly, because
-//      they are drawn P times as far from the centre of the view. So P = 1 at the centre, and the sky keeps moving apart.
 //
-// Adding a sky shader? Give it the depth explicitly: an `aDepth` attribute per instance or per point, set from body.depth,
-// or a uniform if the pass draws one body. Never rely on a missing attribute reading as 0. BAND_GLSL has depthP(d):
-//   Something sized on the sky:   gl_Position.xy *= depthP(aDepth);
-//   A sprite sized in pixels:     clip.xy *= depthP(aDepth);  before adding the quad's offset, so faint stars keep their size.
-//   Anything the shader works out from uPxPerRad is really uPxPerRad * depthP(aDepth) on screen.
-//   The dome (sky, horizon, grid, scenery) is depth 1: depthP(1.0).
+// There is no parallax as the view pans or zooms. The sky used to fake it (further things zoomed more slowly), but a
+// telescope turning or zooming sees none: only the observer moving does. ETA = 0 switches that off, so parallaxFactor is
+// always exactly 1 and the shaders' depthP() too; both are left in place, doing nothing. Real parallax comes instead on a
+// flight into a system, where the observer really travels:
 //
-// Finding a body on screen: engine.projectBody(body), or engine.project(az, alt, depth) for a point near one (a cluster
-// member, a tail). engine.project(az, alt) alone means depth 0. Candidates from a layer's picks() carry { depth }, and their
-// radiusPx is a real one, so scale by parallaxFactor(depth, frame.fov).
+// Travel. Every sky shader gives each thing its distance from Earth in parsecs, travelPc(entity), as an `aPc` attribute
+// (or a uniform for a pass that draws one thing), next to aDepth. The system view moves the traveller along the line to the
+// system (render/system/system_view.js, travelAt in transition.js), and BAND_GLSL's travel(p, pc) moves each thing to
+// where the traveller sees it and says how much nearer it is: render/shared.js. A point brightens by travelLight(near),
+// something with a size grows by travelSize(near). Picking is off during a flight; engine.project(az, alt, pc) and
+// projectBody(body) follow the travel, for the marks drawn over the sky as a flight begins.
 //
-// ETA = 0 is the kill switch: every P becomes 1, and everything is where it was before depth existed.
+// travelPc: a body's own distance, nudged by a few parts in a million where two would otherwise share one, because the
+// shaders know the system being flown to by its distance alone. What's inside a body shares the body's, except a cluster's
+// members, each of which has a place of its own in the depth of its cluster, so that flying into one opens the cluster out.
+//
+// The dome (sky glow, Milky Way band, background stars, horizon) is as good as infinitely far for a flight to a star. It stays
+// fixed, and fades as the system takes over. A flight out of the galaxy fades it on the way: uDomeFade.
 
 import { memberDirection } from '../render/layers/sky_tangent.js';
+import { hashString } from './rng.js';
 
-export const ETA = 0.1;
+export const ETA = 0;
 const FULL_FOV = 80;        // At this field of view and wider, P = 1 at every depth
 const LIGHT_SHARE = 0.5;    // How much of its depth_dim_mag an extended object also loses at every zoom
 
@@ -113,9 +118,19 @@ function scaleSizes(body, scale) {
     }
 }
 
-// What's inside a body is as far away as the body is. A cluster member may also carry a depth_offset, a little either way,
-// so that an open cluster's stars shift against each other as the view moves. A member's depth is its own: entity.depth.
-function passDown(body) {
+// Where a cluster's member lies along the line of sight, in parsecs from its cluster's middle: somewhere in a ball as wide
+// as the cluster is drawn across the sky, which is where its place on the sky puts it. Fixed by its code.
+function memberReachPc(body, member) {
+    const R = body.cluster.radius_deg * (Math.PI / 180) * body.distance_pc;
+    const across = (Math.hypot(member.offset_deg.x, member.offset_deg.y) * (Math.PI / 180) * body.distance_pc);
+    const ball = Math.max(R * 1.2, across * 1.05);
+    const h = (hashString(`travel:${member.code}`) / 4294967296) * 2 - 1;
+    return h * Math.sqrt(ball * ball - across * across);
+}
+
+// What's inside a body is as far away as the body is. A cluster member may also carry a depth_offset, a little either way.
+// A member's depth is its own: entity.depth. So is its distance for a flight: entity.travel_pc (see Travel above).
+function passDown(body, unique) {
     const inside = [
         ...(body.planets || []),
         ...(body.stars || []),
@@ -126,15 +141,24 @@ function passDown(body) {
     inside.forEach((entity) => {
         entity.depth = Math.max(0, body.depth + (entity.depth_offset || 0));
         entity.depth_dim_mag = body.depth_dim_mag;
+        entity.travel_pc = entity.kind === 'cluster_member' || entity.in_cluster
+            ? unique(body.distance_pc + memberReachPc(body, entity))
+            : body.travel_pc;
         // A binary member is a system of its own, and shrinking its cluster has moved it
         if (entity.in_cluster) {
             entity.sky = memberDirection(body, entity);
             entity.stars.forEach((star) => {
                 star.depth = entity.depth;
                 star.depth_dim_mag = body.depth_dim_mag;
+                star.travel_pc = entity.travel_pc;
             });
         }
     });
+}
+
+// A body's distance for a flight, as the sky's layers are given it: see Travel above
+export function travelPc(entity) {
+    return entity.travel_pc || entity.distance_pc;
 }
 
 // Sets body.depth and body.depth_dim_mag on every body, and shrinks the render-only size fields. Run once, right after
@@ -156,10 +180,20 @@ export function assignDepths(universe) {
         if (resolved) body.depth = resolved.body.depth;
     });
 
+    // Distances for a flight: each its own, as a shader sees it, in single precision
+    const taken = new Set();
+    const unique = (pc) => {
+        let x = pc;
+        for (let k = 1; taken.has(Math.fround(x)); k++) x = pc * (1 + k * 1e-5);
+        taken.add(Math.fround(x));
+        return x;
+    };
+    universe.bodies.forEach((body) => { body.travel_pc = unique(body.distance_pc); });
+
     universe.bodies.forEach((body) => {
         const row = DEPTH_TABLE[body.kind] || DEPTH_TABLE.star;
         body.depth_dim_mag = row.kDim * body.depth;
         if (row.kSize) scaleSizes(body, 1 - row.kSize * body.depth);
-        passDown(body);
+        passDown(body, unique);
     });
 }

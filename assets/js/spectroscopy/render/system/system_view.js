@@ -20,7 +20,7 @@
 import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
-import { ETA, parallaxFactor } from '../../core/depth.js';
+import { ETA, parallaxFactor, travelPc } from '../../core/depth.js';
 import { sharedUniforms } from '../shared.js';
 import { wheelZoomStep } from '../engine.js';
 import { createPlanetMesh, warmPlanetShaders, warmPlanetBakes } from '../planets/planet_mesh.js';
@@ -31,7 +31,7 @@ import {
     hzStatus, layout, ringRadius, starRadius, planetRadius, planetOrbitPoints, planetPhase, childOrbitPoints,
     figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf, sightDirection
 } from './system_model.js';
-import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, handSkyLog, handOffCentre } from './transition.js';
+import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, handSkyLog, handOffCentre, travelAt, domeAt } from './transition.js';
 import { createZoomInto } from './zoom_into.js';
 import { createStar, surfaceColour } from './star_surface.js';
 import { createHole, createPulsarBeams } from './remnants.js';
@@ -457,7 +457,7 @@ export function initSystemView(app) {
         const speckPx = model.stars.length > 1 ? 3 : 0.8;
         const speckR = model.stars.length > 1 ? FRAME : R;
         const d0 = Math.max(dClose * 4, (speckR * frame.height) / (2 * speckPx * TAN_V));
-        path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
+        path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt), pc: travelPc(model.body), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
         if (hand) lockStarsToSky(frame, fit);
 
         cam.az = az1;
@@ -1108,7 +1108,20 @@ export function initSystemView(app) {
         return (Math.tan(fov * RAD * 0.5) / Math.tan(savedView.fov * RAD * 0.5)) * (parallaxFactor(depth, savedView.fov) / parallaxFactor(depth, fov));
     }
 
+    // The sky's own travel towards the system, as the flight has got to p (see travelAt), or none at all
+    function setTravel(p, crowded) {
+        const s = p > 0 ? travelAt(p, path.pc, crowded) : 0;
+        sharedUniforms.uTravel.value.set(path.dir[0] * s, path.dir[1] * s, path.dir[2] * s, s > 0 ? path.pc : 0);
+        sharedUniforms.uDomeFade.value = domeAt(s, path.pc);
+    }
+
+    function stopTravel() {
+        sharedUniforms.uTravel.value.set(0, 0, 0, 0);
+        sharedUniforms.uDomeFade.value = 1;
+    }
+
     function restoreSky() {
+        stopTravel();
         if (engine.setLensShare) engine.setLensShare(1);
         engine.setView(savedView);
         // setView normalises the azimuth; keep the digits as they were
@@ -1626,12 +1639,15 @@ export function initSystemView(app) {
             stepCamera(frame, stage);
             updateWorld(frame, stage, null);
             sharedUniforms.uSkyFade.value = 1;
+            stopTravel();
             engine.setSkyVisible(tNorm < 1);
             backdrop.set(1, 1, frame.dpr);
         } else {
             const p = easeProgress(tNorm);
-            const stage = stagesAt(p, path.byHand, path.byHand && (model.stars.length > 2 || !!model.body.black_hole));
+            const crowded = path.byHand && (model.stars.length > 2 || !!model.body.black_hole);
+            const stage = stagesAt(p, path.byHand, crowded);
             const ndc = stepSky(stage);
+            setTravel(p, crowded);
             sharedUniforms.uSkyFade.value = stage.skyFade;
             engine.setSkyVisible(stage.skyFade > 0.001);
             stepCamera(frame, stage);

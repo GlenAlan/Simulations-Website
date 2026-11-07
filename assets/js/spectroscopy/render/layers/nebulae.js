@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
-import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, zonePalette } from './nebula_bake.js';
 
@@ -500,6 +500,7 @@ function embeddedStars(body, shape, frame, half, rect, out, picks) {
             cell: [rect[0] + (x * 0.5 + 0.5) * rect[2], rect[1] + (y * 0.5 + 0.5) * rect[3]],
             strength: body.bands,
             depth: body.depth,
+            pc: travelPc(body),
             light: depthLight(body)
         });
         // What looks like a star in here has to answer a click, with the nebula it belongs to
@@ -584,6 +585,7 @@ const SPRITE_VERTEX = /* glsl */`
     attribute float aBandB;
     attribute float aReady;
     attribute float aDepth;
+    attribute float aPc;
     attribute vec4 aLook;
     varying vec2 vQ;
     varying vec2 vCell;
@@ -613,12 +615,17 @@ const SPRITE_VERTEX = /* glsl */`
         // Faint nebulae come up as you zoom in, gently, so they don't pop: surface brightness is unchanged by
         // zoom in reality, but the sky's limiting magnitude is how this sim reveals faint objects
         float over = clamp(pow(10.0, -0.4 * (aMag - uLimitMag)), 0.0, 1.0);
-        vStrength = vec4(aBandA.x, aBandA.y, aBandA.z * pow(over, 0.4), aBandA.w);
-        vStrengthX = aBandB;
+        // A flight that comes nearer one draws it bigger, as bright across, and it thins away as the flight goes through it
+        vec3 centre = aCentre;
+        float near = travel(centre, aPc);
+        float grow = travelSize(near);
+        float passing = travelThrough(near) * min(near * near, 1.0);
+        vStrength = vec4(aBandA.x, aBandA.y, aBandA.z * pow(over, 0.4), aBandA.w) * passing;
+        vStrengthX = aBandB * passing;
 
         // Small on screen, a nebula is a soft glow in the Milky Way, as in any wide-field photograph. It only earns its
         // full brightness and contrast as it grows. Planetaries are compact and stay jewels at any size.
-        float across = 2.0 * aPack.x * uPxPerRad * depthP(aDepth);
+        float across = 2.0 * aPack.x * uPxPerRad * depthP(aDepth) * grow;
         float small = 1.0 - smoothstep(24.0, 240.0, across);
         float tiny = 1.0 - smoothstep(26.0, 200.0, across);
         vGain = 1.0;
@@ -639,9 +646,10 @@ const SPRITE_VERTEX = /* glsl */`
         } else if (aKind < 2.5) {
             vBlur = mix(1.0, 1.6, tiny);
         }
+        vDim *= passing;
         // Radio and X-rays come from broad, smooth gas, the more so the smaller it looks
         vLod = mix(3.4, 4.8, small);
-        vec3 world = (aCentre + (aR * position.x + aN * position.y) * aPack.x) * ${SKY_RADIUS.toFixed(1)};
+        vec3 world = (centre + (aR * position.x + aN * position.y) * aPack.x * grow) * ${SKY_RADIUS.toFixed(1)};
         gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
         gl_Position.xy *= depthP(aDepth);
         #ifdef DUST_PASS
@@ -686,6 +694,7 @@ export function createNebulaeLayer(engine, app) {
     const aBandB = stride(1);
     const aReady = stride(1);
     const aDepth = stride(1);
+    const aPc = stride(1);
     const aLook = stride(4);
 
     const items = [];
@@ -729,6 +738,7 @@ export function createNebulaeLayer(engine, app) {
         aBandA.set([body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light], i * 4);
         aBandB[i] = body.bands.xray * light;
         aDepth[i] = body.depth;
+        aPc[i] = travelPc(body);
         const look = type === 'emission' ? emissionLook(body, palette) : null;
         aLook.set(look ? [look.reflection, look.teal, look.side, 0] : [0, 1, 0, 0], i * 4);
         const stars = [];
@@ -750,6 +760,7 @@ export function createNebulaeLayer(engine, app) {
     inst('aBandA', aBandA, 4);
     inst('aBandB', aBandB, 1);
     inst('aDepth', aDepth, 1);
+    inst('aPc', aPc, 1);
     inst('aLook', aLook, 4);
     const readyAttr = new THREE.InstancedBufferAttribute(aReady, 1);
     readyAttr.setUsage(THREE.DynamicDrawUsage);
@@ -932,8 +943,10 @@ export function createNebulaeLayer(engine, app) {
     const sCell = new Float32Array(starCount * 2);
     const sStrength = new Float32Array(starCount * 4);
     const sDepth = new Float32Array(starCount);
+    const sPc = new Float32Array(starCount);
     starList.forEach((s, i) => {
         sDepth[i] = s.depth;
+        sPc[i] = s.pc;
         sPos.set(s.pos, i * 3);
         sCol.set(s.col, i * 3);
         sSize[i] = s.size;
@@ -952,6 +965,7 @@ export function createNebulaeLayer(engine, app) {
     starGeometry.setAttribute('aCell', new THREE.BufferAttribute(sCell, 2));
     starGeometry.setAttribute('aStrength', new THREE.BufferAttribute(sStrength, 4));
     starGeometry.setAttribute('aDepth', new THREE.BufferAttribute(sDepth, 1));
+    starGeometry.setAttribute('aPc', new THREE.BufferAttribute(sPc, 1));
     const starMaterial = skyMaterial({
         uniforms: { tAtlas: baker.atlasUniform },
         vertexShader: /* glsl */`
@@ -964,11 +978,14 @@ export function createNebulaeLayer(engine, app) {
             attribute vec2 aCell;
             attribute vec4 aStrength;
             attribute float aDepth;
+            attribute float aPc;
             varying vec3 vColour;
             varying float vGlow;
             void main() {
+                vec3 centre = position;
+                float near = travel(centre, aPc);
                 // Stars only come out once the parent nebula is large enough on screen for them to read as stars
-                float fade = smoothstep(aFade.x, aFade.y, aFade.z * 2.0 * uPxPerRad * depthP(aDepth));
+                float fade = smoothstep(aFade.x, aFade.y, aFade.z * 2.0 * uPxPerRad * depthP(aDepth) * travelSize(near));
                 float opacity = textureLod(tAtlas, aCell, 1.0).a;
                 float vis = aVis.x * aStrength.y * uBandW[2] * (1.0 - 0.93 * opacity);
                 float ir = aVis.y * aStrength.x * uBandW[1];
@@ -976,8 +993,8 @@ export function createNebulaeLayer(engine, app) {
                 float xr = aVis.w * aStrength.w * uBandW[4];
                 vColour = aColour * mix(vec3(1.0), vec3(1.0, 0.62, 0.42), opacity) * vis
                     + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr;
-                vGlow = fade;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                vGlow = fade * travelLight(near);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 gl_Position.xy *= depthP(aDepth);
                 float dprScale = clamp(uViewport.y / 900.0, 0.8, 2.0);
                 gl_PointSize = (vis + ir + uv + xr) * fade > 0.01 ? (aSize * 1.5 + sqrt(vis + ir + uv + xr) * aSize) * dprScale : 0.0;

@@ -723,7 +723,7 @@ function keepSelectionInView(app) {
             return;
         }
         const { az, alt, depth } = drawnSky(engine, app.selected);
-        const p = engine.project(az, alt, depth);
+        const p = engine.project(az, alt);
         if (!p) return;
         const reach = angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov);
         if (reach > BIG_PX) {
@@ -739,7 +739,7 @@ function keepSelectionInView(app) {
         const bar = bars.find((r) => x > r.left && x < r.right && y > r.top && y < r.bottom);
         if (bar) y = (bar.top + bar.bottom) / 2 < h / 2 ? bar.bottom + ROOM / 2 : bar.top - ROOM / 2;
         if (x === p.x && y === p.y) return;
-        const to = engine.axisPutting(az, alt, x, y, frame.fov, depth);
+        const to = engine.axisPutting(az, alt, x, y, frame.fov);
         engine.slewTo(to, { duration: MOVE_S, axis: true });
     }
 

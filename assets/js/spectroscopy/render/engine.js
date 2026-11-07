@@ -3,7 +3,7 @@
 // A layer is any object with these members, added with engine.addLayer():
 //   id                  a short name
 //   update(frame)       called once a frame before drawing; add your Object3Ds to engine.scene when created
-//   picks(frame)?       extra pick candidates: [{ code, az, alt, radiusPx, depth }]; see engine.pick and core/depth.js
+//   picks(frame)?       extra pick candidates: [{ code, az, alt, radiusPx }]; see engine.pick
 //   dispose()?          free GPU resources
 //
 // frame = { serial, t, dt, fov, pxPerRad, width, height, dpr, camera, band, bandW, quality, reduceMotion, view }
@@ -26,9 +26,9 @@ import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
 import { BANDS, bandIndex } from '../core/bands.js';
 import { azAltToVec3, DEFAULT_VIEW, MIN_FOV, MAX_FOV, limitingMag } from '../core/sky.js';
-import { parallaxFactor, parallaxLog, drawMag } from '../core/depth.js';
+import { parallaxLog, drawMag, travelPc } from '../core/depth.js';
 import { bandSkyBrightness } from '../data/band_table.js';
-import { sharedUniforms } from './shared.js';
+import { sharedUniforms, travelPoint } from './shared.js';
 
 // A body is drawn, and can be picked, when its glow is at least this. Glow is 1 at the zoom's limiting magnitude.
 export const MIN_GLOW = 0.05;
@@ -47,8 +47,6 @@ const PICK_SEEN_MIN = 0.12;     // Drawn fainter than this (see seenAmount), a p
 const PICK_FAINT_REACH = 0.25;  // The faintest that can be clicked must be clicked this near, as a share of the usual reach
 const CLUSTER_INSIDE = 0.45;    // A cluster's radius, as a share of the view's smaller side, once you are in among its stars
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
-const ANCHOR_HOLD_PX = 8;       // A zoom keeps the depth it found under the pointer until the pointer moves this far...
-const ANCHOR_HOLD_MS = 300;     // ...or the wheel has been still this long
 const DRAWER_RESIZE_MS = 700;   // A change of size this soon after the drawer opens or closes is the drawer's doing
 const RECENTRE_AFTER_MS = 600;  // The drawer opening this soon after a slew ended moves what the slew centred...
 const RECENTRE_S = 0.6;         // ...to the new middle, this gently
@@ -231,9 +229,7 @@ export function createEngine(canvas) {
     // The sky stays where it is on the page when the drawer opens or closes. The canvas changes size, and a camera kept in
     // the middle of it would shift everything by half the change, so instead the camera's axis stays where it was: it's drawn
     // lens.x, lens.y CSS px from the canvas's centre (down is positive), and lens.zoom keeps the scale when the height changes.
-    // So the part of the sky still in view doesn't move. Further things are drawn nearer the axis (core/depth.js), so below a
-    // field of view of 80 degrees one depth stays exactly still, the selected object's, and the rest within a few pixels.
-    // Nothing else changes: a slew still puts its target in the middle of the canvas, and closing the drawer undoes it.
+    // So the part of the sky still in view doesn't move. Nothing else changes: a slew still puts its target in the middle of the canvas, and closing the drawer undoes it.
     // A flight into a system eases the offset away by share, and brings it back on the way out.
     const lens = { x: 0, y: 0, zoom: 1, share: 1 };
     let placed = null;          // Where the canvas was on the page at the last resize
@@ -667,19 +663,10 @@ export function createEngine(canvas) {
         buildBloom();
     }
 
-    // Moves the camera's axis to where it was on the page before the drawer moved the canvas. Exact for the selected
-    // object's depth while it's on screen, which is what the student is looking at; for the middle depth otherwise.
+    // Moves the camera's axis to where it was on the page before the drawer moved the canvas
     function holdStill(next) {
-        let depth = 0.5;
-        const resolved = app.selected;
-        if (resolved && app.view === 'sky') {
-            const d = resolved.entity.depth ?? resolved.body.depth ?? 0;
-            const at = project(resolved.body.sky.az, resolved.body.sky.alt, d);
-            if (at && at.onScreen) depth = d;
-        }
-        const p = app.view === 'sky' ? parallaxFactor(depth, view.fov) : 1;
-        lens.x += (placed.left - next.left + (width - next.w) / 2) / p;
-        lens.y += (placed.top - next.top + (height - next.h) / 2) / p;
+        lens.x += placed.left - next.left + (width - next.w) / 2;
+        lens.y += placed.top - next.top + (height - next.h) / 2;
         lens.zoom *= height / next.h;
         // Back to where it started, give or take a rounding error: no need to keep the error
         if (Math.abs(lens.x) < 0.01) lens.x = 0;
@@ -955,14 +942,12 @@ export function createEngine(canvas) {
         }
     }
 
-    // The ray through a screen point for a thing at this depth, in camera space at a field of view: x right, y up, f
-    // forward, length 1. Further things are drawn nearer the centre than the camera alone puts them (core/depth.js).
+    // The ray through a screen point, in camera space at a field of view: x right, y up, f forward, length 1
     const ray = { x: 0, y: 0, f: 1 };
-    function rayThrough(px, py, fov, depth = 0) {
-        const p = parallaxFactor(depth, fov);
+    function rayThrough(px, py, fov) {
         const t = Math.tan(fov * RAD * 0.5) / lens.zoom;
-        const x = (((px / width) * 2 - 1) / p - (2 * lens.x * lens.share) / width) * t * (width / height);
-        const y = ((1 - (py / height) * 2) / p + (2 * lens.y * lens.share) / height) * t;
+        const x = ((px / width) * 2 - 1 - (2 * lens.x * lens.share) / width) * t * (width / height);
+        const y = (1 - (py / height) * 2 + (2 * lens.y * lens.share) / height) * t;
         const length = Math.hypot(x, y, 1);
         ray.x = x / length;
         ray.y = y / length;
@@ -976,8 +961,8 @@ export function createEngine(canvas) {
 
     // The camera's axis that puts a direction on the sky (x, y, z as azAltToVec3 has it) under a screen point, solved from
     // scratch so that errors can't build up over the steps of a zoom
-    function solveAxis(skyX, skyY, skyZ, px, py, fov, depth, altNow) {
-        const r = rayThrough(px, py, fov, depth);
+    function solveAxis(skyX, skyY, skyZ, px, py, fov, altNow) {
+        const r = rayThrough(px, py, fov);
         const tilt = Math.atan2(r.y, r.f);
         const reach = Math.asin(Math.max(-1, Math.min(1, skyY / Math.hypot(r.y, r.f))));
         // Two pitches put the direction at the right height: the one nearer the view, past the zenith or not
@@ -989,9 +974,9 @@ export function createEngine(canvas) {
     }
 
     // The same for an az and alt: what to slew to so that they end up at that point
-    function axisPutting(az, alt, px, py, fov = view.fov, depth = 0) {
+    function axisPutting(az, alt, px, py, fov = view.fov) {
         const v = azAltToVec3(az, alt);
-        const axis = solveAxis(v[0], v[1], v[2], px, py, fov, depth, alt);
+        const axis = solveAxis(v[0], v[1], v[2], px, py, fov, alt);
         return { az: ((axis.az % 360) + 360) % 360, alt: axis.alt };
     }
 
@@ -1010,34 +995,18 @@ export function createEngine(canvas) {
         return { az, alt: Math.asin(Math.max(-1, Math.min(1, up))) / RAD };
     }
 
-    // How far from the axis, in degrees, the canvas reaches for the furthest things: a corner, with the lens's offset
+    // How far from the axis, in degrees, the canvas reaches: a corner, with the lens's offset
     function reachDeg(fov = view.fov) {
         const offX = Math.abs(lens.x * lens.share);
         const offY = Math.abs(lens.y * lens.share);
         const tanPerPx = Math.tan(fov * RAD * 0.5) / (lens.zoom * height * 0.5);
-        return Math.atan((Math.hypot(width / 2 + offX, height / 2 + offY) * tanPerPx) / parallaxFactor(1, fov)) / RAD + 1;
-    }
-
-    // The depth of whatever is under a screen point, or the dome's over empty sky. Asking is a sweep through every layer's
-    // picks, too much for each event of a wheel, so one gesture asks once. And it stays with the thing it found first.
-    const anchorHeld = { x: 0, y: 0, at: -Infinity, depth: 1 };
-    function depthUnder(px, py) {
-        const now = performance.now();
-        const held = now - anchorHeld.at < ANCHOR_HOLD_MS && Math.hypot(px - anchorHeld.x, py - anchorHeld.y) < ANCHOR_HOLD_PX;
-        anchorHeld.at = now;
-        if (held) return anchorHeld.depth;
-        const code = pick(px, py, 12);
-        const found = code ? app.universe.resolve(code) : null;
-        anchorHeld.x = px;
-        anchorHeld.y = py;
-        anchorHeld.depth = found ? found.entity.depth ?? found.body.depth ?? 0 : 1;
-        return anchorHeld.depth;
+        return Math.atan(Math.hypot(width / 2 + offX, height / 2 + offY) * tanPerPx) / RAD + 1;
     }
 
     // The zoom's anchor: a screen point, and the direction in the sky under it when the zoom began. What you point at is
-    // what you zoom into: it's the depth of the thing under the pointer that stays still.
-    function anchorZoomAt(px, py, depth = depthUnder(px, py)) {
-        const r = rayThrough(px, py, view.fov, depth);
+    // what you zoom into.
+    function anchorZoomAt(px, py) {
+        const r = rayThrough(px, py, view.fov);
         const p = view.alt * RAD;
         const a = view.az * RAD;
         const up = r.y * Math.cos(p) + r.f * Math.sin(p);
@@ -1045,7 +1014,6 @@ export function createEngine(canvas) {
         zoomAnchor = {
             x: px,
             y: py,
-            depth,
             skyX: r.x * Math.cos(a) - back * Math.sin(a),
             skyY: up,
             skyZ: r.x * Math.sin(a) + back * Math.cos(a)
@@ -1058,7 +1026,7 @@ export function createEngine(canvas) {
         let { az, alt } = view;
         if (zoomAnchor) {
             const a = zoomAnchor;
-            ({ az, alt } = solveAxis(a.skyX, a.skyY, a.skyZ, a.x, a.y, next, a.depth, alt));
+            ({ az, alt } = solveAxis(a.skyX, a.skyY, a.skyZ, a.x, a.y, next, alt));
         }
         placeView(az, Math.max(alt, altFloor(next)), next);
     }
@@ -1091,22 +1059,22 @@ export function createEngine(canvas) {
         }
     }
 
-    // Screen position (CSS pixels from the canvas's top-left) of a sky direction at a depth; null when behind the camera.
-    // Without a depth this is where a thing as near as can be is drawn: see core/depth.js.
+    // Screen position (CSS pixels from the canvas's top-left) of a sky direction; null when behind the camera. pc, a thing's
+    // distance (core/depth.js travelPc), puts it where it's drawn on a flight into a system, and near says how much nearer
+    // the flight has brought it. Without one, or at rest, it's where Earth sees it, as the dome is.
     const tmp = new THREE.Vector3();
-    function project(az, alt, depth = 0) {
+    function project(az, alt, pc = 0) {
         const v = azAltToVec3(az, alt);
-        tmp.set(v[0] * 1000, v[1] * 1000, v[2] * 1000).project(camera);
+        tmp.set(v[0] * 1000, v[1] * 1000, v[2] * 1000);
+        const near = pc ? travelPoint(tmp, pc) : 1;
+        tmp.project(camera);
         if (tmp.z > 1 || tmp.z < -1) return null;
-        const p = parallaxFactor(depth, view.fov);
-        const x = tmp.x * p;
-        const y = tmp.y * p;
-        return { x: (x * 0.5 + 0.5) * width, y: (-y * 0.5 + 0.5) * height, onScreen: Math.abs(x) <= 1 && Math.abs(y) <= 1 };
+        return { x: (tmp.x * 0.5 + 0.5) * width, y: (-tmp.y * 0.5 + 0.5) * height, onScreen: Math.abs(tmp.x) <= 1 && Math.abs(tmp.y) <= 1, near };
     }
 
     // Where a body is drawn
     function projectBody(body) {
-        return project(body.sky.az, body.sky.alt, body.depth || 0);
+        return project(body.sky.az, body.sky.alt, travelPc(body));
     }
 
     // ---------- Picking ----------
@@ -1174,8 +1142,8 @@ export function createEngine(canvas) {
         const pxPerDeg = (height * 0.5 * RAD * lens.zoom) / Math.tan(view.fov * RAD * 0.5);
         // A click or a hover, as against a question about what's round a thing: only what can be seen
         const byEye = maxPx <= PICK_RADIUS_TOUCH;
-        const consider = (code, az, alt, radiusPx, bonusPx, depth, reach = maxPx) => {
-            const p = project(az, alt, depth);
+        const consider = (code, az, alt, radiusPx, bonusPx, reach = maxPx) => {
+            const p = project(az, alt);
             // Something with a size can be on show while its middle is off the edge of the view
             if (!p || (!p.onScreen && !radiusPx)) return;
             const dist = Math.hypot(p.x - x, p.y - y);
@@ -1191,8 +1159,7 @@ export function createEngine(canvas) {
             for (let i = 0; i < bodies.length; i++) {
                 const body = bodies[i];
                 if (bodyShows(body, lim)) {
-                    const depth = body.depth || 0;
-                    const radiusPx = extendedRadiusDeg(body) * pxPerDeg * parallaxFactor(depth, view.fov);
+                    const radiusPx = extendedRadiusDeg(body) * pxPerDeg;
                     // Inside an open cluster the dark between its stars is just sky: only the stars answer a click
                     if (body.cluster && body.cluster.type === 'open' && radiusPx > CLUSTER_INSIDE * Math.min(width, height)) continue;
                     let reach = maxPx;
@@ -1201,14 +1168,14 @@ export function createEngine(canvas) {
                         if (seen < PICK_SEEN_MIN) continue;
                         reach = maxPx * (PICK_FAINT_REACH + (1 - PICK_FAINT_REACH) * smooth01((seen - PICK_SEEN_MIN) * 2));
                     }
-                    consider(body.code, body.sky.az, body.sky.alt, radiusPx, brightnessBonusPx(body, lim), depth, reach);
+                    consider(body.code, body.sky.az, body.sky.alt, radiusPx, brightnessBonusPx(body, lim), reach);
                 }
             }
         }
         const frame = currentFrame();
         layers.forEach((layer) => {
             if (!layer.picks) return;
-            (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.radiusPx || 0, 0, c.depth || 0));
+            (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.radiusPx || 0, 0));
         });
         return best;
     }
@@ -1647,10 +1614,10 @@ export function createEngine(canvas) {
         },
         zoomIsEasing: () => Math.abs(Math.log(zoomGoal / view.fov)) > 1e-4,
         // Zooms at once by a step (as for the wheel), keeping still what's at a screen point: the middle of the canvas by
-        // default, which is the same at every depth
+        // default
         zoomAt(step, x = width / 2, y = height / 2) {
             if (slew) return;
-            anchorZoomAt(x, y, 0);
+            anchorZoomAt(x, y);
             setFovAnchored(Math.max(MIN_FOV, Math.min(MAX_FOV, view.fov * Math.exp(step))));
             zoomGoal = view.fov;
             zoomAnchor = null;
@@ -1676,11 +1643,11 @@ export function createEngine(canvas) {
         },
         // How a body's glow stands at this zoom: 1 is when it comes in at the limiting magnitude, MIN_GLOW when it first shows
         glowOf: (body) => bodyGlow(body, app.band) * zoomGain(limitingMag(view.fov)),
-        project,                    // project(az, alt, depth = 0): where something at that depth is drawn. See core/depth.js
-        projectBody,                // projectBody(body): the same, for a body at its own depth
+        project,                    // project(az, alt, pc?): where something is drawn, on a flight too if given its distance
+        projectBody,                // projectBody(body): the same, for a body
         // The view's own az and alt are the camera's axis, which the drawer can leave off the middle of the canvas (see the
-        // lens). centreDir() is what's in the middle; axisPutting(az, alt, x, y, fov?, depth?) is the view that puts a
-        // direction at a screen point; reachDeg(fov?) is how far from the axis the canvas reaches, for the furthest things.
+        // lens). centreDir() is what's in the middle; axisPutting(az, alt, x, y, fov?) is the view that puts a direction at
+        // a screen point; reachDeg(fov?) is how far from the axis the canvas reaches.
         centreDir,
         axisPutting,
         reachDeg,

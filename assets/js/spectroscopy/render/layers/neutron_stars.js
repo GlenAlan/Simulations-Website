@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
-import { parallaxFactor } from '../../core/depth.js';
+import { parallaxFactor, travelPc } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, pulsarSpin, HELD_ANGLE, PULSAR_BEAM_SLOPE } from './exotic_common.js';
 
@@ -25,9 +25,11 @@ export function createNeutronStarsLayer(engine, app) {
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
     const depths = new Float32Array(n);
+    const pcs = new Float32Array(n);
 
     bodies.forEach((body, i) => {
         depths[i] = body.depth;
+        pcs[i] = travelPc(body);
         const info = body.neutron_star;
         const rng = bodyRng(body, 'pulsar');
         const v = skyBasis(body.sky.az, body.sky.alt).centre;
@@ -51,6 +53,7 @@ export function createNeutronStarsLayer(engine, app) {
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
 
     const material = skyMaterial({
         vertexShader: /* glsl */`
@@ -63,6 +66,7 @@ export function createNeutronStarsLayer(engine, app) {
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute float aDepth;
+            attribute float aPc;
             varying vec2 vP;
             varying vec3 vAxis;
             varying float vPulse;
@@ -87,7 +91,9 @@ export function createNeutronStarsLayer(engine, app) {
                 float shimmer = 1.0 + 0.05 * uTwinkle * aInfo.y * sin(uTime * (7.1 + aInfo.w * 3.0));
                 vPulse = mix(1.0, 0.16 + 1.5 * crossing, swing) * shimmer;
 
-                float angularPx = radians(aInfo.x) * uPxPerRad * depthP(aDepth);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float angularPx = radians(aInfo.x) * uPxPerRad * depthP(aDepth) * travelSize(near);
                 vDetail = smoothstep(26.0, 90.0, angularPx);
 
                 vWeights = vec4(
@@ -95,7 +101,7 @@ export function createNeutronStarsLayer(engine, app) {
                     uBandW[2] * vDetail,                     // Only once you're close: almost nothing reaches us in visible light
                     uBandW[3] * max(aBandA.w, 0.1 * step(0.001, aBandA.w)),
                     uBandW[4] * aBandB
-                );
+                ) * travelLight(near);
                 float shows = dot(vWeights, vec4(1.0));
                 vInfo = aInfo.yzw;
                 vThermal = aThermal;
@@ -105,7 +111,7 @@ export function createNeutronStarsLayer(engine, app) {
                 float beacon = (uBandW[0] * aBandA.x + uBandW[4] * aBandB) * uViewport.y * 0.022;
                 vHalfPx = max(angularPx, beacon);
                 float gate = shows > 0.002 ? 1.0 : 0.0;
-                vec4 c = modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 c = modelViewMatrix * vec4(centre, 1.0);
                 c.xy *= depthP(aDepth);
                 c.xy += position.xy * vHalfPx * gate * length(c.xyz) / uPxPerRad;
                 gl_Position = projectionMatrix * c;

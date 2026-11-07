@@ -15,6 +15,7 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { bandSkyBrightness } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { MIN_GLOW } from '../engine.js';
+import { travelPc } from '../../core/depth.js';
 
 const POINT_KINDS = new Set(['star', 'binary', 'multiple', 'neutron_star', 'black_hole', 'quasar', 'supernova']);
 const SKY_RADIUS = 1000;
@@ -69,22 +70,25 @@ attribute float aSeed;
 attribute float aSoft;
 attribute float aFlux;
 attribute float aDepth;
+attribute float aPc;        // Its distance, for a flight into a system: see travel() in render/shared.js
 attribute vec2 aSplit;      // Degrees, in a multiple star: from its sibling, and between its own members. 0 where there are none
 attribute float aSpike;     // 0 for a point that must never grow spikes
 uniform float uDpr;
 varying vec2 vUv;
 
-float resolved(float deg) {
-    return smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(deg) * uPxPerRad * depthP(aDepth));
+// grow: how much a flight has brought it nearer (travelSize), which spreads a multiple's stars as zooming does
+float resolved(float deg, float grow) {
+    return smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(deg) * uPxPerRad * depthP(aDepth) * grow);
 }
 
 // A multiple star's point shows until it comes apart: its members (binaries.js) take over as it goes
-float splitShows() {
-    return (aSplit.x > 0.0 ? resolved(aSplit.x) : 1.0) * (1.0 - resolved(aSplit.y));
+float splitShows(float grow) {
+    return (aSplit.x > 0.0 ? resolved(aSplit.x, grow) : 1.0) * (1.0 - resolved(aSplit.y, grow));
 }
 
-float skyGlow() {
-    return clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
+// near: how much nearer a flight has brought it (travel), which brightens it as the inverse square
+float skyGlow(float near) {
+    return clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux * travelLight(near), 0.0, 400.0);
 }
 
 // Glow as magnitudes above the point where a sprite starts to be drawn: 0 up to about 9.75
@@ -115,6 +119,7 @@ function instancedAttributes(geometry, data) {
     geometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(data.seeds, 1));
     geometry.setAttribute('aSoft', new THREE.InstancedBufferAttribute(data.soft, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(data.depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(data.pcs, 1));
     geometry.setAttribute('aFlux', data.flux);
     geometry.setAttribute('aSplit', data.split);
     geometry.setAttribute('aSpike', new THREE.InstancedBufferAttribute(data.spike, 1));
@@ -136,8 +141,10 @@ export function createSprites(data) {
             varying vec4 vShape;    // Quad radius, core sigma, halo radius, halo strength (all device px, bar the last)
             varying float vPeak;
             void main() {
-                float glow = skyGlow();
-                float shows = splitShows();
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float glow = skyGlow(near);
+                float shows = splitShows(travelSize(near));
                 if (glow < ${MIN_GLOW.toFixed(3)} || uSkyFade <= 0.0 || shows <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -168,7 +175,7 @@ export function createSprites(data) {
                 vColour = bandColour(c);
 
                 vUv = position.xy;
-                vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 clip = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 clip.xy *= depthP(aDepth);
                 clip.xy += position.xy * quad * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
@@ -217,9 +224,11 @@ export function createSpikes(data) {
             const float ANGLE = 0.46;   // All spikes share one angle: they come from the telescope, not the star
             void main() {
                 // Only the brightest, in visible light, fading in rather than popping
-                float glow = clamp(aBandA.z * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float glow = clamp(aBandA.z * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux * travelLight(near), 0.0, 400.0);
                 float m = glowLevel(glow);
-                float k = smoothstep(6.6, 8.4, m) * uBandW[2] * uSkyFade * aSpike * splitShows();
+                float k = smoothstep(6.6, 8.4, m) * uBandW[2] * uSkyFade * aSpike * splitShows(travelSize(near));
                 if (k <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -239,7 +248,7 @@ export function createSpikes(data) {
                 vec2 axis = vec2(cos(angle), sin(angle));
                 vec2 side = vec2(-axis.y, axis.x);
                 vec2 offset = axis * position.x * len + side * position.y * width;
-                vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 clip = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 clip.xy *= depthP(aDepth);
                 clip.xy += offset * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
@@ -275,6 +284,7 @@ export function createStarsLayer(engine, app) {
         seeds: new Float32Array(n),
         soft: new Float32Array(n),
         depths: new Float32Array(n),
+        pcs: new Float32Array(n),
         // One value per star that another layer can change while the sim runs: see setSpriteFlux
         flux: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1),
         split: new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2),
@@ -295,6 +305,7 @@ export function createStarsLayer(engine, app) {
         data.seeds[i] = hashString(body.visual_seed || body.code) / 4294967296;
         data.soft[i] = bodySoftness(body);
         data.depths[i] = body.depth;
+        data.pcs[i] = travelPc(body);
         // A black hole's companion sits inside the lens, which would bend its spikes into grey blocks round the disc
         data.spike[i] = body.kind === 'black_hole' ? 0 : 1;
     });

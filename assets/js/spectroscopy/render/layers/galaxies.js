@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { limitingMag, MIN_FOV } from '../../core/sky.js';
-import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { bandMagnitudes, bandSkyBrightness } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
@@ -54,20 +54,26 @@ const VERT = /* glsl */`
     attribute float aMagB;
     attribute float aFade;
     attribute float aDepth;
+    attribute float aPc;
     varying vec2 vUv;
     varying vec2 vQ;
     varying vec4 vBand;
     varying float vXray;
     varying float vJewel;
     void main() {
-        vec3 world = aCentre + position.x * aU + position.y * aV;
+        // A flight that comes nearer one draws it bigger, and as bright across, until it passes right through
+        vec3 centre = aCentre;
+        float near = travel(centre, aPc);
+        float grow = travelSize(near);
+        float light = aFade * travelThrough(near) * min(near * near, 1.0);
+        vec3 world = centre + position.x * aU * grow + position.y * aV * grow;
         vQ = position.xy;
         vUv = aRect.xy + (position.xy * 0.5 + 0.5) * aRect.zw;
         // Faint things come up with zoom in every band, each with its own magnitude there
-        vBand = vec4(aBandA.x * revealGain(aMagA.x), aBandA.y * revealGain(aMagA.y), aBandA.z * revealGain(aMagA.z), aBandA.w * revealGain(aMagA.w)) * aFade;
-        vXray = aBandB * revealGain(aMagB) * aFade;
+        vBand = vec4(aBandA.x * revealGain(aMagA.x), aBandA.y * revealGain(aMagA.y), aBandA.z * revealGain(aMagA.z), aBandA.w * revealGain(aMagA.w)) * light;
+        vXray = aBandB * revealGain(aMagB) * light;
         // Size on screen, in device pixels: the smaller it is, the harder it has to work to read as more than a blob
-        float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth) * 2.0;
+        float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * depthP(aDepth) * grow * 2.0;
         vJewel = fall(46.0, 10.0, px);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
         gl_Position.xy *= depthP(aDepth);
@@ -133,6 +139,7 @@ function quadGeometry(count) {
     add('aMagB', 1);
     add('aFade', 1);
     add('aDepth', 1);
+    add('aPc', 1);
     geometry.instanceCount = count;
     return geometry;
 }
@@ -147,7 +154,8 @@ function writeInstance(geometry, i, g, rect) {
     geometry.attributes.aMagA.array.set(g.magA, i * 4);
     geometry.attributes.aMagB.array[i] = g.magB;
     geometry.attributes.aDepth.array[i] = g.body.depth;
-    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB', 'aDepth'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
+    geometry.attributes.aPc.array[i] = travelPc(g.body);
+    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB', 'aDepth', 'aPc'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
 }
 
 // A feeding black hole whose disc is in view outshines its galaxy's middle many times over, as a point. Once the galaxy is big
@@ -169,17 +177,20 @@ function createCoreSpikes(cores) {
     const centres = new Float32Array(count * 3);
     const majors = new Float32Array(count);
     const depths = new Float32Array(count);
+    const pcs = new Float32Array(count);
     const light = new Float32Array(count * 2);
     cores.forEach((g, i) => {
         centres.set(g.centre, i * 3);
         majors[i] = g.body.galaxy.size_deg / 2;
         depths[i] = g.body.depth;
+        pcs[i] = travelPc(g.body);
         const typeOne = g.body.nucleus.nucleus.type === 1;
         light.set(typeOne ? [SPIKE_LIGHT.visible * g.light, SPIKE_LIGHT.uv * g.light] : [0, 0], i * 2);
     });
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aMajor', new THREE.InstancedBufferAttribute(majors, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
     geometry.setAttribute('aLight', new THREE.InstancedBufferAttribute(light, 2));
     geometry.instanceCount = count;
     const material = skyMaterial({
@@ -188,15 +199,18 @@ function createCoreSpikes(cores) {
             attribute vec3 aCentre;
             attribute float aMajor;
             attribute float aDepth;
+            attribute float aPc;
             attribute vec2 aLight;
             varying vec2 vUv;
             varying vec3 vColour;
             const float ANGLE = 0.46;   // The stars' spikes' angle: they come from the telescope, not the source
             void main() {
-                float majorPx = radians(aMajor) * uPxPerRad * depthP(aDepth);
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
+                float majorPx = radians(aMajor) * uPxPerRad * depthP(aDepth) * travelSize(near);
                 float scale = uViewport.y / 800.0;
                 float grow = smoothstep(${SPIKE_FROM_PX[0].toFixed(1)} * scale, ${SPIKE_FROM_PX[1].toFixed(1)} * scale, majorPx);
-                float amount = grow * (aLight.x * uBandW[2] + aLight.y * uBandW[3]) * uSkyFade;
+                float amount = grow * (aLight.x * uBandW[2] + aLight.y * uBandW[3]) * uSkyFade * min(near * near, 1.0) * travelThrough(near);
                 if (amount <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -208,7 +222,7 @@ function createCoreSpikes(cores) {
                 float angle = ANGLE + position.z * 1.5707963;
                 vec2 axis = vec2(cos(angle), sin(angle));
                 vec2 side = vec2(-axis.y, axis.x);
-                vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
+                vec4 clip = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 clip.xy *= depthP(aDepth);
                 clip.xy += (axis * position.x * len + side * position.y * width) * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
@@ -321,9 +335,11 @@ export function createGalaxiesLayer(engine, app) {
     const nucleusMag = new Float32Array(n);
     const nucleusColour = new Float32Array(n * 3);
     const nucleusDepth = new Float32Array(n);
+    const nucleusPc = new Float32Array(n);
     galaxies.forEach((g, i) => {
         const { body } = g;
         nucleusDepth[i] = body.depth;
+        nucleusPc[i] = travelPc(body);
         const active = !!body.galaxy.active_nucleus;
         const lobed = !!body.galaxy.radio_lobes;
         nucleusPositions.set(g.centre, i * 3);
@@ -352,6 +368,7 @@ export function createGalaxiesLayer(engine, app) {
         seeds: new Float32Array(Math.max(1, cores.length)),
         soft: new Float32Array(Math.max(1, cores.length)),
         depths: new Float32Array(Math.max(1, cores.length)),
+        pcs: new Float32Array(Math.max(1, cores.length)),
         flux: new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cores.length)).fill(1), 1),
         split: new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cores.length) * 2), 2),
         spike: new Float32Array(Math.max(1, cores.length))
@@ -368,6 +385,7 @@ export function createGalaxiesLayer(engine, app) {
         coreData.seeds[i] = (i * 0.618) % 1;
         coreData.soft[i] = 0.8;
         coreData.depths[i] = g.body.depth;
+        coreData.pcs[i] = travelPc(g.body);
         coreData.spike[i] = 0;      // Its own spikes, below, go by how big its galaxy is drawn
         // What it shows in each band, for picking what's drawn: X-rays and radio are the galaxy's point's
         g.core = { code: hole.code, glow, point: [nucleusBandA[g.index * 4], nucleusBandB[g.index]], hidden: !typeOne };
@@ -388,6 +406,7 @@ export function createGalaxiesLayer(engine, app) {
     nucleusGeometry.setAttribute('aMag', new THREE.BufferAttribute(nucleusMag, 1));
     nucleusGeometry.setAttribute('aColour', new THREE.BufferAttribute(nucleusColour, 3));
     nucleusGeometry.setAttribute('aDepth', new THREE.BufferAttribute(nucleusDepth, 1));
+    nucleusGeometry.setAttribute('aPc', new THREE.BufferAttribute(nucleusPc, 1));
     const nucleusMaterial = skyMaterial({
         vertexShader: /* glsl */`
             ${BAND_GLSL}
@@ -398,18 +417,21 @@ export function createGalaxiesLayer(engine, app) {
             attribute float aMag;
             attribute vec3 aColour;
             attribute float aDepth;
+            attribute float aPc;
             varying vec3 vColour;
             void main() {
+                vec3 centre = position;
+                float near = travel(centre, aPc);
                 float gain = revealGain(aMag);
                 // A pinprick in visible only while the galaxy is too small to show its own nucleus
-                float small = fall(4000.0, 1500.0, uPxPerRad * depthP(aDepth));
-                vec3 c = aColour * aBandA.z * gain * uBandW[2] * 0.9 * small
+                float small = fall(4000.0, 1500.0, uPxPerRad * depthP(aDepth) * travelSize(near));
+                vec3 c = (aColour * aBandA.z * gain * uBandW[2] * 0.9 * small
                     + uBandTint[0] * uBandW[0] * aBandA.x * 2.0
                     + uBandTint[1] * uBandW[1] * aBandA.y * 1.2
                     + uBandTint[3] * uBandW[3] * aBandA.w * 1.6
-                    + uBandTint[4] * uBandW[4] * aBandB * 7.0;
+                    + uBandTint[4] * uBandW[4] * aBandB * 7.0) * travelLight(near);
                 vColour = c;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre, 1.0);
                 gl_Position.xy *= depthP(aDepth);
                 float strongest = max(c.r, max(c.g, c.b));
                 float px = uViewport.y / 800.0;
@@ -439,7 +461,8 @@ export function createGalaxiesLayer(engine, app) {
         spanDeg: g.body.galaxy.size_deg * (2.2 + (g.recipe.off[1] / 90) * 1.6),
         strength: Math.max(0.35, g.body.bands.radio) * g.light,
         seed: g.body.visual_seed,
-        depth: g.body.depth
+        depth: g.body.depth,
+        pc: travelPc(g.body)
     }));
     const lobes = createRadioLobes(engine, lobeSources);
 
