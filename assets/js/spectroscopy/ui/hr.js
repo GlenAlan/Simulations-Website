@@ -14,7 +14,7 @@ import { newTurnOff, turnOffWords, drawTurnOff, turnOffGrip, turnOffValueText } 
 import {
     blackBodyCss, createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
     drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel,
-    readSaved, showFigure, writeSaved
+    readSaved, showFigure, writeSaved, savedEntries, cleanSaved
 } from './plot2d.js';
 
 const T_MAX = 130000;     // Left edge (K): the hottest white dwarfs
@@ -171,18 +171,35 @@ function persist() {
     writeSaved(saveKey, stars.length ? { nextNumber, stars } : null);
 }
 
+// What a saved star may bring back: the numbers the form itself would take, and the words the tools write
+const SAVED_LIMITS = {
+    T_K: [100, 1e7], T_err_K: [0, 1e7],
+    flux_Wm2: [1e-30, 1e6], flux_err: [0, 1e6],
+    distance_pc: [1e-6, 1e10],
+    L_Lsun: [1e-12, 1e14], L_err_Lsun: [0, 1e14]
+};
+const SAVED_WORDS = { T_source: Object.keys(SOURCES) };
+
 function restore(app) {
     saveKey = `spectro.hr.v1.${app.universe.seed}`;
     const saved = readSaved(saveKey);
-    if (!saved || !Array.isArray(saved.stars)) return;
-    saved.stars.forEach(({ code, number, values }) => {
-        if (!values || !app.universe.resolve(code)) return;
-        recordMeasurement(code, values);
+    if (!saved || typeof saved !== 'object' || !Array.isArray(saved.stars)) return;
+    // Codes are kept from one sky to the next, but what a code names may have changed: only stars still go on the diagram
+    const isStar = (code) => {
+        const resolved = app.universe.resolve(code);
+        return !!resolved && isApplicable(resolved) && !(resolved.path === 'body' && resolved.body.kind === 'cluster');
+    };
+    savedEntries(saved.stars, isStar).forEach(({ code, number, values }) => {
+        const clean = cleanSaved(values, SAVED_LIMITS, SAVED_WORDS);
+        if (!Object.keys(clean).length) return;
+        recordMeasurement(code, clean);
         if (starPoint(code)) {
             plotted.set(code, number);
             nextNumber = Math.max(nextNumber, number + 1);
         }
     });
+    // What couldn't be used is gone from the save too
+    persist();
 }
 
 function addStar(code) {
@@ -427,7 +444,7 @@ function mountHR(container, app) {
                 rangeText: 'a brightness from 1e-30 to 1e6 W/m²',
                 extra: { flux_err: undefined, L_Lsun: undefined, L_err_Lsun: undefined },
                 brief: (m) => `${sci(m.flux_Wm2, 2)} W/m²`,
-                show: (m) => `${sci(m.flux_Wm2, 3)} W/m², from the photometer`
+                show: (m) => `${sci(m.flux_Wm2, 3)} W/m², from the Brightness tool`
             },
             {
                 key: 'distance_pc',
@@ -441,7 +458,7 @@ function mountHR(container, app) {
                 rangeText: 'a distance from 1e-6 to 1e10 pc',
                 extra: { L_Lsun: undefined, L_err_Lsun: undefined },
                 brief: (m) => distance(m.distance_pc),
-                show: (m) => `${distance(m.distance_pc)}, from the photometer`
+                show: (m) => `${distance(m.distance_pc)}, from the Brightness tool`
             }
         ],
         // Where it went, once it's on: the point's number and the two values it is plotted at

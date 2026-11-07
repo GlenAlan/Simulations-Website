@@ -697,6 +697,50 @@ export function readSaved(key) {
     }
 }
 
+// A saved list read back, checked entry by entry: a damaged save, or one from a sky that has changed since, must not stop a
+// tab from starting or put Infinity on a plot. Keeps each object once, only if isRight(code) still says it belongs here,
+// and gives any entry without a usable number the next free one. -> [{ code, number, values }]
+export function savedEntries(list, isRight) {
+    if (!Array.isArray(list)) return [];
+    const codes = new Set();
+    const numbers = new Set();
+    const out = [];
+    list.forEach((entry) => {
+        if (!entry || typeof entry !== 'object' || typeof entry.code !== 'string' || codes.has(entry.code)) return;
+        let right = false;
+        try {
+            right = isRight(entry.code);
+        } catch (err) {
+            right = false;
+        }
+        if (!right) return;
+        codes.add(entry.code);
+        const { number } = entry;
+        const usable = Number.isInteger(number) && number > 0 && number < 1e6 && !numbers.has(number);
+        if (usable) numbers.add(number);
+        out.push({ code: entry.code, number: usable ? number : null, values: entry.values });
+    });
+    let next = Math.max(0, ...numbers) + 1;
+    out.forEach((entry) => { if (entry.number === null) entry.number = next++; });
+    return out;
+}
+
+// A saved entry's values, keeping only known numbers within what the tab's own form accepts, and known words.
+// limits: { key: [lowest, highest] }; words: { key: [allowed values] }. A typed value is kept on the same terms.
+export function cleanSaved(values, limits, words = {}) {
+    const out = {};
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return out;
+    const fits = (key, v) => typeof v === 'number' && Number.isFinite(v) && v >= limits[key][0] && v <= limits[key][1];
+    Object.keys(limits).forEach((key) => { if (fits(key, values[key])) out[key] = values[key]; });
+    Object.keys(words).forEach((key) => { if (words[key].includes(values[key])) out[key] = values[key]; });
+    if (values.typed && typeof values.typed === 'object' && !Array.isArray(values.typed)) {
+        const typed = {};
+        Object.keys(values.typed).forEach((key) => { if (key in limits && fits(key, values.typed[key])) typed[key] = values.typed[key]; });
+        if (Object.keys(typed).length) out.typed = typed;
+    }
+    return out;
+}
+
 export function writeSaved(key, value) {
     try {
         if (value) localStorage.setItem(key, JSON.stringify(value));

@@ -10,7 +10,7 @@ import { toolWords } from './spectrum/tools/index.js';
 import {
     createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
     drawFrame, drawMarker, el, fitThroughOrigin, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint,
-    niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved
+    niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved, savedEntries, cleanSaved
 } from './plot2d.js';
 
 const Z_LIMIT = 0.1;          // Above this, v = cz is only an approximation (spec section 8.4)
@@ -33,18 +33,30 @@ function persist() {
     writeSaved(saveKey, galaxies.length ? { nextNumber, galaxies } : null);
 }
 
+// What a saved galaxy may bring back: the numbers the form itself would take, and the words the tools write
+const SAVED_LIMITS = { v_kms: [-1e6, 1e6], v_err_kms: [0, 1e6], z: [-0.99, 20], distance_pc: [1e3, 1e12] };
+const SAVED_WORDS = { v_source: ['slide', 'line'] };
+
 function restore(app) {
     saveKey = `spectro.hubble.v1.${app.universe.seed}`;
     const saved = readSaved(saveKey);
-    if (!saved || !Array.isArray(saved.galaxies)) return;
-    saved.galaxies.forEach(({ code, number, values }) => {
-        if (!values || !app.universe.resolve(code)) return;
-        recordMeasurement(code, values);
+    if (!saved || typeof saved !== 'object' || !Array.isArray(saved.galaxies)) return;
+    // Codes are kept from one sky to the next, but what a code names may have changed: only galaxies still go on the plot
+    const isGalaxy = (code) => {
+        const resolved = app.universe.resolve(code);
+        return !!resolved && resolved.path === 'body' && resolved.body.kind === 'galaxy';
+    };
+    savedEntries(saved.galaxies, isGalaxy).forEach(({ code, number, values }) => {
+        const clean = cleanSaved(values, SAVED_LIMITS, SAVED_WORDS);
+        if (!Object.keys(clean).length) return;
+        recordMeasurement(code, clean);
         if (galaxyPoint(code)) {
             plotted.set(code, number);
             nextNumber = Math.max(nextNumber, number + 1);
         }
     });
+    // What couldn't be used is gone from the save too
+    persist();
 }
 
 function addGalaxy(code) {
@@ -235,7 +247,7 @@ function mountHubble(container, app) {
                 max: 1e6,
                 rangeText: 'a distance from 0.001 to 1,000,000 Mpc',
                 brief: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc`,
-                show: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc, from the photometer`
+                show: (m) => `${sig(m.distance_pc / 1e6, 3)} Mpc, from the Brightness tool`
             }
         ],
         summary(code) {
