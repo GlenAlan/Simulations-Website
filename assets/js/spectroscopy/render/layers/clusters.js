@@ -33,12 +33,13 @@ const PAIR_APART_PX = 9.5;          // A pair's two stars can be picked one by o
 // A member's light, from how many magnitudes it is above the zoom's limit. Shader and picking share these.
 const SHOW_FROM = -0.6;             // Starts to show this far below the limit...
 const SHOW_BY = 0.8;                // ...and is fully there this far above it
+const MEMBER_HEAD_START = 1.2;      // Magnitudes: a crowd of stars is easier to see than one alone, so members come out a little before lone stars do
 const LIGHT_AT_START = 0.15;        // What light it has when it starts to show...
-const LIGHT_RATE = 0.08;            // ...and each magnitude above that multiplies it by 10 to this power, for a few bright stars among many faint
-const LIGHT_MOST = 3;
-const GLOBULAR_GIANTS = 1.5;        // A globular's stars have its glow to stand out from
-const FAR_OFF_LIGHT = 0.4;          // A cluster's stars are held back to this share while it's small, so they don't catch the eye first...
-const FAR_OFF_PX = [20, 170];       // ...until this many CSS pixels per degree
+const LIGHT_RATE = 0.072;           // ...and each magnitude above that multiplies it by 10 to this power, for a few bright stars among many faint
+const LIGHT_MOST = 1.6;
+const GLOBULAR_GIANTS = 1.6;        // A globular's stars have its glow to stand out from
+const FAR_OFF_LIGHT = 0.3;          // A cluster's stars are held back to this share while it's small, so they don't catch the eye first...
+const FAR_OFF_PX = [20, 90];        // ...until this many CSS pixels per degree
 const SMUDGE_LIGHT = 0.03;          // Too faint to see one by one, an open cluster's stars still add up to a smudge...
 const SMUDGE_FROM_PX2 = 4;          // ...while each has less than this much of the screen to itself (square CSS pixels)...
 const SMUDGE_TO_PX2 = 30;           // ...and none by this much
@@ -291,7 +292,7 @@ export function createClustersLayer(engine, app) {
                 float smudge = aBoost > 1.0 ? 0.0 : (1.0 - smoothstep(${SMUDGE_FROM_PX2.toFixed(1)}, ${SMUDGE_TO_PX2.toFixed(1)}, room))
                     * clamp(room / ${SMUDGE_STACKED_PX2.toFixed(1)}, 0.2, 1.0) * ${SMUDGE_LIGHT.toFixed(3)} * revealGain(aInfo.z);
                 float farOff = mix(${FAR_OFF_LIGHT.toFixed(2)}, 1.0, smoothstep(${FAR_OFF_PX[0].toFixed(1)}, ${FAR_OFF_PX[1].toFixed(1)}, pxPerDeg / uDpr));
-                float strong = max(memberLight(uLimitMag - aInfo.x) * aBoost * farOff, smudge) * aBandA.z * uBandW[2];
+                float strong = max(memberLight(uLimitMag + ${MEMBER_HEAD_START.toFixed(2)} - aInfo.x) * aBoost * farOff, smudge) * aBandA.z * uBandW[2];
                 float grey = dot(aColour, vec3(0.3, 0.55, 0.15));
                 vec3 c = max(mix(vec3(grey), aColour, 1.3), 0.0) * strong
                     + uBandTint[0] * uBandW[0] * aBandA.x
@@ -792,12 +793,13 @@ export function createClustersLayer(engine, app) {
                 // One point of light, standing for itself if there's room, and for the cluster if not
                 const offer = (m, room) => {
                     let light;
-                    if (band === 'visible') light = Math.max(memberLight(lim - m.mag) * m.starLight * farOff, smudge) * m.visible;
+                    if (band === 'visible') light = Math.max(memberLight(lim + MEMBER_HEAD_START - m.mag) * m.starLight * farOff, smudge) * m.visible;
                     else if (band === 'ir' || band === 'uv') light = m[band] * (0.5 + 0.5 * spread) * 2.2;
                     else light = m[band] * (band === 'xray' ? 3 : 1);
                     if (light < DRAWN_PEAK) return;
                     any = true;
-                    out.push(opened && light >= SEEN_PEAK && room >= apart
+                    // UV's false colour is a deep blue, which takes more light to see
+                    out.push(opened && light >= SEEN_PEAK * (band === 'uv' ? 3 : 1) && room >= apart
                         ? { code: m.code, az: m.az, alt: m.alt, radiusPx: MEMBER_REACH_PX, depth: m.depth }
                         : { code: body.code, az: m.az, alt: m.alt, radiusPx: 0, depth: m.depth });
                 };
