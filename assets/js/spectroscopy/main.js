@@ -3,6 +3,7 @@
 
 import { app, bus, select } from './core/state.js';
 import { generateUniverse } from './data/universe.js';
+import { seedFromPage } from './core/seed.js';
 import { assignDepths } from './core/depth.js';
 import { createEngine } from './render/engine.js';
 import { createDrawer } from './ui/drawer.js';
@@ -84,7 +85,7 @@ async function boot() {
     sliceStart = 0;
     await breathe();    // And that frame has to reach the screen
 
-    app.universe = generateUniverse();
+    app.universe = generateUniverse(seedFromPage());   // ?seed=... in the address, or the standard sky
     assignDepths(app.universe);
     await breathe();
 

@@ -171,9 +171,9 @@ export function layOutSky(entries, rng) {
 
     // Everything as it finally sits, for the passes that come after
     entries.forEach((entry) => {
-        placed.push({ entry, v: azAltToVec3(entry.body.sky.az, entry.body.sky.alt), radius: entry.radius_deg || 0, deep: false, spacing: MIN_SPACING_DEG });
+        placed.push({ entry, v: azAltToVec3(entry.body.sky.az, entry.body.sky.alt), radius: entry.radius_deg || 0, deep: false, spacing: MIN_SPACING_DEG, clear: entry.clear_deg || 0 });
     });
-    return { placed, maxRadius: placed.reduce((m, p) => Math.max(m, p.radius), 0) };
+    return { placed, maxRadius: placed.reduce((m, p) => Math.max(m, p.radius), 0), maxClear: placed.reduce((m, p) => Math.max(m, p.clear), 0) };
 }
 
 // How far apart a new body and one already placed must be, with room for rounding
@@ -182,13 +182,13 @@ function deepSeparation(entry, other) {
     const b = other.radius;
     const reach = a > 0 && b > 0 ? a + b : 0.5 * Math.max(a, b);
     const point = other.deep ? Math.min(entry.spacing, other.spacing) : Math.max(entry.spacing, DEEP_CLEAR_DEG);
-    return Math.max(point * DEEP_MARGIN, reach);
+    return Math.max(point * DEEP_MARGIN, reach, other.clear || 0);   // And out of any space kept clear round a body
 }
 
 // Only a body nearer than the widest separation this entry could need is worth the full rule
 function widestSeparation(layout, entry) {
     const a = entry.radius_deg || 0;
-    return Math.max(Math.max(entry.spacing, DEEP_CLEAR_DEG) * DEEP_MARGIN, a + layout.maxRadius, 0.5 * Math.max(a, layout.maxRadius));
+    return Math.max(Math.max(entry.spacing, DEEP_CLEAR_DEG) * DEEP_MARGIN, a + layout.maxRadius, 0.5 * Math.max(a, layout.maxRadius), layout.maxClear);
 }
 
 function deepFits(layout, v, entry, skip) {
@@ -244,13 +244,13 @@ export function placeOne(layout, entry, candidates) {
         const v = azAltToVec3(az, alt);
         const clear = layout.placed.every((other) => {
             if (other.entry === entry) return true;
-            const need = Math.max(sep, other.radius > 0 ? 0.5 * other.radius + (entry.radius_deg || 0) : 0);
+            const need = Math.max(sep, other.radius > 0 ? 0.5 * other.radius + (entry.radius_deg || 0) : 0, other.clear || 0);
             return !tooClose(v[0] * other.v[0] + v[1] * other.v[1] + v[2] * other.v[2], Math.cos(need * RAD));
         });
         if (clear) {
             entry.body.sky = { az, alt };
             layout.placed = layout.placed.filter((p) => p.entry !== entry);
-            layout.placed.push({ entry, v, radius: entry.radius_deg || 0, deep: false, spacing: MIN_SPACING_DEG });
+            layout.placed.push({ entry, v, radius: entry.radius_deg || 0, deep: false, spacing: MIN_SPACING_DEG, clear: 0 });
             return { az, alt };
         }
     }

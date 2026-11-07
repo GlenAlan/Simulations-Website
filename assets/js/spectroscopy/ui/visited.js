@@ -4,12 +4,15 @@
 // app.visited = { has(code), count(), codes(), clear() }. Bus event sent: 'visited' { count }.
 
 import { bus } from '../core/state.js';
+import { isDefaultSeed } from '../core/seed.js';
 
 const STORE_KEY = 'spectroscopy.visitedSystems';
+let storeKey = STORE_KEY;          // Each sky keeps its own list (core/seed.js); the standard sky's keeps the old key
 
 function load(universe) {
+    storeKey = isDefaultSeed(universe.seed) ? STORE_KEY : `${STORE_KEY}.${universe.seed}`;
     try {
-        const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
+        const saved = JSON.parse(localStorage.getItem(storeKey) || '[]');
         return Array.isArray(saved) ? saved.filter((code) => typeof code === 'string' && universe.resolve(code)) : [];
     } catch (err) {
         return [];
@@ -18,8 +21,8 @@ function load(universe) {
 
 function save(codes) {
     try {
-        if (codes.size) localStorage.setItem(STORE_KEY, JSON.stringify([...codes]));
-        else localStorage.removeItem(STORE_KEY);
+        if (codes.size) localStorage.setItem(storeKey, JSON.stringify([...codes]));
+        else localStorage.removeItem(storeKey);
     } catch (err) { /* Blocked or full: it still works until the page closes */ }
 }
 
