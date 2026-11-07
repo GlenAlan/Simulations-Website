@@ -884,6 +884,7 @@ export function createBackgroundLayer(engine, app) {
             uDeepFade: { value: new THREE.Vector4(0, 0, 0, 0) },
             uDetailFade: { value: new THREE.Vector3(0, 0, 1) },
             uTan: { value: new THREE.Vector2(1, 1) },
+            uTanShift: { value: new THREE.Vector2(0, 0) },
             uDpr: { value: 1 },
             uDetailBias: { value: SMOOTH_DETAIL_BIAS },
             uSkyBias: { value: SMOOTH_SKY_BIAS },
@@ -893,9 +894,10 @@ export function createBackgroundLayer(engine, app) {
         },
         vertexShader: /* glsl */`
             uniform vec2 uTan;
+            uniform vec2 uTanShift;     // The camera's axis can be off the middle of the canvas: see the lens in engine.js
             varying vec3 vDir;
             void main() {
-                vDir = transpose(mat3(viewMatrix)) * vec3(position.xy * uTan, -1.0);
+                vDir = transpose(mat3(viewMatrix)) * vec3(position.xy * uTan - uTanShift, -1.0);
                 gl_Position = vec4(position.xy, 1.0, 1.0);
             }`,
         fragmentShader: SKY_FRAGMENT
@@ -999,8 +1001,10 @@ export function createBackgroundLayer(engine, app) {
             u.uDpr.value = frame.dpr;
             // The dome lags behind the camera as much as anything can: it's the screen that has to come to it
             const parallax = parallaxFactor(1, frame.fov);
-            const tanY = Math.tan(frame.fov * RAD * 0.5) / parallax;
+            const zoom = frame.zoom || 1;
+            const tanY = Math.tan(frame.fov * RAD * 0.5) / parallax / zoom;
             u.uTan.value.set(tanY * (frame.width / frame.height), tanY);
+            u.uTanShift.value.set((frame.shiftX || 0) * tanY * parallax * (frame.width / frame.height), (frame.shiftY || 0) * tanY * parallax);
             const cssPerRad = (frame.pxPerRad * parallax) / frame.dpr;
             const low = frame.quality === 'low';
             // Low draws only the coarsest layers: enough not to feel empty, at almost no cost

@@ -459,13 +459,13 @@ export function initSystemView(app) {
         cam.azT = az1;
         cam.el = HOME_EL;
         cam.elT = HOME_EL;
-        cam.zoom = 1;
+        cam.zoom = path.endZoom || 1;
         cam.focus.set(0, 0, 0);
         cam.target = null;
         cam.flight = null;
         fitSmooth = fit;
-        cam.dist = fit;
-        cam.distT = fit;
+        cam.dist = fit * cam.zoom;
+        cam.distT = cam.dist;
 
         // Line the faint sky's catalogue up with the line of sight, so what's behind the star is what was behind it
         const skyQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(star.alt * RAD, -star.az * RAD, 0, 'YXZ'));
@@ -538,6 +538,16 @@ export function initSystemView(app) {
         const angle = holes && holes.companionAngle ? holes.companionAngle(model.code) : null;
         path.d0 = fit * HOLE_APPROACH;
         path.skyLog = Math.log(HOLE_SKY_ZOOM);
+        // Better still, from the sky's own size: the hole starts exactly as big as the sky draws its disc, and on the way in
+        // it's never drawn smaller than that, so zooming in can't shrink it. Its companion may then be off to the side on
+        // arrival; zooming out brings it in.
+        const discDeg = holes && holes.discDeg ? holes.discDeg(model.code) : 0;
+        if (discDeg > 0) {
+            const frame = engine.currentFrame();
+            const skyPx = (discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(model.body.depth || 0, savedView.fov)) / Math.tan(savedView.fov * RAD * 0.5);
+            path.d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
+            path.endZoom = Math.max(minDistance() / fit, Math.min(1, path.d0 / (HOLE_SKY_ZOOM * fit)));
+        }
         if (angle === null) return;
         const [hole, star] = positions.stars;
         const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
@@ -1065,11 +1075,14 @@ export function initSystemView(app) {
             const fov = from.fov * Math.exp(-handSkyLog(tNorm, path.skyLog));
             // What the star's distance from the centre of the screen comes to as an angle, at this field of view
             const centre = 1 - handOffCentre(tNorm) * skyScale(fov);
+            if (engine.setLensShare) engine.setLensShare(handOffCentre(tNorm));
             engine.flyView(from.az + path.dAz * centre, from.alt + (path.star.alt - from.alt) * centre, fov);
         } else {
             const alt = from.alt + (path.star.alt - from.alt) * stage.skyCentre;
             const az = from.az + path.dAz * stage.skyCentre;
             const fov = Math.exp(Math.log(from.fov) + (Math.log(path.fovEnd) - Math.log(from.fov)) * stage.skyZoom);
+            // The star comes to the middle of the canvas, wherever the drawer had left the sky's axis
+            if (engine.setLensShare) engine.setLensShare(1 - stage.skyCentre);
             engine.setView({ az, alt, fov });
         }
         const sky = engine.camera;
@@ -1091,6 +1104,7 @@ export function initSystemView(app) {
     }
 
     function restoreSky() {
+        if (engine.setLensShare) engine.setLensShare(1);
         engine.setView(savedView);
         // setView normalises the azimuth; keep the digits as they were
         engine.view.az = savedView.az;
@@ -1774,7 +1788,8 @@ export function initSystemView(app) {
     function enter(code, opts = {}) {
         const resolved = app.universe.resolve(code);
         const body = systemBodyOf(resolved);
-        if (!body) {
+        // With the graphics gone for now, a flight could never finish: the panels still work, and the sky is where it was
+        if (!body || engine.isContextLost()) {
             if (opts.onDone) opts.onDone();
             return false;
         }
@@ -1916,9 +1931,9 @@ export function initSystemView(app) {
         // A zoom under way gives way to Esc, the button or a link, and from here it's a flight on the clock
         const wasHand = !!hand;
         hand = null;
-        if (mode === 'exit' && !wasHand) return;
-        if (mode === 'load') {
-            // Never got started: just put everything back
+        if (mode === 'exit' && !wasHand && !engine.isContextLost()) return;
+        if (mode === 'load' || engine.isContextLost()) {
+            // Never got started, or there are no frames to fly with: just put everything back
             tNorm = 0;
             finishExit();
             return;
@@ -2001,6 +2016,10 @@ export function initSystemView(app) {
         else setTimeout(warmSmallPrograms, 1500);
     });
     bus.on('gl-restored', warmSmallPrograms);
+    // A flight in or out can't go on without frames: back to the sky, so the panel and the scene agree while it's dark
+    bus.on('gl-lost', () => {
+        if (mode === 'load' || mode === 'enter' || mode === 'exit') exit();
+    });
     // A system kept ready has lost what it compiled
     bus.on('gl-restored', () => {
         if (mode !== 'sky' || !model) return;

@@ -203,12 +203,13 @@ function neutronStarStrengths(body) {
 function blackHoleStrengths(body) {
     const bh = body.black_hole;
     const companion = starStrengths(bh.companion.star); // Infrared and visible see only the companion
+    const quiet = bh.feeding === 'none';                // Nothing falling in: no disc, and only a faint glow
     return {
         radio: bh.jets ? 0.7 : 0,
         ir: companion.ir,
         visible: companion.visible,
-        uv: Math.max(0.55, companion.uv),        // Inner accretion disc
-        xray: 1                                  // The accretion disc: the main way to find one
+        uv: quiet ? companion.uv : Math.max(0.55, companion.uv), // Inner accretion disc
+        xray: quiet ? 0.25 : 1                   // The accretion disc: the main way to find one
     };
 }
 
@@ -378,14 +379,18 @@ function starMags(star, distancePc, fallbackMag) {
     };
 }
 
-// A black hole's X-rays are the gas falling onto it, so they follow how much of its companion it can pull in: most when the star
-// nearly fills the space it has and the orbit is close, some from a hot star's wind, and more onto a heavier hole. A magnitude,
-// over about four from the most starved to the best fed.
+// A black hole's X-rays are the gas falling onto it, so they follow how it is fed (black_hole.feeding, data/dynamics.js): a
+// companion spilling over its Roche lobe feeds a bright disc, a supergiant's wind nearly as well, and a quiet pair hardly at
+// all. A heavier hole shines a little more. A magnitude, over about four from the most starved to the best fed.
 const BH_XRAY_FED = 0.6;           // The best fed: the sky's brightest
 const BH_XRAY_RANGE = 4;
+const BH_XRAY_BY_FEEDING = { roche: 0, wind: 0.5, none: 3.6 };
 
 function blackHoleXray(bh) {
     const companion = bh.companion.star;
+    if (bh.feeding in BH_XRAY_BY_FEEDING) {
+        return BH_XRAY_FED + BH_XRAY_BY_FEEDING[bh.feeding] + 0.4 * (1 - clamp01(Math.log10(bh.mass_Msun / 3)));
+    }
     const fill = (companion.radius_Rsun * 0.00465) / bh.a_AU;
     const wind = 0.5 * smooth(9000, 20000, companion.teff_K);
     const feed = Math.log10(fill) + wind + 0.5 * Math.log10(bh.mass_Msun / 10);

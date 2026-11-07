@@ -46,26 +46,33 @@ export function galacticLatitude(az, alt) {
 }
 
 // Galactic coordinates on the dome: x towards the bulge, on the band at GALACTIC_CENTRE_AZ (core/bands.js), as the Milky Way
-// is drawn (render/layers/background.js); z the north galactic pole; y = z x x, longitude 90, the way the disc turns. In this
-// made-up sky GALACTIC_POLE is the south galactic pole, so the Sun's apex lies below the horizon, away from the opening view.
+// is drawn (render/layers/background.js); y longitude 90, the way the disc turns; z the pole the Sun's apex leans towards,
+// north in our galaxy. This sky is made up, so two signs are free: NORTH_POLE_SIGN 1 puts z at GALACTIC_POLE, and TURN_SIGN 1
+// makes the disc turn towards z x x, as ours does. With both -1 the disc turns towards GALACTIC_POLE x x, so GALACTIC_POLE
+// plays our north pole, and the Sun's slow drift out of the plane (about 7 km/s, which sets its apex 23 degrees off the band)
+// heads the other way, away from it. That is our galaxy with the Sun at the other end of its up-and-down bob through the disc,
+// which it reaches every few tens of millions of years: just as real. Of the four ways round, it gives the most redshift
+// across this sky (data/motions.js), as the owner asked.
+export const NORTH_POLE_SIGN = -1;
+export const TURN_SIGN = -1;
 let galacticAxes = null;
 
 function axes() {
     if (galacticAxes) return galacticAxes;
-    const south = azAltToVec3(GALACTIC_POLE.az, GALACTIC_POLE.alt);
-    const z = [-south[0], -south[1], -south[2]];
+    const pole = azAltToVec3(GALACTIC_POLE.az, GALACTIC_POLE.alt);
+    const z = pole.map((c) => NORTH_POLE_SIGN * c);
     const centreAlt = Math.atan2(
         -Math.cos(GALACTIC_POLE.alt * RAD) * Math.cos((GALACTIC_CENTRE_AZ - GALACTIC_POLE.az) * RAD),
         Math.sin(GALACTIC_POLE.alt * RAD)
     ) / RAD;
     const x = azAltToVec3(GALACTIC_CENTRE_AZ, centreAlt);
-    const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+    const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]].map((c) => TURN_SIGN * c);
     galacticAxes = { x, y, z };
     return galacticAxes;
 }
 
 // Galactic longitude (0 to 360, from the bulge towards the way the disc turns) and latitude (positive towards the north
-// galactic pole, so the opposite sign to galacticLatitude's) of a direction, in degrees
+// galactic pole) of a direction, in degrees
 export function galacticLonLat(az, alt) {
     const v = azAltToVec3(az, alt);
     const { x, y, z } = axes();

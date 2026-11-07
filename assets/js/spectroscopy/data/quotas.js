@@ -19,6 +19,10 @@ export const MIX = {
     radioLobes: 4,                                     // Among all the galaxies
     activeNuclei: 5,
     supernova: { Ia: 8, II: 7 },
+    // How each black hole is fed (data/dynamics.js settleHole): most by a low-mass companion filling its Roche lobe, some by
+    // a massive companion's wind, a few not at all, as among the stellar black holes known in our galaxy
+    blackHoleFeeding: { roche: 14, wind: 6, none: 5 },
+    eclipsingTilted: 5,                                // Detached close pairs turned edge-on (data/dynamics.js tiltEclipses)
     rogue_planet: { gas_giant: 59, sub_neptune: 35, ice_dwarf: 23 },
     giants: { red_giant: 20, red_supergiant: 3, blue_supergiant: 6 },
     population: { I: 401, II: 143, peculiar: 29 },     // Shares of 573 single stars (spec 8.1)
