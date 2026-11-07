@@ -11,7 +11,11 @@
 //   Mapping   xOf(nm), nmOf(x), yOf(flux, 'body'|'ref'), fluxAt(nm, 'body'|'ref'), panes() (all in CSS pixels of the canvas)
 //   Cursor    setCursor(nm|null), getCursor()
 //   Events    onClick(fn(nm, e)), onHover(fn(nm|null, e)), onRangeChange(fn(lo, hi)): each returns a function that removes it
-//   Drawing   addOverlay(fn(ctx, plot)) -> remove, redraw(now?), showLineLabels(on), setAriaLabel(text), dispose()
+//   Drawing   addOverlay(fn(ctx, plot)) -> remove, redraw(now?), showLineLabels(on), labelBand(), setTopCap(note), setAriaLabel(text), dispose()
+//
+// The wheel belongs to the drawer, which it scrolls: the plot fills most of the drawer, so a wheel it kept would stop the
+// panel scrolling just when the pointer is over the plot. Ctrl with the wheel (which is also what a trackpad pinch sends)
+// zooms, as do a touch pinch, a mouse drag up and down, the keys and the panel's buttons.
 //
 // An overlay is drawn after the spectra each time the plot redraws, in CSS pixels; call redraw() when its own state
 // changes. Wavelengths in the visible are coloured with wavelengthToRgb, and wavelengthScale and wavelengthTicks are
@@ -21,6 +25,9 @@
 
 import { SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../core/phys.js';
 import { sig, wavelength, superscript } from '../../core/format.js';
+
+// Said once a visit, the first time someone wheels over the plot
+let wheelNoteShown = false;
 
 export const VISIBLE_LO_NM = 380;
 export const VISIBLE_HI_NM = 750;
@@ -205,6 +212,8 @@ function clamp01(v) {
 // At 4.5, a whole 40,000-sample spectrum of pure noise has about a 1 in 8 chance of a single false feature.
 const OUTLIER_SD = 4.5;
 
+const OVERLAY_DASH = [6, 4];
+
 function isNoisy(sp) {
     return Number.isFinite(sp.snr) && sp.snr > 0;
 }
@@ -242,7 +251,7 @@ function yTicks(top, maxTicks = 3) {
 }
 
 function makeSeries() {
-    return { sp: null, label: '', key: '', cols: null, top: 1, exp: 0, peak: 0, fluxPeak: 0, noiseK: 0, emissive: false, strip: null, paneNote: '' };
+    return { sp: null, label: '', key: '', cols: null, top: 1, exp: 0, peak: 0, fluxPeak: 0, noiseK: 0, emissive: false, strip: null, paneNote: '', capNote: '', capped: false };
 }
 
 function makeColumns(n) {
@@ -283,7 +292,12 @@ export function createPlot(container, opts = {}) {
     cursorCanvas.className = 'spectro-plot-cursor';
     cursorCanvas.setAttribute('aria-hidden', 'true');
 
-    stage.append(canvas, cursorCanvas);
+    const stageNote = document.createElement('div');
+    stageNote.className = 'spectro-plot-tip';
+    stageNote.setAttribute('aria-hidden', 'true');
+    stageNote.hidden = true;
+
+    stage.append(canvas, cursorCanvas, stageNote);
     root.append(readout, stage);
     container.appendChild(root);
 
@@ -542,14 +556,27 @@ export function createPlot(container, opts = {}) {
         // The scale fits the line, with room for most of the noise around it but not for its wildest spikes
         s.peak = peak;
         s.top = peak > 0 ? Math.max(1.06 * linePeak, Math.min(1.02 * peak, 1.25 * linePeak)) : 1;
+        // Asked to: a part of the range that climbs far above the rest doesn't get to squash the rest flat. It runs off
+        // the top instead, and the plot says so.
+        s.capped = false;
+        if (s.capNote && any) {
+            const values = Array.from(c.lineMax).filter((v) => v === v).sort((x, y) => x - y);
+            const cap = 1.8 * values[values.length >> 1];
+            if (cap > 0 && s.top > 1.25 * cap) {
+                s.top = cap;
+                s.capped = true;
+            }
+        }
         // Say so when a range has nothing to show, rather than leave a drawing that looks broken
         s.paneNote = '';
         if (s.emissive ? excess < 1e-3 * s.fluxPeak : (s.sp.mode === 'absorption' && flat)) {
             if (which === 'ref') s.paneNote = 'No lines from this reference in this range';
             // A flat line isn't scaled up to fill the pane, or it would look like a strong signal
             if (s.emissive) s.top = 1.06 * s.fluxPeak;
-        } else if (k > 0 && any && contPeak < 3 * k * Math.sqrt(contPeak) && !s.emissive) {
+        } else if (k > 0 && any && contPeak <= 3 * k * Math.sqrt(contPeak) && !s.emissive) {
             s.paneNote = 'Too faint here to show more than noise';
+            // Nor is noise scaled up to fill the pane, or its spikes would look like lines
+            if (linePeak < 0.01 * s.fluxPeak) s.top = 0.01 * s.fluxPeak;
         }
         paintStrip(s);
     }
@@ -716,7 +743,7 @@ export function createPlot(container, opts = {}) {
         });
     }
 
-    function drawSeries(pane, s, colour, { fill = 0.13, alpha = 1 } = {}) {
+    function drawSeries(pane, s, colour, { fill = 0.13, alpha = 1, dash = null } = {}) {
         const c = s.cols;
         if (!c) return;
         const band = labelBand(pane);
@@ -774,7 +801,8 @@ export function createPlot(container, opts = {}) {
             trace(c.max, c.min);
         }
         ctx.globalAlpha = alpha;
-        ctx.lineWidth = 1.3;
+        ctx.lineWidth = dash ? 1.5 : 1.3;
+        if (dash) ctx.setLineDash(dash);
         trace(c.lineMax, c.lineMin);
         ctx.restore();
     }
@@ -841,6 +869,21 @@ export function createPlot(container, opts = {}) {
         return x + size + 4;
     }
 
+    // A sample of the line itself, for overlay, where the two curves are told apart by being solid or dashed
+    function drawLineKey(x, y, colour, dashed) {
+        const length = 20;
+        ctx.save();
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = 2;
+        if (dashed) ctx.setLineDash(OVERLAY_DASH);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + length, y);
+        ctx.stroke();
+        ctx.restore();
+        return x + length + 4;
+    }
+
     function drawTitle(pane, s, which, unit) {
         const y = pane.titleY + layout.titleH / 2 + 0.5;
         ctx.font = fontOf(11);
@@ -862,13 +905,13 @@ export function createPlot(container, opts = {}) {
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
         const half = pane.w * 0.42;
-        let x = drawKey(pane.x, y, tokens.body, false);
+        let x = drawLineKey(pane.x, y, tokens.body, false);
         ctx.font = fontOf(11.5, 700);
         ctx.fillStyle = tokens.ink;
         const name = ellipsize(series.body.label || 'This object', half - 14);
         ctx.fillText(name, x, y);
         x += ctx.measureText(name).width + 12;
-        x = drawKey(x, y, tokens.ref, true);
+        x = drawLineKey(x, y, tokens.ref, true);
         ctx.font = fontOf(11.5);
         ctx.fillStyle = tokens.ink;
         ctx.fillText(ellipsize(`${series.ref.label || 'Reference'} (own scale)`, pane.x + pane.w - x), x, y);
@@ -1021,6 +1064,23 @@ export function createPlot(container, opts = {}) {
         ctx.fillText(s.paneNote, pane.x + pane.w / 2, y);
     }
 
+    // Where the curve has run off the top, at the top
+    function drawCapNote(pane, s) {
+        if (!s.capped) return;
+        const text = `↑ ${s.capNote}`;
+        ctx.font = fontOf(11);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        const y = pane.y + labelBand(pane) + 9;
+        const w = ctx.measureText(text).width;
+        ctx.fillStyle = tokens.well;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(pane.x + pane.w - w - 8, y - 7, w + 6, 14);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = tokens.ink;
+        ctx.fillText(text, pane.x + pane.w - 5, y);
+    }
+
     function fluxUnit(s) {
         return s.exp ? `relative flux × 10${superscript(s.exp)}` : 'relative flux';
     }
@@ -1069,7 +1129,7 @@ export function createPlot(container, opts = {}) {
             }
         } else {
             const refPane = layout.ref;
-            drawSeries(refPane, ref, tokens.ref, { fill: 0, alpha: 0.78 });
+            drawSeries(refPane, ref, tokens.ref, { fill: 0, alpha: 0.9, dash: OVERLAY_DASH });
             drawOverlayTitle(bodyPane);
             drawOverlayUnit(bodyPane, body);
             drawLineLabels(bodyPane, [{ s: body, ink: tokens.body }, { s: ref, ink: tokens.ref }], labelRows(bodyPane));
@@ -1078,6 +1138,7 @@ export function createPlot(container, opts = {}) {
             drawStrip(bodyPane, body);
             drawStrip(refPane, ref);
         }
+        drawCapNote(bodyPane, body);
         drawAxis(ticks);
 
         overlays.forEach((fn) => {
@@ -1181,7 +1242,7 @@ export function createPlot(container, opts = {}) {
             const touch = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
             add('spectro-readout-hint', touch
                 ? 'Tap to read a value. Drag to pan, pinch to zoom.'
-                : 'Point to read a value. Drag to pan, scroll to zoom.');
+                : 'Point to read a value. Drag to pan, Ctrl + scroll to zoom.');
             canvas.setAttribute('aria-valuenow', String(Math.round(Math.sqrt(lo * hi))));
             canvas.setAttribute('aria-valuetext', `Showing ${wavelength(lo)} to ${wavelength(hi)}`);
             return;
@@ -1348,14 +1409,25 @@ export function createPlot(container, opts = {}) {
         panFrom(lo, hi, fraction);
     }
 
+    // By ratio, so the view keeps its width whatever it passes through and stops flat at either end of the range
     function panFrom(lo0, hi0, fraction) {
-        if (scale.t >= 0.5) {
-            const f = Math.exp(fraction * Math.log(hi0 / lo0));
-            applyRange(lo0 * f, hi0 * f);
-        } else {
-            const d = Math.min(limitHi - hi0, Math.max(limitLo - lo0, fraction * (hi0 - lo0)));
-            applyRange(lo0 + d, hi0 + d);
-        }
+        const f = Math.exp(fraction * Math.log(hi0 / lo0));
+        applyRange(lo0 * f, hi0 * f);
+    }
+
+    // Zooming from where a drag began, about the wavelength it began on
+    function zoomFrom(lo0, hi0, anchorNm, u, factor) {
+        const span = Math.log(hi0 / lo0) * factor;
+        const a = Math.log(anchorNm) - u * span;
+        applyRange(Math.exp(a), Math.exp(a + span));
+    }
+
+    function noteWheel() {
+        if (wheelNoteShown) return;
+        wheelNoteShown = true;
+        stageNote.textContent = 'Hold Ctrl and scroll to zoom the plot';
+        stageNote.hidden = false;
+        setTimeout(() => { stageNote.hidden = true; }, 2600);
     }
 
     // ---------- Pointers ----------
@@ -1461,13 +1533,28 @@ export function createPlot(container, opts = {}) {
                 fireHover(cursorNm, e);
                 return;
             }
-            if (!drag.moved && Math.abs(dx) < (drag.type === 'mouse' ? 3 : 7)) return;
+            const dy = e.clientY - drag.y0;
+            const mouse = drag.type === 'mouse';
+            // A finger going up or down scrolls the drawer, so only a mouse can zoom by dragging
+            const reach = mouse ? Math.max(Math.abs(dx), Math.abs(dy)) : Math.abs(dx);
+            if (!drag.moved && reach < (mouse ? 3 : 7)) return;
+            ensureLayout();
             if (!drag.moved) {
                 drag.moved = true;
                 clearHold();
+                drag.zooms = mouse && Math.abs(dy) > 1.5 * Math.abs(dx);
+                if (drag.zooms) {
+                    const x0 = Math.max(layout.left, Math.min(layout.right, drag.x0));
+                    drag.anchorNm = scale.nmOf(x0);
+                    drag.anchorU = (x0 - layout.left) / layout.plotW;
+                }
             }
-            ensureLayout();
-            panFrom(drag.lo0, drag.hi0, -dx / layout.plotW);
+            if (drag.zooms) {
+                // Up is in, and 120 px is a factor of e
+                zoomFrom(drag.lo0, drag.hi0, drag.anchorNm, drag.anchorU, Math.exp(dy / 120));
+            } else {
+                panFrom(drag.lo0, drag.hi0, -dx / layout.plotW);
+            }
             return;
         }
 
@@ -1533,20 +1620,27 @@ export function createPlot(container, opts = {}) {
     }
 
     function onWheel(e) {
-        e.preventDefault();
-        stopTween();
-        ensureLayout();
         const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
         const dx = e.deltaX * unit;
         const dy = (e.shiftKey && !dx ? 0 : e.deltaY) * unit;
         const sideways = e.shiftKey && !dx ? e.deltaY * unit : dx;
-        if (Math.abs(sideways) > Math.abs(dy)) {
+        const zooming = e.ctrlKey || e.metaKey;
+        if (!zooming && Math.abs(sideways) <= Math.abs(dy)) {
+            // Straight up and down: this is the drawer's, so it scrolls
+            if (dy) noteWheel();
+            return;
+        }
+        e.preventDefault();
+        stopTween();
+        ensureLayout();
+        if (!zooming) {
             panFrom(lo, hi, sideways / layout.plotW);
             return;
         }
         const x = Math.max(layout.left, Math.min(layout.right, localX(e)));
         const u = (x - layout.left) / layout.plotW;
-        zoomAbout(scale.nmOf(x), u, Math.exp(Math.max(-1, Math.min(1, dy * (e.ctrlKey ? 0.01 : 0.0016)))));
+        // A trackpad pinch sends many small steps, a mouse wheel a few big ones
+        zoomAbout(scale.nmOf(x), u, Math.exp(Math.max(-1, Math.min(1, dy * (Math.abs(dy) < 40 ? 0.01 : 0.0016)))));
     }
 
     function onDoubleClick(e) {
@@ -1731,6 +1825,19 @@ export function createPlot(container, opts = {}) {
             redraw();
         },
         lineLabelsShown: () => labelsOn,
+        // How much of the top of the object's pane the line labels take, so that a tool's own marks can sit below them
+        labelBand() {
+            ensureLayout();
+            return labelBand(layout.body);
+        },
+        // note, or '': lets a part of the object's spectrum run off the top, with this said where it does
+        setTopCap(note) {
+            const next = note || '';
+            if (series.body.capNote === next) return;
+            series.body.capNote = next;
+            series.body.key = '';
+            redraw();
+        },
         setAriaLabel(text) {
             canvas.setAttribute('aria-label', text);
         },

@@ -55,12 +55,19 @@ const STANDARD_KEYWORDS = {
     DA: ['white dwarf', 'wd', 'broad hydrogen', 'pressure broadening'], RG: ['red giant', 'giant', 'k5 iii', 'narrow lines']
 };
 
+const DWARF_NOTE = 'A main-sequence star, or dwarf. A giant at the same temperature has narrower lines, so it looks different: try the red giant too.';
+const GIANT_NOTE = 'A giant\'s thin outer layers give narrower lines than a dwarf\'s at the same temperature. This one reference stands for cool giants of every class, and it is cooler than a K5 dwarf.';
+
+// Says which sort of star each standard is, as a dwarf and a giant of one class look quite different
+const stdName = (id) => (STANDARDS[id].luminosity_class === 'V' ? `${id} dwarf (${id} V)` : STANDARD_LABELS[id]);
+
 const std = (id) => ({
     id: `std:${id}`,
-    label: `${STANDARD_LABELS[id]}, ${Math.round(STANDARDS[id].teff_K).toLocaleString('en-GB')} K`,
+    label: `${stdName(id)}, ${Math.round(STANDARDS[id].teff_K).toLocaleString('en-GB')} K`,
     kind: 'standard',
     standard: id,
-    keywords: [id, 'standard star', 'classification', `${STANDARDS[id].class}`, ...STANDARD_KEYWORDS[id]]
+    keywords: [id, 'standard star', 'classification', `${STANDARDS[id].class}`, ...STANDARD_KEYWORDS[id]],
+    ...(id === 'RG' ? { note: GIANT_NOTE } : STANDARDS[id].luminosity_class === 'V' ? { note: DWARF_NOTE } : {})
 });
 
 const lyman = LINES['H I'].filter((l) => l.series === 'Lyman').map((l) => l.w);
@@ -145,7 +152,7 @@ export const REFERENCE_GROUPS = [
             label: 'Black body (adjustable)',
             kind: 'blackbody',
             T_min_K: 1000,
-            T_max_K: 50000,
+            T_max_K: 150000,
             T_default_K: 5800,
             keywords: ['black body', 'blackbody', 'planck', 'wien', 'continuum', 'temperature', 'thermal']
         }]

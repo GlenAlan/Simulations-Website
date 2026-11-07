@@ -70,9 +70,12 @@ export function fitThroughOrigin(xs, ys) {
 
 const FROM_SUPER = { '⁻': '-', '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
 
-// What students type: "5,100", "3.2e-9", "3.2 × 10^-9", "3.2x10⁻⁹". NaN for anything else.
+// What students type: "5,100", "3.2e-9", "3.2 × 10^-9", "3.2x10⁻⁹". NaN for anything else. A comma only counts as a
+// thousands separator: "1,2,3" and "5.800,5" are slips, and they don't get to pass as 123 and 5.8005.
 export function parseNumber(text) {
-    let t = String(text).trim().toLowerCase().replace(/[−–]/g, '-').replace(/[,\s]/g, '');
+    let t = String(text).trim().toLowerCase().replace(/[−–]/g, '-');
+    if (t.includes(',') && !/^[-+]?\d{1,3}(,\d{3})+(\.\d*)?(\s*[ex×*·].*)?$/.test(t)) return NaN;
+    t = t.replace(/[,\s]/g, '');
     t = t.replace(/[⁻⁰¹²³⁴-⁹]+/g, (m) => `^${[...m].map((c) => FROM_SUPER[c]).join('')}`);
     t = t.replace(/[x×*·]10\^?([-+]?\d+)$/, 'e$1');
     t = t.replace(/^10\^([-+]?\d+)$/, '1e$1');
@@ -394,23 +397,46 @@ export function nearestPoint(points, pos) {
 
 // ---------- The card that plots the current object, asking for whatever hasn't been measured yet ----------
 
-// fields: [{ key (in the measurement store), label, unit, scale (typed unit to stored unit), placeholder, hint,
-//            allowNegative, extra (cleared alongside a typed value, as a tool's uncertainty no longer applies),
-//            show(m) -> text of a measured value }]
-// options: title(code), status(code, m), working(code, m) -> lines or null, isPlotted(code), onAdd(code),
-//          onRemove(code), onHint(), addLabel, removeLabel
+// fields: [{ key (in the measurement store), label, unit, scale (typed unit to stored unit), placeholder, tool (its id),
+//            toolName (its button's words), min, max, rangeText (what can be typed, as words), allowNegative,
+//            extra (cleared alongside a typed value, as a tool's uncertainty no longer applies), show(m) -> text of a measured value }]
+// options: status(code, m), working(code, m) -> lines or null, isPlotted(code), onAdd(code), onRemove(code),
+//          onTool(toolId), addLabel, removeLabel, workingParent (where the working goes, away from the buttons)
+//
+// What a student typed is kept with the measurement, under typed, so a reload can tell it from a tool's reading.
+//
+// The Plot button comes before everything that can appear or vanish while values are being typed, so that it stays under
+// a pointer already on its way to it when the box being typed in loses focus.
 export function createMeasureCard(parent, options) {
     const { fields } = options;
-    const title = el('p', { class: 'spectro-fig-card-title' });
+    const title = el('p', { class: 'spectro-fig-card-title', tabindex: '-1' });
     const status = el('p', { class: 'spectro-fig-card-status' });
-    const rows = el('div', { class: 'spectro-fig-rows', hidden: true });
+    const rows = el('div', { class: 'spectro-fig-rows' });
     const working = el('p', { class: 'spectro-fig-working', hidden: true });
     const message = el('p', { class: 'spectro-fig-message', role: 'status', hidden: true });
-    const button = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main' });
-    const root = el('div', { class: 'spectro-fig-card' }, title, status, rows, working, message, button);
-    parent.appendChild(root);
+    const button = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main', hidden: true });
 
-    const typedByCode = new Map();  // What this card was told by hand, so it can tell that from a tool's reading
+    const toolButtons = new Map();
+    fields.forEach((field) => {
+        if (!field.tool || toolButtons.has(field.tool)) return;
+        const asks = fields.filter((f) => f.tool === field.tool).map((f) => f.label.toLowerCase()).join(' and ');
+        toolButtons.set(field.tool, el('button', {
+            type: 'button',
+            class: 'spectro-fig-tool',
+            text: field.toolName,
+            'aria-label': `Measure ${asks} with ${field.toolName}, in the Spectrum tab`,
+            onclick: () => options.onTool(field.tool)
+        }));
+    });
+    const measureWord = el('span', { class: 'spectro-fig-measure-word', text: 'Measure with' });
+    const typeButton = el('button', { type: 'button', class: 'spectro-fig-hint', text: 'or type them' });
+    const measure = el('div', { class: 'spectro-fig-measure' }, measureWord, ...toolButtons.values(), typeButton);
+
+    const heading = el('div', { class: 'spectro-fig-card-head' }, title, status);
+    const root = el('div', { class: 'spectro-fig-card' }, heading, rows, el('div', { class: 'spectro-fig-actions' }, button, measure), message);
+    parent.appendChild(root);
+    (options.workingParent || root).appendChild(working);
+
     const inputs = new Map();
     let code = null;
     let formOpen = false;
@@ -418,43 +444,50 @@ export function createMeasureCard(parent, options) {
 
     const stored = () => getMeasurement(code) || {};
     const has = (m, field) => Number.isFinite(m[field.key]);
-    const isTyped = (m, field) => {
-        const typed = typedByCode.get(code);
-        return Boolean(typed) && typed[field.key] !== undefined && typed[field.key] === m[field.key];
-    };
+    const isTyped = (m, field) => Boolean(m.typed) && m.typed[field.key] !== undefined && m.typed[field.key] === m[field.key];
+
+    function setAccepted(tick, on) {
+        tick.classList.toggle('is-on', on);
+    }
 
     function commit(field, input, errorLine, tick) {
         const text = input.value.trim();
-        const typed = typedByCode.get(code) || {};
+        const m = stored();
+        const typed = { ...(m.typed || {}) };
         if (text === '') {
             errorLine.hidden = true;
             input.removeAttribute('aria-invalid');
-            tick.hidden = true;
+            setAccepted(tick, false);
             if (typed[field.key] !== undefined) {
                 delete typed[field.key];
                 committing = true;
-                recordMeasurement(code, { [field.key]: undefined, ...field.extra });
+                recordMeasurement(code, { [field.key]: undefined, ...field.extra, typed });
                 committing = false;
             }
             return true;
         }
         const value = parseNumber(text);
-        if (!Number.isFinite(value) || (!field.allowNegative && value <= 0)) {
+        const size = Math.abs(value);
+        const wrongKind = !Number.isFinite(value) || (!field.allowNegative && value <= 0);
+        // Numbers the plot can't hold would only come back as Infinity
+        const outOfRange = !wrongKind && ((field.max !== undefined && size > field.max) || (field.min !== undefined && size < field.min));
+        if (wrongKind || outOfRange) {
             input.setAttribute('aria-invalid', 'true');
-            errorLine.textContent = `Enter a ${field.allowNegative ? '' : 'positive '}number, such as ${field.placeholder}`;
+            errorLine.textContent = outOfRange
+                ? `That is too far off this plot. Enter ${field.rangeText}.`
+                : `Enter a ${field.allowNegative ? '' : 'positive '}number, such as ${field.placeholder}`;
             errorLine.hidden = false;
-            tick.hidden = true;
+            setAccepted(tick, false);
             return false;
         }
         input.removeAttribute('aria-invalid');
         errorLine.hidden = true;
-        tick.hidden = false;
+        setAccepted(tick, true);
         const stores = value * (field.scale || 1);
-        if (typed[field.key] === stores && stored()[field.key] === stores) return true;
+        if (typed[field.key] === stores && m[field.key] === stores) return true;
         typed[field.key] = stores;
-        typedByCode.set(code, typed);
         committing = true;
-        recordMeasurement(code, { [field.key]: stores, ...field.extra });
+        recordMeasurement(code, { [field.key]: stores, ...field.extra, typed });
         committing = false;
         return true;
     }
@@ -466,10 +499,11 @@ export function createMeasureCard(parent, options) {
             id,
             inputmode: field.allowNegative ? 'text' : 'decimal',
             autocomplete: 'off',
-            placeholder: field.placeholder
+            placeholder: `e.g. ${field.placeholder}`
         });
         if (has(m, field)) input.value = String(Number((m[field.key] / (field.scale || 1)).toPrecision(6)));
-        const tick = el('span', { class: 'spectro-fig-tick', hidden: !has(m, field) }, '✓ Accepted');
+        // Takes its room from the start, so that it appearing moves nothing
+        const tick = el('span', { class: `spectro-fig-tick spectro-fig-accepted${has(m, field) ? ' is-on' : ''}` }, '✓ Accepted');
         const errorLine = el('p', { class: 'spectro-fig-error', role: 'alert', hidden: true });
         input.addEventListener('change', () => commit(field, input, errorLine, tick));
         input.addEventListener('keydown', (event) => {
@@ -484,8 +518,7 @@ export function createMeasureCard(parent, options) {
         return el('div', { class: 'spectro-fig-row spectro-fig-row-input' },
             el('label', { for: id, text: field.label }),
             el('span', { class: 'spectro-fig-inputline' }, input, el('span', { class: 'spectro-fig-unit', text: field.unit }), tick),
-            errorLine,
-            el('button', { type: 'button', class: 'spectro-fig-hint', text: field.hint, onclick: () => options.onHint(field) }));
+            errorLine);
     }
 
     function measuredRow(field, m) {
@@ -504,13 +537,16 @@ export function createMeasureCard(parent, options) {
         const m = stored();
         rows.replaceChildren();
         inputs.clear();
-        rows.hidden = !formOpen && !fields.some((f) => has(m, f));
-        if (rows.hidden) return;
         fields.forEach((field) => {
             if (has(m, field) && !isTyped(m, field)) rows.appendChild(measuredRow(field, m));
             else if (formOpen || has(m, field)) rows.appendChild(inputRow(field, m));
             else rows.appendChild(missingRow(field));
         });
+    }
+
+    function missingFields() {
+        const m = stored();
+        return fields.filter((f) => !has(m, f));
     }
 
     function renderOutcome() {
@@ -521,10 +557,19 @@ export function createMeasureCard(parent, options) {
         working.hidden = !lines;
         working.replaceChildren(...(lines || []).map((line) => el('span', { text: line })));
         const plotted = options.isPlotted(code);
-        button.textContent = plotted ? options.removeLabel : options.addLabel;
-        button.setAttribute('aria-label', `${plotted ? options.removeLabel : options.addLabel}: ${code}`);
+        const missing = missingFields();
+        const label = plotted ? options.removeLabel : options.addLabel;
+        button.textContent = label;
+        button.setAttribute('aria-label', `${label}: ${code}`);
+        button.hidden = !plotted && !formOpen && missing.length > 0;
+        button.classList.toggle('spectro-fig-button-main', !plotted);
+        toolButtons.forEach((toolButton, tool) => {
+            toolButton.hidden = plotted || !missing.some((f) => f.tool === tool);
+        });
+        const measuring = !plotted && missing.length > 0;
+        measure.hidden = !measuring;
+        typeButton.hidden = formOpen;
         // The "still needed" line stays true as values arrive
-        const missing = fields.filter((f) => !has(m, f));
         if (plotted || missing.length === 0) message.hidden = true;
         else message.textContent = stillNeeded(missing);
     }
@@ -532,6 +577,16 @@ export function createMeasureCard(parent, options) {
     function stillNeeded(missing) {
         return `Still needed: ${missing.map((f) => f.label.toLowerCase()).join(', ')}.`;
     }
+
+    function openForm(missing) {
+        formOpen = true;
+        renderRows();
+        renderOutcome();
+        const first = inputs.get(missing[0]);
+        if (first) first.input.focus();
+    }
+
+    typeButton.addEventListener('click', () => openForm(missingFields()));
 
     button.addEventListener('click', () => {
         if (options.isPlotted(code)) {
@@ -541,19 +596,14 @@ export function createMeasureCard(parent, options) {
         // A value still in its box counts, even if the box hasn't lost focus yet
         const allGood = [...inputs.entries()].every(([field, { input, errorLine, tick }]) => commit(field, input, errorLine, tick));
         if (!allGood) return;
-        const m = stored();
-        const missing = fields.filter((f) => !has(m, f));
+        const missing = missingFields();
         if (missing.length === 0) {
             options.onAdd(code);
             return;
         }
-        formOpen = true;
-        renderRows();
-        renderOutcome();
         message.textContent = stillNeeded(missing);
         message.hidden = false;
-        const first = inputs.get(missing[0]);
-        if (first) first.input.focus();
+        openForm(missing);
     });
 
     return {
@@ -575,21 +625,87 @@ export function createMeasureCard(parent, options) {
             if (!committing) renderRows();
             renderOutcome();
         },
+        // Where focus goes on arriving at this card: the next thing to press
+        focusNext() {
+            const next = [...toolButtons.values(), button].find((b) => !b.hidden);
+            (next || title).focus();
+        },
+        focusTitle() {
+            title.focus();
+        },
         setHidden(hidden) { root.hidden = hidden; }
     };
 }
 
+// ---------- Plots that last through a reload ----------
+
+// The browser may refuse storage, in a private window or on a locked-down school machine: the plot then just lasts as long
+// as the page.
+export function readSaved(key) {
+    try {
+        return JSON.parse(localStorage.getItem(key));
+    } catch (err) {
+        return null;
+    }
+}
+
+export function writeSaved(key, value) {
+    try {
+        if (value) localStorage.setItem(key, JSON.stringify(value));
+        else localStorage.removeItem(key);
+    } catch (err) {
+        // Nothing to be done: see above
+    }
+}
+
 // ---------- The list of plotted objects ----------
 
-// focusAfterLast() names what takes keyboard focus when the last row goes
-export function createPlottedList(parent, heading, focusAfterLast) {
+// focusAfterLast() names what takes keyboard focus when the last row goes. onClear, if given, adds a way to clear the lot,
+// which asks first: it can be half an hour's work.
+export function createPlottedList(parent, heading, focusAfterLast, onClear) {
     const list = el('ul', { class: 'spectro-fig-list' });
-    const root = el('div', { class: 'spectro-fig-listgroup', hidden: true },
-        el('p', { class: 'sim-control-group-label', text: heading }), list);
+    const clearButton = el('button', { type: 'button', class: 'spectro-fig-hint', text: 'Clear all', hidden: !onClear });
+    const sure = el('span', { class: 'spectro-fig-sure', hidden: true });
+    const head = el('div', { class: 'spectro-fig-listhead' }, el('p', { class: 'sim-control-group-label', text: heading }), clearButton, sure);
+    const root = el('div', { class: 'spectro-fig-listgroup', hidden: true }, head, list);
     parent.appendChild(root);
+    let shownRows = 0;
+
+    function askSure(on) {
+        sure.hidden = !on;
+        clearButton.hidden = on || !onClear;
+    }
+
+    clearButton.addEventListener('click', () => {
+        sure.replaceChildren(
+            el('span', { text: `Clear all ${shownRows}?` }),
+            el('button', {
+                type: 'button',
+                class: 'spectro-fig-hint',
+                text: 'Yes, clear',
+                onclick: () => {
+                    askSure(false);
+                    onClear();
+                    focusAfterLast().focus();
+                }
+            }),
+            el('button', {
+                type: 'button',
+                class: 'spectro-fig-hint',
+                text: 'Keep them',
+                onclick: () => {
+                    askSure(false);
+                    clearButton.focus();
+                }
+            }));
+        askSure(true);
+        sure.querySelector('button').focus();
+    });
+
     return {
         // rows: [{ key, badge, icon, code, detail, current, onSelect, onRemove }]
         update(rows) {
+            shownRows = rows.length;
             root.hidden = rows.length === 0;
             const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
             list.replaceChildren(...rows.map((row) => el('li', { class: row.current ? 'is-current' : null },

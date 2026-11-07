@@ -1,7 +1,8 @@
 // The reference picker: one grouped, searchable list (spec 10.3), a black-body temperature slider, a slider that
 // Doppler-shifts the reference to line it up with the object, and the line labels switch.
 //
-//   const picker = createRefPicker(container, { onChange(state), onLabels(on), onOpenChange(open), onFrame(lo, hi) })
+//   const picker = createRefPicker(container, { beside, onChange(state), onLabels(on), onOpenChange(open), onFrame(lo, hi) })
+//   beside is an element for the row with the line labels switch
 //   picker.state() -> { id, item, T, z, shift_kms, labels }   item is null for "No reference"
 //   picker.setEntity(resolved)   sets the shift slider's range for this kind of object and zeroes it
 //   picker.setView(lo, hi)       the range on show: a reference with a range of its own offers to go there when it's elsewhere
@@ -27,6 +28,27 @@ function norm(text) {
         .replace(/β/g, 'b')
         .replace(/γ/g, 'g')
         .replace(/δ/g, 'd');
+}
+
+function wordsOf(text) {
+    return norm(text).split(/[^a-z0-9.+]+/).filter(Boolean);
+}
+
+// How well one typed word fits an entry, best first: a word of its name, the start of one, its group, a hidden keyword,
+// then anywhere in its name. A hidden keyword has to match from its start, or "si" would find "emission" in everything;
+// one or two letters are too few to go on for the last two, so they have to be the whole keyword.
+function wordScore(entry, word) {
+    const short = word.length < 3;
+    if (entry.labelWords.includes(word)) return 0;
+    if (entry.labelWords.some((w) => w.startsWith(word))) return 1;
+    if (entry.groupWords.some((w) => w.startsWith(word))) return 2;
+    if (entry.keyWords.some((w) => (short ? w === word : w.startsWith(word)))) return 3;
+    if (!short && entry.labelText.includes(word)) return 4;
+    return Infinity;
+}
+
+function entryScore(entry, words) {
+    return words.reduce((worst, word) => Math.max(worst, wordScore(entry, word)), 0);
 }
 
 function make(tag, props = {}, children = []) {
@@ -101,14 +123,20 @@ function repeating(button, step) {
     button.addEventListener('click', (e) => { if (e.detail === 0) step(); });
 }
 
-export function createRefPicker(container, { onChange = () => {}, onLabels = () => {}, onOpenChange = () => {}, onFrame = () => {} } = {}) {
+export function createRefPicker(container, { beside = null, onChange = () => {}, onLabels = () => {}, onOpenChange = () => {}, onFrame = () => {} } = {}) {
     const uid = `spectroRef${++nextId}`;
 
     const allItems = [];
     REFERENCE_GROUPS.forEach((group) => {
         group.items.forEach((item) => {
-            const words = [item.label, group.label, item.species, item.id, ...(item.keywords || [])];
-            allItems.push({ item, group, text: norm(words.filter(Boolean).join(' ')) });
+            allItems.push({
+                item,
+                group,
+                labelText: norm(item.label),
+                labelWords: wordsOf(item.label),
+                groupWords: wordsOf(group.label),
+                keyWords: wordsOf([item.species, item.id, ...(item.keywords || [])].filter(Boolean).join(' '))
+            });
         });
     });
     const blackBody = (allItems.find((entry) => entry.item.kind === 'blackbody') || {}).item || {};
@@ -175,7 +203,8 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
     const frameButton = make('button', { type: 'button', class: 'spectro-text-button spectro-ref-frame', hidden: true });
     const refNote = make('p', { class: 'spectro-hint', hidden: true });
 
-    const root = make('div', { class: 'spectro-ref' }, [label, row, list, status, frameButton, refNote, tRow, labelsRow, shiftDetails]);
+    const optionsRow = make('div', { class: 'spectro-ref-options' }, beside ? [beside, labelsRow] : [labelsRow]);
+    const root = make('div', { class: 'spectro-ref' }, [label, row, list, status, frameButton, refNote, tRow, optionsRow, shiftDetails]);
     container.appendChild(root);
 
     // ---------- The list ----------
@@ -223,8 +252,15 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
     }
 
     function renderList(query) {
-        const tokens = norm(query).split(/\s+/).filter(Boolean);
-        const matches = allItems.filter((entry) => tokens.every((t) => entry.text.includes(t)));
+        const tokens = wordsOf(query);
+        const scored = allItems
+            .map((entry) => ({ entry, score: entryScore(entry, tokens) }))
+            .filter(({ score }) => score < Infinity);
+        // The best matches come first, in the group that holds them, so that Enter takes what's at the top
+        const groupScore = (group) => scored.reduce((best, { entry, score }) => (entry.group === group ? Math.min(best, score) : best), Infinity);
+        const groups = REFERENCE_GROUPS
+            .map((group, order) => ({ group, order, score: groupScore(group) }))
+            .sort((a, b) => a.score - b.score || a.order - b.order);
         list.replaceChildren();
         shown = [];
         const addOption = (item, parent) => {
@@ -240,13 +276,13 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
             shown.push({ item, el: option });
         };
         if (!tokens.length) addOption(NONE, list);
-        REFERENCE_GROUPS.forEach((group, g) => {
-            const inGroup = matches.filter((entry) => entry.group === group);
+        groups.forEach(({ group, order }) => {
+            const inGroup = scored.filter(({ entry }) => entry.group === group).sort((a, b) => a.score - b.score);
             if (!inGroup.length) return;
-            const headingId = `${uid}Group${g}`;
+            const headingId = `${uid}Group${order}`;
             const heading = make('div', { id: headingId, class: 'spectro-ref-heading', role: 'presentation', text: group.label });
             const wrap = make('div', { role: 'group', 'aria-labelledby': headingId }, [heading]);
-            inGroup.forEach((entry) => addOption(entry.item, wrap));
+            inGroup.forEach(({ entry }) => addOption(entry.item, wrap));
             list.appendChild(wrap);
         });
         if (!shown.length) {
@@ -285,7 +321,17 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
         setActive(shown.findIndex((entry) => entry.item.id === state.id));
         onOpenChange(true);
         document.addEventListener('pointerdown', onOutsidePress, true);
-        list.scrollIntoView({ block: 'nearest' });
+        fitList();
+    }
+
+    // As many rows as the drawer has room for
+    function fitList() {
+        let scroller = list.parentElement;
+        while (scroller && scroller !== document.body && !/auto|scroll/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+        if (!scroller || scroller === document.body) return;
+        const room = scroller.getBoundingClientRect().bottom - list.getBoundingClientRect().top - 10;
+        list.style.maxHeight = `${Math.max(132, Math.min(room, 500))}px`;
+        if (shown[active]) setActive(active);
     }
 
     function close() {
@@ -424,6 +470,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
         close();
         if (setChoice(allItems[nextAt].item.id)) emit();
         syncInput();
+        status.textContent = `Reference: ${currentLabel()}`;
     }
 
     prev.addEventListener('click', () => step(-1));
