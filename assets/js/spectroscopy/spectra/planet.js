@@ -115,7 +115,7 @@ function drawPlanetAbsorption(A, grid, planet, factor, gases = gasesOf(planet), 
         if (atom && LINES[atom]) {
             // Atoms in a hot atmosphere: only the ground-state lines, narrow cores on far-reaching pressure wings
             const strength = 0.95 * (1 - Math.exp(-Math.sqrt(ppm * Math.min(pressure, 5))));
-            const prof = makeProfile({ sigma: 3, a: 350, R: grid.R });
+            const prof = makeProfile({ sigma: 3, a: 1200, R: grid.R });
             LINES[atom].forEach((line) => {
                 if ((line.ei ?? 0) > 0.1 || line.forbidden) return;
                 const d = strength * (line.s ?? 1);

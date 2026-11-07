@@ -16,6 +16,9 @@
 // photometer(entity)         -> { flux_Wm2, err_Wm2, distance_pc, distance_ly }: a measured brightness, stable per object
 // timeVarying(entity)        -> null, or { kind, period_days | duration_days, ... } for the panel's playback
 // lightCurve(entity, opts)   -> for a supernova: { t_days, mag, rel_flux, peak_mag, t_peak_days, t_first_light_days }
+//
+// The Wien tool should use blackBodyPeak(spectrum) from spectra/peak.js, on a spectrum across the whole range: smoothing
+// a spectrum and taking its highest point misses the true peak by more than 3% for a quarter of the sky's stars.
 
 import { SPECTRUM_LO_NM, SPECTRUM_HI_NM, R_OVERVIEW, LY_PER_PC, wienPeakNm } from '../core/phys.js';
 import { hashString } from '../core/rng.js';
@@ -89,19 +92,21 @@ function buildSpectrum(entity, grid, opts) {
     }
 }
 
+const LINE_MIN_DEPTH = 0.01;
+
 // How deep a line has to be for a student to see it through the noise at its own wavelength
 function visibleLines(spec, clean, grid, noise) {
     const shown = [];
     const { snr, fRef } = spec;
     for (const line of spec.lines) {
-        let needed = 0.02;
+        let needed = LINE_MIN_DEPTH;
         if (noise && Number.isFinite(snr)) {
             const i = Math.max(0, Math.min(grid.n - 1, Math.round((Math.log(line.obs_nm) - grid.lnLo) / grid.step)));
             const level = Math.max(1e-12, spec.continuum[i] > 0 ? spec.continuum[i] : clean[i]);
             if (line.type === 'em') {
                 needed = (2.5 * Math.sqrt(level * fRef)) / snr;
             } else {
-                needed = Math.max(0.02, 2.5 / (snr * Math.sqrt(level / Math.max(1e-30, fRef))));
+                needed = Math.max(LINE_MIN_DEPTH, 2.5 / (snr * Math.sqrt(level / Math.max(1e-30, fRef))));
             }
         }
         if (line.depth >= needed) shown.push(line);
@@ -237,9 +242,9 @@ function systemTiming(body) {
     const shortest = periods[0];
     switch (body.architecture) {
     case 'figure_eight':
-        return { kind: 'figure_eight', period_days: shortest ?? body.period_days ?? DAYS_PER_YEAR };
+        return { kind: 'figure_eight', period_days: body.figure_eight?.period_days ?? shortest ?? DAYS_PER_YEAR };
     case 'double_double':
-        return { kind: 'double_double', period_days: shortest ?? 3.5, periods_days: periods };
+        return { kind: 'double_double', period_days: shortest ?? 3.5, periods_days: periods, pairs: body.pairs || null };
     case 'hierarchical_triple':
         return { kind: 'hierarchical_triple', period_days: shortest, periods_days: periods };
     default:

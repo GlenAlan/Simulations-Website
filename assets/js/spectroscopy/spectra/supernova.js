@@ -98,7 +98,15 @@ const phaseOf = (body, t) => (body.supernova.phase0_days ?? 0) + t;
 export function supernovaMag(body, t) {
     const phase = phaseOf(body, t);
     if (phase < FIRST_LIGHT) return Infinity;
-    return body.supernova.peak_mag - 2.5 * Math.log10(Math.max(0.001, supernovaBandsAt(body.supernova, phase).visible));
+    return body.supernova.peak_mag - 2.5 * Math.log10(Math.max(0.001, explosionLight(body.supernova, phase)));
+}
+
+// The band table's visible light, 1 at peak. Later on that rises again as the sky draws the spreading filaments of the
+// remnant, but those aren't the explosion's own light, so after peak this curve only ever falls.
+function explosionLight(sn, phase) {
+    let light = supernovaBandsAt(sn, phase).visible;
+    for (let p = 0; p < phase; p += 10) light = Math.min(light, supernovaBandsAt(sn, p).visible);
+    return light;
 }
 
 export function supernovaSpectrum(body, grid, opts) {
@@ -141,8 +149,9 @@ export function supernovaSpectrum(body, grid, opts) {
         const atRest = rest * factor;
         if (depth > 0) {
             mulLine(A, grid, trough, depth, shape);
+            // An absorption dip needs a continuum to absorb, so it fades from view as the continuum does
             if (trough >= grid.lo && trough <= grid.hi) {
-                lines.push({ rest_nm: rest, obs_nm: trough, species, label, depth: depth * shape.peak, type: 'abs' });
+                lines.push({ rest_nm: rest, obs_nm: trough, species, label, depth: depth * shape.peak * (contWeight / peak), type: 'abs' });
             }
         }
         if (emit > 0) {

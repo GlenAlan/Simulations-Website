@@ -140,8 +140,8 @@ export function quasarSpectrum(body, grid) {
     for (let k = 0; k < clouds; k++) {
         const u = 0.5 + 0.5 * Math.tanh(gaussAt(seed, 2 * k));
         const obs = lyman + (lyAlpha - lyman) * u;
-        const depth = Math.min(0.95, 0.2 + 0.25 * Math.abs(gaussAt(seed, 2 * k + 1)));
-        mulLine(forest, grid, obs, (depth * shape.table[0] ** -1) * 0.5, shape);
+        const depth = Math.min(0.9, 0.2 + 0.2 * Math.abs(gaussAt(seed, 2 * k + 1)));
+        mulLine(forest, grid, obs, depth, shape);
     }
     for (let i = 0; i < n; i++) flux[i] *= forest[i];
 

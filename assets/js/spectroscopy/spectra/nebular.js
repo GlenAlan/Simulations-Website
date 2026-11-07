@@ -204,7 +204,7 @@ export function cometSpectrum(body, grid) {
         const obs = line.w * factor;
         const band = bandFor(line);
         if (band) addBand(flux, grid, band, amp, factor);
-        else addLine(flux, grid, obs, peakHeight(2, amp * 0.7), narrow);
+        else addLine(flux, grid, obs, peakHeight(2, amp * 2), narrow); // On top of the Sun's own deep sodium lines
         if (obs >= grid.lo && obs <= grid.hi) {
             lines.push({ rest_nm: line.w, obs_nm: obs, species: COMET_SPECIES[line.label] || line.label, label: line.label, depth: amp, type: 'em' });
         }

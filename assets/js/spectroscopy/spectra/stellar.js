@@ -30,27 +30,27 @@ const SPECIES = {
     'He I': row(20000, 0.085, 0.16, 0.8, 70, 0.3),
     'He II': row(45000, 0.1, 0.25, 0.75, 90, 0.3),
     'Li I': row(4200, 0.1, 0.1, 0.15, 2),
-    'C I': row(7500, 0.1, 0.12, 0.45, 3),
-    'C II': row(18000, 0.09, 0.1, 0.5, 4),
-    'C III': row(30000, 0.08, 0.1, 0.55, 4),
-    'C IV': row(42000, 0.09, 0.14, 0.6, 5),
-    'N I': row(9000, 0.09, 0.1, 0.4, 3),
-    'N II': row(22000, 0.08, 0.09, 0.5, 4),
-    'N III': row(34000, 0.08, 0.1, 0.55, 4),
-    'N V': row(45000, 0.08, 0.14, 0.6, 5),
-    'O I': row(7500, 0.12, 0.1, 0.7, 3),
-    'O II': row(25000, 0.07, 0.09, 0.55, 4),
-    'O III': row(38000, 0.07, 0.1, 0.55, 4),
-    'Na I': row(3800, 0.13, 0.16, 0.95, 8),
-    'Mg I': row(4500, 0.13, 0.16, 0.85, 4),
-    'Mg II': row(9500, 0.16, 0.16, 0.8, 6),
-    'Si I': row(5000, 0.12, 0.12, 0.5, 3),
-    'Si II': row(12000, 0.12, 0.12, 0.7, 4),
-    'Si III': row(20000, 0.08, 0.1, 0.55, 4),
-    'Si IV': row(28000, 0.07, 0.1, 0.6, 5),
-    'K I': row(3200, 0.12, 0.12, 0.8, 6),
-    'Ca I': row(3700, 0.11, 0.14, 0.85, 4),
-    'Ca II': row(5000, 0.25, 0.13, 0.97, 4),
+    'C I': row(7500, 0.1, 0.12, 0.45, 2),
+    'C II': row(18000, 0.09, 0.1, 0.5, 2),
+    'C III': row(30000, 0.08, 0.1, 0.55, 2),
+    'C IV': row(42000, 0.09, 0.14, 0.6, 2),
+    'N I': row(9000, 0.09, 0.1, 0.4, 2),
+    'N II': row(22000, 0.08, 0.09, 0.5, 2),
+    'N III': row(34000, 0.08, 0.1, 0.55, 2),
+    'N V': row(45000, 0.08, 0.14, 0.6, 2),
+    'O I': row(7500, 0.12, 0.1, 0.7, 2),
+    'O II': row(25000, 0.07, 0.09, 0.55, 2),
+    'O III': row(38000, 0.07, 0.1, 0.55, 2),
+    'Na I': row(3800, 0.13, 0.16, 0.95, 2),
+    'Mg I': row(4500, 0.13, 0.16, 0.85, 2),
+    'Mg II': row(9500, 0.16, 0.16, 0.8, 2),
+    'Si I': row(5000, 0.12, 0.12, 0.5, 2),
+    'Si II': row(12000, 0.12, 0.12, 0.7, 2),
+    'Si III': row(20000, 0.08, 0.1, 0.55, 2),
+    'Si IV': row(28000, 0.07, 0.1, 0.6, 2),
+    'K I': row(3200, 0.12, 0.12, 0.8, 2),
+    'Ca I': row(3700, 0.11, 0.14, 0.85, 2),
+    'Ca II': row(5000, 0.25, 0.12, 0.97, 2),
     'Ti I': row(3500, 0.12, 0.1, 0.6, 2),
     'Ti II': row(6500, 0.13, 0.12, 0.6, 2),
     'Fe I': row(4500, 0.13, 0.15, 0.85, 2),
@@ -60,7 +60,7 @@ const SPECIES = {
 // The few strong lines whose wings run far past a normal metal line's: [species, rest nm, Lorentz half-width (km/s)]
 const WIDE_LINES = [
     ['Ca II', 393.366, 500], ['Ca II', 396.847, 420], ['Ca II', 849.802, 60], ['Ca II', 854.209, 120], ['Ca II', 866.214, 90],
-    ['Ca I', 422.673, 60], ['Na I', 588.995, 16], ['Na I', 589.592, 13], ['K I', 766.49, 20], ['K I', 769.896, 15],
+    ['Ca I', 422.673, 60], ['Na I', 588.995, 24], ['Na I', 589.592, 20], ['K I', 766.49, 20], ['K I', 769.896, 15],
     ['Mg I', 516.733, 18], ['Mg I', 517.268, 30], ['Mg I', 518.361, 40], ['Mg II', 279.553, 200], ['Mg II', 280.271, 170]
 ];
 
@@ -149,7 +149,7 @@ function starBands(star) {
     const tio = 1 / (1 + Math.exp((T - 3450) / 170));
     return [
         ['TiO', 0.9 * tio * metal('Ti')],
-        ['CH', 0.5 * bell(T, 5000, 0.12, 0.12) * metal('C')],
+        ['CH', 0.5 * bell(T, 4800, 0.12, 0.08) * metal('C')],
         ['CN', 0.3 * bell(T, 4500, 0.1, 0.1) * metal('N')],
         ['MgH', 0.4 * bell(T, 4000, 0.08, 0.08) * dwarfness * metal('Mg')],
         ['CaH', 0.45 * bell(T, 3200, 0.07, 0.08) * dwarfness * metal('Ca')]
@@ -167,9 +167,11 @@ function buildModel(star, R, sigmaExtra) {
     const vsini = star.vsini_kms ?? 0;
     const wd = isWhiteDwarf(star);
     const shapes = new Map();
+    // Wings are rounded to about 20% steps, so that a star needs a few dozen shapes rather than one per line
     const shapeFor = (sigma, a) => {
-        const key = `${sigma.toFixed(2)}|${a.toFixed(1)}`;
-        if (!shapes.has(key)) shapes.set(key, makeProfile({ sigma, a, vsini, R }));
+        const rounded = a > 0.05 ? 10 ** (Math.round(Math.log10(a) * 12) / 12) : 0;
+        const key = `${sigma.toFixed(1)}|${rounded.toFixed(3)}`;
+        if (!shapes.has(key)) shapes.set(key, makeProfile({ sigma: Number(sigma.toFixed(1)), a: rounded, vsini, R }));
         return shapes.get(key);
     };
 
@@ -178,33 +180,48 @@ function buildModel(star, R, sigmaExtra) {
         const p = SPECIES[species];
         if (!p) return;
         const el = elementOf(species);
+        const light = el === 'H' || el === 'He';
         const strength = wd ? whiteDwarfStrength(species, star) : visibility(species, T) * abundanceDepth(abundance(star, el));
         if (strength < 0.004) return;
-        // A metal line in a white dwarf is very broad, but hydrogen and helium are what really widen with gravity
-        const gravity = Math.min(el === 'H' || el === 'He' ? 10 : 3, 10 ** (p.k * (logg - 4.44)));
         const mass = LINE_INFO[species] ? LINE_INFO[species].mass_u : 40;
         const sigma = Math.hypot(0.0912 * Math.sqrt(T / mass), MICRO_KMS, sigmaExtra);
         const wingScale = Math.sqrt(Math.min(1, strength));
+        // Hydrogen and helium are what really widen with gravity. A metal line has its limits: it is only so broad in a
+        // white dwarf, and even a supergiant's strongest metal lines keep a little wing.
+        const gravity = (k) => Math.min(light ? 10 : 3, Math.max(light ? 0 : 0.12, 10 ** (k * (logg - 4.44))));
         LINES[species].forEach((line) => {
             if (line.forbidden) return; // Forbidden lines only form in thin gas, never as absorption in a star
             const lineS = line.s ?? 1;
             const lyman = el === 'H' && line.w < 200;
-            // Gravity dissolves the high levels of hydrogen in a white dwarf, so its Balmer series stops early
-            if (wd && el === 'H' && !lyman && lineS < 0.3) return;
-            // Balmer lines stay strong far up the series, as saturated lines do
-            const s = el === 'H' && !lyman && !wd ? Math.sqrt(lineS) : lineS;
-            // Ultraviolet resonance lines start from the ground state, where nearly all atoms sit, so they saturate early
-            const raw = line.w < 300
-                ? 0.95 * (1 - Math.exp(-5 * strength)) * s
-                : strength * s * boltzmannWeight(species, line, T);
-            const d = Math.min(0.97, raw);
-            if (d < 0.004) return;
+            // Gravity dissolves the high levels of hydrogen in a white dwarf, so its series stop early
+            if (wd && el === 'H' && lineS < 0.3) return;
+
+            // depth = visibility x abundance x the line's own share, levelling off as a line saturates. An ordinary
+            // metal line's wings stay small, so its width at high resolution is mostly rotation and can be read as such.
+            const x = strength * lineS * boltzmannWeight(species, line, T);
             const wide = WIDE_LINES.find((w) => w[0] === species && Math.abs(w[1] - line.w) < 0.15);
-            let a = (wide ? wide[2] : p.a) * gravity * wingScale;
-            if (el === 'H') a *= lineS ** 0.75;
-            if (lyman) a = Math.min(a, 700);
-            const prof = shapeFor(sigma, a);
-            lines.push({ w: line.w, d, prof, species, label: line.label || `${species} ${line.w.toFixed(1)}` });
+            let d;
+            let a;
+            if (lyman) {
+                // Nearly every hydrogen atom sits in the ground state, so the Lyman series saturates early
+                d = 0.95 * (1 - Math.exp(-5 * strength)) * lineS;
+                a = Math.min(wd ? 500 : 700, p.a * gravity(p.k) * wingScale * lineS ** 0.75);
+            } else if (el === 'H') {
+                // Balmer lines stay strong far up the series, as saturated lines do, unless gravity has dissolved them
+                d = strength * (wd ? lineS : Math.sqrt(lineS)) * boltzmannWeight(species, line, T);
+                a = p.a * gravity(p.k) * wingScale * lineS ** 0.75;
+            } else if (el === 'He') {
+                d = 1 - Math.exp(-1.5 * x);
+                a = p.a * gravity(p.k) * wingScale;
+            } else {
+                d = 1 - Math.exp(-3.5 * x);
+                a = wide
+                    ? wide[2] * gravity(0.3) * wingScale
+                    : p.a * gravity(p.k) * Math.min(1, (x / 0.15) ** 1.5);
+            }
+            d = Math.min(0.97, d);
+            if (d < 0.004) return;
+            lines.push({ w: line.w, d, prof: shapeFor(sigma, a), species, label: line.label || `${species} ${line.w.toFixed(1)}` });
         });
     });
 
