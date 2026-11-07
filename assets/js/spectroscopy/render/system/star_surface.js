@@ -104,6 +104,7 @@ uniform float uReveal;
 uniform float uDetail;      // Surface patterns fade out when too small on screen to do anything but shimmer
 uniform float uSpotDetail;
 uniform float uLane;        // 0: broad lanes, as cool stars have. 1: thin, warm lanes round brighter cells
+uniform float uJitter;      // How far the cells' centres wander. Much past a quarter, close views show where the search for the nearest stops
 uniform vec3 uLaneColour;
 uniform float uFine;        // A finer grain inside the cells, once they're big enough on screen to hold one
 varying vec3 vN;
@@ -123,7 +124,7 @@ vec2 cells(vec3 p, float boil) {
                 vec3 o = vec3(float(i), float(j), float(k));
                 vec3 c = ip + o;
                 vec4 h = textureLod(tNoise, (c.xy + c.z * vec2(37.0, 17.0) + 0.5) / 256.0, 0.0);
-                vec3 d = o + 0.5 + 0.42 * sin(boil + 6.2831 * h.rba) - fp;
+                vec3 d = o + 0.5 + uJitter * sin(boil + 6.2831 * h.rba) - fp;
                 float q = dot(d, d);
                 if (q < f1) {
                     f2 = f1;
@@ -449,6 +450,7 @@ export function createStar(starData, opts = {}) {
             ...TRUE_COLOUR,
             tNoise: noise,
             uLane: { value: look.lane },
+            uJitter: { value: 0.42 - 0.17 * look.lane },
             uLaneColour: { value: laneColour },
             uFine: { value: 0 },
             uTideAxis: { value: new THREE.Vector3(1, 0, 0) },
@@ -581,6 +583,7 @@ export function createStar(starData, opts = {}) {
             surfaceMaterial.uniforms.uDetail.value = THREE.MathUtils.smoothstep(cellPx, 1.6, 4) * still;
             surfaceMaterial.uniforms.uFine.value = look.lane * THREE.MathUtils.smoothstep(cellPx, 12, 32);
             surfaceMaterial.uniforms.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70) * still;
+            coronaMaterial.uniforms.uTurb.value = c.turb * still;
             surfaceMaterial.uniforms.uIntensity.value = look.intensity * (1 + 0.15 * (1 - THREE.MathUtils.smoothstep(s.pxRadius, 12, 70)));
             reveal.value = s.reveal;
             group.visible = s.reveal > 0.001;

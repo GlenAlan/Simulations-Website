@@ -84,7 +84,7 @@ void main() {
 const FLOOR_FRAGMENT = /* glsl */`
 uniform float uFade;
 void main() {
-    gl_FragColor = vec4(vec3(0.0012, 0.0021, 0.0058) * uFade, 1.0);
+    gl_FragColor = vec4(vec3(0.0021, 0.0037, 0.0100) * uFade, 1.0);
 }`;
 const FLOOR_VERTEX = 'void main(){ gl_Position = vec4(position.xy, 0.99999, 1.0); }';
 

@@ -70,7 +70,7 @@ export function initSystemTab(app) {
 
     function tellClock() {
         if (playback) view.setClock({ speed: playback.speed, playing: playback.playing });
-        else view.setClock({ speed: 0, playing: false });
+        else view.setClock({ speed: 0, playing: false, read: null });
     }
 
     function startPlayback(model) {
@@ -111,7 +111,8 @@ export function initSystemTab(app) {
         if (now - lastPaint < 150) return;
         lastPaint = now;
         const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
-        parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}`;
+        const blurred = view.isBlurred() ? '. The fastest orbits are a blur at this speed.' : '';
+        parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}${blurred}`;
     }
 
     function selectFromList(code) {

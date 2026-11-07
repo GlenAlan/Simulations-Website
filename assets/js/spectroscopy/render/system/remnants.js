@@ -203,7 +203,7 @@ export function createHole(starData, opts = {}) {
             tNoise: { value: exoticNoise() },
             uPxM: { value: 0.5 },
             uLod: { value: 0 },
-            uOrders: { value: 3 },
+            uOrders: { value: opts.quality === 'low' ? 2 : 3 },
             uDiscT: { value: starData.teff_K },
             uSeed: { value: rng.next() },
             uHotAngle: { value: 0 },

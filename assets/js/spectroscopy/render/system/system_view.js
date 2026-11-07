@@ -191,7 +191,8 @@ export function initSystemView(app) {
         const quality = app.qualityLevel;
         const group = new THREE.Group();
         const stars = model.stars.map((s) => {
-            const star = s.star.stage === 'black_hole' ? createHole(s.star, { seed: s.code }) : createStar(s.star, { seed: s.code, quality });
+            const make = s.star.stage === 'black_hole' ? createHole : createStar;
+            const star = make(s.star, { seed: s.code, quality });
             group.add(star.group);
             return star;
         });
@@ -453,6 +454,7 @@ export function initSystemView(app) {
         if (!inSystem() || e.target !== canvas) return;
         e.stopPropagation();
         canvas.focus({ preventScroll: true });
+        aimCode = null;
         try {
             canvas.setPointerCapture(e.pointerId);
         } catch (err) { /* Already gone: the drag just ends sooner */ }
@@ -1157,17 +1159,24 @@ export function initSystemView(app) {
     // ---------- Labels ----------
     const LABEL_W = 58;         // The size of a label, roughly: six characters. Measuring every frame would cost layout
     const LABEL_H = 18;
-    const placedLabels = [];
+    const placedX = [];
+    const placedY = [];
+    let placedCount = 0;
 
     // Takes turns: whoever comes first keeps its place, and a label that would land on it waits until there's room
     function placeLabel(el, x, y, frame, cls) {
         const out = x < 0 || y < 0 || x > frame.width || y > frame.height;
-        const crowded = !out && placedLabels.some((q) => Math.abs(q.x - x) < LABEL_W && Math.abs(q.y - y) < LABEL_H);
+        let crowded = false;
+        for (let k = 0; k < placedCount && !crowded && !out; k++) {
+            crowded = Math.abs(placedX[k] - x) < LABEL_W && Math.abs(placedY[k] - y) < LABEL_H;
+        }
         el.hidden = out || crowded;
         el.classList.toggle('is-selected', cls === 'selected');
         if (el.hidden) return;
         el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
-        placedLabels.push({ x, y });
+        placedX[placedCount] = x;
+        placedY[placedCount] = y;
+        placedCount++;
     }
 
     function projectToCss(pos, frame) {
@@ -1218,7 +1227,7 @@ export function initSystemView(app) {
     function updateLabels(frame, stage) {
         const shown = stage.planets > 0.9;
         const labelsOn = app.layers.labels && shown;
-        placedLabels.length = 0;
+        placedCount = 0;
         const isMarked = (code) => code === selectedCode || code === hoverCode || code === aimCode;
         // What the student is pointing at goes first, as it must always show, then stars, then planets
         world.starLabels.forEach((el, i) => { if (shown && isMarked(model.stars[i].code)) placeStarLabel(i, frame, 'selected'); });
@@ -1551,17 +1560,23 @@ export function initSystemView(app) {
     // The warm star is never freed: while a material uses a program, three.js keeps it for the next star to share.
     // One at every level, as Auto can change the level during a visit.
     let warmStars = [];
+    let warmGlow = null;
     function warmSmallPrograms() {
         const renderer = engine.renderer;
         if (!renderer) return;
         warmPlanetShaders(renderer);
         warmStars.forEach((star) => star.dispose());
+        if (warmGlow) warmGlow.dispose();
         const warmScene = new THREE.Scene();
         warmStars = ['low', 'medium', 'high'].map((quality) => {
             const star = createStar({ teff_K: 5800, radius_Rsun: 1, stage: 'main_sequence' }, { seed: 'warm', quality });
             warmScene.add(star.group);
             return star;
         });
+        // The smears start hidden, so a system's own compile won't get to them
+        warmGlow = createOrbitGlow([[1, 0, 0], [0, 0, 1]], [1, 1, 1]);
+        warmGlow.object.visible = true;
+        warmScene.add(warmGlow.object);
         engine.compileInBackground(warmScene, camera);
     }
     bus.on('ready', () => {
@@ -1605,6 +1620,11 @@ export function initSystemView(app) {
             }
         },
         timeScale,
+        // Has any orbit merged into its smear just now?
+        isBlurred() {
+            if (!world) return false;
+            return world.smear.planets.some((w) => w > 0.5) || world.smear.stars.some((w) => w > 0.5);
+        },
         isLogScale: () => mixTarget > 0.5,
         logScaleUseful: () => !!(model && model.logUseful),
         getTime: () => tDays,

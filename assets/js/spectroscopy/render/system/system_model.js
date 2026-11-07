@@ -158,8 +158,8 @@ function neutronAsStar(ns) {
 }
 
 function starsOf(body) {
+    if (body.stars && body.stars.length) return body.stars.map((s) => ({ code: s.code, star: s.star, entity: s }));
     if (body.star) return [{ code: body.code, star: body.star, entity: body }];
-    if (body.stars) return body.stars.map((s) => ({ code: s.code, star: s.star, entity: s }));
     if (body.black_hole) {
         const { companion } = body.black_hole;
         return [
@@ -654,7 +654,7 @@ export function hzStatus(body) {
     if (body.black_hole || body.neutron_star) {
         return { ok: false, reason: 'No habitable zone here: the simple formula is for a single star on the main sequence.' };
     }
-    if (!body.star) {
+    if (!body.star || (body.stars && body.stars.length > 1)) {
         return { ok: false, reason: 'No habitable zone here: with more than one star, the simple formula does not apply.' };
     }
     if (body.star.stage !== 'main_sequence') {
