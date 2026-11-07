@@ -13,14 +13,26 @@ const RAD = Math.PI / 180;
 const ARC_HALF = 0.72;             // Radians: how far each arc runs either side of level
 const MAX_RADIUS_PX = 40;          // A wide pair's marks stop growing once its stars have come apart
 const SEEN_MARGIN_MAG = 1;         // Within this of the zoom's limit a thing is drawn but can't be made out: an empty mark
+const WIDE_MARGIN_MAG = 3.5;       // A wide view has dozens of hosts in it, most of them specks: only the plain ones are marked
+const HUD_CLEAR_PX = 4;            // Marks keep this far off the bars over the sky, which they would show through
 
-const HOST_STYLE = 'rgba(170, 230, 240, 0.85)';
+const HOST_RGB = '170, 230, 240';
 const VISITED_STYLE = 'rgba(255, 226, 150, 0.95)';
-const UNDER_STYLE = 'rgba(0, 0, 0, 0.55)';      // A dark edge keeps a mark readable over the band or a bright nebula
+const UNDER_RGB = '0, 0, 0';       // A dark edge keeps a mark readable over the band or a bright nebula
+
+function smoothstep(a, b, x) {
+    const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+}
 
 // Wider views have more in them, and smaller marks keep that from getting busy
 function baseRadius(fov) {
     return fov > 40 ? 6.5 : fov > 12 ? 8 : 10;
+}
+
+// How wide a view is, from 0 zoomed in to 1 at the opening view: fewer and quieter marks the wider it is
+function wideness(fov) {
+    return smoothstep(12, 60, fov);
 }
 
 export function createSearchMarksLayer(engine, app) {
@@ -69,30 +81,53 @@ export function createSearchMarksLayer(engine, app) {
         ctx.lineTo(tx + 3.5, ty - 3);
     }
 
-    function strokeMarks(trace, style) {
+    function strokeMarks(trace, style, under = 0.55) {
         ctx.beginPath();
         trace();
         ctx.lineWidth = 3;
-        ctx.strokeStyle = UNDER_STYLE;
+        ctx.strokeStyle = `rgba(${UNDER_RGB}, ${under})`;
         ctx.stroke();
         ctx.lineWidth = 1.25;
         ctx.strokeStyle = style;
         ctx.stroke();
     }
 
+    // The bars over the sky are glass, and a mark under one shows through it as if it were part of the bar
+    let hud = [];
+    function measureHud() {
+        const box = canvas.getBoundingClientRect();
+        hud = ['spectroTopLeft', 'spectroBandBar', 'spectroTopRight', 'spectroContextBar', 'spectroLegend']
+            .map((id) => document.getElementById(id))
+            .filter((el) => el && !el.hidden && el.offsetParent)
+            .map((el) => {
+                const r = el.getBoundingClientRect();
+                return [r.left - box.left, r.top - box.top, r.right - box.left, r.bottom - box.top];
+            })
+            .filter((r) => r[2] > r[0] && r[3] > r[1]);
+    }
+    function underHud(x, y, r) {
+        const m = r + HUD_CLEAR_PX;
+        return hud.some((b) => x + m > b[0] && x - m < b[2] && y + m > b[1] && y - m < b[3]);
+    }
+
     function drawHosts(frame, forward, cosLimit, base, seen) {
         let n = 0;
+        // Wide, only the hosts that are plain to see, and the marks fainter than the stars they ring
+        const wide = wideness(frame.fov);
+        const plain = seen - (WIDE_MARGIN_MAG - SEEN_MARGIN_MAG) * wide;
         strokeMarks(() => {
             for (let i = 0; i < hosts.length; i++) {
                 const { body, dir } = hosts[i];
                 if (dir[0] * forward[0] + dir[1] * forward[1] + dir[2] * forward[2] < cosLimit) continue;
-                if (!engine.bodyShows(body, seen)) continue;
+                if (!engine.bodyShows(body, plain)) continue;
                 const p = engine.projectBody(body);
                 if (!p || !p.onScreen) continue;
-                traceArcs(p.x, p.y, radiusOf(body, frame, base));
+                const r = radiusOf(body, frame, base);
+                if (underHud(p.x, p.y, r)) continue;
+                traceArcs(p.x, p.y, r);
                 n += 1;
             }
-        }, HOST_STYLE);
+        }, `rgba(${HOST_RGB}, ${(0.85 - 0.35 * wide).toFixed(3)})`, 0.55 - 0.25 * wide);
         return n;
     }
 
@@ -108,7 +143,7 @@ export function createSearchMarksLayer(engine, app) {
                     if (item.dir[0] * forward[0] + item.dir[1] * forward[1] + item.dir[2] * forward[2] < cosLimit) continue;
                     if (!engine.bodyShows(item.body, seen)) continue;
                     const p = engine.projectBody(item.body);
-                    if (!p || !p.onScreen) continue;
+                    if (!p || !p.onScreen || underHud(p.x, p.y, base)) continue;
                     traceTick(p.x, p.y, radiusOf(item.body, frame, base));
                     n += 1;
                     continue;
@@ -122,7 +157,7 @@ export function createSearchMarksLayer(engine, app) {
                 if (!found || found.path !== 'member') continue;
                 const at = memberDirection(found.body, found.entity);
                 const p = at && engine.project(at.az, at.alt);
-                if (!p || !p.onScreen) continue;
+                if (!p || !p.onScreen || underHud(p.x, p.y, base)) continue;
                 traceTick(p.x, p.y, base);
                 n += 1;
             }
@@ -164,6 +199,7 @@ export function createSearchMarksLayer(engine, app) {
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
 
+            measureHud();
             const forward = azAltToVec3(view.az, view.alt);
             const cosLimit = cosLimitFor(frame);
             const base = baseRadius(view.fov);

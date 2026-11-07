@@ -42,16 +42,17 @@ export function smoothstep(lo, hi, x) {
 //
 // The rule for how fast a pulsar is shown turning. Real ones turn from about once a second to hundreds of times a second,
 // which would be a strobe, so both views slow them by the same rule, and show the same turn at the same moment:
-//   - Each turns at its true rate, but never more than MAX_TURNS_PER_S, once a second. On the sky one turn is one pulse,
-//     as the beam crosses our line of sight. Up close a beam sweeping over the screen passes a point two or three times a
-//     turn (two beams, each with two bright walls, swinging out and back), and three flashes a second is the most that
-//     photosensitive viewers can take, over the large part of the screen a close beam sweeps. So once a second it is.
+//   - Each turns at its true rate, but never more than MAX_TURNS_PER_S, once every two seconds. On the sky one turn is one
+//     pulse, as the beam crosses our line of sight. Up close a beam sweeps over a large part of the screen, and changes much
+//     of it from one frame to the next: three such changes a second is the most photosensitive viewers can take. At a
+//     turn a second a close beam did that eight times a second; at half that, with the soft beam in system/remnants.js,
+//     it stays under two. Slowing both views keeps the pulse on the sky and the beam up close in step.
 //   - The faster one really turns, the less its light swings on the sky, down to a faint shimmer below SHIMMER_BELOW_S.
 //   - With Reduce motion nothing turns: the beam holds still at HELD_ANGLE, seen side-on, and the light is steady.
 // The angle at a moment is turns a second x the shared clock (sharedUniforms.uTime) plus the pulsar's own start, so a
 // pulse on the sky is the beam pointing at the camera in the system view, and zooming in keeps the phase. The Pulse timing
 // tool reads the true period, never this.
-export const MAX_TURNS_PER_S = 1;
+export const MAX_TURNS_PER_S = 0.5;
 const SHIMMER_BELOW_S = 0.25;
 export const HELD_ANGLE = 1.3;
 export const PULSAR_BEAM_SLOPE = 0.13;     // A beam's half-width per unit of its length, in both views

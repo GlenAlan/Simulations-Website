@@ -369,8 +369,8 @@ export function initSystemTab(app) {
 
         parts.summary.textContent = summaryOf(model, !!(app.engine && app.engine.renderer));
 
-        // The way back to the sky is on the context bar, always in the same place
-        parts.action.hidden = inThis;
+        // The way back to the sky is on the context bar, always in the same place. Without graphics there's no going in.
+        parts.action.hidden = inThis || !(app.engine && app.engine.renderer);
         parts.whole.hidden = !(inThis && view.isFocused());
         parts.timeGroup.hidden = !inThis || !playback;
 

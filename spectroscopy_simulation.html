@@ -228,6 +228,7 @@
 		<link rel="modulepreload" href="assets/js/spectroscopy/ui/shell.js" />
 		<link rel="modulepreload" href="assets/js/spectroscopy/ui/sky_hints.js" />
 		<link rel="modulepreload" href="assets/js/spectroscopy/ui/spectrum/panel.js" />
+		<link rel="modulepreload" href="assets/js/spectroscopy/boot.js" />
 		<link rel="modulepreload" href="assets/js/spectroscopy/main.js" />
 		<link rel="stylesheet" href="assets/css/main.css" />
 		<link rel="stylesheet" href="assets/css/simulation_styles.css" />
@@ -302,6 +303,11 @@
 											<!-- ui/shell.js replaces this ratio with one that fills the column, and keeps it up to date -->
 												<div class="sim-aspect-ratio-box" style="--aspect-ratio: 16/9;">
 												<canvas id="simulationCanvas" class="sim-canvas" role="application" tabindex="0" aria-label="A night sky full of stars, galaxies and nebulae. Drag or use the arrow keys to look around, scroll or press plus and minus to zoom. Click an object, or press Enter for what is at the centre of the view, to study its light. Square brackets move to the next nearest object."></canvas>
+												<!-- Shown only if the simulation's code fails to load (assets/js/spectroscopy/main.js). Styled here too, in case the stylesheet didn't load either. -->
+												<div id="spectroLoadFailed" class="spectro-load-failed" role="alert" hidden style="position:absolute;inset:0;z-index:5;padding:2em 1.5em;background:#05070d;color:#e6e9f2;text-align:center;">
+													<p>The simulation didn't load properly. Please reload the page: press Ctrl+Shift+R (Cmd+Shift+R on a Mac).</p>
+													<button type="button" onclick="location.reload()" style="color:#e6e9f2 !important;box-shadow:inset 0 0 0 2px #e6e9f2;">Reload</button>
+												</div>
 												<!-- Controls over the sky: thin bars at the edges, never over the centre -->
 												<div id="spectroOverlay">
 													<div id="spectroTopLeft"></div>
@@ -382,6 +388,6 @@
 			<script src="assets/js/util.js"></script>
 			<script src="assets/js/main.js"></script>
 			<script src="assets/js/simulation_ui.js"></script> <!-- Generic UI handler -->
-			<script type="module" src="assets/js/spectroscopy/main.js"></script> <!-- Simulation specific logic -->
+			<script type="module" src="assets/js/spectroscopy/main.js" onerror="document.getElementById('spectroLoadFailed').hidden = false"></script> <!-- Simulation specific logic -->
 	</body>
 </html>

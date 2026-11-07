@@ -1,140 +1,46 @@
-// Starts the simulation. Each piece is started inside its own try/catch, so that one failing piece shows up
-// in the console without taking the rest of the page down. Tracks fill in their own files; this list is fixed.
+// Loads the simulation (boot.js and everything it imports) and starts it. Everything comes in through the one dynamic
+// import below, so that if any file fails to load (a dropped connection, a blocked file, or a browser holding an old copy
+// of one file beside new ones after an update) the student is told to reload, rather than left with a black box. A
+// failure in a static import can't be caught; this can. The page shows the same message if this file itself fails.
 
-import { app, bus, select } from './core/state.js';
-import { generateUniverse } from './data/universe.js';
-import { seedFromPage } from './core/seed.js';
-import { assignDepths } from './core/depth.js';
-import { createEngine } from './render/engine.js';
-import { createDrawer } from './ui/drawer.js';
+// The message is in the page, hidden (#spectroLoadFailed). An older copy of the page may not have it, so it can be made here.
+const FAILED_TEXT = "The simulation didn't load properly. Please reload the page: press Ctrl+Shift+R (Cmd+Shift+R on a Mac).";
+const FAILED_STYLE = 'position:absolute;inset:0;z-index:5;padding:2em 1.5em;background:#05070d;color:#e6e9f2;text-align:center;';
 
-import { createBackgroundLayer } from './render/layers/background.js';
-import { createBandSkyLayer } from './render/layers/band_sky.js';
-import { createNebulaeLayer } from './render/layers/nebulae.js';
-import { createSupernovaeLayer } from './render/layers/supernovae.js';
-import { createGalaxiesLayer } from './render/layers/galaxies.js';
-import { createClustersLayer } from './render/layers/clusters.js';
-import { createStarsLayer } from './render/layers/stars.js';
-import { createQuasarsLayer } from './render/layers/quasars.js';
-import { createBlackHolesLayer } from './render/layers/black_holes.js';
-import { createNeutronStarsLayer } from './render/layers/neutron_stars.js';
-import { createCometsLayer } from './render/layers/comets.js';
-import { createBinariesLayer } from './render/layers/binaries.js';
-import { createRoguePlanetsLayer } from './render/layers/rogue_planets.js';
-import { createHomePlanetsLayer } from './render/layers/home_planets.js';
-import { createOverlaysLayer } from './render/layers/overlays.js';
-
-import { initSystemView } from './render/system/system_view.js';
-import { initShell } from './ui/shell.js';
-import { initOverviewTab } from './ui/overview.js';
-import { initSpectrumTab } from './ui/spectrum/panel.js';
-import { initHRTab } from './ui/hr.js';
-import { initHubbleTab } from './ui/hubble.js';
-import { initInfoTab } from './ui/info_tab.js';
-import { initSkyHints } from './ui/sky_hints.js';
-import { initGoto } from './ui/goto.js';
-import { initKeyboard } from './ui/keyboard.js';
-
-function attempt(name, fn) {
-    try {
-        return fn();
-    } catch (err) {
-        console.error(`[spectroscopy] ${name} failed to start:`, err);
-        return null;
+function showLoadFailure(err) {
+    console.error('[spectroscopy] The simulation could not load:', err);
+    let box = document.getElementById('spectroLoadFailed');
+    if (!box) {
+        const canvas = document.getElementById('simulationCanvas');
+        if (!canvas || !canvas.parentElement) return;
+        box = document.createElement('div');
+        box.id = 'spectroLoadFailed';
+        box.className = 'spectro-load-failed';
+        box.setAttribute('role', 'alert');
+        box.style.cssText = FAILED_STYLE;
+        const words = document.createElement('p');
+        words.textContent = FAILED_TEXT;
+        const again = document.createElement('button');
+        again.type = 'button';
+        again.textContent = 'Reload';
+        again.style.cssText = 'color:#e6e9f2 !important;box-shadow:inset 0 0 0 2px #e6e9f2;';
+        again.addEventListener('click', () => location.reload());
+        box.append(words, again);
+        canvas.parentElement.appendChild(box);
     }
-}
-
-const FIRST_FRAME_WAIT_MS = 500;
-
-// Lets the browser draw and answer the pointer before more is started, if a bit of this has run on for long enough
-const SLICE_MS = 12;
-let sliceStart = 0;
-
-function breathe() {
-    if (performance.now() - sliceStart < SLICE_MS) return null;
-    return new Promise((resolve) => {
-        const go = () => {
-            sliceStart = performance.now();
-            resolve();
-        };
-        if (document.hidden) setTimeout(go, 0); // A hidden tab has no frames to wait for
-        else requestAnimationFrame(() => setTimeout(go, 0));
-    });
-}
-
-// The sky is drawn and can be dragged before anything else is started. Everything after it joins as it becomes ready.
-async function boot() {
-    sliceStart = performance.now();
-    const canvas = document.getElementById('simulationCanvas');
-    app.engine = createEngine(canvas);
-    createDrawer();
-
-    const engine = app.engine;
-    const addLayer = (name, create) => {
-        const layer = attempt(`layer: ${name}`, () => create(engine, app));
-        if (layer) engine.addLayer(layer);
-    };
-
-    // First the page's own controls, which also give the canvas its final size, so that nothing jumps once the sky is up
-    attempt('shell', () => initShell(app));
-    engine.resize();
-    addLayer('background', createBackgroundLayer);
-    engine.start();
-    // Building the universe is the one long job here: let the sky appear first
-    await Promise.race([engine.firstFrame, new Promise((resolve) => setTimeout(resolve, FIRST_FRAME_WAIT_MS))]);
-    sliceStart = 0;
-    await breathe();    // And that frame has to reach the screen
-
-    app.universe = generateUniverse(seedFromPage());   // ?seed=... in the address, or the standard sky
-    assignDepths(app.universe);
-    await breathe();
-
-    const layers = [
-        ['band sky', createBandSkyLayer],
-        ['nebulae', createNebulaeLayer],
-        ['supernovae', createSupernovaeLayer],
-        ['galaxies', createGalaxiesLayer],
-        ['clusters', createClustersLayer],
-        ['stars', createStarsLayer],
-        ['quasars', createQuasarsLayer],
-        ['black holes', createBlackHolesLayer],
-        ['neutron stars', createNeutronStarsLayer],
-        ['comets', createCometsLayer],
-        ['binaries', createBinariesLayer],
-        ['rogue planets', createRoguePlanetsLayer],
-        ['home planets', createHomePlanetsLayer],
-        ['overlays', createOverlaysLayer]
-    ];
-    for (const [name, create] of layers) {
-        addLayer(name, create);
-        await breathe();
-    }
-
-    const inits = [
-        ['system view', initSystemView],
-        ['overview tab', initOverviewTab],
-        ['spectrum tab', initSpectrumTab],
-        ['H-R tab', initHRTab],
-        ['Hubble tab', initHubbleTab],
-        ['info tab', initInfoTab],
-        ['sky hints', initSkyHints],
-        ['go to', initGoto],
-        ['keyboard', initKeyboard]
-    ];
-    for (const [name, init] of inits) {
-        attempt(name, () => init(app));
-        await breathe();
-    }
-
-    // Clicking the sky selects what's under the pointer; clicking empty sky leaves the selection alone
-    bus.on('skyclick', ({ code }) => { if (code) select(code); });
-
-    // For tests and the browser console
-    window.__spectro = { app, bus, select };
-
-    bus.emit('ready', {});
+    box.hidden = false;
 }
 
 // Modules run before DOMContentLoaded: wait for it, so simulation_ui.js has set the panel and buttons up first
-if (document.readyState === 'complete') boot();
-else document.addEventListener('DOMContentLoaded', boot, { once: true });
+const pageReady = new Promise((resolve) => {
+    if (document.readyState === 'complete') resolve();
+    else document.addEventListener('DOMContentLoaded', resolve, { once: true });
+});
+
+import('./boot.js').then((loaded) => {
+    if (typeof loaded.boot !== 'function') {
+        showLoadFailure(new Error('boot.js has no boot()'));
+        return null;
+    }
+    return pageReady.then(() => loaded.boot());
+}, showLoadFailure);

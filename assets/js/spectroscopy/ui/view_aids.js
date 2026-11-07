@@ -4,6 +4,7 @@
 
 import { DEFAULT_VIEW, azAltToVec3, vec3ToAzAlt, angularSeparation, limitingMag } from '../core/sky.js';
 import { parallaxFactor } from '../core/depth.js';
+import { drawnSky } from '../render/layers/sky_tangent.js';
 import { announce } from './drawer.js';
 import { bus } from '../core/state.js';
 
@@ -125,9 +126,11 @@ export function initViewAids(app) {
         const cosHalf = Math.cos(Math.min(89, half) * RAD);
         const pxPerDeg = RAD * (frame.pxPerRad / frame.dpr);
         const seen = limitingMag(view.fov) - IN_VIEW_MARGIN;
-        // Whatever the student has picked counts, however faint: the selection ring is round it
-        if (app.selected && engine.bodyShows(app.selected.body)) {
-            const p = engine.projectBody(app.selected.body);
+        // Whatever the student has picked counts, however faint: the selection's corners are round it. Where it's drawn, as
+        // the corners have it: a cluster's member, or a pair's star, is not where its cluster or system is.
+        if (app.selected) {
+            const at = drawnSky(engine, app.selected);
+            const p = engine.project(at.az, at.alt);
             if (p && p.onScreen) return true;
         }
         const touches = (p, r) => !!p && p.x + r >= 0 && p.x - r <= frame.width && p.y + r >= 0 && p.y - r <= frame.height;
@@ -193,7 +196,7 @@ export function initViewAids(app) {
             hide(nothing);
             return;
         }
-        const key = `${view.az.toFixed(3)},${view.alt.toFixed(3)},${view.fov.toFixed(3)},${frame.width},${frame.height},${frame.band},${app.layers.homePlanets}`;
+        const key = `${view.az.toFixed(3)},${view.alt.toFixed(3)},${view.fov.toFixed(3)},${frame.width},${frame.height},${frame.band},${app.layers.homePlanets},${app.selected ? app.selected.entity.code : ''}`;
         if (key !== lastKey) {
             lastKey = key;
             wasEmpty = !somethingInFrame(items, frame, view);

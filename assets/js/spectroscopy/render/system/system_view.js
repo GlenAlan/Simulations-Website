@@ -62,6 +62,8 @@ const HOLE_NEAR_FOV = 1;            // The sky draws a black hole about as big a
 const DAY_SIDE = 0.65;              // How far round from the star a close-up looks at a planet (radians)
 const CLOSE_UP_ORBITS_PER_S = 0.02; // A planet in close-up goes round no faster than this: it's there to be looked at
 const CLOSE_UP_SLOWDOWN = 0.1;      // ... and the clock runs at least this much slower
+const CLOSE_RING = 3;               // A star this few of its radii from the middle sweeps a ring the camera could be inside...
+const CLEAR_OF_STAR = 1.6;          // ... so the whole-system view stays this many of its radii outside that ring
 
 // The soft halo round a planet that's only a few pixels across, in its own colour
 const HALO_VERTEX = /* glsl */`
@@ -778,7 +780,18 @@ export function initSystemView(app) {
         if (t && t.kind === 'planet') return planetRadius(model, model.planets[t.index].planet, mix) * 1.5;
         if (t && t.kind === 'star') return starRadius(model, t.index, mix) * 1.5;
         if (t && t.kind === 'comet') return FRAME * 0.02;
-        return Math.max(...model.stars.map((_, i) => starRadius(model, i, mix))) * 1.5;
+        let least = Math.max(...model.stars.map((_, i) => starRadius(model, i, mix))) * 1.5;
+        // The whole system: never inside the ring that a star of a close pair sweeps round the middle. In there it would come
+        // round to fill the screen in a frame, or pass right through the camera, and be gone again a moment later.
+        if (positions) {
+            model.stars.forEach((_, i) => {
+                const R = Math.max(starRadius(model, i, mix), world ? world.sizes.stars[i] : 0);
+                const p = positions.stars[i];
+                const r = Math.hypot(p[0] - cam.focus.x, p[1] - cam.focus.y, p[2] - cam.focus.z);
+                if (r < CLOSE_RING * R) least = Math.max(least, r + CLEAR_OF_STAR * R);
+            });
+        }
+        return least;
     }
 
     // Screen-space picking: planets win over the star behind them, and the radius is generous on purpose.
@@ -1785,8 +1798,10 @@ export function initSystemView(app) {
             : main === 'black_hole' ? 'a black hole and a star'
             : main === 'neutron_star' ? 'a neutron star'
                 : model.stars.length === 1 ? 'a star' : `${model.stars.length} stars`;
+        const nc = model.comets ? model.comets.length : 0;
+        const comets = nc === 0 ? '' : nc === 1 ? ' and a comet' : ` and ${nc} comets`;
         const planets = n === 0 ? 'no planets' : n === 1 ? 'one planet' : `${n} planets`;
-        live.textContent = `In system ${model.code}: ${stars} and ${planets}. Press Escape to go back to the sky.`;
+        live.textContent = `In system ${model.code}: ${stars}${comets ? ', ' : ' and '}${planets}${comets}. Press Escape to go back to the sky.`;
     }
 
     // ---------- Drawing ----------
@@ -2135,7 +2150,8 @@ export function initSystemView(app) {
             listeners.add(fn);
             return () => listeners.delete(fn);
         },
-        hasSystemView,
+        // Without graphics there's no view to go into, so nothing offers one
+        hasSystemView: (body) => !!engine.renderer && hasSystemView(body),
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
         _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),

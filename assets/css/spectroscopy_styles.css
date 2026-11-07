@@ -4746,6 +4746,43 @@ details.description-area > summary::after {
 /* === end PANELFIX === */
 
 
+/* === SKYFIX: the message in the sky area when the simulation's code didn't load === */
+/* Position and colours are on the element itself (main.js and the page), in case this stylesheet is the stale one */
+.spectro-load-failed:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.9em;
+    line-height: 1.5;
+}
+
+.spectro-load-failed p {
+    max-width: 32em;
+    margin: 0;
+}
+
+/* The sky area is dark in either site theme */
+.spectro-load-failed button {
+    color: #e6e9f2 !important;
+    box-shadow: inset 0 0 0 2px #e6e9f2;
+}
+
+/* The tag by the pointer names what's under it, so it shows over the legend and the bottom bar, which come before it.
+   The menus at the top stay over it. */
+#spectroOverlay > .spectro-hover-tag {
+    z-index: 1;
+}
+
+/* The System tab's switches are finger-sized on a touch screen */
+@media (pointer: coarse) {
+    .spectro-system-tab .sim-checkbox-group input[type="checkbox"] + label {
+        min-height: 44px;
+    }
+}
+/* === end SKYFIX === */
+
+
 /* === OVERLAYS: labels and markers over the sky === */
 /* Drawn over the sky, under the bars; drags go straight through it to the canvas */
 #spectroOverlay > .spectro-overlay-canvas {

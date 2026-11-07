@@ -128,6 +128,12 @@ export function createZoomInto(app, view) {
     // The field of view at which the sky has shown all it has of this system
     function handOverFov(system, frame) {
         if (system.black_hole) return LENS_FOV;
+        // A pulsar's beams turn on the sky first, so that the student sees the same turn carry on up close
+        if (system.neutron_star && system.neutron_star.pulsar) {
+            const pulsars = engine.getLayer('neutron_stars');
+            const fov = pulsars && pulsars.beamsFov ? pulsars.beamsFov(system.code, frame) : 0;
+            if (fov) return Math.max(LIMIT_FOV, Math.min(CAPTURE_FOV, fov));
+        }
         // A galaxy's black hole: once the galaxy fills the view (render/layers/galaxies.js)
         if (system.kind === 'nucleus') {
             const galaxies = engine.getLayer('galaxies');
