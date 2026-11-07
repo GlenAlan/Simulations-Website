@@ -17,6 +17,8 @@
 import * as THREE from 'three';
 import { app, bus } from '../../core/state.js';
 import { appearanceFrom, ringProfile } from './appearance.js';
+import { planetBandLook, planetBandValues } from './planet_bands.js';
+import { sharedUniforms } from '../shared.js';
 import {
     liveBodyFragment, bakeFragment, BAKED_BODY_FRAGMENT, BODY_VERTEX, BAKE_VERTEX,
     SHELL_VERTEX, SHELL_FRAGMENT, RING_VERTEX, RING_FRAGMENT
@@ -283,6 +285,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
 
     const pattern = patternUniforms(look);
     const ringTexture = r ? makeRingTexture(look) : null;
+    const bandLook = planetBandLook(planet, look);
 
     // Shared by reference between the materials, so setting a value once reaches them all
     const shared = {
@@ -305,7 +308,13 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         tRing: { value: ringTexture || blackTexture },
         uRingIn: { value: r ? r.inner : 2 },
         uRingOut: { value: r ? r.outer : 3 },
-        uRingOpacity: { value: r ? r.opacity : 0 }
+        uRingOpacity: { value: r ? r.opacity : 0 },
+        // In the sky's band (planet_bands.js)
+        uBandW: sharedUniforms.uBandW,
+        uBandTint: sharedUniforms.uBandTint,
+        uBandReflect: { value: new THREE.Vector4(...bandLook.reflect) },
+        uBandHeat: { value: new THREE.Vector2(...bandLook.heat) },
+        uBandAurora: { value: new THREE.Vector3(...bandLook.aurora) }
     };
     const shading = {
         ...shared,
@@ -662,5 +671,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         fixedQuality = level;
     }
 
-    return { object3d, update, dispose, setOpacity, setQuality, look, meanColour: [flatAlbedo.x, flatAlbedo.y, flatAlbedo.z] };
+    const meanColour = [flatAlbedo.x, flatAlbedo.y, flatAlbedo.z];
+    // bandValues: a speck of this planet in each band, for its glow when small and the smear of a fast orbit
+    return { object3d, update, dispose, setOpacity, setQuality, look, meanColour, bandValues: planetBandValues(bandLook, meanColour) };
 }

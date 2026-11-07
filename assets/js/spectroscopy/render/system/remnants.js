@@ -10,6 +10,7 @@ import { hashString, Rng } from '../../core/rng.js';
 import { sharedUniforms } from '../shared.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from '../layers/bh_geodesic.js';
 import { exoticNoise } from '../layers/exotic_common.js';
+import { HOLE_DISC, JET_BANDS, BEAM_BANDS, BEAM_TRUE, bandRgb, falseTint } from './band_look.js';
 
 // Lengths in units of the hole's mass M, as on the sky. The radius the system view gives a hole is its disc's outer edge.
 const R_IN = 6;
@@ -41,6 +42,8 @@ uniform float uReveal;
 uniform vec3 uN;            // The disc's axes as the camera sees them: x right, y up, z towards the viewer
 uniform vec3 uE1;
 uniform vec3 uE2;
+uniform vec2 uBandDisc;     // The band: how bright the whole disc is, and how much more towards its hot inner edge
+uniform vec4 uBandTint;     // ... the false colour it's drawn in, and how much of the mix is false colour
 varying vec2 vP;
 
 const float PI = 3.14159265;
@@ -100,7 +103,7 @@ vec4 discLight(float r, float phi, float g) {
     float d = inner * outer * clumps;
     float T = max(uDiscT * Tn * g * (1.0 + 0.5 * spot), 2300.0);
     vec3 bb = pow(textureLod(tBody, vec2(log(clamp(T, 1000.0, 40000.0) / 1000.0) / log(40.0), 0.5), 0.0).rgb, vec3(1.2));
-    vec3 light = bb * (2.0 * pow(f, 1.3) * g * g * g * d + 1.2 * spot * inner);
+    vec3 light = bb * (2.0 * pow(f, 1.3) * g * g * g * d + 1.2 * spot * inner) * max(uBandDisc.x + uBandDisc.y * f * f, 0.0);
     return vec4(light, clamp(d * 1.5, 0.0, 0.94));
 }
 
@@ -136,13 +139,14 @@ void main() {
     float sigma = max(0.1, 1.2 * uPxM);
     float rim = (b - B_CRIT) / sigma;
     float approaching = 0.5 + 0.5 * clamp(angularMomentum / B_CRIT / max(length(uN.xy), 0.2), -1.0, 1.0);
-    light += clear * warm * exp(-rim * rim) * (0.35 + 1.5 * approaching * approaching);
+    light += clear * warm * exp(-rim * rim) * (0.35 + 1.5 * approaching * approaching) * max(uBandDisc.x + uBandDisc.y, 0.0);
 
     float beyond = max(b - B_CRIT, 0.0) / (R_OUT * 0.34);
     light += warm * exp(-beyond * beyond) * outside * 0.035;
 
     // Whatever's behind shows through only where the ray isn't caught and the gas lets it pass
     float edge = 1.0 - smoothstep(0.9, 1.0, b / ${QUAD_M.toFixed(2)});
+    light = mix(light, uBandTint.rgb * dot(light, vec3(0.3, 0.55, 0.15)) * 1.5, uBandTint.a);
     gl_FragColor = vec4(light * edge * uReveal, (1.0 - clear * outside) * uReveal);
 }`;
 
@@ -210,7 +214,9 @@ export function createHole(starData, opts = {}) {
             uReveal: { value: 1 },
             uN: { value: new THREE.Vector3(0, 0, 1) },
             uE1: { value: new THREE.Vector3(1, 0, 0) },
-            uE2: { value: new THREE.Vector3(0, 1, 0) }
+            uE2: { value: new THREE.Vector3(0, 1, 0) },
+            uBandDisc: { value: new THREE.Vector2(1, 0) },
+            uBandTint: { value: new THREE.Vector4(1, 1, 1, 0) }
         }
     });
     const quad = new THREE.Mesh(quadGeometry, material);
@@ -229,6 +235,15 @@ export function createHole(starData, opts = {}) {
     const qCam = new THREE.Quaternion();
     const toCompanion = new THREE.Vector3();
 
+    // Jets along the disc's axis, for a hole that has them: they show in radio, and faintly in X-rays
+    const jets = opts.jets ? createBeams({ radius: 0.05, length: 1, knots: 1, sides: 16 }) : null;
+    if (jets) {
+        jets.object.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+        group.add(jets.object);
+    }
+    const tintOut = [0, 0, 0];
+    const jetRgb = [0, 0, 0];
+
     const api = {
         group,
         look: null,
@@ -239,6 +254,19 @@ export function createHole(starData, opts = {}) {
         },
         setTide() {},
         setBandStrength() {},
+        // The band weights: the disc's hot inner edge in X-rays, its cooler outside in infrared, the jets in radio
+        setBand(w) {
+            let x = 0;
+            let y = 0;
+            for (let b = 0; b < 5; b++) {
+                x += w[b] * HOLE_DISC[b][0];
+                y += w[b] * HOLE_DISC[b][1];
+            }
+            material.uniforms.uBandDisc.value.set(x, y);
+            const { tint, share } = falseTint(w, tintOut);
+            material.uniforms.uBandTint.value.set(tint[0], tint[1], tint[2], share);
+            if (jets) jets.setColour(bandRgb(w, [0, 0, 0], JET_BANDS, jetRgb));
+        },
         setQuality(q) { material.uniforms.uOrders.value = q === 'low' ? 2 : 3; },
         // Where the companion is, so the stream lands on the right side of the disc
         setCompanion(x, y, z) {
@@ -257,13 +285,17 @@ export function createHole(starData, opts = {}) {
             u.uN.value.copy(normal).applyMatrix3(rot);
             u.uE1.value.copy(e1).applyMatrix3(rot);
             u.uE2.value.copy(e2).applyMatrix3(rot);
+            if (jets) jets.update({ dt: s.dt, reveal: s.reveal, reduceMotion: s.reduceMotion, scale: api.radius * 6 });
         },
-        dispose() { material.dispose(); }
+        dispose() {
+            material.dispose();
+            if (jets) jets.dispose();
+        }
     };
     return api;
 }
 
-// ---------- A pulsar's beams ----------
+// ---------- Beams: a pulsar's, and a black hole's jets ----------
 
 const BEAM_VERTEX = /* glsl */`
 varying float vAlong;
@@ -278,7 +310,10 @@ void main() {
 }`;
 
 const BEAM_FRAGMENT = /* glsl */`
+uniform vec3 uColour;
 uniform float uAmount;
+uniform float uKnots;       // Jets: knots of brighter gas, moving outward
+uniform float uFlow;
 varying float vAlong;
 varying vec3 vNormal;
 varying vec3 vView;
@@ -286,15 +321,17 @@ void main() {
     float along = abs(vAlong);
     float fade = (1.0 - smoothstep(0.1, 1.0, along)) * smoothstep(0.0, 0.08, along);
     float rim = pow(abs(dot(normalize(vNormal), normalize(vView))), 1.5);
-    gl_FragColor = vec4(vec3(0.55, 0.72, 1.0) * fade * rim * uAmount, 1.0);
+    float knots = mix(1.0, 0.45 + 0.55 * pow(0.5 + 0.5 * sin(along * 24.0 - uFlow), 3.0), uKnots);
+    gl_FragColor = vec4(uColour * fade * rim * knots * uAmount, 1.0);
 }`;
 
 // The real thing turns too fast to draw, and would flash. These sweep gently, at one speed for every pulsar.
 const BEAM_TURNS_PER_S = 0.12;
 
-export function createPulsarBeams(ns) {
-    const geometry = new THREE.ConeGeometry(0.13, 1, 28, 1, true);
-    geometry.translate(0, -0.5, 0);     // The point at the star, the open end along -y
+// Two cones from a point, one each way along y: { object, setColour(rgb), update({ dt, reveal, reduceMotion, scale }) }
+function createBeams({ radius, length, knots, sides }) {
+    const geometry = new THREE.ConeGeometry(radius, length, sides, 1, true);
+    geometry.translate(0, -0.5 * length, 0);     // The point at the star, the open end along -y
     const material = new THREE.ShaderMaterial({
         toneMapped: false,
         transparent: true,
@@ -303,32 +340,58 @@ export function createPulsarBeams(ns) {
         blending: THREE.AdditiveBlending,
         vertexShader: BEAM_VERTEX,
         fragmentShader: BEAM_FRAGMENT,
-        uniforms: { uAmount: { value: 0.5 } }
+        uniforms: {
+            uColour: { value: new THREE.Color(...BEAM_TRUE) },
+            uAmount: { value: 0.5 },
+            uKnots: { value: knots },
+            uFlow: { value: 0 }
+        }
     });
-    const spin = new THREE.Group();
-    const axis = new THREE.Group();
-    axis.rotation.z = ((ns.magnetic_tilt_deg || 30) * Math.PI) / 180;
+    const object = new THREE.Group();
     const north = new THREE.Mesh(geometry, material);
     const south = new THREE.Mesh(geometry, material);
     south.rotation.z = Math.PI;
-    north.frustumCulled = false;
-    south.frustumCulled = false;
-    north.renderOrder = 3;
-    south.renderOrder = 3;
-    axis.add(north, south);
-    spin.add(axis);
-    let angle = 0;
+    [north, south].forEach((m) => {
+        m.frustumCulled = false;
+        m.renderOrder = 3;
+    });
+    object.add(north, south);
     return {
-        object: spin,
-        update({ dt, reveal, reduceMotion, radius }) {
-            if (!reduceMotion) angle += dt * BEAM_TURNS_PER_S * Math.PI * 2;
-            spin.rotation.y = angle;
-            spin.scale.setScalar(radius * 7);
+        object,
+        setColour(rgb) {
+            material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]);
+            object.visible = rgb[0] + rgb[1] + rgb[2] > 0.002;
+        },
+        update({ dt, reveal, reduceMotion, scale }) {
+            if (!reduceMotion) material.uniforms.uFlow.value += dt * 2.2;
+            object.scale.setScalar(scale);
             material.uniforms.uAmount.value = 0.5 * reveal;
         },
         dispose() {
             geometry.dispose();
             material.dispose();
         }
+    };
+}
+
+export function createPulsarBeams(ns) {
+    const beams = createBeams({ radius: 0.13, length: 1, knots: 0, sides: 28 });
+    const spin = new THREE.Group();
+    const axis = new THREE.Group();
+    axis.rotation.z = ((ns.magnetic_tilt_deg || 30) * Math.PI) / 180;
+    axis.add(beams.object);
+    spin.add(axis);
+    let angle = 0;
+    const rgb = [0, 0, 0];
+    return {
+        object: spin,
+        // Radio first; some pulsars sweep X-rays too. In visible light they stay the stylised beams they were.
+        setBand(w) { beams.setColour(bandRgb(w, BEAM_TRUE, BEAM_BANDS, rgb)); },
+        update({ dt, reveal, reduceMotion, radius }) {
+            if (!reduceMotion) angle += dt * BEAM_TURNS_PER_S * Math.PI * 2;
+            spin.rotation.y = angle;
+            beams.update({ dt: 0, reveal, reduceMotion: true, scale: radius * 7 });
+        },
+        dispose: beams.dispose
     };
 }

@@ -8,6 +8,15 @@ import { termHtml } from '../content/glossary.js';
 
 const NARROW_SCREEN = '(max-width: 640px)';
 
+// Inside a planetary system the same band says what shows up close (render/system/band_look.js, planet_bands.js)
+const IN_SYSTEM = {
+    radio: 'Giant planets with strong magnetic fields glow at their poles, active stars flare, and jets and pulsar beams shine. Quiet stars are dim.',
+    ir: 'Heat glows here. Cool stars and hot planets are bright, the day side brighter than the night. Cold worlds are dim.',
+    visible: 'Starlight, and planets lit by their star, in the colours your eyes would see.',
+    uv: 'Hot stars blaze. Hazy air reflects this light, and auroras ring the poles of giant planets. Bare rock is dark.',
+    xray: 'Gas at millions of degrees: a star\'s corona, flares, and gas falling onto a star or a black hole. Planets show almost nothing.'
+};
+
 // The sky's own tone mapping (render/engine.js), so that the ramp shows the colours the sky really has
 function toCss(linear) {
     const channel = (x) => {
@@ -64,7 +73,7 @@ export function initLegend(app) {
         name.textContent = info.label;
         if (!info.falseColour && document.activeElement === tag) toggle.focus({ preventScroll: true });
         tag.hidden = !info.falseColour;
-        text.textContent = info.legend;
+        text.textContent = app.view === 'system' ? IN_SYSTEM[band] : info.legend;
         ramp.style.background = rampGradient(band);
         low.textContent = info.falseColour ? 'Faint' : 'Cool stars';
         high.textContent = info.falseColour ? 'Bright' : 'Hot stars';
@@ -72,12 +81,10 @@ export function initLegend(app) {
 
     toggle.addEventListener('click', () => setOpen(body.hidden));
     const offBand = bus.on('band', ({ band }) => show(band));
-    // A band is a view of the sky, so the legend has nothing to say inside a planetary system
-    const offView = bus.on('view', ({ view }) => { host.hidden = view === 'system'; });
+    const offView = bus.on('view', () => show(app.band));
 
     setOpen(startOpen);
     show(app.band);
-    host.hidden = app.view === 'system';
 
     return {
         setOpen,

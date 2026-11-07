@@ -38,6 +38,9 @@ import { createHole, createPulsarBeams } from './remnants.js';
 import { createOrbitLine, createOrbitGlow } from './orbit_lines.js';
 import { createBackdrop } from './backdrop.js';
 import { createMassStream } from './mass_stream.js';
+import { starBandLook, createFlares, FLARE_GAIN, bandRgb } from './band_look.js';
+import { createComets } from './comets.js';
+import { hashString } from '../../core/rng.js';
 
 const RAD = Math.PI / 180;
 const FOV = 36;                     // Vertical field of view of the system camera (degrees)
@@ -202,12 +205,18 @@ export function initSystemView(app) {
     function buildWorld() {
         const quality = app.qualityLevel;
         const group = new THREE.Group();
+        const hole = model.body.black_hole;
         const stars = model.stars.map((s) => {
-            const make = s.star.stage === 'black_hole' ? createHole : createStar;
-            const star = make(s.star, { seed: s.code, quality });
+            const isHole = s.star.stage === 'black_hole';
+            const make = isHole ? createHole : createStar;
+            const star = make(s.star, { seed: s.code, quality, jets: isHole && !!(hole && hole.jets) });
             group.add(star.group);
             return star;
         });
+        // How each star shows in each band, and the flares of an active M dwarf
+        const accretor = model.stream && !model.stream.ontoHole ? model.stream.accretor : -1;
+        const bandLooks = model.stars.map((s, i) => (s.star.stage === 'black_hole' ? null : starBandLook(s, i === accretor)));
+        const flares = bandLooks.map((look, i) => (look && look.flares ? createFlares(hashString(model.stars[i].code)) : null));
         const brightest = model.stars.reduce((best, s, i) => (s.star.luminosity_Lsun > model.stars[best].star.luminosity_Lsun ? i : best), 0);
 
         let beams = null;
@@ -259,7 +268,8 @@ export function initSystemView(app) {
             geometry.setAttribute('position', place);
             geometry.setAttribute('aSize', size);
             geometry.setAttribute('aAlpha', alpha);
-            geometry.setAttribute('aColour', new THREE.BufferAttribute(colours, 3));
+            const colour = new THREE.BufferAttribute(colours, 3);
+            geometry.setAttribute('aColour', colour);
             const material = new THREE.ShaderMaterial({
                 toneMapped: false,
                 transparent: true,
@@ -272,7 +282,7 @@ export function initSystemView(app) {
             object.frustumCulled = false;
             object.renderOrder = 4;
             group.add(object);
-            halo = { object, geometry, material, place, size, alpha };
+            halo = { object, geometry, material, place, size, alpha, colour };
         }
 
         // The figure-eight: a thin line inside a faint glow
@@ -321,10 +331,15 @@ export function initSystemView(app) {
         const starLabels = model.stars.map((s) => makeLabel(s.code));
         const planetLabels = model.planets.map((e) => makeLabel(e.code));
 
+        const comets = model.comets.length ? createComets(model, mix) : null;
+        if (comets) group.add(comets.group);
+        const cometLabels = model.comets.map((e) => makeLabel(e.code));
+
         scene.add(group);
         const steady = new Map(model.nodes.map((n) => [n, [0, 0, 0]]));
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
+            bandLooks, flares, bandSeen: null, comets, cometLabels,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
             lastStars: new Float64Array(model.stars.length * 3),
             lastPlanets: new Float64Array(model.planets.length * 3),
@@ -377,6 +392,7 @@ export function initSystemView(app) {
             world.hz.mesh.geometry.dispose();
         }
         if (world.stream) world.stream.dispose();
+        if (world.comets) world.comets.dispose();
         labelLayer.replaceChildren();
         world = null;
         positions = null;
@@ -674,13 +690,14 @@ export function initSystemView(app) {
 
     function nameOf(code) {
         if (model.planets.some((p) => p.code === code)) return 'Planet';
+        if (model.comets.some((p) => p.code === code)) return 'Comet';
         const star = model.stars.find((s) => s.code === code);
         return star && star.star.stage === 'black_hole' ? 'Black hole' : star && star.star.stage === 'neutron_star' ? 'Neutron star' : 'Star';
     }
 
     function walk(direction) {
         if (!canInteract()) return;
-        const list = [...model.stars.map((s) => s.code), ...model.planets.map((p) => p.code)];
+        const list = [...model.stars.map((s) => s.code), ...model.planets.map((p) => p.code), ...model.comets.map((p) => p.code)];
         const here = list.indexOf(aimCode || selectedCode);
         const next = here < 0 ? (direction > 0 ? list[0] : list[list.length - 1]) : list[(here + direction + list.length) % list.length];
         aimCode = next;
@@ -734,6 +751,7 @@ export function initSystemView(app) {
         const t = cam.target;
         if (t && t.kind === 'planet') return planetRadius(model, model.planets[t.index].planet, mix) * 1.5;
         if (t && t.kind === 'star') return starRadius(model, t.index, mix) * 1.5;
+        if (t && t.kind === 'comet') return FRAME * 0.02;
         return Math.max(...model.stars.map((_, i) => starRadius(model, i, mix))) * 1.5;
     }
 
@@ -786,6 +804,8 @@ export function initSystemView(app) {
             const hidden = stars.some((st) => st.depth < q.depth && Math.hypot(st.x - q.x, st.y - q.y) < st.r);
             if (!hidden) consider(q, entry.code, 0);
         });
+        const comet = world.comets ? world.comets.pick(x, y, radiusPx) : null;
+        if (comet) offer(comet.d, comet.code);
         stars.forEach((st, i) => {
             if (world.smear.stars[i] <= 0.5) {
                 consider(st, st.code, 6);
@@ -802,6 +822,8 @@ export function initSystemView(app) {
         if (!model || !code) return null;
         const pi = model.planets.findIndex((e) => e.code === code);
         if (pi >= 0) return { kind: 'planet', index: pi, code };
+        const ci = model.comets.findIndex((e) => e.code === code);
+        if (ci >= 0) return { kind: 'comet', index: ci, code };
         const si = model.stars.findIndex((s) => s.code === code);
         if (si >= 0) {
             if (model.stars.length === 1) return null;  // The middle of a one-star system: the whole view
@@ -838,6 +860,7 @@ export function initSystemView(app) {
     function targetPosition(t) {
         if (!t || !positions) return [0, 0, 0];
         if (t.kind === 'planet') return positions.planets[t.index];
+        if (t.kind === 'comet') return world.comets.items[t.index].world;
         if (t.kind === 'star') return world.starsAt[t.index];
         return world.steady.get(t.node);
     }
@@ -851,6 +874,8 @@ export function initSystemView(app) {
             return (planetRadius(model, planet, mix) * reach) / (2 * 0.2 * TAN_V * Math.min(1, aspect));
         }
         if (t.kind === 'star') return starRadius(model, t.index, mix) / (2 * 0.24 * TAN_V);
+        // A comet: its tail across most of the view, or a close look at its head if it has none just now
+        if (t.kind === 'comet') return Math.max(world.comets.items[t.index].tailWorld, FRAME * 0.06) / (1.05 * TAN_V * Math.min(1, aspect));
         const sep = ringRadius(model, t.node.a_AU, mix);
         const around = model.planets.filter((e) => e.node === t.node).map((e) => ringRadius(model, e.planet.orbit_AU, mix));
         return (Math.max(sep * 1.1, ...around.map((r) => r * 1.1)) / TAN_V) / Math.min(1, aspect);
@@ -869,6 +894,7 @@ export function initSystemView(app) {
                 faceLitSide(target);
                 cam.elT = Math.max(10 * RAD, Math.min(32 * RAD, cam.elT));
             }
+            if (target && target.kind === 'comet') faceTail(target);
             cam.zoom = zoomAfter;
             cam.dist = toDist;
             cam.distT = toDist;
@@ -883,6 +909,7 @@ export function initSystemView(app) {
             faceLitSide(target);
             cam.elT = Math.max(10 * RAD, Math.min(32 * RAD, cam.elT));
         }
+        if (target && target.kind === 'comet') faceTail(target);
         notify();
     }
 
@@ -895,6 +922,15 @@ export function initSystemView(app) {
         const gap = Math.hypot(sun[0] - p[0], sun[2] - p[2]);
         const clear = Math.asin(Math.min(0.95, (1.25 * starRadius(model, world.brightest, mix)) / Math.max(gap, 1e-6)));
         cam.azT = cam.az + wrapPi(towardsSun + Math.max(DAY_SIDE, clear) - cam.az);
+    }
+
+    // A comet is looked at side-on to its tails, which point straight away from the star, so they show at their full length
+    function faceTail(target) {
+        const d = world.comets.items[target.index].dir;
+        // Of the two side-on views, the one nearer where the camera is
+        const turn = wrapPi(Math.atan2(-d[2], d[0]) - cam.az);
+        cam.azT = cam.az + (Math.abs(turn) <= Math.PI / 2 ? turn : wrapPi(turn + Math.PI));
+        cam.elT = 18 * RAD;
     }
 
     // The planet that sizes are being worked out around: the one in focus, or the one a flight is just leaving
@@ -1089,8 +1125,62 @@ export function initSystemView(app) {
         return smoothstep(1.5, 3, pxPerSecond / (2 * Math.max(pxRadius, 1))) * smoothstep(40, 80, pxRadius);
     }
 
+    // ---------- Bands ----------
+    const HOLE_LIGHT = [0.05, 0.5, 1, 0.6, 1.5];   // A black hole merged into its smear: its disc's light, roughly
+    const bandTmp = [0, 0, 0];
+
+    function childBandColour(child, w) {
+        const out = [0, 0, 0];
+        child.members.forEach((i) => {
+            const look = world.bandLooks[i];
+            const rgb = bandRgb(w, surfaceColour(model.stars[i].star.teff_K), look ? look.surface : HOLE_LIGHT, bandTmp);
+            for (let c = 0; c < 3; c++) out[c] += rgb[c] / child.members.length;
+        });
+        return out;
+    }
+
+    // Everything in the system in the sky's band, cross-fading as the sky does (band_look.js). Strengths every frame, for
+    // the flares; colours set once only when the band changes.
+    function updateBands(frame) {
+        const w = sharedUniforms.uBandW.value;
+        const reduce = app.settings.reduceMotion;
+        world.stars.forEach((star, i) => {
+            const look = world.bandLooks[i];
+            if (!look) {
+                star.setBand(w);
+                return;
+            }
+            const flare = world.flares[i] ? world.flares[i].step(frame.dt, reduce) : 0;
+            let surface = 0;
+            let corona = 0;
+            for (let b = 0; b < 5; b++) {
+                surface += w[b] * look.surface[b] * (1 + flare * FLARE_GAIN.surface[b]);
+                corona += w[b] * look.corona[b] * (1 + flare * FLARE_GAIN.corona[b]);
+            }
+            star.setBandStrength(surface, corona);
+        });
+        if (world.beams) world.beams.setBand(w);
+        const seen = world.bandSeen;
+        let same = !!seen;
+        for (let b = 0; b < 5 && same; b++) same = seen[b] === w[b];
+        if (same) return;
+        world.bandSeen = w.slice();
+        world.planets.forEach((item, j) => {
+            const rgb = bandRgb(w, item.handle.meanColour, item.handle.bandValues, bandTmp);
+            if (world.halo) world.halo.colour.setXYZ(j, rgb[0], rgb[1], rgb[2]);
+            item.smear.setColour(rgb);
+        });
+        if (world.halo) world.halo.colour.needsUpdate = true;
+        world.starLines.forEach((line) => {
+            const rgb = childBandColour(line.child, w);
+            line.smear.setColour(rgb);
+            line.glow.setColour(rgb);
+        });
+    }
+
     function updateWorld(frame, stage, starNdc) {
         const reduce = app.settings.reduceMotion;
+        updateBands(frame);
         const seen = starNdc ? starNdc.seen : 1;
         const showReveal = stage.reveal * seen;
         const camPos = camera.position;
@@ -1237,6 +1327,21 @@ export function initSystemView(app) {
                 item.smear.set({ opacity: smearOpacity, width: Math.min(80, across * 2.4) * frame.dpr });
             }
         });
+        if (world.comets) {
+            world.comets.update({
+                camera,
+                star: world.starsAt[world.brightest],
+                stage,
+                rate: clock.shown,
+                cap: reduce ? ORBITS_PER_SECOND_REDUCED : ORBITS_PER_SECOND,
+                tDays,
+                dpr: frame.dpr,
+                selected: selectedCode,
+                hover: hoverCode || aimCode,
+                focused: cam.target ? cam.target.code : null,
+                focusIndex: cam.target && cam.target.kind === 'comet' ? cam.target.index : -1
+            });
+        }
         if (world.halo) {
             world.halo.place.needsUpdate = true;
             world.halo.size.needsUpdate = true;
@@ -1382,6 +1487,16 @@ export function initSystemView(app) {
         placeLabel(el, at.x, at.y - r - 3, frame, cls);
     }
 
+    function placeCometLabel(i, frame, cls) {
+        const el = world.cometLabels[i];
+        const item = world.comets.items[i];
+        if (!item.screen.ok || item.own > 0.5) {
+            el.hidden = true;
+            return;
+        }
+        placeLabel(el, item.screen.x, item.screen.y - item.screen.coma - 6, frame, cls);
+    }
+
     function placeStarLabel(i, frame, cls) {
         const el = world.starLabels[i];
         const merged = world.smear.stars[i] > 0.5;
@@ -1396,7 +1511,8 @@ export function initSystemView(app) {
             return;
         }
         const r = (world.sizes.stars[i] * frame.height) / (2 * TAN_V * Math.max(world.sizes.starZ[i], world.sizes.stars[i], 1e-6));
-        placeLabel(el, at.x, at.y - r - 3, frame, cls);
+        // Clear of the bright glow round its edge, which reaches furthest past a small star
+        placeLabel(el, at.x, at.y - r - Math.max(Math.min(0.6 * r, 16), 11) - 3, frame, cls);
     }
 
     function updateLabels(frame, stage) {
@@ -1416,6 +1532,10 @@ export function initSystemView(app) {
         world.planetLabels.forEach((el, i) => {
             if (isMarked(model.planets[i].code) && shown) return;
             if (labelsOn) placePlanetLabel(i, frame, '');
+            else el.hidden = true;
+        });
+        world.cometLabels.forEach((el, i) => {
+            if (shown && (labelsOn || isMarked(model.comets[i].code))) placeCometLabel(i, frame, isMarked(model.comets[i].code) ? 'selected' : '');
             else el.hidden = true;
         });
         if (world.hz) {
@@ -1477,6 +1597,7 @@ export function initSystemView(app) {
 
         // Before the camera moves, so that what it's following can't be a frame behind
         positions = layout(model, tDays, mix, positions);
+        if (world.comets) world.comets.place(tDays, mix);
         settleOrbits(frame);
 
         if (useFade) {
@@ -1658,7 +1779,7 @@ export function initSystemView(app) {
             return false;
         }
         const focusCode = opts.focus && opts.focus !== true ? opts.focus
-            : (resolved.path === 'planet' && opts.focus !== false ? resolved.entity.code : null);
+            : ((resolved.path === 'planet' || resolved.path === 'comet') && opts.focus !== false ? resolved.entity.code : null);
 
         if (mode !== 'sky' && model && model.code === body.code) {
             // A zoom under way gives way to the button or a link
@@ -1721,6 +1842,7 @@ export function initSystemView(app) {
         ensureBackdrop();
         world = buildWorld();
         positions = layout(model, tDays, mix);
+        if (world.comets) world.comets.place(tDays, mix);
         compiled = false;
 
         // Compile before the clock starts, so a slow shader doesn't eat the first second of the flight
@@ -1815,8 +1937,9 @@ export function initSystemView(app) {
     // How much the clock is held back. A planet in close-up is there to be looked at, not to race round its star.
     function timeScale() {
         const t = cam.target;
-        if (!model || mode !== 'system' || !t || t.kind !== 'planet' || !(clock.speed > 0)) return 1;
-        return Math.min(CLOSE_UP_SLOWDOWN, (CLOSE_UP_ORBITS_PER_S * model.planets[t.index].planet.period_days) / clock.speed);
+        if (!model || mode !== 'system' || !t || (t.kind !== 'planet' && t.kind !== 'comet') || !(clock.speed > 0)) return 1;
+        const period = t.kind === 'planet' ? model.planets[t.index].planet.period_days : model.comets[t.index].orbit.period_days;
+        return Math.min(CLOSE_UP_SLOWDOWN, (CLOSE_UP_ORBITS_PER_S * period) / clock.speed);
     }
 
     // ---------- Things other parts of the page react to ----------
@@ -1957,6 +2080,10 @@ export function initSystemView(app) {
         _project(code) {
             const i = model.planets.findIndex((e) => e.code === code);
             return i < 0 ? null : projectToCss(positions.planets[i], engine.currentFrame());
+        },
+        _cometScreen(code) {
+            const item = world && world.comets ? world.comets.items.find((c) => c.entry.code === code) : null;
+            return item && item.screen.ok ? { x: item.screen.x, y: item.screen.y, coma: item.screen.coma } : null;
         },
         _camera: () => camera,
         // What's really in the scene this frame: for checking the size rule against the picture, not against the sums

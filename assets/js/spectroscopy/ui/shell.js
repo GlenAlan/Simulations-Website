@@ -133,26 +133,23 @@ function initBandBar(app) {
         // The name holds the words on the button, so asking for "IR" by voice still finds it
         const { short, label } = BAND_INFO[band];
         b.setAttribute('aria-label', short === label ? label : `${short}, ${label}`);
-        b.addEventListener('click', () => { if (app.view === 'sky') setBand(band); });
+        b.addEventListener('click', () => setBand(band));
         bar.appendChild(b);
         return b;
     });
 
-    // Bands are a way of looking at the sky: a system is always drawn as it would look to the eye
+    // The sky and a planetary system alike
     function paint() {
-        const inSky = app.view === 'sky';
+        const where = app.view === 'sky' ? 'the sky' : 'this system';
         buttons.forEach((b) => {
             const on = b.dataset.band === app.band;
             b.setAttribute('aria-checked', on ? 'true' : 'false');
             b.tabIndex = on ? 0 : -1;
-            b.title = inSky ? `Show the sky in ${BAND_INFO[b.dataset.band].label}` : 'Bands show in the sky view';
-            if (inSky) b.removeAttribute('aria-disabled');
-            else b.setAttribute('aria-disabled', 'true');
+            b.title = `Show ${where} in ${BAND_INFO[b.dataset.band].label}`;
         });
     }
 
     bar.addEventListener('keydown', (e) => {
-        if (app.view !== 'sky') return;
         const i = BANDS.indexOf(app.band);
         let next = -1;
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % BANDS.length;
@@ -463,7 +460,7 @@ function initContextBar(app) {
         const resolved = app.selected;
         const code = systemCodeFor(app, resolved);
         if (!code || !app.system) return;
-        const planet = resolved.path === 'planet' ? resolved.entity.code : null;
+        const planet = resolved.path === 'planet' || resolved.path === 'comet' ? resolved.entity.code : null;
         app.system.enter(code, { onDone: planet ? () => app.system.focusPlanet(planet) : undefined });
     });
     back.addEventListener('click', () => { if (app.system) app.system.exit(); });

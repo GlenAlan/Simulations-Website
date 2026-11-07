@@ -5,6 +5,7 @@
 //   points are [x, y, z] in the line's own space; scale and place line.object as needed.
 //   line.set({ draw, head, opacity, width, trail }): draw is how much of the loop shows, measured back from head.
 //   line.withGeometry(opts) makes another line over the same points with its own look: a smear under a thin line, say.
+//   line.setColour(rgb) and glow.setColour(rgb): for a smear of light, which takes the band's colours.
 //
 //   const glow = createOrbitGlow(points, colour);
 //   glow.set({ radius, amount, count }): a star's light averaged over its orbit, as many soft discs round it. It's for when
@@ -70,6 +71,7 @@ export function createOrbitGlow(points, colour) {
     object.visible = false;
     return {
         object,
+        setColour(rgb) { material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]); },
         set({ radius, amount, count }) {
             material.uniforms.uRadius.value = radius;
             material.uniforms.uAmount.value = amount;
@@ -145,20 +147,24 @@ export function createOrbitLine(points, opts = {}) {
     const next = new Float32Array(count * 2 * 3);
     const side = new Float32Array(count * 2);
     const u = new Float32Array(count * 2);
-    for (let i = 0; i < count; i++) {
-        const k = closed ? i % n : i;
-        const a = closed ? points[(k + n - 1) % n] : points[Math.max(0, k - 1)];
-        const c = points[k];
-        const b = closed ? points[(k + 1) % n] : points[Math.min(n - 1, k + 1)];
-        for (let s = 0; s < 2; s++) {
-            const j = i * 2 + s;
-            position.set(c, j * 3);
-            prev.set(a, j * 3);
-            next.set(b, j * 3);
-            side[j] = s === 0 ? -1 : 1;
-            u[j] = closed ? i / n : i / Math.max(1, n - 1);
+    // opts.u: where along the loop each point is, from 0 to 1, if not evenly spaced (a comet's points, by time)
+    const fill = (pts) => {
+        for (let i = 0; i < count; i++) {
+            const k = closed ? i % n : i;
+            const a = closed ? pts[(k + n - 1) % n] : pts[Math.max(0, k - 1)];
+            const c = pts[k];
+            const b = closed ? pts[(k + 1) % n] : pts[Math.min(n - 1, k + 1)];
+            for (let s = 0; s < 2; s++) {
+                const j = i * 2 + s;
+                position.set(c, j * 3);
+                prev.set(a, j * 3);
+                next.set(b, j * 3);
+                side[j] = s === 0 ? -1 : 1;
+                u[j] = opts.u ? opts.u[k] + (i >= n ? 1 : 0) : closed ? i / n : i / Math.max(1, n - 1);
+            }
         }
-    }
+    };
+    fill(points);
     const indices = [];
     for (let i = 0; i < count - 1; i++) {
         const j = i * 2;
@@ -171,7 +177,13 @@ export function createOrbitLine(points, opts = {}) {
     geometry.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
     geometry.setAttribute('aU', new THREE.BufferAttribute(u, 1));
     geometry.setIndex(indices);
-    return lineOver(geometry, opts, true);
+    const line = lineOver(geometry, opts, true);
+    // The same number of points, moved: a comet's orbit as the log scale eases in
+    line.setPoints = (pts) => {
+        fill(pts);
+        ['position', 'aPrev', 'aNext'].forEach((name) => { geometry.getAttribute(name).needsUpdate = true; });
+    };
+    return line;
 }
 
 function lineOver(geometry, opts, ownsGeometry) {
@@ -208,6 +220,7 @@ function lineOver(geometry, opts, ownsGeometry) {
             if (values.width !== undefined) un.uWidth.value = values.width;
             if (values.trail !== undefined) un.uTrail.value = values.trail;
         },
+        setColour(rgb) { material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]); },
         withGeometry: (nextOpts) => lineOver(geometry, nextOpts, false),
         dispose() {
             if (ownsGeometry) geometry.dispose();

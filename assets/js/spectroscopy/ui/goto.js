@@ -460,7 +460,7 @@ export function initGoto(app) {
     }
 
     function isHidden({ body, path }) {
-        if (path === 'planet') return false; // Not drawn on the sky at all: the flight ends in its system, whatever the band
+        if (path === 'planet' || path === 'comet') return false; // Not drawn on the sky at all: the flight ends in its system, whatever the band
         return isFaintInBand(body) && strongestBand(body) !== app.band;
     }
 
@@ -537,7 +537,7 @@ export function initGoto(app) {
             if (!stillCurrent()) return false;
             if (!inItsSystem()) return false;
             // As a row in the System tab does: a star's code goes back to the whole system or on to that star
-            app.system.focusPlanet(path === 'planet' || path === 'component' ? entity.code : null);
+            app.system.focusPlanet(path === 'planet' || path === 'comet' || path === 'component' ? entity.code : null);
             select(entity.code);
             return true;
         }
@@ -555,11 +555,12 @@ export function initGoto(app) {
             await leaveSystem();
             if (!stillCurrent()) return false;
         }
-        if ((path === 'planet' || pressedEnter) && systemCode && engine.renderer) {
+        const inSystem = path === 'planet' || path === 'comet';
+        if ((inSystem || pressedEnter) && systemCode && engine.renderer) {
             await goIntoSystem();
             if (!stillCurrent()) return false;
             if (!inItsSystem()) return false; // Esc on the way in called the whole thing off
-            if (path === 'planet') app.system.focusPlanet(entity.code);
+            if (inSystem) app.system.focusPlanet(entity.code);
         }
         select(entity.code);
         if (path === 'member' && app.view === 'sky') {
