@@ -2518,6 +2518,128 @@ body.sim-panel-sheet .spectro-instrument.has-tool:not(.has-own-figure) .spectro-
 /* === end TOOLS === */
 
 
+/* === MEASURE: How hot? and How is it moving?, worked out by hand on the plot === */
+
+/* The ways to measure, one at a time, as one flat row */
+.spectro-hands-modes {
+    display: flex;
+    min-width: 0;
+}
+
+.spectro-spectrum button.spectro-hands-mode {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 0.3em;
+    border-radius: 0;
+    white-space: normal;
+    line-height: 1.15;
+}
+
+.spectro-spectrum button.spectro-hands-mode + button.spectro-hands-mode {
+    margin-left: -1px;
+}
+
+.spectro-spectrum button.spectro-hands-mode:first-child {
+    border-radius: var(--sim-radius) 0 0 var(--sim-radius);
+}
+
+.spectro-spectrum button.spectro-hands-mode:last-child {
+    border-radius: 0 var(--sim-radius) var(--sim-radius) 0;
+}
+
+.spectro-spectrum button.spectro-hands-mode[aria-pressed="true"],
+.spectro-spectrum button.spectro-hands-mode:focus-visible {
+    position: relative;
+    z-index: 1;
+}
+
+.spectro-hands-pane,
+.spectro-hands-mode-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45em;
+    min-width: 0;
+}
+
+.spectro-hands-pane[hidden],
+.spectro-hands-mode-body[hidden],
+.spectro-tool-body p[hidden] {
+    display: none;
+}
+
+/* One large slider: a long track and a thumb a finger can find */
+.spectro-spectrum input[type="range"].spectro-hands-big {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    margin: 0;
+}
+
+.spectro-spectrum input[type="range"].spectro-hands-big::-webkit-slider-runnable-track {
+    height: 8px;
+    border-radius: 4px;
+}
+
+.spectro-spectrum input[type="range"].spectro-hands-big::-webkit-slider-thumb {
+    width: 26px;
+    height: 26px;
+    margin-top: -9px;
+}
+
+.spectro-spectrum input[type="range"].spectro-hands-big::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+}
+
+/* What either end of a slider means, in two words */
+.spectro-hands-ends {
+    display: flex;
+    justify-content: space-between;
+    margin-top: -0.45em;
+    font-size: 0.78em;
+    line-height: 1.2;
+    color: var(--color-text);
+}
+
+.spectro-hands-slide {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+}
+
+/* Rows of chips that fill the width: the classes, the standards in a class, the lines to zoom to */
+.spectro-hands-chips,
+.spectro-hands-subs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3em;
+}
+
+.spectro-spectrum button.spectro-hands-chip {
+    flex: 1 1 0;
+    min-width: 44px;
+    padding: 0 0.35em;
+}
+
+.spectro-hands-subs .spectro-hands-chip.is-other {
+    flex-grow: 1.6;
+}
+
+.spectro-hands-use,
+.spectro-hands-note {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+}
+
+.spectro-hands-use:empty,
+.spectro-hands-note:empty {
+    display: none;
+}
+
+/* === end MEASURE === */
+
+
 /* === HR: the H-R and Hubble tabs === */
 .spectro-fig-tab {
     display: flex;

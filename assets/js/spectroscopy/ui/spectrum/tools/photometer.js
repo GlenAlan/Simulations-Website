@@ -1,7 +1,7 @@
 // Photometer: the object's measured brightness b and its distance, which give L = 4 pi d^2 b for the H-R diagram.
 
 import * as synth from '../../../spectra/synth.js';
-import { registerTool } from './index.js';
+import { registerTool, toolWords } from './index.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { LY_PER_PC, luminosityFromFlux } from '../../../core/phys.js';
 import { sci, sig } from '../../../core/format.js';
@@ -66,8 +66,8 @@ function mount(container, api) {
             hasFlux && !shinesByItself(entity) ? para('This is reflected sunlight, so it says how much light is bounced back this way and not how much the object gives out.') : null,
             actionRow(
                 go,
-                hasTab('hr') && !(m.T_K > 0) ? toolLink(api, 'wien', 'Wien\'s law next') : null,
-                hasTab('hubble') && !Number.isFinite(m.v_kms) ? toolLink(api, 'doppler', 'Doppler next') : null
+                hasTab('hr') && !(m.T_K > 0) ? toolLink(api, 'wien', toolWords({ id: 'wien' }).short) : null,
+                hasTab('hubble') && !Number.isFinite(m.v_kms) ? toolLink(api, 'doppler', toolWords({ id: 'doppler' }).short) : null
             )
         );
     }

@@ -77,7 +77,7 @@ function tToSlider(T, min, max) {
 
 // How far the shift slider reaches: enough for the object's kind, in the unit that suits it. Depends only on the kind,
 // so it never hints at a particular object's velocity.
-function shiftSettings(entity) {
+export function shiftSettings(entity) {
     const kind = entity ? entity.kind : '';
     if (kind === 'quasar') return { unit: 'z', min: -0.1, max: 5, step: 0.001 };
     if (kind === 'galaxy') return { unit: 'kms', min: -2000, max: 100000, step: 10 };
