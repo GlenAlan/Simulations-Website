@@ -1335,11 +1335,14 @@ export function createEngine(canvas) {
         lastNow = now;
         elapsed += dt;
         // Just after the drawer opens or closes, look every frame: the size changes in one step, and the frame it changes in
-        // should already be drawn at the new size, or the old picture shows stretched for a moment
+        // should already be drawn at the new size, or the old picture shows stretched for a moment. The canvas can also move
+        // first and change size a frame later (a closing drawer's column widens before the sky's ratio follows, so for a
+        // frame the old width sits in the middle of the new room): that frame is drawn where it now is, too.
         const drawerResize = now - drawerChangedAt < DRAWER_RESIZE_MS;
         if (drawerResize && !resizePending) {
             const rect = canvas.getBoundingClientRect();
             if (Math.round(rect.width) !== width || Math.round(rect.height) !== height) resizePending = true;
+            else if (placed && (Math.abs(rect.left + window.scrollX - placed.left) > 0.5 || Math.abs(rect.top + window.scrollY - placed.top) > 0.5)) resizePending = true;
         }
         if (resizePending && (drawerResize || now - lastResizeAt > 120)) {
             // Dragging a window's edge resizes many times over: reallocating every frame of that would thrash the GPU
@@ -1541,7 +1544,17 @@ export function createEngine(canvas) {
 
         window.addEventListener('resize', () => { resizePending = true; });
         if (typeof ResizeObserver === 'function') {
-            new ResizeObserver(() => { resizePending = true; }).observe(canvas);
+            new ResizeObserver(() => {
+                resizePending = true;
+                // The drawer's doing: this runs after the frame was drawn and before it's shown, so draw it again at the new
+                // size now, or the old picture shows stretched over the new box for a frame
+                if (running && chainReady && !contextLost && !document.hidden && performance.now() - drawerChangedAt < DRAWER_RESIZE_MS) {
+                    resizePending = false;
+                    lastResizeAt = performance.now();
+                    resize(true);
+                    renderOnce(0);
+                }
+            }).observe(canvas);
         }
 
         document.addEventListener('visibilitychange', () => {
