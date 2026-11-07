@@ -4,8 +4,11 @@
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
+import { BANDS } from '../../core/bands.js';
 import { azAltToVec3 } from '../../core/sky.js';
+import { bandSkyBrightness } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { MIN_GLOW } from '../engine.js';
 
 const SKY_RADIUS = 1000;
 
@@ -26,7 +29,6 @@ export function createHomePlanetsLayer(engine, app) {
     const centres = new Float32Array(n * 3);
     const colours = new Float32Array(n * 3);
     const shape = new Float32Array(n * 3);      // Disc scale, banding, ring
-    const mags = new Float32Array(n);
     const bandA = new Float32Array(n * 4);
     const bandB = new Float32Array(n);
     bodies.forEach((body, i) => {
@@ -35,9 +37,9 @@ export function createHomePlanetsLayer(engine, app) {
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         colours.set(look.colour, i * 3);
         shape.set([look.disc, look.band, look.ring], i * 3);
-        mags[i] = body.brightness.mag;
-        bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
-        bandB[i] = body.bands.xray;
+        const glow = BANDS.map((band) => bandSkyBrightness(body, band));
+        bandA.set(glow.slice(0, 4), i * 4);
+        bandB[i] = glow[4];
     });
 
     const geometry = new THREE.InstancedBufferGeometry();
@@ -46,7 +48,6 @@ export function createHomePlanetsLayer(engine, app) {
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aColour', new THREE.InstancedBufferAttribute(colours, 3));
     geometry.setAttribute('aShape', new THREE.InstancedBufferAttribute(shape, 3));
-    geometry.setAttribute('aMag', new THREE.InstancedBufferAttribute(mags, 1));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.instanceCount = n;
@@ -58,7 +59,6 @@ export function createHomePlanetsLayer(engine, app) {
             attribute vec3 aCentre;
             attribute vec3 aColour;
             attribute vec3 aShape;
-            attribute float aMag;
             attribute vec4 aBandA;
             attribute float aBandB;
             uniform float uDpr;
@@ -68,24 +68,21 @@ export function createHomePlanetsLayer(engine, app) {
             varying float vFill;    // Brightness of the disc itself
             varying float vQuad;
             void main() {
-                float wVis = uBandW[2];
-                float otherStrength = aBandA.x * uBandW[0] + aBandA.y * uBandW[1] + aBandA.w * uBandW[3] + aBandB * uBandW[4];
-                otherStrength /= max(1.0 - wVis, 1e-4);
-                float e = mix(0.9 + 9.0 * pow(max(otherStrength, 0.0), 0.55), clamp(uLimitMag - aMag, 0.0, 11.0), wVis);
-                float shown = mix(smoothstep(0.01, 0.03, otherStrength), smoothstep(0.0, 1.0, uLimitMag - aMag) * step(0.01, aBandA.z), wVis);
-                shown *= uSkyFade;
-                if (shown <= 0.002) {
+                float glow = clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)), 0.0, 400.0);
+                if (glow < ${MIN_GLOW.toFixed(3)} || uSkyFade <= 0.0) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
                 }
+                // Magnitudes above where it starts to be drawn: 0 up to about 9.75
+                float m = max(1.0857 * log(glow) + 3.25, 0.0);
+                float shown = smoothstep(0.0, 2.2, m) * uSkyFade;
                 // A small steady disc at any zoom, growing as a telescope would show it
                 float grow = clamp(pow(80.0 / uFov, 0.52), 1.0, 22.0);
-                float radius = (0.85 + 0.09 * e) * mix(1.0, aShape.x, 0.75) * grow * uDpr;
-                float glow = 0.03 + 0.012 * e * e;
-                vFill = (0.75 + 0.55 * pow(10.0, 0.13 * e)) * shown / (1.0 + 0.06 * grow * grow);
-                vLook = vec4(radius, aShape.y, aShape.z, glow * shown);
+                float radius = (0.72 + 0.085 * m) * mix(1.0, aShape.x, 0.75) * grow * uDpr;
+                vFill = (0.5 + 0.34 * pow(10.0, 0.11 * m)) * shown / (1.0 + 0.06 * grow * grow);
+                vLook = vec4(radius, aShape.y, aShape.z, (0.02 + 0.0065 * m * m) * shown);
                 vColour = bandColour(aColour);
-                vQuad = radius * (aShape.z > 0.5 ? 2.5 : 1.2) + (5.0 + 2.6 * e) * uDpr;
+                vQuad = radius * (aShape.z > 0.5 ? 2.5 : 1.2) + (4.0 + 2.2 * m) * uDpr;
                 vPx = position.xy * vQuad;
                 vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
                 clip.xy += vPx * 2.0 / uViewport * clip.w;

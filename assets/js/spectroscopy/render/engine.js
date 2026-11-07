@@ -16,7 +16,11 @@ import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
 import { BANDS, bandIndex } from '../core/bands.js';
 import { azAltToVec3, DEFAULT_VIEW, MIN_FOV, MAX_FOV, limitingMag } from '../core/sky.js';
+import { bandSkyBrightness } from '../data/band_table.js';
 import { sharedUniforms } from './shared.js';
+
+// A body is drawn, and can be picked, when its glow is at least this. Glow is 1 at the zoom's limiting magnitude.
+export const MIN_GLOW = 0.05;
 
 const RAD = Math.PI / 180;
 const BAND_FADE_S = 0.6;
@@ -592,11 +596,26 @@ export function createEngine(canvas) {
         return Math.max(0, dist - radiusPx) - bonusPx;
     }
 
+    // Up to 10 px of head start for the brighter of two neighbours: 1.25 px for each magnitude above the zoom's limit
     function brightnessBonusPx(body, lim) {
-        const margin = app.band === 'visible'
-            ? lim - body.brightness.mag
-            : (body.bands[app.band] || 0) * 8;
+        const margin = 2.5 * Math.log10(Math.max(bodyGlow(body, app.band) * zoomGain(lim), 1e-6));
         return Math.min(10, Math.max(0, margin) * 1.25);
+    }
+
+    function zoomGain(lim) {
+        return 10 ** (0.4 * (lim - 6));
+    }
+
+    // Worked out once per body and band. The sum behind it is cheap, but picking asks for a thousand at a time.
+    const glowCache = new WeakMap();
+    function bodyGlow(body, band) {
+        let row = glowCache.get(body);
+        if (!row) {
+            row = {};
+            glowCache.set(body, row);
+        }
+        if (row[band] === undefined) row[band] = bandSkyBrightness(body, band);
+        return row[band];
     }
 
     // The code of the object nearest a screen position (CSS pixels), or null. Bodies must show in the current band
@@ -636,13 +655,11 @@ export function createEngine(canvas) {
         return best;
     }
 
-    // Is this body drawn at all right now? Used for picking; the layers apply the same rules in their shaders.
+    // Is this body drawn at all right now? Used for picking; the layers apply the same rule in their shaders, so what
+    // can be picked matches what is drawn in every band.
     function bodyShows(body, lim = limitingMag(view.fov)) {
         if (body.kind === 'home_planet' && !app.layers.homePlanets) return false;
-        const strength = body.bands[app.band] || 0;
-        if (strength <= 0.01) return false;
-        if (app.band !== 'visible') return true;
-        return body.brightness.mag <= lim;
+        return bodyGlow(body, app.band) * zoomGain(lim) >= MIN_GLOW;
     }
 
     // ---------- Bands ----------

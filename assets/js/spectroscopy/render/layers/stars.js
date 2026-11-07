@@ -2,16 +2,19 @@
 // stars, black holes' companions, quasars and supernovae. Other layers add detail on top of some of these. Home
 // planets and rogue planets have their own layers (home_planets.js, rogue_planets.js).
 //
-// Colour comes from temperature. Brightness and size come from how far a body's magnitude is above the zoom's
-// limit, so faint stars appear as you zoom in. Other bands use the body's strength in that band and the band's tint.
-// A second instanced mesh draws thin diffraction spikes for the brightest, skipped entirely at Low.
+// Colour comes from temperature, or the band's false colour. Brightness and size come from the body's glow in the
+// band (data/band_table.js), so faint objects appear as you zoom in, in every band. A second instanced mesh draws thin
+// diffraction spikes for the brightest, and is skipped entirely at Low.
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
+import { BANDS } from '../../core/bands.js';
 import { hashString } from '../../core/rng.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { blackBodyRGB } from '../../core/phys.js';
+import { bandSkyBrightness } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { MIN_GLOW } from '../engine.js';
 
 const POINT_KINDS = new Set(['star', 'binary', 'multiple', 'neutron_star', 'black_hole', 'quasar', 'supernova']);
 const SKY_RADIUS = 1000;
@@ -51,12 +54,12 @@ function bodySoftness(body) {
     return 1;
 }
 
-// The magnitude scale: e is how many magnitudes above the zoom's limit, compressed so that a -2 star doesn't wash
-// out the sky. Shared by the sprite and spike shaders so the two agree.
-const LEVEL_GLSL = /* glsl */`
+// A body's glow is 1 at the zoom's limiting magnitude and 0.05 (not drawn) a little over 3 magnitudes fainter, in the
+// magnitude scale of whichever band is showing. So every band shares one set of sprite shapes. engine.bodyShows applies
+// the same rule to picking. Shared by the sprite and spike shaders so the two agree.
+const SPRITE_GLSL = /* glsl */`
 attribute vec3 aCentre;
 attribute vec3 aColour;
-attribute float aMag;
 attribute vec4 aBandA;
 attribute float aBandB;
 attribute float aSeed;
@@ -65,22 +68,18 @@ attribute float aFlux;
 uniform float uDpr;
 varying vec2 vUv;
 
-// 1 at the widest zoom, shrinking so that stars stay crisp points through a narrow field
+float skyGlow() {
+    return clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
+}
+
+// Glow as magnitudes above the point where a sprite starts to be drawn: 0 up to about 9.75
+float glowLevel(float glow) {
+    return max(1.0857 * log(max(glow, ${MIN_GLOW.toFixed(3)})) + 3.25, 0.0);
+}
+
+// 1 at wide zoom, shrinking so that stars stay crisp points through a narrow field
 float crispness() {
     return mix(0.62, 1.0, smoothstep(0.7, 2.0, log(uFov + 0.5) * 0.72));
-}
-
-float visibleLevel(float mag, float strength) {
-    float margin = uLimitMag - mag;
-    return strength > 0.01 ? margin + 2.5 * log(strength + 1e-5) * 0.4343 * 0.5 : -1.0;
-}
-
-// In other bands the strength is all there is. Compressed, so 0.02 is a dim dot and 1.0 is a beacon.
-float otherLevel(vec4 a, float b) {
-    float s = a.x * uBandW[0] + a.y * uBandW[1] + a.w * uBandW[3] + b * uBandW[4];
-    float total = max(uBandW[0] + uBandW[1] + uBandW[3] + uBandW[4], 1e-4);
-    s /= total;
-    return s > 0.01 ? 0.9 + 9.0 * pow(s, 0.55) : -1.0;
 }
 
 // How much the air scintillates a star: stronger towards the horizon
@@ -96,7 +95,6 @@ float twinkle(vec3 dir, float seed) {
 function instancedAttributes(geometry, data) {
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(data.centres, 3));
     geometry.setAttribute('aColour', new THREE.InstancedBufferAttribute(data.colours, 3));
-    geometry.setAttribute('aMag', new THREE.InstancedBufferAttribute(data.mags, 1));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(data.bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(data.bandB, 1));
     geometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(data.seeds, 1));
@@ -115,37 +113,33 @@ function createSprites(data) {
         uniforms: { uDpr: { value: 1 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
-            ${LEVEL_GLSL}
+            ${SPRITE_GLSL}
             varying vec3 vColour;
             varying vec4 vShape;    // Quad radius, core sigma, halo radius, halo strength (all device px, bar the last)
             varying float vPeak;
             void main() {
-                float wVis = uBandW[2];
-                float levelVis = visibleLevel(aMag, aBandA.z);
-                float levelOther = otherLevel(aBandA, aBandB);
-                // A level below zero means not shown in that band
-                float amountVis = wVis * smoothstep(0.0, 1.3, levelVis);
-                float amountOther = (1.0 - wVis) * smoothstep(0.0, 0.9, levelOther);
-                float amount = (amountVis + amountOther) * aFlux * uSkyFade;
-                if (amount <= 0.002) {
+                float glow = skyGlow();
+                if (glow < ${MIN_GLOW.toFixed(3)} || uSkyFade <= 0.0) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
                 }
-                float e = clamp(mix(max(levelOther, 0.0), max(levelVis, 0.0), wVis), 0.0, 9.5);
-                e += 2.5 * log(max(aFlux, 0.01)) * 0.4343;
-                e = max(e, 0.0);
+                float m = glowLevel(glow);
+                // Fades in from nothing rather than popping as the zoom crosses its threshold
+                float amount = smoothstep(0.0, 2.2, m) * uSkyFade;
 
                 vec3 dir = aCentre / ${SKY_RADIUS.toFixed(1)};
                 float air = exp(-0.05 / (max(dir.y, 0.0) + 0.05));
                 float glint = twinkle(dir, aSeed);
                 float size = uDpr * crispness();
 
-                float sigma = (0.68 + 0.115 * e) * size * mix(1.0, aSoft, 0.55);
-                float haloR = sigma * (2.1 + 0.28 * e) * aSoft;
-                float quad = sigma * 3.0 + haloR * (3.0 + 0.5 * e);
+                float sigma = (0.58 + 0.095 * m) * size * mix(1.0, aSoft, 0.55);
+                float haloR = sigma * (1.5 + 0.22 * m) * aSoft;
+                // Faint stars have no halo worth drawing, and they are most of them: keep their quads tiny
+                float quad = sigma * 3.0 + haloR * (2.5 + 0.42 * m) * smoothstep(2.5, 6.0, m);
 
-                vPeak = (0.16 + 0.28 * pow(10.0, 0.19 * e)) * amount * air * glint;
-                float haloAmp = (0.005 + 0.0085 * e * e) * amount * air * mix(1.0, glint, 0.5);
+                // Compressed: true flux would run to a thousand times this, and wash out the whole sky
+                vPeak = 0.028 * pow(10.0, 0.293 * m) * amount * air * glint;
+                float haloAmp = 0.00042 * m * m * m * amount * air * mix(1.0, glint, 0.5);
                 vShape = vec4(quad, sigma, haloR, haloAmp);
 
                 // Real colour shows in the halo: the core saturates to white in tone mapping
@@ -168,10 +162,11 @@ function createSprites(data) {
                 float r = u * vShape.x;
                 float core = exp(-r * r / (2.0 * vShape.y * vShape.y));
                 // Moffat wings: the soft glow real optics put around a star
-                float wing = 1.0 / pow(1.0 + r * r / (vShape.z * vShape.z), 1.75);
+                float wing = 1.0 / (1.0 + r * r / (vShape.z * vShape.z));
+                wing *= wing;
                 float window = 1.0 - u * u;
                 window *= window;
-                vec3 tint = mix(vColour, vColour * vColour, 0.35);   // A little richer in the halo than the core
+                vec3 tint = mix(vColour, vColour * vColour, 0.15);   // A little richer in the halo than the core
                 gl_FragColor = vec4(vColour * vPeak * core + tint * vShape.w * wing * window, 1.0);
             }`
     });
@@ -195,16 +190,14 @@ function createSpikes(data) {
         uniforms: { uDpr: { value: 1 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
-            ${LEVEL_GLSL}
+            ${SPRITE_GLSL}
             varying vec3 vColour;
-            varying float vLength;
-            varying float vWidth;
             const float ANGLE = 0.46;   // All spikes share one angle: they come from the telescope, not the star
             void main() {
-                float levelVis = visibleLevel(aMag, aBandA.z) + 2.5 * log(max(aFlux, 0.01)) * 0.4343;
-                float e = clamp(levelVis, 0.0, 9.0);
                 // Only the brightest, in visible light, fading in rather than popping
-                float k = smoothstep(5.6, 7.6, e) * uBandW[2] * uSkyFade;
+                float glow = clamp(aBandA.z * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
+                float m = glowLevel(glow);
+                float k = smoothstep(7.4, 9.2, m) * uBandW[2] * uSkyFade;
                 if (k <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -212,16 +205,17 @@ function createSpikes(data) {
                 vec3 dir = aCentre / ${SKY_RADIUS.toFixed(1)};
                 float air = exp(-0.05 / (max(dir.y, 0.0) + 0.05));
                 float size = uDpr * crispness();
-                vLength = (12.0 + 7.0 * (e - 5.0) * (e - 5.0)) * size * k;
-                vWidth = (1.2 + 0.12 * e) * size * 3.0;
+                float reach = m - 5.8;
+                float len = (10.0 + 4.2 * reach * reach) * size * k;
+                float width = (1.2 + 0.1 * m) * size * 3.0;
                 vec3 c = aColour / max(max(aColour.r, aColour.g), aColour.b);
-                vColour = c * k * air * twinkle(dir, aSeed) * (0.32 + 0.22 * (e - 5.0));
+                vColour = c * k * air * twinkle(dir, aSeed) * (0.25 + 0.15 * reach);
                 vUv = position.xy;
 
                 float angle = ANGLE + position.z * 1.5707963;
                 vec2 axis = vec2(cos(angle), sin(angle));
                 vec2 side = vec2(-axis.y, axis.x);
-                vec2 offset = axis * position.x * vLength + side * position.y * vWidth;
+                vec2 offset = axis * position.x * len + side * position.y * width;
                 vec4 clip = projectionMatrix * modelViewMatrix * vec4(aCentre, 1.0);
                 clip.xy += offset * 2.0 / uViewport * clip.w;
                 gl_Position = clip;
@@ -229,8 +223,6 @@ function createSpikes(data) {
         fragmentShader: /* glsl */`
             varying vec2 vUv;
             varying vec3 vColour;
-            varying float vLength;
-            varying float vWidth;
             void main() {
                 float along = abs(vUv.x);
                 // Thin across, with a slow rainbow along: light of each colour diffracts to a different length
@@ -254,7 +246,6 @@ export function createStarsLayer(engine, app) {
         count: n,
         centres: new Float32Array(n * 3),
         colours: new Float32Array(n * 3),
-        mags: new Float32Array(n),
         bandA: new Float32Array(n * 4),
         bandB: new Float32Array(n),
         seeds: new Float32Array(n),
@@ -269,9 +260,10 @@ export function createStarsLayer(engine, app) {
         const v = azAltToVec3(body.sky.az, body.sky.alt);
         data.centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         data.colours.set(bodyColour(body), i * 3);
-        data.mags[i] = body.brightness.mag;
-        data.bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
-        data.bandB[i] = body.bands.xray;
+        // In BANDS order: radio, infrared, visible, ultraviolet here, and X-ray in aBandB
+        const glow = BANDS.map((band) => bandSkyBrightness(body, band));
+        data.bandA.set(glow.slice(0, 4), i * 4);
+        data.bandB[i] = glow[4];
         data.seeds[i] = hashString(body.visual_seed || body.code) / 4294967296;
         data.soft[i] = bodySoftness(body);
     });
@@ -292,7 +284,7 @@ export function createStarsLayer(engine, app) {
             spikes.material.uniforms.uDpr.value = frame.dpr;
         },
         // For a layer whose body changes brightness (a supernova) or draws its own sprite: multiplies the sprite's
-        // brightness by this factor. 1 is normal; 0 hides it.
+        // glow by this factor. 1 is normal; 0 hides it.
         setSpriteFlux(code, factor) {
             const i = indexOf.get(code);
             if (i === undefined || data.flux.array[i] === factor) return;

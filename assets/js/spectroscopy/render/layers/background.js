@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { Rng } from '../../core/rng.js';
 import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
+import { GALACTIC_CENTRE_AZ } from '../../core/bands.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 
@@ -23,10 +24,6 @@ const SKY_GAIN = 1.6;               // The texture stores sqrt(colour / SKY_GAIN
 
 const FIELD_STARS = { low: 12000, medium: 34000, high: 64000 };
 const FIELD_STARS_MAX = FIELD_STARS.high;
-
-// Where the band's centre sits. The band crosses the horizon at azimuth 205, and the bulge is placed a little way up
-// from there, so that the opening view looks at the brightest part of the Milky Way rising out of the hills.
-const BULGE_ANGLE_DEG = 24;
 
 // The dome map reaches this far from the zenith (100 degrees, so 10 below the horizon)
 const DOME_GLSL = /* glsl */`
@@ -179,7 +176,7 @@ const BAKE_FRAGMENT = /* glsl */`
         col += vec3(0.20, 0.55, 0.85) * gas * (1.0 - gas) * gasMask * 0.05;
 
         // More colour than the tone curve will leave otherwise
-        col = max(mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.25), vec3(0.0));
+        col = max(mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.35), vec3(0.0));
 
         // Far from the band the sky is a deep blue, not quite black
         vec3 base = vec3(0.0052, 0.0076, 0.0165) * (0.9 + 0.5 * fbm(g * 2.2 + vec3(8.0, 8.0, 1.0), 3));
@@ -299,11 +296,12 @@ const SKY_FRAGMENT = /* glsl */`
 // The Milky Way bake: a density map at once, then the full-size texture over the next frames
 function createSkyBake(renderer) {
     const pole = azAltToVec3(GALACTIC_POLE.az, GALACTIC_POLE.alt);
-    // Rising from the crossing at azimuth (pole + 90) towards the band's highest point
-    const crossing = azAltToVec3(GALACTIC_POLE.az + 90, 0);
-    const top = azAltToVec3(GALACTIC_POLE.az + 180, 90 - GALACTIC_POLE.alt);
-    const s = BULGE_ANGLE_DEG * RAD;
-    const centre = [0, 1, 2].map((i) => crossing[i] * Math.cos(s) + top[i] * Math.sin(s));
+    // The bulge sits where the band passes the centre's azimuth, the same frame the other bands' skies use (band_sky.js)
+    const centreAlt = Math.atan2(
+        -Math.cos(GALACTIC_POLE.alt * RAD) * Math.cos((GALACTIC_CENTRE_AZ - GALACTIC_POLE.az) * RAD),
+        Math.sin(GALACTIC_POLE.alt * RAD)
+    ) / RAD;
+    const centre = azAltToVec3(GALACTIC_CENTRE_AZ, centreAlt);
     const east = [
         pole[1] * centre[2] - pole[2] * centre[1],
         pole[2] * centre[0] - pole[0] * centre[2],
@@ -525,7 +523,7 @@ function createFieldStars(pixels) {
             void main() {
                 // Most are too faint to notice until a narrower field brightens them. The soft ceiling means
                 // they never outshine real objects, and keep their colour instead of burning out to white.
-                float level = pow(10.0, -0.28 * (aMag - 4.4 - 0.36 * (uLimitMag - 6.0)));
+                float level = pow(10.0, -0.33 * (aMag - 4.4 - 0.30 * (uLimitMag - 6.0)));
                 level = level / (1.0 + 0.45 * level);
                 if (level < 0.004 || uFieldAmount <= 0.0) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
@@ -539,7 +537,7 @@ function createFieldStars(pixels) {
                 float wobble = sin(uTime * (1.3 + aSeed * 2.7) + aSeed * 90.0) * sin(uTime * (0.7 + aSeed * 1.9) + aSeed * 37.0);
                 float twinkle = 1.0 + uTwinkle * wobble * mix(0.16, 0.5, exp(-up / 0.3));
                 float bright = level * air * twinkle * uFieldAmount * uSkyFade;
-                vRadius = (0.80 + 0.42 * level) * uDpr;
+                vRadius = (0.78 + 0.40 * level) * uDpr;
                 gl_PointSize = vRadius * 2.0 + 1.0;
                 vColour = aColour * bright;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -587,12 +585,13 @@ function plantTrees(rng, columns, stepDeg) {
     let az = 0;
     while (az < 360) {
         const density = clump(az);
-        az += density > -0.05 ? rng.range(0.06, 0.34) : rng.range(0.6, 2.4);
-        if (density < -0.3) continue;
-        const stand = 0.72 + 0.65 * Math.max(0, density);
-        const conifer = rng.next() < 0.8;
-        const h = (conifer ? rng.range(0.75, 1.7) : rng.range(0.6, 1.05)) * stand;
-        const halfW = conifer ? h * rng.range(0.16, 0.24) : h * rng.range(0.42, 0.6);
+        az += density > -0.2 ? rng.range(0.05, 0.24) : rng.range(0.4, 1.8);
+        if (density < -0.42) continue;
+        // Stands are tallest in the middle and taper away towards their edges
+        const stand = 0.5 + 0.8 * Math.min(1, Math.max(0, density + 0.42));
+        const conifer = rng.next() < 0.78;
+        const h = (conifer ? rng.range(0.9, 1.8) : rng.range(0.7, 1.15)) * stand;
+        const halfW = conifer ? h * rng.range(0.20, 0.30) : h * rng.range(0.46, 0.64);
         const reach = Math.ceil(halfW / stepDeg);
         const mid = Math.round(az / stepDeg);
         const tiers = 4 + Math.floor(rng.next() * 3);
@@ -628,7 +627,7 @@ function buildHorizon() {
     const farPeaks = ridgeNoise(rng, 6, 11, 1.9, 0.6);
     ridges.push({
         step: 0.25,
-        height: (az) => 2.5 + 1.7 * farNoise(az) + 0.7 * Math.abs(farPeaks(az)),
+        height: (az) => 2.9 + 1.5 * farNoise(az) + 0.7 * Math.abs(farPeaks(az)),
         colour: [0.0150, 0.0215, 0.0300],
         bottom: -1.5
     });
@@ -637,7 +636,7 @@ function buildHorizon() {
     const midRough = ridgeNoise(rng, 5, 90, 1.7, 0.75);
     ridges.push({
         step: 0.1,
-        height: (az) => 1.55 + 1.05 * midNoise(az) + 0.09 * midRough(az),
+        height: (az) => 1.9 + 1.25 * midNoise(az) + 0.09 * midRough(az),
         colour: [0.0100, 0.0130, 0.0170],
         bottom: -1.5
     });
@@ -648,7 +647,7 @@ function buildHorizon() {
     const trees = plantTrees(rng, nearColumns, nearStep);
     ridges.push({
         step: nearStep,
-        height: (az, i) => 0.6 + 0.6 * nearNoise(az) + trees[i % nearColumns],
+        height: (az, i) => 1.05 + 1.0 * nearNoise(az) + trees[i % nearColumns],
         colour: [0.0018, 0.0022, 0.0030],
         bottom: -70
     });
@@ -723,9 +722,11 @@ function buildHorizon() {
             varying float vDepth;
             void main() {
                 float edge = clamp(0.5 + vDepth / max(fwidth(vDepth), 1e-5), 0.0, 1.0);
-                // Each ridge falls away to darker at its foot
+                // Each ridge falls away to darker at its foot. The hills catch only the visible sky's faint airglow,
+                // and must stay darker than the blacker skies of the other bands.
                 float fall = mix(0.6, 1.0, exp(-max(vDepth, 0.0) / 1.4));
-                gl_FragColor = vec4(vColour * fall * uSkyFade, edge * uSkyFade);
+                float lit = mix(0.22, 1.0, uBandW[2]);
+                gl_FragColor = vec4(vColour * fall * lit * uSkyFade, edge * uSkyFade);
             }`
     });
     const mesh = new THREE.Mesh(geometry, material);
