@@ -353,7 +353,7 @@ function initSettingsPage(app) {
         fpsLabel.htmlFor = fps.id;
         fps.addEventListener('change', () => { if (fpsEl) fpsEl.style.display = fps.checked ? 'block' : 'none'; });
         checks.append(motion, motionLabel, fps, fpsLabel);
-        toggles.append(checks, element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for jumps.'));
+        toggles.append(checks, element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for quick fades.'));
 
         container.append(qualityGroup, toggles);
 

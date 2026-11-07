@@ -80,7 +80,7 @@ function fillWords(el, text, seen) {
     return el;
 }
 
-// A code that takes you to its object, as in "orbits 7KX2QM"
+// A code that takes you to its object: a planet's "orbits", a star's "part of"
 function codeLink(code) {
     const b = element('button', 'spectro-link', code);
     b.type = 'button';
