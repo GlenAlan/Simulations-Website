@@ -183,7 +183,7 @@ export function createSupernovaeLayer(engine, app) {
     geometry.instanceCount = n;
 
     const material = skyMaterial({
-        uniforms: { tAtlas: baker.atlasUniform, ...baker.heroUniforms },
+        uniforms: { tAtlas: baker.atlasUniform, uDpr: { value: 1 }, ...baker.heroUniforms },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             ${SPRITE_ID_GLSL}
@@ -200,6 +200,7 @@ export function createSupernovaeLayer(engine, app) {
             attribute vec3 aFlashCol;
             attribute vec3 aSheetCol;
             attribute float aDepth;
+            uniform float uDpr;
             varying vec2 vQ;
             varying vec2 vPx;
             varying vec4 vRect;
@@ -212,6 +213,7 @@ export function createSupernovaeLayer(engine, app) {
             varying float vReady;
             varying float vGlowPx;
             varying float vSmall;
+            varying vec2 vPoint;    // Where its centre is on the screen, in device pixels
             void main() {
                 float aHalf = aPack.x;
                 // Only a few tens of pixels across, a shell is a faint smoke ring on the sky, not yet a bright hoop
@@ -227,10 +229,13 @@ export function createSupernovaeLayer(engine, app) {
                 float xr = aFlash.w * uBandW[4];
                 vFlash = aFlashCol * vis + uBandTint[0] * radio + uBandTint[1] * ir + uBandTint[3] * uv + uBandTint[4] * xr;
                 float total = vis + radio + ir + uv + xr;
-                float dprScale = clamp(uViewport.y / 900.0, 0.8, 2.0);
-                // Bright, but a point of light: at its peak it shouldn't be the largest thing in the sky
-                float glowPx = (4.0 + 34.0 * sqrt(total)) * dprScale;
+                // A point of light: the star's own sprite and spikes in stars.js say how bright it is, and this is only the
+                // soft bloom round them. So it's a size on the page, the same on a phone as on a desk, and never the
+                // largest thing in the sky
+                float glowPx = (3.0 + 15.0 * sqrt(total)) * uDpr;
                 vGlowPx = glowPx;
+                vec4 point = projectionMatrix * modelViewMatrix * vec4(aCentre * ${SKY_RADIUS.toFixed(1)}, 1.0);
+                vPoint = (point.xy * depthP(aDepth) / max(point.w, 0.001) * 0.5 + 0.5) * uViewport;
                 float half_ = max(aHalf, glowPx / uPxPerRad);
                 vQ = position.xy * half_ / aHalf;
                 vPx = position.xy * half_ * uPxPerRad;
@@ -260,6 +265,7 @@ export function createSupernovaeLayer(engine, app) {
             varying float vReady;
             varying float vGlowPx;
             varying float vSmall;
+            varying vec2 vPoint;
 
             vec3 ramp(vec3 tint, float v) {
                 return tint * v + vec3(0.9) * v * v * 0.3;
@@ -284,9 +290,10 @@ export function createSupernovaeLayer(engine, app) {
                 col += ramp(uBandTint[3], (sheet * 1.2 + fil * 1.1) * 1.5 * vShell.w) * uBandW[3];
                 col += ramp(uBandTint[4], (hot * 1.4 + sheet * 0.3) * 1.5 * vShellX) * uBandW[4];
 
-                // The flash: a small hot core and a wide faint halo, sized in pixels because it is a point of light
-                float r = length(vPx) / max(vGlowPx, 1.0);
-                float glow = exp(-r * r * 36.0) * 2.2 + exp(-r * r * 7.0) * 0.45 + 0.09 / (1.0 + r * r * 90.0);
+                // The flash: a small hot core and a wide faint halo, sized in pixels because it is a point of light. Measured
+                // on the screen, so that it stays round at the edge of a wide view, where the quad is stretched
+                float r = length(gl_FragCoord.xy - vPoint) / max(vGlowPx, 1.0);
+                float glow = exp(-r * r * 36.0) * 1.1 + exp(-r * r * 7.0) * 0.32 + 0.09 / (1.0 + r * r * 90.0);
                 glow *= smoothstep(1.0, 0.72, r);
                 col += vFlash * glow;
 
@@ -324,6 +331,7 @@ export function createSupernovaeLayer(engine, app) {
         id: 'supernovae',
         update(frame) {
             baker.beginFrame(frame);
+            material.uniforms.uDpr.value = frame.dpr;
             let changed = false;
             const step = frame.dt > 0 ? frame.dt / 0.5 : 1;
             if (pointsDirty) sendPoints();

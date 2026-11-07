@@ -98,7 +98,8 @@ export function createQuasarsLayer(engine, app) {
             varying float vHost;
             void main() {
                 // A glow fixed in pixels round the core, so it reads the same at any zoom
-                float px = length(vPx);
+                // Tighter outside visible light, where a quasar is nothing but a point
+                float px = length(vPx) * (1.0 + 1.3 * (uBandW[1] + uBandW[3] + uBandW[4]));
                 float glow = 1.0 / (1.0 + pow(px / 5.5, 2.4));
                 glow *= 1.0 - smoothstep(26.0, 44.0, px);
                 // The host galaxy: faint, smooth and redder than the core

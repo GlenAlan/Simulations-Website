@@ -6,7 +6,7 @@
 // glowing in Lyman alpha, radio a faint OH point, and X-rays a faint crescent where the solar wind hits the coma.
 
 import * as THREE from 'three';
-import { azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
+import { azAltToVec3, vec3ToAzAlt, limitingMag } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { bandMagnitudes } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
@@ -56,9 +56,16 @@ function tailBasis(body, sunDir) {
 }
 
 const COMET_COMMON = /* glsl */`
+    uniform float uDpr;
     float cometShows(float mag) {
-        // Fainter comets come into view as you zoom in, like everything else in visible light
-        return smoothstep(-0.6, 0.6, uLimitMag - mag) * clamp(pow(10.0, -0.4 * (mag - 4.0)), 0.5, 1.4);
+        // Fainter comets come into view as you zoom in, like everything else in visible light. A faint one stays quieter
+        // than a bright one for a while after it arrives, so that it has to be looked for
+        float over = uLimitMag - mag;
+        return smoothstep(-0.6, 0.6, over) * clamp(pow(10.0, -0.4 * (mag - 4.0)), 0.5, 1.4) * mix(0.45, 1.0, smoothstep(0.3, 2.6, over));
+    }
+    // How long the tail is on screen, in CSS pixels
+    float tailOnScreen(float tailDeg, float depth) {
+        return radians(tailDeg) * uPxPerRad * depthP(depth) / uDpr;
     }
     // In the other bands, as for a sprite in stars.js: from a little over 3 magnitudes below the zoom's limit, which is
     // when engine.bodyShows says it can be clicked
@@ -101,7 +108,7 @@ function createGlow(engine, comets) {
 
     const material = skyMaterial({
         side: THREE.DoubleSide,  // The quad lies on the sky; which way round it faces depends on the tail
-        uniforms: { tNoise: { value: exoticNoise() } },
+        uniforms: { tNoise: { value: exoticNoise() }, uDpr: { value: 1 } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             ${COMET_COMMON}
@@ -124,16 +131,27 @@ function createGlow(engine, comets) {
             varying float vXray;
             varying float vHalo;
             varying vec2 vEdge;
+            varying vec4 vLook;       // The head's least radius (device px), the tail's light, the coma's light, device px per CSS px
             void main() {
                 const float RAD = 0.0174533;
                 vEdge = position.xy;
                 float pxDeg = 1.0 / (uPxPerRad * depthP(aDepth) * RAD);
                 vPxDeg = pxDeg;
                 float tail = aShape.y;
-                float coma = max(aShape.x, 4.0 * pxDeg);
+                // At sky scale the coma is under a pixel across, yet the head must be what the eye goes to. So it never
+                // gets smaller than a small glow, a bigger one the nearer the comet is
+                float headPx = mix(5.5, 2.2, sqrt(aDepth)) * uDpr;
+                float coma = max(aShape.x, headPx * pxDeg);
+                // A tail a few pixels wide is all at the same spot on the screen, so it's drawn fainter or it burns to white.
+                // One wider than the frame eases off too, or there is nothing to see but a pale wash
+                float tailPx = tailOnScreen(tail, aDepth);
+                float tailLight = mix(0.34, 1.0, smoothstep(50.0, 300.0, tailPx)) * mix(1.0, 0.3, smoothstep(900.0, 5000.0, tailPx));
+                // Zoomed right in, a coma wider than the frame would be a fog. So it thins out as it outgrows the view
+                float comaFills = smoothstep(0.04, 0.25, aShape.x / pxDeg / uViewport.y);
+                vLook = vec4(headPx, tailLight, mix(1.0, 0.2, comaFills), uDpr);
                 float halo = max(tail * 0.85, 2.4);
                 float uvOn = step(0.002, uBandW[3]);
-                float reach = max(coma * 3.5, 14.0 * pxDeg);
+                float reach = max(coma * 3.5, 16.0 * pxDeg * uDpr);
                 float back = mix(reach, halo * 1.25, uvOn);
                 float front = max(tail * 1.3, mix(reach, halo * 1.25, uvOn));
                 float side = max(max((abs(aExtra.x) * 0.8 + 0.3) * tail, reach), mix(0.0, halo * 1.25, uvOn));
@@ -160,6 +178,7 @@ function createGlow(engine, comets) {
             varying float vHalo;
             varying vec2 vEdge;
             varying float vPxDeg;
+            varying vec4 vLook;
 
             void main() {
                 float x = vXY.x;
@@ -172,12 +191,15 @@ function createGlow(engine, comets) {
                 float t = uTime * uTwinkle;
 
                 // The coma: pushed back on the sunward side into a hood, drawn out towards the tail
-                float comaR = max(vShape.x, 3.0 * pxDeg);
+                float comaR = max(vShape.x, vLook.x * pxDeg);
                 float cosA = x / r;
                 float rh = r * (1.0 + 0.28 * -cosA + 0.22 * cosA * -abs(cosA));
                 float comaWide = exp(-rh / (comaR * 0.42));
-                float comaCore = exp(-r / (comaR * 1.1)) / (1.0 + pow(rh / (comaR * 0.1), 2.0));
-                float nucleusR = max(comaR * 0.035, 1.05 * pxDeg);
+                // The bright middle and the nucleus keep to a few pixels however far in you go: a nucleus is a point of
+                // light, and a ball of white the size of the frame would hide the coma's own shape
+                float coreR = min(comaR * 0.1, 22.0 * vLook.w * pxDeg);
+                float comaCore = exp(-r / (comaR * 1.1)) / (1.0 + pow(rh / coreR, 2.0));
+                float nucleusR = max(min(comaR * 0.035, 3.0 * vLook.w * pxDeg), 1.05 * pxDeg);
                 float nucleus = exp(-r * r / (nucleusR * nucleusR));
 
                 // The ion tail: straight out from the nucleus, narrow, full of fine rays flowing away
@@ -208,7 +230,7 @@ function createGlow(engine, comets) {
                     float lead = yn * sign(vCurve);
                     float prof = lead > 0.0 ? exp(-lead * lead * 2.6) : exp(-lead * lead * 0.6);
                     // Streamers fan out from the nucleus: read noise by the angle they leave it at
-                    float fan = texture2D(tNoise, vec2((y / max(x, comaR)) * 3.5 + seed * 3.0, xd * 0.12 - t * 0.006)).r;
+                    float fan = texture2D(tNoise, vec2((y / sqrt(x * x + comaR * comaR)) * 3.5 + seed * 3.0, xd * 0.12 - t * 0.006)).r;
                     float bands = texture2D(tNoise, vec2(yn * 0.1 + seed, xd * 0.3 - t * 0.012)).a;
                     dust = prof * exp(-xd * 1.55) * ramp * (0.45 + 0.75 * fan + 0.45 * bands) * smoothstep(1.6, 1.15, xd);
                 }
@@ -219,9 +241,10 @@ function createGlow(engine, comets) {
                 // Visible
                 vec3 dustColour = mix(vec3(1.0, 0.74, 0.4), vec3(1.0, 0.9, 0.7), smoothstep(0.55, 0.0, xd));
                 vec3 ionColour = vec3(0.2, 0.46, 1.0);
-                vec3 visible = dustColour * dust * dustW * 0.8
-                    + ionColour * (ion * 1.3 + ionWide * 0.2) * ionW
-                    + vGas * comaWide * 0.42
+                vec3 tailLit = (dustColour * dust * dustW * 0.8 + ionColour * (ion * 1.3 + ionWide * 0.2) * ionW) * vLook.y * vAmount.z;
+                // A soft ceiling, so that however bright it gets the tail keeps its colours and never burns to white
+                tailLit /= 1.0 + 2.2 * dot(tailLit, vec3(0.3, 0.55, 0.15));
+                vec3 visible = vGas * comaWide * 0.42 * vLook.z
                     + mix(vGas, vec3(1.0), 0.45) * comaCore * 0.8
                     + vec3(1.0, 0.98, 0.92) * nucleus * 4.5;
 
@@ -232,6 +255,8 @@ function createGlow(engine, comets) {
                 float hr = r / vHalo;
                 float cloud = exp(-hr * hr * 2.6) * 0.34 + exp(-hr * 3.2) * 0.16;
                 cloud *= 1.0 + 0.18 * (texture2D(tNoise, vXY / vHalo * 0.12 + seed).a - 0.5);
+                // Far bigger than a narrow view, so there it's only a tint over what's behind it, not a wall of violet
+                cloud *= mix(0.22, 1.0, smoothstep(2.0, 15.0, uFov));
                 float uv = cloud * smoothstep(1.25, 0.9, hr) + comaWide * 0.8 + comaCore * 0.9 + ion * 0.5 * ionW + nucleus * 2.0;
 
                 // Radio: a faint point at the 18 cm OH line
@@ -243,7 +268,7 @@ function createGlow(engine, comets) {
                 float crescent = exp(-shell * shell) * pow(max(-cosA, 0.0), 1.4);
                 float xray = (crescent * 1.2 + nucleus * 0.6 + comaWide * 0.2) * 2.2;
 
-                vec3 light = visible * vAmount.z
+                vec3 light = tailLit + visible * vAmount.z
                     + uBandTint[0] * (radio * vAmount.x)
                     + uBandTint[1] * (ir * vAmount.y)
                     + uBandTint[3] * (uv * vAmount.w)
@@ -301,7 +326,6 @@ function createParticles(engine, comets) {
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             ${COMET_COMMON}
-            uniform float uDpr;
             attribute vec3 aTail;
             attribute vec3 aNormal;
             attribute vec4 aShape;
@@ -335,8 +359,10 @@ function createParticles(engine, comets) {
                 float life = smoothstep(0.0, 0.05, u) * smoothstep(1.0, 0.75, u);
                 float flicker = 0.65 + 0.35 * uTwinkle * sin(uTime * (1.5 + aGrain.w * 3.0) + aGrain.w * 50.0);
                 vec3 tint = isIon > 0.5 ? vec3(0.45, 0.68, 1.0) : vec3(1.0, 0.86, 0.62);
-                // At wide views the grains blur into the glow; zoomed in they stand apart
-                float vis = aBand.y * uBandW[2] * cometShows(aShape.w);
+                // At wide views the grains land on top of each other and would burn the tail to white, so they fade right
+                // out and leave it to the glow. Zoomed in they stand apart.
+                float apart = smoothstep(90.0, 340.0, tailOnScreen(tail, aDepth));
+                float vis = aBand.y * uBandW[2] * cometShows(aShape.w) * apart * apart;
                 vec3 light = tint * vis
                     + uBandTint[1] * (uBandW[1] * aBand.x * (1.0 - isIon) * bandShows(aMags.x))
                     + uBandTint[3] * (uBandW[3] * aBand.z * isIon * 0.4 * bandShows(aMags.y));
@@ -374,6 +400,7 @@ export function createCometsLayer(engine, app) {
         id: 'comets',
         update(frame) {
             particles.material.uniforms.uDpr.value = frame.dpr;
+            glow.material.uniforms.uDpr.value = frame.dpr;
             if (frame.quality !== appliedQuality) {
                 appliedQuality = frame.quality;
                 const share = frame.quality === 'low' ? 0.3 : frame.quality === 'medium' ? 0.65 : 1;
@@ -386,6 +413,8 @@ export function createCometsLayer(engine, app) {
             const list = [];
             comets.forEach(({ body, basis, curve }) => {
                 if (!engine.bodyShows(body)) return;
+                // In visible light a comet is seen only from a little before the zoom's limit: no clicking on empty sky
+                if (frame.band === 'visible' && drawMag(body) > limitingMag(frame.fov) + 0.6) return;
                 const { c, t, n } = basis;
                 const tail = body.comet.tail_deg;
                 const step = 30 / ((frame.pxPerRad * DEG * parallaxFactor(body.depth, frame.fov)) / frame.dpr);
@@ -399,9 +428,9 @@ export function createCometsLayer(engine, app) {
                 for (let x = along; x <= tail; x += along) {
                     const xd = x / (tail * 0.82);
                     // As far out as the grains go: see the particles' shader
-                    const halfWidth = tail * (0.012 + 0.11 * xd) * 1.3;
+                    const halfWidth = tail * (0.012 + 0.11 * xd) * 1.7;
                     const across = Math.max(step, (2 * halfWidth) / 20);
-                    const middle = curve * tail * 0.15 * xd * xd;
+                    const middle = curve * tail * 0.3 * xd * xd;
                     for (let y = -halfWidth; y <= halfWidth + across * 0.5; y += across) push(x, middle + y);
                 }
             });

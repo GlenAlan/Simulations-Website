@@ -40,7 +40,8 @@ export function createHomePlanetsLayer(engine, app) {
         shape.set([look.disc, look.band, look.ring], i * 3);
         const glow = BANDS.map((band) => bandSkyBrightness(body, band));
         bandA.set(glow.slice(0, 4), i * 4);
-        bandB[i] = glow[4];
+        // A planet's X-rays are faint however bright it is otherwise: only Jupiter's aurora, and that barely
+        bandB[i] = glow[4] * 0.3;
     });
 
     const geometry = new THREE.InstancedBufferGeometry();

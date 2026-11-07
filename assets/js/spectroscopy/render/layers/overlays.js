@@ -54,6 +54,7 @@ function shiftWords(body) {
     if (z !== null && z !== undefined && Math.abs(z) >= 0.1) return `z = ${signed(z, 2)}`;
     if (!Number.isFinite(v)) return null;
     const speed = Math.abs(v) >= 1000 ? withCommas(Math.abs(v)) : Math.abs(v).toFixed(0);
+    if (speed === '0') return '0 km/s';     // Neither towards us nor away
     return `${v < 0 ? '−' : '+'}${speed} km/s`;
 }
 
@@ -73,6 +74,23 @@ function makeHalo(rgb) {
     return c;
 }
 
+// A soft dark tag to put behind a label, drawn once and stretched to fit. Over dark sky it can't be seen. Over the bright
+// band it keeps 11 px text above 4.5:1, which a shadow alone couldn't. Soft all round, so that it never looks like a box.
+const BACKING_R = 6;
+function makeBacking() {
+    const size = BACKING_R * 2 + 2;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const g = c.getContext('2d');
+    g.filter = 'blur(1.5px)';
+    g.fillStyle = 'rgba(3, 5, 12, 0.72)';
+    g.beginPath();
+    g.roundRect(2, 2, size - 4, size - 4, BACKING_R - 2);
+    g.fill();
+    return c;
+}
+
 export function createOverlaysLayer(engine, app) {
     const canvas = document.createElement('canvas');
     canvas.className = 'spectro-overlay-canvas';
@@ -83,6 +101,8 @@ export function createOverlaysLayer(engine, app) {
 
     const haloRed = makeHalo(RED_SHIFT.rgb);
     const haloBlue = makeHalo(BLUE_SHIFT.rgb);
+    const backing = makeBacking();
+    const taken = [];       // Where the labels drawn so far this time are, so that none lands on another
 
     let reticle = { on: false, code: null };
     bus.on('reticle', (next) => { reticle = next; });
@@ -141,7 +161,7 @@ export function createOverlaysLayer(engine, app) {
     function labelSpot(points, frame, inset) {
         for (let i = 0; i < points.length; i++) {
             const p = engine.project(points[i].az, points[i].alt, 1);
-            if (p && p.x > 8 && p.x < frame.width - 44 && p.y > inset.top + 10 && p.y < frame.height - inset.bottom) return p;
+            if (p && p.x > 8 && p.x < frame.width - 44 && p.y > inset.top + 30 && p.y < frame.height - inset.bottom) return p;
         }
         return null;
     }
@@ -151,6 +171,44 @@ export function createOverlaysLayer(engine, app) {
         ctx.fillText(text, x + 1, y + 1);
         ctx.fillStyle = style;
         ctx.fillText(text, x, y);
+    }
+
+    // Behind a box of text. Nine slices, so that the corners stay soft however it's stretched
+    function drawBacking(x, y, w, h) {
+        const r = BACKING_R;
+        const m = backing.width - 2 * r;
+        const x0 = x - 4;
+        const y0 = y - 3;
+        const midW = w + 8;
+        const midH = h + 6;
+        for (let row = 0; row < 3; row++) {
+            const sy = row === 0 ? 0 : row === 1 ? r : r + m;
+            const sh = row === 1 ? m : r;
+            const dy = row === 0 ? y0 - r : row === 1 ? y0 : y0 + midH;
+            const dh = row === 1 ? midH : r;
+            ctx.drawImage(backing, 0, sy, r, sh, x0 - r, dy, r, dh);
+            ctx.drawImage(backing, r, sy, m, sh, x0, dy, midW, dh);
+            ctx.drawImage(backing, r + m, sy, r, sh, x0 + midW, dy, r, dh);
+        }
+    }
+
+    // A label with no job but to be read: dropped if it would land on one already there. x, y as for left and middle
+    function placeLabel(text, x, y, style) {
+        const w = ctx.measureText(text).width;
+        const rect = { x: x - 3, y: y - LINE_H / 2 - 3, w: w + 6, h: LINE_H + 6 };
+        if (!clearOfTaken(rect)) return false;
+        taken.push(rect);
+        drawBacking(x, y - LINE_H / 2, w, LINE_H);
+        drawText(text, x, y, style);
+        return true;
+    }
+
+    function clearOfTaken(r) {
+        for (let i = 0; i < taken.length; i++) {
+            const q = taken[i];
+            if (!(r.x > q.x + q.w || r.x + r.w < q.x || r.y > q.y + q.h || r.y + r.h < q.y)) return false;
+        }
+        return true;
     }
 
     // How much of the dome is on show: more than the field of view says, as it's as far back as anything can be
@@ -181,7 +239,7 @@ export function createOverlaysLayer(engine, app) {
             for (let i = 0; i <= 64; i++) points.push({ az: view.az - span + (2 * span * i) / 64, alt });
             strokeLine(points, lineStyle);
             const spot = labelSpot(points, frame, inset);
-            if (spot) drawText(`${alt.toFixed(digits)}°`, spot.x + 3, spot.y - 7, textStyle);
+            if (spot) placeLabel(`${alt.toFixed(digits)}°`, spot.x + 3, spot.y - 7, textStyle);
         }
 
         // Azimuth: lines up from the horizon, labelled near the bottom edge, with the compass points named
@@ -197,7 +255,7 @@ export function createOverlaysLayer(engine, app) {
             if (spot) {
                 const wrapped = ((az % 360) + 360) % 360;
                 const name = COMPASS[Math.round(wrapped * 100) / 100];
-                drawText(`${wrapped.toFixed(digits)}°${name ? ` ${name}` : ''}`, spot.x + 3, spot.y - 7, textStyle);
+                placeLabel(`${wrapped.toFixed(digits)}°${name ? ` ${name}` : ''}`, spot.x + 3, spot.y - 7, textStyle);
             }
         }
     }
@@ -256,7 +314,7 @@ export function createOverlaysLayer(engine, app) {
             ctx.font = LABEL_FONT;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            drawText('Galactic band', spot.x + 4, spot.y, 'rgba(255, 232, 186, 0.95)');
+            placeLabel('Galactic band', spot.x + 4, spot.y, 'rgba(255, 232, 186, 0.95)');
         }
     }
 
@@ -268,15 +326,14 @@ export function createOverlaysLayer(engine, app) {
         const halfDiagonal = Math.min(89, Math.atan(Math.tan(view.fov * RAD / 2) / parallaxFactor(1, view.fov) * Math.hypot(1, frame.width / frame.height)) / RAD + 1);
         const cosLimit = Math.cos(halfDiagonal * RAD);
         const budget = Math.max(5, Math.round((frame.width * frame.height) / AREA_PER_LABEL));
-        const placed = [];
-        const fits = (r) => placed.every((q) => r.x > q.x + q.w || r.x + r.w < q.x || r.y > q.y + q.h || r.y + r.h < q.y);
+        const firstOwn = taken.length;
 
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.setLineDash([]);
 
         const list = rankedBodies(frame.band);
-        for (let i = 0; i < list.length && placed.length < budget; i++) {
+        for (let i = 0; i < list.length && taken.length - firstOwn < budget; i++) {
             const { body, dir } = list[i];
             if (dir[0] * forward[0] + dir[1] * forward[1] + dir[2] * forward[2] < cosLimit) continue;
             if (!engine.bodyShows(body)) continue;
@@ -288,7 +345,7 @@ export function createOverlaysLayer(engine, app) {
             const shift = showShift && body.kind !== 'home_planet' ? shiftWords(body) : null;
             if (!name && !shift) continue;
             const v = body.radial_velocity_kms;
-            const shiftText = shift ? `${v >= 0 ? '→' : '←'} ${shift}` : null;
+            const shiftText = shift ? (shift === '0 km/s' ? shift : `${v >= 0 ? '→' : '←'} ${shift}`) : null;
 
             ctx.font = LABEL_FONT;
             const nameW = name ? ctx.measureText(name).width : 0;
@@ -302,8 +359,8 @@ export function createOverlaysLayer(engine, app) {
             if (x + w > frame.width - 6) x = p.x - offset - w; // Flip to the left near the right edge
             const y = p.y - h / 2;
             const rect = { x: x - LABEL_GAP, y: y - LABEL_GAP, w: w + LABEL_GAP * 2, h: h + LABEL_GAP * 2 };
-            if (!fits(rect)) continue;
-            placed.push(rect);
+            if (!clearOfTaken(rect)) continue;
+            taken.push(rect);
 
             if (shift) {
                 const halo = v >= 0 ? haloRed : haloBlue;
@@ -313,6 +370,7 @@ export function createOverlaysLayer(engine, app) {
                 ctx.drawImage(halo, p.x - r, p.y - r, r * 2, r * 2);
                 ctx.globalAlpha = 1;
             }
+            drawBacking(x, y, w, h);
             let line = y + LINE_H / 2;
             if (name) {
                 ctx.font = LABEL_FONT;
@@ -381,6 +439,8 @@ export function createOverlaysLayer(engine, app) {
             ctx.font = LABEL_FONT;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
+            const w = ctx.measureText(reticle.code).width;
+            drawBacking(cx - w / 2, cy + gap + len + 5, w, LINE_H);
             drawText(reticle.code, cx, cy + gap + len + 5, 'rgba(255, 255, 255, 0.95)');
         }
     }
@@ -421,6 +481,7 @@ export function createOverlaysLayer(engine, app) {
             if (!inSky) return;
 
             const inset = barInsets(frame);
+            taken.length = 0;
             if (layers.galacticBand) drawGalacticBand(frame, view, inset);
             if (layers.grid) drawGrid(frame, view, inset);
             if (layers.labels || layers.shiftTint) drawObjectMarks(frame, view, inset, layers.labels, layers.shiftTint);
