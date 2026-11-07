@@ -68,7 +68,12 @@ function everyCode(u) {
         (body.planets || []).forEach((p) => codes.push(p.code));
         (body.stars || []).forEach((s) => codes.push(s.code));
         if (body.black_hole) codes.push(body.black_hole.companion.code);
-        if (body.cluster) body.cluster.members.forEach((m) => codes.push(m.code));
+        if (body.cluster) {
+            body.cluster.members.forEach((m) => {
+                codes.push(m.code);
+                (m.stars || []).forEach((s) => codes.push(s.code));
+            });
+        }
     });
     return codes;
 }
@@ -215,7 +220,12 @@ function checkStars(u, fail) {
         if (body.star) checkStar(body.star, classKey(body.star), body.code, fail);
         (body.stars || []).forEach((s) => checkInnerStar(s.star, s.code, fail));
         if (body.black_hole) checkInnerStar(body.black_hole.companion.star, body.black_hole.companion.code, fail);
-        if (body.cluster) body.cluster.members.forEach((m) => checkInnerStar(m.star, m.code, fail));
+        if (body.cluster) {
+            body.cluster.members.forEach((m) => {
+                checkInnerStar(m.star, m.code, fail);
+                (m.stars || []).forEach((s) => checkInnerStar(s.star, s.code, fail));
+            });
+        }
         if (body.nebula && body.nebula.central_star) checkInnerStar(body.nebula.central_star, body.code, fail);
         if (body.kind === 'star') {
             const f = fluxFromLuminosity(body.star.luminosity_Lsun, body.distance_pc);
@@ -345,7 +355,19 @@ function checkDeepSky(u, fail) {
                     if (m.star.mass_Msun > c.turnoff_Msun * 1.001) fail(`${m.code} should have left the main sequence`);
                     if (m.brightness.mag > limitingMag(MIN_FOV)) fail(`${m.code} is too faint to find`);
                 }
+                // A companion was born with its star, so it's as old and made of the same, and still below the turn-off
+                (m.stars || []).forEach((s) => {
+                    if (s.star === m.star) return;
+                    if (s.star.stage !== 'main_sequence') fail(`${s.code} should be on the main sequence`);
+                    if (s.star.mass_Msun > c.turnoff_Msun * 1.001) fail(`${s.code} should have left the main sequence`);
+                    if (s.star.mass_Msun > m.star.mass_Msun * 1.001) fail(`${s.code} is heavier than its partner`);
+                    if (s.star.composition !== c.composition) fail(`${s.code} isn't made of what its cluster is`);
+                    if (c.type === 'globular' && s.star.population !== 'II') fail(`${s.code} isn't metal-poor`);
+                });
+                if (m.stars && Math.abs(m.orbits[0].period_days) <= 0) fail(`${m.code} has no orbit`);
             });
+            const counted = c.members.reduce((sum, m) => sum + (m.stars ? 2 : 1), 0);
+            if (c.n_stars !== counted) fail(`${body.code} counts ${c.n_stars} stars, not ${counted}`);
             if (Math.abs(msLifetimeMyr(c.turnoff_Msun) / c.age_Myr - 1) > 0.02) fail(`${body.code}'s turn-off doesn't match its age`);
         }
         if (body.neutron_star && body.neutron_star.pulsar) {

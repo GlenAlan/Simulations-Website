@@ -6,12 +6,18 @@
 //                 turnoff_Msun, turnoff_teff_K, n_stars, shape: { axis_ratio, pa_deg, core } }
 // A member: { code, kind: 'cluster_member', parent, offset_deg: { x, y }, depth_offset, star, brightness, distance_pc,
 //             radial_velocity_kms }. Its star's composition is the object held at cluster.composition.
+//
+// A binary member is a member that is also a whole system, with everything a 'binary' body has (see data/multi.js): its
+// kind is 'binary', and it has stars[], orbits[] and the rest, a sky and bands of its own, and in_cluster, its cluster's
+// code. So universe.resolve hands it back as a body, its stars as components, and the spectrum tools and system view need
+// nothing special. Its star is still its brighter star, and cluster.members lists it once; n_stars counts both.
 
 import { Rng, stable } from '../core/rng.js';
 import { fluxFromLuminosity } from '../core/phys.js';
 import { limitingMag, MIN_ALT, MIN_FOV } from '../core/sky.js';
 import { dp, luminosityFromRT, mainSequenceAt, msLifetimeMyr, turnoffMass, starFromMass, clusterGiant, makeWhiteDwarf,
     makeComposition, absoluteVisual, distanceModulus, combineMags } from './stellar.js';
+import { makePairOf } from './multi.js';
 
 const MEMBER_LIMIT_MAG = limitingMag(MIN_FOV) - 0.5;
 const LOWEST_MEMBER_MASS = 0.25;
@@ -180,6 +186,54 @@ export function keepMembersAboveHorizon(body) {
     });
 }
 
+// ---------- Binary members ----------
+// Made last of all, once every other code has been drawn, from a random stream of their own: so nothing else changes.
+
+const PAIR_SHARE = { open: 0.13, globular: 0.09 };
+const PAIR_FAINTEST_MAG = 15;       // A pair this faint can still be found, and its two stars told apart
+
+// Stylised, as a multiple's are: too small to see at first, and coming apart well into the zoom. Slow, wide orbits show first.
+const pairSeparationDeg = (periodDays) => dp(0.016 * Math.max(0.2, periodDays) ** 0.12, 4);
+
+function memberBrightness(star, distance) {
+    const absV = absoluteVisual(star.luminosity_Lsun, star.teff_K);
+    return {
+        flux_Wm2: stable(fluxFromLuminosity(star.luminosity_Lsun, distance), 5),
+        mag: dp(absV + distanceModulus(distance), 3)
+    };
+}
+
+// Turns about one in eight of a cluster's members into pairs. A companion was born with its star, so it has the same age
+// and make-up, and is lighter, which keeps it on the main sequence below the turn-off.
+export function makeBinaryMembers(body, nextCode) {
+    const c = body.cluster;
+    const rng = new Rng(`cluster-pairs:${body.code}`);
+    const canPair = c.members.filter((m) => m.star.stage !== 'white_dwarf' && m.brightness.mag <= PAIR_FAINTEST_MAG);
+    const chosen = rng.shuffle(canPair).slice(0, Math.round(c.members.length * PAIR_SHARE[c.type]));
+    chosen.forEach((member) => {
+        const primary = member.star;
+        const heaviest = Math.min(primary.mass_Msun, c.turnoff_Msun * 0.98);
+        const mass = stable(Math.max(LOWEST_MEMBER_MASS, Math.min(heaviest, primary.mass_Msun * rng.range(0.4, 1))), 4);
+        const companion = starFromMass(rng, mass, {
+            population: c.population,
+            composition: c.composition,
+            age: c.age_Myr,
+            aged: Math.min(1, c.age_Myr / msLifetimeMyr(mass)),
+            tight: true
+        });
+        Object.assign(member, makePairOf(rng, nextCode, member.code, primary, companion, pairSeparationDeg));
+        member.in_cluster = body.code;
+        member.stars.forEach((part) => {
+            part.distance_pc = member.distance_pc;
+            part.radial_velocity_kms = member.radial_velocity_kms;
+            part.brightness = memberBrightness(part.star, member.distance_pc);
+        });
+        const [a, b] = member.stars.map((part) => part.brightness);
+        member.brightness = { flux_Wm2: stable(a.flux_Wm2 + b.flux_Wm2, 5), mag: dp(combineMags([a.mag, b.mag]), 3) };
+    });
+    c.n_stars = c.members.length + chosen.length;
+}
+
 // Fills in body.cluster, the body's distance and its integrated brightness. nextCode gives member codes.
 export function makeCluster(rng, nextCode, body, type) {
     const globular = type === 'globular';
@@ -222,7 +276,6 @@ export function makeCluster(rng, nextCode, body, type) {
 
     const radius = dp(globular ? rng.range(0.2, 0.6) : rng.range(0.4, 1.6), 3);
     const members = stars.map((star) => {
-        const absV = absoluteVisual(star.luminosity_Lsun, star.teff_K);
         // Members used to take their places from this stream. placeMembers has its own, so these two draws are thrown away,
         // which keeps every later number from it, and so every code and speed, the same.
         rng.next();
@@ -236,10 +289,7 @@ export function makeCluster(rng, nextCode, body, type) {
             star,
             distance_pc: distance,
             radial_velocity_kms: 0, // Set by the caller, once the cluster's own velocity is known
-            brightness: {
-                flux_Wm2: stable(fluxFromLuminosity(star.luminosity_Lsun, distance), 5),
-                mag: dp(absV + distanceModulus(distance), 3)
-            },
+            brightness: memberBrightness(star, distance),
             visual_seed: ''
         };
     });

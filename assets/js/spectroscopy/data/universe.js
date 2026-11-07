@@ -19,13 +19,14 @@ import { dp, clamp, STAR_TABLE, makeClassStar, makeRedGiant, makeRedSupergiant, 
 import { PLANET_COUNT_BUCKETS, hostContext, makeSystemPlanets, planetFromSpec, addToTally } from './planets.js';
 import { makeRandomMulti, makeFigureEightSystem, makeDoubleDoubleSystem, systemAbsoluteMag, systemLuminosity, systemMass,
     widestOrbitAU, fillComponentFields } from './multi.js';
-import { makeCluster, keepMembersAboveHorizon } from './clusters.js';
+import { makeCluster, makeBinaryMembers, keepMembersAboveHorizon } from './clusters.js';
 import { makeNebula, makeNeutronStar, makeGalaxy, makeBlackHole, makeSupernova, makeQuasar, makeComet, makeRogue } from './deep_sky.js';
 import { layOutSky } from './sky_layout.js';
 import { makeHomePlanets } from './home_system.js';
 import { unseal } from './sealed.js';
 import { bandStrengths } from './band_table.js';
 import { BODY_COUNTS, MIX } from './quotas.js';
+import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
 
@@ -414,7 +415,14 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     home.forEach((body) => entries.push({ body, rule: 'even', fixed: body.sky }));
 
     layOutSky(entries, root.fork('sky'));
-    bodies.forEach((body) => { if (body.cluster) keepMembersAboveHorizon(body); });
+
+    // Clusters' binary members take the last codes of all, so that no other code changes, and need the sky to be laid out
+    const pairCode = coder('member pairs');
+    bodies.forEach((body) => {
+        if (!body.cluster) return;
+        keepMembersAboveHorizon(body);
+        makeBinaryMembers(body, pairCode);
+    });
 
     const all = root.fork('order').shuffle(bodies).concat(home);
 
@@ -426,6 +434,16 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         if (body.black_hole) body.black_hole.companion.bands = bandStrengths(body.black_hole.companion);
         body.bands = bandStrengths(body);
     });
+    // After all of those: band strengths are cached by temperature, so doing these sooner would nudge the others
+    all.forEach((body) => {
+        if (!body.cluster) return;
+        body.cluster.members.forEach((member) => {
+            if (!member.stars) return;
+            member.sky = memberDirection(body, member);
+            member.stars.forEach((star) => { star.bands = bandStrengths(star); });
+            member.bands = bandStrengths(member);
+        });
+    });
 
     const byCode = new Map();
     const register = (entity, body, path) => byCode.set(entity.code, { entity, body, path });
@@ -434,7 +452,17 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         (body.planets || []).forEach((planet) => register(planet, body, 'planet'));
         (body.stars || []).forEach((star) => register(star, body, 'component'));
         if (body.black_hole) register(body.black_hole.companion, body, 'component');
-        if (body.cluster) body.cluster.members.forEach((member) => register(member, body, 'member'));
+        if (body.cluster) {
+            body.cluster.members.forEach((member) => {
+                if (member.stars) {
+                    // A pair of stars is a system of its own, the same to everything that reads it as any other binary
+                    register(member, member, 'body');
+                    member.stars.forEach((star) => register(star, member, 'component'));
+                } else {
+                    register(member, body, 'member');
+                }
+            });
+        }
     });
 
     return {

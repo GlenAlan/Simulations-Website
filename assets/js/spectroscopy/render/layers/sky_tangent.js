@@ -64,9 +64,12 @@ export function drawnSky(engine, { entity, body, path }) {
         return { az, alt, depth: entity.depth ?? body.depth ?? 0 };
     }
     if (path === 'component') {
-        const layer = engine.getLayer('binaries');
-        const spot = layer && layer.componentSky ? layer.componentSky(entity.code, engine.currentFrame()) : null;
-        if (spot) return spot;
+        // The sky's multiples are drawn by one layer, and the binary members of clusters by another
+        for (const id of ['binaries', 'clusters']) {
+            const layer = engine.getLayer(id);
+            const spot = layer && layer.componentSky ? layer.componentSky(entity.code, engine.currentFrame()) : null;
+            if (spot) return spot;
+        }
     }
     return { az: body.sky.az, alt: body.sky.alt, depth: body.depth || 0 };
 }

@@ -44,6 +44,7 @@ export function angularRadiusDeg(entity, body) {
     if (body.cluster) return body.cluster.radius_deg;
     if (body.supernova) return body.supernova.shell_deg || 0;
     if (body.comet) return body.comet.coma_deg || 0;
+    if (body.stars) return (body.visual_sep_deg || 0) * 0.7;
     return 0;
 }
 

@@ -106,10 +106,13 @@ function relationLine(resolved) {
     } else if (path === 'member') {
         words = 'Member of';
         code = entity.parent || body.code;
+    } else if (entity.in_cluster) {
+        words = 'Member of';
+        code = entity.in_cluster;
     }
     if (!code) return null;
     const line = element('p', 'spectro-relation', `${words} `);
-    line.appendChild(codeLink(code, path === 'member'));
+    line.appendChild(codeLink(code, words === 'Member of'));
     return line;
 }
 

@@ -11,6 +11,7 @@ import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB, planck, SIGMA } from '../../core/phys.js';
 import { limitingMag, MIN_FOV } from '../../core/sky.js';
 import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
+import { componentStates } from '../../data/orbits.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, memberDirection, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 
@@ -27,6 +28,7 @@ const OPENS_PX = 55;                // A cluster's radius on screen before its m
 const APART_PX = 6;                 // ...and how far a member must then be from its nearest neighbour
 const APART_DEEP_PX = 4;            // The same at the deepest zoom, where every member should be open to a click
 const MEMBER_REACH_PX = 3;          // Within this of a member it's a direct hit. Small, so that the nearer of two wins
+const PAIR_APART_PX = 9.5;          // A pair's two stars can be picked one by one this far apart, in device pixels, as a multiple's can
 
 // A member's light, from how many magnitudes it is above the zoom's limit. Shader and picking share these.
 const SHOW_FROM = -0.6;             // Starts to show this far below the limit...
@@ -101,30 +103,77 @@ function memberLight(above) {
     return smoothstep(SHOW_FROM, SHOW_BY, above) * Math.min(LIGHT_MOST, LIGHT_AT_START * 10 ** (LIGHT_RATE * Math.max(above - SHOW_FROM, 0)));
 }
 
-// What picking needs to know about each member. Built the first time a click comes near the cluster.
-function pickTable(body, bandA, bandB, memberBoost, first) {
-    return body.cluster.members.map((member, k) => {
-        let nearest = Infinity;
-        body.cluster.members.forEach((other) => {
-            if (other === member) return;
-            const d = Math.hypot(member.offset_deg.x - other.offset_deg.x, member.offset_deg.y - other.offset_deg.y);
-            if (d < nearest) nearest = d;
-        });
-        const { az, alt } = memberDirection(body, member);
-        const i = first + k;
+// Where a binary member's two stars are on the sky, as offsets from its cluster. Stylised as a multiple's are (binaries.js):
+// the true direction between them, at a made-up distance, so they come apart well into the zoom. rho turns the pair on the sky.
+function pairSpots(member, rho, tDays) {
+    const [a, b] = componentStates(member, tDays);
+    const orbit = member.orbits[0];
+    const dx = b.x_AU - a.x_AU;
+    const dy = (b.y_AU - a.y_AU) * Math.cos(orbit.inc_deg * RAD) + (b.z_AU - a.z_AU) * Math.sin(orbit.inc_deg * RAD);
+    const c = Math.cos(rho);
+    const s = Math.sin(rho);
+    const sx = dx * c - dy * s;
+    const sy = dx * s + dy * c;
+    const lengthSky = Math.hypot(sx, sy) || 1;
+    const length3 = Math.hypot(b.x_AU - a.x_AU, b.y_AU - a.y_AU, b.z_AU - a.z_AU) || 1;
+    // Foreshortened near conjunction, but never so much that a pair can't be told apart
+    const sep = member.visual_sep_deg * Math.max(0.6, lengthSky / length3);
+    const ma = member.stars[0].star.mass_Msun;
+    const mb = member.stars[1].star.mass_Msun;
+    const ux = (sx / lengthSky) * sep;
+    const uy = (sy / lengthSky) * sep;
+    const { x, y } = member.offset_deg;
+    const shareB = ma / (ma + mb);
+    return [{ x: x - ux * (1 - shareB), y: y - uy * (1 - shareB) }, { x: x + ux * shareB, y: y + uy * shareB }];
+}
+
+// What picking needs to know about each member, and each star of a pair. Built the first time a click comes near the cluster.
+function pickTable(c, points, bandA, bandB, memberBoost) {
+    const { body } = c;
+    const entry = (i) => {
+        const point = points[i];
+        const { az, alt } = memberDirection(body, { offset_deg: point.spot });
         return {
-            code: member.code,
+            code: point.entity.code,
             az,
             alt,
-            depth: member.depth,
-            nearestDeg: nearest,
-            mag: Math.min(drawMag(member), FAINTEST_DRAWN),
+            depth: point.entity.depth,
+            mag: Math.min(drawMag(point.entity), FAINTEST_DRAWN),
             starLight: memberBoost[i],
             visible: bandA[i * 4 + 2],
             radio: bandA[i * 4],
             ir: bandA[i * 4 + 1],
             uv: bandA[i * 4 + 3],
             xray: bandB[i]
+        };
+    };
+    let i = c.firstPoint;
+    return body.cluster.members.map((member) => {
+        let nearest = Infinity;
+        body.cluster.members.forEach((other) => {
+            if (other === member) return;
+            const d = Math.hypot(member.offset_deg.x - other.offset_deg.x, member.offset_deg.y - other.offset_deg.y);
+            if (d < nearest) nearest = d;
+        });
+        if (!member.stars) return { ...entry(i++), nearestDeg: nearest, parts: null };
+        // A pair not yet apart looks like the brighter of its two in each band, and stands for the pair
+        const parts = [entry(i), entry(i + 1)];
+        i += 2;
+        const [a, b] = parts;
+        return {
+            ...a,
+            code: member.code,
+            az: member.sky.az,
+            alt: member.sky.alt,
+            mag: Math.min(a.mag, b.mag),
+            visible: Math.max(a.visible, b.visible),
+            radio: Math.max(a.radio, b.radio),
+            ir: Math.max(a.ir, b.ir),
+            uv: Math.max(a.uv, b.uv),
+            xray: Math.max(a.xray, b.xray),
+            nearestDeg: nearest,
+            parts,
+            sepDeg: member.visual_sep_deg
         };
     });
 }
@@ -155,8 +204,25 @@ export function createClustersLayer(engine, app) {
 
     const uDpr = { value: 1 };
 
-    // Members: one draw call for every star in every cluster
-    const memberCount = clusters.reduce((sum, c) => sum + c.body.cluster.members.length, 0);
+    // Every star drawn: a member, or one of a pair
+    const points = [];
+    const pairs = new Map();    // A binary member's code to { c, member, rho, first, spots }
+    clusters.forEach((c) => {
+        c.firstPoint = points.length;
+        c.body.cluster.members.forEach((member) => {
+            if (!member.stars) {
+                points.push({ c, member, entity: member, spot: member.offset_deg });
+                return;
+            }
+            const rho = new Rng(`pair:${member.code}`).range(0, Math.PI * 2);
+            const spots = pairSpots(member, rho, 0);
+            pairs.set(member.code, { c, member, rho, first: points.length, spots });
+            member.stars.forEach((entity, k) => points.push({ c, member, entity, spot: spots[k] }));
+        });
+    });
+
+    // One draw call for every star in every cluster
+    const memberCount = points.length;
     const positions = new Float32Array(memberCount * 3);
     const colours = new Float32Array(memberCount * 3);
     const bandA = new Float32Array(memberCount * 4);
@@ -164,36 +230,32 @@ export function createClustersLayer(engine, app) {
     const memberInfo = new Float32Array(memberCount * 3); // Its magnitude as drawn, its cluster's sky area per member, and its cluster's magnitude
     const memberBoost = new Float32Array(memberCount);
     const memberDepth = new Float32Array(memberCount);
-    let w = 0;
     clusters.forEach((c) => {
+        const { members, radius_deg: radius } = c.body.cluster;
+        c.areaPerMember = (Math.PI * radius * radius) / Math.max(1, members.length) / (c.globular ? 5 : 1);
+    });
+    points.forEach(({ c, member, entity, spot }, w) => {
         const { body } = c;
-        const { members, radius_deg: radius } = body.cluster;
-        const areaPerMember = (Math.PI * radius * radius) / Math.max(1, members.length) / (c.globular ? 5 : 1);
-        c.firstMember = w;
-        c.areaPerMember = areaPerMember;
-        members.forEach((member) => {
-            const v = offsetVector(c.basis, member.offset_deg.x, member.offset_deg.y);
-            positions.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], w * 3);
-            const T = member.star.teff_K;
-            colours.set(blackBodyRGB(T), w * 3);
-            const L = member.star.luminosity_Lsun;
-            const shares = bandShares(T);
-            const isXray = c.xray.has(member.code);
-            const youngCorona = !c.globular && T < 6500 && body.cluster.age_Myr < 150;
-            const light = depthLight(body);
-            bandA.set([
-                body.bands.radio * 0.2 * light,
-                squeeze(L * shares.ir, REF_IR) * body.bands.ir * light,
-                // Its magnitude already says how much distance has dimmed it, so depth takes only a little more off here
-                body.bands.visible * Math.sqrt(light),
-                squeeze(L * shares.uv, REF_UV) * body.bands.uv * light
-            ], w * 4);
-            memberBoost[w] = c.globular ? GLOBULAR_GIANTS : 1;
-            bandB[w] = (isXray ? Math.max(0.5, body.bands.xray) : (youngCorona ? 0.25 : 0.03) * body.bands.xray) * light;
-            memberInfo.set([Math.min(drawMag(member), FAINTEST_DRAWN), areaPerMember, drawMag(body)], w * 3);
-            memberDepth[w] = member.depth;
-            w++;
-        });
+        const v = offsetVector(c.basis, spot.x, spot.y);
+        positions.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], w * 3);
+        const T = entity.star.teff_K;
+        colours.set(blackBodyRGB(T), w * 3);
+        const L = entity.star.luminosity_Lsun;
+        const shares = bandShares(T);
+        const isXray = c.xray.has(member.code) || member.interacting;
+        const youngCorona = !c.globular && T < 6500 && body.cluster.age_Myr < 150;
+        const light = depthLight(body);
+        bandA.set([
+            body.bands.radio * 0.2 * light,
+            squeeze(L * shares.ir, REF_IR) * body.bands.ir * light,
+            // Its magnitude already says how much distance has dimmed it, so depth takes only a little more off here
+            body.bands.visible * Math.sqrt(light),
+            squeeze(L * shares.uv, REF_UV) * body.bands.uv * light
+        ], w * 4);
+        memberBoost[w] = c.globular ? GLOBULAR_GIANTS : 1;
+        bandB[w] = (isXray ? Math.max(0.5, body.bands.xray) : (youngCorona ? 0.25 : 0.03) * body.bands.xray) * light;
+        memberInfo.set([Math.min(drawMag(entity), FAINTEST_DRAWN), c.areaPerMember, drawMag(body)], w * 3);
+        memberDepth[w] = entity.depth;
     });
     const memberGeometry = new THREE.BufferGeometry();
     memberGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -625,6 +687,20 @@ export function createClustersLayer(engine, app) {
         bus.on('highlight', ({ code }) => setRing(code)),
         bus.on('deselect', () => setRing(null)),
         bus.on('select', ({ code }) => { if (code !== ringCode) setRing(null); }),
+        // A panel's playback moves a binary member's two stars along their orbit, as it does any multiple's
+        bus.on('timeline', ({ code, t_days, stepped_t_days }) => {
+            const resolved = app.universe.resolve(code);
+            const pair = resolved ? pairs.get(resolved.body.code) : null;
+            if (!pair) return;
+            pair.spots = pairSpots(pair.member, pair.rho, stepped_t_days ?? t_days);
+            const entries = pair.c.table ? pair.c.table.find((m) => m.code === pair.member.code).parts : null;
+            pair.spots.forEach((spot, k) => {
+                const v = offsetVector(pair.c.basis, spot.x, spot.y);
+                positions.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], (pair.first + k) * 3);
+                if (entries) Object.assign(entries[k], memberDirection(pair.c.body, { offset_deg: spot }));
+            });
+            memberGeometry.attributes.position.needsUpdate = true;
+        }),
         // The haze went with the context: back to none, until it has baked again
         bus.on('gl-restored', () => {
             const amounts = glowGeometry.attributes.aHazeAmount;
@@ -670,6 +746,20 @@ export function createClustersLayer(engine, app) {
             }
         },
 
+        // Where one star of a binary member is drawn at this zoom: on its own, or still as one point with its partner
+        componentSky(code, frame) {
+            const resolved = app.universe.resolve(code);
+            const pair = resolved ? pairs.get(resolved.body.code) : null;
+            const index = pair ? pair.member.stars.findIndex((star) => star.code === code) : -1;
+            if (index < 0) return null;
+            const { member } = pair;
+            if (member.visual_sep_deg * RAD * frame.pxPerRad * parallaxFactor(member.depth, frame.fov) < PAIR_APART_PX) {
+                return { az: member.sky.az, alt: member.sky.alt, depth: member.depth };
+            }
+            const { az, alt } = memberDirection(pair.c.body, { offset_deg: pair.spots[index] });
+            return { az, alt, depth: member.depth };
+        },
+
         // Every point drawn answers a click. A member stands for itself once the cluster has opened out and it's clear of
         // its neighbours, and until then for the cluster, so the cluster's own reach is as far as its strays.
         picks(frame) {
@@ -697,19 +787,24 @@ export function createClustersLayer(engine, app) {
                 const smudge = c.globular ? 0 : (1 - smoothstep(SMUDGE_FROM_PX2, SMUDGE_TO_PX2, room))
                     * Math.max(0.2, Math.min(1, room / SMUDGE_STACKED_PX2)) * SMUDGE_LIGHT * revealGain(drawMag(body), lim);
                 const farOff = FAR_OFF_LIGHT + (1 - FAR_OFF_LIGHT) * smoothstep(FAR_OFF_PX[0], FAR_OFF_PX[1], pxPerDeg);
-                if (!c.table) c.table = pickTable(body, bandA, bandB, memberBoost, c.firstMember);
+                if (!c.table) c.table = pickTable(c, points, bandA, bandB, memberBoost);
                 let any = false;
-                c.table.forEach((m) => {
+                // One point of light, standing for itself if there's room, and for the cluster if not
+                const offer = (m, room) => {
                     let light;
                     if (band === 'visible') light = Math.max(memberLight(lim - m.mag) * m.starLight * farOff, smudge) * m.visible;
                     else if (band === 'ir' || band === 'uv') light = m[band] * (0.5 + 0.5 * spread) * 2.2;
                     else light = m[band] * (band === 'xray' ? 3 : 1);
                     if (light < DRAWN_PEAK) return;
                     any = true;
-                    const own = opened && light >= SEEN_PEAK && m.nearestDeg * pxPerDeg >= apart;
-                    out.push(own
+                    out.push(opened && light >= SEEN_PEAK && room >= apart
                         ? { code: m.code, az: m.az, alt: m.alt, radiusPx: MEMBER_REACH_PX, depth: m.depth }
                         : { code: body.code, az: m.az, alt: m.alt, radiusPx: 0, depth: m.depth });
+                };
+                c.table.forEach((m) => {
+                    const room = m.nearestDeg * pxPerDeg;
+                    if (m.parts && m.sepDeg * pxPerDeg * frame.dpr >= PAIR_APART_PX) m.parts.forEach((part) => offer(part, room));
+                    else offer(m, room);
                 });
                 if (any && !opened) out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth });
                 // A globular's fainter stars have no codes of their own, and run out past its radius
