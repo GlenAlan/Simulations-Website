@@ -80,12 +80,16 @@ function fillWords(el, text, seen) {
     return el;
 }
 
-// A code that takes you to its object: a planet's "orbits", a star's "part of"
-function codeLink(code) {
+// A code that takes you to its object: a planet's "orbits", a star's "part of". From among a cluster's stars the cluster
+// is off round the view, so a link back to it flies out far enough to see it whole.
+function codeLink(code, flyBack = false) {
     const b = element('button', 'spectro-link', code);
     b.type = 'button';
-    b.setAttribute('aria-label', `Select ${code}`);
-    b.addEventListener('click', () => select(code));
+    b.setAttribute('aria-label', flyBack ? `Back to ${code}` : `Select ${code}`);
+    b.addEventListener('click', () => {
+        if (flyBack && app.goto) app.goto.goto(code);
+        else select(code);
+    });
     return b;
 }
 
@@ -105,7 +109,7 @@ function relationLine(resolved) {
     }
     if (!code) return null;
     const line = element('p', 'spectro-relation', `${words} `);
-    line.appendChild(codeLink(code));
+    line.appendChild(codeLink(code, path === 'member'));
     return line;
 }
 

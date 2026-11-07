@@ -55,6 +55,22 @@ export function memberDirection(body, member) {
     return vec3ToAzAlt(v[0], v[1], v[2]);
 }
 
+// Where a selected thing is drawn, as { az, alt, depth }, for engine.project: its own place for a cluster member, the point
+// it's showing as for a star of a multiple, and otherwise where its body is. Everything that marks or follows a selection
+// goes through here, as a resolved selection's body is only the cluster or the system it belongs to.
+export function drawnSky(engine, { entity, body, path }) {
+    if (path === 'member' && entity.offset_deg) {
+        const { az, alt } = memberDirection(body, entity);
+        return { az, alt, depth: entity.depth ?? body.depth ?? 0 };
+    }
+    if (path === 'component') {
+        const layer = engine.getLayer('binaries');
+        const spot = layer && layer.componentSky ? layer.componentSky(entity.code, engine.currentFrame()) : null;
+        if (spot) return spot;
+    }
+    return { az: body.sky.az, alt: body.sky.alt, depth: body.depth || 0 };
+}
+
 // Two vectors in the sky's tangent plane for a quad at this basis: u along a position angle measured from up
 // towards the right, v a quarter turn anticlockwise from it as seen from the observer (so the quad faces inwards).
 export function quadAxes(basis, positionAngleDeg, halfLength) {

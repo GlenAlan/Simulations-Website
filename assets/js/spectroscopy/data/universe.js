@@ -19,7 +19,7 @@ import { dp, clamp, STAR_TABLE, makeClassStar, makeRedGiant, makeRedSupergiant, 
 import { PLANET_COUNT_BUCKETS, hostContext, makeSystemPlanets, planetFromSpec, addToTally } from './planets.js';
 import { makeRandomMulti, makeFigureEightSystem, makeDoubleDoubleSystem, systemAbsoluteMag, systemLuminosity, systemMass,
     widestOrbitAU, fillComponentFields } from './multi.js';
-import { makeCluster } from './clusters.js';
+import { makeCluster, keepMembersAboveHorizon } from './clusters.js';
 import { makeNebula, makeNeutronStar, makeGalaxy, makeBlackHole, makeSupernova, makeQuasar, makeComet, makeRogue } from './deep_sky.js';
 import { layOutSky } from './sky_layout.js';
 import { makeHomePlanets } from './home_system.js';
@@ -414,6 +414,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     home.forEach((body) => entries.push({ body, rule: 'even', fixed: body.sky }));
 
     layOutSky(entries, root.fork('sky'));
+    bodies.forEach((body) => { if (body.cluster) keepMembersAboveHorizon(body); });
 
     const all = root.fork('order').shuffle(bodies).concat(home);
 

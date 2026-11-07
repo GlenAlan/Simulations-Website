@@ -442,9 +442,9 @@ export function initGoto(app) {
     // --- Flights ---
 
     // Resolves when the slew ends, even if something cuts it short without calling onDone, such as a drag or a newer flight
-    function slew(target, { duration = FLIGHT_S, pullBack = true } = {}) {
+    function slew(target, { duration = FLIGHT_S, pullBack = true, exact = false } = {}) {
         const view = engine.getView();
-        const framed = angularSeparation(view.az, view.alt, target.az, target.alt) < view.fov * 0.02
+        const framed = angularSeparation(view.az, view.alt, target.az, target.alt) < view.fov * (exact ? 0.0005 : 0.02)
             && Math.abs(Math.log(view.fov / target.fov)) < 0.05;
         if (framed && !engine.isSlewing()) return Promise.resolve(); // No wobble; but an older flight mustn't carry on
 
@@ -482,8 +482,9 @@ export function initGoto(app) {
 
     function memberFov(body, member) {
         const fov = Math.max(MIN_FOV, fovAtDepth(body.cluster.radius_deg * 1.2, body.depth));
-        // Only visible light has a brightness limit: see engine.bodyShows
-        return app.band === 'visible' ? fovShowingMag(member.brightness && drawMag(member), fov) : fov;
+        // Only visible light has a brightness limit: see engine.bodyShows. Every member shows at the deepest zoom, however faint
+        const mag = member.brightness ? Math.min(drawMag(member), limitingMag(MIN_FOV) - MAG_MARGIN) : NaN;
+        return app.band === 'visible' ? fovShowingMag(mag, fov) : fov;
     }
 
     async function fly(resolved, id) {
@@ -510,13 +511,12 @@ export function initGoto(app) {
         }
         select(entity.code);
         if (path === 'member') {
-            // Selected before the zoom, and the zoom waits a few frames. Just after a selection the shell pulls the
-            // selected body back on screen if it has gone, and a member's body is its cluster: selected at the end,
-            // the camera would be dragged off the member again.
+            // Selected before the zoom, and the zoom waits a few frames, so that the shell has looked at the selection
+            // (it brings it back on screen if it has gone) and won't start a slew of its own during the zoom.
             await animationFrames(3);
             const dir = await memberDirection(body, entity);
             if (!stillCurrent()) return false;
-            await slew({ az: dir.az, alt: dir.alt, fov: memberFov(body, entity) }, { duration: MEMBER_ZOOM_S, pullBack: false });
+            await slew({ az: dir.az, alt: dir.alt, fov: memberFov(body, entity) }, { duration: MEMBER_ZOOM_S, pullBack: false, exact: true });
             if (!stillCurrent()) return false;
             bus.emit('highlight', { code: entity.code });
         }

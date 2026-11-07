@@ -87,7 +87,8 @@ function scaleSizes(body, scale) {
     }
 }
 
-// What's inside a body is as far away as the body is
+// What's inside a body is as far away as the body is. A cluster member may also carry a depth_offset, a little either way,
+// so that an open cluster's stars shift against each other as the view moves. A member's depth is its own: entity.depth.
 function passDown(body) {
     const inside = [
         ...(body.planets || []),
@@ -96,7 +97,7 @@ function passDown(body) {
         ...(body.cluster ? body.cluster.members : [])
     ];
     inside.forEach((entity) => {
-        entity.depth = body.depth;
+        entity.depth = Math.max(0, body.depth + (entity.depth_offset || 0));
         entity.depth_dim_mag = body.depth_dim_mag;
     });
 }

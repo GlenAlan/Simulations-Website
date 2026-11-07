@@ -557,6 +557,22 @@ export function createBinariesLayer(engine, app) {
     return {
         id: 'binaries',
         update() {},
+        // Where one star of a system is drawn at this zoom: the point it's part of, for as long as it hasn't come apart
+        componentSky(code, frame) {
+            const resolved = app.universe.resolve(code);
+            const system = resolved && byCode.get(resolved.body.code);
+            const index = system ? system.body.stars.findIndex((star) => star.code === code) : -1;
+            if (index < 0) return null;
+            const { depth } = system.body;
+            const pxPerRad = frame.pxPerRad * parallaxFactor(depth, frame.fov);
+            let node = system.tree;
+            while (node.children.length && node.sepSelf * DEG * pxPerRad >= (SPLIT_LO + SPLIT_HI) / 2) {
+                node = node.children.find((child) => child.stars.includes(index));
+            }
+            const world = worldOf(system, node.x, node.y);
+            const { az, alt } = vec3ToAzAlt(world[0], world[1], world[2]);
+            return { az, alt, depth };
+        },
         // Resolved members can be selected. Only called on a click, so it may build a list
         picks(frame) {
             pickList.length = 0;

@@ -601,7 +601,7 @@ function clusterInfo({ entity }) {
         return {
             ...common,
             kindLabel: 'Open cluster',
-            summary: 'A loose group of stars, all born at about the same time from one cloud. Compare its H-R diagram with a globular cluster\'s.',
+            summary: 'A loose group of stars, all born at about the same time from one cloud. Zoom in to go among them and pick one out. Compare its H-R diagram with a globular cluster\'s.',
             rarity: 'Thousands are known in the Milky Way. Most drift apart within a few hundred million years.'
         };
     }
