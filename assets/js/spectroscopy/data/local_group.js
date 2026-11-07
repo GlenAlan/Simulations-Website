@@ -62,8 +62,9 @@ function tooClose(dot, threshold) {
 }
 
 // Somewhere away from the band and well up, its whole disc clear of the hard-coded systems and of the space kept round the
-// target, none of the other extended objects overlapping it, and nothing else near its middle. strict keeps everything
-// further off; the fallback only keeps the layout's own spacing, and is there so that every sky has one.
+// target, none of the other extended objects overlapping it, and the first sky's bodies clear of its middle. The deeper sky's
+// faint stars may lie across its disc, as our own galaxy's stars lie in front of Andromeda, but not on its bulge. strict keeps
+// everything further off; the fallback only keeps the layout's own spacing, and is there so that every sky has one.
 function placeGalaxy(rng, body, layout, avoid) {
     const R = body.galaxy.size_deg / 2;
     const lowest = Math.max(ALTITUDE_DEG[0], MIN_ALT + 0.3 + R);
@@ -76,7 +77,8 @@ function placeGalaxy(rng, body, layout, avoid) {
         };
         if (avoid.some((a) => near(a.sky, R + 1 + (a.clear_deg || 0)))) return false;
         return layout.placed.every((other) => {
-            let need = strict ? 1.2 : other.deep ? 0.35 : 1.02;
+            // A deeper body keeps the spacing its own brightness asks for (data/sky_layout.js deepSpacingDeg)
+            let need = other.deep ? Math.max(strict ? 0.5 : 0.35, (other.spacing || 0) * 1.02) : strict ? 1.2 : 1.02;
             if (other.radius > 0) need = Math.max(need, other.radius + R + (strict ? 0.3 : 0));
             if (other.clear > 0) need = Math.max(need, other.clear + R);
             return !tooClose(v[0] * other.v[0] + v[1] * other.v[1] + v[2] * other.v[2], Math.cos(need * RAD));

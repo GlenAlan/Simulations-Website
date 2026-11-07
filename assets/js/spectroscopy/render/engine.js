@@ -1080,7 +1080,10 @@ export function createEngine(canvas) {
     // ---------- Picking ----------
 
     // Extended bodies can be clicked anywhere on them, using the size in their data. Layers may add better shapes.
-    function extendedRadiusDeg(body) {
+    // The Local Group's galaxy (data/local_group.js) is long, thin and bright: while it is small on screen, only its bright
+    // middle answers for it, so that a star by its tip can still be clicked.
+    function extendedRadiusDeg(body, pxPerDeg) {
+        if (body.galaxy && body.galaxy.local_group && body.galaxy.size_deg * 0.45 * pxPerDeg <= 12) return body.galaxy.size_deg * 0.15;
         if (body.nebula) return body.nebula.size_deg * 0.4;
         if (body.galaxy) return body.galaxy.size_deg * 0.45;
         if (body.cluster) return body.cluster.radius_deg;
@@ -1159,7 +1162,7 @@ export function createEngine(canvas) {
             for (let i = 0; i < bodies.length; i++) {
                 const body = bodies[i];
                 if (bodyShows(body, lim)) {
-                    const radiusPx = extendedRadiusDeg(body) * pxPerDeg;
+                    const radiusPx = extendedRadiusDeg(body, pxPerDeg) * pxPerDeg;
                     // Inside an open cluster the dark between its stars is just sky: only the stars answer a click
                     if (body.cluster && body.cluster.type === 'open' && radiusPx > CLUSTER_INSIDE * Math.min(width, height)) continue;
                     let reach = maxPx;
