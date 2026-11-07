@@ -2,10 +2,12 @@
 // slot for the legend. Everything here is a thin bar at an edge of the sky; only the bars take pointer events.
 
 import { bus, setBand, setLayer, setSetting } from '../core/state.js';
+import { announce } from './drawer.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
 import { DEFAULT_VIEW } from '../core/sky.js';
 import { helpSections } from '../content/help.js';
 import { initLegend } from './legend.js';
+import { initViewAids } from './view_aids.js';
 
 function element(tag, className, text) {
     const el = document.createElement(tag);
@@ -27,6 +29,11 @@ function iconSpan(icon) {
 }
 
 // ---------- The sky fills the column ----------
+const SKY_MIN_H = 120;       // Above a sheet, however little room is left
+const SKY_SHORT_H = 300;     // Below this over a sheet the band switcher gives way (the panel's band chips still switch)
+const SKY_TINY_H = 180;      // And below this the context bar does too: System has the same buttons
+const SHORT_SCREEN = '(max-height: 540px)'; // As in simulation_styles.css: the page header is meant to scroll away here
+
 // A hidden probe takes the column's width and the site's tallest canvas height (--sim-canvas-max-h), and the ratio
 // of the two becomes the page's --aspect-ratio (simulation_ui.js mirrors it to the elements that use it). The probe
 // doesn't depend on the canvas, so resizing the canvas can't set this off again. Fullscreen needs none of it: CSS
@@ -45,15 +52,23 @@ function initSkyFit() {
 
     let lastW = 0;
     let lastH = 0;
+    function sheetIsOpen() {
+        return body.classList.contains('sim-panel-sheet') && panel.classList.contains('panel-open');
+    }
+
     function fit() {
-        if (body.classList.contains('sim-fullscreen-active')) return;
+        if (body.classList.contains('sim-fullscreen-active')) {
+            body.classList.remove('spectro-sky-short', 'spectro-sky-tiny');
+            return;
+        }
         const w = probe.offsetWidth - 2; // Inside the canvas's 1px border
         let h = probe.offsetHeight;
         if (w <= 0 || h <= 0) return;
         // A bottom sheet covers the lower part of the screen: the whole sky stays in view above it
-        if (body.classList.contains('sim-panel-sheet') && panel.classList.contains('panel-open')) {
-            h = Math.max(160, Math.min(h, window.innerHeight - panel.offsetHeight - 18));
-        }
+        const sheet = sheetIsOpen();
+        if (sheet) h = Math.max(SKY_MIN_H, Math.min(h, window.innerHeight - panel.offsetHeight - 18));
+        body.classList.toggle('spectro-sky-short', sheet && h < SKY_SHORT_H);
+        body.classList.toggle('spectro-sky-tiny', sheet && h < SKY_TINY_H);
         if (Math.abs(w - lastW) < 1 && Math.abs(h - lastH) < 1) return;
         lastW = w;
         lastH = h;
@@ -67,6 +82,38 @@ function initSkyFit() {
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(probe);
     window.addEventListener('resize', fit);
     bus.on('drawer', fit);
+
+    // simulation_ui.js only scrolls the sky into view as the panel opens. Rotating the screen or leaving fullscreen can
+    // leave it under the sheet, and a short screen starts with it part way off the bottom. This scrolls the page to
+    // match: never for a change of height alone, as a phone's address bar changes that while scrolling.
+    function reveal() {
+        const short = window.matchMedia(SHORT_SCREEN).matches;
+        const sheet = sheetIsOpen();
+        if ((!short && !sheet) || body.classList.contains('sim-fullscreen-active')) return;
+        const r = box.getBoundingClientRect();
+        const margin = 8;
+        const floor = (sheet ? window.innerHeight - panel.offsetHeight : window.innerHeight) - margin;
+        const delta = r.top < margin ? r.top - margin : r.bottom > floor ? Math.min(r.bottom - floor, r.top - margin) : 0;
+        if (Math.abs(delta) > 2) window.scrollBy(0, delta);
+    }
+    let revealTimer = 0;
+    const revealSoon = () => {
+        clearTimeout(revealTimer);
+        revealTimer = setTimeout(reveal, 200); // Once the site's own layout has settled
+    };
+    let lastWindowW = window.innerWidth;
+    window.addEventListener('resize', () => {
+        if (window.innerWidth === lastWindowW) return;
+        lastWindowW = window.innerWidth;
+        revealSoon();
+    });
+    let wasFullscreen = body.classList.contains('sim-fullscreen-active');
+    new MutationObserver(() => {
+        const now = body.classList.contains('sim-fullscreen-active');
+        if (now !== wasFullscreen && !now) revealSoon();
+        wasFullscreen = now;
+    }).observe(body, { attributes: true, attributeFilter: ['class'] });
+    if (window.scrollY === 0) revealSoon();
 }
 
 // ---------- Band switcher ----------
@@ -128,8 +175,16 @@ const LAYER_ROWS = [
     { name: 'grid', label: 'Grid', tip: 'Lines of altitude (height above the horizon) and azimuth (bearing around the horizon), in degrees.' },
     { name: 'labels', label: 'Labels', tip: 'Shows each object\'s code. Zoom in to see more of them.' },
     { name: 'shiftTint', label: 'Red/blue shift tint', tip: 'Tints bright objects by how fast they move along your line of sight, with an arrow and the speed.' },
-    { name: 'habitableZone', label: 'Habitable zone (system view)', tip: 'A ring around a star where liquid water could exist on a planet. Shows in the system view.' }
+    { name: 'habitableZone', label: 'Habitable zone (system view)', tip: 'A ring around a star where liquid water could exist on a planet. Shows in the system view.' },
+    { name: 'visited', label: 'Visited systems', mark: 'tick', tip: 'A small tick by each star system you have been into, so you can see where you have already looked. Kept on this device.' },
+    { name: 'planetHosts', label: 'Stars with planets', mark: 'arcs', tip: 'Two small arcs by each star or star system known to have planets. Astronomers keep the same list. Only marks what you can see at this zoom.' }
 ];
+
+// What each mark looks like on the sky, drawn beside its name
+const MARK_GLYPHS = {
+    tick: '<path d="M3.5 8.5L6.5 11.5L12.5 4.5"/>',
+    arcs: '<path d="M4.5 3a7 7 0 0 0 0 10M11.5 3a7 7 0 0 1 0 10"/>'
+};
 
 const HZ_REASON = 'Not available for this system. The zone formula only works for a single main-sequence star: it moves as giants and white dwarfs evolve, and does not apply to several stars.';
 
@@ -154,10 +209,51 @@ function layerRow(app, group, row) {
     input.checked = !!app.layers[row.name];
     const label = element('label', '', row.label);
     label.htmlFor = id;
-    label.title = row.tip;
+    label.dataset.tip = row.tip;
+    if (row.mark) {
+        const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        glyph.setAttribute('class', 'spectro-layer-mark');
+        glyph.setAttribute('viewBox', '0 0 16 16');
+        glyph.setAttribute('aria-hidden', 'true');
+        glyph.innerHTML = MARK_GLYPHS[row.mark];
+        label.append(glyph);
+    }
+    // The tip for screen readers. See rowTips for everyone else
+    const description = element('span', '', row.tip);
+    description.id = `${id}-tip`;
+    description.hidden = true;
+    input.setAttribute('aria-describedby', description.id);
     input.addEventListener('change', () => setLayer(row.name, input.checked));
-    group.append(input, label);
+    group.append(input, label, description);
     return input;
+}
+
+// A tip per row that doesn't need a mouse: one line at the foot of the menu, for the row under the pointer, the row a key
+// has moved to, or the row just tapped
+function rowTips(menu) {
+    const line = element('p', 'spectro-layer-tip');
+    line.setAttribute('aria-hidden', 'true');
+    line.hidden = true;
+    menu.appendChild(line);
+    const show = (text) => {
+        line.textContent = text || '';
+        line.hidden = !text;
+    };
+    const tipOf = (target) => {
+        const label = target.closest ? target.closest('label[data-tip]') : null;
+        return label ? label.dataset.tip : '';
+    };
+    let touched = false;
+    menu.addEventListener('pointerover', (e) => {
+        touched = e.pointerType === 'touch';
+        if (tipOf(e.target) || !touched) show(tipOf(e.target));
+    });
+    menu.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') show(''); });
+    menu.addEventListener('click', (e) => { if (touched && tipOf(e.target)) show(tipOf(e.target)); });
+    menu.addEventListener('focusin', (e) => {
+        if (e.target.matches('input:focus-visible') && e.target.labels[0]) show(e.target.labels[0].dataset.tip);
+    });
+    menu.addEventListener('focusout', () => { if (!touched) show(''); });
 }
 
 function initLayersMenu(app, topRight) {
@@ -180,6 +276,19 @@ function initLayersMenu(app, topRight) {
     LAYER_ROWS.forEach((row) => { inputs[row.name] = layerRow(app, group, row); });
     menu.appendChild(group);
 
+    // How many so far, and the one click that starts again: under its switch while it's on
+    const visitedLine = element('p', 'spectro-layer-note spectro-visited-line');
+    const visitedCount = element('span');
+    const clearVisited = button('spectro-layer-clear', 'Clear');
+    clearVisited.setAttribute('aria-label', 'Clear the visited systems');
+    visitedLine.append(visitedCount, clearVisited);
+    group.insertBefore(visitedLine, inputs.planetHosts);
+    clearVisited.addEventListener('click', () => {
+        inputs.visited.focus({ preventScroll: true }); // This button is about to hide
+        app.visited.clear();
+        announce('Cleared. No systems are marked now.');
+    });
+
     // What the tint means, in words, while it is on
     const shiftKey = element('p', 'spectro-layer-note', '→ Red: moving away from you (redshift). ← Blue: moving towards you (blueshift).');
     const hzNote = element('p', 'spectro-layer-note');
@@ -196,6 +305,7 @@ function initLayersMenu(app, topRight) {
     const cmbNote = element('p', 'spectro-layer-note', 'Shows only when the sky is in Radio.');
     menu.append(radioHeading, radioGroup, cmbNote);
 
+    rowTips(menu);
     root.append(toggle, menu);
     topRight.prepend(root);
 
@@ -207,12 +317,16 @@ function initLayersMenu(app, topRight) {
         // The switch says what's on show: there's no zone here, whatever it's set to for the systems that have one
         if (!hz.available) inputs.habitableZone.checked = false;
         const hzLabel = menu.querySelector(`label[for="${inputs.habitableZone.id}"]`);
-        hzLabel.title = hz.available ? LAYER_ROWS.find((row) => row.name === 'habitableZone').tip : hz.reason;
+        hzLabel.dataset.tip = hz.available ? LAYER_ROWS.find((row) => row.name === 'habitableZone').tip : hz.reason;
         hzNote.textContent = hz.reason;
         hzNote.hidden = hz.available;
-        if (hz.available) inputs.habitableZone.removeAttribute('aria-describedby');
+        if (hz.available) inputs.habitableZone.setAttribute('aria-describedby', `${inputs.habitableZone.id}-tip`);
         else inputs.habitableZone.setAttribute('aria-describedby', hzNote.id);
         cmbNote.hidden = app.band === 'radio';
+        const visits = app.visited ? app.visited.count() : 0;
+        visitedLine.hidden = !app.layers.visited;
+        visitedCount.textContent = visits === 0 ? 'None yet.' : visits === 1 ? '1 system so far.' : `${visits} systems so far.`;
+        clearVisited.hidden = visits === 0;
     }
 
     function isOpen() {
@@ -250,6 +364,7 @@ function initLayersMenu(app, topRight) {
     bus.on('band', paint);
     bus.on('view', paint);
     bus.on('select', paint);
+    bus.on('visited', paint);
 
     return { isOpen, close };
 }
@@ -274,10 +389,19 @@ function initContextBar(app) {
     bar.classList.add('spectro-glass');
 
     const readout = element('div', 'spectro-zoom');
-    readout.title = 'Field of view: how much of the sky fits from the bottom of the view to the top';
+    // The tip the glossary's terms use (content/glossary.js): it opens on hover, on focus and on a tap
+    const reading = element('span', 'spectro-term spectro-zoom-reading');
+    reading.tabIndex = 0;
+    reading.setAttribute('role', 'note');
+    reading.dataset.tip = 'Field of view: how much of the sky fits from the bottom of the view to the top';
+    reading.setAttribute('aria-describedby', 'spectroZoomTip');
+    const readingTip = element('span', '', reading.dataset.tip);
+    readingTip.id = 'spectroZoomTip';
+    readingTip.hidden = true;
     const zoomText = element('span', 'spectro-zoom-value');
     const fovText = element('span', 'spectro-zoom-fov');
-    readout.append(zoomText, fovText);
+    reading.append(zoomText, fovText);
+    readout.append(reading, readingTip);
 
     const enter = button('spectro-bar-button');
     enter.append(iconSpan('fa-search-plus'), element('span', '', 'Enter system'));
@@ -366,8 +490,18 @@ function initSettingsPage(app) {
         const fpsLabel = element('label', '', 'Show frame rate');
         fpsLabel.htmlFor = fps.id;
         fps.addEventListener('change', () => { if (fpsEl) fpsEl.style.display = fps.checked ? 'block' : 'none'; });
-        checks.append(motion, motionLabel, fps, fpsLabel);
-        toggles.append(checks, element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for quick fades.'));
+        const keys = element('input');
+        keys.type = 'checkbox';
+        keys.id = 'spectroSingleKeys';
+        const keysLabel = element('label', '', 'Single-key shortcuts everywhere');
+        keysLabel.htmlFor = keys.id;
+        keys.addEventListener('change', () => setSetting('singleKeys', keys.checked));
+        checks.append(motion, motionLabel, fps, fpsLabel, keys, keysLabel);
+        toggles.append(
+            checks,
+            element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for quick fades.'),
+            element('p', 'spectro-setting-note', 'Turn single-key shortcuts off if speech input or a stray key sets them off. They then work only while the sky itself has the focus.')
+        );
 
         container.append(qualityGroup, toggles);
 
@@ -379,6 +513,7 @@ function initSettingsPage(app) {
                 : `Now drawing at ${level}.`;
             motion.checked = !!app.settings.reduceMotion;
             fps.checked = fpsShown();
+            keys.checked = app.settings.singleKeys !== false;
         };
         paintPage();
     }
@@ -492,7 +627,14 @@ export function initShell(app) {
 
     // A layer gets called once a frame, so the zoom readout needs no timer of its own
     const updateZoom = initContextBar(app);
-    app.engine.addLayer({ id: 'shell', update(frame) { updateZoom(frame.fov); } });
+    const viewAids = initViewAids(app);
+    app.engine.addLayer({
+        id: 'shell',
+        update(frame) {
+            updateZoom(frame.fov);
+            viewAids.update(frame);
+        }
+    });
 
     initLegend(app);
 }

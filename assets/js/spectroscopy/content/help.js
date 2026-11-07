@@ -21,7 +21,7 @@ const USING_THE_SKY = `<ol>
     <li><strong>Zoom in.</strong> Use Enter system on a star with planets, and click a planet to open it.</li>
 </ol>
 <p>At the bottom of each Info tab are the <strong>Catalogue values</strong>, the true numbers for checking yourself. Work it out first, then look.</p>
-<p>Labels, the grid and the other extras are in <strong>Layers</strong>. Everything has its own code, and <strong>Copy link</strong> makes a link that opens that object, so a teacher can send you straight there.</p>`;
+<p>Labels, the grid and the other extras are in <strong>Layers</strong>. Two of them help a long search: <strong>Visited systems</strong> ticks the systems you have been in, and <strong>Stars with planets</strong> marks the stars known to have them. Everything has its own code, and <strong>Copy link</strong> makes a link that opens that object, so a teacher can send you straight there.</p>`;
 
 const FINDING = `<p>Nothing lists a star's class, because working it out is the exercise. Start from its colour, which follows its temperature. On a bright star, look at the glow around it, as the centre washes out to white.</p>
 ${definitions([
@@ -41,8 +41,10 @@ const KEYBOARD = definitions([
     [`${key(']')} ${key('Page Down')}`, 'Move to the next nearest object, or in a system the next star or planet. Press Enter to select it'],
     [`${key('[')} ${key('Page Up')}`, 'Go back to the object before'],
     [`${key('/')}`, 'Jump to the Go to box'],
+    [`${key('Enter')}`, 'After Go to, with the object at the centre of the view: move straight into its panel. Esc brings you back'],
     [`${key('Esc')}`, 'Step back: close a menu or panel, then leave a system, then leave fullscreen'],
-    [`${key('F')}`, 'Show or hide the frame rate']
+    [`${key('F')}`, 'Show or hide the frame rate'],
+    ['Settings', 'Single-key shortcuts everywhere: turn it off, and these single keys work only while the sky itself has the focus']
 ], 'spectro-help-list spectro-help-keys');
 
 const BANDS = `${definitions([

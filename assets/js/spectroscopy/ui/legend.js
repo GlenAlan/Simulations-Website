@@ -4,6 +4,7 @@
 import { bus } from '../core/state.js';
 import { BAND_INFO, bandRampColour } from '../core/bands.js';
 import { blackBodyRGB } from '../core/phys.js';
+import { termHtml } from '../content/glossary.js';
 
 const NARROW_SCREEN = '(max-width: 640px)';
 
@@ -28,13 +29,16 @@ export function initLegend(app) {
     if (!host) return null;
 
     const startOpen = !(typeof matchMedia === 'function' && matchMedia(NARROW_SCREEN).matches);
+    termHtml('false colour'); // Sets up the shared tip, which the tag below uses: it opens on hover, focus and tap
     host.innerHTML = `
-        <button type="button" class="spectro-legend-toggle" aria-expanded="${startOpen}" aria-controls="spectroLegendBody">
-            <span class="spectro-legend-hidden">Legend for this band: </span>
-            <span class="spectro-legend-name"></span>
-            <span class="spectro-legend-tag" title="These colours are not what your eyes would see. They stand for light we can't see.">False colour</span>
-            <span class="spectro-legend-chevron" aria-hidden="true"></span>
-        </button>
+        <div class="spectro-legend-head">
+            <button type="button" class="spectro-legend-toggle" aria-expanded="${startOpen}" aria-controls="spectroLegendBody">
+                <span class="spectro-legend-hidden">Legend for this band: </span>
+                <span class="spectro-legend-name"></span>
+                <span class="spectro-legend-chevron" aria-hidden="true"></span>
+            </button>
+            <span class="spectro-legend-tag spectro-term" tabindex="0" role="note" data-tip="These colours are not what your eyes would see. They stand for light we can't see." aria-label="False colour. These colours are not what your eyes would see. They stand for light we can't see.">False colour</span>
+        </div>
         <div class="spectro-legend-body" id="spectroLegendBody" aria-live="polite">
             <p class="spectro-legend-text"></p>
             <div class="spectro-legend-ramp" aria-hidden="true"></div>
@@ -58,6 +62,7 @@ export function initLegend(app) {
     function show(band) {
         const info = BAND_INFO[band];
         name.textContent = info.label;
+        if (!info.falseColour && document.activeElement === tag) toggle.focus({ preventScroll: true });
         tag.hidden = !info.falseColour;
         text.textContent = info.legend;
         ramp.style.background = rampGradient(band);
