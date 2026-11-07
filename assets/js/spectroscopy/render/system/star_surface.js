@@ -210,7 +210,8 @@ void main() {
     colour = mix(uLimbColour, colour, smoothstep(0.0, 0.75, mu));
 
     vec3 c = bandColour(colour) * uBandStrength;
-    gl_FragColor = vec4(c * max(bright, 0.05) * limb * uIntensity * uReveal, 1.0);
+    // As uReveal rises this covers what's behind it, rather than starting as a black disc on the sky's point of light
+    gl_FragColor = vec4(c * max(bright, 0.05) * limb * uIntensity * uReveal, uReveal);
 }`;
 
 const CORONA_VERTEX = /* glsl */`
@@ -408,6 +409,9 @@ export function createStar(starData, opts = {}) {
 
     const surfaceMaterial = new THREE.ShaderMaterial({
         toneMapped: false,
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneMinusSrcAlphaFactor,
         defines: { QUALITY: qualityDefine(opts.quality) },
         vertexShader: SURFACE_VERTEX,
         fragmentShader: SURFACE_FRAGMENT,

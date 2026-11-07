@@ -15,15 +15,17 @@
 import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
-import { parallaxFactor } from '../../core/depth.js';
+import { ETA, parallaxFactor } from '../../core/depth.js';
 import { sharedUniforms } from '../shared.js';
+import { wheelZoomStep } from '../engine.js';
 import { createPlanetMesh, warmPlanetShaders, warmPlanetBakes } from '../planets/planet_mesh.js';
 import { initSystemTab } from '../../ui/system_tab.js';
 import {
     FRAME, buildModel, canDraw, hasSystemView, hzStatus, layout, ringRadius, starRadius, planetRadius,
     planetOrbitPoints, planetPhase, childOrbitPoints, figureEightWorldPoints, compressedSize, keplerReadout
 } from './system_model.js';
-import { TRANSITION_S, easeProgress, pathAt, stagesAt, smoothstep } from './transition.js';
+import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, handSkyLog, handOffCentre } from './transition.js';
+import { createZoomInto } from './zoom_into.js';
 import { createStar } from './star_surface.js';
 import { createOrbitLine } from './orbit_lines.js';
 import { createBackdrop } from './backdrop.js';
@@ -39,6 +41,8 @@ const FLIGHT_S = 1.15;              // A focus flight to a planet
 const SKY_END_FOV_FACTOR = 34;      // How far the sky camera narrows as it flies in
 const COMPILE_WAIT_MS = 4000;       // The longest a flight waits for its shaders, after which it goes without
 const WARM_AFTER_SELECT_MS = 500;
+const KEY_ZOOM_RATE = 1.3;          // Zooming with a key held down, as a log of the field of view a second, as on the sky
+const VIEW_SHOWN_AT = 0.14;         // A zoom this far in has really gone in, so the rest of the page can hear about it
 
 const HZ_VERTEX = /* glsl */`
 varying vec2 vQ;
@@ -116,6 +120,9 @@ export function initSystemView(app) {
     let savedView = null;       // The sky view to come back to, exactly
     let tNorm = 0;              // Linear progress through the flight (0 sky, 1 system)
     let hold = null;            // Test hook: a fixed tNorm
+    let hand = null;            // The student's zoom is moving tNorm: see zoom_into.js. Otherwise the flight is on a clock.
+    let keyZoom = 0;            // A zoom key held down during that move: -1 in, +1 out
+    let viewShown = true;       // Has the page been told the view changed? A zoom waits to see if it's really going in.
     let useFade = false;        // This transition is the Reduce motion cross-fade
     let path = null;            // The flight's fixed values: see beginFlight
     let doneCallbacks = [];
@@ -302,7 +309,7 @@ export function initSystemView(app) {
     function beginFlight(frame) {
         const star = model.body.sky;
         const dAz = ((star.az - savedView.az + 540) % 360) - 180;
-        const fovEnd = Math.max(0.7, savedView.fov / SKY_END_FOV_FACTOR);
+        const fovEnd = Math.min(savedView.fov, Math.max(0.7, savedView.fov / SKY_END_FOV_FACTOR));
         const aspect = frame.width / Math.max(1, frame.height);
         // The flight starts on the true line of sight: edge-on for inclination 90, from above for smaller angles.
         // A lone star has no measured tilt, so it starts low and rises.
@@ -316,7 +323,8 @@ export function initSystemView(app) {
         const speckPx = model.stars.length > 1 ? 3 : 0.8;
         const speckR = model.stars.length > 1 ? FRAME : R;
         const d0 = Math.max(dClose * 4, (speckR * frame.height) / (2 * speckPx * TAN_V));
-        path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt) };
+        path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
+        if (hand) lockStarsToSky(frame, fit);
 
         cam.az = az1;
         cam.azT = az1;
@@ -336,6 +344,58 @@ export function initSystemView(app) {
         const look = new THREE.Matrix4().lookAt(sysPos, new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
         const sysQ = new THREE.Quaternion().setFromRotationMatrix(look);
         backdrop.setOrientation(sysQ.multiply(skyQ.invert()));
+    }
+
+    // Under a hand a multiple's stars start right where the sky has already drawn them apart, and stay on them: the camera
+    // starts as far off as puts the two widest parts of its first split that far apart, turned to match, and comes in just
+    // as the sky zooms. A pair lands exactly. The sky draws the spacing in a triple or two pairs in its own way, so they land
+    // close, each part round its place on the sky.
+    function lockStarsToSky(frame, fit) {
+        const binaries = engine.getLayer('binaries');
+        const onSky = model.stars.length > 1 && binaries && binaries.firstSplit ? binaries.firstSplit(model.code) : null;
+        if (!onSky || onSky.length < 2) return;
+        let from = null;
+        let to = null;
+        let widest = -1;
+        onSky.forEach((p, i) => onSky.forEach((q, j) => {
+            const apart = Math.hypot(q.x - p.x, q.y - p.y);
+            if (j > i && apart > widest) {
+                widest = apart;
+                from = p;
+                to = q;
+            }
+        }));
+        if (!(widest > 0)) return;
+        // Where those two lie across the view, from the path's starting point
+        const { el0, az0 } = path;
+        const back = lockBack.set(Math.cos(el0) * Math.sin(az0), Math.sin(el0), Math.cos(el0) * Math.cos(az0));
+        const right = lockRight.set(0, 1, 0).cross(back).normalize();
+        const up = lockUp.copy(back).cross(right);
+        const gap = lockGap.set(0, 0, 0);
+        [[to, 1], [from, -1]].forEach(([part, sign]) => {
+            let mass = 0;
+            part.stars.forEach((i) => { mass += model.stars[i].star.mass_Msun; });
+            part.stars.forEach((i) => {
+                const share = (sign * model.stars[i].star.mass_Msun) / mass;
+                const q = positions.stars[i];
+                gap.x += q[0] * share;
+                gap.y += q[1] * share;
+                gap.z += q[2] * share;
+            });
+        });
+        const across = gap.dot(right);
+        const along = gap.dot(up);
+        const worldApart = Math.hypot(across, along);
+        if (!(worldApart > 1e-6)) return;
+        const depth = model.body.depth || 0;
+        const skyApart = widest * RAD * parallaxFactor(depth, savedView.fov) / Math.tan(savedView.fov * RAD * 0.5);
+        const d0 = worldApart / (TAN_V * skyApart);
+        if (d0 < fit * 1.5) return;
+        path.d0 = d0;
+        path.locked = true;
+        path.roll = Math.atan2(to.y - from.y, to.x - from.x) - Math.atan2(along, across);
+        // The sky zooms by just enough, as the camera arrives. Its depth holds it back a little: see core/depth.js.
+        path.skyLog = Math.log(d0 / fit) / (1 - ETA * depth);
     }
 
     // ---------- Input: while a system is open the sky's own handlers never see these ----------
@@ -367,14 +427,9 @@ export function initSystemView(app) {
         if (!inSystem() || e.target !== canvas) return;
         e.stopPropagation();
         if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (hand) pinchMoved();
         if (!canInteract()) return;
-        if (pinch && pointers.size === 2) {
-            const [a, b] = [...pointers.values()];
-            const d = Math.hypot(a.x - b.x, a.y - b.y);
-            if (pinch.d > 0 && d > 0) applyZoom(pinch.d / d);
-            pinch.d = d;
-            return;
-        }
+        if (pinchMoved()) return;
         if (drag) {
             const dx = e.clientX - drag.x;
             const dy = e.clientY - drag.y;
@@ -394,6 +449,15 @@ export function initSystemView(app) {
             }
         }
     }, true);
+
+    function pinchMoved() {
+        if (!pinch || pointers.size !== 2) return false;
+        const [a, b] = [...pointers.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch.d > 0 && d > 0) applyZoom(pinch.d / d);
+        pinch.d = d;
+        return true;
+    }
 
     function endPointer(e) {
         if (!inSystem() || e.target !== canvas) return;
@@ -419,7 +483,7 @@ export function initSystemView(app) {
         if (!inSystem() || e.target !== canvas) return;
         e.stopPropagation();
         e.preventDefault();
-        if (canInteract()) applyZoom(Math.exp(e.deltaY * 0.0012));
+        applyZoom(Math.exp(wheelZoomStep(e)));
     }, { capture: true, passive: false });
 
     // Arrow keys orbit and +/- zoom, while the sky stays put. Esc belongs to the shell.
@@ -433,8 +497,8 @@ export function initSystemView(app) {
         else if (e.key === 'ArrowRight') cam.azT -= step;
         else if (e.key === 'ArrowUp') cam.elT = Math.min(88 * RAD, cam.elT + step);
         else if (e.key === 'ArrowDown') cam.elT = Math.max(-80 * RAD, cam.elT - step);
-        else if (e.key === '+' || e.key === '=') applyZoom(0.85);
-        else if (e.key === '-' || e.key === '_') applyZoom(1 / 0.85);
+        else if (e.key === '+' || e.key === '=') zoomKey(-1);
+        else if (e.key === '-' || e.key === '_') zoomKey(1);
         else used = false;
         if (used) {
             e.preventDefault();
@@ -442,7 +506,22 @@ export function initSystemView(app) {
         }
     }, true);
 
+    // During the move a held key zooms by the frame, as on the sky, not at the rate the keyboard repeats
+    function zoomKey(direction) {
+        if (hand) keyZoom = direction;
+        else applyZoom(direction < 0 ? 0.85 : 1 / 0.85);
+    }
+    const releaseZoomKey = () => { keyZoom = 0; };
+    window.addEventListener('keyup', (e) => {
+        if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_' || e.key === '−') releaseZoomKey();
+    });
+    window.addEventListener('blur', releaseZoomKey);
+
     function applyZoom(factor) {
+        if (hand) {
+            hand.push(Math.log(factor));
+            return;
+        }
         if (!canInteract()) return;
         if (cam.target) {
             cam.distT = Math.max(minDistance(), cam.distT * factor);
@@ -450,6 +529,11 @@ export function initSystemView(app) {
             if (fitSmooth && cam.distT >= fitSmooth * 0.9) {
                 startFocusFlight(null, cam.distT / fitSmooth);
             }
+            return;
+        }
+        // Zooming out from the outermost distance carries on out to the sky
+        if (factor > 1 && !cam.flight && cam.zoom >= maxZoom()) {
+            zoomInto.zoomedOutPast(Math.log(factor));
             return;
         }
         cam.zoom = Math.max(minDistance() / (fitSmooth || 1), Math.min(maxZoom(), cam.zoom * factor));
@@ -460,7 +544,7 @@ export function initSystemView(app) {
     }
 
     function maxZoom() {
-        return Math.max(3, hzReach() * 1.4);
+        return Math.max(1.8, hzReach() * 1.4);
     }
 
     function minDistance() {
@@ -637,15 +721,18 @@ export function initSystemView(app) {
         let fy = cam.focus.y;
         let fz = cam.focus.z;
         if (w < 1) {
+            // Under a hand there is no swing in close: the camera comes straight to where the student's is
             const pose = pathAt(easeProgress(tNorm), {
                 d0: path.d0,
-                dClose: path.dClose,
-                dEnd: Math.max(path.dClose * 1.01, fitSmooth),
+                dClose: path.byHand ? cam.dist : path.dClose,
+                dEnd: path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth),
+                arrive: path.byHand ? HAND_ARRIVE : undefined,
                 el0: path.el0,
                 el1: HOME_EL,
                 az0: path.az0,
                 az1: path.az1
             });
+            if (path.locked) pose.dist = path.d0 * skyScale(engine.view.fov);
             // Take the short way round from wherever the student left it
             const azUser = pose.az + wrapPi(cam.az - pose.az);
             az = pose.az + (azUser - pose.az) * w;
@@ -667,6 +754,7 @@ export function initSystemView(app) {
         );
         camera.up.set(0, 1, 0);
         camera.lookAt(fx, fy, fz);
+        if (w < 1 && path.roll) camera.rotateZ(-path.roll * (1 - smoothstep(0.3, 0.85, easeProgress(tNorm))));
         camera.updateMatrixWorld();
     }
 
@@ -682,10 +770,17 @@ export function initSystemView(app) {
             restoreSky();
             return { x: 0, y: 0, seen: 0 };
         }
-        const alt = from.alt + (path.star.alt - from.alt) * stage.skyCentre;
-        const az = from.az + path.dAz * stage.skyCentre;
-        const fov = Math.exp(Math.log(from.fov) + (Math.log(path.fovEnd) - Math.log(from.fov)) * stage.skyZoom);
-        engine.setView({ az, alt, fov });
+        if (path.byHand) {
+            const fov = from.fov * Math.exp(-handSkyLog(tNorm, path.skyLog));
+            // What the star's distance from the centre of the screen comes to as an angle, at this field of view
+            const centre = 1 - handOffCentre(tNorm) * skyScale(fov);
+            engine.flyView(from.az + path.dAz * centre, from.alt + (path.star.alt - from.alt) * centre, fov);
+        } else {
+            const alt = from.alt + (path.star.alt - from.alt) * stage.skyCentre;
+            const az = from.az + path.dAz * stage.skyCentre;
+            const fov = Math.exp(Math.log(from.fov) + (Math.log(path.fovEnd) - Math.log(from.fov)) * stage.skyZoom);
+            engine.setView({ az, alt, fov });
+        }
         const sky = engine.camera;
         tmp.set(path.dir[0] * 1000, path.dir[1] * 1000, path.dir[2] * 1000).project(sky);
         // tmp.z > 1 means the star is behind the sky camera, which project can't express
@@ -696,6 +791,12 @@ export function initSystemView(app) {
         // Comes up only as it turns into view
         const edge = Math.max(Math.abs(x), Math.abs(y));
         return { x: Math.max(-2, Math.min(2, x)), y: Math.max(-2, Math.min(2, y)), seen: 1 - smoothstep(1, 1.3, edge) };
+    }
+
+    // The size of a patch of sky on screen at a field of view is one over this, as a share of how it was when the move began
+    function skyScale(fov) {
+        const depth = model.body.depth || 0;
+        return (Math.tan(fov * RAD * 0.5) / Math.tan(savedView.fov * RAD * 0.5)) * (parallaxFactor(depth, savedView.fov) / parallaxFactor(depth, fov));
     }
 
     function restoreSky() {
@@ -934,6 +1035,8 @@ export function initSystemView(app) {
         const duration = useFade ? FADE_S : TRANSITION_S;
         if (hold !== null) {
             tNorm = hold;
+        } else if (hand) {
+            stepHand(dt);
         } else if (mode === 'enter') {
             tNorm = Math.min(1, tNorm + dt / duration);
         } else if (mode === 'exit') {
@@ -956,7 +1059,7 @@ export function initSystemView(app) {
             backdrop.set(1, 1, frame.dpr);
         } else {
             const p = easeProgress(tNorm);
-            const stage = stagesAt(p);
+            const stage = stagesAt(p, path.byHand, path.byHand && model.stars.length > 2);
             const ndc = stepSky(stage);
             sharedUniforms.uSkyFade.value = stage.skyFade;
             engine.setSkyVisible(stage.skyFade > 0.001);
@@ -968,9 +1071,35 @@ export function initSystemView(app) {
         if (hold === null) finishIfDone();
     }
 
+    function stepHand(dt) {
+        if (app.settings.reduceMotion) {
+            // Switched on part way through: no more flying, just a fade to the nearer end
+            hand = null;
+            useFade = true;
+            restoreSky();
+            sharedUniforms.uSkyFade.value = 1;
+            engine.setSkyVisible(true);
+            mode = tNorm >= 0.5 ? 'enter' : 'exit';
+            return;
+        }
+        if (keyZoom) hand.push(keyZoom * KEY_ZOOM_RATE * dt);
+        if (pinch) hand.hold();
+        tNorm = hand.advance(tNorm, dt);
+        mode = hand.modeAt(tNorm, mode);
+        if (!viewShown && tNorm >= VIEW_SHOWN_AT) showView();
+    }
+
+    function showView() {
+        viewShown = true;
+        bus.emit('view', { view: 'system', code: model.code });
+    }
+
     function finishIfDone() {
         if (mode === 'enter' && tNorm >= 1) {
             mode = 'system';
+            if (hand) arrivedByHand();
+            hand = null;
+            keyZoom = 0;
             sharedUniforms.uSkyFade.value = 0;
             announce();
             const queued = queuedFocus;
@@ -989,13 +1118,30 @@ export function initSystemView(app) {
         list.forEach((fn) => fn());
     }
 
+    // If a panel for something else is open, it moves to where the student has gone. If none is, none opens in their face.
+    function arrivedByHand() {
+        if (!viewShown) showView();
+        const drawer = app.drawer;
+        const reading = app.selected ? app.selected.body.code === model.code || app.selected.entity.code === model.code : false;
+        if (drawer && drawer.isOpen() && drawer.currentView() === 'object' && !reading) select(model.code);
+    }
+
     function finishExit() {
         restoreSky();
         sharedUniforms.uSkyFade.value = 1;
         engine.setSkyVisible(true);
-        disposeWorld();
         const previous = model;
-        model = null;
+        // Back by zoom, the student may well zoom straight in again: it stays ready for a while, undrawn
+        const stayReady = !!hand;
+        const heardOfIt = viewShown;
+        const fingers = hand && pinch && pointers.size === 2 ? [...pointers] : null;
+        hand = null;
+        keyZoom = 0;
+        viewShown = true;
+        if (!stayReady) {
+            disposeWorld();
+            model = null;
+        }
         mode = 'sky';
         canvas.style.cursor = '';
         canvas.setAttribute('aria-label', skyAria);
@@ -1005,7 +1151,11 @@ export function initSystemView(app) {
         drag = null;
         pinch = null;
         hoverCode = null;
-        bus.emit('view', { view: 'sky', code: null, from: previous ? previous.code : null });
+        if (fingers) {
+            const rect = canvas.getBoundingClientRect();
+            engine.givePointers(fingers.map(([id, q]) => ({ id, x: q.x - rect.left, y: q.y - rect.top })));
+        }
+        if (heardOfIt) bus.emit('view', { view: 'sky', code: null, from: previous ? previous.code : null });
         runDone();
         notify();
     }
@@ -1076,6 +1226,9 @@ export function initSystemView(app) {
             : (resolved.path === 'planet' && opts.focus !== false ? resolved.entity.code : null);
 
         if (mode !== 'sky' && model && model.code === body.code) {
+            // A zoom under way gives way to the button or a link
+            hand = null;
+            if (!viewShown) showView();
             // Already here, or on the way out of it: turn round
             if (mode === 'exit') {
                 runDone();
@@ -1098,28 +1251,37 @@ export function initSystemView(app) {
 
         savedView = engine.getView();
         skyAria = canvas.getAttribute('aria-label') || skyAria;
-        model = buildModel(body);
-        mix = (logChoice === null ? model.startLog : logChoice) && model.logUseful ? 1 : 0;
-        mixTarget = mix;
-        tDays = lastTimeline && lastTimeline.code === body.code ? lastTimeline.t_days : 0;
+        const alreadyReady = !!model && model.code === body.code;
+        if (!alreadyReady) makeReady(body);
         selectedCode = app.selected ? app.selected.entity.code : null;
         queuedFocus = focusCode;
         doneCallbacks = opts.onDone ? [opts.onDone] : [];
-        if (!backdrop) {
-            backdrop = createBackdrop(app, app.qualityLevel);
-            backScene.add(backdrop.group);
-        }
-        world = buildWorld();
-        positions = layout(model, tDays, mix, positions);
         mode = 'load';
-        compiled = false;
         useFade = !!app.settings.reduceMotion;
         tNorm = 0;
         app.view = 'system';
         app.systemCode = body.code;
         canvas.setAttribute('aria-label', `Planetary system ${body.code}. Drag to orbit the camera, scroll to zoom, and select a planet to study it.`);
-        bus.emit('view', { view: 'system', code: body.code });
+        viewShown = !opts.hand;
+        if (opts.hand) hand = opts.hand;
+        else bus.emit('view', { view: 'system', code: body.code });
         notify();
+        // A flight on the clock won't wait for ever on its shaders. A zoom doesn't start until they are done.
+        if (!compiled) setTimeout(() => { if (model && model.code === body.code) compiled = true; }, COMPILE_WAIT_MS);
+        return true;
+    }
+
+    // Builds a system and compiles what it needs. Nothing shows for it, and the student may still be in the sky.
+    function makeReady(body) {
+        if (world) disposeWorld();
+        model = buildModel(body);
+        mix = (logChoice === null ? model.startLog : logChoice) && model.logUseful ? 1 : 0;
+        mixTarget = mix;
+        tDays = lastTimeline && lastTimeline.code === body.code ? lastTimeline.t_days : 0;
+        ensureBackdrop();
+        world = buildWorld();
+        positions = layout(model, tDays, mix, positions);
+        compiled = false;
 
         // Compile before the clock starts, so a slow shader doesn't eat the first second of the flight
         const started = model;
@@ -1129,9 +1291,59 @@ export function initSystemView(app) {
         camera.position.set(0, 0, FRAME * 3);
         camera.lookAt(0, 0, 0);
         camera.updateMatrixWorld();
-        const compiling = Promise.all([engine.compileInBackground(scene, camera), engine.compileInBackground(backScene, camera)]);
-        Promise.race([compiling, new Promise((r) => setTimeout(r, COMPILE_WAIT_MS))]).then(go, go);
-        return true;
+        Promise.all([engine.compileInBackground(scene, camera), engine.compileInBackground(backScene, camera)]).then(go, go);
+    }
+
+    function ensureBackdrop() {
+        if (backdrop) return;
+        backdrop = createBackdrop(app, app.qualityLevel);
+        backScene.add(backdrop.group);
+    }
+
+    // What the zoom gesture needs from here
+    function bodyFor(code) {
+        const resolved = app.universe.resolve(code);
+        return resolved && canDraw(resolved.body) ? resolved.body : null;
+    }
+    const zoomInto = createZoomInto(app, {
+        prepare(code) {
+            if (mode !== 'sky' || (model && model.code === code)) return;
+            const body = bodyFor(code);
+            if (!body) return;
+            if (body.planets && body.planets.length && engine.renderer) warmPlanetBakes(engine.renderer, body.planets);
+            makeReady(body);
+        },
+        isReady: (code) => mode === 'sky' && !!model && model.code === code && compiled,
+        hasReady: () => mode === 'sky' && !!model,
+        dropReady() {
+            if (mode !== 'sky') return;
+            disposeWorld();
+            model = null;
+            compiled = false;
+        },
+        beginIn(code, moving, kind) {
+            enter(code, { hand: moving, focus: false });
+            if (kind === 'touch') adoptFingers();
+        },
+        beginOut(moving) {
+            hand = moving;
+            path.byHand = true;
+            mode = 'exit';
+        },
+        enter(code) { enter(code, { focus: false }); },
+        exit() { exit(); }
+    });
+
+    // A pinch that began on the sky goes on here without the fingers lifting
+    function adoptFingers() {
+        const rect = canvas.getBoundingClientRect();
+        pointers.clear();
+        engine.takePointers().forEach((p) => pointers.set(p.id, { x: p.x + rect.left, y: p.y + rect.top }));
+        drag = null;
+        if (pointers.size === 2) {
+            const [a, b] = [...pointers.values()];
+            pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) };
+        }
     }
 
     function exit(opts = {}) {
@@ -1140,7 +1352,10 @@ export function initSystemView(app) {
             return;
         }
         if (opts.onDone) doneCallbacks.push(opts.onDone);
-        if (mode === 'exit') return;
+        // A zoom under way gives way to Esc, the button or a link, and from here it's a flight on the clock
+        const wasHand = !!hand;
+        hand = null;
+        if (mode === 'exit' && !wasHand) return;
         if (mode === 'load') {
             // Never got started: just put everything back
             tNorm = 0;
@@ -1180,10 +1395,17 @@ export function initSystemView(app) {
     // The warm star is never freed: while a material uses a program, three.js keeps it for the next star to share.
     // One at every level, as Auto can change the level during a visit.
     let warmStars = [];
+    let warmLine = null;
+    const lockBack = new THREE.Vector3();
+    const lockRight = new THREE.Vector3();
+    const lockUp = new THREE.Vector3();
+    const lockGap = new THREE.Vector3();
     function warmSmallPrograms() {
         const renderer = engine.renderer;
         if (!renderer) return;
         warmPlanetShaders(renderer);
+        ensureBackdrop();
+        engine.compileInBackground(backScene, camera);
         warmStars.forEach((star) => star.dispose());
         const warmScene = new THREE.Scene();
         warmStars = ['low', 'medium', 'high'].map((quality) => {
@@ -1191,6 +1413,8 @@ export function initSystemView(app) {
             warmScene.add(star.group);
             return star;
         });
+        if (!warmLine) warmLine = createOrbitLine([[1, 0, 0], [0, 0, 1], [-1, 0, 0], [0, 0, -1]], {});
+        warmScene.add(warmLine.object);
         engine.compileInBackground(warmScene, camera);
     }
     bus.on('ready', () => {
@@ -1229,9 +1453,10 @@ export function initSystemView(app) {
         isLogScale: () => mixTarget > 0.5,
         logScaleUseful: () => !!(model && model.logUseful),
         getTime: () => tDays,
-        getModel: () => model,
+        getModel: () => (mode === 'sky' ? null : model),
         isFocused: () => !!cam.target,
         isBusy: () => mode === 'load' || mode === 'enter' || mode === 'exit',
+        isOpening: () => !viewShown,    // A zoom has only just begun, and might yet settle back to the sky
         readout(code) {
             if (!model) return null;
             const entry = model.planets.find((e) => e.code === code);
@@ -1244,7 +1469,13 @@ export function initSystemView(app) {
         hasSystemView,
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
-        _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null }),
+        _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
+        _saved: () => ({ ...savedView }),
+        _starPx: () => {
+            if (!world || !positions) return 0;
+            const depth = tmp.set(...positions.stars[world.brightest]).distanceTo(camera.position);
+            return starDrawnRadius[world.brightest] * pxPerWorldAt(depth, engine.currentFrame());
+        },
         _planetsShown: () => (world ? world.planets.filter((item) => item.handle.object3d.children[0].visible).length : 0),
         _project(code) {
             const i = model.planets.findIndex((e) => e.code === code);

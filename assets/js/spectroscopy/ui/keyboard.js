@@ -86,6 +86,8 @@ export function initKeyboard(app) {
                 } else if (key === 'in') dz -= 1;
                 else if (key === 'out') dz += 1;
             });
+            // Holding a zoom key on a star carries on into its system, as a wheel does
+            if (dz && engine.offerZoom(dz * ZOOM_RATE * frame.dt, null, 'key')) return;
             const step = v.fov * LOOK_RATE * frame.dt;
             const stretch = 1 / Math.max(0.2, Math.cos(v.alt * Math.PI / 180)); // Azimuth lines bunch up towards the zenith
             engine.setView({ az: v.az + dx * step * stretch, alt: v.alt + dy * step, fov: v.fov * Math.exp(dz * ZOOM_RATE * frame.dt) });

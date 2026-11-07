@@ -3328,6 +3328,29 @@ body.sim-panel-sheet .spectro-instrument.has-tool:not(.has-own-figure) .spectro-
 /* === end BINARY === */
 
 
+/* === ZOOM: the way into a system by zooming, and what the context bar says about it === */
+.spectro-zoom-hint {
+    font-weight: 400;
+    opacity: 0.85;
+}
+
+.spectro-zoom-hint[hidden] {
+    display: none;
+}
+
+/* Zooming is the way in: the buttons for it step back */
+.spectro-bar-button.spectro-bar-quiet {
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.86) !important;
+}
+
+@media (hover: hover) {
+    .spectro-bar-button.spectro-bar-quiet:hover {
+        color: #ffffff !important;
+    }
+}
+/* === end ZOOM === */
+
 /* === OVERLAYS: labels and markers over the sky === */
 /* Drawn over the sky, under the bars; drags go straight through it to the canvas */
 #spectroOverlay > .spectro-overlay-canvas {

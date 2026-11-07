@@ -37,7 +37,7 @@ const BAND_FADE_S = 0.6;
 const ALT_MAX = 89.9;
 const ALT_SLEW_MIN = -5;        // Slews and code may go this low; dragging stops a little sooner (altFloor)
 const INERTIA_RATE = 4.2;       // How fast a flicked sky slows down (1/s)
-const ZOOM_RATE = 11;           // How fast the zoom catches up with the wheel (1/s)
+export const ZOOM_RATE = 11;    // How fast the zoom catches up with the wheel (1/s)
 const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a drag
 const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
 const PICK_RADIUS_MOUSE = 24;
@@ -120,6 +120,15 @@ function hideCanvasMessage(canvas) {
     if (box) box.hidden = true;
 }
 
+// A wheel event as a change in the natural log of the field of view, negative going in
+export function wheelZoomStep(e) {
+    // Lines and pages are rare, but a wheel in those units should not feel dead
+    const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+    // Trackpad pinches arrive as small wheel events with ctrlKey set
+    const gain = e.ctrlKey ? 0.008 : 0.0012;
+    return Math.max(-0.9, Math.min(0.9, e.deltaY * unit * gain));
+}
+
 export function createEngine(canvas) {
     let renderer = null;
     try {
@@ -166,6 +175,8 @@ export function createEngine(canvas) {
     const velocity = { az: 0, alt: 0 };     // Degrees a second, from a flick
     let zoomGoal = view.fov;
     let zoomAnchor = null;                  // Screen point (CSS px) that stays put while zooming
+    let zoomIntake = null;                  // Sees every zoom step first: see setZoomIntake
+    let wheelBoost = 1;                     // How much further a wheel's step in goes: see setWheelBoost
 
     // ---------- Render targets ----------
 
@@ -705,6 +716,16 @@ export function createEngine(canvas) {
         velocity.alt = 0;
     }
 
+    // For a flight only, which is free to go narrower than a student's zoom can: the system view puts the view back after
+    function flyView(az, alt, fov) {
+        view.az = ((az % 360) + 360) % 360;
+        view.alt = alt;
+        view.fov = fov;
+        applyView();
+        zoomGoal = view.fov;
+        zoomAnchor = null;
+    }
+
     // Fly the camera along the shortest way round. opts: { duration (s), pullBack, onDone }. Duration 0 jumps.
     // pullBack widens the view on the way, more for a long flight, so the sky doesn't whip past. Reduce motion
     // replaces the flight with a quick dip to black.
@@ -929,8 +950,9 @@ export function createEngine(canvas) {
     }
 
     // The code of the object nearest a screen position (CSS pixels), or null. Bodies must show in the current band
-    // at this zoom. Layers can add candidates (cluster members, say) through layer.picks(frame).
-    function pick(x, y, maxPx = PICK_RADIUS_MOUSE) {
+    // at this zoom. Layers can add candidates (cluster members, say) through layer.picks(frame). skip(code, radiusPx)
+    // can rule things out, to ask what else is near a thing.
+    function pick(x, y, maxPx = PICK_RADIUS_MOUSE, skip = null) {
         if (app.view !== 'sky') return null;
         applyView();
         let best = null;
@@ -942,7 +964,7 @@ export function createEngine(canvas) {
             // Something with a size can be on show while its middle is off the edge of the view
             if (!p || (!p.onScreen && !radiusPx)) return;
             const dist = Math.hypot(p.x - x, p.y - y);
-            if (dist > maxPx + radiusPx) return;
+            if (dist > maxPx + radiusPx || (skip && skip(code, radiusPx))) return;
             const score = pickScore(dist, radiusPx, bonusPx);
             if (score < bestScore) {
                 bestScore = score;
@@ -1221,7 +1243,9 @@ export function createEngine(canvas) {
             if (dragPointers.size === 2 && pinch) {
                 const now = pinchState();
                 if (pinch.dist > 0 && now.dist > 0) {
-                    zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * (pinch.dist / now.dist)));
+                    const ratio = pinch.dist / now.dist;
+                    if (zoomIntake && zoomIntake(Math.log(ratio), now, 'touch')) return;
+                    zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * ratio));
                 }
                 moveByPixels(now.x - pinch.x, now.y - pinch.y);
                 anchorZoomAt(now.x, now.y);
@@ -1273,13 +1297,10 @@ export function createEngine(canvas) {
             if (app.view !== 'sky') return;
             e.preventDefault();
             if (slew) return;
-            // Lines and pages are rare, but a wheel in those units should not feel dead
-            const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
-            // Trackpad pinches arrive as small wheel events with ctrlKey set
-            const gain = e.ctrlKey ? 0.008 : 0.0012;
-            const step = Math.max(-0.9, Math.min(0.9, e.deltaY * unit * gain));
-            zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * Math.exp(step)));
+            const step = wheelZoomStep(e);
             const point = canvasPoint(e);
+            if (zoomIntake && zoomIntake(step, point, 'wheel')) return;
+            zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * Math.exp(step * (step < 0 ? wheelBoost : 1))));
             anchorZoomAt(point.x, point.y);
             velocity.az = 0;
             velocity.alt = 0;
@@ -1351,9 +1372,46 @@ export function createEngine(canvas) {
         view,
         canvas,
         setView,                    // setView({ az, alt, fov }) jumps straight there
+        flyView,
         getView: () => ({ ...view }),
         slewTo,                     // slewTo({ az, alt, fov }, { duration, pullBack, onDone })
         isSlewing: () => !!slew,
+        // setZoomIntake(fn): fn(step, point, kind) sees every zoom step before the sky does, and returns true to keep it.
+        // step is the change in the natural log of the field of view, negative going in. point is in CSS pixels, or null for
+        // the centre of the view. kind is 'wheel', 'touch' or 'key'. The system view uses this to carry a zoom into a star.
+        setZoomIntake(fn) { zoomIntake = fn; },
+        // With only one thing in play and a long way down to go, a wheel covers the distance in fewer notches
+        setWheelBoost(k) { wheelBoost = k; },
+        offerZoom: (step, point, kind) => !!(zoomIntake && zoomIntake(step, point, kind)),
+        // What's left of the last zoom step, as a change in log field of view, and the sky stops there
+        takeZoomLeft() {
+            const left = Math.log(zoomGoal / view.fov);
+            zoomGoal = view.fov;
+            zoomAnchor = null;
+            return left;
+        },
+        zoomIsEasing: () => Math.abs(Math.log(zoomGoal / view.fov)) > 1e-4,
+        // True while one finger or the mouse is on the sky: a drag, or a click still to come
+        isPressed: () => dragPointers.size === 1,
+        // Two fingers can go from the sky to a system without lifting: whoever has them hands them on.
+        // In and out are { id, x, y } in CSS pixels from the canvas's corner.
+        takePointers() {
+            const out = [...dragPointers].map(([id, p]) => ({ id, x: p.x, y: p.y }));
+            dragPointers.clear();
+            pinch = null;
+            press = null;
+            return out;
+        },
+        givePointers(list) {
+            dragPointers.clear();
+            list.forEach((p) => dragPointers.set(p.id, { x: p.x, y: p.y }));
+            press = null;
+            velocity.az = 0;
+            velocity.alt = 0;
+            pinch = dragPointers.size === 2 ? pinchState() : null;
+        },
+        // How a body's glow stands at this zoom: 1 is when it comes in at the limiting magnitude, MIN_GLOW when it first shows
+        glowOf: (body) => bodyGlow(body, app.band) * zoomGain(limitingMag(view.fov)),
         project,                    // project(az, alt, depth = 0): where something at that depth is drawn. See core/depth.js
         projectBody,                // projectBody(body): the same, for a body at its own depth
         pick,

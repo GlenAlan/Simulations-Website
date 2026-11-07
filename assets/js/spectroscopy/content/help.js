@@ -18,7 +18,7 @@ const USING_THE_SKY = `<ol>
     <li><strong>Select.</strong> Click or tap an object, or type its 6-character code into Go to. Its panel opens at the side.</li>
     <li><strong>Analyse.</strong> The Spectrum tab sets its light beside a reference you can swap. The H-R tab puts stars on the diagram.</li>
     <li><strong>Switch bands.</strong> Some objects only show in radio, infrared, ultraviolet or X-rays.</li>
-    <li><strong>Zoom in.</strong> Use Enter system on a star with planets, and click a planet to open it.</li>
+    <li><strong>Go in.</strong> Keep zooming in on a star to go into its system, and zoom back out to return. Enter system does the same. Click a planet to open it.</li>
 </ol>
 <p>Each panel has <strong>Catalogue values</strong>, the true numbers for checking yourself. Work it out first, then look.</p>
 <p>Labels, the grid and the other extras are in <strong>Layers</strong>. Everything has its own code, and <strong>Copy link</strong> makes a link that opens that object, so a teacher can send you straight there.</p>`;
