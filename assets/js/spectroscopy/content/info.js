@@ -16,6 +16,7 @@
 
 import { withCommas, sig, signed, wavelength, distance } from '../core/format.js';
 import { AU, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
+import { pulsarKind, PULSE_SHOWN_HZ } from '../data/deep_sky.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const row = (label, value) => ({ label, value });
@@ -667,13 +668,30 @@ function clusterInfo({ entity }) {
     };
 }
 
+// What this pulsar's spin says about it (data/deep_sky.js pulsarKind), and how the sky shows one too fast to draw
+const PULSAR_KIND_TEXT = {
+    young: (block) => `This one is young, born in the supernova ${block.remnant_of} less than a year ago, and spins tens of times a second, as the Crab pulsar does.`,
+    millisecond: () => 'This is a millisecond pulsar: an old one, spun up again to hundreds of turns a second by gas falling on it from a companion star.',
+    magnetar: () => 'This one is slow. A magnetic field about a thousand times a normal pulsar\'s has braked it hard: it may be a magnetar.'
+};
+
+function pulsarNote(block) {
+    const parts = ['Beams of radio waves stream from its magnetic poles. As it spins, they sweep past us once per turn, so the pulse period is its spin period. Switch to Radio to see it pulse.'];
+    const kind = PULSAR_KIND_TEXT[pulsarKind(block)];
+    if (kind) parts.push(kind(block));
+    if (isNum(block.pulse_period_s) && 1 / block.pulse_period_s > PULSE_SHOWN_HZ.max) {
+        parts.push(`The sky shows it flashing ${PULSE_SHOWN_HZ.max} times a second, much slower than it really does.`);
+    }
+    return { heading: 'The lighthouse model', text: parts.join(' ') };
+}
+
 function neutronStarInfo({ entity }) {
     const block = entity.neutron_star || {};
     const pulsar = block.pulsar === true;
     const notes = [
         { heading: 'What it is', text: 'When a massive star explodes as a supernova, its core can collapse until protons and electrons are squeezed into neutrons. A teaspoon of it would have about the mass of a mountain.' },
         pulsar
-            ? { heading: 'The lighthouse model', text: 'Beams of radio waves stream from its magnetic poles. As it spins, they sweep past us once per turn, so the pulse period is its spin period. Switch to Radio to see it pulse.' }
+            ? pulsarNote(block)
             : { heading: 'A quiet one', text: 'Not every neutron star pulses for us: the beams may miss us, or may have faded with age. Switch to X-ray to see the heat of its surface.' },
         { heading: 'A faint spectrum', text: 'In visible light there is almost nothing to see: a faint, nearly featureless thermal glow. It is so hot that its peak lies far off the chart, in the X-rays.' }
     ];
