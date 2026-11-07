@@ -145,7 +145,7 @@ function createGlow(engine, comets) {
                 // A tail a few pixels wide is all at the same spot on the screen, so it's drawn fainter or it burns to white.
                 // One wider than the frame eases off too, or there is nothing to see but a pale wash
                 float tailPx = tailOnScreen(tail, aDepth);
-                float tailLight = mix(0.34, 1.0, smoothstep(50.0, 300.0, tailPx)) * mix(1.0, 0.4, smoothstep(900.0, 4000.0, tailPx));
+                float tailLight = mix(0.34, 1.0, smoothstep(50.0, 300.0, tailPx)) * mix(1.0, 0.3, smoothstep(900.0, 5000.0, tailPx));
                 // Zoomed right in, a coma wider than the frame would be a fog. So it thins out as it outgrows the view
                 float comaFills = smoothstep(0.04, 0.25, aShape.x / pxDeg / uViewport.y);
                 vLook = vec4(headPx, tailLight, mix(1.0, 0.2, comaFills), uDpr);
@@ -426,9 +426,9 @@ export function createCometsLayer(engine, app) {
                 for (let x = along; x <= tail; x += along) {
                     const xd = x / (tail * 0.82);
                     // As far out as the grains go: see the particles' shader
-                    const halfWidth = tail * (0.012 + 0.11 * xd) * 1.3;
+                    const halfWidth = tail * (0.012 + 0.11 * xd) * 1.7;
                     const across = Math.max(step, (2 * halfWidth) / 20);
-                    const middle = curve * tail * 0.15 * xd * xd;
+                    const middle = curve * tail * 0.3 * xd * xd;
                     for (let y = -halfWidth; y <= halfWidth + across * 0.5; y += across) push(x, middle + y);
                 }
             });

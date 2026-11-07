@@ -41,7 +41,7 @@ export const BAND_INFO = {
         tint: [0.45, 0.95, 1.0],      // Cyan-white, false colour
         ramp: { low: [0.01, 0.2, 0.3], high: [0.86, 1.0, 1.0] },
         falseColour: true,
-        legend: 'Gas at millions of degrees glows here, around black holes and in supernova shells.'
+        legend: 'Gas at millions of degrees glows here: black holes, supernova shells.'
     }
 };
 

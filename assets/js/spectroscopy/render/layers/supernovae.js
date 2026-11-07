@@ -194,6 +194,7 @@ export function createSupernovaeLayer(engine, app) {
             varying float vShellX;
             varying float vReady;
             varying float vGlowPx;
+            varying vec2 vPoint;    // Where its centre is on the screen, in device pixels
             void main() {
                 float aHalf = aPack.x;
                 SET_HERO(aPack.y)
@@ -212,6 +213,8 @@ export function createSupernovaeLayer(engine, app) {
                 // largest thing in the sky
                 float glowPx = (3.0 + 15.0 * sqrt(total)) * uDpr;
                 vGlowPx = glowPx;
+                vec4 point = projectionMatrix * modelViewMatrix * vec4(aCentre * ${SKY_RADIUS.toFixed(1)}, 1.0);
+                vPoint = (point.xy * depthP(aDepth) / max(point.w, 0.001) * 0.5 + 0.5) * uViewport;
                 float half_ = max(aHalf, glowPx / uPxPerRad);
                 vQ = position.xy * half_ / aHalf;
                 vPx = position.xy * half_ * uPxPerRad;
@@ -240,6 +243,7 @@ export function createSupernovaeLayer(engine, app) {
             varying float vShellX;
             varying float vReady;
             varying float vGlowPx;
+            varying vec2 vPoint;
 
             vec3 ramp(vec3 tint, float v) {
                 return tint * v + vec3(0.9) * v * v * 0.3;
@@ -264,8 +268,9 @@ export function createSupernovaeLayer(engine, app) {
                 col += ramp(uBandTint[3], (sheet * 1.2 + fil * 1.1) * 1.5 * vShell.w) * uBandW[3];
                 col += ramp(uBandTint[4], (hot * 1.4 + sheet * 0.3) * 1.5 * vShellX) * uBandW[4];
 
-                // The flash: a small hot core and a wide faint halo, sized in pixels because it is a point of light
-                float r = length(vPx) / max(vGlowPx, 1.0);
+                // The flash: a small hot core and a wide faint halo, sized in pixels because it is a point of light. Measured
+                // on the screen, so that it stays round at the edge of a wide view, where the quad is stretched
+                float r = length(gl_FragCoord.xy - vPoint) / max(vGlowPx, 1.0);
                 float glow = exp(-r * r * 36.0) * 1.1 + exp(-r * r * 7.0) * 0.32 + 0.09 / (1.0 + r * r * 90.0);
                 glow *= smoothstep(1.0, 0.72, r);
                 col += vFlash * glow;
