@@ -6756,7 +6756,7 @@
     const minorGroups = new Map(), pieceGroups = new Map(), gasGroups = new Map();
     function drawTrails(C) {
         const years = trailYears();
-        if (years <= 0) { if (swarmLayer.tiles.length) layerFree(); return; }
+        if (years <= 0) { layerAfterFrame(false); return; }
         const first = sampleAtTime(simTime - trailDir * years);
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L && !L.trail) return;
@@ -6773,7 +6773,6 @@
         for (const g of minorGroups.values()) g.length = 0;
         for (const g of pieceGroups.values()) g.length = 0;
         for (const g of gasGroups.values()) g.length = 0;
-        // (who has a trail is settled here, once: the groups are all the swarm's trails are drawn from, on canvases or not)
         for (const b of bodies) {
             if (b.held || !b.trail) continue;
             if ((b.minor || b.grp) && !isChosen(b)) {
@@ -6813,13 +6812,11 @@
         trailGroups(pieceGroups, PIECE_CHUNKS, 0, 0.8, tr, first, oFirst, C);
         // (gas: short and faint, a sign of how it moves. Its glow is the thing to see)
         trailGroups(gasGroups, MINOR_CHUNKS, 0.03, 0.27, tr, Math.max(first, sampleCount - GAS_TRAIL), oFirst, C);
-        if (low) {
-            if (swarmLayer.tiles.length) layerFree();
-            swarmLayer.slow = LAYER_SLOW;
-        } else {
+        if (!low) {
             ctx.lineJoin = 'miter';
             if (!swarmFromLayer(tr, first, oFirst, C, lw)) trailGroups(minorGroups, MINOR_CHUNKS, 0.06, 0.5, tr, first, oFirst, C);
         }
+        layerAfterFrame(low);
         ctx.globalAlpha = 1;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -6879,7 +6876,7 @@
     // the edge, drawing them all afresh again and again would only make it slower)
     const LAYER_SLOW = 120;
     const swarmLayer = {
-        off: false, tiles: [], built: false, stale: false, T: 0, span: 1, k: 0, sig: 0, wait: 0, slow: 0, reach: 0, builds: 0,
+        off: false, tiles: [], built: false, stale: false, asked: false, T: 0, span: 1, k: 0, sig: 0, wait: 0, slow: 0, reach: 0, builds: 0,
         w: 0, h: 0, dpr: 0, scale: 0, offX: 0, offY: 0, dark: false, lw: 0, oT: null, list: null, epoch: 0, dir: 0, sel: null, pop: null, frame: null
     };
 
@@ -6903,6 +6900,14 @@
         swarmLayer.tiles.length = 0;
         swarmLayer.built = false;
         swarmLayer.wait = 0;
+    }
+
+    // After the frame's trails: if the swarm's weren't asked for, for whatever reason, the canvases aren't needed
+    function layerAfterFrame(low) {
+        const q = swarmLayer;
+        if (low) q.slow = LAYER_SLOW;
+        if (!q.asked && q.tiles.length) layerFree();
+        q.asked = false;
     }
 
     function layerClear(t, lw) {
@@ -7030,6 +7035,7 @@
     // The swarm's trails from the canvases. False if they aren't to be drawn that way this frame.
     function swarmFromLayer(tr, first, oFirst, C, lw) {
         const q = swarmLayer;
+        q.asked = true;
         let n = 0, sig = 0;
         for (const g of minorGroups.values()) {
             n += g.length;
