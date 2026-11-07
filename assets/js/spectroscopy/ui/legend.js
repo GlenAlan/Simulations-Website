@@ -17,6 +17,62 @@ const IN_SYSTEM = {
     xray: 'Gas at millions of degrees: a star\'s corona, flares, and gas falling onto a star or a black hole. Planets show almost nothing.'
 };
 
+// A system with no planets says only what it has: one star or several, a black hole and what feeds it, a galaxy's centre, or
+// a neutron star
+const STARS_ONLY = {
+    radio: 'Active stars flare here. Quiet stars are dim.',
+    ir: 'Heat glows here. Cool stars are bright, and hot stars dimmer than they look to your eye.',
+    visible: 'Starlight, in the colours your eyes would see.',
+    uv: 'Hot stars blaze, and cool stars are dim.',
+    xray: 'Gas at millions of degrees: a star\'s corona and its flares, and any gas falling from one star onto another.'
+};
+
+const BLACK_HOLE = {
+    radio: 'Jets from near the black hole shine, when it has them. Its companion star is dim.',
+    ir: 'Heat glows here: the companion star, and the cooler outside of the disc of gas round the black hole.',
+    visible: 'The companion star, and the hot disc of gas it feeds to the black hole, in the colours your eyes would see. The hole itself gives out no light.',
+    uv: 'The inner disc of gas round the black hole glows brightly, hotter than almost any star.',
+    xray: 'Gas at millions of degrees, falling onto the black hole: the brightest thing here. The hole itself gives out no light.'
+};
+
+const NUCLEUS = {
+    radio: 'Jets from near the black hole shine, when it has them. The stars are dim.',
+    ir: 'Heat glows here: the stars, and dust warmed by the gas falling into the black hole.',
+    visible: 'The stars on close orbits, and the gas falling into the black hole, in the colours your eyes would see. The hole itself gives out no light.',
+    uv: 'Gas falling into the black hole blazes, when it is feeding. Cool stars are dim.',
+    xray: 'Gas at millions of degrees, falling into the black hole. The hole itself gives out no light.'
+};
+
+const PULSAR = {
+    radio: 'The pulsar\'s beams shine here as they sweep round. The star itself is dark.',
+    ir: 'A neutron star gives out almost no infrared: it is tiny, and most of its light is X-rays.',
+    visible: 'A neutron star, hot but only a few kilometres across. Its beams are drawn so you can see it turn.',
+    uv: 'The neutron star\'s hot surface glows here.',
+    xray: 'The neutron star\'s hot surface shines brightest here, and its beams sweep round.'
+};
+
+const NEUTRON_STAR = {
+    ...PULSAR,
+    radio: 'A neutron star with no beams pointing our way is dark here.',
+    visible: 'A neutron star, hot but only a few kilometres across, so it gives out very little light.',
+    xray: 'The neutron star\'s hot surface shines brightest here.'
+};
+
+// The words for what the system view has on show
+function systemWords(app, code) {
+    const resolved = code && app.universe ? app.universe.resolve(code) : null;
+    if (!resolved) return IN_SYSTEM;
+    let body = resolved.body;
+    try {
+        if (app.system && app.system.systemOf) body = app.system.systemOf(resolved) || body;
+    } catch (err) { /* The selection's own body will do */ }
+    if (!body) return IN_SYSTEM;
+    if (body.kind === 'nucleus') return NUCLEUS;
+    if (body.black_hole) return BLACK_HOLE;
+    if (body.neutron_star) return body.neutron_star.pulsar ? PULSAR : NEUTRON_STAR;
+    return body.planets && body.planets.length ? IN_SYSTEM : STARS_ONLY;
+}
+
 // The sky's own tone mapping (render/engine.js), so that the ramp shows the colours the sky really has
 function toCss(linear) {
     const channel = (x) => {
@@ -68,12 +124,14 @@ export function initLegend(app) {
         body.hidden = !open;
     }
 
+    let systemCode = null;
     function show(band) {
         const info = BAND_INFO[band];
         name.textContent = info.label;
         if (!info.falseColour && document.activeElement === tag) toggle.focus({ preventScroll: true });
         tag.hidden = !info.falseColour;
-        text.textContent = app.view === 'system' ? IN_SYSTEM[band] : info.legend;
+        const inSystem = systemCode ? true : app.view === 'system';
+        text.textContent = inSystem ? systemWords(app, systemCode || app.systemCode)[band] : info.legend;
         ramp.style.background = rampGradient(band);
         low.textContent = info.falseColour ? 'Faint' : 'Cool stars';
         high.textContent = info.falseColour ? 'Bright' : 'Hot stars';
@@ -81,7 +139,10 @@ export function initLegend(app) {
 
     toggle.addEventListener('click', () => setOpen(body.hidden));
     const offBand = bus.on('band', ({ band }) => show(band));
-    const offView = bus.on('view', () => show(app.band));
+    const offView = bus.on('view', (e) => {
+        systemCode = e && e.view === 'system' ? e.code : null;
+        show(app.band);
+    });
 
     setOpen(startOpen);
     show(app.band);
