@@ -15,6 +15,7 @@ import { isValidCode } from '../core/rng.js';
 import { withSeed } from '../core/seed.js';
 import { limitingMag, angularSeparation, MIN_FOV, MAX_FOV } from '../core/sky.js';
 import { drawMag, parallaxFactor } from '../core/depth.js';
+import { bandMagnitude } from '../data/band_table.js';
 import { createVisited } from './visited.js';
 import { createSearchMarksLayer } from '../render/layers/search_marks.js';
 
@@ -476,7 +477,9 @@ export function initGoto(app) {
 
     function isHidden({ body, path }) {
         if (path === 'planet' || path === 'comet') return false; // Not drawn on the sky at all: the flight ends in its system, whatever the band
-        return isFaintInBand(body) && strongestBand(body) !== app.band;
+        // Faint in this band, or too faint to be drawn in it at any zoom (a dim red dwarf in ultraviolet)
+        const unseen = isFaintInBand(body) || !engine.bodyShows(body, limitingMag(MIN_FOV));
+        return unseen && strongestBand(body) !== app.band;
     }
 
     // --- Flights ---
@@ -517,7 +520,15 @@ export function initGoto(app) {
         const framed = span > 0 ? fovAtDepth((span * FRAME_MARGIN) / narrowest, body.depth) : pointFov(body, path);
         const fov = Math.max(MIN_FOV, Math.min(MAX_FOV, framed));
         const shows = engine.bodyShows(body, limitingMag(fov) - MAG_MARGIN);
-        return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingMag(body.brightness && drawMag(body), fov) };
+        return { az: body.sky.az, alt: body.sky.alt, fov: shows ? fov : fovShowingBody(body, fov) };
+    }
+
+    // In by its brightness in the band on show, not in visible light: a far rogue planet is drawn in infrared, and only
+    // deeper in. If a magnitude inside the limit is past the deepest zoom, the deepest zoom, so long as it is drawn there.
+    function fovShowingBody(body, fov) {
+        const zoomed = fovShowingMag(bandMagnitude(body, app.band), fov);
+        if (zoomed <= MIN_FOV || engine.bodyShows(body, limitingMag(zoomed) - MAG_MARGIN)) return zoomed;
+        return engine.bodyShows(body, limitingMag(MIN_FOV)) ? MIN_FOV : zoomed;
     }
 
     // A little wider than where a zoom would carry on into the hole, or the narrowest view for a galaxy too small for that

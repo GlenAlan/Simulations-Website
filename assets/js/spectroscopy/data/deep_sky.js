@@ -240,11 +240,32 @@ export function pushBack(body, distancePc) {
 // Our own comets, in the evening sky. The Sun has set in the west and is below the horizon. A comet with a tail is within a
 // few AU of the Sun, so it is seen not far from it: low over where it set, its tail pointing up and away from it. The
 // brighter one is nearer the Sun, closer to us and lower, with a long tail; the fainter further out and higher.
+// The brighter is a small comet passing fairly near us. How bright it looks and how long its tail looks follow from where it is:
+// H is its absolute magnitude, and tailAU its tail's true length when 1 AU from the Sun. The fainter is a big comet further off,
+// as bright and long-tailed as one of those would look there.
 const COMET_SUN = { az: 262, alt: -16 };
 const SKY_COMET_LOOKS = [
-    { r: [0.55, 0.9], elong: [26, 34], alt: [8, 13], mag: [2.4, 3.4], tail: [6.5, 9], near: true },
+    { r: [0.66, 0.74], elong: [26, 34], alt: [8, 13], H: [7.5, 7.9], tailAU: [0.0132, 0.0215], near: true },
     { r: [1.3, 1.9], elong: [44, 56], alt: [20, 30], mag: [5.4, 6.6], tail: [2.5, 3.8], near: false }
 ];
+
+// A comet's total magnitude, from its absolute magnitude H and its distances in AU from the Sun (r) and from us (delta):
+// the usual rule for comets, brightening as the fourth power of nearness to the Sun as it gives off more gas and dust
+function cometMag(H, r, delta) {
+    return H + 5 * Math.log10(delta) + 10 * Math.log10(r);
+}
+
+// How long a tail looks, in degrees, for a comet r AU from the Sun seen elongDeg from it, delta AU from us. The tail points
+// straight away from the Sun, and is longer the nearer the comet is to it: lengthAU at 1 AU, as 1 / r^2.
+function tailAngleDeg(r, elongDeg, delta, lengthAU) {
+    const e = (elongDeg * Math.PI) / 180;
+    // In the plane of the Sun, us and the comet: the Sun at the origin, us at (1, 0)
+    const head = [1 - delta * Math.cos(e), delta * Math.sin(e)];
+    const out = 1 + lengthAU / (r * r) / Math.hypot(head[0], head[1]);
+    const a = [head[0] - 1, head[1]];
+    const b = [head[0] * out - 1, head[1] * out];
+    return (Math.atan2(Math.abs(a[0] * b[1] - a[1] * b[0]), a[0] * b[0] + a[1] * b[1]) * 180) / Math.PI;
+}
 
 // Places the sky's comets by the Sun (placeOne in data/sky_layout.js keeps them clear of everything else), with their distances
 // from the Sun and from us to match. Returns where the Sun is.
@@ -270,11 +291,12 @@ export function placeSkyComets(rng, comets, layout) {
         const s = Math.sin(elong * RAD);
         const root = Math.sqrt(Math.max(0, r * r - s * s));
         const delta = look.near && r < 1 ? ce - root : ce + root;
-        const mag = dp(rng.range(look.mag[0], look.mag[1]), 3);
+        const mag = dp(look.H ? cometMag(rng.range(look.H[0], look.H[1]), r, delta) : rng.range(look.mag[0], look.mag[1]), 3);
         body.distance_pc = stable(delta * (AU / PC), 4);
         body.brightness = { flux_Wm2: fluxFromVisualMag(mag), mag };
         body.comet.heliocentric_AU = dp(r, 2);
-        body.comet.tail_deg = dp(rng.range(look.tail[0], look.tail[1]), 2);
+        const tail = look.tailAU ? tailAngleDeg(r, elong, delta, rng.range(look.tailAU[0], look.tailAU[1])) : rng.range(look.tail[0], look.tail[1]);
+        body.comet.tail_deg = dp(tail, 2);
     });
     return { ...COMET_SUN };
 }

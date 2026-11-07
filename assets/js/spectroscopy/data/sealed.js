@@ -64,10 +64,36 @@ const BLOCK = [
     'iHcvOJYCYpyWXu6WStYwVzTv/J4sAxqCqXF3z02ocAKD81Ve1qA='
 ].join('');
 
-export function unseal() {
+// The two showcase systems and their stars keep these codes in every sky: they are meant to be famous
+export const SHOWCASE_CODES = ['F8Q3ZN', 'F8Q3ZA', 'F8Q3ZB', 'F8Q3ZC', 'D2W7XK', 'D2W7XA', 'D2W7XB', 'D2W7XC', 'D2W7XD'];
+
+// The hard-coded systems as they are in the sky made from this seed. In the standard sky they keep their own codes. In any
+// other, their stars and planets take codes drawn from the seed like everything else's, so that comparing two skies can't
+// pick them out: drawn from a stream of their own, clear of every reserved code, so the same seed always gives the same
+// ones. codes then holds both sets, as no random code may take either.
+export function unseal(seed = DEFAULT_SEED) {
     const bytes = atob(BLOCK);
     const rng = new Rng(hashString(`${DEFAULT_SEED}:sealed`));
     let text = '';
     for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes.charCodeAt(i) ^ Math.floor(rng.next() * 256));
-    return JSON.parse(text);
+    const data = JSON.parse(text);
+    if (seed === DEFAULT_SEED) return data;
+    const taken = new Set([...data.codes, ...SHOWCASE_CODES]);
+    const stream = new Rng(seed).fork('codes:sealed');
+    const fresh = new Map();
+    data.codes.forEach((old) => {
+        let code;
+        do code = stream.code(); while (taken.has(code));
+        taken.add(code);
+        fresh.set(old, code);
+    });
+    const recode = (entity) => { entity.code = fresh.get(entity.code) || entity.code; };
+    recode(data.target.host);
+    data.target.planets.forEach(recode);
+    data.decoys.forEach((decoy) => {
+        recode(decoy.host);
+        recode(decoy.planet);
+    });
+    data.codes = [...data.codes, ...fresh.values()];
+    return data;
 }
