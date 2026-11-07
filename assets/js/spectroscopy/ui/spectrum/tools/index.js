@@ -41,8 +41,9 @@ export function listTools() {
 //   comesBack   left on, it comes back on the next object it applies to
 function words(id) {
     switch (id) {
-    case 'wien': return { short: 'Wien\'s law', about: 'Find the temperature from where the curve peaks' };
-    case 'doppler': return { short: 'Doppler', about: 'Find the speed from how far a line has shifted' };
+    // Named by what they answer; the laws they use are named inside
+    case 'wien': return { short: 'How hot?', about: 'Find the temperature: fit a black-body curve, compare standard stars, or use Wien\'s law' };
+    case 'doppler': return { short: 'How is it moving?', about: 'Find the speed: slide reference lines onto the dips, or measure one line' };
     case 'line-zoom': return { short: 'Line zoom', about: 'Look closely at one line and measure its width' };
     case 'photometer': return { short: 'Photometer', about: 'Read the brightness and the distance' };
     case 'time-series': return { short: 'Time series', about: 'Follow the lines over time to find the period', ownFigure: true };

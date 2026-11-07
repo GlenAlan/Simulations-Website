@@ -232,16 +232,18 @@ function layerRow(app, group, row) {
 }
 
 // A tip per row that doesn't need a mouse: one line at the foot of the menu, for the row under the pointer, the row a key
-// has moved to, or the row just tapped
+// has moved to, or the row just tapped. Returns fit(), which holds the line at the height of the longest tip, so the menu
+// doesn't grow and shrink under the pointer as it moves from row to row.
 function rowTips(menu) {
+    const IDLE = 'Point to a layer to see what it shows.';
     const line = element('p', 'spectro-layer-tip');
     line.setAttribute('aria-hidden', 'true');
-    line.hidden = true;
     menu.appendChild(line);
     const show = (text) => {
-        line.textContent = text || '';
-        line.hidden = !text;
+        line.textContent = text || IDLE;
+        line.classList.toggle('is-idle', !text);
     };
+    show('');
     const tipOf = (target) => {
         const label = target.closest ? target.closest('label[data-tip]') : null;
         return label ? label.dataset.tip : '';
@@ -257,6 +259,19 @@ function rowTips(menu) {
         if (e.target.matches('input:focus-visible') && e.target.labels[0]) show(e.target.labels[0].dataset.tip);
     });
     menu.addEventListener('focusout', () => { if (!touched) show(''); });
+    return function fit() {
+        const text = line.textContent;
+        const idle = line.classList.contains('is-idle');
+        line.style.minHeight = '';
+        let tallest = 0;
+        menu.querySelectorAll('label[data-tip]').forEach((label) => {
+            line.textContent = label.dataset.tip;
+            tallest = Math.max(tallest, line.offsetHeight);
+        });
+        line.textContent = text;
+        line.classList.toggle('is-idle', idle);
+        line.style.minHeight = `${tallest}px`;
+    };
 }
 
 function initLayersMenu(app, topRight) {
@@ -308,7 +323,7 @@ function initLayersMenu(app, topRight) {
     const cmbNote = element('p', 'spectro-layer-note', 'Shows only when the sky is in Radio.');
     menu.append(radioHeading, radioGroup, cmbNote);
 
-    rowTips(menu);
+    const fitTips = rowTips(menu);
     root.append(toggle, menu);
     topRight.prepend(root);
 
@@ -339,6 +354,7 @@ function initLayersMenu(app, topRight) {
     function open() {
         paint();
         menu.hidden = false;
+        fitTips();
         toggle.setAttribute('aria-expanded', 'true');
         // The box clips what's inside it, so the menu scrolls rather than running off the bottom of the sky
         const box = document.querySelector('.sim-aspect-ratio-box').getBoundingClientRect();

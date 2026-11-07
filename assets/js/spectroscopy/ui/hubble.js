@@ -6,6 +6,7 @@ import { bus, select } from '../core/state.js';
 import { getMeasurement, recordMeasurement } from '../core/measurements.js';
 import { C_KMS, H0 } from '../core/phys.js';
 import { plusMinus, sig, withCommas } from '../core/format.js';
+import { toolWords } from './spectrum/tools/index.js';
 import {
     createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
     drawFrame, drawMarker, el, fitThroughOrigin, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint,
@@ -222,12 +223,12 @@ function mountHubble(container, app) {
                 unit: 'km/s',
                 placeholder: '7,000',
                 tool: 'doppler',
-                toolName: 'Doppler',
+                toolName: toolWords({ id: 'doppler' }).short,
                 allowNegative: true,
                 max: 1e6,
                 rangeText: 'a speed of up to 1,000,000 km/s',
-                extra: { v_err_kms: undefined, z: undefined },
-                show: (m) => `${m.v_err_kms > 0 ? plusMinus(m.v_kms, m.v_err_kms) : withCommas(m.v_kms)} km/s, from the Doppler tool`
+                extra: { v_err_kms: undefined, z: undefined, v_source: undefined },
+                show: (m) => `${m.v_err_kms > 0 ? plusMinus(m.v_kms, m.v_err_kms) : withCommas(m.v_kms)} km/s, from ${m.v_source === 'slide' ? 'your slide' : 'a measured line'}`
             },
             {
                 key: 'distance_pc',
@@ -347,8 +348,8 @@ function mountHubble(container, app) {
                 el('button', {
                     type: 'button',
                     class: 'spectro-fig-tool',
-                    text: 'Doppler',
-                    'aria-label': 'Measure z with Doppler, in the Spectrum tab',
+                    text: toolWords({ id: 'doppler' }).short,
+                    'aria-label': `Measure z with ${toolWords({ id: 'doppler' }).short}, in the Spectrum tab`,
                     onclick: () => app.spectrumPanel.openTool('doppler', { from: 'hubble', focus: true })
                 })),
             el('p', { text: `A quasar can't go on this plot. Using v = cz here would give ${sig(v, 3)} km/s, ${compared}. Its light has been stretched by the expanding Universe during a very long journey, so astronomers quote z itself instead of a speed.` }));
