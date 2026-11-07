@@ -606,7 +606,7 @@ function nebulaInfo({ entity }) {
 
 function clusterInfo({ entity }) {
     const block = entity.cluster || {};
-    const memberCount = Array.isArray(block.members) ? block.members.length : null;
+    const memberCount = block.n_stars ?? (Array.isArray(block.members) ? block.members.length : null);
     const notes = [
         { heading: 'Reading its age', text: 'Massive stars use their fuel fastest, so they leave the main sequence first. Plot every member at once on the cluster H-R diagram: the turn-off shows the age, and the lower it sits, the older the cluster.' },
         { heading: 'Why clusters are so useful', text: 'All the stars formed together from one cloud, so they share an age, a distance and a starting mix. Differences between them come mostly from mass.' },
@@ -635,7 +635,7 @@ function clusterInfo({ entity }) {
         return {
             ...common,
             kindLabel: 'Open cluster',
-            lead: 'A loose group of stars, all born at about the same time from one cloud.',
+            lead: 'A loose group of stars, all born at about the same time from one cloud. Zoom in to go among them and pick one out.',
             summary: 'A loose group of stars, all born at about the same time from one cloud. Compare its H-R diagram with a globular cluster\'s.',
             rarity: 'Thousands are known in the Milky Way. Most drift apart within a few hundred million years.'
         };

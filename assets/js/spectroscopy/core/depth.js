@@ -22,6 +22,8 @@
 //
 // ETA = 0 is the kill switch: every P becomes 1, and everything is where it was before depth existed.
 
+import { memberDirection } from '../render/layers/sky_tangent.js';
+
 export const ETA = 0.1;
 const FULL_FOV = 80;        // At this field of view and wider, P = 1 at every depth
 const LIGHT_SHARE = 0.5;    // How much of its depth_dim_mag an extended object also loses at every zoom
@@ -86,11 +88,13 @@ function scaleSizes(body, scale) {
         body.cluster.members.forEach((member) => {
             member.offset_deg.x *= scale;
             member.offset_deg.y *= scale;
+            if (member.stars) member.visual_sep_deg *= scale;
         });
     }
 }
 
-// What's inside a body is as far away as the body is
+// What's inside a body is as far away as the body is. A cluster member may also carry a depth_offset, a little either way,
+// so that an open cluster's stars shift against each other as the view moves. A member's depth is its own: entity.depth.
 function passDown(body) {
     const inside = [
         ...(body.planets || []),
@@ -99,8 +103,16 @@ function passDown(body) {
         ...(body.cluster ? body.cluster.members : [])
     ];
     inside.forEach((entity) => {
-        entity.depth = body.depth;
+        entity.depth = Math.max(0, body.depth + (entity.depth_offset || 0));
         entity.depth_dim_mag = body.depth_dim_mag;
+        // A binary member is a system of its own, and shrinking its cluster has moved it
+        if (entity.in_cluster) {
+            entity.sky = memberDirection(body, entity);
+            entity.stars.forEach((star) => {
+                star.depth = entity.depth;
+                star.depth_dim_mag = body.depth_dim_mag;
+            });
+        }
     });
 }
 

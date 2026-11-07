@@ -42,6 +42,7 @@ const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a
 const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
 const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
+const CLUSTER_INSIDE = 0.45;    // A cluster's radius, as a share of the view's smaller side, once you are in among its stars
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
 const ANCHOR_HOLD_PX = 8;       // A zoom keeps the depth it found under the pointer until the pointer moves this far...
 const ANCHOR_HOLD_MS = 300;     // ...or the wheel has been still this long
@@ -818,7 +819,7 @@ export function createEngine(canvas) {
         const found = code ? app.universe.resolve(code) : null;
         anchorHeld.x = px;
         anchorHeld.y = py;
-        anchorHeld.depth = found ? found.body.depth || 0 : 1;
+        anchorHeld.depth = found ? found.entity.depth ?? found.body.depth ?? 0 : 1;
         return anchorHeld.depth;
     }
 
@@ -978,6 +979,8 @@ export function createEngine(canvas) {
                 if (bodyShows(body, lim)) {
                     const depth = body.depth || 0;
                     const radiusPx = extendedRadiusDeg(body) * pxPerDeg * parallaxFactor(depth, view.fov);
+                    // Inside an open cluster the dark between its stars is just sky: only the stars answer a click
+                    if (body.cluster && body.cluster.type === 'open' && radiusPx > CLUSTER_INSIDE * Math.min(width, height)) continue;
                     consider(body.code, body.sky.az, body.sky.alt, radiusPx, brightnessBonusPx(body, lim), depth);
                 }
             }

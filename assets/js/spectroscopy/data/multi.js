@@ -121,6 +121,27 @@ export function makeRandomMulti(rng, nextCode, code, triple, wantsPlanets) {
     };
 }
 
+// A pair from two stars that already exist, for a cluster's binary members: the same shape as a random binary
+export function makePairOf(rng, nextCode, code, s0, s1, visualSepDeg) {
+    const floor = smallestSeparation(s0, s1);
+    const aInner = stable(rng.logRange(Math.max(0.02, floor * 1.02), Math.max(8, floor * 2)), 5);
+    const orbit = makeOrbit(rng, [0], [1], aInner, s0.mass_Msun + s1.mass_Msun, { circular: aInner < 0.2 });
+    const donorIndex = s0.radius_Rsun >= s1.radius_Rsun ? 0 : 1;
+    const closeEnough = aInner <= TRANSFER_RADII * (s0.radius_Rsun + s1.radius_Rsun) * RSUN_AU || aInner < 0.05;
+    return {
+        kind: 'binary',
+        architecture: 'binary',
+        stars: [s0, s1].map((star) => component(nextCode(), code, star)),
+        orbits: [orbit],
+        interacting: closeEnough,
+        transfer: closeEnough ? { donor: donorIndex, accretor: 1 - donorIndex } : null,
+        figure_eight: null,
+        pairs: null,
+        visual_sep_deg: visualSepDeg(orbit.period_days),
+        planets: []
+    };
+}
+
 // Combined light of a system's stars, and how far away it has to be for a target magnitude
 export function systemAbsoluteMag(stars) {
     return combineMags(stars.map((s) => absoluteVisual(s.star.luminosity_Lsun, s.star.teff_K)));

@@ -5,7 +5,7 @@
 
 import { bus, select, setSetting } from '../core/state.js';
 import { angularSeparation, limitingMag } from '../core/sky.js';
-import { memberDirection } from '../render/layers/sky_tangent.js';
+import { drawnSky } from '../render/layers/sky_tangent.js';
 import { announce, kindLabelOf } from './drawer.js';
 
 const LOOK = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
@@ -116,9 +116,8 @@ export function initKeyboard(app) {
     }
 
     function selectionAtCentre(frame) {
-        const { entity, body, path } = app.selected;
-        const at = path === 'member' && entity.offset_deg ? memberDirection(body, entity) : body.sky;
-        const p = engine.project(at.az, at.alt, body.depth);
+        const at = drawnSky(engine, app.selected);
+        const p = engine.project(at.az, at.alt, at.depth);
         return !!p && Math.hypot(p.x - frame.width / 2, p.y - frame.height / 2) <= CENTRE_PICK_PX;
     }
 
