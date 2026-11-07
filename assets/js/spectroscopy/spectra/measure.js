@@ -393,6 +393,8 @@ function findLine(spectrum, nearNm, opts = {}) {
             }
             if (clear >= LINE_CLEAR_SIGMA) break;
         }
+        // Nothing measurable at any smoothing, as where the light runs out
+        if (!profile) return null;
         // Of the dips about as deep as the deepest in reach, the one nearest the click: a click on Ca II H means H, not K. A caller
         // that says what kind of line it wants is following a known line through time, not asking what a click meant.
         let others = [];

@@ -2563,6 +2563,9 @@ body.sim-panel-sheet .spectro-instrument.has-tool:not(.has-own-figure) .spectro-
 
 .spectro-hands-pane[hidden],
 .spectro-hands-mode-body[hidden],
+.spectro-hands-slide[hidden],
+.spectro-hands-ends[hidden],
+.spectro-hands-chips[hidden],
 .spectro-tool-body p[hidden] {
     display: none;
 }

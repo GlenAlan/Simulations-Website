@@ -304,37 +304,43 @@ function mountExact(container, api, isActive) {
     };
 }
 
+// The easiest first: the tool picks the object's best line and zooms to it, and the student lines up one reference line
 const MODES = [
+    { id: 'best', label: 'Best line' },
     { id: 'slide', label: 'Slide the lines' },
     { id: 'exact', label: 'Measure one line' }
 ];
 
 // The mode is kept from one object to the next
-const memory = { mode: 'slide' };
+const memory = { mode: 'best' };
 
 function mount(container, api) {
     const reference = borrowReference(api);
     let mode = null;
     const says = el('p', { class: 'spectro-sr-only', role: 'status' });
     const modes = modeRow('How to measure the motion', MODES, (id) => select(id));
+    const bestBox = el('div', { class: 'spectro-hands-mode-body' });
     const slideBox = el('div', { class: 'spectro-hands-mode-body' });
     const exactBox = el('div', { class: 'spectro-hands-mode-body spectro-tool-body' });
-    container.append(modes.el, slideBox, exactBox, says);
+    container.append(modes.el, bestBox, slideBox, exactBox, says);
+    const best = createSlide(bestBox, api, { says, single: true });
     const slide = createSlide(slideBox, api, { says });
     const exact = mountExact(exactBox, api, () => mode === 'exact');
+    const slides = { best, slide };
 
     function select(next) {
         if (mode === next) return;
-        if (mode === 'slide') slide.leave();
+        if (slides[mode]) slides[mode].leave();
         mode = next;
         memory.mode = next;
         modes.set(next);
+        bestBox.hidden = next !== 'best';
         slideBox.hidden = next !== 'slide';
         exactBox.hidden = next !== 'exact';
-        // The slide draws its own lamp lines, so the reference stands aside for it; measuring one line has it back
-        if (next === 'slide') {
+        // Sliding draws its own reference lines, so the reference stands aside for it; measuring one line has it back
+        if (slides[next]) {
             reference.show('none');
-            slide.enter();
+            slides[next].enter();
         } else {
             reference.give();
         }
@@ -345,11 +351,13 @@ function mount(container, api) {
         setEntity(resolved) {
             // Zooming in close shows a line at high resolution, where its centre can be read more finely
             api.setResolution('zoom');
+            best.setEntity(resolved);
             slide.setEntity(resolved);
             exact.setEntity(resolved);
             if (!mode) select(memory.mode);
         },
         dispose() {
+            best.dispose();
             slide.dispose();
             exact.dispose();
             reference.dispose();
