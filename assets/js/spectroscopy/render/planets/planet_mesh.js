@@ -6,8 +6,11 @@
 // Large on screen, it works out its surface per pixel. Both output linear HDR for the engine's tone mapping.
 //
 // Also on the returned object: look (the appearanceFrom block) and setOpacity(0..1) for fading in.
+// opts: quality (overrides frame.quality), timeScale (of the decorative spin), renderer (found by itself otherwise).
+// warmPlanetShaders(renderer, camera) can compile the programs ahead of the first system, without blocking.
 
 import * as THREE from 'three';
+import { app } from '../../core/state.js';
 import { appearanceFrom, ringProfile } from './appearance.js';
 import {
     liveBodyFragment, bakeFragment, BAKED_BODY_FRAGMENT, BODY_VERTEX, BAKE_VERTEX,
@@ -16,7 +19,7 @@ import {
 
 const QUALITY = {
     low: { oct: 4, steps: 0, shell: false, liveAbovePx: Infinity, bakeOct: 6 },
-    medium: { oct: 5, steps: 6, shell: true, liveAbovePx: 260, bakeOct: 6 },
+    medium: { oct: 5, steps: 6, shell: true, liveAbovePx: 520, bakeOct: 6 },
     high: { oct: 7, steps: 10, shell: true, liveAbovePx: 140, bakeOct: 7 }
 };
 
@@ -55,10 +58,12 @@ const FACES = [
 
 const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 
-// Bakes share a budget so that entering a system does not stall on several at once
-let bakeFrame = -1;
-let bakesThisFrame = 0;
-const BAKE_FACES_PER_FRAME = 2;
+// Bakes share a budget of pixels per frame, so that entering a system does not stall on several at once. A small
+// planet's cube takes a frame or two; a large one's is spread over twelve.
+let bakeFrame = null;
+let bakeTime = 0;
+let bakedPixelsThisFrame = 0;
+const BAKE_PIXELS_PER_FRAME = 131072;
 
 function jetIndex(lat, bandN, phase) {
     const warped = lat + 0.05 * Math.sin(lat * 6 + phase) + 0.03 * Math.sin(lat * 11 + phase * 2.3);
@@ -74,6 +79,7 @@ function patternUniforms(look) {
         uSeed: { value: v3(look.seedOffset) },
         uOct: { value: 5 },
         uPhase: { value: look.seedPhase },
+        uLocked: { value: look.locked ? 1 : 0 },
         uStormN: { value: look.storms.length },
         uStormA: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 1, 0, 0.1)) },
         uStormB: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, 0, 0)) }
@@ -108,6 +114,7 @@ function patternUniforms(look) {
             uCracks: { value: s.cracks },
             uPlains: { value: s.plains },
             uLava: { value: s.lava },
+            uDayMelt: { value: s.dayMelt },
             uMelt: { value: s.melt },
             uCap: { value: s.cap },
             uFrost: { value: s.frost },
@@ -160,6 +167,25 @@ function makeRingTexture(look) {
     tex.anisotropy = 4;
     tex.needsUpdate = true;
     return tex;
+}
+
+// Compiles the planet programs without blocking, where the browser allows it, so that the first planet in a system does
+// not stall the flight in. Optional: call it once when the sim has loaded. Three.js keeps the programs by their source.
+export function warmPlanetShaders(renderer, camera) {
+    sharedGeometry();
+    const scene = new THREE.Scene();
+    const flags = { transparent: true, premultipliedAlpha: true, depthWrite: true, toneMapped: false };
+    const materials = [
+        new THREE.ShaderMaterial({ ...flags, vertexShader: BODY_VERTEX, fragmentShader: liveBodyFragment('solid') }),
+        new THREE.ShaderMaterial({ ...flags, vertexShader: BODY_VERTEX, fragmentShader: liveBodyFragment('envelope') }),
+        new THREE.ShaderMaterial({ ...flags, vertexShader: BODY_VERTEX, fragmentShader: BAKED_BODY_FRAGMENT }),
+        new THREE.ShaderMaterial({ ...flags, depthWrite: false, side: THREE.BackSide, vertexShader: SHELL_VERTEX, fragmentShader: SHELL_FRAGMENT }),
+        new THREE.ShaderMaterial({ vertexShader: BAKE_VERTEX, fragmentShader: bakeFragment('solid'), depthTest: false, depthWrite: false, toneMapped: false }),
+        new THREE.ShaderMaterial({ vertexShader: BAKE_VERTEX, fragmentShader: bakeFragment('envelope'), depthTest: false, depthWrite: false, toneMapped: false })
+    ];
+    materials.forEach((material) => scene.add(new THREE.Mesh(shellGeometry, material)));
+    const finish = () => materials.forEach((material) => material.dispose());
+    return renderer.compileAsync(scene, camera).then(finish, finish);
 }
 
 export function createPlanetMesh(planet, hostTeffK, opts = {}) {
@@ -283,10 +309,12 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
     // rendering, whichever one the caller draws its system scene with.
     const camLocal = new THREE.Vector3();
     const invTilt = new THREE.Matrix4();
-    let renderer = opts.renderer || null;
+    let renderer = opts.renderer || (app.engine && app.engine.renderer) || null;
     let pixelDiameter = 0;
+    let measured = false;      // Once it has been drawn, its size on screen is known for certain
     function syncCamera(glRenderer, camera) {
         renderer = glRenderer;
+        measured = true;
         invTilt.copy(tilt.matrixWorld).invert();
         camLocal.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(invTilt);
         shared.uCam.value.copy(camLocal);
@@ -322,14 +350,7 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         };
     }
 
-    function runBakeStep(glRenderer, quality) {
-        const frameNo = glRenderer.info.render.frame;
-        if (frameNo !== bakeFrame) {
-            bakeFrame = frameNo;
-            bakesThisFrame = 0;
-        }
-        if (bakesThisFrame >= BAKE_FACES_PER_FRAME) return;
-        bakesThisFrame++;
+    function runBakeStep(glRenderer, quality, frame) {
         if (!bakeMaterial) {
             bakeMaterial = new THREE.ShaderMaterial({
                 vertexShader: BAKE_VERTEX,
@@ -346,23 +367,34 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
                 toneMapped: false
             });
         }
-        const layer = bakeJob.step < 6 ? 0 : 1;
-        const face = bakeJob.step % 6;
-        const target = layer === 0 ? bakeJob.surface : bakeJob.extras;
+        // A new frame resets the budget; so does time passing, in case a caller reuses one frame object
+        const now = performance.now();
+        if (frame !== bakeFrame || now - bakeTime > 10) {
+            bakeFrame = frame;
+            bakeTime = now;
+            bakedPixelsThisFrame = 0;
+        }
         const previous = glRenderer.getRenderTarget();
         const previousFace = glRenderer.getActiveCubeFace();
         const previousMip = glRenderer.getActiveMipmapLevel();
         const savedOct = pattern.uOct.value;
         pattern.uOct.value = QUALITY[quality].bakeOct;
-        bakeMaterial.uniforms.uFace.value = FACES[face];
-        bakeMaterial.uniforms.uLayer.value = layer;
         bakeMaterial.uniforms.uBakePx.value = 2.2 / bakeJob.size;
         bakeMesh.material = bakeMaterial;
-        glRenderer.setRenderTarget(target, face);
-        glRenderer.render(bakeScene, bakeCamera);
+        const facePixels = bakeJob.size * bakeJob.size;
+        // Always one face at least, so that the largest size still gets done
+        while (bakeJob.step < 12 && (bakedPixelsThisFrame === 0 || bakedPixelsThisFrame + facePixels <= BAKE_PIXELS_PER_FRAME)) {
+            const layer = bakeJob.step < 6 ? 0 : 1;
+            const face = bakeJob.step % 6;
+            bakeMaterial.uniforms.uFace.value = FACES[face];
+            bakeMaterial.uniforms.uLayer.value = layer;
+            glRenderer.setRenderTarget(layer === 0 ? bakeJob.surface : bakeJob.extras, face);
+            glRenderer.render(bakeScene, bakeCamera);
+            bakedPixelsThisFrame += facePixels;
+            bakeJob.step++;
+        }
         glRenderer.setRenderTarget(previous, previousFace, previousMip);
         pattern.uOct.value = savedOct;
-        bakeJob.step++;
         if (bakeJob.step >= 12) finishBake();
     }
 
@@ -393,11 +425,25 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         }
     }
 
-    function bakeSizeFor(px, quality) {
+    function bakeSizeFor(px) {
         if (px < 96) return 128;
-        if (px < 300 || quality !== 'low') return 256;
-        return 512;
+        return px < 300 ? 256 : 512;
     }
+
+    // Storms ride their jets, which the clouds of a rocky world do not have
+    const stormJets = look.storms.slice(0, 6).map((storm) => (isSolid ? 0 : jetRate(jetIndex(storm.lat, look.envelope.bandCount, look.seedPhase), look.seedPhase)));
+    function placeStorms(jetT) {
+        for (let i = 0; i < stormJets.length; i++) {
+            const storm = look.storms[i];
+            const lon = storm.lon - jetT * stormJets[i];
+            const cosLat = Math.cos(storm.lat * Math.PI / 2);
+            const a4 = pattern.uStormA.value[i];
+            a4.x = cosLat * Math.cos(lon);
+            a4.y = Math.sin(storm.lat * Math.PI / 2);
+            a4.z = cosLat * Math.sin(lon);
+        }
+    }
+    placeStorms(0);
 
     // --- Time ---
     let clock = 0;
@@ -418,10 +464,15 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
             if (Array.isArray(sunDirWorld)) shared.uSun.value.fromArray(sunDirWorld);
             else shared.uSun.value.copy(sunDirWorld);
             shared.uSun.value.transformDirection(invTilt);
+            // A locked world turns with its orbit, not with the clock: this keeps +x of its pattern under the star
+            if (look.locked) shared.uSpin.value = Math.atan2(shared.uSun.value.z, shared.uSun.value.x);
         }
-        if (frame && frame.camera && !renderer) {
+        if (frame && frame.camera && !measured) {
+            // Not drawn yet: this is the first estimate of its size, from the camera the frame names
             camLocal.setFromMatrixPosition(frame.camera.matrixWorld).applyMatrix4(invTilt);
             shared.uCam.value.copy(camLocal);
+            const heightPx = (frame.height || 720) * (frame.dpr || 1);
+            pixelDiameter = heightPx * frame.camera.projectionMatrix.elements[5] / camLocal.length();
         }
 
         pattern.uOct.value = q.oct;
@@ -429,12 +480,12 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
         if (shell) shell.visible = q.shell;
 
         // Live or baked, with a margin so that it does not flip back and forth at the threshold
-        const px = pixelDiameter;
+        const px = pixelDiameter || (quality === 'low' ? 64 : 0);
         const margin = useBaked ? 1.2 : 0.85;
         const wantBaked = px > 0 && px < q.liveAbovePx * margin;
 
         if (renderer && wantBaked) {
-            const size = bakeSizeFor(px, quality);
+            const size = measured ? bakeSizeFor(px) : Math.min(256, bakeSizeFor(px));
             const have = bakeJob ? bakeJob.size : baked ? baked.size : 0;
             if (have < size) {
                 if (bakeJob) {
@@ -444,33 +495,17 @@ export function createPlanetMesh(planet, hostTeffK, opts = {}) {
                 startBake(size);
             }
         }
-        if (renderer && bakeJob) runBakeStep(renderer, quality);
+        if (renderer && bakeJob) runBakeStep(renderer, quality, frame);
 
         useBaked = wantBaked && !!baked;
         if (!bakeJob && !useBaked && !isSolid) pattern.uJetT.value = clock * look.spinRate * look.envelope.jetSpeed * 0.12;
         if (isSolid && !bakeJob && !useBaked) pattern.uFlow.value = clock * 0.03;
 
-        // Storms ride their jet
-        if (!isSolid) {
-            look.storms.slice(0, 6).forEach((storm, i) => {
-                const lat = storm.lat;
-                const jet = jetIndex(lat, look.envelope.bandCount, look.seedPhase);
-                const lon = storm.lon + pattern.uJetT.value * -jetRate(jet, look.seedPhase);
-                const cosLat = Math.cos(lat * Math.PI / 2);
-                pattern.uStormA.value[i].x = cosLat * Math.cos(lon);
-                pattern.uStormA.value[i].y = Math.sin(lat * Math.PI / 2);
-                pattern.uStormA.value[i].z = cosLat * Math.sin(lon);
-            });
-        } else {
-            look.storms.slice(0, 6).forEach((storm, i) => {
-                const cosLat = Math.cos(storm.lat * Math.PI / 2);
-                pattern.uStormA.value[i].x = cosLat * Math.cos(storm.lon);
-                pattern.uStormA.value[i].y = Math.sin(storm.lat * Math.PI / 2);
-                pattern.uStormA.value[i].z = cosLat * Math.sin(storm.lon);
-            });
-        }
+        if (!isSolid) placeStorms(pattern.uJetT.value);
 
         body.material = useBaked ? bakedMaterial : liveMaterial;
+        // At Low the costly live program is never built: a planet waits out its short bake unseen, rings and all
+        tilt.visible = useBaked || !(quality === 'low' && renderer);
     }
 
     function setOpacity(value) {

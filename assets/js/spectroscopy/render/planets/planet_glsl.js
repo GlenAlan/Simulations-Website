@@ -7,6 +7,14 @@
 //   baked   reads the cube map; much cheaper, and its mipmaps stop small planets shimmering
 // The frame of all the shading is the planet's own, tilted but not spinning, with radius 1: see uCam and uSun.
 
+const ROT_Y_GLSL = /* glsl */`
+vec3 rotY(vec3 v, float a) {
+    float c = cos(a);
+    float s = sin(a);
+    return vec3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
+}
+`;
+
 export const NOISE_GLSL = /* glsl */`
 vec3 mod289(vec3 x) { return x - floor(x / 289.0) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x / 289.0) * 289.0; }
@@ -200,11 +208,7 @@ vec2 voronoi(vec3 x) {
     return sqrt(vec2(d1, d2));
 }
 
-vec3 rotY(vec3 v, float a) {
-    float c = cos(a);
-    float s = sin(a);
-    return vec3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
-}
+${ROT_Y_GLSL}
 
 // Turns p about the axis c by an angle that falls away with distance from c: stirs bands and clouds into a vortex
 vec3 swirl(vec3 p, vec3 c, float r, float amount) {
@@ -257,6 +261,7 @@ export const PATTERN_UNIFORMS = /* glsl */`
 uniform vec3 uSeed;
 uniform int uOct;
 uniform float uPhase;
+uniform float uLocked;   // 1 on a tidally locked world: then +x in the pattern's frame always points at the star
 `;
 
 // Thin features are drawn no thinner than a pixel, and fade to keep their weight, so they stay put at any size
@@ -330,6 +335,7 @@ uniform float uSalt;
 uniform float uCracks;
 uniform float uPlains;
 uniform float uLava;
+uniform float uDayMelt;
 uniform float uMelt;
 uniform float uCap;
 uniform float uFrost;
@@ -362,6 +368,7 @@ void solidSurface(vec3 p, float px, inout Surf s) {
     // Only the large octaves are warped: warping the fine ones would draw them out into streaks
     vec3 grad;
     float elev = fbmD(q * 0.95 + wv * 0.32, 3, px * 0.95, grad);
+    float elevSmooth = elev;
     grad *= 0.95;
     if (uOct > 3) {
         vec3 gh;
@@ -426,8 +433,7 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         rock = mix(rock, uRockC, uSalt * smoothstep(0.05, 0.14, -elev - 0.16 + fine * 0.12) * 0.75);
     }
 
-    float hasShell = uCracks;
-    if (hasShell > 0.0) {
+    if (uCracks > 0.0) {
         // A bright cracked shell: blue-white mottling, long ridged lines over it, and plates split by fractures
         rock = mix(uRockA, uRockB, smoothstep(0.02, 0.42, tone + 0.2 * fine) * 0.8);
         rock = mix(rock, uRockC, smoothstep(0.05, 0.36, -tone) * 0.7);
@@ -442,13 +448,13 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         float l2 = thinLine(abs(n2), 0.02, px * 2.7) * smoothstep(-0.25, 0.2, tone);
         float l3 = thinLine(abs(n3), 0.035, px * 7.3) * smoothstep(0.0, 0.45, tone);
         float lines = max(l1, max(l2 * 0.5, l3 * 0.32));
-        rock = mix(rock, uLine, lines * 0.85);
+        rock = mix(rock, uLine, lines * 0.85 * uCracks);
         // Each crack has a stained band either side of it
-        rock = mix(rock, mix(uRockB, uLine, 0.25), band * 0.5 * (1.0 - l1));
+        rock = mix(rock, mix(uRockB, uLine, 0.25), band * 0.5 * (1.0 - l1) * uCracks);
         vec2 v = voronoi(ql * 3.1 + 9.0);
-        float plates = thinLine(v.y - v.x, 0.028, px * 3.1) * 0.55;
+        float plates = thinLine(v.y - v.x, 0.028, px * 3.1) * 0.55 * uCracks;
         rock = mix(rock, uRockB * 0.55, plates);
-        height += 0.05 * lines;
+        height *= 0.1;
         grad = grad * 0.1 + (n2 > 0.0 ? -g2 : g2) * 2.7 * l2 * 0.02;
         s.sheen = 1.0 - lines;
     }
@@ -467,6 +473,7 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         rock = mix(rock, ice, basin);
         craterAmount *= 1.0 - basin;
         grad *= 1.0 - 0.92 * basin;
+        height = mix(height, elevSmooth, 0.92 * basin);
         s.sheen = basin * 0.5;
     }
 
@@ -482,18 +489,35 @@ void solidSurface(vec3 p, float px, inout Surf s) {
         float crack2 = thinLine(edge2, 0.075, px * 6.7);
         float core1 = thinLine(edge1, 0.026, px * 2.3);
         float poolField = fbm(q * 1.25 + wv * 0.5 + 2.0, 4, px * 1.25) + 0.12 * fine;
-        float pool = smoothstep(uMelt, uMelt + 0.1, poolField);
+        // Facing the star the melt spreads into an ocean; the far side is mostly solid crust
+        float facing = uLocked * (smoothstep(0.35, 1.0, p.x) * 0.26 - smoothstep(-0.05, -0.7, p.x) * 0.12);
+        float pool = smoothstep(uMelt, uMelt + 0.1, poolField + facing);
         float churn = 0.5 + 0.5 * fbm(q * 5.5 + wv * 1.3, min(uOct, 4), px * 5.5);
         // Crust cools darker towards the middle of each plate
         float plateAge = smoothstep(0.0, 0.45, edge1);
         rock = mix(uRockA * 1.4, uRockB * 0.5, plateAge);
         rock = mix(rock, uRockB, smoothstep(-0.1, 0.4, fine));
         heat = max(crack1 * 0.4, max(core1 * 0.7, crack2 * 0.28 * smoothstep(0.1, 0.75, churn)));
-        heat = max(heat, pool * mix(0.42, 0.92, churn * churn));
+        heat *= mix(1.0, mix(0.68, 1.0, smoothstep(-0.7, 0.3, p.x)), uLocked);
+        heat = max(heat, pool * mix(0.34, 0.8, churn * churn));
         rock *= 1.0 - pool * 0.9;
         grad = grad * 0.5 * (1.0 - pool);
         height += 0.08 * plateAge;
         craterAmount = 0.0;
+    }
+
+    if (uDayMelt > 0.0) {
+        float reach = mix(0.985, 0.87, uDayMelt);    // Cosine of how far from the point under the star it has melted
+        float towards = p.x + 0.05 * fine + 0.05 * tone;
+        float pond = smoothstep(reach, reach + 0.025, towards);
+        float margin = smoothstep(reach - 0.2, reach, towards);
+        vec2 v = voronoi(q * 5.0 + wv * 0.4);
+        float crack = thinLine(v.y - v.x, 0.07, px * 5.0) * margin;
+        heat = max(heat, max(pond * (0.36 + 0.34 * smoothstep(-0.3, 0.4, fine)), crack * 0.34));
+        rock = mix(rock, uRockB * 0.6, margin * 0.7);
+        rock *= 1.0 - 0.92 * pond;
+        craterAmount *= 1.0 - margin;
+        grad *= 1.0 - 0.8 * margin;
     }
 
     if (craterAmount > 0.002) {
@@ -579,7 +603,7 @@ vec3 cloudSample(vec3 p, int oct, float px) {
     // Slow, wide warping draws the big masses out into fronts; the fine detail is left unsmeared
     vec3 warp = vec3(snoise(q * 0.7 + 11.0), snoise(q * 0.7 + 23.0), snoise(q * 0.7 - 7.0));
     float f = fbm(q + warp * 0.6, min(oct, 3), px * 1.8 * stretch);
-    float texture_ = 0.0;
+    float grain = 0.0;
     float veil = 0.0;
     if (oct > 3) {
         vec3 d = vec3(sp.x, sp.y * mix(stretch, 1.0, 0.6), sp.z) * 10.0 + uSeed * 2.1 + warp * 0.7;
@@ -587,7 +611,7 @@ vec3 cloudSample(vec3 p, int oct, float px) {
         // Detail bites hardest near the edge of a cloud mass, so edges fray while cores stay solid
         float nearEdge = 1.0 - smoothstep(0.0, 0.3, abs(f - uCloudLevel));
         f += detail * mix(0.13, 0.34, nearEdge);
-        texture_ = detail;
+        grain = detail;
     }
     // Wet tropics and storm tracks, dry subtropics, in proportion to how much the air stirs
     f += 0.1 * uCloudSwirl * cos(p.y * 9.4);
@@ -596,7 +620,7 @@ vec3 cloudSample(vec3 p, int oct, float px) {
         float where = smoothstep(0.0, 0.5, snoise(q * 0.45 - 31.0));
         veil = smoothstep(-0.08, 0.5, fbmFlow(c, min(oct, 6), px * 13.0)) * where * uCloudVeil;
     }
-    return vec3(f, texture_, veil);
+    return vec3(f, grain, veil);
 }
 
 // Optical depth grows from nothing at the level, slowly at first: thin frayed edges, building to an opaque core
@@ -679,7 +703,7 @@ void envelopeSurface(vec3 p, float px, inout Surf s) {
         float m = uStormB[i].y * (1.0 - smoothstep(0.5, 1.05, ovalD));
         stormEdge = max(stormEdge, uStormB[i].y * exp(-(ovalD - 1.0) * (ovalD - 1.0) * 1.6));
         stormMask = max(stormMask, m);
-        sp = swirl(sp, c, r * 1.55, uStormB[i].x);
+        sp = swirl(sp, c, r * 1.3, uStormB[i].x);
     }
 
     float lat = asin(clamp(sp.y, -1.0, 1.0)) / 1.5708;
@@ -718,8 +742,8 @@ void envelopeSurface(vec3 p, float px, inout Surf s) {
     // Bright ovals with dark collars
     float spot = mix(a.y, b.y, k);
     float ovals = uChevron > 0.0 ? 0.0 : uTurb;
-    float oval = smoothstep(0.7, 0.76, spot) * ovals * 1.8;
-    float collar = (smoothstep(0.54, 0.7, spot) - smoothstep(0.7, 0.76, spot)) * ovals * 1.1;
+    float oval = smoothstep(0.8, 0.87, spot) * ovals * 1.3;
+    float collar = (smoothstep(0.66, 0.8, spot) - smoothstep(0.8, 0.87, spot)) * ovals * 0.3;
     col = mix(col, uBelt, clamp(collar, 0.0, 1.0) * octaveFade(15.0, px) * uBands);
     col = mix(col, uZone, clamp(oval, 0.0, 1.0) * octaveFade(15.0, px) * uBands);
 
@@ -742,7 +766,9 @@ void envelopeSurface(vec3 p, float px, inout Surf s) {
     }
 
     s.albedo = col;
-    s.heat = clamp(0.34 + 0.55 * v + 0.28 * n, 0.0, 1.0);
+    float heat = clamp(0.34 + 0.55 * v + 0.28 * n, 0.0, 1.0);
+    if (uLocked > 0.0) heat *= mix(0.62, 1.22, smoothstep(-0.55, 0.9, dot(p, vec3(0.906, 0.0, 0.423))));
+    s.heat = clamp(heat, 0.0, 1.0);
 }
 `;
 
@@ -768,7 +794,7 @@ float chapman(float X, float h, float cosChi) {
 }
 
 // Single scattering from t0 to t1 along a ray. Returns the light added and the fraction of light from behind let through.
-vec3 scatterAlong(vec3 ro, vec3 rd, float t0, float t1, vec3 sun, vec3 sunCol, out vec3 through) {
+vec3 scatterAlong(vec3 ro, vec3 rd, float t0, float t1, vec3 sun, vec3 sunCol, out vec3 through, out float column) {
     float X = 1.0 / uH;
     float dt = (t1 - t0) / float(uAtmSteps);
     float mu = dot(rd, sun);
@@ -779,7 +805,7 @@ vec3 scatterAlong(vec3 ro, vec3 rd, float t0, float t1, vec3 sun, vec3 sunCol, o
     vec3 ext = uBetaR + uBetaM + uBetaA;
     vec3 sumR = vec3(0.0);
     vec3 sumM = vec3(0.0);
-    float column = 0.0;
+    column = 0.0;
     for (int i = 0; i < uAtmSteps; i++) {
         vec3 p = ro + rd * (t0 + (float(i) + 0.5) * dt);
         float r = length(p);
@@ -832,7 +858,7 @@ vec3 glowOf(float heat) {
     return c * smoothstep(0.0, 0.12, heat);
 }
 
-vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float dist, float coverage, vec3 extraGrad) {
+vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float coverage, vec3 extraGrad) {
     vec3 L = uSun;
     vec3 gradB = rotY(s.grad, -uSpin) + extraGrad;
     gradB -= P * dot(gradB, P);
@@ -903,9 +929,10 @@ vec4 shadePlanet(Surf s, vec3 P, vec3 ro, vec3 rd, float tHit, float dist, float
         if (disc > 0.0) {
             float t0 = max(-bb - sqrt(disc), 0.0);
             vec3 through;
-            added = scatterAlong(ro, rd, t0, max(tHit, t0 + 1e-4), L, uSunCol, through);
+            float column;
+            added = scatterAlong(ro, rd, t0, max(tHit, t0 + 1e-4), L, uSunCol, through, column);
             // A bright haze near the limb stands in for light scattered more than once
-            vec3 lost = 1.0 - through;
+            vec3 lost = 1.0 - exp(-(uBetaR + uBetaM) * column);
             added *= mix(0.45, 1.0, lost.g);
             added += lost * lost * uRimCol * uHazeGlow * smoothstep(-0.06, 0.45, muS);
             col = col * mix(through, vec3(1.0), 0.45) + added;
@@ -987,7 +1014,7 @@ ${RAY_SPHERE_GLSL}
     ` : /* glsl */`
     envelopeSurface(pB, px, s);
     `}
-    gl_FragColor = shadePlanet(s, P, ro, rd, tHit, dist, coverage, extra);
+    gl_FragColor = shadePlanet(s, P, ro, rd, tHit, coverage, extra);
 }
 `;
 }
@@ -1000,7 +1027,7 @@ uniform float uBakeTexel;
 uniform float uCloudSpin;
 uniform float uCloudAlt;
 uniform float uCloudOpacity;
-${NOISE_ROT_ONLY()}
+${ROT_Y_GLSL}
 ${SURF_GLSL}
 ${ATMOSPHERE_GLSL}
 ${SHADE_GLSL}
@@ -1013,16 +1040,16 @@ ${RAY_SPHERE_GLSL}
     vec4 e = textureCube(tExtras, pB);
     s.albedo = a.rgb;
     s.heat = e.b;
-    s.water = e.a > 0.5 ? (e.a - 0.5) * 2.0 : 0.0;
-    s.sheen = e.a < 0.5 ? e.a * 2.0 : 0.0;
+    s.water = clamp((e.a - 0.52) / 0.48, 0.0, 1.0);
+    s.sheen = clamp(e.a / 0.48, 0.0, 1.0) * (1.0 - step(0.5, e.a));
     // Relief from the stored height, by finite differences: smooth even when texels are magnified
     vec3 t1 = normalize(cross(abs(pB.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), pB));
     vec3 t2 = cross(pB, t1);
-    float step_ = max(uBakeTexel * 1.5, px);
-    float lod = log2(step_ / uBakeTexel);
-    float hx = textureLod(tSurface, pB + t1 * step_, lod).a - textureLod(tSurface, pB - t1 * step_, lod).a;
-    float hy = textureLod(tSurface, pB + t2 * step_, lod).a - textureLod(tSurface, pB - t2 * step_, lod).a;
-    s.grad = (t1 * hx + t2 * hy) / (2.0 * step_) * 0.45;
+    float reach = max(uBakeTexel * 1.5, px);
+    float lod = log2(reach / uBakeTexel);
+    float hx = textureLod(tSurface, pB + t1 * reach, lod).a - textureLod(tSurface, pB - t1 * reach, lod).a;
+    float hy = textureLod(tSurface, pB + t2 * reach, lod).a - textureLod(tSurface, pB - t2 * reach, lod).a;
+    s.grad = (t1 * hx + t2 * hy) / (2.0 * reach) * 0.45;
     vec3 extra = vec3(0.0);
     if (uCloudOpacity > 0.0) {
         vec3 pC = rotY(P, uCloudSpin);
@@ -1034,19 +1061,9 @@ ${RAY_SPHERE_GLSL}
         s.cloudTop = clamp(ec.g * 1.0, 0.35, 1.0);
         s.shadow = d2;
     }
-    gl_FragColor = shadePlanet(s, P, ro, rd, tHit, dist, coverage, extra);
+    gl_FragColor = shadePlanet(s, P, ro, rd, tHit, coverage, extra);
 }
 `;
-
-function NOISE_ROT_ONLY() {
-    return /* glsl */`
-vec3 rotY(vec3 v, float a) {
-    float c = cos(a);
-    float s = sin(a);
-    return vec3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
-}
-`;
-}
 
 // Writes the pattern into one face of a cube map. uLayer 0: colour and height, in half floats.
 // uLayer 1: cloud opacity, cloud-top shading, heat, and water or sheen sharing the last channel.
@@ -1086,7 +1103,7 @@ void main() {
     if (uLayer == 0) {
         gl_FragColor = vec4(max(s.albedo, vec3(0.0)), s.height);
     } else {
-        float last = s.water > 0.002 ? 0.5 + 0.5 * s.water : 0.5 * s.sheen;
+        float last = s.water > 0.002 ? 0.52 + 0.48 * s.water : 0.48 * s.sheen;
         gl_FragColor = vec4(s.cloud, s.cloudTop, s.heat, last);
     }
 }
@@ -1133,7 +1150,8 @@ void main() {
     if (d2 > 0.0) t1 = min(t1, -b - sqrt(d2));
     if (t1 <= t0) discard;
     vec3 through;
-    vec3 added = scatterAlong(ro, rd, t0, t1, uSun, uSunCol, through);
+    float column;
+    vec3 added = scatterAlong(ro, rd, t0, t1, uSun, uSunCol, through, column);
     float a = 1.0 - dot(through, vec3(0.3333));
     gl_FragColor = vec4(added, a) * uOpacity;
 }

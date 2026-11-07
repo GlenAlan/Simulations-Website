@@ -79,8 +79,8 @@ const ROCKS = {
 function rockColours(rock, ice) {
     const r = String(rock || '').toLowerCase();
     const i = String(ice || '').toLowerCase();
-    if (!r && /water|h2o/.test(i)) return ROCKS.waterIce;
-    if (!r && i) return ROCKS.tholin;
+    if (/water|h2o/.test(i)) return ROCKS.waterIce;
+    if (i) return ROCKS.tholin;
     if (/basalt|mafic|lava|molten|magma/.test(r)) return ROCKS.basalt;
     if (/oxide|rust|hematite|ferric/.test(r)) return ROCKS.rust;
     if (/sand|desert|dune|arid/.test(r)) return ROCKS.sand;
@@ -161,7 +161,7 @@ function atmosphereFrom(ctx) {
         g = 0.7;
     } else if (envelope) {
         const puffiness = smooth(8, 40, puff);
-        hazeTau = lerp(0.1, 0.34, puffiness) + 0.12 * ch4Eff;
+        hazeTau = lerp(0.1, 0.24, puffiness) + 0.1 * ch4Eff;
         hazeColour = mix3(srgb(255, 240, 214), srgb(206, 236, 255), ch4Eff);
         g = 0.55;
     } else if (kind === 'H2O') {
@@ -182,7 +182,7 @@ function atmosphereFrom(ctx) {
         0.07 * ch4Eff + 0.75 * alkali + 0.03 * so2 + o3,
         0.14 * alkali + 0.22 * so2
     ];
-    const betaA = scale3(absorb, 1 / H);
+    const betaA = scale3(absorb, Math.min(1, column) / H);
 
     // In-scattered brightness, a drawing choice. Thin air would otherwise vanish at small sizes.
     const gain = lerp(3.4, 1.5, smooth(0.1, 1.5, column));
@@ -190,7 +190,7 @@ function atmosphereFrom(ctx) {
     // For Low quality, which skips the shell: the same colour as a Fresnel rim
     const skyColour = add3(mul3(scale3(rayleigh, blueTau), [1, 1, 1]), scale3(hazeColour, hazeTau * 0.8));
     const m = Math.max(skyColour[0], skyColour[1], skyColour[2], 1e-3);
-    const limb = mul3(mul3(scale3(skyColour, 1 / m), mix3([1, 1, 1], sun, 0.5)), [Math.exp(-absorb[0] * 2), Math.exp(-absorb[1] * 2), Math.exp(-absorb[2] * 2)]);
+    const limb = mul3(mul3(scale3(skyColour, 1 / m), mix3([1, 1, 1], sun, 0.85)), [Math.exp(-absorb[0] * 2), Math.exp(-absorb[1] * 2), Math.exp(-absorb[2] * 2)]);
     const rim = clamp(0.25 + 0.75 * smooth(0.02, 1.2, column)) * (1 - 0.55 * alkali);
     const rimPower = lerp(6.5, 2.6, smooth(0.01, 0.05, H));
 
@@ -227,49 +227,58 @@ function envelopeColours(ctx) {
             ch4Eff: 0
         };
     }
+    // Alkali metals darken the tops whatever the exact temperature
+    const Tc = gas.amount('Na') + gas.amount('K') > 0 ? Math.max(T, 1000) : T;
     const zone = ramp([
-        [85, srgb(216, 208, 180)],
-        [140, srgb(242, 232, 208)],
+        [40, srgb(206, 204, 190)],
+        [72, srgb(220, 210, 180)],
+        [105, srgb(242, 232, 208)],
         [230, srgb(238, 238, 230)],
         [430, srgb(226, 232, 238)],
         [620, srgb(132, 160, 198)],
-        [950, srgb(84, 70, 104)],
-        [1400, srgb(66, 50, 86)]
-    ], T);
+        [950, srgb(62, 50, 78)],
+        [1400, srgb(48, 36, 64)]
+    ], Tc);
     const belt = ramp([
-        [85, srgb(170, 150, 112)],
-        [140, srgb(118, 70, 44)],
+        [40, srgb(186, 178, 158)],
+        [72, srgb(176, 154, 114)],
+        [105, srgb(118, 70, 44)],
         [230, srgb(134, 116, 100)],
         [430, srgb(126, 142, 160)],
         [620, srgb(52, 76, 124)],
         [950, srgb(30, 20, 40)],
         [1400, srgb(18, 12, 28)]
-    ], T);
+    ], Tc);
     const accent = ramp([
-        [85, srgb(198, 182, 146)],
-        [140, srgb(196, 134, 86)],
+        [40, srgb(196, 190, 172)],
+        [72, srgb(200, 184, 146)],
+        [105, srgb(196, 134, 86)],
         [230, srgb(190, 176, 158)],
         [430, srgb(172, 188, 204)],
         [620, srgb(88, 116, 164)],
-        [950, srgb(70, 40, 62)],
-        [1400, srgb(58, 30, 50)]
-    ], T);
+        [950, srgb(54, 30, 48)],
+        [1400, srgb(44, 22, 38)]
+    ], Tc);
     const storm = ramp([
-        [85, srgb(232, 222, 196)],
-        [140, srgb(182, 78, 44)],
+        [40, srgb(224, 220, 206)],
+        [72, srgb(234, 224, 198)],
+        [105, srgb(182, 78, 44)],
         [230, srgb(246, 244, 238)],
         [430, srgb(250, 250, 250)],
         [620, srgb(196, 210, 228)],
         [950, srgb(128, 50, 56)],
         [1400, srgb(120, 34, 36)]
-    ], T);
+    ], Tc);
 
     // Methane: a haze whitens the top, then the gas above it takes out red, and more of it the colder and deeper
     const ch4Eff = methaneEffect(gas.amount('CH4'));
     const deep = smooth(80, 42, T) * ch4Eff;
     const absorb = [lerp(1, 0.3, ch4Eff) * lerp(1, 0.5, deep), lerp(1, 0.8, ch4Eff) * lerp(1, 0.56, deep), lerp(1, 1, ch4Eff) * lerp(1, 0.96, deep)];
     const white = [0.86, 0.91, 1];
-    const tint = (c) => mul3(mix3(c, white, ch4Eff * 0.82), absorb);
+    // CO2 haze lies above the methane and pales it, so a sub-Neptune looks chalkier than a clear ice giant
+    const co2Haze = smooth(0.05, 0.9, gas.amount('CO2')) * 0.42;
+    const pale = srgb(206, 208, 200);
+    const tint = (c) => mix3(mul3(mix3(c, white, ch4Eff * 0.72), absorb), pale, co2Haze);
     const out = { zone: tint(zone), belt: tint(belt), accent: tint(accent), storm: tint(storm), ch4Eff };
     if (mass < 25) {
         const dim = lerp(0.72, 1, smooth(8, 25, mass));
@@ -301,10 +310,11 @@ function envelopeFrom(ctx, rng) {
         };
     }
     const massF = smooth(12, 120, mass);
-    const coldMute = 1 - 0.62 * smooth(125, 80, T);
+    const coldMute = 1 - 0.62 * smooth(100, 68, T);
     const hazeHide = 1 - 0.72 * c.ch4Eff * (1 - smooth(50, 100, mass));
     const bands = clamp(lerp(0.34, 1, massF) * coldMute * hazeHide);
-    const turbulence = clamp((0.22 + 0.78 * smooth(60, 560, T)) * lerp(0.45, 1, massF));
+    // Warmer means more turbulent; the heaviest giants also stir themselves with their own internal heat
+    const turbulence = clamp((0.22 + 0.72 * smooth(60, 560, T) + 0.28 * smooth(100, 400, mass)) * lerp(0.45, 1, massF));
     // Faster spin and a bigger planet make narrower jets (Rhines scale)
     const jets = 5.5 * Math.sqrt(10 / Math.max(3, day)) * Math.sqrt(radius / 6) * lerp(0.55, 1.5, massF);
     return {
@@ -324,40 +334,46 @@ function envelopeFrom(ctx, rng) {
 }
 
 function solidFrom(ctx) {
-    const { T, mass, radius, pressure, surface, gas, airless } = ctx;
+    const { T, TEq, mass, radius, gravity, pressure, surface, gas, airless, locked } = ctx;
     const ice = String(surface.ice || '').toLowerCase();
     const rock = String(surface.rock || '').toLowerCase();
     const waterIce = /water|h2o/.test(ice);
     const softIce = !!ice && !waterIce;
-    const iceWorld = (waterIce && !surface.rock) || (ice && !surface.rock) || waterIce;
     const ocean = clamp(finite(surface.ocean_fraction, 0));
     const shellFrozen = waterIce && (ocean <= 0 || T < 235);
+    const iceWorld = shellFrozen || softIce;
     const liquid = shellFrozen ? 0 : ocean * (1 - smooth(420, 520, T));
+    const activeShell = shellFrozen && !!surface.subsurface_ocean;
 
-    // Molten rock: named outright, or hot enough, or rock vapour in the air above bare ground
+    // Molten rock: named outright, or rock vapour in the air above bare ground, or an unlocked world hot all round
     const vapour = gas.amount('Na') + gas.amount('K') + gas.amount('SiO');
-    const molten = !!surface && (/lava|molten|magma/.test(rock) || T >= 1100 || (vapour > 0 && liquid <= 0));
+    const molten = /lava|molten|magma/.test(rock) || (vapour > 0 && liquid <= 0) || (!locked && T >= 1400);
+    // On a locked airless rock the point under the star runs about 1.4 times hotter than T_eq, so it melts first
+    const dayMelt = !molten && locked && !iceWorld ? smooth(1000, 1450, TEq) : 0;
 
-    const colours = rockColours(surface.rock, shellFrozen || softIce ? ice : null);
     const dry = liquid <= 0.001;
-    const gravity = mass / Math.max(0.05, radius * radius);
-    const relief = clamp(0.8 / gravity ** 0.3, 0.45, 1.05);
+    const windy = !airless && pressure >= 0.003 && dry && !molten && !iceWorld;
+    let colours = rockColours(surface.rock, iceWorld ? ice : null);
+    // Wind and air weather bare silicates into sand
+    if (colours === ROCKS.silicate && windy && pressure >= 0.05) colours = ROCKS.sand;
+    const g = finite(gravity, mass / Math.max(0.05, radius * radius));
+    const relief = clamp(0.8 / Math.max(0.01, g) ** 0.3, 0.45, 1.05);
 
     let craters = airless ? 1 : pressure < 0.02 ? 0.55 : pressure < 0.2 ? 0.3 : 0.1;
-    if (shellFrozen) craters = 0.1;
+    // An ocean under the ice keeps resurfacing it; a shell with nothing beneath it is old and battered
+    if (shellFrozen) craters = activeShell ? 0.1 : 0.5;
     if (softIce) craters = 0.45;
     if (molten) craters = 0;
     if (liquid > 0) craters = 0.03;
 
     const rustGround = colours === ROCKS.rust;
     const sandGround = colours === ROCKS.sand;
-    const windy = !airless && pressure >= 0.003 && dry && !molten && !shellFrozen && !softIce;
 
     // Polar caps where water or CO2 can freeze out
     const water = gas.amount('H2O') > 0 || liquid > 0;
     let cap = 0;
-    if (water && !shellFrozen) cap = lerp(0.12, 0.45, smooth(300, 235, T));
-    else if (!shellFrozen && !softIce && !airless && gas.amount('CO2') > 10 && T < 250) cap = lerp(0.05, 0.28, smooth(250, 190, T));
+    if (water && !shellFrozen) cap = lerp(0.1, 0.45, smooth(300, 235, T));
+    else if (!iceWorld && !airless && gas.amount('CO2') > 10 && T < 250) cap = lerp(0.05, 0.28, smooth(250, 190, T));
     if (molten) cap = 0;
 
     const redEdge = finite(surface.red_edge_nm, 0);
@@ -371,7 +387,7 @@ function solidFrom(ctx) {
         rockBright: colours[2],
         iceColour: softIce ? srgb(240, 224, 208) : srgb(232, 240, 250),
         lineColour: waterIce ? srgb(150, 128, 122) : srgb(120, 80, 64),
-        deepWater: srgb(5, 17, 48),
+        deepWater: srgb(4, 20, 50),
         shallowWater: srgb(12, 66, 96),
         leaf: mix3(srgb(86, 72, 34), srgb(68, 46, 24), leafDark),
         leafDry: mix3(srgb(112, 90, 50), srgb(92, 66, 38), leafDark),
@@ -381,19 +397,19 @@ function solidFrom(ctx) {
         craters,
         ridges: molten ? 0.15 : shellFrozen ? 0 : softIce ? 0.2 : liquid > 0 ? 0.8 : windy ? 0.42 : 0.3,
         canyons: rustGround && windy ? 0.75 : 0,
-        maria: airless && !molten ? 0.8 : softIce ? 0 : 0,
+        maria: airless && !molten && !iceWorld ? 0.8 : 0,
         dunes: windy ? (sandGround ? 1 : rustGround ? 0.3 : 0.35) : 0,
         saltFlats: windy && sandGround ? 0.8 : 0,
-        cracks: shellFrozen ? 1 : 0,
+        cracks: shellFrozen ? (activeShell ? 1 : 0.4) : 0,
         plains: softIce ? 1 : 0,
         lava: molten ? 1 : 0,
+        dayMelt,
         // Height at which to cut the melt noise: the hotter, the more lies molten
         melt: molten ? lerp(0.36, 0.16, smooth(1000, 2600, T)) : 0,
         cap,
         frost: iceWorld ? 0 : smooth(170, 90, T) * (airless ? 0.15 : 0.65),
         relief,
-        regolith: shellFrozen ? 0.25 : airless ? 0.62 : lerp(0.4, 0, smooth(0.001, 0.3, pressure)),
-        iceSheen: shellFrozen ? 1 : softIce ? 0.4 : 0
+        regolith: shellFrozen ? 0.25 : airless ? 0.62 : lerp(0.4, 0, smooth(0.001, 0.3, pressure))
     };
 }
 
@@ -404,7 +420,7 @@ function cloudsFrom(ctx) {
     const off = { kind: null, cover: 0, level: 9, colour: zero3(), shade: zero3(), opacity: 0, swirl: 0, streak: 0, soft: 0.1, altitude: 0, veil: 0, storms: 0 };
     if (!kind || cover <= 0 || !solid) return off;
     // Opacity builds up from the level, so the visibly cloudy area starts a little above it
-    const level = CLOUD_SIGMA * normalQuantile(1 - cover) - 0.04;
+    const level = CLOUD_SIGMA * normalQuantile(1 - cover) - 0.025;
     if (kind === 'H2O') {
         return { kind, cover, level, colour: srgb(252, 252, 250), shade: srgb(128, 142, 170), opacity: 1, swirl: 1, streak: 0.55, soft: 0.2, altitude: 0.012, veil: 0.2, storms: Math.round(2 + cover * 3) };
     }
@@ -424,8 +440,8 @@ function cloudsFrom(ctx) {
 // Black-body glow from the planet's own heat, at three points along the temperature range of what is glowing
 function emissionFrom(ctx, solid) {
     const { T } = ctx;
-    const molten = solid && solid.lava > 0;
-    const off = { on: false, tempK: 0, cool: zero3(), warm: zero3(), hot: zero3(), night: 0 };
+    const molten = solid && (solid.lava > 0 || solid.dayMelt > 0);
+    const off = { on: false, cool: zero3(), warm: zero3(), hot: zero3() };
     if (molten) {
         const top = Math.max(1500, T * 1.15);
         const at = (K, gain) => {
@@ -433,14 +449,14 @@ function emissionFrom(ctx, solid) {
             const m = Math.max(bb[0], bb[1], bb[2]);
             return scale3(bb, gain / m);
         };
-        return { on: true, tempK: top, cool: at(850, 0.35), warm: at(top * 0.8, 1.7), hot: at(top * 1.2, 5), night: 1 };
+        return { on: true, cool: at(850, 0.35), warm: at(top * 0.8, 1.7), hot: at(top * 1.2, 5) };
     }
-    if (!solid && T >= 650) {
+    if (ctx.envelope && T >= 650) {
         const glow = smooth(650, 1700, T);
         const bb = blackBodyRGB(T);
         const m = Math.max(bb[0], bb[1], bb[2]);
         const c = scale3(bb, 1 / m);
-        return { on: true, tempK: T, cool: scale3(c, 0.004 * glow), warm: scale3(c, 0.026 * glow), hot: scale3(c, 0.11 * glow), night: glow };
+        return { on: true, cool: scale3(c, 0.004 * glow), warm: scale3(c, 0.026 * glow), hot: scale3(c, 0.11 * glow) };
     }
     return off;
 }
@@ -495,7 +511,7 @@ export function appearanceFrom(planet, hostTeffK) {
     const seedText = String(planet.visual_seed || planet.code || 'planet');
     const rng = new Rng(seedText);
 
-    const T = Math.max(10, finite(planet.T_eq_K, 250));
+    const TEq = Math.max(10, finite(planet.T_eq_K, 250));
     const radius = Math.max(0.05, finite(planet.radius_Rearth, 1));
     const mass = Math.max(0.001, finite(planet.mass_Mearth, 1));
     const pressure = Math.max(0, finite(planet.pressure_bar, 0));
@@ -511,8 +527,12 @@ export function appearanceFrom(planet, hostTeffK) {
     const envelope = gas.amount('H2') + gas.amount('He') >= 40;
     const deck = !envelope && (kind === 'H2SO4' || (cover >= 0.9 && pressure >= 3) || (pressure >= 15 && gas.amount('CO2') >= 50));
     const airless = !envelope && !deck && gas.total <= 0 && pressure <= 1e-6;
-    const sun = hostLight(hostTeffK);
-    const ctx = { gas, T, mass, radius, pressure, day, envelope, deck, airless, sun, surface, kindRaw, coverRaw };
+    const locked = !!planet.tidally_locked;
+    const sun = hostLight(hostTeffK ?? planet.host_teff_K);
+    // What we can see: the ground's own temperature on a rocky world, the cloud tops on anything with a deck or envelope
+    const T = envelope || deck ? TEq : Math.max(10, finite(planet.T_surface_K, TEq));
+    const gravity = planet.gravity_g;
+    const ctx = { gas, T, TEq, mass, radius, gravity, pressure, day, envelope, deck, airless, locked, sun, surface, kindRaw, coverRaw };
 
     const solid = envelope || deck ? null : solidFrom(ctx);
     ctx.solid = solid;
@@ -533,12 +553,13 @@ export function appearanceFrom(planet, hostTeffK) {
         storms.push({
             lat,
             lon: rng.range(0, Math.PI * 2),
-            radius: gasBody ? lerp(0.05, 0.1 + 0.16 * (1 - i / Math.max(1, stormCount)), rng.next()) : rng.range(0.05, 0.115),
-            spin: (lat >= 0 ? 1 : -1) * (gasBody ? rng.range(2.6, 5) : rng.range(1.0, 1.9)),
+            radius: gasBody ? lerp(0.05, 0.07 + 0.11 * (1 - i / Math.max(1, stormCount)), rng.next()) : rng.range(0.05, 0.115),
+            spin: (lat >= 0 ? 1 : -1) * (gasBody ? rng.range(2, 3.4) : rng.range(1.0, 1.9)),
             strength: gasBody ? (i === 0 ? 1 : rng.range(0.35, 0.8)) : 1
         });
     }
-    const tiltDeg = planet.rings && Number.isFinite(planet.rings.tilt_deg) ? planet.rings.tilt_deg : rng.range(-26, 26);
+    // A locked world keeps its pole upright to the orbit and one face to the star
+    const tiltDeg = planet.rings && Number.isFinite(planet.rings.tilt_deg) ? planet.rings.tilt_deg : locked ? 0 : rng.range(-26, 26);
 
     // A faster day turns the globe faster, but gently: a slow, calm spin, whatever the planet
     const spinRate = clamp(0.055 * Math.sqrt(24 / day), 0.012, 0.11);
@@ -549,13 +570,14 @@ export function appearanceFrom(planet, hostTeffK) {
         seedPhase: rng.range(0, Math.PI * 2),
         phase0: rng.range(0, Math.PI * 2),
         model: solid ? 'solid' : 'envelope',
+        locked,
         sun,
         atmosphere,
         envelope: gasBody,
         solid,
         clouds,
         emission: emissionFrom(ctx, solid),
-        rings: ringsFrom(planet, T),
+        rings: ringsFrom(planet, TEq),
         storms,
         tiltDeg,
         spinRate,
