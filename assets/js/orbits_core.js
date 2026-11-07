@@ -17656,6 +17656,7 @@
         quiet: null,                      // the body chosen by the scene, for the readouts: no arrows or ring for it, until pressed (a ring round Earth would look like a path)
         boxes: new Float64Array(4 * (CANNON_MAX + 2))
     };
+    // (minutes: the clock and periods read in minutes, as a low orbit's do; underneath, its time is in seconds)
     SCENES.cannon = {
         units: 'km', time: 's', minutes: true, Tref: 0.75 * CANNON_LAP, cannon: true, swarm: true, noClock: true, subject: 0, trail: 0, vref: 7.85 / AUYR_KMS,
         box: [-9500, 9500, -13000, 9000].map((v) => v / AU_KM),
@@ -18036,7 +18037,7 @@
                 const round = y / hyp(x, y);   // (the cannon is straight up: 1 beside it, -1 on the far side)
                 if (round < best) { best = round; ax = X; ay = Y; }
             }
-            if (best > 1.5 || best > 0.9999) continue;   // (none of it in view, or only just out of the muzzle)
+            if (best > 0.9999) continue;   // (none of it in view, or only just out of the muzzle)
             const dx = ax - ox, dy = ay - oy, d = hyp(dx, dy) || 1, ux = dx / d, uy = dy / d, w = nameWidth(q.text, fs);
             let box = null;
             for (let t = 0; t < 8; t++) {
