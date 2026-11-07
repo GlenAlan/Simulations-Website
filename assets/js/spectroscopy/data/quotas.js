@@ -114,7 +114,7 @@ export const SUPERNOVAE = {
     near: { Ia: 1, II: 2 },
     far: { Ia: 5, II: 2 },
     farPeakMag: [12.5, 15],          // How bright a far one is at its peak: its host is a galaxy at the distance that gives this
-    farPhaseDays: [-8, 25],          // Days from its peak at the start, spread evenly: caught near its peak, as real ones are
+    farPhaseDays: [-6, 16],          // Days from its peak at the start, spread evenly: caught near its peak, as real ones are
     farFaintestNow: 16.6,            // The faintest one may be drawn at the start, so it can be found zoomed in (the limit is 17.5)
     farOffset: [0.15, 0.55]          // How far out on its galaxy, as a share of the way from the middle to the edge as drawn
 };
