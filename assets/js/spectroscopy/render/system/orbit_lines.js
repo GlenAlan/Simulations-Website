@@ -131,7 +131,7 @@ void main() {
         : 1.0 - smoothstep(halfW - 0.5, halfW + 0.5, abs(vEdge));
     // How far behind the head this point is, as a fraction of the loop
     float back = fract(uHead - vU);
-    a *= 1.0 - smoothstep(uDraw - 0.015, uDraw, back);
+    if (uDraw < 0.999) a *= 1.0 - smoothstep(uDraw - 0.015, uDraw, back);
     float t = uTrail > 0.0 ? mix(1.0, 1.0 + uTrail, pow(1.0 - back, 5.0)) : 1.0;
     gl_FragColor = vec4(uColour * uOpacity * t * a, 1.0);
 }`;
