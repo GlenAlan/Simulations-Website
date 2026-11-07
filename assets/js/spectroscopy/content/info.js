@@ -836,7 +836,7 @@ function nucleusInfo({ entity, body }) {
         row('Narrow lines, full width at half height', n.active && isNum(n.narrow_fwhm_kms) ? `${withCommas(n.narrow_fwhm_kms)} km/s` : null),
         row("Stars' speeds in the bulge (σ)", num(n.sigma_kms, ' km/s')),
         row('Redshift, z', isNum(n.z) ? n.z.toFixed(4) : null),
-        row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+        row(entity.radial_velocity_kms < 0 ? 'Radial velocity' : 'Recession velocity', velocityText(entity.radial_velocity_kms)),
         row('Distance', distanceText(entity.distance_pc))
     ]);
     if (!n.active) {
