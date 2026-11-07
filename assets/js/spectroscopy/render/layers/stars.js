@@ -153,13 +153,14 @@ export function createSprites(data) {
 
                 // Never under about a pixel across, or a faint star would flicker as it crosses pixel boundaries
                 float sigma = max((0.58 + 0.095 * m) * size * mix(1.0, aSoft, 0.55), 0.55 * uDpr);
-                float haloR = sigma * (1.5 + 0.22 * m) * aSoft;
+                // X-ray sources are hard points in a black sky, not balls of cotton
+                float haloR = sigma * (1.5 + 0.22 * m) * aSoft * mix(1.0, 0.6, uBandW[4]);
                 // Faint stars have no halo worth drawing, and they are most of them: keep their quads tiny
                 float quad = sigma * 3.0 + haloR * (2.5 + 0.42 * m) * smoothstep(2.5, 6.0, m);
 
                 // Compressed: true flux would run to a thousand times this, and wash out the whole sky
                 vPeak = 0.028 * pow(10.0, 0.293 * m) * amount * air * glint;
-                float haloAmp = 0.0006 * m * m * m * amount * air * mix(1.0, glint, 0.5);
+                float haloAmp = 0.0006 * m * m * m * amount * air * mix(1.0, glint, 0.5) * mix(1.0, 0.3, uBandW[4]);
                 vShape = vec4(quad, sigma, haloR, haloAmp);
 
                 // Real colour shows in the halo: the core saturates to white in tone mapping

@@ -12,7 +12,7 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
-import { bandSkyBrightness } from '../../data/band_table.js';
+import { bandSkyBrightness, bandMagnitude } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
 import { createSprites, createSpikes, bodySoftness, SPLIT_LO, SPLIT_HI } from './stars.js';
@@ -368,7 +368,8 @@ export function createBinariesLayer(engine, app) {
         pairs.forEach(({ system, node }, i) => {
             centres.set(worldOf(system, node.x, node.y), i * 3);
             auraBandA.set([0, 0, 0, system.body.bands.uv], i * 4);
-            auraBandB[i] = system.body.bands.xray;
+            // A brighter source has the bigger glow, so that the sky has a few great beacons and many small ones
+            auraBandB[i] = system.body.bands.xray * Math.min(1, 10 ** (-0.2 * (bandMagnitude(system.body, 'xray') - 1.5)));
             sep[i] = node.sepSelf;
         });
         auraGeometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
@@ -402,7 +403,7 @@ export function createBinariesLayer(engine, app) {
                 varying float vAmount;
                 void main() {
                     float r = length(vP);
-                    float glow = exp(-r * r * 12.0) * 0.5 + 0.1 / (1.0 + r * r * 25.0);
+                    float glow = exp(-r * r * 12.0) * mix(0.5, 0.28, uBandW[4]) + 0.1 / (1.0 + r * r * 25.0);
                     gl_FragColor = vec4(bandColour(vec3(1.0)) * glow * smoothstep(1.0, 0.55, r) * vAmount, 1.0);
                 }`
         });
