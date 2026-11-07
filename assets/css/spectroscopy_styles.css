@@ -391,8 +391,13 @@ body.sim-fullscreen-active .spectro-sim .sim-aspect-ratio-box {
     padding: 0.5em 0.9em 0.6em;
     border-top: 1px solid var(--color-border);
     background-color: var(--color-bg-alt);
+    box-sizing: border-box; /* So that the height fit() measures is the height it keeps */
     font-size: 0.85em;
     line-height: 1.35;
+}
+
+.spectro-layer-tip.is-idle {
+    font-style: italic;
 }
 
 /* Context bar */
