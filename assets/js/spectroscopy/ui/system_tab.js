@@ -5,7 +5,7 @@
 import { bus, select, setLayer } from '../core/state.js';
 import { sig, sci } from '../core/format.js';
 import { createPlayback } from './playback.js';
-import { hzStatus, buildModel, keplerReadout, speedsFor } from '../render/system/system_model.js';
+import { hzStatus, buildModel, keplerReadout, cometReadout, speedsFor } from '../render/system/system_model.js';
 import { clockFor } from './spectrum/tools/orbit_clock.js';
 
 function el(tag, className, text) {
@@ -34,21 +34,26 @@ function row(list, label, value) {
     return dd;
 }
 
-// A sentence on what's here. With nothing going round it, that includes what there is to do.
-function summaryOf(model) {
+// A sentence on what's here. With nothing going round it, that includes what there is to do, if this device can show it.
+function summaryOf(model, canView) {
     const { body } = model;
     if (body.black_hole) return 'A black hole and the star going round it. Gas from the star falls onto the disc.';
     if (body.neutron_star) {
         return body.neutron_star.pulsar
             ? 'A neutron star, with its beams slowed right down. Really it turns far too fast to draw.'
-            : 'A neutron star, on its own. Drag to look round it.';
+            : `A neutron star, on its own.${canView ? ' Drag to look round it.' : ''}`;
     }
     const n = model.planets.length;
-    if (model.lone) return 'One star, no planets. Nothing goes round it, so this is the star up close: drag to look round it, or zoom in on its surface.';
+    if (model.lone) return canView ? 'One star, no planets. Nothing goes round it, so this is the star up close: drag to look round it, or zoom in on its surface.' : 'One star, no planets.';
     const starText = model.stars.length === 1 ? 'One star' : `${model.stars.length} stars`;
     const planetText = n === 0 ? 'no planets' : n === 1 ? 'one planet' : `${n} planets`;
-    return `${starText}, ${planetText}.`;
+    const nc = model.comets.length;
+    const cometText = nc === 0 ? '' : nc === 1 ? ' and a comet' : ` and ${nc} comets`;
+    return `${starText}, ${planetText}${cometText}.`;
 }
+
+// What the student last chose for each system's clock, kept between visits
+const keptClocks = new Map();
 
 export function initSystemTab(app) {
     const view = app.system;
@@ -70,24 +75,35 @@ export function initSystemTab(app) {
         return modelCache;
     }
 
+    let quiet = false;          // Starting or stopping the control itself: not the student's choice, so not kept
+
     function tellClock() {
-        if (playback) view.setClock({ speed: playback.speed, playing: playback.playing });
-        else view.setClock({ speed: 0, playing: false, read: null });
+        if (playback) {
+            view.setClock({ speed: playback.speed, playing: playback.playing });
+            const model = view.getModel();
+            if (!quiet && model) keptClocks.set(model.code, { speed: playback.speed, playing: playback.playing });
+        } else {
+            view.setClock({ speed: 0, playing: false, read: null });
+        }
     }
 
     function startPlayback(model) {
         stopPlayback();
         const reduced = !!app.settings.reduceMotion;
-        const range = speedsFor(model, reduced);
+        const range = speedsFor(model, reduced, view.isLogScale() ? 1 : 0);
         if (!range) return;    // Nothing here goes round anything
+        // Back again: as the student left it, within what this speed range allows
+        const kept = keptClocks.get(model.code);
+        const speed = kept ? Math.min(range.max, Math.max(range.min, kept.speed)) : range.speed;
+        quiet = true;
         // Stars' orbits run on the clock the spectrum shares; a single star's planets need only this control
         const { body } = model;
         systemClock = (body.orbits && body.orbits.length) || body.black_hole ? clockFor(body) : null;
-        if (systemClock && !systemClock.playing) systemClock.setSpeed(range.speed);
+        if (systemClock && !systemClock.playing) systemClock.setSpeed(speed);
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
             range,
-            speed: range.speed,
+            speed,
             words: speedWords,
             unit: 'days',
             t0: view.getTime(),
@@ -104,15 +120,18 @@ export function initSystemTab(app) {
         // The view reads this system's time from its clock, every frame
         if (systemClock) view.setClock({ read: () => systemClock.t });
         tellClock();
-        if (!reduced) playback.play();
+        if (!reduced && !(kept && !kept.playing)) playback.play();
+        quiet = false;
     }
 
     function stopPlayback() {
+        quiet = true;
         if (playback) playback.dispose();
         playback = null;
         if (systemClock) systemClock.pause();
         systemClock = null;
         tellClock();
+        quiet = false;
     }
 
     let lastPaint = 0;
@@ -149,7 +168,7 @@ export function initSystemTab(app) {
         action.addEventListener('click', () => {
             if (!resolved) return;
             // Selected a planet? Then that's what the flight is for.
-            view.enter(resolved.path === 'planet' ? resolved.entity.code : view.systemOf(resolved).code);
+            view.enter(resolved.path === 'planet' || resolved.path === 'comet' ? resolved.entity.code : view.systemOf(resolved).code);
             if (action.hidden) focusIntoTab();
         });
 
@@ -157,7 +176,7 @@ export function initSystemTab(app) {
         whole.type = 'button';
         whole.addEventListener('click', () => {
             view.focusPlanet(null);
-            const current = parts.list.querySelector('[aria-current="true"]') || parts.starList.querySelector('[aria-current="true"]');
+            const current = [parts.list, parts.cometList, parts.starList].map((l) => l.querySelector('[aria-current="true"]')).find(Boolean);
             if (current) current.focus({ preventScroll: true });
             else focusIntoTab();
         });
@@ -198,6 +217,10 @@ export function initSystemTab(app) {
         const list = el('ul', 'spectro-system-list');
         listGroup.append(listLabel, list);
 
+        const cometGroup = el('div', 'sim-control-group');
+        const cometList = el('ul', 'spectro-system-list');
+        cometGroup.append(el('span', 'sim-control-group-label', 'Comets'), cometList);
+
         const starGroup = el('div', 'sim-control-group');
         const starList = el('ul', 'spectro-system-list');
         starGroup.append(el('span', 'sim-control-group-label', 'Stars'), starList);
@@ -209,9 +232,9 @@ export function initSystemTab(app) {
             el('p', 'spectro-system-note', 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. An orbit too fast to follow turns into a steady ring of light, so that the slower ones can still be watched.')
         );
 
-        box.append(summary, action, whole, timeGroup, scaleWrap, detail, listGroup, starGroup, about);
+        box.append(summary, action, whole, timeGroup, scaleWrap, detail, listGroup, cometGroup, starGroup, about);
         container.appendChild(box);
-        return { summary, action, whole, timeGroup, time, scaleWrap, logBox, logLabel, hzBox, hzLabel, hzTip, hzNote, detail, listGroup, list, listLabel, starGroup, starList };
+        return { summary, action, whole, timeGroup, time, scaleWrap, logBox, logLabel, hzBox, hzLabel, hzTip, hzNote, detail, listGroup, list, listLabel, cometGroup, cometList, starGroup, starList };
     }
 
     function renderList(model) {
@@ -231,6 +254,21 @@ export function initSystemTab(app) {
             b.addEventListener('click', () => selectFromList(entry.code));
             li.appendChild(b);
             parts.list.appendChild(li);
+        });
+
+        parts.cometList.replaceChildren();
+        parts.cometGroup.hidden = model.comets.length === 0;
+        model.comets.forEach((entry) => {
+            const li = el('li');
+            const b = el('button', 'spectro-system-planet');
+            b.type = 'button';
+            b.dataset.code = entry.code;
+            const { q_AU: q, Q_AU: Q, period_days: T } = entry.orbit;
+            b.append(el('span', 'spectro-system-code', entry.code), el('span', 'spectro-system-facts', `${sig(q, 2)} to ${sig(Q, 2)} AU, ${timeText(T)}`));
+            b.setAttribute('aria-label', `Comet ${entry.code}: from ${sig(q, 2)} to ${sig(Q, 2)} astronomical units from its star, period ${timeText(T)}`);
+            b.addEventListener('click', () => selectFromList(entry.code));
+            li.appendChild(b);
+            parts.cometList.appendChild(li);
         });
 
         // A multi-star system: each star can be selected too, which is how a pair gets untangled
@@ -259,8 +297,13 @@ export function initSystemTab(app) {
     function renderDetail(model) {
         const d = parts.detail;
         d.replaceChildren();
-        const code = resolved && resolved.path === 'planet' ? resolved.entity.code : null;
+        const code = resolved ? resolved.entity.code : null;
         const entry = code ? model.planets.find((e) => e.code === code) : null;
+        const comet = code && !entry ? model.comets.find((e) => e.code === code) : null;
+        if (comet) {
+            renderCometDetail(model, comet);
+            return;
+        }
         if (!entry) {
             d.hidden = model.planets.length === 0;
             d.append(el('p', 'spectro-system-note', 'Select a planet to see its orbit and test Kepler\'s third law.'));
@@ -286,6 +329,28 @@ export function initSystemTab(app) {
         d.append(el('p', 'spectro-system-note', `The two sides agree to ${Math.abs(ratio - 1) < 0.005 ? 'within 0.5%' : `${sig(Math.abs(ratio - 1) * 100, 2)}%`}: the same value for every planet going round the same mass.`));
     }
 
+    // A comet's orbit is an ellipse, so Kepler's third law takes its semi-major axis: halfway between nearest and furthest
+    function renderCometDetail(model, entry) {
+        const d = parts.detail;
+        d.hidden = false;
+        const r = cometReadout(model, entry);
+        d.append(el('span', 'sim-control-group-label', `Orbit of ${entry.code}`));
+        const dl = el('dl', 'spectro-system-readout');
+        row(dl, 'Nearest the star', `${sig(r.q_AU, 3)} AU`);
+        row(dl, 'Furthest out', `${sig(r.Q_AU, 3)} AU`);
+        row(dl, 'Semi-major axis, a', `${sig(r.a_AU, 3)} AU (${sci(r.a_AU * 1.495978707e11, 3)} m)`);
+        row(dl, 'Period, T', `${timeText(r.T_days)} (${sci(r.T_s, 3)} s)`);
+        d.append(dl);
+        d.append(el('span', 'sim-control-group-label', 'Kepler\'s third law'));
+        const k = el('dl', 'spectro-system-readout');
+        row(k, 'a³/T²', `${sci(r.a3OverT2, 3)} m³/s²`);
+        row(k, 'GM/4π²', `${sci(r.GMOver4Pi2, 3)} m³/s²`);
+        row(k, 'with M', `${sig(r.mass_Msun, 3)} solar masses`);
+        d.append(k);
+        const ratio = r.a3OverT2 / r.GMOver4Pi2;
+        d.append(el('p', 'spectro-system-note', `The two sides agree to ${Math.abs(ratio - 1) < 0.005 ? 'within 0.5%' : `${sig(Math.abs(ratio - 1) * 100, 2)}%`}. Its tails grow as it nears the star, where the heat turns its ice to gas, and always point away from the star.`));
+    }
+
     function paint() {
         if (!parts || !resolved) return;
         const body = view.systemOf(resolved);
@@ -293,7 +358,7 @@ export function initSystemTab(app) {
         const model = modelFor(body);
         const inThis = app.view === 'system' && app.systemCode === body.code;
 
-        parts.summary.textContent = summaryOf(model);
+        parts.summary.textContent = summaryOf(model, !!(app.engine && app.engine.renderer));
 
         // The way back to the sky is on the context bar, always in the same place
         parts.action.hidden = inThis;
@@ -322,7 +387,7 @@ export function initSystemTab(app) {
         renderList(model);
         renderDetail(model);
         const selected = resolved.entity.code;
-        [parts.list, parts.starList].forEach((l) => l.querySelectorAll('button').forEach((b) => {
+        [parts.list, parts.cometList, parts.starList].forEach((l) => l.querySelectorAll('button').forEach((b) => {
             b.setAttribute('aria-current', b.dataset.code === selected ? 'true' : 'false');
         }));
         paintTime();

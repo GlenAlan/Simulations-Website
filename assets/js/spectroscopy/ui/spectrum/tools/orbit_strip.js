@@ -10,6 +10,7 @@ import { el } from '../../plot2d.js';
 import { niceSpeeds } from './common.js';
 import { clockFor } from './orbit_clock.js';
 import { createOrbitDial } from './orbit_dial.js';
+import { componentStates } from '../../../data/orbits.js';
 
 // How often the spectrum follows, in ms, by how wide a view it is: a shift of a few km/s can only be seen zoomed in on a line,
 // and the wider view costs more. The narrowest view follows every frame.
@@ -25,6 +26,23 @@ function applies(resolved) {
     return !!(body && (body.black_hole || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
 }
 
+// The next moment, within one turn of the fastest orbit, when the stars' speeds along the line of sight are furthest apart:
+// their lines are then split widest
+function widestSplit(body, from, period) {
+    let best = from;
+    let most = -1;
+    for (let k = 0; k < 96; k++) {
+        const t = from + (k / 96) * period;
+        const v = componentStates(body, t).map((s) => s.vlos_kms);
+        const spread = Math.max(...v) - Math.min(...v);
+        if (spread > most + 1e-9) {
+            most = spread;
+            best = t;
+        }
+    }
+    return best;
+}
+
 function inThisSystem(clock) {
     return app.view === 'system' && app.systemCode === clock.code;
 }
@@ -37,12 +55,20 @@ function mount(container, api) {
         type: 'button',
         class: 'spectro-tool-next spectro-orbit-closer',
         text: 'See the lines split',
-        onclick: () => api.openTool('time-series')
+        onclick: () => {
+            // Straight to a moment when they are, and running, so there's something to see at once
+            if (clock && bound) {
+                clock.setTime(widestSplit(bound, clock.t, clock.fastest));
+                if (!(app.settings && app.settings.reduceMotion)) clock.play();
+            }
+            api.openTool('time-series');
+        }
     });
     const root = el('div', { class: 'spectro-orbit' }, controls, dialHost);
     container.append(root);
 
     let clock = null;
+    let bound = null;
     let playback = null;
     let dial = null;
     let offState = null;
@@ -84,6 +110,7 @@ function mount(container, api) {
     function bind(body) {
         release();
         clock = clockFor(body);
+        bound = body;
         dial = createOrbitDial(dialHost, body);
         const period = clock.fastest;
         const speeds = niceSpeeds([period / 12, period / 6, period / 3, period / 1.5]);

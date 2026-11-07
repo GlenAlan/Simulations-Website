@@ -9,6 +9,7 @@
 import { AU, G, M_SUN, R_SUN, R_EARTH, hzEdges, orbitalSpeedKms } from '../../core/phys.js';
 import { componentStates, figureEightPath, planetOrbitCentre } from '../../data/orbits.js';
 import { memberDirection } from '../layers/sky_tangent.js';
+import { cometsOf, cometOrbit } from './comet_orbits.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -199,10 +200,16 @@ export function buildModel(body) {
         return { planet, code: planet.code, node, parent: model.nodes.find((n) => n.children && n.children.includes(node)) || null };
     });
 
-    // Every distance that has to fit: a separation for each orbit, a radius for each planet
+    // Comets go round the whole system, on long eccentric orbits
+    const totalMass = stars.reduce((sum, s) => sum + (s.star.mass_Msun || 0), 0) || 1;
+    model.luminosity = stars.reduce((sum, s) => sum + (s.star.luminosity_Lsun || 0), 0);
+    model.comets = cometsOf(body).map((comet) => ({ comet, code: comet.code, orbit: cometOrbit(comet, totalMass) }));
+
+    // Every distance that has to fit: a separation for each orbit, a radius for each planet, and each comet's mean distance
     const levels = [];
     model.nodes.forEach((n) => { if (n.children && !n.flat && n.a_AU > 0) levels.push(n.a_AU); });
     model.planets.forEach((e) => levels.push(e.planet.orbit_AU));
+    model.comets.forEach((c) => levels.push(c.orbit.a_AU));
     model.levels = levels;
 
     // How far out things reach, true scale: sampled over the longest orbit
@@ -226,6 +233,8 @@ export function buildModel(body) {
         }
         extent = Math.max(extent, offset + e.planet.orbit_AU);
     });
+    // A comet's whole orbit is in view when zoomed out as far as the view goes, and most of it at the start
+    model.comets.forEach((c) => { extent = Math.max(extent, c.orbit.Q_AU / 1.6); });
     // A lone star with nothing round it still needs a frame
     model.extent = extent > 0 ? extent : 8 * stars[0].star.radius_Rsun * RSUN_AU;
     model.unit = FRAME / model.extent;
@@ -249,7 +258,7 @@ export function buildModel(body) {
 
     const main = stars.length === 1 && (stars[0].star.stage === 'main_sequence');
     if (main) model.hz = hzEdges(stars[0].star.luminosity_Lsun);
-    model.lone = stars.length === 1 && model.planets.length === 0;
+    model.lone = stars.length === 1 && model.planets.length === 0 && model.comets.length === 0;
 
     computeSizes(model);
     return model;
@@ -552,6 +561,17 @@ export function layout(model, tDays, m, out = null) {
     return o;
 }
 
+// A point r AU from the middle of the system, in world units: each distance is scaled as an orbit of that size would be,
+// so a comet's long orbit squeezes in log scale just as the planets' do. p holds AU in world axes; out may be p.
+export function radialToWorld(model, p, m, out = [0, 0, 0]) {
+    const r = Math.hypot(p[0], p[1], p[2]);
+    const k = r > 0 ? ringRadius(model, r, m) / r : model.unit;
+    out[0] = p[0] * k;
+    out[1] = p[1] * k;
+    out[2] = p[2] * k;
+    return out;
+}
+
 // Unit-circle points of a planet's orbit in world axes, tilted as it is
 export function planetOrbitPoints(planet, n = 180) {
     const inc = ((planet.inclination_deg || 0) * Math.PI) / 180;
@@ -672,6 +692,27 @@ export function keplerReadout(model, entry) {
     };
 }
 
+// A comet's orbit for the System tab: its nearest and furthest from the middle, and Kepler's third law with the semi-major
+// axis, which is what r becomes for an ellipse
+export function cometReadout(model, entry) {
+    const o = entry.orbit;
+    const aM = o.a_AU * AU;
+    const tS = o.period_days * 86400;
+    const massMsun = massOf(model.stars, model.root.members);
+    return {
+        q_AU: o.q_AU,
+        Q_AU: o.Q_AU,
+        a_AU: o.a_AU,
+        e: o.e,
+        T_days: o.period_days,
+        T_s: tS,
+        a3OverT2: aM ** 3 / tS ** 2,
+        GMOver4Pi2: (G * massMsun * M_SUN) / (4 * Math.PI * Math.PI),
+        mass_Msun: massMsun,
+        aroundStars: model.stars.length
+    };
+}
+
 // Can the habitable zone be drawn for this body? The reason is shown as the switch's tooltip when it can't.
 export function hzStatus(body) {
     if (!body) return { ok: false, reason: 'The habitable zone shows inside a planetary system. Enter a system to see it.' };
@@ -691,15 +732,44 @@ export function hzStatus(body) {
 // The range of the clock, in days per second, from a crawl through the shortest orbit to a visible turn of the longest.
 // Fast enough, the shorter orbits merge into their smears, and the longer ones are what's left to watch. With Reduce
 // motion the top is far lower. Null if nothing here goes round anything.
-export function speedsFor(model, reduceMotion = false) {
+export function speedsFor(model, reduceMotion = false, mix = model.startLog ? 1 : 0) {
     const periods = model.planets.map((e) => e.planet.period_days);
     model.nodes.forEach((n) => { if (n.orbit && n.orbit.period_days) periods.push(n.orbit.period_days); });
     if (model.pathPoints) periods.push(model.pathPeriodDays);
+    (model.comets || []).forEach((c) => periods.push(c.orbit.period_days));
     if (!periods.length) return null;
     const shortest = Math.min(...periods);
     const longest = Math.max(...periods);
     const min = shortest / 200;
     const fastest = model.pathPoints ? 0.2 : 0.5;   // The figure-eight's stars share a path, and must stay stars at the top
     const max = longest * (reduceMotion ? ORBITS_PER_SECOND_REDUCED * 0.2 : ORBITS_PER_SECOND * fastest);
-    return { min, max, speed: Math.min(max, shortest / 8) };
+    return { min, max, speed: Math.min(max, Math.max(shortest / 8, speedToSeeMoving(model, mix))) };
+}
+
+// The orbits drawn big enough to watch in the whole-system view, as { r: radius as a share of the view's half-width, period }
+function watchableOrbits(model, mix) {
+    const out = [];
+    model.planets.forEach((e) => out.push({ r: ringRadius(model, e.planet.orbit_AU, mix) / FRAME, period: e.planet.period_days }));
+    model.nodes.forEach((n) => {
+        if (!n.orbit || !n.orbit.period_days || n.flat) return;
+        // The lighter side goes round furthest from the middle
+        const masses = n.children.map((c) => massOf(model.stars, c.members));
+        const share = Math.max(...masses) / (masses[0] + masses[1]);
+        out.push({ r: (ringRadius(model, n.a_AU, mix) * share) / FRAME, period: n.orbit.period_days });
+    });
+    if (model.pathPoints) out.push({ r: 0.5, period: model.pathPeriodDays });
+    (model.comets || []).forEach((c) => out.push({ r: ringRadius(model, c.orbit.a_AU, mix) / FRAME, period: c.orbit.period_days }));
+    return out.filter((o) => o.r >= WATCHABLE_SHARE && o.period > 0);
+}
+
+// The least speed at which something on show visibly goes round: a few pixels a second at least, so a wide triple whose close
+// pair is one dot at this scale still has its third star moving on arrival. Any orbit too small to see may then blur, as the
+// flash cap says (smearWeights).
+const WATCHABLE_SHARE = 0.05;       // An orbit this far out from the middle, as a share of the view, is about 15 px
+const MOVING_SHARE_PER_S = 0.06;    // ... and this much of the view a second, about 20 px, is plainly moving
+
+function speedToSeeMoving(model, mix) {
+    const orbits = watchableOrbits(model, mix);
+    if (!orbits.length) return 0;
+    return Math.min(...orbits.map((o) => (MOVING_SHARE_PER_S * o.period) / (2 * Math.PI * o.r)));
 }

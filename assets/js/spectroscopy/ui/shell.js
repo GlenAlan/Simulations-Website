@@ -460,7 +460,7 @@ function initContextBar(app) {
         const resolved = app.selected;
         const code = systemCodeFor(app, resolved);
         if (!code || !app.system) return;
-        const planet = resolved.path === 'planet' ? resolved.entity.code : null;
+        const planet = resolved.path === 'planet' || resolved.path === 'comet' ? resolved.entity.code : null;
         app.system.enter(code, { onDone: planet ? () => app.system.focusPlanet(planet) : undefined });
     });
     back.addEventListener('click', () => { if (app.system) app.system.exit(); });
