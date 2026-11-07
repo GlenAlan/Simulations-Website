@@ -1116,6 +1116,8 @@
             trail: null,                  // samples (allocated at the first one: see recordSample)
             trailStart: sampleCount,      // first valid sample
             layerPen: -1,                 // the newest sample of its trail on the swarm's canvases, -1 with none there
+            orbitDrawn: false,            // its trail was last drawn from its orbit (see orbitTrail)
+            fastOrbit: null,              // { a, b, hosted } while relativity keeps it from being a close pair (see fastOrbits)
             primary: null, bound: false, hill: Infinity,
             grp: null,                    // id of the body it is a piece of (torn apart by tides)
             fx: 0, fy: 0,                 // net gravitational force (M_sun AU / yr^2)
@@ -1666,6 +1668,7 @@
     const KEP_GAMMA = 0.02;
     const KEP_TURN = 0.05;                // step <= KEP_TURN x sqrt(r^3 / GM): about 4 degrees of the pair's turn
     const KEP_UNRESOLVED = 0.25;          // periods under this many trail samples are not followed turn by turn
+    const ORBIT_TRAIL = 2, ORBIT_TRAIL_OFF = 2.5;   // periods under this many trail samples have trails drawn from the orbit (see orbitTrail), until over the second
     const PN_PAIR_MAX = 1e-6;
     // A piece of a torn-apart body (see "Tidal disruption"), so light that it can't disturb its host much (at
     // most a HOST_MIN-th of its mass), is followed round it the same way, relativity or not, and many can
@@ -1689,7 +1692,7 @@
     const HOST_GW = 1e6;                  // radiation may take this many trail samples or more to close the orbit
     const LIGHT = 1e-9;                   // the lighter of a pair by this much: it moves the other not at all, and has nothing else to answer for
     const ROCHE_NEAR = 392;               // (3 ROCHE)^3: inside three times its Roche limit a whole body is followed closely
-    const mainPairs = [];                 // { a, b, touch, fast, hosted, closest } for the bodies (hosted: a goes round b, see driftHosted)
+    const mainPairs = [];                 // { a, b, touch, fast, orbit, hosted, closest } for the bodies (hosted: a goes round b, see driftHosted)
     let mainStamp = 0, mainN = 0;
 
     // Universal-variable Kepler drift (Danby's G-functions): exact for ellipses, parabolas and hyperbolas,
@@ -1795,6 +1798,20 @@
         if (KMIN < p.closest) p.closest = KMIN;
     }
 
+    // Relativity's turn of an orbit (see driftHosted), on the drift just done: KX, KY, KVX, KVY
+    function relativityTurn(rx, ry, vx, vy, gm, dt) {
+        const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
+        let swept = Math.atan2(rx * KY - ry * KX, rx * KX + ry * KY);
+        if (swept * way < 0) swept += way * TAU;
+        const w = (3 * gm * gm / (C2 * h * h)) * (swept + way * TAU * Math.abs(KTURNS));
+        if (h !== 0 && w !== 0) {
+            const c = Math.cos(w), s = Math.sin(w);
+            const x1 = c * KX - s * KY, vx1 = c * KVX - s * KVY;
+            KY = s * KX + c * KY; KVY = s * KVX + c * KVY;
+            KX = x1; KVX = vx1;
+        }
+    }
+
     // Move a host and its pieces. The whole group's centre of mass goes in a straight line; each piece goes
     // round the host exactly; and the pieces' pull on the host is the small term left (Duncan, Levison & Lee
     // 1998: the "democratic heliocentric" form of the Wisdom-Holman splitting), in which each moves the host,
@@ -1829,23 +1846,11 @@
             const vx = HPX[i] * im, vy = HPY[i] * im;
             const r2 = rx * rx + ry * ry;
             keplerDrift(rx, ry, vx, vy, gm, dt, 4 * dt * dt * gm < r2 * Math.sqrt(r2));
-            let kx = KX, ky = KY, kvx = KVX, kvy = KVY;
             if ((KMIN < (H.R + f.R) / AU_KM && KMIN < contactReach(H, f)) || (real && gm > ISCO_C2 * KMIN) || (f.grp < 0 && KMIN < gasFall(mH))) p.touch = true;
             if (KMIN < p.closest) p.closest = KMIN;
-            if (real) {
-                const h = rx * vy - ry * vx, way = h * dt < 0 ? -1 : 1;
-                let swept = Math.atan2(rx * ky - ry * kx, rx * kx + ry * ky);
-                if (swept * way < 0) swept += way * TAU;
-                const w = (3 * gm * gm / (C2 * h * h)) * (swept + way * TAU * Math.abs(KTURNS));
-                if (h !== 0 && w !== 0) {
-                    const c = Math.cos(w), s = Math.sin(w);
-                    const x1 = c * kx - s * ky, vx1 = c * kvx - s * kvy;
-                    ky = s * kx + c * ky; kvy = s * kvx + c * kvy;
-                    kx = x1; kvx = vx1;
-                }
-            }
-            HRX[i] = kx; HRY[i] = ky;
-            const px = kvx / im, py = kvy / im;
+            if (real) relativityTurn(rx, ry, vx, vy, gm, dt);
+            HRX[i] = KX; HRY[i] = KY;
+            const px = KVX / im, py = KVY / im;
             HPX[i] = px; HPY[i] = py;
             tx += px; ty += py;
         }
@@ -1907,7 +1912,7 @@
 
     // Follow a and b as a close pair (a, a piece of a torn-apart body or a light whole body, round its host b)
     function followPair(a, b, fast, hosted) {
-        const q = { a, b, touch: false, fast, hosted: !!(hosted || a.grp), closest: Infinity };
+        const q = { a, b, touch: false, fast, orbit: false, hosted: !!(hosted || a.grp), closest: Infinity };
         mainPairs.push(q);
         a.kep = q;
         if (!q.hosted) b.kep = q;
@@ -2092,7 +2097,9 @@
         const gm = G * (a.m + b.m);
         const vx = b.vx - a.vx, vy = b.vy - a.vy;
         const beta = 2 * gm / r - (vx * vx + vy * vy);
-        p.fast = beta > 0 && TAU * gm / (beta * Math.sqrt(beta)) < KEP_UNRESOLVED * sampleDt;
+        const period = beta > 0 ? TAU * gm / (beta * Math.sqrt(beta)) : Infinity;
+        p.fast = period < KEP_UNRESOLVED * sampleDt;
+        p.orbit = period < (p.orbit ? ORBIT_TRAIL_OFF : ORBIT_TRAIL) * sampleDt;
         if (p.fast) return Infinity;
         if (!p.hosted) return KEP_TURN * Math.sqrt(r2 * r / gm);
         const own = HOST_TURN * Math.sqrt(r2 * r / gm);
@@ -4697,6 +4704,30 @@
                 if (c.primary === top && c.bound && c.m >= 0.1 * top.m) { top.primary = c; top.bound = true; break; }
             }
         }
+        fastOrbits();
+    }
+
+    // Two bodies close enough for relativity to matter are no close pair (PN_PAIR_MAX), so their steps are fine, but
+    // they go round just as fast between trail samples: their trails come from their orbits too (see orbitTrail). Unless
+    // the orbit won't last (ORBIT_STEADY turns, by Peters' time for waves to close it): a final inspiral keeps its samples.
+    const ORBIT_STEADY = 100;
+    function fastOrbits() {
+        for (const b of bodies) {
+            const p = b.primary, was = b.fastOrbit;
+            b.fastOrbit = null;
+            if (!settings.realistic || b.kep || b.hosts || b.minor || b.grp || b.held || !p || !b.bound || p.held) continue;
+            const r = hyp(b.x - p.x, b.y - p.y), gm = G * (b.m + p.m);
+            if (!(gm > PN_PAIR_MAX * C2 * r)) continue;
+            const el = elementsOf(b, p);
+            if (!(el.bound && el.T < (was ? ORBIT_TRAIL_OFF : ORBIT_TRAIL) * sampleDt)) continue;
+            const a2 = el.a * el.a;
+            if (!((5 / 256) * C5 * a2 * a2 / (G * G * gm * b.m * p.m) > ORBIT_STEADY * el.T)) continue;
+            // (going round something far heavier, as round a host. Otherwise only if each goes round the other)
+            const hosted = p.m >= HOST_MIN * b.m;
+            if (!hosted && (p.primary !== b || !p.bound)) continue;
+            const A = hosted || b.id < p.id ? b : p, H = A === b ? p : b;
+            b.fastOrbit = was && was.a === A && was.b === H ? was : { a: A, b: H, hosted };
+        }
     }
 
     function heaviest() {
@@ -4965,7 +4996,7 @@
         const k = sampleCount - 1;
         for (const b of bodies) {
             const p = b.primary;
-            if (!p || b.minor || (b.grp && b.id !== selectedId) || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k) continue;
+            if (!p || b.minor || (b.grp && b.id !== selectedId) || b.held || p.held || !b.trail || !p.trail || trailFirst(b) > k || trailFirst(p) > k || trailOrbit(b)) continue;
             const ib = trailIndex(b.trail, k), ip = trailIndex(p.trail, k);
             const rx = b.x - p.x, ry = b.y - p.y;
             const ox = b.trail[ib] - p.trail[ip], oy = b.trail[ib + 1] - p.trail[ip + 1];
@@ -5118,6 +5149,30 @@
         }
     }
 
+    // A close pair can turn further in a step than a Taylor series can follow (a step can take one many times
+    // round), and in slow motion that step is on the screen for seconds. So past a turn of KEP_TURN (which no ordinary
+    // pair's step goes beyond) a pair is drawn from its exact orbit, as the step itself will move it, frame by frame.
+    // For drawing only, so slowing time changes nothing that happens. True if b has been placed.
+    const DRAW_TURN2 = KEP_TURN * KEP_TURN;
+    function drawFromOrbit(b, q, t) {
+        const A = q.a, H = q.b, gm = G * (A.m + H.m);
+        const rx = A.x - H.x, ry = A.y - H.y, r2 = rx * rx + ry * ry, r3 = r2 * Math.sqrt(r2);
+        if (!(t * t * gm > DRAW_TURN2 * r3)) return false;
+        const vx = A.vx - H.vx, vy = A.vy - H.vy;
+        keplerDrift(rx, ry, vx, vy, gm, t, 4 * t * t * gm < r3);
+        if (q.hosted && settings.realistic) relativityTurn(rx, ry, vx, vy, gm, t);
+        // (what carries it along: the host, or the pair's centre of mass, which feels only the others' pull)
+        const M = A.m + H.m, fa = q.hosted ? 0 : A.m / M, fh = 1 - fa, part = b === A ? fh : -fa;
+        const ax = q.hosted ? H.fx / H.m : (A.fx + H.fx) / M, ay = q.hosted ? H.fy / H.m : (A.fy + H.fy) / M;
+        const cx = fa * A.x + fh * H.x, cy = fa * A.y + fh * H.y, cvx = fa * A.vx + fh * H.vx, cvy = fa * A.vy + fh * H.vy;
+        b.dx = cx + (cvx + 0.5 * ax * t) * t + part * KX; b.dy = cy + (cvy + 0.5 * ay * t) * t + part * KY;
+        b.dvx = cvx + ax * t + part * KVX; b.dvy = cvy + ay * t + part * KVY;
+        // (its arrow: the same force, with the pair's own pull as it is at this separation)
+        const r1 = Math.hypot(KX, KY), f0 = G * A.m * H.m / r3, f1 = G * A.m * H.m / (r1 * r1 * r1), s = b === A ? 1 : -1;
+        b.dfx = b.fx + s * (f0 * rx - f1 * KX); b.dfy = b.fy + s * (f0 * ry - f1 * KY);
+        return true;
+    }
+
     // A body is drawn lag years on from the end of the last step: its place, velocity and force carried on
     // from there by a Taylor series, so the arrows turn as smoothly as the bodies move, however many frames a
     // step spans. For drawing only. What is left to land on at the next step's end is about (turn per step)^2 / 2
@@ -5127,21 +5182,8 @@
         for (const b of bodies) {
             b.dvx = b.vx; b.dvy = b.vy; b.dfx = b.fx; b.dfy = b.fy;
             if (b.held) { b.dx = b.x; b.dy = b.y; continue; }
-            // (a close pair going round faster than one step is drawn moving with its centre of mass, and its
-            // arrows can't be followed from one step to the next)
-            const p = b.kep && b.kep.fast ? b.kep : null;
-            if (p) {
-                const M = p.a.m + p.b.m;
-                const vx = (p.a.m * p.a.vx + p.b.m * p.b.vx) / M, vy = (p.a.m * p.a.vy + p.b.m * p.b.vy) / M;
-                b.dx = b.x + (vx + 0.5 * t * (p.a.fx + p.b.fx) / M) * t; b.dy = b.y + (vy + 0.5 * t * (p.a.fy + p.b.fy) / M) * t;
-                continue;
-            }
-            let ax = b.m > 0 ? (t * b.fx) / b.m : 0, ay = b.m > 0 ? (t * b.fy) / b.m : 0;
-            // (a step can take a body round a host by over a radian: then a curve would only fly off further than a line)
-            if (b.kep && b.kep.hosted) {
-                const H = b.kep.b, rx = b.x - H.x, ry = b.y - H.y;
-                if ((ax * ax + ay * ay) * t * t > rx * rx + ry * ry) { ax = 0; ay = 0; }
-            }
+            if (b.kep && t && drawFromOrbit(b, b.kep, t)) continue;
+            const ax = b.m > 0 ? (t * b.fx) / b.m : 0, ay = b.m > 0 ? (t * b.fy) / b.m : 0;
             b.dx = b.x + (b.vx + 0.5 * ax) * t; b.dy = b.y + (b.vy + 0.5 * ay) * t;
             b.dvx = b.vx + ax; b.dvy = b.vy + ay;
             // (only for what has a force arrow or a name to place: see drawArrows, drawLabels)
@@ -7604,11 +7646,11 @@
         refreshBodyLists();
         selectBody(b.id);
         clearHint('note');   // (whatever it said before this)
-        // (Sagittarius A*, with something close enough to go round it faster than the trails are sampled: that makes a pretty pattern, which isn't its orbit)
+        // (Sagittarius A*, with something close enough to go round it faster than can be watched)
         if (added && k.as) {
             let near = Infinity;
             for (const q of bodies) if (q !== b) near = Math.min(near, hyp(q.x - b.x, q.y - b.y));
-            if (TAU * Math.sqrt((near * near * near) / (G * b.m)) < sampleDt) showHint('tip', '<strong>4.3 million Suns:</strong> orbits here are too fast to draw. Any pattern is just sampling.');
+            if (TAU * Math.sqrt((near * near * near) / (G * b.m)) < sampleDt) showHint('tip', '<strong>4.3 million Suns:</strong> orbits this close are a blur. Slow time right down to watch one go round.');
         }
         return added;
     }
@@ -7884,41 +7926,157 @@
     // slider set longer than the scene's own. (It lives in the slider, so share links, undo and autosave keep it. A
     // chosen dot has its trail either way, and the planets among the dots theirs.)
     const swarmTrails = () => !scene.swarm || settings.trailIndex > scene.trail;
+
+    // ---- An orbit too fast for its samples ----
+    // A close pair that goes round in under ORBIT_TRAIL trail samples has moved on by anything up to many turns from
+    // one sample to the next, so lines between them cut across the orbit and draw a pattern it never made. Its path is
+    // known exactly, though: so each body's trail is its orbit, worked out afresh each frame, and it spends no samples,
+    // which keeps the other bodies' trails long. What the pair does as a whole goes on as a trail too: the samples of
+    // its centre of mass (a body going round a far heavier host needs none of its own: the host's trail is that).
+    const PAIR_ORIGIN = new Float64Array(TRAIL_CAP * 2), PAIR_TRAIL = new Float64Array(TRAIL_CAP * 2);
+    const trailOrbit = (b) => (b.kep && b.kep.orbit ? b.kep : b.fastOrbit);
+    const orbitPair = (b) => { const q = trailOrbit(b); return q && q.a.trail && q.b.trail ? q : null; };
+    const orbitPairFirst = (q) => (q.hosted ? trailFirst(q.b) : Math.max(trailFirst(q.a), trailFirst(q.b)));
+    // Where the pair's centre is drawn (a host is drawn where it goes)
+    function orbitPairCentre(q) {
+        if (q.hosted) return { x: q.b.dx, y: q.b.dy };
+        const A = q.a, H = q.b, fa = A.m / (A.m + H.m), fh = 1 - fa;
+        return { x: fa * A.dx + fh * H.dx, y: fa * A.dy + fh * H.dy };
+    }
+    // Samples k0 on of the pair's centre, in a ring like a whole body's
+    function orbitPairSamples(q, k0, out) {
+        if (q.hosted) return q.b.trail;
+        const A = q.a, H = q.b, TA = A.trail, TH = H.trail, fa = A.m / (A.m + H.m), fh = 1 - fa;
+        for (let k = k0; k < sampleCount; k++) {
+            const ia = trailIndex(TA, k), ih = trailIndex(TH, k), j = 2 * (k % TRAIL_CAP);
+            out[j] = fa * TA[ia] + fh * TH[ih];
+            out[j + 1] = fa * TA[ia + 1] + fh * TH[ih + 1];
+        }
+        return out;
+    }
+
+    // b's orbit, drawn. Back from where it is by one turn, or as far as its trail goes if that's less. It keeps its
+    // place by its eccentric anomaly E, which puts points on an ellipse closest where it bends most. Relativity turns
+    // an orbit going round a host (see driftHosted), which can be by a good part of a turn each time, so then it goes
+    // back over as many turns as make the whole rosette. With time slow enough to watch it go round, the far end fades
+    // as a trail's does, to show the way it is going. Any faster and that would only flicker.
+    const ORBIT_ROSETTE = 24;             // turns at most
+    const ORBIT_SHADES = 8;               // shades for each turn, and three times that at most
+    const ORBIT_POINTS = 3000;            // points at most (close up, only a few are on the screen)
+    function orbitTrail(b, q, k0, L, tr) {
+        const A = q.a, H = q.b, gm = G * (A.m + H.m);
+        const el = turnedElements(relElements(A.x - H.x, A.y - H.y, A.vx - H.vx, A.vy - H.vy, gm));
+        if (!el.bound || b === L) return;
+        // Seen from the other of the pair it goes round that body itself, not their centre
+        const seenFrom = L === A || L === H, fa = q.hosted ? 0 : A.m / (A.m + H.m);
+        const part = seenFrom ? (b === A ? 1 : -1) : b === A ? 1 - fa : -fa;
+        const a = el.a, e = el.e, bb = a * Math.sqrt(Math.max(0, 1 - e * e));
+        const Rpx = a * (1 + e) * Math.abs(part) * scale;
+        if (Rpx < 1.5) return;   // (a dot on the body: nothing to see)
+        const c = seenFrom ? { x: L.dx, y: L.dy } : orbitPairCentre(q);
+        const ox = sx(c.x), oy = sy(c.y), way = el.h < 0 ? -1 : 1, cw = Math.cos(el.w), sw = Math.sin(el.w);
+        // Where it is now along the orbit, and how far back in time its trail goes
+        const nx = A.dx - H.dx, ny = A.dy - H.dy, u = nx * cw + ny * sw, v = way * (ny * cw - nx * sw);
+        const E0 = Math.atan2(v / (bb || 1), u / a + e), M0 = E0 - e * Math.sin(E0);
+        const oldest = Math.min(k0, sampleCount - 1);
+        const reach = oldest >= 0 ? (TAU / el.T) * Math.abs(simTime + lag - sampleTimes[oldest % TRAIL_CAP]) : 0;
+        // Relativity's turn for each radian round, and whether that shows
+        const kw = settings.realistic && el.h !== 0 ? 3 * gm * gm / (C2 * el.h * el.h) : 0;
+        const turns = kw * TAU * Rpx * e > 1 ? Math.min(ORBIT_ROSETTE, Math.ceil(1 / kw)) : 1;
+        const perTurn = clamp(Math.ceil(Math.PI * Math.sqrt(2.5 * Rpx * perf.quality)), 16, Math.floor(ORBIT_POINTS / turns));
+        const n = perTurn * turns, beta = e / (1 + Math.sqrt(Math.max(0, 1 - e * e)));
+        const anomaly = (E) => E + 2 * Math.atan2(beta * Math.sin(E), 1 - beta * Math.cos(E));
+        const nu0 = anomaly(E0);
+        // (frames for one turn at this speed: at 4 it is too quick to see, and by 12 it has its fade)
+        const frames = el.T / (settings.speed * rate() * STEP_FRAME), fade = 0.55 * clamp((frames - 4) / 8, 0, 1);
+        const at = (E) => {
+            const X = a * (Math.cos(E) - e), Y = way * bb * Math.sin(E);
+            let wx1 = X * cw - Y * sw, wy1 = X * sw + Y * cw;
+            if (kw) {
+                const back = way * kw * (nu0 - anomaly(E)), cb = Math.cos(back), sb = Math.sin(back), x1 = cb * wx1 + sb * wy1;
+                wy1 = cb * wy1 - sb * wx1; wx1 = x1;
+            }
+            TP[0] = ox + part * wx1 * scale; TP[1] = oy - part * wy1 * scale;
+        };
+        const shades = Math.min(3, turns) * ORBIT_SHADES, each = Math.ceil(n / shades);
+        let i = 0, done = false;
+        for (let s = 0; s < shades && !done && i < n; s++) {
+            ctx.globalAlpha = 0.8 - (fade * s) / Math.max(1, shades - 1);
+            ctx.beginPath();
+            at(E0 - (i * TAU) / perTurn);
+            let px = TP[0], py = TP[1];
+            tr.out = outcode(px, py);
+            tr.pen = true;
+            ctx.moveTo(px, py);
+            for (let j = 0; j < each && i < n; j++) {
+                i++;
+                const E = E0 - (i * TAU) / perTurn;
+                if (M0 - (E - e * Math.sin(E)) > reach) { done = true; break; }
+                at(E);
+                trailLine(tr, px, py, TP[0], TP[1]);
+                px = TP[0]; py = TP[1];
+            }
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+    }
+
     function drawTrails(C) {
         const years = trailYears();
         if (years <= 0) { layerAfterFrame(false); return; }
         const first = sampleAtTime(simTime - trailDir * years);
         const L = frameId !== null ? bodyById(frameId) : null;
         if (L && !L.trail) return;
+        // (seen from a body in such a pair: from the pair's centre, whose samples are a path. Its own aren't)
+        const Lq = L ? orbitPair(L) : null;
         // While the frame is frozen (a body is being dragged), the live origin has drifted from F
-        const live = freeze ? liveFrameOrigin() : F;
+        const live = Lq ? orbitPairCentre(Lq) : freeze ? liveFrameOrigin() : F;
         const offX = (live.x - F.x - view.panX) * scale + midX, offY = viewH / 2 - (live.y - F.y - view.panY) * scale;
         const lw = clamp(1.6 * sizeScale, 1.2, 2);
         // (a turned view: each sample turned by the angle at its own time, from the turning pair's own
         // samples; see turnedTrails)
         const turned = turnedTrails(first);
-        const oT = turned && turned.oT ? turned.oT : L ? L.trail : comTrail;
-        const oFirst = turned && turned.oT ? turned.first : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
-        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true, g: ctx };
+        const oFirst = turned && turned.oT ? turned.first : Lq ? Math.max(orbitPairFirst(Lq), first) : L ? trailFirst(L) : sampleCount - TRAIL_CAP + 1;
+        const oT = turned && turned.oT ? turned.oT : Lq ? orbitPairSamples(Lq, oFirst, PAIR_ORIGIN) : L ? L.trail : comTrail;
+        const tr = { T: null, oT, offX, offY, stride: 1, turn: turned, capT: 0, capO: 0, out: 0, pen: true, g: ctx, curves: false, lo: 0 };
         for (const g of minorGroups.values()) g.length = 0;
         for (const g of pieceGroups.values()) g.length = 0;
         for (const g of gasGroups.values()) g.length = 0;
         for (const b of bodies) {
+            const q = orbitPair(b);
+            // (out of such a pair its samples are no use: its trail starts again)
+            if (b.orbitDrawn && !q) b.trailStart = sampleCount;
+            b.orbitDrawn = !!q;
             if (b.held || !b.trail) continue;
+            // (a host, seen from a body going round it, goes round that body)
+            if (Lq && Lq.hosted && b === Lq.b) {
+                ctx.strokeStyle = bodyStroke(b.color, C.dark);
+                ctx.lineWidth = lw;
+                orbitTrail(b, Lq, Math.max(trailFirst(b), first, oFirst), L, tr);
+                continue;
+            }
             if ((b.minor || b.grp) && !isChosen(b)) {
+                if (q) continue;   // (a dot in a swarm: only its orbit would say anything, and hundreds of those say nothing)
                 const groups = b.grp < 0 ? gasGroups : b.minor ? minorGroups : pieceGroups;
                 let g = groups.get(b.color);
                 if (!g) { g = []; groups.set(b.color, g); }
                 g.push(b);
                 continue;
             }
-            const k0 = Math.max(trailFirst(b), first, oFirst);
+            const k0 = Math.max(q ? orbitPairFirst(q) : trailFirst(b), first, oFirst);
             const count = sampleCount - k0;
-            if (count < 1) continue;
+            if (count < 1 && !q) continue;
             ctx.strokeStyle = bodyStroke(b.color, C.dark);
             ctx.lineWidth = lw;
-            tr.T = b.trail;
+            if (q) {
+                orbitTrail(b, q, k0, L, tr);
+                // (the path of the pair as a whole goes with the heavier of two)
+                if (q.hosted || count < 1 || b !== (q.a.m > q.b.m ? q.a : q.b)) continue;
+            }
+            tr.T = q ? orbitPairSamples(q, k0, PAIR_TRAIL) : b.trail;
             tr.stride = Math.max(1, Math.floor(count / (TRAIL_POINTS * perf.quality)));
+            tr.curves = perf.quality > 0.5;
+            tr.lo = k0;
             const chunk = Math.max(1, Math.ceil(count / TRAIL_CHUNKS));
             for (let c = 0; c < TRAIL_CHUNKS; c++) {
                 const ks = k0 + c * chunk;
@@ -7928,9 +8086,13 @@
                 ctx.globalAlpha = 0.08 + 0.72 * f;
                 ctx.beginPath();
                 traceTrail(tr, ks, ke, (1.2 + 2 * (1 - f)) / perf.quality);
-                if (ke === sampleCount && !b.ghost) ctx.lineTo(sx(b.dx), sy(b.dy));   // (b.ghost: see drawPast)
+                if (ke === sampleCount && !b.ghost) {   // (b.ghost: see drawPast)
+                    const end = q ? orbitPairCentre(q) : null;
+                    trailEnd(tr, sx(end ? end.x : b.dx), sy(end ? end.y : b.dy));
+                }
                 ctx.stroke();
             }
+            tr.curves = false;
         }
         // The swarm: one path per colour for each of a few shades, in thinner lines with plain ends and
         // corners (round ones take far longer to paint); when drawing runs slow, only their newest part
@@ -8242,10 +8404,79 @@
                 }
                 b = c; bx = cx; by = cy;
             }
-            trailLine(tr, ax, ay, bx, by);
+            if (!tr.curves || !trailCurve(tr, a, ax, ay, b, bx, by)) trailLine(tr, ax, ay, bx, by);
             a = b; ax = bx; ay = by;
         }
         if (!tr.pen) tr.g.moveTo(ax, ay);
+    }
+
+    // Samples can be far apart on the screen: a body going round a heavy host at a good many degrees a step, or any
+    // orbit from close up. Where the corner would show (the line's middle over CURVE_SHOW px from the true path), a
+    // line goes as a curve instead, leaving each end along the way through it and its neighbours (as a circle through
+    // them would: a sample with no neighbour on one side has the same bend as at its other end). A turn of over
+    // CURVE_MAX at either end isn't a curve the samples have followed, so it stays as it is. It takes no more samples.
+    const CURVE_SHOW = 0.4, CURVE_MAX = 0.8;
+    const CURVE_SIN = Math.sin(CURVE_MAX), CURVE_MIN = (4 * CURVE_SHOW) / CURVE_SIN;   // (lines shorter than that can't show one)
+    // The way a circle goes through the point joining a line (ax, ay) of length A to the next, (bx, by) of length B,
+    // into TP as a unit vector: each line's direction counts for as much as the other is long
+    function trailTangent(ax, ay, A, bx, by, B) {
+        const tx = (ax / A) * B + (bx / B) * A, ty = (ay / A) * B + (by / B) * A, t = hyp(tx, ty) || 1;
+        TP[0] = tx / t; TP[1] = ty / t;
+    }
+    function trailCurve(tr, a, ax, ay, b, bx, by) {
+        const ex = bx - ax, ey = by - ay, L = hyp(ex, ey), o = outcode(bx, by);
+        if (L < CURVE_MIN || (o & tr.out)) return false;
+        const s = b - a;
+        let in1 = NaN, in2 = NaN, u1x = 0, u1y = 0, u2x = 0, u2y = 0;
+        if (a - s >= tr.lo) {
+            trailAt(tr, a - s);
+            const dx = ax - TP[0], dy = ay - TP[1], D = hyp(dx, dy);
+            if (D > 0) {
+                trailTangent(dx, dy, D, ex, ey, L);
+                u1x = TP[0]; u1y = TP[1];
+                in1 = (ex * u1y - ey * u1x) / L;
+            }
+        }
+        if (b + s < sampleCount) {
+            trailAt(tr, b + s);
+            const dx = TP[0] - bx, dy = TP[1] - by, D = hyp(dx, dy);
+            if (D > 0) {
+                trailTangent(ex, ey, L, dx, dy, D);
+                u2x = TP[0]; u2y = TP[1];
+                in2 = (ex * u2y - ey * u2x) / L;
+            }
+        }
+        if (in1 !== in1 && in2 !== in2) return false;
+        // (no neighbour: the mirror of the other end)
+        if (in1 !== in1) { in1 = -in2; u1x = (2 * ex * (ex * u2x + ey * u2y)) / (L * L) - u2x; u1y = (2 * ey * (ex * u2x + ey * u2y)) / (L * L) - u2y; }
+        if (in2 !== in2) { in2 = -in1; u2x = (2 * ex * (ex * u1x + ey * u1y)) / (L * L) - u1x; u2y = (2 * ey * (ex * u1x + ey * u1y)) / (L * L) - u1y; }
+        const turn = Math.abs(in1) + Math.abs(in2);
+        if (Math.abs(in1) > CURVE_SIN || Math.abs(in2) > CURVE_SIN || (L * turn) / 8 <= CURVE_SHOW) return false;
+        if (!tr.pen) { tr.g.moveTo(ax, ay); tr.pen = true; }
+        const c = L / 3;
+        tr.g.bezierCurveTo(ax + c * u1x, ay + c * u1y, bx - c * u2x, by - c * u2y, bx, by);
+        tr.out = o;
+        return true;
+    }
+
+    // On from the newest sample to the body, as it is now: the same, with only its last line to go by
+    function trailEnd(tr, x, y) {
+        const k = sampleCount - 1;
+        if (tr.curves && k - 1 >= tr.lo) {
+            trailAt(tr, k);
+            const ax = TP[0], ay = TP[1];
+            trailAt(tr, k - 1);
+            const dx = ax - TP[0], dy = ay - TP[1], D = hyp(dx, dy), ex = x - ax, ey = y - ay, L = hyp(ex, ey);
+            if (D > 0 && L > CURVE_MIN) {
+                trailTangent(dx, dy, D, ex, ey, L);
+                const ux = TP[0], uy = TP[1], side = (ex * uy - ey * ux) / L;
+                if (Math.abs(side) <= CURVE_SIN && (L * Math.abs(side)) / 4 > CURVE_SHOW) {
+                    tr.g.quadraticCurveTo(ax + 0.5 * L * ux, ay + 0.5 * L * uy, x, y);
+                    return;
+                }
+            }
+        }
+        tr.g.lineTo(x, y);
     }
 
     // Where sample k of the trail is drawn, into TP (turned, in a turned view: see turnedTrails)
@@ -13451,6 +13682,11 @@
         updateHistoryUi();
     }
 
+    // How soon a sharp bend may add a trail sample after the last one. In slow motion that shrinks with the speed, so
+    // a curve gets as many samples for each frame it is on the screen as at TRAIL_SLOW, ready for a close view.
+    const TRAIL_SLOW = 0.1;
+    const bendGap = () => (sampleDt / 32) * Math.min(1, settings.speed / TRAIL_SLOW);
+
     // The trails after a step, either way in time. The kept samples always run one way (trailDir).
     // Going that way, one is added every sampleDt (and on a sharp bend). Going the other way, the
     // bodies go back over their trails, so the samples they pass are dropped (their numbers stay in
@@ -13469,7 +13705,7 @@
             nextSampleT = simTime + timeDir * sampleDt;
             return;
         }
-        if (timeDir * (simTime - nextSampleT) >= 0 || (timeDir * (simTime - lastSampleT) > sampleDt / 32 && trailBending())) {
+        if (timeDir * (simTime - nextSampleT) >= 0 || (timeDir * (simTime - lastSampleT) > bendGap() && trailBending())) {
             recordSample();
             past.dropped = false;
             while (timeDir * (nextSampleT - simTime) <= 0) nextSampleT += timeDir * sampleDt;
@@ -13540,7 +13776,7 @@
             return { x: offX + (rc * rx - rs * ry) * scale, y: offY - (rs * rx + rc * ry) * scale };
         };
         // (not pieces of a torn-apart body: their samples are too far apart at a swing past the host to say where they were)
-        const usable = (b) => !b.held && !b.grp && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k;
+        const usable = (b) => !b.held && !b.grp && b.trail && !(b.minor && !isChosen(b)) && trailFirst(b) <= k && !trailOrbit(b);
         for (const b of bodies) {
             if (!usable(b)) continue;
             const g = where(b), x = sx(b.dx), y = sy(b.dy), r = drawRadius(b);
@@ -19132,7 +19368,9 @@
     // Many bodies and close pairs: what the integrator is doing (for testing)
     Object.assign(window.orbitsSimulation, {
         // The close pairs followed by the exact two-body drift
-        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast, hosted: p.hosted })),
+        pairs: () => mainPairs.map((p) => ({ a: p.a.name, b: p.b.name, fast: p.fast, orbit: p.orbit, hosted: p.hosted })),
+        // The bodies whose trails are drawn from their orbits (see orbitTrail)
+        orbitTrails: () => bodies.filter(trailOrbit).map((b) => b.name),
         // The gas round compact bodies: how much of it, its mean eccentricity, the energy it has lost, goes logged
         gas() {
             const r = [];
