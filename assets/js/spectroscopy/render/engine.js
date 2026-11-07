@@ -1,5 +1,4 @@
-// FOUNDATION ENGINE, owned by the sky-core track, which may rewrite the inside but keeps this API.
-// The renderer, the hemisphere camera, the frame loop, picking and the post-processing chain.
+// The renderer, the hemisphere camera, the frame loop, picking, the graphics level and the post-processing chain.
 //
 // A layer is any object with these members, added with engine.addLayer():
 //   id                  a short name
@@ -8,25 +7,112 @@
 //   dispose()?          free GPU resources
 //
 // frame = { t, dt, fov, pxPerRad, width, height, dpr, camera, band, bandW, quality, reduceMotion, view }
+// The frame passed to update() is reused every frame, so keep what you need rather than keeping the object.
+//
+// Each frame: sky scene -> overlay passes -> post effects (all HDR) -> bloom -> tone map, vignette, sRGB, dither.
+// If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
+//
+// If the browser takes the graphics context away and later gives it back, the engine emits bus 'gl-restored'. Whatever
+// a layer baked into a render target is gone by then, so a layer that bakes should listen and bake again.
 
 import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
 import { BANDS, bandIndex } from '../core/bands.js';
 import { azAltToVec3, DEFAULT_VIEW, MIN_FOV, MAX_FOV, limitingMag } from '../core/sky.js';
+import { bandSkyBrightness } from '../data/band_table.js';
 import { sharedUniforms } from './shared.js';
+
+// A body is drawn, and can be picked, when its glow is at least this. Glow is 1 at the zoom's limiting magnitude.
+export const MIN_GLOW = 0.05;
 
 const RAD = Math.PI / 180;
 const BAND_FADE_S = 0.6;
+const ALT_MAX = 89.9;
+const ALT_SLEW_MIN = -5;        // Slews and code may go this low; dragging stops a little sooner (altFloor)
+const INERTIA_RATE = 4.2;       // How fast a flicked sky slows down (1/s)
+const ZOOM_RATE = 11;           // How fast the zoom catches up with the wheel (1/s)
+const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a drag
+const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
+const PICK_RADIUS_MOUSE = 24;
+const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
+const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
+
+// What each graphics level spends. dpr caps the pixel ratio; bloom levels are halvings of the screen.
+const LEVELS = ['low', 'medium', 'high'];
+const QUALITY = {
+    low: { dpr: 1, bloomLevels: 0 },
+    medium: { dpr: 1.5, bloomLevels: 4 },
+    high: { dpr: 2, bloomLevels: 6 }
+};
+// Auto: step down below these rates (frames a second), step up only from a steady rate of QUALITY_UP_FPS
+const QUALITY_DOWN_FPS = { high: 42, medium: 27 };
+const QUALITY_UP_FPS = 55;
+const QUALITY_WINDOW_S = 2;
+
+const BLOOM = {
+    threshold: 0.75,            // HDR level where glow starts; the Milky Way sits below it and stays clean
+    knee: 0.5,                  // Softness of that start
+    strength: 0.5,              // Bloom added to the picture
+    spread: 0.72                // Each wider level's weight relative to the one above: higher is a wider glow
+};
+
+const FULLSCREEN_VERT = /* glsl */`
+    varying vec2 vUv;
+    void main() {
+        vUv = position.xy * 0.5 + 0.5;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+    }`;
 
 function easeInOut(x) {
     return x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2;
 }
 
+// The lowest a user's view can go at a field of view: the bottom edge sits a little below the horizon, by 8 degrees
+// at most, so that ground never takes over the picture and a narrow view can still get right down to the hills
+function altFloor(fov) {
+    return Math.max(fov * 0.25, fov * 0.5 - 8);
+}
+
+function supportsHalfFloatTarget(renderer) {
+    return renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
+}
+
+// A message in the canvas area, for when the sky can't be drawn at all
+function showCanvasMessage(canvas, text) {
+    const host = canvas.parentElement;
+    if (!host) return null;
+    let box = host.querySelector('.spectro-gl-message');
+    if (!box) {
+        box = document.createElement('div');
+        box.className = 'spectro-gl-message';
+        box.setAttribute('role', 'alert');
+        host.appendChild(box);
+    }
+    box.textContent = text;
+    box.hidden = false;
+    return box;
+}
+
+function hideCanvasMessage(canvas) {
+    const box = canvas.parentElement && canvas.parentElement.querySelector('.spectro-gl-message');
+    if (box) box.hidden = true;
+}
+
 export function createEngine(canvas) {
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false });
-    renderer.setClearColor(0x000000, 1);
-    renderer.toneMapping = THREE.NoToneMapping;
-    renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // The final pass converts to sRGB itself
+    let renderer = null;
+    try {
+        renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false, depth: false });
+    } catch (err) {
+        console.warn('[spectroscopy] WebGL is not available:', err);
+        showCanvasMessage(canvas, "This device can't draw the sky, because WebGL 2 isn't available or is turned off. Try turning on hardware acceleration in your browser's settings, or use another browser. The Go to box and the object panels still work.");
+    }
+    if (renderer) {
+        renderer.setClearColor(0x000000, 1);
+        renderer.toneMapping = THREE.NoToneMapping;
+        renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // The final pass converts to sRGB itself
+        renderer.autoClear = false;                             // Overlay passes draw on top of the sky
+        renderer.info.autoReset = false;                        // Count the whole frame, not its last pass
+    }
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(DEFAULT_VIEW.fov, 2, 0.1, 5000);
@@ -40,109 +126,486 @@ export function createEngine(canvas) {
     let width = 1;
     let height = 1;
     let dpr = 1;
+    let bufferW = 1;
+    let bufferH = 1;
     let lastNow = performance.now();
     let elapsed = 0;
     let bandFrom = bandIndex(app.band);
     let bandTo = bandFrom;
     let bandFade = 1;
     let running = false;
+    let rafId = 0;
+    let contextLost = false;
     let skipSkyDraw = false;
+    let dipToBlack = 1;       // 1 is the full picture; Reduce motion's slews dip this to 0 and back
+    let lastCameraFov = 0;
 
-    const makeTarget = () => new THREE.WebGLRenderTarget(1, 1, {
-        type: THREE.HalfFloatType,
-        depthBuffer: true,
+    // Camera motion
+    const velocity = { az: 0, alt: 0 };     // Degrees a second, from a flick
+    let zoomGoal = view.fov;
+    let zoomAnchor = null;                  // Screen point (CSS px) that stays put while zooming
+
+    // ---------- Render targets ----------
+
+    const hdrType = renderer && !supportsHalfFloatTarget(renderer) ? THREE.UnsignedByteType : THREE.HalfFloatType;
+    const makeTarget = (depthBuffer) => new THREE.WebGLRenderTarget(1, 1, {
+        type: hdrType,
+        depthBuffer,
+        stencilBuffer: false,
         minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter
+        magFilter: THREE.LinearFilter,
+        generateMipmaps: false
     });
-    let targetA = makeTarget();
-    let targetB = makeTarget();
+    let targetA = renderer ? makeTarget(true) : null;
+    let targetB = null;                     // Made the first time a post effect runs, as most frames need none
+    let bloomTargets = [];
 
-    // Final pass: tone map the HDR buffer to the screen (ACES-like curve, then sRGB)
-    const blitScene = new THREE.Scene();
-    const blitCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const blitMaterial = new THREE.ShaderMaterial({
+    // ---------- Full-screen passes ----------
+
+    const fsGeometry = new THREE.BufferGeometry();
+    fsGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+    const fsMesh = new THREE.Mesh(fsGeometry);
+    fsMesh.frustumCulled = false;
+    const fsScene = new THREE.Scene();
+    fsScene.add(fsMesh);
+    const fsCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    const fsMaterial = (params) => new THREE.ShaderMaterial({
         depthTest: false,
         depthWrite: false,
         toneMapped: false,
-        uniforms: { tInput: { value: null }, uExposure: { value: 1 } },
-        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        vertexShader: FULLSCREEN_VERT,
+        ...params
+    });
+
+    function drawFullscreen(material, target) {
+        fsMesh.material = material;
+        renderer.setRenderTarget(target);
+        renderer.render(fsScene, fsCamera);
+    }
+
+    // Bloom: a dual-filter chain. Each step down halves the picture with 5 taps; each step up adds the wider
+    // level back with 8. No separate targets for the way up, as the levels are added to in place.
+    const bloomDown = fsMaterial({
+        blending: THREE.NoBlending,
+        uniforms: {
+            tInput: { value: null },
+            uHalfTexel: { value: new THREE.Vector2() },
+            uThreshold: { value: 0 },
+            uKnee: { value: BLOOM.knee }
+        },
         fragmentShader: /* glsl */`
             uniform sampler2D tInput;
+            uniform vec2 uHalfTexel;
+            uniform float uThreshold;
+            uniform float uKnee;
+            varying vec2 vUv;
+            vec3 bright(vec3 c) {
+                // A very bright star must not outweigh everything once averaged
+                c = min(c, vec3(64.0));
+                if (uThreshold <= 0.0) return c;
+                float b = max(c.r, max(c.g, c.b));
+                float soft = clamp(b - uThreshold + uKnee, 0.0, 2.0 * uKnee);
+                soft = soft * soft / (4.0 * uKnee + 1e-4);
+                return c * max(b - uThreshold, soft) / max(b, 1e-4);
+            }
+            void main() {
+                vec3 sum = bright(texture2D(tInput, vUv).rgb) * 4.0;
+                sum += bright(texture2D(tInput, vUv - uHalfTexel).rgb);
+                sum += bright(texture2D(tInput, vUv + uHalfTexel).rgb);
+                sum += bright(texture2D(tInput, vUv + vec2(uHalfTexel.x, -uHalfTexel.y)).rgb);
+                sum += bright(texture2D(tInput, vUv - vec2(uHalfTexel.x, -uHalfTexel.y)).rgb);
+                gl_FragColor = vec4(sum / 8.0, 1.0);
+            }`
+    });
+    const bloomUp = fsMaterial({
+        transparent: true,
+        blending: THREE.CustomBlending,
+        blendEquation: THREE.AddEquation,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneFactor,
+        uniforms: {
+            tInput: { value: null },
+            uHalfTexel: { value: new THREE.Vector2() },
+            uWeight: { value: 1 }
+        },
+        fragmentShader: /* glsl */`
+            uniform sampler2D tInput;
+            uniform vec2 uHalfTexel;
+            uniform float uWeight;
+            varying vec2 vUv;
+            void main() {
+                vec2 h = uHalfTexel;
+                vec3 sum = texture2D(tInput, vUv + vec2(-h.x * 2.0, 0.0)).rgb;
+                sum += texture2D(tInput, vUv + vec2(-h.x, h.y)).rgb * 2.0;
+                sum += texture2D(tInput, vUv + vec2(0.0, h.y * 2.0)).rgb;
+                sum += texture2D(tInput, vUv + vec2(h.x, h.y)).rgb * 2.0;
+                sum += texture2D(tInput, vUv + vec2(h.x * 2.0, 0.0)).rgb;
+                sum += texture2D(tInput, vUv + vec2(h.x, -h.y)).rgb * 2.0;
+                sum += texture2D(tInput, vUv + vec2(0.0, -h.y * 2.0)).rgb;
+                sum += texture2D(tInput, vUv + vec2(-h.x, -h.y)).rgb * 2.0;
+                gl_FragColor = vec4(sum / 12.0 * uWeight, 1.0);
+            }`
+    });
+
+    // Final pass: HDR plus bloom, a subtle vignette, an ACES-like curve, sRGB, and a little dither so that the
+    // long faint gradients of the Milky Way don't band in eight bits.
+    const composite = fsMaterial({
+        blending: THREE.NoBlending,
+        uniforms: {
+            tInput: { value: null },
+            tBloom: { value: null },
+            uBloom: { value: 0 },
+            uExposure: { value: 1 },
+            uDip: { value: 1 },
+            uAspect: { value: 1 }
+        },
+        fragmentShader: /* glsl */`
+            uniform sampler2D tInput;
+            uniform sampler2D tBloom;
+            uniform float uBloom;
             uniform float uExposure;
+            uniform float uDip;
+            uniform float uAspect;
             varying vec2 vUv;
             vec3 aces(vec3 x) {
                 return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
             }
+            vec3 toSRGB(vec3 c) {
+                return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+            }
             void main() {
-                vec3 c = aces(texture2D(tInput, vUv).rgb * uExposure);
-                gl_FragColor = vec4(pow(c, vec3(1.0 / 2.2)), 1.0);
+                vec3 hdr = texture2D(tInput, vUv).rgb;
+                if (uBloom > 0.0) hdr += texture2D(tBloom, vUv).rgb * uBloom;
+                vec2 q = (vUv - 0.5) * vec2(min(uAspect, 1.6) / 1.6, 1.0) * 2.0;
+                float vignette = 1.0 - 0.22 * smoothstep(0.25, 1.6, dot(q, q));
+                vec3 c = toSRGB(aces(hdr * uExposure * vignette * uDip));
+                float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+                gl_FragColor = vec4(c + (dither - 0.5) / 255.0, 1.0);
             }`
     });
-    blitScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blitMaterial));
+
+    function disposeBloom() {
+        bloomTargets.forEach((t) => t.dispose());
+        bloomTargets = [];
+    }
+
+    function buildBloom() {
+        disposeBloom();
+        const levels = QUALITY[app.qualityLevel].bloomLevels;
+        let w = bufferW;
+        let h = bufferH;
+        for (let i = 0; i < levels; i++) {
+            w = Math.max(2, w >> 1);
+            h = Math.max(2, h >> 1);
+            const target = makeTarget(false);
+            target.setSize(w, h);
+            bloomTargets.push(target);
+        }
+    }
+
+    function renderBloom(input) {
+        const n = bloomTargets.length;
+        if (!n) return null;
+        let source = input;
+        for (let i = 0; i < n; i++) {
+            const target = bloomTargets[i];
+            bloomDown.uniforms.tInput.value = source;
+            bloomDown.uniforms.uHalfTexel.value.set(0.5 / target.width, 0.5 / target.height);
+            bloomDown.uniforms.uThreshold.value = i === 0 ? BLOOM.threshold : 0;
+            drawFullscreen(bloomDown, target);
+            source = target.texture;
+        }
+        for (let i = n - 2; i >= 0; i--) {
+            const target = bloomTargets[i];
+            bloomUp.uniforms.tInput.value = bloomTargets[i + 1].texture;
+            bloomUp.uniforms.uHalfTexel.value.set(0.5 / target.width, 0.5 / target.height);
+            bloomUp.uniforms.uWeight.value = BLOOM.spread;
+            drawFullscreen(bloomUp, target);
+        }
+        return bloomTargets[0].texture;
+    }
+
+    // ---------- Size and graphics level ----------
 
     function resize() {
         const rect = canvas.getBoundingClientRect();
         width = Math.max(1, Math.round(rect.width));
         height = Math.max(1, Math.round(rect.height));
-        dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-        renderer.setPixelRatio(dpr);
-        renderer.setSize(width, height, false);
-        targetA.setSize(Math.round(width * dpr), Math.round(height * dpr));
-        targetB.setSize(Math.round(width * dpr), Math.round(height * dpr));
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
+        if (!renderer) return;
+        const cap = QUALITY[app.qualityLevel].dpr;
+        dpr = Math.min(window.devicePixelRatio || 1, cap);
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(width, height, false);
+        const unchanged = canvas.width === bufferW && canvas.height === bufferH
+            && bloomTargets.length === QUALITY[app.qualityLevel].bloomLevels;
+        composite.uniforms.uAspect.value = camera.aspect;
+        if (unchanged) return;
+        bufferW = canvas.width;
+        bufferH = canvas.height;
+        targetA.setSize(bufferW, bufferH);
+        if (targetB) targetB.setSize(bufferW, bufferH);
+        buildBloom();
     }
+
+    function setLevel(level) {
+        if (level === app.qualityLevel) return;
+        app.qualityLevel = level;
+        resize();
+        bus.emit('quality', { level });
+    }
+
+    // Weak-looking machines start low and earn their way up, rather than stuttering for the first few seconds
+    function guessStartLevel() {
+        const memory = navigator.deviceMemory || 8;
+        const cores = navigator.hardwareConcurrency || 8;
+        return memory <= 4 && cores <= 4 ? 'low' : 'medium';
+    }
+
+    // Auto: measures in windows. It steps down when a window stays low, and only ever climbs to a level that
+    // hasn't failed: a level it had to leave becomes the ceiling, which is what stops it oscillating.
+    const auto = { time: 0, frames: 0, skip: 1, lowWindows: 0, goodWindows: 0, stalls: 0, ceiling: 2 };
+
+    function resetAuto(skip = 1) {
+        auto.time = 0;
+        auto.frames = 0;
+        auto.skip = skip;
+        auto.lowWindows = 0;
+        auto.goodWindows = 0;
+        auto.stalls = 0;
+    }
+
+    function measureAuto(realDt) {
+        if (app.settings.quality !== 'auto') return;
+        if (realDt > 1) {
+            // A single long frame is a stall, not a rate. A run of them is a very slow machine.
+            auto.stalls += 1;
+            if (auto.stalls >= 4) stepDown();
+            return;
+        }
+        auto.time += realDt;
+        auto.frames += 1;
+        if (auto.time < QUALITY_WINDOW_S) return;
+        const fps = auto.frames / auto.time;
+        auto.time = 0;
+        auto.frames = 0;
+        auto.stalls = 0;
+        if (auto.skip > 0) {
+            auto.skip -= 1;
+            return;
+        }
+        const index = LEVELS.indexOf(app.qualityLevel);
+        const floor = QUALITY_DOWN_FPS[app.qualityLevel];
+        if (floor && fps < floor) {
+            auto.lowWindows += 1;
+            auto.goodWindows = 0;
+            if (auto.lowWindows >= 2 || fps < floor * 0.66) stepDown();
+            return;
+        }
+        auto.lowWindows = 0;
+        auto.goodWindows = fps >= QUALITY_UP_FPS ? auto.goodWindows + 1 : 0;
+        if (auto.goodWindows >= 2 && index < auto.ceiling) {
+            setLevel(LEVELS[index + 1]);
+            resetAuto();
+        }
+    }
+
+    function stepDown() {
+        const index = LEVELS.indexOf(app.qualityLevel);
+        if (index > 0) {
+            auto.ceiling = index - 1;
+            setLevel(LEVELS[index - 1]);
+        }
+        resetAuto();
+    }
+
+    function applyQualitySetting() {
+        const wanted = app.settings.quality;
+        if (wanted === 'auto') {
+            auto.ceiling = 2;
+            resetAuto();
+        } else if (QUALITY[wanted]) {
+            setLevel(wanted);
+        }
+    }
+
+    // ---------- Camera ----------
 
     function applyView() {
         camera.rotation.y = -view.az * RAD;
         camera.rotation.x = view.alt * RAD;
-        camera.fov = view.fov;
-        camera.updateProjectionMatrix();
+        if (view.fov !== lastCameraFov) {
+            lastCameraFov = view.fov;
+            camera.fov = view.fov;
+            camera.updateProjectionMatrix();
+        }
         camera.updateMatrixWorld();
     }
 
-    function setView(next) {
-        if (next.az !== undefined) view.az = ((next.az % 360) + 360) % 360;
-        if (next.alt !== undefined) view.alt = Math.max(-5, Math.min(89.9, next.alt));
-        if (next.fov !== undefined) view.fov = Math.max(MIN_FOV, Math.min(MAX_FOV, next.fov));
+    function placeView(az, alt, fov) {
+        view.az = ((az % 360) + 360) % 360;
+        view.alt = Math.max(ALT_SLEW_MIN, Math.min(ALT_MAX, alt));
+        view.fov = Math.max(MIN_FOV, Math.min(MAX_FOV, fov));
         applyView();
     }
 
-    // Fly the camera along the shortest path. opts: { duration (s), onDone }. Reduce motion jumps instead.
+    // Jumps straight there. In the sky, the horizon rule applies: widening the view lifts it clear of the ground, while
+    // a view a flight left below the rule can stay, but not go lower. The system view's own flights aren't held to it.
+    function setView(next) {
+        const fov = next.fov !== undefined ? Math.max(MIN_FOV, Math.min(MAX_FOV, next.fov)) : view.fov;
+        let alt = next.alt !== undefined ? next.alt : view.alt;
+        if (app.view === 'sky') {
+            const floor = altFloor(fov);
+            alt = fov > view.fov ? Math.max(alt, floor) : Math.max(alt, Math.min(view.alt, floor));
+        }
+        placeView(next.az !== undefined ? next.az : view.az, alt, fov);
+        zoomGoal = view.fov;
+        zoomAnchor = null;
+        velocity.az = 0;
+        velocity.alt = 0;
+    }
+
+    // Fly the camera along the shortest way round. opts: { duration (s), pullBack, onDone }. Duration 0 jumps.
+    // pullBack widens the view on the way, more for a long flight, so the sky doesn't whip past. Reduce motion
+    // replaces the flight with a quick dip to black.
     function slewTo(target, opts = {}) {
-        const duration = app.settings.reduceMotion ? 0 : (opts.duration ?? 1.5);
+        velocity.az = 0;
+        velocity.alt = 0;
+        zoomAnchor = null;
+        const duration = opts.duration ?? 1.5;
+        const toAz = target.az ?? view.az;
+        const toAlt = target.alt ?? view.alt;
+        const toFov = target.fov ?? view.fov;
         if (duration <= 0) {
-            setView(target);
+            placeView(toAz, toAlt, toFov);
+            zoomGoal = view.fov;
             slew = null;
+            dipToBlack = 1;
             if (opts.onDone) opts.onDone();
             return;
         }
-        const dAz = ((((target.az ?? view.az) - view.az + 540) % 360) - 180);
-        slew = {
-            from: { ...view },
-            dAz,
-            toAlt: target.alt ?? view.alt,
-            toFov: target.fov ?? view.fov,
-            midFov: opts.pullBack ? Math.min(MAX_FOV, Math.max(view.fov, target.fov ?? view.fov) * 1.25) : null,
-            t: 0,
-            duration,
-            onDone: opts.onDone
-        };
+        if (app.settings.reduceMotion) {
+            slew = { dip: true, jumped: false, toAz, toAlt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
+            return;
+        }
+        const dAz = ((((toAz - view.az + 540) % 360) + 360) % 360) - 180;
+        const dAlt = toAlt - view.alt;
+        let midFov = null;
+        if (opts.pullBack) {
+            const across = Math.hypot(dAz * Math.cos(((view.alt + toAlt) / 2) * RAD), dAlt);
+            midFov = Math.min(MAX_FOV, Math.max(Math.max(view.fov, toFov) * 1.25, Math.min(70, across * 0.8)));
+        }
+        slew = { from: { ...view }, dAz, dAlt, toFov, midFov, t: 0, duration, onDone: opts.onDone };
     }
 
     function stepSlew(dt) {
         if (!slew) return;
         slew.t = Math.min(1, slew.t + dt / slew.duration);
-        const k = easeInOut(slew.t);
-        const fov = slew.midFov
-            ? (slew.t < 0.5 ? slew.from.fov + (slew.midFov - slew.from.fov) * easeInOut(slew.t * 2)
-                : slew.midFov + (slew.toFov - slew.midFov) * easeInOut(slew.t * 2 - 1))
-            : slew.from.fov + (slew.toFov - slew.from.fov) * k;
-        setView({ az: slew.from.az + slew.dAz * k, alt: slew.from.alt + (slew.toAlt - slew.from.alt) * k, fov });
+        if (slew.dip) {
+            dipToBlack = Math.abs(1 - slew.t * 2);
+            if (slew.t >= 0.5 && !slew.jumped) {
+                slew.jumped = true;
+                placeView(slew.toAz, slew.toAlt, slew.toFov);
+                zoomGoal = view.fov;
+            }
+        } else {
+            const k = easeInOut(slew.t);
+            const { from, midFov, toFov } = slew;
+            let fov;
+            // In log steps, as a zoom feels even when each step is the same ratio
+            if (midFov) {
+                fov = slew.t < 0.5
+                    ? from.fov * (midFov / from.fov) ** easeInOut(slew.t * 2)
+                    : midFov * (toFov / midFov) ** easeInOut(slew.t * 2 - 1);
+            } else {
+                fov = from.fov * (toFov / from.fov) ** k;
+            }
+            placeView(from.az + slew.dAz * k, from.alt + slew.dAlt * k, fov);
+        }
         if (slew.t >= 1) {
             const done = slew.onDone;
             slew = null;
+            dipToBlack = 1;
+            zoomGoal = view.fov;
             if (done) done();
+        }
+    }
+
+    // The ray through a screen point, in camera space at a field of view: x right, y up, f forward, length 1
+    const ray = { x: 0, y: 0, f: 1 };
+    function rayThrough(px, py, fov) {
+        const t = Math.tan(fov * RAD * 0.5);
+        const x = ((px / width) * 2 - 1) * t * (width / height);
+        const y = (1 - (py / height) * 2) * t;
+        const length = Math.hypot(x, y, 1);
+        ray.x = x / length;
+        ray.y = y / length;
+        ray.f = 1 / length;
+        return ray;
+    }
+
+    // The zoom's anchor: a screen point, and the direction in the sky under it when the zoom began
+    function anchorZoomAt(px, py) {
+        const r = rayThrough(px, py, view.fov);
+        const p = view.alt * RAD;
+        const a = view.az * RAD;
+        const up = r.y * Math.cos(p) + r.f * Math.sin(p);
+        const back = r.y * Math.sin(p) - r.f * Math.cos(p);
+        zoomAnchor = {
+            x: px,
+            y: py,
+            skyX: r.x * Math.cos(a) - back * Math.sin(a),
+            skyY: up,
+            skyZ: r.x * Math.sin(a) + back * Math.cos(a)
+        };
+    }
+
+    // Keeps the sky under the anchor still, so what you point at is what you zoom into. Solves for the view that puts
+    // the anchor's direction back under its screen point, so errors can't build up over the steps of a zoom.
+    function setFovAnchored(next) {
+        let { az, alt } = view;
+        if (zoomAnchor) {
+            const r = rayThrough(zoomAnchor.x, zoomAnchor.y, next);
+            const tilt = Math.atan2(r.y, r.f);
+            const reach = Math.asin(Math.max(-1, Math.min(1, zoomAnchor.skyY / Math.hypot(r.y, r.f))));
+            // Two pitches put the anchor at the right height: the one nearer the view, past the zenith or not
+            const near = reach - tilt;
+            const far = Math.PI - reach - tilt;
+            const p = Math.abs(far - alt * RAD) < Math.abs(near - alt * RAD) ? far : near;
+            const back = r.y * Math.sin(p) - r.f * Math.cos(p);
+            alt = p / RAD;
+            az = (Math.atan2(zoomAnchor.skyX, -zoomAnchor.skyZ) - Math.atan2(r.x, -back)) / RAD;
+        }
+        placeView(az, Math.max(alt, altFloor(next)), next);
+    }
+
+    function stepCameraMotion(dt) {
+        if (slew) return;
+        const reduce = app.settings.reduceMotion;
+        if (Math.abs(Math.log(zoomGoal / view.fov)) > 1e-4) {
+            const k = reduce ? 1 : 1 - Math.exp(-dt * ZOOM_RATE);
+            setFovAnchored(view.fov * (zoomGoal / view.fov) ** k);
+        } else if (view.fov !== zoomGoal) {
+            setFovAnchored(zoomGoal);
+        }
+        if (dragPointers.size || (velocity.az === 0 && velocity.alt === 0)) return;
+        if (reduce) {
+            velocity.az = 0;
+            velocity.alt = 0;
+            return;
+        }
+        const decay = Math.exp(-dt * INERTIA_RATE);
+        const alt = Math.max(Math.min(view.alt, altFloor(view.fov)), view.alt + velocity.alt * dt);
+        placeView(view.az + velocity.az * dt, alt, view.fov);
+        velocity.az *= decay;
+        velocity.alt *= decay;
+        // Stop once it no longer moves a pixel a second or so
+        const minSpeed = (view.fov / height) * 0.5;
+        if (Math.abs(velocity.az) < minSpeed && Math.abs(velocity.alt) < minSpeed) {
+            velocity.az = 0;
+            velocity.alt = 0;
         }
     }
 
@@ -155,148 +618,433 @@ export function createEngine(canvas) {
         return { x: (tmp.x * 0.5 + 0.5) * width, y: (-tmp.y * 0.5 + 0.5) * height, onScreen: Math.abs(tmp.x) <= 1 && Math.abs(tmp.y) <= 1 };
     }
 
-    // The code of the object nearest a screen position (CSS pixels), or null. Bodies must show in the
-    // current band at this zoom. Layers can add candidates (cluster members, say) through layer.picks(frame).
-    function pick(x, y, maxPx = 24) {
-        const frame = currentFrame();
+    // ---------- Picking ----------
+
+    // Extended bodies can be clicked anywhere on them, using the size in their data. Layers may add better shapes.
+    function extendedRadiusDeg(body) {
+        if (body.nebula) return body.nebula.size_deg * 0.4;
+        if (body.galaxy) return body.galaxy.size_deg * 0.45;
+        if (body.cluster) return body.cluster.radius_deg;
+        if (body.comet) return body.comet.coma_deg;
+        if (body.supernova) return body.supernova.shell_deg;
+        return 0;
+    }
+
+    // Lower is a better match. A point-like thing near the pointer beats a big thing it lies inside, and of two
+    // things about as close, the brighter one wins.
+    function pickScore(dist, radiusPx, bonusPx) {
+        if (radiusPx > 12) {
+            return dist <= radiusPx ? 6 + 8 * (dist / radiusPx) : dist - radiusPx + 14;
+        }
+        return Math.max(0, dist - radiusPx) - bonusPx;
+    }
+
+    // Up to 10 px of head start for the brighter of two neighbours: 1.25 px for each magnitude above the zoom's limit
+    function brightnessBonusPx(body, lim) {
+        const margin = 2.5 * Math.log10(Math.max(bodyGlow(body, app.band) * zoomGain(lim), 1e-6));
+        return Math.min(10, Math.max(0, margin) * 1.25);
+    }
+
+    function zoomGain(lim) {
+        return 10 ** (0.4 * (lim - 6));
+    }
+
+    // Worked out once per body and band. The sum behind it is cheap, but picking asks for a thousand at a time.
+    const glowCache = new WeakMap();
+    function bodyGlow(body, band) {
+        let row = glowCache.get(body);
+        if (!row) {
+            row = {};
+            glowCache.set(body, row);
+        }
+        if (row[band] === undefined) row[band] = bandSkyBrightness(body, band);
+        return row[band];
+    }
+
+    // The code of the object nearest a screen position (CSS pixels), or null. Bodies must show in the current band
+    // at this zoom. Layers can add candidates (cluster members, say) through layer.picks(frame).
+    function pick(x, y, maxPx = PICK_RADIUS_MOUSE) {
+        if (app.view !== 'sky') return null;
+        applyView();
         let best = null;
-        let bestD = maxPx;
+        let bestScore = Infinity;
         const lim = limitingMag(view.fov);
-        const consider = (code, az, alt, radiusPx) => {
+        const pxPerDeg = (height * 0.5 * RAD) / Math.tan(view.fov * RAD * 0.5);
+        const consider = (code, az, alt, radiusPx, bonusPx) => {
             const p = project(az, alt);
             if (!p || !p.onScreen) return;
-            const d = Math.hypot(p.x - x, p.y - y) - radiusPx;
-            if (d < bestD) {
-                bestD = d;
+            const dist = Math.hypot(p.x - x, p.y - y);
+            if (dist > maxPx + radiusPx) return;
+            const score = pickScore(dist, radiusPx, bonusPx);
+            if (score < bestScore) {
+                bestScore = score;
                 best = code;
             }
         };
         if (app.universe) {
-            app.universe.bodies.forEach((body) => {
-                if (!bodyShows(body, lim)) return;
-                consider(body.code, body.sky.az, body.sky.alt, 0);
-            });
+            const { bodies } = app.universe;
+            for (let i = 0; i < bodies.length; i++) {
+                const body = bodies[i];
+                if (bodyShows(body, lim)) {
+                    consider(body.code, body.sky.az, body.sky.alt, extendedRadiusDeg(body) * pxPerDeg, brightnessBonusPx(body, lim));
+                }
+            }
         }
+        const frame = currentFrame();
         layers.forEach((layer) => {
             if (!layer.picks) return;
-            (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.radiusPx || 0));
+            (layer.picks(frame) || []).forEach((c) => consider(c.code, c.az, c.alt, c.radiusPx || 0, 0));
         });
         return best;
     }
 
-    // Is this body drawn at all right now? Used for picking; the layers apply the same rules in their shaders.
+    // Is this body drawn at all right now? Used for picking; the layers apply the same rule in their shaders, so what
+    // can be picked matches what is drawn in every band.
     function bodyShows(body, lim = limitingMag(view.fov)) {
         if (body.kind === 'home_planet' && !app.layers.homePlanets) return false;
-        const strength = body.bands[app.band] || 0;
-        if (strength <= 0.01) return false;
-        if (app.band !== 'visible') return true;
-        return body.brightness.mag <= lim;
+        return bodyGlow(body, app.band) * zoomGain(lim) >= MIN_GLOW;
     }
+
+    // ---------- Bands ----------
+
+    const bandWeights = BANDS.map((_, i) => (i === bandTo ? 1 : 0));
 
     function setBandTarget(band) {
-        const weights = currentBandWeights();
-        bandFrom = weights.indexOf(Math.max(...weights));
+        let top = 0;
+        for (let i = 1; i < bandWeights.length; i++) if (bandWeights[i] > bandWeights[top]) top = i;
+        bandFrom = top;
         bandTo = bandIndex(band);
         bandFade = app.settings.reduceMotion ? 1 : 0;
+        updateBandWeights();
     }
 
-    function currentBandWeights() {
+    function updateBandWeights() {
         const k = easeInOut(Math.min(1, bandFade));
-        return BANDS.map((_, i) => (i === bandTo ? k : 0) + (i === bandFrom ? 1 - k : 0));
+        for (let i = 0; i < bandWeights.length; i++) {
+            bandWeights[i] = (i === bandTo ? k : 0) + (i === bandFrom ? 1 - k : 0);
+        }
+    }
+
+    // ---------- The frame ----------
+
+    function fillFrame(frame, dt) {
+        frame.t = elapsed;
+        frame.dt = dt;
+        frame.fov = view.fov;
+        frame.pxPerRad = (height * dpr * 0.5) / Math.tan(view.fov * RAD * 0.5);
+        frame.width = width;
+        frame.height = height;
+        frame.dpr = dpr;
+        frame.camera = camera;
+        frame.band = app.band;
+        frame.bandW = bandWeights;
+        frame.quality = app.qualityLevel;
+        frame.reduceMotion = app.settings.reduceMotion;
+        frame.view = app.view;
+        return frame;
     }
 
     function currentFrame() {
-        return {
-            t: elapsed,
-            dt: 0,
-            fov: view.fov,
-            pxPerRad: (height * dpr * 0.5) / Math.tan(view.fov * RAD * 0.5),
-            width,
-            height,
-            dpr,
-            camera,
-            band: app.band,
-            bandW: currentBandWeights(),
-            quality: app.qualityLevel,
-            reduceMotion: app.settings.reduceMotion,
-            view: app.view
-        };
+        return fillFrame({}, 0);
     }
 
+    const liveFrame = {};
+    const stats = { calls: 0, triangles: 0, points: 0, jsMs: 0, fps: 0 };
+
     function renderOnce(dt) {
+        const started = performance.now();
         stepSlew(dt);
-        if (bandFade < 1) bandFade = Math.min(1, bandFade + dt / BAND_FADE_S);
+        stepCameraMotion(dt);
+        if (bandFade < 1) {
+            bandFade = Math.min(1, bandFade + dt / BAND_FADE_S);
+            updateBandWeights();
+        }
         applyView();
-        const frame = currentFrame();
-        frame.dt = dt;
+        const frame = fillFrame(liveFrame, dt);
         sharedUniforms.uTime.value = elapsed;
         sharedUniforms.uTwinkle.value = app.settings.reduceMotion ? 0 : 1;
-        sharedUniforms.uBandW.value = frame.bandW;
+        sharedUniforms.uBandW.value = bandWeights;
         sharedUniforms.uFov.value = view.fov;
         sharedUniforms.uPxPerRad.value = frame.pxPerRad;
         sharedUniforms.uLimitMag.value = limitingMag(view.fov);
-        sharedUniforms.uViewport.value.set(width * dpr, height * dpr);
+        sharedUniforms.uViewport.value.set(bufferW, bufferH);
 
-        layers.forEach((layer) => { if (layer.update) layer.update(frame); });
+        renderer.info.reset();
+        for (let i = 0; i < layers.length; i++) {
+            if (layers[i].update) layers[i].update(frame);
+        }
 
         renderer.setRenderTarget(targetA);
         renderer.clear();
         if (!skipSkyDraw) renderer.render(scene, camera);
-        overlayPasses.forEach((pass) => pass(renderer, frame, targetA));
+        for (let i = 0; i < overlayPasses.length; i++) overlayPasses[i](renderer, frame, targetA);
 
         let input = targetA;
-        let output = targetB;
-        postEffects.forEach((effect) => {
-            if (effect.isActive && !effect.isActive(frame)) return;
+        for (let i = 0; i < postEffects.length; i++) {
+            const effect = postEffects[i];
+            if (effect.isActive && !effect.isActive(frame)) continue;
+            if (!targetB) {
+                targetB = makeTarget(false);    // Post effects are full-screen, so this needs no depth
+                targetB.setSize(bufferW, bufferH);
+            }
+            const output = input === targetA ? targetB : targetA;
             effect.render(renderer, input.texture, output, frame);
-            [input, output] = [output, input];
-        });
+            input = output;
+        }
 
-        renderer.setRenderTarget(null);
-        blitMaterial.uniforms.tInput.value = input.texture;
-        renderer.render(blitScene, blitCamera);
+        const bloom = renderBloom(input.texture);
+        composite.uniforms.tInput.value = input.texture;
+        composite.uniforms.tBloom.value = bloom;
+        composite.uniforms.uBloom.value = bloom ? BLOOM.strength * (1 - BLOOM.spread * 0.5) : 0;
+        composite.uniforms.uDip.value = dipToBlack;
+        drawFullscreen(composite, null);
+
+        stats.calls = renderer.info.render.calls;
+        stats.triangles = renderer.info.render.triangles;
+        stats.points = renderer.info.render.points;
+        stats.jsMs = performance.now() - started;
+    }
+
+    // ---------- The loop ----------
+
+    const fpsDisplay = document.getElementById('fpsDisplay');
+    const fpsMeter = { time: 0, frames: 0, shown: -1 };
+
+    function meterFps(realDt) {
+        fpsMeter.time += realDt;
+        fpsMeter.frames += 1;
+        if (fpsMeter.time < 0.5) return;
+        stats.fps = fpsMeter.frames / fpsMeter.time;
+        fpsMeter.time = 0;
+        fpsMeter.frames = 0;
+        const shown = Math.round(stats.fps);
+        if (fpsDisplay && shown !== fpsMeter.shown) {
+            fpsMeter.shown = shown;
+            fpsDisplay.textContent = `FPS: ${shown}`;
+        }
     }
 
     function loop(now) {
-        if (!running) return;
-        requestAnimationFrame(loop);
-        const dt = Math.min(0.1, (now - lastNow) / 1000);
+        rafId = 0;
+        if (!running || contextLost || document.hidden) return;
+        rafId = requestAnimationFrame(loop);
+        const realDt = Math.max(0, (now - lastNow) / 1000);
+        const dt = Math.min(0.1, realDt);
         lastNow = now;
         elapsed += dt;
+        if (resizePending && now - lastResizeAt > 120) {
+            // The drawer animates the canvas's size: reallocating every frame of that would thrash the GPU.
+            resizePending = false;
+            lastResizeAt = now;
+            resize();
+        }
         renderOnce(dt);
+        meterFps(realDt);
+        measureAuto(realDt);
+        checkHover(now);
     }
 
-    // Basic drag and zoom; the sky-core track adds inertia, pinch and keyboard
-    let dragging = null;
-    canvas.addEventListener('pointerdown', (e) => {
-        dragging = { x: e.clientX, y: e.clientY, moved: 0 };
-        canvas.setPointerCapture(e.pointerId);
-    });
-    canvas.addEventListener('pointermove', (e) => {
-        if (!dragging) return;
-        const dx = e.clientX - dragging.x;
-        const dy = e.clientY - dragging.y;
-        dragging.x = e.clientX;
-        dragging.y = e.clientY;
-        dragging.moved += Math.abs(dx) + Math.abs(dy);
-        const degPerPx = view.fov / height;
-        setView({ az: view.az - dx * degPerPx, alt: view.alt + dy * degPerPx });
-    });
-    canvas.addEventListener('pointerup', (e) => {
-        if (dragging && dragging.moved < 6) {
-            const rect = canvas.getBoundingClientRect();
-            const code = pick(e.clientX - rect.left, e.clientY - rect.top);
-            bus.emit('skyclick', { code });
-        }
-        dragging = null;
-    });
-    canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        setView({ fov: view.fov * Math.exp(e.deltaY * 0.001) });
-    }, { passive: false });
+    function wake() {
+        if (!running || contextLost || document.hidden || rafId) return;
+        lastNow = performance.now();
+        resetAuto();
+        rafId = requestAnimationFrame(loop);
+    }
+
+    function sleep() {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = 0;
+    }
+
+    // ---------- Pointer input ----------
+
+    const dragPointers = new Map(); // pointerId -> { x, y }
+    let press = null;               // The press that may yet turn out to be a click
+    let pinch = null;
+    const dragTrail = { x: 0, y: 0, time: 0 };
+    const hover = { x: 0, y: 0, dirty: false, lastAt: 0 };
+
+    const inputActive = () => app.view === 'sky' && !slew && !contextLost;
+
+    function canvasPoint(e) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    // Degrees of sky per CSS pixel at the centre of the view, so the sky stays under the pointer at any zoom
+    function degPerPx() {
+        return (2 * Math.tan(view.fov * RAD * 0.5)) / height / RAD;
+    }
+
+    function moveByPixels(dx, dy) {
+        const deg = degPerPx();
+        const stretch = 1 / Math.max(Math.cos(view.alt * RAD), 0.2); // Near the zenith, azimuth covers less sky
+        const alt = Math.max(Math.min(view.alt, altFloor(view.fov)), view.alt + dy * deg);
+        placeView(view.az - dx * deg * stretch, alt, view.fov);
+        return { az: -dx * deg * stretch, alt: dy * deg };
+    }
+
+    function pinchState() {
+        const [a, b] = [...dragPointers.values()];
+        return { dist: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+
+    if (renderer) {
+        canvas.addEventListener('pointerdown', (e) => {
+            if (!inputActive() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+            const p = canvasPoint(e);
+            dragPointers.set(e.pointerId, p);
+            try {
+                canvas.setPointerCapture(e.pointerId);
+            } catch (err) { /* The pointer has already gone */ }
+            velocity.az = 0;
+            velocity.alt = 0;
+            zoomAnchor = null;
+            zoomGoal = view.fov;
+            if (dragPointers.size === 1) {
+                press = { x: p.x, y: p.y, moved: 0, touch: e.pointerType !== 'mouse' };
+                dragTrail.time = performance.now();
+            } else if (dragPointers.size === 2) {
+                press = null; // Two fingers are never a click
+                pinch = pinchState();
+            }
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            const pointer = dragPointers.get(e.pointerId);
+            if (!pointer) {
+                if (e.pointerType === 'mouse') {
+                    const p = canvasPoint(e);
+                    hover.x = p.x;
+                    hover.y = p.y;
+                    hover.dirty = true;
+                }
+                return;
+            }
+            const p = canvasPoint(e);
+            const dx = p.x - pointer.x;
+            const dy = p.y - pointer.y;
+            pointer.x = p.x;
+            pointer.y = p.y;
+            if (!inputActive()) return;
+            if (dragPointers.size === 2 && pinch) {
+                const now = pinchState();
+                if (pinch.dist > 0 && now.dist > 0) {
+                    zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * (pinch.dist / now.dist)));
+                }
+                moveByPixels(now.x - pinch.x, now.y - pinch.y);
+                anchorZoomAt(now.x, now.y);
+                pinch = now;
+                return;
+            }
+            if (dragPointers.size !== 1) return;
+            if (press) {
+                press.moved += Math.abs(dx) + Math.abs(dy);
+                const slop = press.touch ? CLICK_SLOP_TOUCH : CLICK_SLOP_MOUSE;
+                if (press.moved <= slop) return; // Still might be a click: hold the sky still
+                press = null;
+            }
+            const moved = moveByPixels(dx, dy);
+            // The flick's speed: an average over the last moments of the drag
+            const t = performance.now();
+            const gap = Math.max(1, t - dragTrail.time) / 1000;
+            dragTrail.time = t;
+            const mix = Math.min(1, gap / 0.05);
+            velocity.az += (moved.az / gap - velocity.az) * mix;
+            velocity.alt += (moved.alt / gap - velocity.alt) * mix;
+        });
+
+        const release = (e, cancelled) => {
+            if (!dragPointers.has(e.pointerId)) return;
+            dragPointers.delete(e.pointerId);
+            if (dragPointers.size < 2) pinch = null;
+            if (dragPointers.size) return;
+            const held = performance.now() - dragTrail.time;
+            if (held > 90 || app.settings.reduceMotion || cancelled) {
+                // A pause before letting go means no flick
+                velocity.az = 0;
+                velocity.alt = 0;
+            }
+            if (press && !cancelled && inputActive()) {
+                const p = canvasPoint(e);
+                const code = pick(p.x, p.y, press.touch ? PICK_RADIUS_TOUCH : PICK_RADIUS_MOUSE);
+                bus.emit('skyclick', { code, x: p.x, y: p.y });
+            }
+            press = null;
+        };
+        canvas.addEventListener('pointerup', (e) => release(e, false));
+        canvas.addEventListener('pointercancel', (e) => release(e, true));
+        canvas.addEventListener('lostpointercapture', (e) => release(e, true));
+
+        canvas.addEventListener('pointerleave', () => { hover.dirty = false; });
+
+        canvas.addEventListener('wheel', (e) => {
+            if (app.view !== 'sky') return;
+            e.preventDefault();
+            if (slew) return;
+            // Lines and pages are rare, but a wheel in those units should not feel dead
+            const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+            // Trackpad pinches arrive as small wheel events with ctrlKey set
+            const gain = e.ctrlKey ? 0.008 : 0.0012;
+            const step = Math.max(-0.9, Math.min(0.9, e.deltaY * unit * gain));
+            zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * Math.exp(step)));
+            const point = canvasPoint(e);
+            anchorZoomAt(point.x, point.y);
+            velocity.az = 0;
+            velocity.alt = 0;
+        }, { passive: false });
+    }
+
+    // A pointing hand over anything that can be selected, checked a few times a second at most
+    function checkHover(now) {
+        if (!hover.dirty || dragPointers.size || now - hover.lastAt < 120) return;
+        hover.dirty = false;
+        hover.lastAt = now;
+        const over = inputActive() && pick(hover.x, hover.y, 12);
+        canvas.style.cursor = over ? 'pointer' : '';
+    }
+
+    // ---------- Events ----------
 
     bus.on('band', ({ band }) => setBandTarget(band));
-    window.addEventListener('resize', resize);
+    bus.on('settings', ({ key }) => {
+        if (key === 'quality') applyQualitySetting();
+    });
+
+    let resizePending = false;
+    let lastResizeAt = 0;
+
+    if (renderer) {
+        app.qualityLevel = app.settings.quality !== 'auto' && QUALITY[app.settings.quality]
+            ? app.settings.quality
+            : guessStartLevel();
+
+        window.addEventListener('resize', () => { resizePending = true; });
+        if (typeof ResizeObserver === 'function') {
+            new ResizeObserver(() => { resizePending = true; }).observe(canvas);
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) sleep();
+            else wake();
+        });
+
+        // Layers listen for 'gl-restored' to bake again whatever lived only on the GPU
+        canvas.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault(); // Without this the browser never gives the context back
+            contextLost = true;
+            sleep();
+            showCanvasMessage(canvas, 'The graphics card needed a moment. The sky will come back on its own if it can; if it stays dark, reload the page.');
+        });
+        canvas.addEventListener('webglcontextrestored', () => {
+            contextLost = false;
+            hideCanvasMessage(canvas);
+            resize();
+            bus.emit('gl-restored', {});
+            wake();
+        });
+    }
+
     resize();
     applyView();
 
@@ -316,20 +1064,23 @@ export function createEngine(canvas) {
         addLayer(layer) { layers.push(layer); return layer; },
         getLayer: (id) => layers.find((l) => l.id === id),
         // effect = { isActive(frame)?, render(renderer, inputTexture, outputTarget, frame) }: a full-screen pass
-        // run in order on the HDR buffer before tone mapping. It must fill outputTarget. (Lensing uses this.)
+        // run in order on the HDR buffer before bloom and tone mapping. It must fill outputTarget. (Lensing uses this.)
         addPostEffect(effect) { postEffects.push(effect); return effect; },
         // fn(renderer, frame, target): draw extra scenes into the HDR buffer after the sky (depth is still valid)
         addOverlayPass(fn) { overlayPasses.push(fn); return fn; },
         setSkyVisible(on) { skipSkyDraw = !on; },
         currentFrame,
         resize,
-        renderOnce: () => renderOnce(0.016), // For tests: draw one frame now
+        renderOnce: () => { if (renderer && !contextLost) renderOnce(0.016); }, // For tests: draw one frame now
+        stats: () => ({ ...stats, bloomLevels: bloomTargets.length, dpr, bufferW, bufferH, level: app.qualityLevel }),
         start() {
-            if (running) return;
+            if (running || !renderer) return;
             running = true;
-            lastNow = performance.now();
-            requestAnimationFrame(loop);
+            wake();
         },
-        stop() { running = false; }
+        stop() {
+            running = false;
+            sleep();
+        }
     };
 }
