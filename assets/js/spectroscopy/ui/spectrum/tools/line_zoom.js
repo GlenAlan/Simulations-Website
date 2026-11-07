@@ -12,6 +12,7 @@ import { C_KMS, R_ZOOM, R_OVERVIEW } from '../../../core/phys.js';
 import { lineWidth, lineZoomWindow, hasLongWings, suggestRotationLines, resolvingPower, rotationLimitKms, ROTATION_FWHM, FASTEST_SPIN_KMS } from '../../../spectra/measure.js';
 import { gridFor } from '../../../spectra/kernel.js';
 import { renderStars, starPartsOf } from '../../../spectra/stellar.js';
+import { broadLineWidth, BROAD_LINE_HALF } from '../../../spectra/extragalactic.js';
 import { el } from '../../plot2d.js';
 import { actionRow, fill, overlayTheme, para, plotLabel, resultLine, searchNmAt, statusBox } from './common.js';
 import { borrowReference, drawGrip, handTheme, HAND_DASH, plotGrab, reachOf } from './hands_on.js';
@@ -165,6 +166,14 @@ function isStarLike(entity) {
     return !!(entity.star || entity.stars || entity.black_hole);
 }
 
+// The lines on offer. At a galaxy's centre with bright lines, only those: its stars' dark Hα sits at the same wavelength as the
+// bright one, and isn't the line to measure there.
+function linesFor(overview, entity) {
+    const atoms = ((overview && overview.lines) || []).filter((l) => !l.band);
+    const bright = entity && entity.kind === 'nucleus' ? atoms.filter((l) => l.type === 'em') : [];
+    return bright.length ? bright : atoms;
+}
+
 const WIDTH_MEANS = {
     galaxy: 'Stars moving about inside the galaxy smear every line.',
     quasar: 'Gas whirling round the central black hole spreads these lines out.',
@@ -218,8 +227,8 @@ function mount(container, api) {
     // its strongest lines.
     function offered() {
         const overview = api.getOverview();
-        const atoms = ((overview && overview.lines) || []).filter((l) => !l.band);
         const { entity } = api.resolved;
+        const atoms = linesFor(overview, entity);
         const list = [];
         const add = (l) => { if (l && !list.some((x) => same(x, l))) list.push(l); };
         // The line on show, such as one carried over from the last star, is always among them
@@ -228,10 +237,11 @@ function mount(container, api) {
             suggestRotationLines(overview || {}, 1).forEach(add);
             PRESSURE_LINES.forEach((label) => add(atoms.find((l) => l.label === label)));
         } else {
-            // At a galaxy's centre the bright lines are what the tool is for, if there are any
+            // At a galaxy's centre the bright lines are what the tool is for, if there are any, and the broad ones first
             const pool = atoms.filter((l) => l.obs_nm > 330);
             const bright = entity.kind === 'nucleus' ? pool.filter((l) => l.type === 'em') : [];
-            (bright.length ? bright : pool).sort((a, b) => Math.abs(b.depth) - Math.abs(a.depth)).slice(0, 3).forEach(add);
+            const weight = (l) => Math.abs(l.depth) * (l.broad ? 20 : 1);
+            (bright.length ? bright : pool).sort((a, b) => weight(b) - weight(a)).slice(0, 3).forEach(add);
         }
         return list;
     }
@@ -255,7 +265,9 @@ function mount(container, api) {
         widthKms = null;
         checkKey = '';
         const overview = api.getOverview();
-        const view = lineZoomWindow(overview, l.obs_nm, { line: l, searchNm: l.obs_nm * 0.0015, hydrogen: l.species === 'H I' });
+        // A galaxy's black hole's broad line needs a wide view, with continuum either side (spectra/extragalactic.js)
+        const view = l.broad ? { centre_nm: l.obs_nm, half_nm: l.obs_nm * BROAD_LINE_HALF }
+            : lineZoomWindow(overview, l.obs_nm, { line: l, searchNm: l.obs_nm * 0.0015, hydrogen: l.species === 'H I' });
         if (view) api.setResolution('zoom', { lo_nm: view.centre_nm - view.half_nm, hi_nm: view.centre_nm + view.half_nm });
         twin = null;
         renderChips(offered());
@@ -414,7 +426,7 @@ function mount(container, api) {
         const spectrum = api.getSpectrum();
         if (!spectrum || !line) return;
         const near = shape ? shape.centre : line.obs_nm;
-        measured = lineWidth(spectrum, near, { searchNm: near * 0.0006, hydrogen: line.species === 'H I' });
+        measured = line.broad ? broadLineWidth(spectrum, line.obs_nm) : lineWidth(spectrum, near, { searchNm: near * 0.0006, hydrogen: line.species === 'H I' });
         if (!measured) measured = { none: true };
     }
 
@@ -650,7 +662,7 @@ function mount(container, api) {
             checkKey = '';
             api.setResolution('zoom');
             // The same line as on the last star, so the two can be compared, if this one shows it
-            const again = lastLine ? ((api.getOverview() || {}).lines || []).find((l) => !l.band && same(l, lastLine)) : null;
+            const again = lastLine ? linesFor(api.getOverview(), api.resolved.entity).find((l) => same(l, lastLine)) : null;
             const first = again || offered()[0] || null;
             line = first;
             renderChips(offered());

@@ -4,6 +4,10 @@
 //
 // Sky rule: the fainter a galaxy is, the dimmer it starts, and it comes up as the limiting magnitude falls with
 // zoom. The rule is softer than the one for stars, since a galaxy is a small jewel in the wide sky, not a point.
+//
+// A galaxy whose central black hole is feeding (data/nuclei.js) has a point of light at its middle, drawn as a star is.
+// Close in, that point is picked for itself and a click further out on the galaxy picks the galaxy, as with a cluster's
+// stars; and a zoom on it carries on into the hole (nucleusFov, for render/system/zoom_into.js).
 
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
@@ -102,11 +106,12 @@ const FRAG = /* glsl */`
     }`;
 
 // Is a feeding hole's point drawn in this band at this zoom? Radio and X-rays: its galaxy's point. Otherwise its own star-like
-// sprite, by the stars' rule (render/layers/stars.js skyGlow).
+// sprite, by the stars' rule (render/layers/stars.js skyGlow). One hidden by its dust (type 2) is only a faint knot there,
+// but a click on its galaxy's bright middle, close in, still means it.
 function coreShows(core, band, lim) {
     if (band === 0) return core.point[0] > CORE_SHOWS;
     if (band === 4) return core.point[1] > CORE_SHOWS;
-    return core.glow[band - 1] * 10 ** (0.4 * (lim - 6)) >= MIN_GLOW;
+    return core.hidden || core.glow[band - 1] * 10 ** (0.4 * (lim - 6)) >= MIN_GLOW;
 }
 
 function quadGeometry(count) {
@@ -365,7 +370,7 @@ export function createGalaxiesLayer(engine, app) {
         coreData.depths[i] = g.body.depth;
         coreData.spike[i] = 0;      // Its own spikes, below, go by how big its galaxy is drawn
         // What it shows in each band, for picking what's drawn: X-rays and radio are the galaxy's point's
-        g.core = { code: hole.code, glow, point: [nucleusBandA[g.index * 4], nucleusBandB[g.index]] };
+        g.core = { code: hole.code, glow, point: [nucleusBandA[g.index * 4], nucleusBandB[g.index]], hidden: !typeOne };
     });
     const coreSprites = cores.length ? createSprites(coreData) : null;
     const coreSpikes = cores.length ? createCoreSpikes(cores) : null;

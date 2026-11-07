@@ -28,6 +28,7 @@ const BULGE_SHARE = 0.0049;                 // A hole is about half a per cent o
 const BULGE_SCATTER_DEX = 0.28;
 const FWHM_F = 1.1;                         // The virial factor for a line's full width at half maximum
 const TYPE_1_SHARE = 0.4;                   // Of active nuclei: more are seen through their dust than down its axis
+const TYPE_1_BRIGHT_SHARE = 0.7;            // ...and of those seen down it, this share in the brighter half of the galaxies
 const STARS_EACH = 3;
 const LIGHT_DAY_M = C_MS * 86400;
 const ERG_PER_LSUN = L_SUN * 1e7;
@@ -170,8 +171,17 @@ export function addNuclei(rng, bodies, nextCode) {
     const galaxies = bodies.filter((b) => b.kind === 'galaxy');
     const hosts = galaxies.filter((b) => b.galaxy.morphology !== 'irregular' || b.galaxy.active_nucleus || b.galaxy.radio_lobes);
     const active = hosts.filter((b) => b.galaxy.active_nucleus || b.galaxy.radio_lobes);
+    // Which are seen down the dust's axis is chance, but the broad lines are easiest to find in the brighter galaxies, as
+    // astronomers find them: so most of them are among the brighter half
     const quota = rng.fork('types');
-    const typeOne = new Set(quota.shuffle(active.map((b) => b.code).sort()).slice(0, Math.round(TYPE_1_SHARE * active.length)));
+    const byBrightness = active.slice().sort((a, b) => a.brightness.mag - b.brightness.mag || (a.code < b.code ? -1 : 1)).map((b) => b.code);
+    const half = Math.ceil(byBrightness.length / 2);
+    const ones = Math.round(TYPE_1_SHARE * active.length);
+    const fromBright = Math.min(half, Math.ceil(ones * TYPE_1_BRIGHT_SHARE));
+    const typeOne = new Set([
+        ...quota.shuffle(byBrightness.slice(0, half)).slice(0, fromBright),
+        ...quota.shuffle(byBrightness.slice(half)).slice(0, ones - fromBright)
+    ]);
     hosts.forEach((body) => {
         const feeding = !!(body.galaxy.active_nucleus || body.galaxy.radio_lobes);
         body.galaxy.active_nucleus = feeding;

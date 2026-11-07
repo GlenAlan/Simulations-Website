@@ -781,7 +781,7 @@ function nucleusInfo({ entity, body }) {
     const n = entity.nucleus || {};
     const galaxy = entity.parent || body?.code;
     const mass = massWords(n.mass_Msun);
-    const where = galaxy ? `the centre of the galaxy ${galaxy}` : 'the centre of its galaxy';
+    const where = 'the centre of its galaxy';       // The Overview names the galaxy just below
     const typeText = n.type === 1 ? 'Type 1: seen down the dust ring\'s axis, broad lines show'
         : n.type === 2 ? 'Type 2: seen through the dust ring, broad lines hidden' : null;
     const catalogue = clean([

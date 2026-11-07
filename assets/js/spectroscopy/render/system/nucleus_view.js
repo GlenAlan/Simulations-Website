@@ -66,11 +66,13 @@ void main() {
     // Thin at the edges seen side-on, and ragged there: a cloud of dust, not a solid ring
     float face = abs(dot(n, toEye));
     float body = smoothstep(0.05, 0.5, face * (0.6 + 0.8 * fine));
-    vec3 visible = vec3(0.07, 0.04, 0.025) * (0.05 + 1.8 * lit * lit * lit) * clumps;
+    // The outside is lit only faintly, by the galaxy's stars all round
+    vec3 visible = vec3(0.07, 0.04, 0.025) * (0.16 + 1.8 * lit * lit * lit) * clumps;
     float warm = (0.25 + 1.4 * lit) * clumps;
     vec3 colour = visible * uBandW[2] + visible * 0.4 * uBandW[3] + uBandTint[1] * warm * 0.7 * uBandW[1];
-    // Dust stops visible, ultraviolet and infrared light, but X-rays and radio go through it
-    float solid = clamp(uBandW[1] + uBandW[2] + uBandW[3], 0.0, 1.0) * mix(0.55, 0.97, body);
+    // Dust stops visible, ultraviolet and infrared light, but X-rays and radio go through it. It's thinner in places.
+    float patchy = 0.72 + 0.28 * smoothstep(0.2, 0.7, clumps);
+    float solid = clamp(uBandW[1] + uBandW[2] + uBandW[3], 0.0, 1.0) * mix(0.45, 0.95, body) * patchy;
     gl_FragColor = vec4(colour * uReveal * body, solid * uReveal);
 }`;
 

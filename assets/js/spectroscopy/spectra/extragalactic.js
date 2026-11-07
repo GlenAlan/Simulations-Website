@@ -243,22 +243,26 @@ export function nucleusSpectrum(entity, grid, host) {
 
     // A line's height above the continuum, from its equivalent width: EW = 1.064 h FWHM for a Gaussian
     const heightFor = (ew, rest, fwhm) => (ew * C_KMS) / (1.064 * rest * fwhm);
+    // A broad line has wings, from the fastest gas closest in; its core is narrowed to match, so the whole line is still
+    // fwhmKms wide at half its height (the pseudo-Voigt's width, for a Lorentzian of 0.24 of that)
     const emit = (rest, label, species, amp, fwhmKms) => {
         const obs = rest * factor;
         if (obs < grid.lo * 0.9 || obs > grid.hi * 1.1 || !(amp > 0)) return 0;
-        const prof = makeProfile({ sigma: fwhmKms / 2.3548, a: fwhmKms > 1000 ? 0.12 * fwhmKms : 0, R: grid.R });
+        const broad = fwhmKms > 1000;
+        const prof = makeProfile({ sigma: (broad ? 0.865 : 1) * fwhmKms / 2.3548, a: broad ? 0.12 * fwhmKms : 0, R: grid.R });
         addLine(flux, grid, obs, amp, prof);
         return amp * prof.peak;
     };
+    // A broad line is marked broad: it's the one to measure the width of (ui/spectrum/tools/line_zoom.js)
     const seen = new Map();
-    const list = (rest, label, species, peak) => {
+    const list = (rest, label, species, peak, broad = false) => {
         const obs = rest * factor;
         if (!(peak > 0) || obs < grid.lo || obs > grid.hi) return;
         const key = rest.toFixed(1);
         const had = seen.get(key);
         if (had) had.depth += peak;
         else {
-            const line = { rest_nm: rest, obs_nm: obs, species, label, depth: peak, type: 'em' };
+            const line = { rest_nm: rest, obs_nm: obs, species, label, depth: peak, type: 'em', ...(broad ? { broad: true } : {}) };
             seen.set(key, line);
             lines.push(line);
         }
@@ -267,7 +271,7 @@ export function nucleusSpectrum(entity, grid, host) {
     if (n.type === 1 && n.broad_fwhm_kms) {
         BROAD_LINES.forEach(([rest, label, species, ew]) => {
             const h = heightFor(ew, rest, n.broad_fwhm_kms) * disc(rest * factor) * scale;
-            list(rest, label, species, emit(rest, label, species, h, n.broad_fwhm_kms));
+            list(rest, label, species, emit(rest, label, species, h, n.broad_fwhm_kms), true);
         });
     }
     if (n.active) {
@@ -275,9 +279,12 @@ export function nucleusSpectrum(entity, grid, host) {
         // diluted by the disc's own light
         const ew = 1.2 * Math.min(2, Math.max(0.3, n.luminosity_Lsun / (0.5 * galaxyL))) * (n.type === 1 ? 0.25 : 1);
         const oiii = heightFor(ew, 500.684, n.narrow_fwhm_kms) * starAt(500.684 * factor) * scale;
+        // Where the broad lines show, the narrow lines on top of and beside them are only a few per cent of their light, and
+        // are left out, so a broad line's width can be read cleanly: [O III], which has no broad line, stays
         const alpha = (oiii * 3.5) / (n.oiii_hbeta || 8);
-        const narrow = [...NARROW_LINES.map(([rest, label, species, rel, balmer]) => [rest, label, species, (balmer ? alpha : oiii) * rel]),
-            [486.133, 'Hβ', 'H I', alpha / 3.5], [434.047, 'Hγ', 'H I', alpha / 7.4], [656.282, 'Hα', 'H I', alpha]];
+        const nearBroad = (balmer) => n.type === 1 && balmer;
+        const narrow = [...NARROW_LINES.map(([rest, label, species, rel, balmer]) => [rest, label, species, nearBroad(balmer) ? 0 : (balmer ? alpha : oiii) * rel]),
+            ...(n.type === 1 ? [] : [[486.133, 'Hβ', 'H I', alpha / 3.5], [434.047, 'Hγ', 'H I', alpha / 7.4], [656.282, 'Hα', 'H I', alpha]])];
         narrow.forEach(([rest, label, species, h]) => {
             // Heights scale with the stars' light at each line, as their strengths are against it
             const local = starAt(rest * factor) / starAt(500.684 * factor);
@@ -294,5 +301,95 @@ export function nucleusSpectrum(entity, grid, host) {
         snr: snrFromFlux(effectiveFlux(host ? host.brightness : entity.brightness)),
         mode: n.type === 1 ? 'emission' : 'absorption',
         note
+    };
+}
+
+// ---------- Measuring a broad line ----------
+//
+// A broad emission line is many times wider than anything the line tools were made for, and noise along its top can look like
+// a line of its own. So for one: a straight continuum from either side of a wide window, the line smoothed over a few hundred
+// km/s, and its full width where the smoothed line falls to half its height. Works from the spectrum alone.
+// Returns { centre_nm, fwhm_nm, fwhm_kms, continuum, height, type: 'em', instrument_kms } or null.
+const BROAD_WINDOW = 0.07;          // Half the window, as a share of the wavelength: about 21,000 km/s
+const BROAD_SMOOTH_KMS = 400;
+const BROAD_SIDE = 0.15;            // The share of the window at each end taken as continuum
+const BROAD_FIND_KMS = 2500;        // How far from where it's expected its peak may be
+
+export const BROAD_LINE_HALF = BROAD_WINDOW;
+
+function median(list) {
+    const s = list.slice().sort((a, b) => a - b);
+    return s.length ? s[s.length >> 1] : 0;
+}
+
+export function broadLineWidth(spectrum, nearNm) {
+    const { wl, flux } = spectrum;
+    if (!wl || wl.length < 20) return null;
+    const lo = nearNm * (1 - BROAD_WINDOW);
+    const hi = nearNm * (1 + BROAD_WINDOW);
+    let a = 0;
+    while (a < wl.length && wl[a] < lo) a++;
+    let b = wl.length - 1;
+    while (b > a && wl[b] > hi) b--;
+    const n = b - a + 1;
+    if (n < 40) return null;
+    const side = Math.max(3, Math.floor(n * BROAD_SIDE));
+    const left = [];
+    const right = [];
+    for (let i = 0; i < side; i++) {
+        left.push(flux[a + i]);
+        right.push(flux[b - i]);
+    }
+    const yl = median(left);
+    const yr = median(right);
+    const xl = wl[a + (side >> 1)];
+    const xr = wl[b - (side >> 1)];
+    const cont = (x) => yl + ((yr - yl) * (x - xl)) / (xr - xl);
+    // Smoothed, over a fixed number of km/s whatever the sampling
+    const dv = (wl[a + 1] / wl[a] - 1) * C_KMS;
+    const k = Math.max(1, Math.round(BROAD_SMOOTH_KMS / dv / 2));
+    const resid = new Float64Array(n);
+    for (let i = 0; i < n; i++) resid[i] = flux[a + i] - cont(wl[a + i]);
+    const smooth = new Float64Array(n);
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < Math.min(n, k); i++) { sum += resid[i]; count++; }
+    for (let i = 0; i < n; i++) {
+        if (i + k < n) { sum += resid[i + k]; count++; }
+        if (i - k - 1 >= 0) { sum -= resid[i - k - 1]; count--; }
+        smooth[i] = sum / count;
+    }
+    // The noise left after smoothing, from the continuum's own scatter
+    const scatter = Math.sqrt(left.concat(right).reduce((s, y, i) => s + (y - (i < side ? yl : yr)) ** 2, 0) / (2 * side));
+    const noise = scatter / Math.sqrt(2 * k + 1);
+    let peak = -1;
+    for (let i = 0; i < n; i++) {
+        if (Math.abs(wl[a + i] / nearNm - 1) * C_KMS > BROAD_FIND_KMS) continue;
+        if (peak < 0 || smooth[i] > smooth[peak]) peak = i;
+    }
+    if (peak < 0 || !(smooth[peak] > 5 * noise) || !(smooth[peak] > 0)) return null;
+    const half = smooth[peak] / 2;
+    const cross = (from, step) => {
+        for (let i = from; i > 0 && i < n - 1; i += step) {
+            if (smooth[i + step] < half) {
+                const t = (smooth[i] - half) / (smooth[i] - smooth[i + step]);
+                return wl[a + i] + t * (wl[a + i + step] - wl[a + i]);
+            }
+        }
+        return null;
+    };
+    const l = cross(peak, -1);
+    const r = cross(peak, 1);
+    if (l === null || r === null) return null;
+    const centre = 0.5 * (l + r);
+    const R = 1 / (2 * (wl[a + 1] / wl[a] - 1));
+    return {
+        centre_nm: centre,
+        fwhm_nm: r - l,
+        fwhm_kms: ((r - l) / centre) * C_KMS,
+        continuum: cont(centre),
+        height: smooth[peak],
+        type: 'em',
+        instrument_kms: C_KMS / R
     };
 }
