@@ -522,8 +522,9 @@ export function initSystemView(app) {
         const angle = holes && holes.companionAngle ? holes.companionAngle(model.code) : null;
         path.d0 = fit * HOLE_APPROACH;
         path.skyLog = Math.log(HOLE_SKY_ZOOM);
-        // Exactly: the hole starts as big as the sky draws its disc, and on the way in it's never drawn smaller than that,
-        // so zooming in can't shrink it. Its companion may then be off to the side on arrival; zooming out brings it in.
+        // Better still, from the sky's own size: the hole starts exactly as big as the sky draws its disc, and on the way in
+        // it's never drawn smaller than that, so zooming in can't shrink it. Its companion may then be off to the side on
+        // arrival; zooming out brings it in.
         const discDeg = holes && holes.discDeg ? holes.discDeg(model.code) : 0;
         if (discDeg > 0) {
             const frame = engine.currentFrame();

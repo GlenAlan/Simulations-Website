@@ -57,13 +57,13 @@ const SAY_WAITING_S = 0.6;      // A wait as long as this gets a word in the con
 function createHand(t) {
     const hand = {
         seenGoal: handSeen(t),
-        heading: 0,         // +1 inwards, -1 outwards
-        quiet: 0,           // Seconds since the last step
+        heading: t >= 1 ? -1 : 1,   // +1 inwards, -1 outwards: away from the end it starts at, until a step says otherwise
+        quiet: 0,                   // Seconds since the last step
         settling: null,
         get goal() { return handTAt(hand.seenGoal); },
         push(log) {
             hand.seenGoal = Math.max(0, Math.min(1, hand.seenGoal - log / HAND_LOG));
-            hand.heading = log < 0 ? 1 : -1;
+            if (log) hand.heading = log < 0 ? 1 : -1;
             hand.quiet = 0;
             hand.settling = null;
         },

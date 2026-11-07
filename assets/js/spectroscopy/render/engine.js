@@ -600,8 +600,9 @@ export function createEngine(canvas) {
         camera.aspect = width / height;
         applyProjection();
         // A flight that has only just put something in the middle meant the middle: it glides on to the new one
+        // (With Reduce motion, at once: the flight has only just dipped to black, and needn't do it again)
         if (keepStill && lastAim && performance.now() - lastAim.at < RECENTRE_AFTER_MS && !slew && app.view === 'sky') {
-            slewTo(lastAim.aim, { duration: RECENTRE_S });
+            slewTo(lastAim.aim, { duration: app.settings.reduceMotion ? 0 : RECENTRE_S });
         }
         lastAim = null;
         if (!renderer) return;
