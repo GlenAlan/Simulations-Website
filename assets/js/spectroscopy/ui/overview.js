@@ -96,11 +96,13 @@ function planetFacts(planet) {
     return facts;
 }
 
-// The code this object leads to, in words: [label, code]. It is the same link as any other code in the drawer.
+// The code this object leads to, in words: [label, code]. It is the same link as any other code in the drawer. From among
+// a cluster's stars the cluster is all round the view, so the way back to it flies out far enough to see it whole: [.., fly].
 function relationOf({ entity, body, path }) {
     if (path === 'planet') return ['Orbits', entity.host || body.code];
     if (path === 'component') return ['Part of', entity.parent || body.code];
-    if (path === 'member') return ['Member of', entity.parent || body.code];
+    if (path === 'member') return ['Member of', entity.parent || body.code, true];
+    if (entity.in_cluster) return ['Member of', entity.in_cluster, true];
     if (entity.kind === 'black_hole' && entity.black_hole?.companion?.code) return ['Companion', entity.black_hole.companion.code];
     return null;
 }
@@ -251,7 +253,7 @@ function mountOverview(container) {
             lead.innerHTML = richHtml(info.lead || '');
             const rows = [];
             const relation = relationOf(resolved);
-            if (relation) rows.push(factRow(relation[0], codeHtml(relation[1])));
+            if (relation) rows.push(factRow(relation[0], codeHtml(relation[1], { fly: !!relation[2] })));
             const count = planetsHere(resolved);
             if (count) rows.push(factRow('Planets', String(count)));
             facts.replaceChildren(...rows);

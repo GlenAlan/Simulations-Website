@@ -6,7 +6,7 @@ import { bus } from '../../core/state.js';
 import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { signed, withCommas } from '../../core/format.js';
-import { memberDirection } from './sky_tangent.js';
+import { drawnSky } from './sky_tangent.js';
 
 const RAD = Math.PI / 180;
 const BAND_EDGE_DEG = 14;          // How far either side of the galactic plane the highlight's edges sit
@@ -37,13 +37,14 @@ function stepDigits(step) {
 }
 
 // How far an object spreads on the sky, for a ring that goes round it rather than through it
-function angularRadiusDeg(entity, body) {
+export function angularRadiusDeg(entity, body) {
     if (entity !== body) return 0;
     if (body.nebula) return body.nebula.size_deg / 2;
     if (body.galaxy) return body.galaxy.size_deg / 2;
     if (body.cluster) return body.cluster.radius_deg;
     if (body.supernova) return body.supernova.shell_deg || 0;
     if (body.comet) return body.comet.coma_deg || 0;
+    if (body.stars) return (body.visual_sep_deg || 0) * 0.7;
     return 0;
 }
 
@@ -128,14 +129,6 @@ export function createOverlaysLayer(engine, app) {
         };
         ranked = bodyDirs().slice().sort((a, b) => score(b) - score(a));
         return ranked;
-    }
-
-    function selectedPosition() {
-        const sel = app.selected;
-        if (!sel) return null;
-        const { entity, body, path } = sel;
-        if (path === 'member' && entity.offset_deg) return memberDirection(body, entity);
-        return body.sky;
     }
 
     // The grid and the band's edges are drawn on the dome, at depth 1
@@ -384,11 +377,10 @@ export function createOverlaysLayer(engine, app) {
         }
     }
 
-    function drawSelection(frame) {
-        const at = selectedPosition();
+    function drawSelection(frame, at) {
         if (!at) return;
         const { entity, body } = app.selected;
-        const p = engine.project(at.az, at.alt, body.depth);
+        const p = engine.project(at.az, at.alt, at.depth);
         if (!p || !p.onScreen) return;
         const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr) * parallaxFactor(body.depth, frame.fov);
         const r = Math.max(13, Math.min(spread * 1.08, Math.min(frame.width, frame.height) * 0.42));
@@ -459,10 +451,12 @@ export function createOverlaysLayer(engine, app) {
             const layers = app.layers;
             const inSky = frame.view === 'sky';
             const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+            // A star of a multiple moves as its system's clock runs, and comes apart from its partner as the view zooms
+            const marked = app.selected ? drawnSky(engine, app.selected) : null;
             const key = [
                 view.az.toFixed(4), view.alt.toFixed(4), view.fov.toFixed(4), frame.width, frame.height, pixelRatio, frame.band, inSky,
                 layers.grid, layers.labels, layers.galacticBand, layers.shiftTint, layers.homePlanets,
-                app.selected ? app.selected.entity.code : '', reticle.on, reticle.code
+                app.selected ? app.selected.entity.code : '', marked ? marked.az.toFixed(6) : '', marked ? marked.alt.toFixed(6) : '', reticle.on, reticle.code
             ].join();
             if (key === lastKey) return;
             lastKey = key;
@@ -485,7 +479,7 @@ export function createOverlaysLayer(engine, app) {
             if (layers.galacticBand) drawGalacticBand(frame, view, inset);
             if (layers.grid) drawGrid(frame, view, inset);
             if (layers.labels || layers.shiftTint) drawObjectMarks(frame, view, inset, layers.labels, layers.shiftTint);
-            drawSelection(frame);
+            drawSelection(frame, marked);
             if (reticle.on) drawReticle(frame);
         }
     };

@@ -5,6 +5,9 @@ import { bus, setBand, setLayer, setSetting } from '../core/state.js';
 import { announce } from './drawer.js';
 import { BANDS, BAND_INFO } from '../core/bands.js';
 import { DEFAULT_VIEW } from '../core/sky.js';
+import { parallaxFactor } from '../core/depth.js';
+import { drawnSky } from '../render/layers/sky_tangent.js';
+import { angularRadiusDeg } from '../render/layers/overlays.js';
 import { helpSections } from '../content/help.js';
 import { initLegend } from './legend.js';
 import { initViewAids } from './view_aids.js';
@@ -563,14 +566,20 @@ function initHelpPage(app, topRight) {
 function keepSelectionInView(app) {
     const BARS = ['spectroTopLeft', 'spectroBandBar', 'spectroTopRight', 'spectroContextBar', 'spectroLegend'];
     const CLEARANCE = 16;
+    const BIG_PX = 60;      // Something this wide across still shows with its middle behind a bar, or off the edge
     bus.on('select', () => {
         // After the drawer has opened and the canvas has taken its new size
         requestAnimationFrame(() => requestAnimationFrame(() => {
             const engine = app.engine;
             if (!app.selected || app.view !== 'sky' || engine.isSlewing()) return;
-            const { az, alt } = app.selected.body.sky;
-            const p = engine.projectBody(app.selected.body);
+            const { az, alt, depth } = drawnSky(engine, app.selected);
+            const p = engine.project(az, alt, depth);
             const frame = engine.currentFrame();
+            const reach = p ? angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov) : 0;
+            if (reach > BIG_PX) {
+                const shows = BIG_PX - reach;
+                if (p.x > shows && p.x < frame.width - shows && p.y > shows && p.y < frame.height - shows) return;
+            }
             const onSky = p && p.x > CLEARANCE && p.x < frame.width - CLEARANCE && p.y > CLEARANCE && p.y < frame.height - CLEARANCE;
             if (onSky) {
                 const sky = document.getElementById('simulationCanvas').getBoundingClientRect();

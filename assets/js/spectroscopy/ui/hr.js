@@ -228,11 +228,15 @@ export function clusterPoints(body) {
     const rng = new Rng(`hr-${body.code}`); // The same noise each time this cluster is plotted
     const out = [];
     body.cluster.members.forEach((member) => {
-        const flux = memberFlux(member);
-        const dist = member.distance_pc || body.distance_pc;
-        const L = flux > 0 && dist > 0 ? luminosityFromFlux(flux, dist) : member.star.luminosity_Lsun;
-        const T = member.star.teff_K * (1 + rng.gauss(0, T_NOISE));
-        if (L > 0 && T > 0) out.push({ code: member.code, T, L, isMember: true });
+        // A binary member's two stars were born with the cluster too, and each is a point of its own. The pair's own code
+        // finds its brighter star.
+        (member.stars || [member]).forEach((one, k) => {
+            const flux = memberFlux(one);
+            const dist = member.distance_pc || body.distance_pc;
+            const L = flux > 0 && dist > 0 ? luminosityFromFlux(flux, dist) : one.star.luminosity_Lsun;
+            const T = one.star.teff_K * (1 + rng.gauss(0, T_NOISE));
+            if (L > 0 && T > 0) out.push({ code: one.code, pairCode: member.stars && k === 0 ? member.code : null, T, L, isMember: true });
+        });
     });
     return out;
 }
@@ -525,7 +529,11 @@ function mountHR(container, app) {
     root.appendChild(howAge);
 
     function clusterBody() {
-        return current && current.body && current.body.cluster ? current.body : null;
+        if (!current || !current.body) return null;
+        if (current.body.cluster) return current.body;
+        // A binary member is a body of its own, and knows which cluster it's in
+        const home = current.body.in_cluster ? app.universe.resolve(current.body.in_cluster) : null;
+        return home ? home.body : null;
     }
 
     function toggleCluster() {
@@ -551,7 +559,7 @@ function mountHR(container, app) {
         clusterTitle.textContent = `${typeName} ${body.code}`;
         const showing = cluster && cluster.code === body.code;
         clusterButton.textContent = showing ? 'Remove cluster' : 'Plot all members';
-        clusterStatus.textContent = `${body.cluster.members.length} stars at about the same distance, born at about the same time.`;
+        clusterStatus.textContent = `${body.cluster.n_stars} stars at about the same distance, born at about the same time.`;
         clusterStatus.hidden = !!showing;
         suggestButton.hidden = !showing;
         ageLine.hidden = !showing;
@@ -988,7 +996,7 @@ function mountHR(container, app) {
         });
 
         // A ring round the selected star, wherever it came from
-        const selected = [...stars, ...(cluster ? cluster.points : [])].find((p) => p.code === code);
+        const selected = [...stars, ...(cluster ? cluster.points : [])].find((p) => p.code === code || p.pairCode === code);
         if (selected) {
             ctx.beginPath();
             ctx.arc(selected.px, selected.py, selected.isMember ? 7 : 9, 0, Math.PI * 2);
