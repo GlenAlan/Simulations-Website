@@ -28,7 +28,9 @@ const MIN_ERR_KMS = 0.5;
 const MIN_LINE_DEPTH = 0.03;     // As in suggestTrackingLines: shallower than this, a star doesn't really show a line
 const POOR_K_SHARE = 0.05;       // A speed swing known no better than this may well read better from another of the star's lines
 const MIN_SAMPLES_PER_SWING = 6; // Sampled less often than this, a swing can't be read, and what fits it instead is false
-const MIN_CYCLES_FOR_PERIOD = 1.15; // As in fitOrbit: a period only counts once more than one cycle has gone by
+// A period is only offered once a swing and a half of the star's quickest orbit is in. Before that, part of a swing can be
+// fitted as well by a shorter, false one with a tight error bar, and a student who paused would copy it down.
+const MIN_CYCLES_FOR_PERIOD = 1.5;
 const SPEED_SHARES = [1 / 36, 1 / 18, 1 / 9, 1 / 4.5]; // The time to show covered per second: a full picture in 36 s at the slowest
 const LAST_SLIDER_FRACTION = 0.9995; // The very end of the slider is the end of the picture, not the start of the next
 
@@ -341,11 +343,17 @@ function mount(container, api) {
         return !star.fit || (!linePicked && star.fit.err_K_kms > POOR_K_SHARE * star.fit.K_kms);
     }
 
+    // How much of the star's quickest orbit its readings cover
+    function cyclesIn(star) {
+        const n = star.points.length;
+        return n ? (star.points[n - 1].t - star.points[0].t) / Math.min(...star.periods) : 0;
+    }
+
     function updateResults() {
         fitsDue = false;
         const covered = filledCount >= COLUMNS;
         stars.forEach((star) => {
-            star.fit = !star.tooFast && star.points.length >= 12 ? fitOrbit(star.points) : null;
+            star.fit = !star.tooFast && star.points.length >= 12 && cyclesIn(star) >= MIN_CYCLES_FOR_PERIOD ? fitOrbit(star.points) : null;
             if (covered && wantsAnotherLine(star)) tryOtherLines(star);
         });
         result.replaceChildren(...orbitResults({
@@ -469,7 +477,7 @@ function mount(container, api) {
         const windowHalf = line.rest_nm * ((Math.max(Math.abs(vLo), Math.abs(vHi)) + 15) / C_KMS);
         api.setResolution('zoom', { lo_nm: line.rest_nm - windowHalf, hi_nm: line.rest_nm + windowHalf });
         if (stars.some((star) => star.tooFast)) updateResults();
-        else result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}The period appears once more than one full swing has gone by.`));
+        else result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}The period appears once a swing and a half has gone by.`));
         apply(clock.steppedT());
     }
 

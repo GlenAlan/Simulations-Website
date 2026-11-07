@@ -115,7 +115,7 @@ export function orbitResults({ resolved, stars, covered, span, line, sampleGap }
     if (!any && !tooFast.length) {
         const slow = stars.every((s) => s.tooSlow);
         items.push(para(!covered
-            ? 'The period appears once more than one full swing has gone by.'
+            ? 'The period appears once a swing and a half has gone by.'
             : slow
                 ? `No regular swing shows in ${sig(span, 3)} days. An orbit slower than this looks like a slow drift, so try a longer time.`
                 : 'No regular swing can be measured here. These lines are too broad or too faint for it to stand out from their width.'));

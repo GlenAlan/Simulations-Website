@@ -948,6 +948,8 @@ function solveHarmonics(points, freq, harmonics) {
 }
 
 const ORBIT_MIN_CYCLES = 1.15;   // A period only counts once more than one full cycle has been seen
+const ORBIT_CLEAR = 4.5;         // How far a swing must stand above what noise alone could make of the same points
+const ORBIT_WORST_K = 0.2;       // The largest share of K its uncertainty may be
 
 // The period and speed swing of a line, from points { t (days), v (km/s), err (km/s) } in time order. Takes the shortest
 // period that fits as well as any, since twice a period fits just as well. Null until a period shows clearly.
@@ -969,32 +971,56 @@ export function fitOrbit(points) {
     }
     if (!flat) return null;
 
+    const step = 1 / (span * 8);
     const trials = [];
-    for (let f = fLo; f <= fHi; f += 1 / (span * 8)) {
+    for (let f = fLo; f <= fHi; f += step) {
         const s = solveHarmonics(points, f, harmonicsFor(f));
         if (s) trials.push({ f, chi: s.chi });
     }
     if (!trials.length) return null;
-    const best = trials.reduce((m, s) => Math.min(m, s.chi), Infinity);
-    // The highest frequency, so the shortest period, whose fit is about as good as the best, at the bottom of its valley
-    let pick = trials.length - 1;
-    const good = best * 1.25 + 2 * n * 0.05;
-    while (pick > 0 && !(trials[pick].chi <= good && trials[pick - 1].chi >= trials[pick].chi)) pick--;
-    let f = trials[pick].f;
-    let width = 1 / (span * 8);
-    for (let round = 0; round < 24; round++) {
-        const a = f - width / 2;
-        const b = f + width / 2;
-        const ca = a > 0 ? solveHarmonics(points, a, harmonicsFor(f)) : null;
-        const cb = solveHarmonics(points, b, harmonicsFor(f));
-        const c0 = solveHarmonics(points, f, harmonicsFor(f));
-        if (ca && c0 && ca.chi < c0.chi) f = a;
-        else if (cb && c0 && cb.chi < c0.chi) f = b;
-        else width /= 2;
-        if (width * span < 1e-4) break;
+    // To the bottom of the valley a frequency sits in, between the steps of the search
+    const refine = (start) => {
+        let f = start;
+        let width = step;
+        for (let round = 0; round < 24; round++) {
+            const a = f - width / 2;
+            const b = f + width / 2;
+            const ca = a > 0 ? solveHarmonics(points, a, harmonicsFor(f)) : null;
+            const cb = solveHarmonics(points, b, harmonicsFor(f));
+            const c0 = solveHarmonics(points, f, harmonicsFor(f));
+            if (ca && c0 && ca.chi < c0.chi) f = a;
+            else if (cb && c0 && cb.chi < c0.chi) f = b;
+            else width /= 2;
+            if (width * span < 1e-4) break;
+        }
+        const s = solveHarmonics(points, f, harmonicsFor(f));
+        return s ? { f, chi: s.chi, fit: s } : null;
+    };
+    // The strongest of the deepest valleys, each refined: on the search's coarse steps alone, twice the period (whose second
+    // harmonic is the period itself) can happen to land nearer the data than the period does
+    const valleys = trials.filter((s, i) => (i === 0 || trials[i - 1].chi >= s.chi) && (i === trials.length - 1 || trials[i + 1].chi >= s.chi));
+    const refined = valleys.sort((a, b) => a.chi - b.chi).slice(0, 4).map((s) => refine(s.f)).filter(Boolean);
+    if (!refined.length) return null;
+    let pick = refined.reduce((a, b) => (b.chi < a.chi ? b : a));
+    const good = (chi) => chi * 1.25 + 2 * n * 0.05;
+    // Then the shortest period that fits about as well: a half or a third of it, refined in turn
+    for (const k of [3, 2]) {
+        const fk = pick.f * k;
+        if (fk > fHi) continue;
+        const r = refine(fk);
+        if (r && r.chi <= good(pick.chi)) {
+            pick = r;
+            break;
+        }
     }
-    const fit = solveHarmonics(points, f, harmonicsFor(f));
-    if (!fit) return null;
+    // A fit whose own cycle is weaker than its second harmonic is following half its period, as no orbit does
+    const amplitude = (s, h) => (h <= s.harmonics ? Math.hypot(s.coef[2 * h], s.coef[2 * h + 1]) : 0);
+    if (pick.fit.harmonics >= 2 && amplitude(pick.fit, 1) < 0.5 * amplitude(pick.fit, 2) && 2 * pick.f <= fHi) {
+        const r = refine(2 * pick.f);
+        if (r) pick = r;
+    }
+    const f = pick.f;
+    const fit = pick.fit;
     const dof = Math.max(1, n - fit.coef.length);
     // Most of the swing has to be explained by the cycle, and the swing has to stand above the scatter left over
     if (fit.chi > 0.5 * trendChi && fit.chi / dof > 2) return null;
@@ -1019,8 +1045,11 @@ export function fitOrbit(points) {
     const K = 0.5 * (top - bottom);
     const meanErr = points.reduce((s, p) => s + p.err, 0) / n;
     const scatter = meanErr * Math.sqrt(Math.max(1, fit.chi / dof));
-    if (K < 2.5 * scatter * Math.sqrt(2 / n)) return null;
+    // Searching many periods, noise alone finds a swing of a few times scatter × √(2/n): one has to stand well clear of that
+    if (K < ORBIT_CLEAR * scatter * Math.sqrt(2 / n)) return null;
     const errK = Math.hypot(2 * scatter * Math.sqrt(2 / n), 0.01 * K, 0.2);
+    // A swing known no better than this can't pin down how long it takes either
+    if (errK > ORBIT_WORST_K * K) return null;
     const errF = (Math.sqrt(6 / n) * scatter) / (Math.PI * span * Math.max(K, 1e-6));
     const errP = Math.hypot(2 * period * period * errF, 0.002 * period);
     const gamma = fit.coef[0] + fit.coef[1] * (0.5 * span) + 0.5 * (top + bottom);
