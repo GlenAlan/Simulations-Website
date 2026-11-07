@@ -458,6 +458,121 @@ html.dark-mode .charges-sim {
     }
 }
 
+/* ---------- Short landscape screens (phones held sideways): the toolbar in a column beside the canvas ----------
+   A toolbar under the canvas would cost it a third of the screen's height (the relativity page does the same).
+   The column has a fixed width, so the display container is made that much wider than the canvas. */
+@media (orientation: landscape) and (max-height: 540px) {
+    .charges-sim {
+        --ch-side-w: 176px;
+        --ch-side-gap: 8px;
+        --ch-btn-h: 32px;
+    }
+
+    .charges-sim .simulation-display-container {
+        display: grid;
+        grid-template-columns: var(--ch-side-w) minmax(0, 1fr);
+        grid-template-areas: "tools canvas" "answer answer" "info info";
+        column-gap: var(--ch-side-gap);
+        width: min(100%, calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 2 / 1)) + 2px + var(--ch-side-w) + var(--ch-side-gap)));
+    }
+
+    .charges-sim .sim-canvas-wrapper {
+        grid-area: canvas;
+        min-width: 0;
+    }
+
+    .charges-sim .sim-info-bar {
+        grid-area: info;
+    }
+
+    .charges-sim .th-answer {
+        grid-area: answer;
+    }
+
+    .ch-toolbar {
+        grid-area: tools;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        align-self: start;
+        gap: 8px;
+        width: auto;
+        margin: 0;
+        padding: 6px;
+    }
+
+    .ch-field {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 3px;
+    }
+
+    .ch-field .ch-seg {
+        flex-direction: column;
+    }
+
+    .ch-field .ch-seg-btn {
+        flex: 0 0 auto;
+        justify-content: flex-start;
+    }
+
+    .charges-sim .ch-field .ch-seg-btn:first-child {
+        border-radius: 4px 4px 0 0;
+    }
+
+    .charges-sim .ch-field .ch-seg-btn:last-child {
+        border-radius: 0 0 4px 4px;
+    }
+
+    .ch-strength {
+        flex-direction: column;
+        align-items: stretch;
+        flex: 0 0 auto;
+        gap: 4px;
+    }
+
+    /* "Plate voltage  500 V" over the slider */
+    .ch-toolbar .ch-slider {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "label value" "slider slider";
+        align-items: center;
+        gap: 0 6px;
+        flex: 0 0 auto;
+    }
+
+    .ch-toolbar .ch-slider .ch-toolbar-label {
+        grid-area: label;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .ch-slider-value {
+        grid-area: value;
+    }
+
+    .ch-toolbar input[type="range"] {
+        grid-area: slider;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .charges-sim .ch-fire {
+        margin-left: 0;
+    }
+
+    /* Fullscreen: the grid fills the space above the fixed info bar */
+    body.sim-fullscreen-active .charges-sim .simulation-display-container {
+        grid-template-rows: minmax(0, 1fr) auto;
+        grid-template-areas: "tools canvas" "answer answer";
+        width: 100%;
+    }
+
+    body.sim-fullscreen-active .charges-sim .sim-canvas-wrapper {
+        height: 100%;
+    }
+}
+
 /* =====================================================================
    Feature sections. Each feature adds its styles inside its own block only.
    ===================================================================== */

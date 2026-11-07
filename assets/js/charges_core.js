@@ -640,7 +640,15 @@
             ctx.textAlign = 'right';
             ctx.textBaseline = top ? 'bottom' : 'top';
             const v = !charged ? '0 V' : isPos ? `+${Math.round(settings.plateV)} V` : '0 V';
-            ctx.fillText(v, x1, top ? yRect - 3 : yRect + th + 3);
+            const ly = top ? yRect - 3 : yRect + th + 3;
+            if (bActive()) {
+                // A patch of background, so the label stays readable over the magnetic field's symbols
+                const w = ctx.measureText(v).width + 6;
+                ctx.fillStyle = pal.bg;
+                ctx.fillRect(x1 - w + 3, top ? ly - fontPx - 1 : ly - 1, w, fontPx + 3);
+                ctx.fillStyle = pal.muted;
+            }
+            ctx.fillText(v, x1, ly);
         });
         if (!settings.lockGeometry) {
             // Grip on the lower plate: drag it to change the gap
@@ -756,14 +764,22 @@
             const fe = Math.hypot(f.fex, f.fey);
             const fb = Math.hypot(f.fbx, f.fby);
             const both = fe > 0 && fb > 0;
-            const one = (fx, fy, mag, color, label) => {
+            // When the two forces point the same way, set the arrows a little apart so both (and their labels) show
+            const sameWay = both && f.fex * f.fbx + f.fey * f.fby > 0.9 * fe * fb;
+            const one = (fx, fy, mag, color, label, side) => {
                 const len = forceArrowLength(mag, p);
                 const ux = fx / mag;
                 const uy = -fy / mag;
-                drawArrow(cx + ux * r, cy + uy * r, cx + ux * (r + len), cy + uy * (r + len), color, 2.5, label);
+                const sx = -uy * side * 5;
+                const sy = ux * side * 5;
+                drawArrow(cx + sx + ux * r, cy + sy + uy * r, cx + sx + ux * (r + len), cy + sy + uy * (r + len), color, 2.5, '');
+                ctx.font = font(fontPx, 700);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, cx + sx * 3.2 + ux * (r + len + 11), cy + sy * 3.2 + uy * (r + len + 11));
             };
-            if (fe > 0) one(f.fex, f.fey, fe, pal.forceE, both ? 'qE' : 'F');
-            if (fb > 0) one(f.fbx, f.fby, fb, pal.forceB, both ? 'qvB' : 'F');
+            if (fe > 0) one(f.fex, f.fey, fe, pal.forceE, both ? 'qE' : 'F', sameWay ? -1 : 0);
+            if (fb > 0) one(f.fbx, f.fby, fb, pal.forceB, both ? 'qvB' : 'F', sameWay ? 1 : 0);
             if (fe === 0 && fb === 0 && (insideE(p.x, p.y) || insideB(p.x, p.y))) {
                 // In a field but feeling nothing: still in a magnetic field, or neutral
                 ctx.fillStyle = pal.muted;
@@ -1490,7 +1506,7 @@
     // Sizes in CSS px: half the gap between the prong tips, the depth of the fork to its crotch, the stem, the
     // thickness of the prongs, and the longest pull
     function slingSize() {
-        const a = clamp(scale * 0.0027, 13, 17);
+        const a = clamp(scale * 0.0034, 14, 21);
         return { a, c: a * 1.45, s: a * 1.35, w: clamp(a * 0.38, 5, 6.5), pullMax: clamp(scale * 0.014, 44, 90) };
     }
 
