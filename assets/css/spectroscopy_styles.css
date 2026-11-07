@@ -1538,13 +1538,13 @@ html.dark-mode .spectro-sim {
 /* The tab's own height is what everything inside is shared out from (cqh), and what decides when it is too short to share */
 #spectroPanel-spectrum {
     container: spectro-room / size;
-    --spectro-plot-min: 230px;      /* A plot with about 100 px of curve, under its header and over its axis and reference row */
+    --spectro-plot-min: 237px;      /* A plot with about 100 px of curve, under its header and over its axis, colour strip and reference row */
     --spectro-tool-room: clamp(290px, 48cqh, 470px);    /* An open tool's share, with the dock */
 }
 
 @media (pointer: coarse) {
     #spectroPanel-spectrum {
-        --spectro-plot-min: 250px;  /* Its rows are 44 px tall for a finger */
+        --spectro-plot-min: 264px;  /* Its rows are 44 px tall for a finger, and its curve keeps its height over two colour strips */
     }
 }
 
