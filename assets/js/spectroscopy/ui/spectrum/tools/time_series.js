@@ -17,6 +17,7 @@ import { createTimeFigure, everyFew, figureTable, labelledSelect, niceSpeeds, ov
 import { orbitResults } from './orbit_sums.js';
 import { clockFor } from './orbit_clock.js';
 import { createOrbitDial, STAR_SHAPES } from './orbit_dial.js';
+import { splitLine, widestSplit } from './split_lines.js';
 
 const COLUMNS = 240;             // Moments across the picture
 const ROWS = 72;                 // Speeds up its side
@@ -443,6 +444,25 @@ function mount(container, api) {
         halfKms = Math.max(Math.abs(vLo), Math.abs(vHi)) + 3 * lineWidth + 40;
     }
 
+    // The plot's flux axis starts just under the deepest the lines get over one turn of the orbit, and stays there, so shallow
+    // dips fill the plot as they part and merge without the scale moving under them. Deep lines keep the axis from zero.
+    function holdFloor(lo, hi) {
+        let lowest = 1;
+        const turn = Math.min(span, shortest);
+        for (let k = 0; k < 12; k++) {
+            const { flux } = spectrumOf(entity, { lo_nm: lo, hi_nm: hi, R: R_ZOOM, t: startT + (k / 12) * turn, ...partOptions() });
+            let top = 0;
+            let low = Infinity;
+            for (let i = 0; i < flux.length; i++) {
+                if (flux[i] > top) top = flux[i];
+                if (flux[i] < low) low = flux[i];
+            }
+            if (top > 0) lowest = Math.min(lowest, low / top);
+        }
+        const floor = lowest - 0.15 * (1 - lowest);
+        if (plot.setFitFloor) plot.setFitFloor(floor > 0.3 ? floor : false);
+    }
+
     function partOptions() {
         const { parts } = api.getBodyOpts();
         return parts && !resolved.body.black_hole ? { parts } : {};
@@ -476,8 +496,14 @@ function mount(container, api) {
         chooseFraming();
         const windowHalf = line.rest_nm * ((Math.max(Math.abs(vLo), Math.abs(vHi)) + 15) / C_KMS);
         api.setResolution('zoom', { lo_nm: line.rest_nm - windowHalf, hi_nm: line.rest_nm + windowHalf });
+        holdFloor(line.rest_nm - windowHalf, line.rest_nm + windowHalf);
         if (stars.some((star) => star.tooFast)) updateResults();
         else result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}The period appears once a swing and a half has gone by.`));
+        // The first moment straight away, with each star's mark, so the picture is never an empty box
+        if (panelShown) {
+            paintColumn(0);
+            drawImage();
+        }
         apply(clock.steppedT());
     }
 
@@ -500,10 +526,25 @@ function mount(container, api) {
             star.fit = null;
             star.periods = periodsOfStar(nextResolved.body, star.code);
         });
-        // Lines come from each star's own light, so the first choice is one that all of them show
+        const periods = periodsFor(nextResolved, stars);
+        shortest = periods[0] ?? 1;
+
+        // Lines come from each star's own light, so the first choice is one that all of them show. Where one shows the lines
+        // plainly splitting in two at their widest, that one comes first: usually a narrow metal line, as hydrogen's are too
+        // broad to part for the eye.
         const overviews = stars.map((star) => spectrumOf(entity, star.part ? { parts: [star.part] } : {}));
         const suggestions = suggestTrackingLines(overviews, 6);
-        lines = suggestions;
+        let split = null;
+        if (stars.length > 1 && nextResolved.body.stars) {
+            const codes = stars.map((star) => star.code);
+            try {
+                const t = widestSplit(nextResolved.body, clock.steppedT(), shortest, codes);
+                split = splitLine(entity, nextResolved.body, overviews, codes, { t, parts: partOptions().parts || null });
+            } catch (err) {
+                console.error('[spectroscopy] choosing a line that splits:', err);
+            }
+        }
+        lines = split ? [split.line, ...suggestions.filter((l) => !sameLine(l, split.line))].slice(0, 6) : suggestions;
         line = lines[0] || null;
         linePicked = false;
         stars.forEach((star, s) => {
@@ -513,8 +554,6 @@ function mount(container, api) {
         setOptions(lineField.select, lines.map((l, i) => ({ value: i, label: lineTitle(l) })), 0);
         lineField.wrap.hidden = lines.length < 2;
 
-        const periods = periodsFor(nextResolved, stars);
-        shortest = periods[0] ?? 1;
         const spans = periods.map((p, i) => ({ value: p * CYCLES_SHOWN, label: daysText(p * CYCLES_SHOWN) + (i === 0 && periods.length > 1 ? ', the shortest' : '') }));
         span = spans.length ? spans[0].value : shortest * CYCLES_SHOWN;
         setOptions(spanField.select, spans, span);
@@ -554,6 +593,7 @@ function mount(container, api) {
             if (offClock) offClock();
             // A long time span may have left it going far faster than it was
             if (clock && clock.speed > clock.smoothMax && speedAtOpen <= clock.smoothMax) clock.setSpeed(speedAtOpen);
+            if (plot.setFitFloor) plot.setFitFloor(false);
             api.setResolution('overview');
             plot.setRange(started.lo, started.hi);
         }

@@ -14,8 +14,10 @@
 //   clock.onTime(fn(t)) -> remove     every change of the continuous time
 //   clock.onStep(fn(t)) -> remove     every change of the stepped reading
 //   clock.onState(fn()) -> remove     playing or paused, and speed
+//   toWidestSplit(body, play)         the clock moved on to when the lines are furthest apart, and started
 
 import { bus } from '../../../core/state.js';
+import { widestSplit } from './split_lines.js';
 
 // The limit on showing an orbit as it happens. Lines cross twice a turn, so this is two crossings a second: under the
 // rule of no more than three changes a second.
@@ -124,5 +126,13 @@ export function clockFor(body) {
         clock = makeClock(body);
         clocks.set(body.code, clock);
     }
+    return clock;
+}
+
+// See the lines split: the clock set to the next moment its stars' lines are furthest apart, and playing unless asked not to
+export function toWidestSplit(body, play = true) {
+    const clock = clockFor(body);
+    clock.setTime(widestSplit(body, clock.t, clock.fastest));
+    if (play) clock.play();
     return clock;
 }
