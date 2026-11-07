@@ -1,17 +1,18 @@
 // The H-R tab (spec section 11). Students plot the stars they have measured, with temperature from the Wien tool
 // or a reference match and luminosity from L = 4 pi d^2 b. A cluster's members can all be plotted at once, and the
 // main-sequence turn-off then gives an estimate of its age. Regions explain what powers their stars.
-// Plotted stars last for the session only: nothing is saved.
+// The student's own stars last through a reload, in this browser, until they're cleared.
 
 import { bus, select } from '../core/state.js';
-import { getMeasurement } from '../core/measurements.js';
+import { getMeasurement, recordMeasurement } from '../core/measurements.js';
 import { luminosityFromFlux, L_SUN, PC } from '../core/phys.js';
 import { Rng } from '../core/rng.js';
 import { distance, plusMinus, sci, sig, withCommas } from '../core/format.js';
 import * as synth from '../spectra/synth.js';
 import {
     blackBodyCss, createChip, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList,
-    drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel
+    drawErrorBar, drawFrame, drawMarker, el, fontOf, haloText, linearScale, logScale, markerIcon, nearestPoint, powerLabel,
+    readSaved, showFigure, writeSaved
 } from './plot2d.js';
 
 const T_MAX = 130000;     // Left edge (K): the hottest white dwarfs
@@ -150,11 +151,44 @@ const SOURCES = { wien: 'the Wien tool', reference: 'the reference match', typed
 const SOURCE_SHORT = { wien: 'Wien tool', reference: 'Reference match', typed: 'Typed in' };
 const T_NOISE = 0.02;     // Cluster members: true temperature with this fractional noise
 
+// How far to trust a turn-off age. Plotting all 40 of this sky's clusters at the suggested turn-off gave 0.77 to 1.37 times
+// the catalogue age, so the true age is within about 30% of what's shown. Stated in words beside the figure.
+const AGE_ERROR_PERCENT = 30;
+
 // ---------- Session state: kept here, not in the tab, so it outlives a change of selection ----------
 
 const plotted = new Map();   // code -> number shown beside the point
 let nextNumber = 1;
 let cluster = null;          // { code, type, points, turnOffLogL, suggestedLogL }
+let saveKey = null;
+let tab = null;              // The mounted tab's refresh, announce and focus
+
+function persist() {
+    if (!saveKey) return;
+    const stars = [...plotted].map(([code, number]) => ({ code, number, values: getMeasurement(code) }));
+    writeSaved(saveKey, stars.length ? { nextNumber, stars } : null);
+}
+
+function restore(app) {
+    saveKey = `spectro.hr.v1.${app.universe.seed}`;
+    const saved = readSaved(saveKey);
+    if (!saved || !Array.isArray(saved.stars)) return;
+    saved.stars.forEach(({ code, number, values }) => {
+        if (!values || !app.universe.resolve(code)) return;
+        recordMeasurement(code, values);
+        if (starPoint(code)) {
+            plotted.set(code, number);
+            nextNumber = Math.max(nextNumber, number + 1);
+        }
+    });
+}
+
+function addStar(code) {
+    if (plotted.has(code)) return;
+    plotted.set(code, nextNumber++);
+    persist();
+    bus.emit('plotted', { code });
+}
 
 // ---------- Numbers ----------
 
@@ -222,6 +256,24 @@ export function initHRTab(app) {
         appliesTo: isApplicable,
         mount: (container) => mountHR(container, app)
     });
+    restore(app);
+
+    // How the Spectrum tab's tools hand their results over
+    const open = () => app.drawer.selectTab('hr');
+    app.diagrams = app.diagrams || {};
+    app.diagrams.hr = {
+        isPlotted: (code) => plotted.has(code),
+        canPlot: (code) => !!starPoint(code),
+        plot(code) {
+            open();
+            addStar(code);
+            if (tab) tab.added(code);
+        },
+        show() {
+            open();
+            if (tab) tab.arrive();
+        }
+    };
 }
 
 function mountHR(container, app) {
@@ -237,14 +289,22 @@ function mountHR(container, app) {
     const root = el('div', { class: 'spectro-fig-tab' });
     container.appendChild(root);
 
-    const caption = el('p', { class: 'spectro-fig-caption', tabindex: '-1' });
-    root.appendChild(caption);
+    // What to do next comes first, directly over the diagram it acts on, so the two are on screen together
+    const top = el('div', { class: 'spectro-fig-top' });
+    root.appendChild(top);
 
     const figure = createFigure(root, {
         label: 'H-R diagram',
-        height: (w) => Math.max(270, Math.min(w * 1.04, 460, window.innerHeight * 0.62)),
+        height: (w) => {
+            const scroller = root.closest('.sim-controls-content');
+            const room = scroller && scroller.clientHeight ? scroller.clientHeight - top.offsetHeight - 24 : window.innerHeight * 0.62;
+            return Math.max(270, Math.min(w * 1.04, 460, room));
+        },
         draw
     });
+
+    const caption = el('p', { class: 'spectro-fig-caption', hidden: true });
+    root.appendChild(caption);
 
     // Keyboard targets for the regions. A pointer reaches the regions through the canvas itself, so these let
     // clicks pass through them; see the CSS.
@@ -328,21 +388,22 @@ function mountHR(container, app) {
 
     // ---------- Adding the current star ----------
 
-    const card = createMeasureCard(root, {
-        addLabel: 'Add to H-R',
+    const card = createMeasureCard(top, {
+        addLabel: 'Plot on H-R',
         removeLabel: 'Remove from H-R',
-        onHint: (field) => {
-            app.drawer.selectTab('spectrum');
-            if (app.spectrumPanel) app.spectrumPanel.openTool(field.tool);
-        },
+        workingParent: root,
+        onTool: (tool) => app.spectrumPanel.openTool(tool, { from: 'hr', focus: true }),
         fields: [
             {
                 key: 'T_K',
                 label: 'Temperature',
                 unit: 'K',
                 placeholder: '5,800',
-                hint: 'Use the Wien tool in Spectrum',
                 tool: 'wien',
+                toolName: 'Wien\'s law',
+                min: 100,
+                max: 1e7,
+                rangeText: 'a temperature from 100 to 10,000,000 K',
                 extra: { T_source: 'typed', T_err_K: undefined },
                 show: (m) => `${m.T_err_K > 0 ? plusMinus(m.T_K, m.T_err_K) : withCommas(m.T_K)} K, from ${SOURCES[m.T_source] || 'your measurement'}`
             },
@@ -351,8 +412,11 @@ function mountHR(container, app) {
                 label: 'Brightness',
                 unit: 'W/m²',
                 placeholder: '3.2e-9',
-                hint: 'Use the Photometer in Spectrum',
                 tool: 'photometer',
+                toolName: 'Photometer',
+                min: 1e-30,
+                max: 1e6,
+                rangeText: 'a brightness from 1e-30 to 1e6 W/m²',
                 extra: { flux_err: undefined, L_Lsun: undefined, L_err_Lsun: undefined },
                 show: (m) => `${sci(m.flux_Wm2, 3)} W/m², from the Photometer`
             },
@@ -361,8 +425,11 @@ function mountHR(container, app) {
                 label: 'Distance',
                 unit: 'pc',
                 placeholder: '35',
-                hint: 'Use the Photometer in Spectrum',
                 tool: 'photometer',
+                toolName: 'Photometer',
+                min: 1e-6,
+                max: 1e10,
+                rangeText: 'a distance from 1e-6 to 1e10 pc',
                 extra: { L_Lsun: undefined, L_err_Lsun: undefined },
                 show: (m) => `${distance(m.distance_pc)}, from the Photometer`
             }
@@ -377,7 +444,7 @@ function mountHR(container, app) {
             if (current && current.path === 'body' && body && body.kind !== 'star') {
                 return 'A point for this system stands for the combined light of its stars. Select one star to plot it alone.';
             }
-            return 'Not on your diagram yet.';
+            return '';
         },
         working(code, m) {
             const lum = luminosityOf(m);
@@ -394,9 +461,8 @@ function mountHR(container, app) {
         },
         isPlotted: (code) => plotted.has(code),
         onAdd(code) {
-            plotted.set(code, nextNumber++);
-            const point = starPoint(code);
-            announce(`${code} added at ${sig(point.T, 3)} K and ${sig(point.L, 3)} L☉.`);
+            addStar(code);
+            announceAdded(code);
             refresh();
         },
         onRemove(code) {
@@ -404,21 +470,38 @@ function mountHR(container, app) {
         }
     });
 
+    function announceAdded(code) {
+        const point = starPoint(code);
+        if (point) announce(`${code} added at ${sig(point.T, 3)} K and ${sig(point.L, 3)} L☉.`);
+    }
+
     function removeStar(code) {
         plotted.delete(code);
         if (plotted.size === 0) nextNumber = 1;
+        persist();
         announce(`${code} removed.`);
+        bus.emit('plotted', { code });
+        refresh();
+    }
+
+    function clearStars() {
+        plotted.clear();
+        nextNumber = 1;
+        persist();
+        announce('All your stars removed from the diagram.');
+        bus.emit('plotted', { code: null });
         refresh();
     }
 
     // ---------- Plotting a whole cluster ----------
 
     const clusterCard = el('div', { class: 'spectro-fig-card', hidden: true });
-    root.appendChild(clusterCard);
-    const clusterTitle = el('p', { class: 'spectro-fig-card-title' });
+    top.appendChild(clusterCard);
+    const clusterTitle = el('p', { class: 'spectro-fig-card-title', tabindex: '-1' });
     const clusterStatus = el('p', { class: 'spectro-fig-card-status' });
+    const ageLine = el('p', { class: 'spectro-fig-readout', hidden: true });
+    const turnOffLine = el('p', { class: 'spectro-fig-card-status', hidden: true });
     const clusterButton = el('button', { type: 'button', class: 'spectro-fig-button spectro-fig-button-main', onclick: toggleCluster });
-    const turnOffBox = el('div', { class: 'spectro-fig-working', hidden: true });
     const suggestButton = el('button', {
         type: 'button',
         class: 'spectro-fig-button',
@@ -430,7 +513,12 @@ function mountHR(container, app) {
             refresh();
         }
     });
-    clusterCard.append(clusterTitle, clusterStatus, turnOffBox, el('div', { class: 'spectro-fig-actions' }, suggestButton, clusterButton));
+    clusterCard.append(clusterTitle, clusterStatus, ageLine, turnOffLine, el('div', { class: 'spectro-fig-actions' }, suggestButton, clusterButton));
+
+    // How the age comes out, under the diagram and out of the way until asked for
+    const turnOffBox = el('div', { class: 'spectro-fig-working' });
+    const howAge = el('details', { class: 'sim-controls-more spectro-fig-more', hidden: true }, el('summary', { text: 'How the age is worked out' }), turnOffBox);
+    root.appendChild(howAge);
 
     function clusterBody() {
         return current && current.body && current.body.cluster ? current.body : null;
@@ -459,30 +547,35 @@ function mountHR(container, app) {
         clusterTitle.textContent = `${typeName} ${body.code}`;
         const showing = cluster && cluster.code === body.code;
         clusterButton.textContent = showing ? 'Remove cluster' : 'Plot all members';
-        clusterStatus.textContent = showing
-            ? 'Luminosities come from each star\'s brightness and the cluster\'s distance. Temperatures are catalogue values with a little noise, as nobody measures every star by hand.'
-            : `${body.cluster.members.length} stars at about the same distance, born at about the same time.`;
+        clusterStatus.textContent = `${body.cluster.members.length} stars at about the same distance, born at about the same time.`;
+        clusterStatus.hidden = !!showing;
         suggestButton.hidden = !showing;
-        turnOffBox.hidden = !showing;
+        ageLine.hidden = !showing;
+        turnOffLine.hidden = !showing;
+        howAge.hidden = !showing;
         if (showing) renderTurnOff();
     }
 
     function renderTurnOff() {
         const { massMsun, ageGyr, T } = turnOffAge(cluster.turnOffLogL);
         const L = 10 ** cluster.turnOffLogL;
+        ageLine.textContent = `Age ≈ ${ageText(ageGyr)} ± ${AGE_ERROR_PERCENT}%`;
+        turnOffLine.textContent = ageGyr > 15
+            ? 'That is longer than the Universe has existed (about 13.8 billion years), so the turn-off is probably higher.'
+            : `Turn-off near ${sig(T, 2)} K, ${sig(L, 2)} L☉. Drag the line to move it.`;
         const working = [
             `Mass: M ≈ (L ÷ 2)^(1/3.5) = ${sig(massMsun, 2)} M☉`,
-            `Age: t ≈ 10 billion years × M^−2.5 ≈ ${ageText(ageGyr)} (estimate)`
+            `Age: t ≈ 10 billion years × M^−2.5 ≈ ${ageText(ageGyr)}`
         ];
         const notes = [
             'A star about to leave the main sequence is roughly twice as bright as when it formed, hence L ÷ 2. The cluster is about as old as the lifetime of these stars.',
+            `Read the age as ± ${AGE_ERROR_PERCENT}%. These are rough rules, and on this sky's clusters they come out between about 0.8 and 1.4 times the catalogue age, with the line where Suggest puts it.`,
             cluster.type === 'globular'
                 ? 'Globular clusters have lost their hot, bright stars, so the main sequence stops low down and red giants stand out.'
-                : 'Open clusters are usually young enough to keep hot, bright stars high on the main sequence.'
+                : 'Open clusters are usually young enough to keep hot, bright stars high on the main sequence.',
+            'Luminosities come from each star\'s brightness and the cluster\'s distance. Temperatures are catalogue values with a little noise, as nobody measures every star by hand.'
         ];
-        if (ageGyr > 15) notes.unshift('That is longer than the Universe has existed (about 13.8 billion years), so the turn-off is probably higher.');
         turnOffBox.replaceChildren(
-            el('strong', { text: `Turn-off near ${sig(T, 2)} K, ${sig(L, 2)} L☉` }),
             ...working.map((line) => el('span', { text: line })),
             ...notes.map((line) => el('span', { class: 'spectro-fig-working-note', text: line })));
     }
@@ -521,7 +614,7 @@ function mountHR(container, app) {
 
     // ---------- The list and the table ----------
 
-    const list = createPlottedList(root, 'Your stars', () => caption);
+    const list = createPlottedList(root, 'Your stars', focusAtTop, clearStars);
     const table = createDataTable(root, {
         label: 'Plotted stars',
         columns: ['Point', 'Code', 'Temperature (K)', 'Luminosity (L☉)', 'Region', 'Temperature from'],
@@ -538,6 +631,26 @@ function mountHR(container, app) {
     const live = el('p', { class: 'spectro-fig-sr', role: 'status' });
     root.appendChild(live);
     function announce(text) { live.textContent = text; }
+
+    // Something that takes focus for certain, whichever card is showing
+    function focusAtTop() {
+        return clusterCard.hidden ? { focus: () => card.focusTitle() } : clusterTitle;
+    }
+
+    tab = {
+        // Back from a tool: on to the next thing to press
+        arrive() {
+            refresh();
+            if (clusterCard.hidden || !card.root.hidden) card.focusNext();
+            else clusterButton.focus();
+        },
+        added(code) {
+            announceAdded(code);
+            refresh();
+            card.focusTitle({ preventScroll: true });
+            showFigure(root, figure);
+        }
+    };
 
     function studentPoints() {
         return [...plotted.keys()].map(starPoint).filter(Boolean);
@@ -568,7 +681,8 @@ function mountHR(container, app) {
         const bits = [];
         if (plotted.size) bits.push(`${plotted.size} of your own star${plotted.size === 1 ? '' : 's'}`);
         if (cluster) bits.push(`${cluster.type === 'globular' ? 'globular' : 'open'} cluster ${cluster.code}, ${cluster.points.length} stars`);
-        caption.textContent = bits.length ? `Plotted: ${bits.join(' and ')}.` : 'Measure a star in Spectrum, then add it here.';
+        caption.textContent = bits.length ? `Plotted: ${bits.join(' and ')}.` : '';
+        caption.hidden = !bits.length;
         legend.hidden = !bits.length;
 
         list.update(studentPoints().map((p) => ({
@@ -839,9 +953,12 @@ function mountHR(container, app) {
     function drawStudentStars(ctx, rect, sx, sy, theme, placer) {
         const code = current ? current.entity.code : null;
         const stars = studentPoints();
+        // With a cluster on show this is about the cluster: other stars are small, hollow and unlabelled, so as not to hide it
+        const quiet = !!cluster;
         stars.forEach((p) => {
             p.px = Math.max(rect.x, Math.min(rect.x + rect.w, sx(p.T)));
             p.py = Math.max(rect.y, Math.min(rect.y + rect.h, sy(Math.log10(p.L))));
+            if (quiet) return;
             if (p.Terr > 0) {
                 const left = Math.max(rect.x, Math.min(rect.x + rect.w, sx(p.T + p.Terr)));
                 const right = Math.max(rect.x, Math.min(rect.x + rect.w, sx(Math.max(T_MIN, p.T - p.Terr))));
@@ -855,10 +972,12 @@ function mountHR(container, app) {
             placer.reserve(p.px, p.py, 6);
         });
         stars.forEach((p) => {
-            drawMarker(ctx, SHAPES[regionOf(p.T, p.L)], p.px, p.py, 5, { fill: blackBodyCss(p.T), stroke: theme.strong });
+            if (quiet) drawMarker(ctx, SHAPES[regionOf(p.T, p.L)], p.px, p.py, 3, { fill: null, stroke: theme.strong, width: 1 });
+            else drawMarker(ctx, SHAPES[regionOf(p.T, p.L)], p.px, p.py, 5, { fill: blackBodyCss(p.T), stroke: theme.strong });
         });
         ctx.font = fontOf(theme, 12, 700);
         stars.forEach((p) => {
+            if (quiet) return;
             const spot = placer.place(String(plotted.get(p.code)), p.px, p.py, 6);
             if (spot) haloText(ctx, String(plotted.get(p.code)), spot.x, spot.y, theme, { font: fontOf(theme, 12, 700), colour: theme.strong });
         });
@@ -952,8 +1071,16 @@ function mountHR(container, app) {
     });
 
     bus.on('measurement', ({ code }) => {
+        // A point that has lost a value it needs comes off the diagram
+        if (plotted.has(code) && !starPoint(code)) {
+            removeStar(code);
+            return;
+        }
         if (current && current.entity.code === code) card.refresh();
-        if (plotted.has(code)) refresh();
+        if (plotted.has(code)) {
+            persist();
+            refresh();
+        }
     });
 
     return {

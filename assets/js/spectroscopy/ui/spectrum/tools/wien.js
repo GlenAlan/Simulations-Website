@@ -8,7 +8,7 @@ import { plusMinus, sci, sig, withCommas } from '../../../core/format.js';
 import { STANDARDS } from '../../../data/standards.js';
 import { wienPeak, wienCurveAt } from '../../../spectra/measure.js';
 import { el } from '../../plot2d.js';
-import { actionRow, diagramLink, fill, overlayTheme, para, plotLabel, plotMark, resultLine, statusBox, steps, toolLink } from './common.js';
+import { actionRow, diagramLink, fill, hasTab, overlayTheme, para, plotLabel, plotMark, resultLine, statusBox, steps, termLine, toolLink } from './common.js';
 
 const BODY_KINDS = ['star', 'binary', 'multiple', 'black_hole', 'supernova', 'neutron_star'];
 
@@ -17,8 +17,17 @@ function applies(resolved) {
     return resolved.path === 'body' && BODY_KINDS.includes(resolved.body.kind);
 }
 
-// By eye, a curve can be told from its neighbours to about this share of the temperature
-const BLACK_BODY_MATCH_ERR = 0.05;
+// By eye, a curve can be told from its neighbours to about this share of the temperature. With its peak off the short end,
+// only a slope is left to match, and that hardly changes with temperature: an O6 star looks as good at 31,000 K as at 43,000 K.
+const PEAK_OFF_SCALE_K = 32000;
+function blackBodyMatchErr(T) {
+    if (T >= 2 * PEAK_OFF_SCALE_K) return 0.3;
+    return T >= PEAK_OFF_SCALE_K ? 0.2 : 0.05;
+}
+
+function roundTo3(x) {
+    return Number(x.toPrecision(3));
+}
 
 // Half the gap to the next standard either side: a match is only as fine as the list of standards
 function standardError(id) {
@@ -53,8 +62,10 @@ function mount(container, api) {
         const theme = overlayTheme(plot);
         const pane = plot.panes().body;
         const { lo } = plot.getRange();
+        // Under the line labels, if they're showing
+        const labelY = pane.y + plot.labelBand() + 12;
         if (peak.belowRange) {
-            plotLabel(ctx, theme, `← the peak is below ${sig(lo, 3)} nm`, pane.x + 6, pane.y + 12, { align: 'left' });
+            plotLabel(ctx, theme, `← the peak is below ${sig(lo, 3)} nm`, pane.x + 6, labelY, { align: 'left' });
             return;
         }
         if (peak.T_K === null) return;
@@ -79,12 +90,17 @@ function mount(container, api) {
         const mark = plotMark(ctx, plot, theme, peak.peak_nm);
         if (!mark) {
             const side = peak.peak_nm < lo;
-            plotLabel(ctx, theme, side ? '← peak' : 'peak →', side ? pane.x + 6 : pane.x + pane.w - 6, pane.y + 12, { align: side ? 'left' : 'right' });
+            plotLabel(ctx, theme, side ? '← peak' : 'peak →', side ? pane.x + 6 : pane.x + pane.w - 6, labelY, { align: side ? 'left' : 'right' });
             return;
         }
         const right = mark.x < pane.x + pane.w * 0.6;
-        plotLabel(ctx, theme, `λmax = ${sig(peak.peak_nm, 3)} nm`, mark.x + (right ? 6 : -6), pane.y + 12, { align: right ? 'left' : 'right' });
+        plotLabel(ctx, theme, `λmax = ${sig(peak.peak_nm, 3)} nm`, mark.x + (right ? 6 : -6), labelY, { align: right ? 'left' : 'right' });
     });
+
+    // A peak that gave a temperature, as opposed to one off the scale or light with no curve to it
+    function hasReading() {
+        return !!peak && !peak.belowRange && peak.T_K !== null;
+    }
 
     function keepReferenceResult() {
         const m = getMeasurement(api.resolved.entity.code);
@@ -95,18 +111,20 @@ function mount(container, api) {
         recordMeasurement(api.resolved.entity.code, { T_K: T, T_err_K: err, T_source: source });
     }
 
+    // The way on from a reading: to the H-R diagram if the tab is there and there's something to do on it, and to the
+    // Photometer if that's what the diagram still needs
     function nextSteps() {
         const m = getMeasurement(api.resolved.entity.code) || {};
-        const link = diagramLink('hr');
-        const items = [link];
-        if (link && !(m.flux_Wm2 > 0)) items.push(toolLink(api, 'photometer', 'Photometer next'));
+        const items = [diagramLink('hr')];
+        if (hasTab('hr') && !(m.flux_Wm2 > 0)) items.push(toolLink(api, 'photometer', 'Photometer next'));
         return actionRow(...items);
     }
 
     function renderBelowRange() {
+        const seen = new Set();
         result.replaceChildren(
             resultLine('The peak is off the scale', true),
-            para('This object is too hot to find its peak here. Above about 32,000 K, the black-body peak falls below 90 nm, the short end of this spectrum, and what you see is only the curve sloping up towards it. There is no top to read, so Wien\'s law has nothing to work on.'),
+            termLine('This object is too hot to find its peak here. Above about 32,000 K, the black-body peak falls below 90 nm, the short end of this spectrum, and what you see is only the curve sloping up towards it. There is no top to read, so Wien\'s law has nothing to work on.', seen, 'spectro-tool-text'),
             para('Instead, fit the black-body reference: show it over the spectrum, then slide its temperature until the two curves have the same shape.')
         );
     }
@@ -123,7 +141,8 @@ function mount(container, api) {
                 `T = b ÷ λmax, with b = ${sci(WIEN_B, 4)} m·K`,
                 `T = (${sci(WIEN_B, 4)} m·K) ÷ (${sci(metres, 3)} m) = ${withCommas(peak.T_K)} K`
             ]),
-            blended ? para('This is the combined light of several stars, so it is a blend of their temperatures. Use Stars shown to look at one star at a time.') : null,
+            blended ? para('This is the combined light of several stars, so it is a blend of their temperatures. To look at one star at a time:') : null,
+            blended ? actionRow(toolLink(api, 'stars-shown', 'Stars shown')) : null,
             reading ? para(`Your H-R diagram is using ${withCommas(reading.T_K)} K from the reference.`) : null,
             reading ? actionRow(el('button', {
                 type: 'button',
@@ -147,7 +166,7 @@ function mount(container, api) {
         const st = api.picker.state();
         if (!st.item) return null;
         if (st.item.kind === 'blackbody') {
-            return { T: st.T, err: BLACK_BODY_MATCH_ERR * st.T, name: `Black-body reference, ${withCommas(st.T)} K` };
+            return { T: st.T, err: blackBodyMatchErr(st.T) * st.T, rough: st.T >= PEAK_OFF_SCALE_K, name: `Black-body reference, ${withCommas(st.T)} K` };
         }
         if (st.item.kind === 'standard') {
             const id = st.item.standard;
@@ -158,7 +177,7 @@ function mount(container, api) {
 
     function showBlackBody() {
         api.picker.choose('bb');
-        plot.setMode('overlay');
+        api.setMode('overlay');
         // The slope that matters is at the short end, so show that much of the range
         const { hi } = plot.getRange();
         plot.setRange(90, Math.min(hi, 800), { animate: true });
@@ -177,8 +196,12 @@ function mount(container, api) {
         const code = api.resolved.entity.code;
         const m = getMeasurement(code);
         const used = !!m && m.T_source === 'reference' && m.T_K === reading.T;
+        const low = roundTo3(reading.T - reading.err);
+        const high = roundTo3(reading.T + reading.err);
         fill(refBlock,
-            para(`${reading.name}. If this matches your spectrum, its temperature is a measurement too.`),
+            para(reading.rough
+                ? `${reading.name}. If this matches your spectrum, its temperature is a measurement too, but a rough one. With no peak to read, a slope changes little with temperature, so anything from about ${withCommas(low)} to ${withCommas(high)} K could look as good.`
+                : `${reading.name}. If this matches your spectrum, its temperature is a measurement too.`),
             actionRow(el('button', {
                 type: 'button',
                 class: 'spectro-tool-go',
@@ -186,12 +209,12 @@ function mount(container, api) {
                 onclick: () => {
                     record(reading.T, reading.err, 'reference');
                     renderReference();
-                    if (peak && !peak.belowRange) renderPeak();
+                    if (hasReading()) renderPeak();
                 }
             })),
-            used ? resultLine(`T = ${plusMinus(reading.T, reading.err)} K, from the reference`, true) : null,
+            used ? resultLine(reading.rough ? `T is about ${withCommas(low)} to ${withCommas(high)} K, from the reference` : `T = ${plusMinus(reading.T, reading.err)} K, from the reference`, true) : null,
             // A star with a peak of its own already offers these under its reading
-            used && hot ? nextSteps() : null
+            used && !hasReading() ? nextSteps() : null
         );
     }
 
@@ -200,7 +223,7 @@ function mount(container, api) {
         peak = spectrum ? wienPeak(spectrum) : null;
         if (peak && peak.belowRange) {
             renderBelowRange();
-        } else if (peak && peak.T_K !== null) {
+        } else if (hasReading()) {
             if (!keepReferenceResult()) record(peak.T_K, peak.err_K, 'wien');
             renderPeak();
             if (frame) {

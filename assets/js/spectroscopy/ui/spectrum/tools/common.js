@@ -1,8 +1,9 @@
 // What the tools share: a result's sum set out in steps, the link that takes a result to its diagram, marks drawn over the
 // plot, and the small figure with a time axis that the time-based tools draw on.
 
-import { app } from '../../../core/state.js';
-import { el, createFigure, drawFrame, linearScale, niceTicks } from '../../plot2d.js';
+import { app, bus } from '../../../core/state.js';
+import { glossaryHtml } from '../../../content/glossary.js';
+import { el, createDataTable, createFigure, drawFrame, linearScale, niceTicks } from '../../plot2d.js';
 
 // ---------- Text ----------
 
@@ -20,9 +21,20 @@ export function resultLine(text, big = false) {
     return el('p', { class: big ? 'spectro-tool-answer' : 'spectro-tool-line', text });
 }
 
+// The same, with tips on the technical terms. seen is a Set shared across one result, so that each term gets one tip.
+export function termLine(text, seen, cls = 'spectro-tool-line') {
+    const node = el('p', { class: cls });
+    node.innerHTML = glossaryHtml(text, { seen });
+    return node;
+}
+
 // A sum set out as numbered steps, so the student can follow it and check it
-export function steps(lines) {
-    return el('ol', { class: 'spectro-tool-steps' }, ...lines.map((line) => el('li', { text: line })));
+export function steps(lines, seen = new Set()) {
+    return el('ol', { class: 'spectro-tool-steps' }, ...lines.map((line) => {
+        const item = el('li');
+        item.innerHTML = glossaryHtml(line, { seen });
+        return item;
+    }));
 }
 
 // A live region for results, so a screen reader hears them as they appear
@@ -64,33 +76,62 @@ export function timeSlider(label, onInput) {
 
 // ---------- Going on to a diagram or another tool ----------
 
-const DIAGRAMS = {
-    hr: { tab: 'hr', label: 'Add to H-R' },
-    hubble: { tab: 'hubble', label: 'Add to Hubble plot' }
-};
+const DIAGRAM_NAMES = { hr: 'H-R', hubble: 'Hubble' };
 
 // The tab bar only lists the tabs that apply to the current object
-function hasTab(tab) {
+export function hasTab(tab) {
     return !!document.getElementById(`spectroTab-${tab}`);
 }
 
-// "Add to H-R" or "Add to Hubble plot", whichever this object can go on; null if neither. `only` names the one diagram that
-// a result is any use to, where that matters: a star's speed doesn't go on the H-R diagram.
-export function diagramLink(only) {
-    const diagram = only ? (hasTab(only) ? DIAGRAMS[only] : null) : hasTab('hubble') ? DIAGRAMS.hubble : hasTab('hr') ? DIAGRAMS.hr : null;
+// What this code's values allow on a diagram right now, and what that button does: put it on and show it, go back to the
+// tab the student came from with the value, or show where it already is. Null when there's nothing to offer yet.
+function diagramStep(tab, code) {
+    const diagram = app.diagrams && app.diagrams[tab];
     if (!diagram) return null;
-    return el('button', {
+    const name = DIAGRAM_NAMES[tab];
+    if (diagram.isPlotted(code)) return { label: `See it on ${name}`, go: () => diagram.show(code) };
+    if (diagram.canPlot(code)) return { label: `Plot on ${name}`, main: true, go: () => diagram.plot(code) };
+    if (app.spectrumPanel && app.spectrumPanel.cameFrom === tab) return { label: `Back to ${name}`, go: () => diagram.show(code) };
+    return null;
+}
+
+// The next step on the diagram this object can go on; null if there isn't one yet. `only` names the one diagram that a
+// result is any use to, where that matters: a star's speed doesn't go on the H-R diagram. The button keeps up with what
+// has been measured and plotted since it was made.
+export function diagramLink(only) {
+    const tab = only ? (hasTab(only) ? only : null) : hasTab('hubble') ? 'hubble' : hasTab('hr') ? 'hr' : null;
+    if (!tab) return null;
+    const code = app.spectrumPanel.resolved.entity.code;
+    const first = diagramStep(tab, code);
+    if (!first) return null;
+    const button = el('button', {
         type: 'button',
         class: 'spectro-tool-go',
-        text: diagram.label,
-        onclick: () => app.drawer.selectTab(diagram.tab)
+        text: first.label,
+        onclick: () => {
+            const step = diagramStep(tab, code);
+            if (step) step.go();
+        }
     });
+    // Results replace their buttons when they change, so one that has gone stops listening the next time anything happens
+    const sync = () => {
+        if (!button.isConnected) {
+            bus.off('plotted', sync);
+            bus.off('measurement', sync);
+            return;
+        }
+        const step = diagramStep(tab, code);
+        if (step) button.textContent = step.label;
+    };
+    bus.on('plotted', sync);
+    bus.on('measurement', sync);
+    return button;
 }
 
 // A button that opens another tool, for a next step such as the Photometer after Wien's law; null if this object hasn't that tool
 export function toolLink(panelApi, id, label) {
     if (!panelApi.hasTool(id)) return null;
-    return el('button', { type: 'button', class: 'spectro-tool-next', text: label, onclick: () => panelApi.openTool(id) });
+    return el('button', { type: 'button', class: 'spectro-tool-next', text: label, onclick: () => panelApi.openTool(id, { focus: true }) });
 }
 
 export function actionRow(...buttons) {
@@ -178,6 +219,19 @@ export function createTimeFigure(parent, { label, xTitle, yTitle, range, paint, 
         }
     });
     return figure;
+}
+
+// The same figure's numbers, for anyone who can't read it off the picture: closed until asked for. Returns its update().
+export function figureTable(parent, { label, columns, rows }) {
+    const holder = el('div', { class: 'spectro-fig-tab' });
+    parent.append(holder);
+    return createDataTable(holder, { label, columns, rows }).update;
+}
+
+// At most `most` evenly spaced items from a long list
+export function everyFew(list, most = 24) {
+    const stride = Math.max(1, Math.ceil(list.length / most));
+    return list.filter((item, i) => i % stride === 0);
 }
 
 function axisNumber(v) {

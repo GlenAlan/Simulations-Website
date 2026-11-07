@@ -12,22 +12,42 @@
 //   getResolution()         'overview' or 'zoom'
 //   setBodyOpts(opts)       add t, parts or subtractHost to the body spectrum and refresh; a null value removes an option, no argument clears all
 //   getBodyOpts(), onBodyOpts(fn(changed)) -> remove, onReferenceChange(fn) -> remove
-//   openTool(id), hasTool(id)   open a tool by its id, unfolding the Tools list; false if this object doesn't have it
+//   openTool(id, { from, focus }), hasTool(id)   open a tool by its id, from anywhere: the tab changes, the tool opens and is
+//                           brought into view. from names a tab to offer a way back to, focus moves focus onto the tool.
+//                           False if this object doesn't have that tool. Ids can be written 'light-curve' or 'light_curve'.
+//   cameFrom                the tab that sent the student to a tool, while it still has a way back
+//   setMode('stacked'|'overlay')   how the two spectra are arranged, with the buttons that say so
 //   picker                  the reference picker, see refs.js
-//   toolsEl                 the element the tools are listed in
+//   toolsEl                 the element the open tools' panels sit in
+//
+// app.spectrumPanel is there from the start, so anything can send the student to a tool before this tab has been opened.
+// A button in any text can do the same with data-spectro-tool="<id>".
 
+import { bus } from '../../core/state.js';
 import { spectrumOf, referenceSpectrum, autoRange } from '../../spectra/synth.js';
 import { R_OVERVIEW, R_ZOOM, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../core/phys.js';
 import { wavelength } from '../../core/format.js';
 import { createPlot, WAVELENGTH_PRESETS } from './plot.js';
 import { createRefPicker, shiftShort } from './refs.js';
-import { listTools } from './tools/index.js';
+import { linkToolNames, listTools, toolWords } from './tools/index.js';
 
 const FULL_RANGE = { lo: SPECTRUM_LO_NM, hi: SPECTRUM_HI_NM, R: R_OVERVIEW };
 const OVERVIEW_MIN_RATIO = 1.002;    // About 1.3 nm at Hα, which is 20 samples at overview resolution
 const ZOOM_MIN_RATIO = 1.0001;       // About 0.07 nm at Hα, which is 20 samples at line-zoom resolution
 const ZOOM_UPGRADE_RATIO = 1.08;     // Higher resolution only shows on screen once the view is this narrow
 const NO_SPECTRUM_NOTE = 'This object gives off too little light to record a spectrum in this range. Its Overview tab says what can be seen of it instead.';
+const RUNS_OFF_TOP = 'Part of this curve runs off the top';
+
+// The wavelength buttons, in two rows that never move: the wide views, then the views around one line
+const PRESET_ORDER = ['uv', 'visible', 'nir', 'full', 'lya', 'halpha', 'cahk', 'nad'];
+
+// A range the student chooses stays when they move to something of the same broad sort, so that one line can be compared
+// across stars. Kept apart for each sort, as a star's Hα says nothing about a quasar.
+const BROAD_SORT = {
+    star: 'star', binary: 'star', multiple: 'star', cluster: 'star', black_hole: 'star', neutron_star: 'star',
+    planet: 'planet', home_planet: 'planet', rogue_planet: 'planet',
+    galaxy: 'galaxy', quasar: 'galaxy'
+};
 
 function make(tag, props = {}, children = []) {
     const el = document.createElement(tag);
@@ -68,52 +88,48 @@ function createSpectrumPanel(app, container) {
     root.append(empty, instrument);
     container.appendChild(root);
 
-    // Stacked or overlay, and the zoom buttons
-    const stackedButton = make('button', { type: 'button', class: 'spectro-seg-button', text: 'Stacked', 'aria-pressed': 'true', title: 'Object on top, reference below, on one wavelength axis' });
-    const overlayButton = make('button', { type: 'button', class: 'spectro-seg-button', text: 'Overlay', 'aria-pressed': 'false', title: 'Reference drawn over the object' });
-    const seg = make('div', { class: 'spectro-seg', role: 'group', 'aria-label': 'How to show the two spectra' }, [stackedButton, overlayButton]);
-    const zoomOut = make('button', { type: 'button', class: 'spectro-square', 'aria-label': 'Zoom out', title: 'Zoom out (minus key)', text: '−' });
-    const zoomIn = make('button', { type: 'button', class: 'spectro-square', 'aria-label': 'Zoom in', title: 'Zoom in (plus key)', text: '+' });
-    const autoButton = make('button', { type: 'button', class: 'spectro-text-button spectro-auto', text: 'Auto', title: 'Frame this object automatically (or double-click the plot)' });
-    const zoomGroup = make('div', { class: 'spectro-zoom', role: 'group', 'aria-label': 'Zoom' }, [zoomOut, zoomIn, autoButton]);
-    const toolbar = make('div', { class: 'spectro-toolbar' }, [seg, zoomGroup]);
-    instrument.appendChild(toolbar);
-
+    // The head: the tools that apply to this object, and the plot. It stays at the top of the drawer while a tool is open.
+    const toolBar = make('div', { class: 'spectro-tool-bar', role: 'group', 'aria-label': 'Tools', hidden: true });
     const plotHost = make('div', { class: 'spectro-plot-host' });
-    instrument.appendChild(plotHost);
+    const head = make('div', { class: 'spectro-head' }, [toolBar, plotHost]);
+    instrument.appendChild(head);
     const plot = createPlot(plotHost, {
         minRatio: OVERVIEW_MIN_RATIO,
         reduceMotion: () => !!(app.settings && app.settings.reduceMotion),
         ariaLabel: 'Spectrum'
     });
 
-    // Presets
+    // The range: presets, and the zoom buttons beside them
     const presetRow = make('div', { class: 'spectro-presets', role: 'group', 'aria-label': 'Wavelength range' });
-    const presetButtons = WAVELENGTH_PRESETS.map((preset) => {
+    const presetButtons = PRESET_ORDER.map((id) => {
+        const preset = WAVELENGTH_PRESETS.find((p) => p.id === id);
         const button = make('button', { type: 'button', class: 'spectro-chip', text: preset.label, title: preset.title, 'aria-pressed': 'false' });
         button.addEventListener('click', () => plot.setRange(preset.lo, preset.hi, { animate: true }));
         presetRow.appendChild(button);
         return { preset, button };
     });
-    instrument.appendChild(presetRow);
-    // A mouse wheel has no sideways: let it scroll the row
-    presetRow.addEventListener('wheel', (e) => {
-        if (presetRow.scrollWidth <= presetRow.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-        presetRow.scrollLeft += e.deltaY;
-        e.preventDefault();
-    }, { passive: false });
-    function syncPresetEdges() {
-        presetRow.classList.toggle('at-start', presetRow.scrollLeft < 2);
-        presetRow.classList.toggle('at-end', presetRow.scrollLeft + presetRow.clientWidth > presetRow.scrollWidth - 2);
-    }
-    presetRow.addEventListener('scroll', syncPresetEdges, { passive: true });
+    const zoomOut = make('button', { type: 'button', class: 'spectro-square', 'aria-label': 'Zoom out', title: 'Zoom out (minus key)', text: '−' });
+    const zoomIn = make('button', { type: 'button', class: 'spectro-square', 'aria-label': 'Zoom in', title: 'Zoom in (plus key)', text: '+' });
+    const autoButton = make('button', { type: 'button', class: 'spectro-text-button spectro-auto', text: 'Auto', title: 'Frame this object automatically (or double-click the plot)' });
+    const zoomGroup = make('div', { class: 'spectro-plot-zoom', role: 'group', 'aria-label': 'Zoom' }, [autoButton, zoomOut, zoomIn]);
+
+    // Tools open directly under the plot, ahead of everything else, so nothing needs to scroll to bring one into view
+    const toolsEl = make('div', { class: 'spectro-tools', hidden: true });
+    instrument.append(toolsEl, make('div', { class: 'spectro-range' }, [presetRow, zoomGroup]));
 
     const note = make('p', { class: 'spectro-note', hidden: true });
+
+    // Stacked or overlay goes with the reference, as that's what it arranges
+    const stackedButton = make('button', { type: 'button', class: 'spectro-seg-button', text: 'Stacked', 'aria-pressed': 'true', title: 'Object on top, reference below, on one wavelength axis' });
+    const overlayButton = make('button', { type: 'button', class: 'spectro-seg-button', text: 'Overlay', 'aria-pressed': 'false', title: 'Reference drawn over the object, dashed' });
+    const seg = make('div', { class: 'spectro-seg', role: 'group', 'aria-label': 'How to show the two spectra' }, [stackedButton, overlayButton]);
 
     // The reference
     const refHost = make('div', { class: 'spectro-ref-host' });
     instrument.appendChild(refHost);
+    let scrollBeforePicking = 0;
     const picker = createRefPicker(refHost, {
+        beside: seg,
         onChange() {
             computeReference();
             describeSoon();
@@ -123,7 +139,11 @@ function createSpectrumPanel(app, container) {
             plot.showLineLabels(on);
         },
         onOpenChange(open) {
+            // While the list is open the tab is only the plot and the list, with as much of the list on screen as fits
+            const scroller = scrollerOf();
+            if (open && scroller) scrollBeforePicking = scroller.scrollTop;
             root.classList.toggle('is-picking', open);
+            if (scroller) scroller.scrollTop = open ? 0 : scrollBeforePicking;
         },
         onFrame(lo, hi) {
             plot.setRange(lo, hi, { animate: true });
@@ -131,19 +151,25 @@ function createSpectrumPanel(app, container) {
     });
     instrument.appendChild(note);
 
-    // Tools
-    const toolsEl = make('div', { class: 'spectro-tools' });
-    const toolsDetails = make('details', { class: 'sim-controls-more spectro-more', hidden: true }, [make('summary', { text: 'Tools' }), toolsEl]);
-    instrument.appendChild(toolsDetails);
-
     // The conventions, stated once and out of the way
     const help = make('details', { class: 'sim-controls-more spectro-more spectro-help' }, [
         make('summary', {}, [make('span', { text: 'About these wavelengths' })]),
         make('p', { text: 'Wavelengths above 200 nm are air wavelengths, as in most textbooks: Hα is 656.3 nm. Below 200 nm they are vacuum wavelengths: Lyman-α is 121.6 nm. Spectra and references both follow this, so their lines match.' }),
         make('p', { text: 'Flux is how much light arrives at each wavelength. It is relative here, not in real units, and each scale fits itself to what is in view. In the colour strips, dark lines are absorption and bright lines are emission. UV and IR are hatched because your eye can\'t see them.' }),
-        make('p', { text: 'Keys on the plot: left and right arrows pan, plus and minus zoom, Shift with an arrow moves the cursor, and 0 resets the view.' })
+        make('p', { text: 'On the plot: drag sideways to pan, and drag up and down or hold Ctrl and scroll to zoom. On a touch screen, drag to pan and pinch to zoom. By keyboard: left and right arrows pan, plus and minus zoom, Shift with an arrow moves the cursor, and 0 resets the view.' })
     ]);
     instrument.appendChild(help);
+
+    // The part of the drawer that scrolls. Only it moves: anything else would take the whole page, and the sky, with it.
+    function scrollerOf() {
+        let scroller = root.parentElement;
+        while (scroller && scroller !== document.body) {
+            const overflow = getComputedStyle(scroller).overflowY;
+            if (overflow === 'auto' || overflow === 'scroll') return scroller;
+            scroller = scroller.parentElement;
+        }
+        return null;
+    }
 
     // ---------- Stacked or overlay, zoom ----------
 
@@ -197,6 +223,9 @@ function createSpectrumPanel(app, container) {
     }
 
     function drawBody() {
+        // With the star divided out, the ends of the range, where the star gives little light, climb far above the rest. The
+        // planet's bands are what this view is for, so the scale fits those.
+        plot.setTopCap(bodyOpts.subtractHost ? RUNS_OFF_TOP : '');
         plot.setSpectrum(bodySpectrum, bodyName());
     }
 
@@ -286,8 +315,25 @@ function createSpectrumPanel(app, container) {
         note.hidden = !text;
     }
 
+    // The range the student has chosen for each broad sort of object, while it differs from what the object opens on
+    const chosenRanges = new Map();
+    let framed = null;
+    let framing = false;
+
+    function sortOf(entity) {
+        return BROAD_SORT[entity.kind] || entity.kind;
+    }
+
+    function noteChosenRange(lo, hi) {
+        if (framing || !resolved || !framed) return;
+        const same = Math.abs(Math.log(lo / framed.lo)) < 0.002 && Math.abs(Math.log(hi / framed.hi)) < 0.002;
+        if (same) chosenRanges.delete(sortOf(resolved.entity));
+        else chosenRanges.set(sortOf(resolved.entity), { lo, hi });
+    }
+
     let viewQueued = 0;
     function onViewChanged(lo, hi) {
+        noteChosenRange(lo, hi);
         syncPresets();
         picker.setView(lo, hi);
         describeSoon();
@@ -347,7 +393,10 @@ function createSpectrumPanel(app, container) {
         entityDirty = false;
         bodyOpts = {};
         resolution = 'overview';
+        const kept = chosenRanges.get(sortOf(resolved.entity));
+        framing = true;
         plot.setMinRatio(OVERVIEW_MIN_RATIO);
+        framing = false;
         overview = null;
         bodySpectrum = null;
         bodyCover = null;
@@ -375,13 +424,17 @@ function createSpectrumPanel(app, container) {
         bodySpectrum = spectrum;
         bodyCover = FULL_RANGE;
         const frame = frameFor(resolved.entity, spectrum);
-        plot.setRange(frame.lo, frame.hi);
+        framed = frame;
+        framing = true;
+        plot.setRange(kept ? kept.lo : frame.lo, kept ? kept.hi : frame.hi);
+        framing = false;
         plot.setAutoRange(frame.lo, frame.hi);
         drawBody();
         updateNote();
         computeReference(false);
         syncPresets();
-        picker.setView(frame.lo, frame.hi);
+        const view = plot.getRange();
+        picker.setView(view.lo, view.hi);
         describeSoon();
         syncTools(); // Last, so a tool's setEntity can read the spectrum
     }
@@ -396,7 +449,6 @@ function createSpectrumPanel(app, container) {
                 button.setAttribute('aria-pressed', on ? 'true' : 'false');
             }
         });
-        syncPresetEdges();
     }
 
     let describeTimer = 0;
@@ -434,23 +486,58 @@ function createSpectrumPanel(app, container) {
     const toolRows = new Map();
     const bodyOptsFns = new Set();
     const referenceFns = new Set();
+    let cameFrom = null;
 
-    // Brings an opened tool up under the plot, which stays stuck to the top of the drawer while a tool is open
-    function revealTool(row) {
-        // Only the drawer scrolls: scrollIntoView would move the whole page, and the sky with it
-        let scroller = row.details.parentElement;
-        while (scroller && scroller !== document.body) {
-            const overflow = getComputedStyle(scroller).overflowY;
-            if ((overflow === 'auto' || overflow === 'scroll') && scroller.scrollHeight > scroller.clientHeight) break;
-            scroller = scroller.parentElement;
-        }
-        if (!scroller || scroller === document.body) return;
-        const inside = row.details.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-        const reduce = !!(app.settings && app.settings.reduceMotion);
-        scroller.scrollTo({ top: scroller.scrollTop + inside - plotHost.offsetHeight - 6, behavior: reduce ? 'auto' : 'smooth' });
+    function openRows() {
+        return [...toolRows.values()].filter((row) => row.open);
     }
 
-    function closeTool(row) {
+    // While a tool is open the head stays stuck to the top of the drawer, a little shorter. A tool that only changes what
+    // the plot shows leaves it as it was, so that it can be read at full size.
+    function syncHead() {
+        const any = openRows();
+        toolsEl.hidden = any.length === 0;
+        instrument.classList.toggle('has-tool', any.some((row) => !row.words.leavesPlot));
+        instrument.classList.toggle('has-own-figure', any.some((row) => row.words.ownFigure));
+        syncScrollPadding();
+    }
+
+    // What stays stuck to the top of the drawer while a tool is open: the head, or just the tool buttons for a tool with a
+    // figure of its own, which needs the room more than it needs the plot
+    function stuckPart() {
+        if (!instrument.classList.contains('has-tool')) return null;
+        return instrument.classList.contains('has-own-figure') ? toolBar : head;
+    }
+
+    // Whatever takes focus or is scrolled to has to land below what's stuck
+    function syncScrollPadding() {
+        const scroller = scrollerOf();
+        if (!scroller) return;
+        const stuck = visible ? stuckPart() : null;
+        root.style.setProperty('--spectro-pad-top', `${parseFloat(getComputedStyle(scroller).paddingTop) || 0}px`);
+        scroller.style.scrollPaddingTop = stuck ? `${stuck.offsetHeight + 4}px` : '';
+    }
+
+    // Brings a tool on screen: its controls and its result together under the plot. Left where it is if it's already whole;
+    // otherwise its top goes just under what's stuck, so that nothing is left half hidden behind it.
+    function revealTool(row) {
+        const reveal = () => {
+            const scroller = scrollerOf();
+            if (!scroller || !row.open) return;
+            const stuck = stuckPart();
+            const box = scroller.getBoundingClientRect();
+            const top = (stuck ? stuck.getBoundingClientRect().bottom : box.top) + 4;
+            const panel = row.panel.getBoundingClientRect();
+            if (panel.top >= top && panel.bottom <= box.bottom - 6) return;
+            const reduce = !!(app.settings && app.settings.reduceMotion);
+            scroller.scrollTo({ top: scroller.scrollTop + panel.top - top, behavior: reduce ? 'auto' : 'smooth' });
+        };
+        reveal();
+        // Again once the plot has settled: the buttons may have just taken a second row, and the plot given way to them
+        requestAnimationFrame(reveal);
+    }
+
+    function disposeTool(row) {
         if (row.instance) {
             try {
                 if (row.instance.dispose) row.instance.dispose();
@@ -462,7 +549,7 @@ function createSpectrumPanel(app, container) {
         row.body.replaceChildren();
     }
 
-    function openTool(row) {
+    function mountTool(row) {
         if (row.instance || !resolved) return;
         try {
             row.instance = row.tool.mount(row.body, panelApi);
@@ -473,33 +560,61 @@ function createSpectrumPanel(app, container) {
         }
     }
 
+    function setToolOpen(row, open) {
+        if (row.open === open) return;
+        row.open = open;
+        row.chip.setAttribute('aria-pressed', open ? 'true' : 'false');
+        row.panel.hidden = !open;
+        if (open) {
+            // One tool at a time, so the drawer never fills up. Only those that change whose light is shown stay beside it.
+            if (!row.words.staysOpen) {
+                openRows().forEach((other) => {
+                    if (other !== row && !other.words.staysOpen) setToolOpen(other, false);
+                });
+            }
+            mountTool(row);
+        } else {
+            disposeTool(row);
+        }
+        syncHead();
+    }
+
     function rowFor(tool) {
         let row = toolRows.get(tool.id);
         if (row && row.tool === tool) return row;
+        const words = toolWords(tool);
+        const panelId = `spectroTool-${tool.id}`;
+        const chip = make('button', { type: 'button', class: 'spectro-tool-chip', title: words.about, 'aria-pressed': 'false', 'aria-controls': panelId, hidden: true }, [
+            make('span', { text: words.short }),
+            make('span', { class: 'spectro-tool-x', 'aria-hidden': 'true', text: '×' })
+        ]);
         const body = make('div', { class: 'spectro-tool-body' });
-        const details = make('details', { class: 'spectro-tool' }, [make('summary', { text: tool.label }), body]);
-        row = { tool, details, body, instance: null };
-        details.addEventListener('toggle', () => {
-            if (details.open) {
-                // Only one tool at a time draws: opening one closes the other, and its dispose hands back the plot
-                if (tool.draws) {
-                    toolRows.forEach((other) => {
-                        if (other !== row && other.tool.draws && other.details.open) {
-                            other.details.open = false;
-                            closeTool(other);
-                        }
-                    });
-                }
-                openTool(row);
-                revealTool(row);
-            } else {
-                closeTool(row);
-            }
+        const panel = make('div', { id: panelId, class: 'spectro-tool-panel', role: 'region', 'aria-label': tool.label, tabIndex: -1, hidden: true }, [body]);
+        row = { tool, words, chip, panel, body, instance: null, open: false, wanted: false };
+        const thisRow = row;
+        chip.addEventListener('click', () => {
+            const next = !thisRow.open;
+            thisRow.wanted = next;
+            setToolOpen(thisRow, next);
+            if (next) revealTool(thisRow);
         });
-        toolsEl.appendChild(details);
+        toolBar.appendChild(chip);
+        toolsEl.appendChild(panel);
         toolRows.set(tool.id, row);
         return row;
     }
+
+    // Tidy rows that fill the width. Up to four sit on one row, at whatever widths their words need, so that none is cut
+    // short; more than four go three to a row. The plot makes way for a second row.
+    function layoutToolBar() {
+        const chips = [...toolBar.children].filter((chip) => !chip.hidden);
+        if (!chips.length) return;
+        root.style.setProperty('--spectro-tool-basis', chips.length > 4 ? 'calc(33.3% - 0.3em)' : 'auto');
+        const rows = Math.round((toolBar.offsetHeight + 5) / (chips[0].offsetHeight + 5));
+        root.style.setProperty('--spectro-tool-rows', String(Math.max(1, rows)));
+        syncScrollPadding();
+    }
+    new ResizeObserver(layoutToolBar).observe(toolBar);
 
     function syncTools() {
         let any = false;
@@ -511,16 +626,19 @@ function createSpectrumPanel(app, container) {
             } catch (err) {
                 console.error(`[spectroscopy] tool ${tool.id}:`, err);
             }
-            row.details.hidden = !applies;
+            row.chip.hidden = !applies;
             if (applies) {
                 any = true;
-                if (row.instance && row.instance.setEntity) row.instance.setEntity(resolved);
-            } else if (row.instance || row.details.open) {
-                row.details.open = false;
-                closeTool(row);
+                if (row.open && row.instance && row.instance.setEntity) row.instance.setEntity(resolved);
+                // Left on, and now back on something it applies to
+                else if (!row.open && row.wanted && row.words.comesBack) setToolOpen(row, true);
+            } else if (row.open) {
+                setToolOpen(row, false);
+                if (!row.words.comesBack) row.wanted = false;
             }
         });
-        toolsDetails.hidden = !any;
+        toolBar.hidden = !any;
+        layoutToolBar();
     }
 
     // ---------- The API tools see ----------
@@ -545,7 +663,11 @@ function createSpectrumPanel(app, container) {
             plot.setMinRatio(resolution === 'zoom' ? ZOOM_MIN_RATIO : OVERVIEW_MIN_RATIO);
             const lo = span && (span.lo_nm ?? span.lo);
             const hi = span && (span.hi_nm ?? span.hi);
+            // A tool framing a line for itself isn't the student choosing a range, unless they're choosing the line
+            const zooming = toolRows.get('line-zoom');
+            framing = !(zooming && zooming.open);
             if (lo && hi) plot.setRange(lo, hi);
+            framing = false;
             if (!resolved || !visible) return;
             updateBody(false);
             computeReference(false);
@@ -571,17 +693,24 @@ function createSpectrumPanel(app, container) {
             referenceFns.add(fn);
             return () => referenceFns.delete(fn);
         },
+        // Asked of the selection itself, as the buttons only catch up with it once this tab is showing
         hasTool(id) {
-            const row = toolRows.get(id);
-            return !!row && !row.details.hidden;
+            const tool = listTools().find((t) => t.id === toolId(id));
+            return !!tool && !!resolved && tool.appliesTo(resolved);
         },
-        // Opens a tool by id, unfolding the Tools list if need be. False if this object doesn't have that tool.
-        openTool(id) {
-            const row = toolRows.get(id);
-            if (!row || row.details.hidden) return false;
-            toolsDetails.open = true;
-            if (row.details.open) revealTool(row);
-            else row.details.open = true;
+        get cameFrom() {
+            return cameFrom;
+        },
+        setMode,
+        openTool(id, { from = null, focus = false } = {}) {
+            app.drawer.selectTab('spectrum');
+            const row = toolRows.get(toolId(id));
+            if (!row || row.chip.hidden) return false;
+            if (from) cameFrom = from;
+            row.wanted = true;
+            setToolOpen(row, true);
+            revealTool(row);
+            if (focus) row.panel.focus({ preventScroll: true });
             return true;
         },
         // For tests and for tools that need to change the reference
@@ -601,15 +730,22 @@ function createSpectrumPanel(app, container) {
             visible = true;
             if (entityDirty) applyEntity();
             else plot.redraw();
+            syncScrollPadding();
         },
         onHide() {
             visible = false;
+            syncScrollPadding();
             // A tool playing through time stops when it can't be seen
             toolRows.forEach((row) => {
                 if (row.instance && row.instance.onPanelHide) row.instance.onPanelHide();
             });
         }
     };
+}
+
+// Ids can be written either way, as these come from other people's text
+function toolId(id) {
+    return String(id).replace(/_/g, '-');
 }
 
 export function initSpectrumTab(app) {
@@ -619,5 +755,41 @@ export function initSpectrumTab(app) {
         order: 20,
         appliesTo: () => true,
         mount: (container) => createSpectrumPanel(app, container)
+    });
+
+    // The tab opens the first time it's asked for, and the real panel then takes over from this
+    const beforeMount = {
+        hasTool(id) {
+            const tool = listTools().find((t) => t.id === toolId(id));
+            return !!tool && !!app.selected && tool.appliesTo(app.selected);
+        },
+        openTool(id, opts) {
+            app.drawer.selectTab('spectrum');
+            return app.spectrumPanel !== beforeMount && app.spectrumPanel.openTool(id, opts);
+        }
+    };
+    app.spectrumPanel = beforeMount;
+
+    // A button anywhere in the drawer's text that names a tool or this tab goes there
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest && e.target.closest('[data-spectro-tool], [data-spectro-tab]');
+        if (!link) return;
+        e.preventDefault();
+        if (link.dataset.spectroTab) app.drawer.selectTab(link.dataset.spectroTab);
+        else app.spectrumPanel.openTool(link.dataset.spectroTool, { focus: true, from: link.dataset.spectroFrom || null });
+    });
+
+    // Text written elsewhere names tools in words. Those words become buttons, for whichever tools this object has.
+    const watched = new Set();
+    const LINKED_TABS = ['overview', 'info'];
+    const linkIn = (panel) => linkToolNames(panel, (id) => app.spectrumPanel.hasTool(id));
+    bus.on('drawer', ({ view, tab }) => {
+        if (view !== 'object' || !LINKED_TABS.includes(tab)) return;
+        const panel = document.getElementById(`spectroPanel-${tab}`);
+        if (!panel) return;
+        linkIn(panel);
+        if (watched.has(panel)) return;
+        watched.add(panel);
+        new MutationObserver(() => linkIn(panel)).observe(panel, { childList: true, subtree: true });
     });
 }

@@ -2,15 +2,16 @@
 // playback runs: each column is the spectrum around one line at one moment, and the marks are that line's measured centre
 // for each star. From those come the period, the speed swing K, and with them the masses (see orbit_sums.js).
 
-import { registerTool } from './index.js';
+import { linkToolNames, registerTool } from './index.js';
 import { bus } from '../../../core/state.js';
 import { C_KMS, R_ZOOM } from '../../../core/phys.js';
+import { sig } from '../../../core/format.js';
 import { spectrumOf } from '../../../spectra/synth.js';
 import { dopplerFrom, fitOrbit, lineCentre, suggestTrackingLines } from '../../../spectra/measure.js';
 import { componentStates } from '../../../data/orbits.js';
 import { createPlayback } from '../../playback.js';
 import { drawMarker, el, markerIcon } from '../../plot2d.js';
-import { createTimeFigure, labelledSelect, niceSpeeds, overlayTheme, para, plotLabel, plotMark, setOptions, statusBox, timeSlider } from './common.js';
+import { createTimeFigure, everyFew, figureTable, labelledSelect, niceSpeeds, overlayTheme, para, plotLabel, plotMark, setOptions, statusBox, timeSlider } from './common.js';
 import { orbitResults } from './orbit_sums.js';
 
 const COLUMNS = 240;             // Moments across the picture
@@ -141,6 +142,11 @@ function mount(container, api) {
     });
     const after = el('div', { class: 'spectro-tool-controls' });
     container.append(after, legend, result, lineField.wrap, spanField.wrap, intro);
+    const updateTable = figureTable(container, {
+        label: 'Line shifts over time',
+        columns: ['Star', 'Time (days)', 'Line shift (km/s)'],
+        rows: () => stars.flatMap((star) => everyFew(star.points, 16).map((p) => [star.code, sig(p.t, 3), sig(p.v, 3)]))
+    });
 
     const removeOverlay = plot.addOverlay((ctx) => {
         if (!line) return;
@@ -259,6 +265,9 @@ function mount(container, api) {
         });
         const covered = filledCount >= COLUMNS;
         result.replaceChildren(...orbitResults({ resolved, stars, shapes: SHAPES, covered, span, shortest }));
+        linkToolNames(result, api.hasTool);
+        figure.setLabel(`Time series: how far the line ${line ? lineTitle(line) : ''} has shifted, in km/s, against time in days, for ${stars.map((star) => `star ${star.code}`).join(' and ')}. The results are below it, and the values are in the table under Show as table.`);
+        updateTable();
     }
 
     function renderLegend() {
