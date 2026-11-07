@@ -56,6 +56,7 @@ let heatRadius = 8,    // brush radius as a percentage of the box width (the sam
     coolRate   = 0.5;  // surface cooling, 0 ... 1
 const baseHeatAmp = 0.5; // heat added per step at strength 1x (before heatAmpMult)
 let brushMode = 1;       // what a plain press does: +1 = heat, -1 = cool (Heat / Cool switch)
+let showBrushGuides = true; // crosshair cursor and brush circle (settings toggle)
 
 // POINTER STATE: every mouse button, finger or pen currently pressed on the canvas.
 // pointerId -> { x, y, sign } with x/y as fractions of the canvas size and sign +1 = heat, -1 = cool
@@ -80,6 +81,7 @@ const resetSimButton = document.getElementById('resetSimulationBtn');
 const modeButtons = Array.from(document.querySelectorAll('.thermal-mode [data-mode]'));
 const hintEl = document.getElementById('thermalHint');
 const legendBar = document.getElementById('colourLegendBar');
+const brushGuidesToggle = document.getElementById('brushGuidesToggle');
 
 // Offscreen canvas
 let offscreenCanvas = null;
@@ -153,6 +155,13 @@ if(heatAmpSlider && ampVal) {
     heatAmpSlider.oninput = () => { heatAmp = +heatAmpSlider.value; ampVal.textContent = heatAmp.toFixed(1); };
 }
 if(coolSlider && coolVal) coolSlider.oninput = () => { coolRate = +coolSlider.value / 100; coolVal.textContent = coolSlider.value; };
+// Turning the guides off hides the brush circle and gives the canvas the normal cursor (convection_styles.css)
+function syncBrushGuides() {
+    showBrushGuides = !brushGuidesToggle || brushGuidesToggle.checked;
+    if (canvas) canvas.classList.toggle('no-brush-guides', !showBrushGuides);
+}
+if (brushGuidesToggle) brushGuidesToggle.addEventListener('change', syncBrushGuides);
+syncBrushGuides(); // A browser restoring the form state may have left it unchecked
 
 
 // Pointer position as a fraction of the canvas size (resolution-independent)
@@ -425,7 +434,7 @@ const colorLUT = new Uint8Array(COLOR_LEVELS * 3);
 
 // Outline of the brush: under an idle mouse, and around every pointer that is heating or cooling
 function drawBrushOutlines() {
-    if (!hoverPointer && activePointers.size === 0) return;
+    if (!showBrushGuides || (!hoverPointer && activePointers.size === 0)) return;
     const w = canvas.width, h = canvas.height;
     const radius = heatRadius / 100 * w;
     const dpr = w / Math.max(1, canvas.clientWidth);

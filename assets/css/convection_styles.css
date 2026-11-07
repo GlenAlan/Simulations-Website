@@ -10,6 +10,55 @@
     -webkit-touch-callout: none;
 }
 
+/* "Crosshair and brush circle" switched off in the settings */
+#simulationCanvas.no-brush-guides {
+    cursor: default;
+}
+
+/* ---------- Docked settings panel: opens beside the canvas, which stays where it is ----------
+   The square canvas leaves wide margins in the column. The shared layout puts the panel at the column's
+   right edge and re-centres the canvas in what is left, which moves the canvas and leaves a gap before
+   the panel. Here the panel opens in the free space right of the canvas column (canvas plus info bar),
+   with the column's box running on under it; only when that space is too narrow does the column move
+   left, and only as far as the panel needs. Percentages are of the area beside the page gutters. */
+.simulation-area-wrapper {
+    --convection-panel-gap: 1rem;
+}
+
+body.sim-panel-side:not(.sim-fullscreen-active) .sim-controls-panel.panel-open {
+    margin-left: var(--convection-panel-gap);
+}
+
+body.sim-panel-side:not(.sim-fullscreen-active) .sim-controls-panel.panel-open + .simulation-main-content {
+    /* The column's natural width (simulation_styles.css), the room the panel takes beside it, and how
+       far the column has to move left to make that room (never more than the shared layout moves it) */
+    --convection-column-w: max(calc(var(--sim-canvas-max-h) * (var(--aspect-ratio, 1 / 1)) + 2px), 26em);
+    --convection-panel-room: calc(var(--sim-panel-width) + var(--convection-panel-gap));
+    --convection-shift: clamp(0px, var(--convection-column-w) + 2 * var(--convection-panel-room) - 100%, var(--convection-panel-room));
+    flex: 0 0 calc(100% - var(--convection-shift));
+    margin-right: calc(var(--convection-shift) - max((100% - var(--convection-column-w)) / 2, var(--convection-panel-room)));
+}
+
+/* Fullscreen: the panel stays a full-height strip at the screen edge, and the canvas (as tall as the
+   space above the info bar, less the column's 8px padding) keeps its place in the middle of the screen
+   while there is room for it beside the panel. */
+body.sim-fullscreen-active.sim-panel-side .sim-controls-panel.panel-open + .simulation-main-content {
+    --convection-canvas-h: calc(100vh - var(--sim-fullscreen-info-bar-height, 56px) - 16px);
+    margin-left: clamp(0px, 100% - var(--sim-panel-width) - 16px - var(--convection-canvas-h), var(--sim-panel-width));
+}
+
+@supports (height: 100dvh) {
+    body.sim-fullscreen-active.sim-panel-side .sim-controls-panel.panel-open + .simulation-main-content {
+        --convection-canvas-h: calc(100dvh - var(--sim-fullscreen-info-bar-height, 56px) - 16px);
+    }
+}
+
+/* A closing panel fades out before giving its width back (simulation_styles.css); hold the canvas
+   where it is until then. */
+body.sim-panel-side .sim-controls-panel:not(.panel-open) + .simulation-main-content {
+    transition: flex 0s linear 0.2s, margin 0s linear 0.2s;
+}
+
 /* ---------- First-use hint over the canvas (hidden after the first press) ---------- */
 .thermal-hint {
     position: absolute;
