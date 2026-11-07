@@ -117,7 +117,7 @@
     // ===================================================================== Fields
     function eActive() { return settings.field === 'E' || settings.field === 'both'; }
     function bActive() { return settings.field === 'B' || settings.field === 'both'; }
-    function platesPresent() { return eActive(); }
+    function platesPresent() { return eActive() || settings.setup === 'thomson'; } // Thomson's plates stay in place
     function eFieldY() { return (settings.plusTop ? -1 : 1) * settings.plateV / settings.gap; } // V/m
     function bFieldZ() { return (settings.bOut ? 1 : -1) * settings.B; }                         // T
     function insideE(x, y) { return eActive() && x >= 0 && x <= PLATE_L && Math.abs(y) < settings.gap / 2; }
@@ -609,7 +609,7 @@
 
     function drawPlates() {
         if (!platesPresent()) return;
-        const charged = settings.plateV > 0;
+        const charged = eActive() && settings.plateV > 0;
         const th = plateThickness();
         const x0 = px(0);
         const x1 = px(PLATE_L);
@@ -977,8 +977,8 @@
                 gun.angle = snapAngle(Math.atan2(-(w.cy - g.my), w.cx - g.mx), e.shiftKey);
             } else if (d.mode === 'body') {
                 if (!d.moved && Math.hypot(w.cx - d.sx, w.cy - d.sy) < 6) return;
+                d.moved = true; // A drag isn't a click, even when the gun can't move
                 if (settings.lockGeometry) return;
-                d.moved = true;
                 const c = clampToView(w.x + d.dx, w.y + d.dy, 0.008);
                 gun.x = c.x;
                 gun.y = c.y;
@@ -1891,8 +1891,715 @@
 
 
     // ===================================================================== [thomson]
+    // Thomson's experiment. A cathode-ray gun on the centre line fires a steady beam between the plates and through
+    // the magnetic field onto a fluorescent screen at the end of the plates. The student measures the spot's shift
+    // with the plates alone, brings it back to zero with the magnetic field (qE = qvB, so v = E/B), then works out
+    // q/m. The beam isn't made of real particles: its steady path comes from the particles' own mover (only when
+    // something changes) and is drawn as a glow with dots streaming along it at equal times. A probe particle partway
+    // along it is what `selected` points at, so the velocity and force arrows show on the beam. Cathode rays are never
+    // called electrons (on screen, in ARIA or in the live region) until both answers have been checked or shown.
+    {
+        const TH_BEAMS = {
+            cathode: { key: 'electron', name: 'Cathode rays', qm: E_CHARGE / M_ELECTRON },
+            hydrogen: { key: 'proton', name: 'Hydrogen ions', qm: E_CHARGE / M_PROTON },
+        };
+        const TH_LAUNCH_V = 2000;     // V
+        const TH_GAP = 0.05;          // m
+        const TH_SCREEN_HALF = 0.03;  // Half-height of the screen (m): it closes the end of the box
+        const TH_TOLERANCE = 0.05;    // An answer within 5% counts
+        const TH_TRIES = 2;           // Wrong answers before "Show answer" appears
+        const TH_ANNOUNCE_MS = 700;   // The spot is read out once it has stayed put this long
+        const TH_GOAL = 'What are cathode rays? Balance the beam, then work out their charge-to-mass ratio.';
+        const TH_CANVAS_LABEL = 'Thomson\'s experiment: a beam from a gun on the left passes between two plates and ' +
+            'through a magnetic field, then makes a glowing spot on a screen with a millimetre scale. Click the gun ' +
+            'or press Space to turn the beam on or off.';
+        const TH_RATIO = Math.round(TH_BEAMS.cathode.qm / TH_BEAMS.hydrogen.qm / 10) * 10; // About 1840
+        const TH_DISCOVERY = `Cathode rays' q/m is about ${TH_RATIO} times hydrogen's, whatever the cathode metal: ` +
+            'a particle far lighter than any atom, inside all of them. It\'s the electron.';
 
+        const th = {
+            active: false,
+            beam: 'cathode',
+            on: true,
+            clock: 0,          // Simulated seconds of beam time
+            onAt: 0,           // Beam clock when the beam last came on, and when it went off (Infinity while on)
+            offAt: Infinity,
+            path: null,        // The beam's steady path: times, positions, velocities, how it ends, the spot
+            dirty: true,
+            pathScale: 0,      // The view scale the path was worked out at
+            probe: null,
+            free: null,        // Free play's settings and gun, kept up to date while in free play, put back on leaving
+            saved: {},         // Page text and states that entering changed
+            answers: {
+                cathode: { text: '', tries: 0, known: false, msg: '' },
+                hydrogen: { text: '', tries: 0, known: false, msg: '' },
+            },
+            spotSpeech: '',    // The spot's position in words, when it last changed, and the last one read out
+            spotSince: 0,
+            spotSaid: '',
+        };
+        const thEl = { hideInThomson: [] };
+        const thPt = { x: 0, y: 0, vx: 0, vy: 0 };
 
+        function thSnapshotFree() {
+            if (settings.setup !== 'free') return;
+            const f = th.free || (th.free = { settings: {}, show: {}, gun: {} });
+            Object.keys(settings).forEach((k) => { if (k !== 'show') f.settings[k] = settings[k]; });
+            Object.assign(f.show, settings.show);
+            f.gun.x = gun.x;
+            f.gun.y = gun.y;
+            f.gun.angle = gun.angle;
+            f.rateOverride = rateOverride;
+            f.hintOverride = hintOverride;
+        }
+
+        function thEnter() {
+            if (!th.active) {
+                th.active = true;
+                thPage(true);
+            }
+            // The experiment starts with the mystery beam
+            if (th.beam !== 'cathode' && thEl.input) th.answers[th.beam].text = thEl.input.value;
+            th.beam = 'cathode';
+            Object.assign(settings, {
+                field: 'E', plateV: 0, plusTop: true, B: B_MIN, bOut: false, gap: TH_GAP, launchV: TH_LAUNCH_V,
+                launcher: 'accelerator', lockGeometry: true, allowDrop: false,
+            });
+            settings.show.values = false;
+            settings.show.aimGuide = false;
+            gun.x = GUN_HOME.x;
+            gun.y = GUN_HOME.y;
+            gun.angle = GUN_HOME.angle;
+            hintOverride = '';
+            thApplyBeam();
+            thRestartBeam();
+        }
+
+        function thLeave() {
+            th.active = false;
+            if (thEl.input) th.answers[th.beam].text = thEl.input.value;
+            const f = th.free;
+            if (f) {
+                Object.keys(f.settings).forEach((k) => { if (k !== 'setup') settings[k] = f.settings[k]; });
+                Object.assign(settings.show, f.show);
+                gun.x = f.gun.x;
+                gun.y = f.gun.y;
+                gun.angle = f.gun.angle;
+                rateOverride = f.rateOverride;
+                hintOverride = f.hintOverride;
+            }
+            if (selected === th.probe) selected = null;
+            thPage(false);
+        }
+
+        // Swap the page between free play and Thomson's experiment
+        function thPage(on) {
+            const s = th.saved;
+            setHidden('statsFree', on);
+            setHidden('particleGroup', on);
+            setHidden('statsThomson', !on);
+            setHidden('beamGroup', !on);
+            setHidden('thAnswer', !on);
+            thEl.hideInThomson.forEach((el) => { el.hidden = on; });
+            const area = canvas.closest('.charges-sim');
+            if (area) area.classList.toggle('th-active', on);
+            const gapSlider = $('gapSlider');
+            if (gapSlider) gapSlider.disabled = on; // The plates are fixed
+            const hint = $('setupHint');
+            const fireBtn = $('fireBtn');
+            const charts = $('showCharts');
+            if (on) {
+                s.hint = hint ? hint.textContent : '';
+                s.canvasLabel = canvas.getAttribute('aria-label');
+                if (hint) hint.textContent = TH_GOAL;
+                canvas.setAttribute('aria-label', TH_CANVAS_LABEL);
+                if (fireBtn) {
+                    s.fireHtml = fireBtn.innerHTML;
+                    s.fireTitle = fireBtn.title;
+                    s.fireLabel = fireBtn.getAttribute('aria-label');
+                    fireBtn.classList.add('th-beam-btn');
+                    fireBtn.title = 'Turn the beam on or off (Space)';
+                    fireBtn.setAttribute('aria-label', 'Beam');
+                }
+                // Speed against time is something Thomson couldn't see
+                s.charts = !!(charts && charts.checked);
+                if (s.charts) {
+                    charts.checked = false;
+                    charts.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            } else {
+                if (hint) hint.textContent = s.hint;
+                if (s.canvasLabel !== null) canvas.setAttribute('aria-label', s.canvasLabel);
+                if (fireBtn) {
+                    fireBtn.innerHTML = s.fireHtml;
+                    fireBtn.title = s.fireTitle;
+                    if (s.fireLabel === null) fireBtn.removeAttribute('aria-label');
+                    else fireBtn.setAttribute('aria-label', s.fireLabel);
+                    fireBtn.removeAttribute('aria-pressed');
+                    fireBtn.classList.remove('th-beam-btn');
+                }
+                if (s.charts && charts) {
+                    charts.checked = true;
+                    charts.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
+        }
+
+        // The beam's particle type drives the gun's polarity, the playback rate and the probe
+        function thApplyBeam() {
+            const b = TH_BEAMS[th.beam];
+            settings.particle = b.key;
+            rateOverride = b.key;
+            th.probe = makeParticle(b.key, gun.x, gun.y);
+            th.probe.name = b.name;
+            th.probe.state = 'gone';
+            selected = th.probe;
+            th.dirty = true;
+            thSyncBeamUI();
+        }
+
+        function thSetBeam(key) {
+            if (!TH_BEAMS[key]) return;
+            if (key !== th.beam) {
+                if (thEl.input) th.answers[th.beam].text = thEl.input.value;
+                th.beam = key;
+                thApplyBeam();
+                thRestartBeam();
+                settingsChanged();
+            }
+            thSyncBeamUI();
+        }
+
+        // The beam comes on afresh: its head leaves the gun now (or the whole beam is there at once while paused)
+        function thRestartBeam() {
+            th.on = true;
+            th.onAt = paused ? -Infinity : th.clock;
+            th.offAt = Infinity;
+            thSyncBeamButton();
+        }
+
+        function thSetBeamOn(on) {
+            if (on) {
+                thRestartBeam();
+                return;
+            }
+            th.on = false;
+            th.offAt = paused ? -Infinity : th.clock; // The tail drains out to the screen
+            thSyncBeamButton();
+        }
+
+        function thSyncBeamButton() {
+            const btn = $('fireBtn');
+            if (!btn || !th.active) return;
+            btn.setAttribute('aria-pressed', th.on ? 'true' : 'false');
+            btn.innerHTML = `<span class="icon solid fa-power-off" aria-hidden="true"></span> Beam ${th.on ? 'on' : 'off'}`;
+        }
+
+        // ----- The steady path
+        function thTracePath() {
+            const t = particleType(TH_BEAMS[th.beam].key);
+            const v = launchSpeedFor(t.q, t.m, settings.launchV);
+            const ux = Math.cos(gun.angle);
+            const uy = Math.sin(gun.angle);
+            const path = { t: [0], x: [gun.x], y: [gun.y], vx: [ux * v], vy: [uy * v], end: 'none', tEnd: 0, spotY: NaN, probeT: NaN };
+            if (!(v > 0)) return path;
+            const p = {
+                ghost: true, qe: t.q, q: t.q * E_CHARGE, m: t.m, x: gun.x, y: gun.y, vx: ux * v, vy: uy * v,
+                state: 'free', t: 0, strobeDt: Infinity, nextStrobe: Infinity, trail: [],
+            };
+            const saved = obstaclesNow;
+            obstaclesNow = obstacleList();
+            const dt = (PLATE_L - gun.x) / v / 300;
+            for (let i = 0; i < 3000 && p.state === 'free'; i++) {
+                advanceFree(p, dt);
+                path.t.push(p.t);
+                path.x.push(p.x);
+                path.y.push(p.y);
+                path.vx.push(p.vx);
+                path.vy.push(p.vy);
+            }
+            obstaclesNow = saved;
+            path.tEnd = p.t;
+            path.end = p.state === 'stopped' ? p.hitWhat : p.state === 'gone' ? 'edge' : 'none';
+            if (p.hitWhat === 'screen') path.spotY = p.y;
+            // The probe sits partway along the plates (or halfway to where the beam ends, if that's sooner)
+            const xMax = Math.max(...path.x);
+            if (xMax > 0) {
+                const x = thProbeX();
+                const target = xMax > x ? x : xMax / 2;
+                for (let i = 1; i < path.x.length; i++) {
+                    if (path.x[i] >= target) {
+                        const f = (target - path.x[i - 1]) / ((path.x[i] - path.x[i - 1]) || 1);
+                        path.probeT = path.t[i - 1] + f * (path.t[i] - path.t[i - 1]);
+                        break;
+                    }
+                }
+            }
+            return path;
+        }
+
+        // About a third of the way along the plates (leaving room for the velocity arrow before the screen), clear of
+        // the electric field lines and the columns of magnetic field symbols (spaced as the core draws them), so the
+        // arrows don't lie along a line and the probe doesn't sit on a symbol
+        function thProbeX() {
+            const avoid = [];
+            if (eActive() && settings.plateV > 0) {
+                const n = Math.round(3 + 15 * clamp(Math.abs(eFieldY()) / 25000, 0, 1));
+                for (let i = 0; i < n; i++) avoid.push((i + 0.5) / n);
+            }
+            if (bActive()) {
+                const cols = Math.round(4 + 8 * bFraction());
+                for (let i = 0; i < cols; i++) avoid.push((i + 0.5) / cols);
+            }
+            let best = 0.35;
+            let bestScore = -Infinity;
+            for (let f = 0.25; f <= 0.45 + 1e-9; f += 0.0025) {
+                const clear = avoid.reduce((g, a) => Math.min(g, Math.abs(f - a)), 0.05);
+                const score = clear - 0.2 * Math.abs(f - 0.35);
+                if (score > bestScore) {
+                    best = f;
+                    bestScore = score;
+                }
+            }
+            return PLATE_L * best;
+        }
+
+        // Worked out again after any change (and after a resize, since a beam can leave the view)
+        function thEnsurePath() {
+            if (th.dirty || !th.path || th.pathScale !== scale) {
+                th.dirty = false;
+                th.pathScale = scale;
+                th.path = thTracePath();
+            }
+            return th.path;
+        }
+
+        // Position and velocity `tp` simulated seconds along the path, into `out`
+        function thPointAt(path, tp, out) {
+            const ts = path.t;
+            const n = ts.length;
+            let i = 0;
+            let f = 0;
+            if (n < 2) {
+                f = 0;
+            } else if (tp >= ts[n - 1]) {
+                i = n - 2;
+                f = 1;
+            } else if (tp > 0) {
+                let lo = 0;
+                let hi = n - 1;
+                while (hi - lo > 1) {
+                    const mid = (lo + hi) >> 1;
+                    if (ts[mid] <= tp) lo = mid;
+                    else hi = mid;
+                }
+                i = lo;
+                f = (tp - ts[lo]) / ((ts[hi] - ts[lo]) || 1);
+            }
+            const j = Math.min(i + 1, n - 1);
+            out.x = path.x[i] + (path.x[j] - path.x[i]) * f;
+            out.y = path.y[i] + (path.y[j] - path.y[i]) * f;
+            out.vx = path.vx[i] + (path.vx[j] - path.vx[i]) * f;
+            out.vy = path.vy[i] + (path.vy[j] - path.vy[i]) * f;
+            return out;
+        }
+
+        // The part of the path the beam fills now (path times a..b), and whether it reaches the end
+        function thSpan(path) {
+            const a = Math.max(0, th.clock - th.offAt);
+            const b = Math.min(path.tEnd, th.clock - th.onAt);
+            const arrived = path.tEnd > 0 && th.clock - th.onAt >= path.tEnd && th.clock - th.offAt <= path.tEnd;
+            return { a, b, arrived };
+        }
+
+        function thUpdateProbe(path, span) {
+            const p = th.probe;
+            if (!p) return;
+            const tp = path.probeT;
+            if (!(tp >= span.a && tp <= span.b)) {
+                p.state = 'gone';
+                return;
+            }
+            thPointAt(path, tp, p);
+            p.state = 'free';
+            p.t = tp;
+        }
+
+        function thUpdateReadout(path, span) {
+            let value = '–';
+            let unit = '';
+            let dir = '';
+            let speech = '';
+            if (!(path.tEnd > 0)) {
+                dir = 'no beam';
+                speech = 'No beam.';
+            } else if (!span.arrived) {
+                if (!th.on) {
+                    dir = 'beam off';
+                    speech = 'Beam off.';
+                }
+            } else if (path.end === 'screen') {
+                const cm = path.spotY * 100;
+                value = Math.abs(cm).toFixed(2);
+                unit = 'cm';
+                dir = value === '0.00' ? '' : cm > 0 ? 'up' : 'down';
+                speech = dir ? `Spot ${value} centimetres ${dir}.` : 'Spot at zero.';
+            } else if (path.end === 'edge') {
+                dir = 'misses';
+                speech = 'The beam misses the screen.';
+            } else {
+                dir = 'hits a plate';
+                speech = 'The beam hits a plate.';
+            }
+            setText('thSpot', value);
+            setText('thSpotUnit', unit);
+            setText('thSpotDir', dir);
+            // Read the spot out once it stays put
+            const now = performance.now();
+            if (speech !== th.spotSpeech) {
+                th.spotSpeech = speech;
+                th.spotSince = now;
+            } else if (speech && speech !== th.spotSaid && now - th.spotSince > TH_ANNOUNCE_MS) {
+                th.spotSaid = speech;
+                announce(speech);
+            }
+        }
+
+        // ----- Drawing
+        function thColors() {
+            return isDarkMode() ? {
+                beam: 'rgba(215, 238, 255, 0.9)', halo: 'rgba(150, 205, 255, 0.16)', dot: '#ffffff',
+                glass: 'rgba(120, 255, 170, 0.14)', glassEdge: 'rgba(120, 255, 170, 0.6)',
+                spot: '120, 255, 160', spotCore: '#f0fff4', hit: '220, 235, 255',
+            } : {
+                beam: 'rgba(40, 52, 70, 0.85)', halo: 'rgba(70, 95, 140, 0.13)', dot: '#26303e',
+                glass: 'rgba(30, 170, 90, 0.12)', glassEdge: 'rgba(20, 135, 70, 0.65)',
+                spot: '25, 190, 90', spotCore: '#0a6630', hit: '70, 85, 110',
+            };
+        }
+
+        // The plates' length and gap, which Thomson knew from his apparatus
+        function thDrawDimensions() {
+            const thk = plateThickness();
+            const x0 = px(0);
+            const x1 = px(PLATE_L);
+            ctx.save();
+            ctx.strokeStyle = pal.faint;
+            ctx.fillStyle = pal.muted;
+            ctx.lineWidth = 1;
+            ctx.font = font(fontPx - 1, 400);
+            ctx.textBaseline = 'middle';
+            // Length, under the lower plate's voltage label
+            const yl = Math.round(py(-settings.gap / 2) + thk + fontPx + 13) + 0.5;
+            const len = `${Math.round(PLATE_L * 100)} cm`;
+            const half = ctx.measureText(len).width / 2 + 6;
+            const xm = (x0 + x1) / 2;
+            ctx.fillStyle = pal.bg; // Clears the field symbols from behind the label
+            ctx.fillRect(xm - half + 2, yl - fontPx / 2 - 1, 2 * half - 4, fontPx + 2);
+            ctx.fillStyle = pal.muted;
+            ctx.beginPath();
+            ctx.moveTo(x0, yl - 4);
+            ctx.lineTo(x0, yl + 4);
+            ctx.moveTo(x1, yl - 4);
+            ctx.lineTo(x1, yl + 4);
+            ctx.moveTo(x0, yl);
+            ctx.lineTo(xm - half, yl);
+            ctx.moveTo(xm + half, yl);
+            ctx.lineTo(x1, yl);
+            ctx.stroke();
+            ctx.textAlign = 'center';
+            ctx.fillText(len, xm, yl);
+            // Gap, just before the plates
+            const xg = Math.round(x0 - 9) + 0.5;
+            const yT = py(settings.gap / 2);
+            const yB = py(-settings.gap / 2);
+            ctx.beginPath();
+            ctx.moveTo(xg - 4, yT);
+            ctx.lineTo(xg + 4, yT);
+            ctx.moveTo(xg - 4, yB);
+            ctx.lineTo(xg + 4, yB);
+            ctx.moveTo(xg, yT);
+            ctx.lineTo(xg, yB);
+            ctx.stroke();
+            ctx.textAlign = 'right';
+            ctx.fillText(`${+(settings.gap * 100).toFixed(1)} cm`, xg - 6, py(settings.gap * 0.36));
+            ctx.restore();
+        }
+
+        // The fluorescent screen across the end of the plates, with a millimetre scale numbered in cm
+        function thDrawScreen(c) {
+            const thk = plateThickness();
+            const x = px(PLATE_L);
+            const yT = py(settings.gap / 2) - thk;
+            const yB = py(-settings.gap / 2) + thk;
+            const w = clamp(scale * 0.0012, 4, 7);
+            ctx.fillStyle = c.glass;
+            ctx.fillRect(x, yT, w, yB - yT);
+            ctx.strokeStyle = c.glassEdge;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x + 0.75, yT);
+            ctx.lineTo(x + 0.75, yB);
+            ctx.stroke();
+            const sx = Math.round(x + w + 2);
+            const step = scale * 0.001 >= 3 ? 1 : 5; // mm between ticks
+            const lim = Math.floor((settings.gap / 2) * 1000 + 1e-6);
+            ctx.strokeStyle = pal.muted;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let k = -lim; k <= lim; k += step) {
+                const len = k % 10 === 0 ? 9 : k % 5 === 0 ? 6 : 3.5;
+                const y = Math.round(py(k / 1000)) + 0.5;
+                ctx.moveTo(sx, y);
+                ctx.lineTo(sx + len, y);
+            }
+            ctx.stroke();
+            ctx.fillStyle = pal.muted;
+            ctx.font = font(fontPx - 1, 400);
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            for (let k = -lim + (lim % 10); k <= lim; k += 10) {
+                ctx.fillText(k === lim - (lim % 10) ? `${k / 10} cm` : String(Math.abs(k / 10)), sx + 12, py(k / 1000));
+            }
+        }
+
+        function thDrawBeam(c, path, span) {
+            const { a, b } = span;
+            if (!(b > a)) return;
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            thPointAt(path, a, thPt);
+            ctx.moveTo(px(thPt.x), py(thPt.y));
+            const ts = path.t;
+            for (let i = 0; i < ts.length; i++) {
+                if (ts[i] > a && ts[i] < b) ctx.lineTo(px(path.x[i]), py(path.y[i]));
+            }
+            thPointAt(path, b, thPt);
+            ctx.lineTo(px(thPt.x), py(thPt.y));
+            ctx.strokeStyle = c.halo;
+            ctx.lineWidth = clamp(scale * 0.0015, 5, 8);
+            ctx.stroke();
+            ctx.strokeStyle = c.beam;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            // Dots streaming along at equal times, like the particles' strobe trails
+            const step = STROBE_S * currentRate();
+            if (step > 0) {
+                ctx.fillStyle = c.dot;
+                ctx.beginPath();
+                for (let tp = th.clock % step; tp <= b; tp += step) {
+                    if (tp < a) continue;
+                    thPointAt(path, tp, thPt);
+                    const x = px(thPt.x);
+                    const y = py(thPt.y);
+                    ctx.moveTo(x + 2.2, y);
+                    ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+                }
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function thGlow(x, y, r, rgb, core, coreR) {
+            const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+            g.addColorStop(0, `rgba(${rgb}, 0.95)`);
+            g.addColorStop(0.3, `rgba(${rgb}, 0.6)`);
+            g.addColorStop(1, `rgba(${rgb}, 0)`);
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = core;
+            ctx.beginPath();
+            ctx.arc(x, y, coreR, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // ----- The answer
+        const TH_SUPS = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁻': '-', '⁺': '+' };
+
+        // A number typed as 1.76e11, 1.76x10^11, 1.76 × 10¹¹, 1.76*10**11 or 176000000000 (NaN if it isn't one)
+        function thParse(text) {
+            let s = String(text || '').toLowerCase()
+                .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]/g, (ch) => TH_SUPS[ch])
+                .replace(/[−–]/g, '-')
+                .replace(/\s+/g, '')
+                .replace(/c\/kg$/, '');
+            // Commas: thousands separators (176,000,000,000) or a decimal comma (1,76e11)
+            s = /^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$/.test(s) ? s.replace(/,/g, '') : s.replace(/,/g, '.');
+            const num = '([+-]?(?:\\d+\\.?\\d*|\\.\\d+))';
+            let m = s.match(new RegExp(`^${num}(?:[x×*·⋅]10(?:\\^|\\*\\*)?([+-]?\\d+))?$`));
+            if (m) return parseFloat(m[1]) * (m[2] === undefined ? 1 : Math.pow(10, parseInt(m[2], 10)));
+            m = s.match(new RegExp(`^${num}e([+-]?\\d+)$`));
+            if (m) return parseFloat(m[1]) * Math.pow(10, parseInt(m[2], 10));
+            m = s.match(/^10(?:\^|\*\*)([+-]?\d+)$/);
+            if (m) return Math.pow(10, parseInt(m[1], 10));
+            return NaN;
+        }
+
+        function thKnownText(key) {
+            const b = TH_BEAMS[key];
+            const other = key === 'cathode' ? 'hydrogen' : 'cathode';
+            const value = fmtSci(b.qm, 2).replace('×', ' × ');
+            const next = th.answers[other].known ? TH_DISCOVERY : `Now try ${TH_BEAMS[other].name.toLowerCase()}.`;
+            return `${b.name}: q/m ≈ ${value} C/kg. ${next}`;
+        }
+
+        // Show a message under the answer; clearing it first makes a screen reader read a repeated one again
+        function thSay(text) {
+            const el = thEl.feedback;
+            if (!el) return;
+            th.answers[th.beam].msg = text;
+            el.textContent = '';
+            setTimeout(() => { if (th.answers[th.beam].msg === text) el.textContent = text; }, 60);
+        }
+
+        function thCheck() {
+            const a = th.answers[th.beam];
+            a.text = thEl.input ? thEl.input.value : '';
+            const v = Math.abs(thParse(a.text));
+            if (!(v > 0 && isFinite(v))) {
+                thSay('Type a number, like 4.2e9 or 4.2 × 10^9.');
+                return;
+            }
+            const ratio = v / TH_BEAMS[th.beam].qm;
+            const pow = Math.round(Math.log10(ratio));
+            if (Math.abs(ratio - 1) <= TH_TOLERANCE) {
+                a.known = true;
+                thSay(`Right! ${thKnownText(th.beam)}`);
+            } else {
+                a.tries++;
+                if (pow !== 0 && Math.abs(ratio / Math.pow(10, pow) - 1) <= TH_TOLERANCE) thSay('Not quite: out by a power of ten. Check your units.');
+                else thSay(`Not within 5%: too ${ratio > 1 ? 'big' : 'small'}.`);
+            }
+            setHidden('thRevealBtn', a.known || a.tries < TH_TRIES);
+        }
+
+        function thReveal() {
+            th.answers[th.beam].known = true;
+            thSay(thKnownText(th.beam));
+            setHidden('thRevealBtn', true);
+            if (thEl.input) thEl.input.focus();
+        }
+
+        function thSyncBeamUI() {
+            if (thEl.syncChips) thEl.syncChips(th.beam);
+            const a = th.answers[th.beam];
+            setText('thAnswerBeam', TH_BEAMS[th.beam].name);
+            if (thEl.input) thEl.input.value = a.text;
+            if (a.known) a.msg = thKnownText(th.beam);
+            if (thEl.feedback) thEl.feedback.textContent = a.msg;
+            setHidden('thRevealBtn', a.known || a.tries < TH_TRIES);
+        }
+
+        features.push({
+            init() {
+                thEl.input = $('thAnswerInput');
+                thEl.feedback = $('thFeedback');
+                const aim = $('aimGuideToggle');
+                const values = $('valuesToggle');
+                thEl.hideInThomson = [
+                    document.querySelector('#launchGroup .ch-seg-panel'),
+                    aim && aim.closest('.sim-checkbox-group'),
+                    values,
+                    document.querySelector('label[for="valuesToggle"]'),
+                    document.querySelector('.sim-show-charts-label'),
+                ].filter(Boolean);
+                thEl.syncChips = radioGroup(document.querySelectorAll('#beamGroup .ch-chip'), (b) => b.dataset.beam, (k) => thSetBeam(k));
+                thEl.syncChips(th.beam);
+                const metal = $('cathodeSelect');
+                if (metal) metal.addEventListener('change', () => { if (th.active) thRestartBeam(); });
+                const form = $('thAnswerForm');
+                if (form) form.addEventListener('submit', (e) => { e.preventDefault(); thCheck(); });
+                const reveal = $('thRevealBtn');
+                if (reveal) reveal.addEventListener('click', () => thReveal());
+                thSnapshotFree();
+                Object.assign(window.chargesSim, {
+                    thomson: {
+                        get active() { return th.active; },
+                        get beam() { return th.beam; },
+                        get on() { return th.on; },
+                        get answers() { return th.answers; },
+                        // Where the beam meets the screen (m, up positive), or null if it doesn't
+                        spot() {
+                            const p = thEnsurePath();
+                            return p.end === 'screen' ? p.spotY : null;
+                        },
+                        path() {
+                            const p = thEnsurePath();
+                            return { end: p.end, tEnd: p.tEnd, spotY: p.spotY, endX: p.x[p.x.length - 1], points: p.t.length };
+                        },
+                        setBeam: thSetBeam,
+                        beamOn: thSetBeamOn,
+                        parse: thParse,
+                        check(text) {
+                            if (thEl.input) thEl.input.value = text;
+                            thCheck();
+                            return th.answers[th.beam].msg;
+                        },
+                        qm: (key) => TH_BEAMS[key].qm,
+                    },
+                });
+            },
+            onSetup(name) {
+                if (name === 'thomson') thEnter();
+                else if (th.active) thLeave();
+            },
+            onSettings() {
+                if (th.active) th.dirty = true;
+                else thSnapshotFree();
+            },
+            reset() {
+                if (!th.active) return;
+                selected = th.probe;
+                thRestartBeam();
+            },
+            frame(realDt, simDt) {
+                if (!th.active) {
+                    thSnapshotFree();
+                    return;
+                }
+                th.clock += simDt;
+                const path = thEnsurePath();
+                const span = thSpan(path);
+                thUpdateProbe(path, span);
+                thUpdateReadout(path, span);
+            },
+            fire() {
+                if (!th.active) return false;
+                thSetBeamOn(!th.on);
+                return true;
+            },
+            obstacles(list) {
+                if (th.active) list.push({ x0: PLATE_L, y0: -TH_SCREEN_HALF, x1: PLATE_L, y1: TH_SCREEN_HALF, name: 'screen' });
+            },
+            drawMid() {
+                if (!th.active) return;
+                const c = thColors();
+                const path = thEnsurePath();
+                const span = thSpan(path);
+                thDrawDimensions();
+                thDrawScreen(c);
+                thDrawBeam(c, path, span);
+                if (span.arrived) {
+                    const n = path.x.length - 1;
+                    if (path.end === 'screen') thGlow(px(PLATE_L) + 1, py(path.spotY), 13, c.spot, c.spotCore, 2.6);
+                    else thGlow(px(path.x[n]), py(path.y[n]), 7, c.hit, c.dot, 1.6);
+                }
+                // The probe: the beam particle the arrows belong to
+                const p = th.probe;
+                if (p && p.state === 'free' && (settings.show.velocity || settings.show.force || settings.show.components)) {
+                    ctx.strokeStyle = c.beam;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(px(p.x), py(p.y), 4.5, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            },
+        });
+    }
     // ===================================================================== end [thomson]
 
 

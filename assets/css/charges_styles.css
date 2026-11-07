@@ -470,7 +470,187 @@ html.dark-mode .charges-sim {
 
 
 /* ---------- [thomson] ---------- */
+/* Thomson's experiment: the q/m answer bar under the toolbar, the spot readout and the Beam on/off button */
+#statsFree[hidden],
+#statsThomson[hidden],
+.charges-sim .sim-show-charts-label[hidden],
+.th-answer[hidden] {
+    display: none !important;
+}
 
+.th-answer {
+    width: var(--sim-canvas-w);
+    max-width: 100%;
+    margin: 0.5em auto 0 auto;
+    padding: 5px 6px 5px 0.75em;
+    box-sizing: border-box;
+    background-color: var(--color-bg-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--sim-radius, 6px);
+    font-size: 0.85em;
+    line-height: 1.3;
+}
+
+.th-answer-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 0.6em;
+    margin: 0;
+}
+
+.charges-sim .th-answer-label {
+    display: block;
+    flex: 0 0 auto;
+    margin: 0;
+    font-size: 1em;
+    font-weight: 400;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.charges-sim input.th-answer-input {
+    flex: 1 1 8em;
+    width: auto;
+    min-width: 6em;
+    max-width: 16em;
+    height: var(--ch-btn-h);
+    padding: 0 0.6em;
+    font-size: 1em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.charges-sim input.th-answer-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.charges-sim input.th-answer-input::placeholder {
+    color: var(--color-text);
+    opacity: 0.45;
+}
+
+.th-answer-unit {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    color: var(--color-text);
+}
+
+.charges-sim .th-check,
+.charges-sim .th-reveal {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    height: var(--ch-btn-h);
+    margin: 0;
+    padding: 0 1.1em;
+    font-size: 0.9em;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    text-transform: none;
+    white-space: nowrap;
+    border-radius: 4px;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.charges-sim .th-check {
+    color: #ffffff !important;
+    background-color: var(--color-accent);
+    box-shadow: none;
+}
+
+.charges-sim .th-reveal {
+    padding: 0 0.8em;
+    color: var(--color-text) !important;
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.charges-sim .th-reveal[hidden] {
+    display: none;
+}
+
+@media (hover: hover) {
+    .charges-sim .th-check:hover {
+        background-color: var(--color-accent-active);
+    }
+
+    .charges-sim .th-reveal:hover {
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+.charges-sim .th-check:focus-visible,
+.charges-sim .th-reveal:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+/* Feedback after Check, on the same row where it fits (so the canvas doesn't resize); empty until there's news */
+.charges-sim .th-feedback {
+    flex: 1 1 16em;
+    min-width: 0;
+    margin: 0;
+    padding: 0 0.2em;
+    font-size: 1em;
+    line-height: 1.35;
+    color: var(--color-text);
+}
+
+.charges-sim .th-feedback:empty {
+    flex-basis: 0;
+    padding: 0;
+}
+
+.th-spot-dir {
+    display: inline-block;
+    min-width: 2.4em;
+}
+
+/* The field strengths are the readings Thomson's experiment depends on: a slider row too narrow for its value and
+   direction button wraps onto its own line rather than letting them overlap */
+.charges-sim.th-active .ch-strength {
+    min-width: min-content;
+}
+
+/* Beam on/off (the Fire button in Thomson's experiment): filled while on, outlined while off */
+.charges-sim .ch-fire.th-beam-btn[aria-pressed="false"] {
+    color: var(--color-text) !important;
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+@media (hover: hover) {
+    .charges-sim .ch-fire.th-beam-btn[aria-pressed="false"]:hover {
+        background-color: transparent;
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+    }
+}
+
+/* iPhones zoom into inputs whose text is under 16px */
+@media (pointer: coarse) {
+    .charges-sim input.th-answer-input {
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 600px) {
+    .th-answer {
+        padding-left: 0.6em;
+    }
+
+    .charges-sim input.th-answer-input {
+        flex-basis: 5em;
+    }
+}
 
 /* ---------- end [thomson] ---------- */
 

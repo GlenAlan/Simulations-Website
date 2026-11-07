@@ -215,7 +215,21 @@
 											</div>
 										</div>
 
-										<!-- [thomson] beam group (Cathode rays | Hydrogen ions, cathode metal) goes here -->
+										<div class="sim-control-group" id="beamGroup" hidden>
+											<p class="sim-control-group-label" id="beamLabel">Beam</p>
+											<div class="ch-chips" role="radiogroup" aria-labelledby="beamLabel">
+												<button type="button" class="ch-chip" role="radio" data-beam="cathode" aria-checked="true"><span class="ch-swatch ch-swatch-neutral" aria-hidden="true">?</span>Cathode rays</button>
+												<button type="button" class="ch-chip" role="radio" data-beam="hydrogen" aria-checked="false"><span class="ch-swatch ch-swatch-pos" aria-hidden="true">+</span>Hydrogen ions</button>
+											</div>
+											<label for="cathodeSelect">Cathode metal</label>
+											<div class="sim-select-container">
+												<select id="cathodeSelect">
+													<option value="copper" selected>Copper</option>
+													<option value="aluminium">Aluminium</option>
+													<option value="platinum">Platinum</option>
+												</select>
+											</div>
+										</div>
 
 										<div class="sim-control-group" id="launchGroup">
 											<p class="sim-control-group-label" id="launcherLabel">Launch</p>
@@ -318,7 +332,17 @@
 											</div>
 											<button type="button" class="ch-fire" id="fireBtn" title="Fire (Space)"><span class="icon solid fa-bolt" aria-hidden="true"></span> Fire</button>
 										</div>
-										<!-- [thomson] the screen readout and q/m answer bar go here -->
+										<!-- Thomson's experiment: the student's answer for the beam's charge-to-mass ratio -->
+										<div class="th-answer" id="thAnswer" hidden>
+											<form class="th-answer-row" id="thAnswerForm" novalidate autocomplete="off">
+												<label for="thAnswerInput" class="th-answer-label"><span id="thAnswerBeam">Cathode rays</span>: <i>q</i>/<i>m</i> =</label>
+												<input type="text" id="thAnswerInput" class="th-answer-input" placeholder="e.g. 4.2e9" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="done" aria-describedby="thAnswerUnit">
+												<span class="th-answer-unit" id="thAnswerUnit">C/kg</span>
+												<button type="submit" class="th-check" id="thCheckBtn">Check</button>
+												<button type="button" class="th-reveal" id="thRevealBtn" hidden>Show answer</button>
+												<p class="th-feedback" id="thFeedback" aria-live="polite"></p>
+											</form>
+										</div>
 										<div class="sim-info-bar" id="statsBar">
 											<div class="stats-container" id="statsFree">
 												<div class="stats-box" title="The selected particle (tap one to select it)"><span class="ch-dot" id="selDot" aria-hidden="true"></span><strong id="selName">Proton</strong></div>
@@ -331,7 +355,9 @@
 												<div class="stats-box ch-values" id="statABox" hidden><strong><em>a</em></strong> <span id="statA" class="sim-value" style="--chars: 9">&ndash;</span> m/s&sup2;</div>
 												<div class="stats-box ch-values" id="statRBox" hidden><strong><em>r</em></strong> <span id="statR" class="sim-value" style="--chars: 5">&ndash;</span> cm</div>
 											</div>
-											<!-- [thomson] readouts for Thomson's experiment go here -->
+											<div class="stats-container" id="statsThomson" hidden>
+												<div class="stats-box" title="Where the beam hits the screen, measured from the centre line"><strong>Spot</strong> <span id="thSpot" class="sim-value" style="--chars: 4">&ndash;</span> <span id="thSpotUnit">cm</span> <span id="thSpotDir" class="th-spot-dir"></span></div>
+											</div>
 											<div class="sim-info-actions">
 												<button type="button" id="pauseBtn" class="sim-icon-button" aria-label="Pause" title="Pause (P)" aria-pressed="false">
 													<span class="icon solid fa-pause" aria-hidden="true"></span>
