@@ -119,6 +119,7 @@ function createSpectrumPanel(app, container) {
     // controls go on two lines, so the name of the reference isn't squeezed out.
     const REF_ROW = coarse ? 44 : 34;
     const ONE_LINE_PX = coarse ? 400 : 340;
+    const ROOMY_ONE_LINE_PX = coarse ? 400 : 440;   // Where the drawer has height to spare, a name gets a line of its own sooner
     plot.setChrome({ headers: coarse ? 44 : 26, top: coarse ? 44 : 32, refRow: REF_ROW });
 
     // The scale: the wide views, then the views around one line, as words along the top of the plot
@@ -203,8 +204,9 @@ function createSpectrumPanel(app, container) {
         };
         place(bodyHead, l.body.titleY, l.titleH);
         place(refHead, l.refRowY, l.refRowH);
-        // With no reference the row is short enough for one line anywhere
-        const twoLines = l.plotW < ONE_LINE_PX && !!l.ref;
+        // With no reference the row is short enough for one line anywhere. With one, its name has a line to itself in a narrow
+        // drawer, and in one of middling width too where the drawer is tall enough not to miss the height, so names aren't cut.
+        const twoLines = !!l.ref && l.plotW < (panelScrolls() ? ONE_LINE_PX : ROOMY_ONE_LINE_PX);
         refHead.classList.toggle('is-two-lines', twoLines);
         const line = twoLines && !coarse ? REF_ROW - 4 : REF_ROW;
         const want = twoLines ? 2 * line : line;
