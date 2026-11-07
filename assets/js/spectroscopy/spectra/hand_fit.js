@@ -7,6 +7,8 @@
 //   fitError(T)                       -> K               how closely a curve can be matched by eye, as an uncertainty
 //   markOnPeak(peak, nm, slackNm)     -> { on, rising }  whether a mark is on the peak wienPeak found: rising is -1 when the light
 //                                                        still rises to the left of the mark, +1 to the right, 0 on the peak
+//   markReading(spectrum, nm)         -> { peak_nm, T_K, err_K, lo_nm, hi_nm, share }   what a mark put at nm says by Wien's
+//                                                        law: T = b / nm, and how far either way it could as well have gone
 //   slideError({ restNm, z, nmPerPx, widthNm, stepZ }) -> err_nm   how finely a slid line can be set on its dip
 
 import { C_KMS, WIEN_B } from '../core/phys.js';
@@ -107,6 +109,53 @@ export function markOnPeak(peak, nm, slackNm = 0) {
     const share = wienCurveAt({ T_K: T, amp: 1 }, nm) / wienCurveAt({ T_K: T, amp: 1 }, top);
     if (share >= ON_PEAK || Math.abs(nm - top) <= slackNm) return { on: true, rising: 0 };
     return { on: false, rising: nm > top ? -1 : 1 };
+}
+
+// The student's own reading: T = b / lambda at the mark, wherever it is. A black body is so flat near its top that the eye can't
+// place its highest point closer than where the curve is within a couple of per cent of it, and noise along the top widens that.
+// The uncertainty is that band: the curve that peaks at the mark, and how far either way it stays that close to its top.
+const EYE_SHARE = 0.02;           // On a plot a couple of hundred pixels tall, a few pixels
+const MARK_NOISE_SIGMAS = 2;
+const MARK_MOST_SHARE = 0.25;
+
+function topNoise(spectrum, nm) {
+    const { wl, flux } = spectrum || {};
+    if (!wl || wl.length < 16) return 0;
+    const a = lowerBound(wl, nm * 0.995);
+    const b = Math.min(wl.length, lowerBound(wl, nm * 1.005) + 1);
+    if (b - a < 6) return 0;
+    const diffs = [];
+    const values = [];
+    for (let i = a; i < b; i++) {
+        values.push(flux[i]);
+        if (i + 1 < b) diffs.push(Math.abs(flux[i + 1] - flux[i]));
+    }
+    diffs.sort((x, y) => x - y);
+    values.sort((x, y) => x - y);
+    const sigma = (diffs[diffs.length >> 1] * 1.4826) / Math.SQRT2;
+    const level = values[Math.floor(0.85 * (values.length - 1))];
+    // What the eye sees is the light in a narrow stretch taken together, as one column of the plot
+    return level > 0 ? sigma / Math.sqrt(b - a) / level : 0;
+}
+
+export function markReading(spectrum, nm) {
+    const T = WIEN_NM_K / nm;
+    const share = Math.min(MARK_MOST_SHARE, Math.hypot(EYE_SHARE, MARK_NOISE_SIGMAS * topNoise(spectrum, nm)));
+    const level = (x) => wienCurveAt({ T_K: T, amp: 1 }, x) / wienCurveAt({ T_K: T, amp: 1 }, nm);
+    // Where the curve falls to (1 - share) of its top, each side of it
+    const edge = (from, to) => {
+        let a = from;
+        let b = to;
+        for (let k = 0; k < 50; k++) {
+            const m = Math.sqrt(a * b);
+            if (level(m) >= 1 - share) a = m;
+            else b = m;
+        }
+        return Math.sqrt(a * b);
+    };
+    const lo = edge(nm, nm / 4);
+    const hi = edge(nm, nm * 4);
+    return { peak_nm: nm, T_K: T, err_K: 0.5 * (WIEN_NM_K / lo - WIEN_NM_K / hi), lo_nm: lo, hi_nm: hi, share };
 }
 
 // ---------- Reference lines slid onto the dips ----------
