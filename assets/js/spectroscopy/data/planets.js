@@ -14,10 +14,11 @@
 //   brightness    reflected starlight only: planets aren't drawn in the sky, but tools can read it
 
 import { stable } from '../core/rng.js';
-import { keplerPeriodDays, hzEdges, AU, R_EARTH } from '../core/phys.js';
+import { keplerPeriodDays, hzEdges, AU, R_EARTH, M_EARTH, M_SUN } from '../core/phys.js';
 import { dp, RSUN_AU } from './stellar.js';
 
 const EARTH_RADIUS_AU = R_EARTH / AU;
+const EARTH_MASS_MSUN = M_EARTH / M_SUN;
 
 export const PLANET_TYPES = {
     sub_neptune: { share: 0.2, label: 'Sub-Neptune' },
@@ -464,7 +465,7 @@ function orbitLadder(rng, n, ctx, fixedAU) {
 // The random planets of one system. fixed = { orbit_AU, planet } keeps a hard-coded one in its place in the ladder.
 export function makeSystemPlanets(rng, nextCode, ctx, n, tally, fixed = null) {
     const orbits = orbitLadder(rng, n, ctx, fixed ? fixed.orbit_AU : null);
-    return orbits.map((a) => {
+    const planets = orbits.map((a) => {
         if (fixed && a === fixed.orbit_AU) {
             addToTally(tally, fixed.planet.type);
             return fixed.planet;
@@ -473,6 +474,115 @@ export function makeSystemPlanets(rng, nextCode, ctx, n, tally, fixed = null) {
         addToTally(tally, type);
         return makePlanet(rng, nextCode(), type, a, ctx);
     });
+    return settlePlanets(rng.fork('settle planets'), planets, ctx, fixed ? fixed.planet : null);
+}
+
+// ---------- Orbits a planet could really keep ----------
+// A planet closer to its star than its Roche limit is torn apart by the star's tides, and two planets closer than about
+// 3.5 times their shared Hill radius pull each other off their orbits (Gladman 1993). Each system is laid out first as it
+// always was, and then put right here, from a random stream of its own, so that no other number in the sky, and no code,
+// moves: a planet too close in moves out, and the ones beyond it make room.
+
+export const ROCHE_FLUID = 2.44;                 // A fluid body's Roche limit, in the planet's radii times (M_star / M_planet)^(1/3)
+export const HILL_SPACING = 2 * Math.sqrt(3);    // Gladman's least spacing of two planets, in their shared Hill radius
+export const ROCHE_ROOM = 1.02;                  // How far outside its Roche limit a planet is moved to, at the least
+export const HILL_ROOM = 1.02;                   // ...and how far outside Gladman's spacing
+export const MOVE_JITTER = 1.1;                  // A moved planet goes up to this much further out than it must
+const LADDER = [1.4, 2];                         // The spacing ratios orbitLadder draws from
+
+// The fluid Roche limit in AU for a planet round mass mStar (solar masses)
+export function rocheLimitAU(planet, mStar) {
+    return stable(ROCHE_FLUID * planet.radius_Rearth * EARTH_RADIUS_AU * Math.cbrt(mStar / (planet.mass_Mearth * EARTH_MASS_MSUN)), 6);
+}
+
+// Two neighbours' shared Hill radius, as a share of their mean orbit
+function hillShare(inner, outer, mStar) {
+    return Math.cbrt(((inner.mass_Mearth + outer.mass_Mearth) * EARTH_MASS_MSUN) / (3 * mStar));
+}
+
+// Their spacing in shared Hill radii
+export function hillSpacing(inner, outer, mStar) {
+    const mean = (inner.orbit_AU + outer.orbit_AU) / 2;
+    return stable((outer.orbit_AU - inner.orbit_AU) / (hillShare(inner, outer, mStar) * mean), 6);
+}
+
+// The least ratio of their orbits that keeps them `room` times Gladman's spacing apart: Infinity if none would
+export function hillRatio(inner, outer, mStar, room = HILL_ROOM) {
+    const x = (room * HILL_SPACING * hillShare(inner, outer, mStar)) / 2;
+    return x < 1 ? stable((1 + x) / (1 - x), 6) : Infinity;
+}
+
+// Whether a planet may still be what it is where it has been moved out to. The hot types keep to the spec's placement rule
+// for them. Any other is just a little colder there, as if it had formed further out; water is dealt with in moveOut.
+function suits(planet, a, ctx) {
+    if (planet.type === 'hot_jupiter' || planet.type === 'lava_world') return a < 0.1 || a < 0.3 * ctx.hz.inner;
+    return true;
+}
+
+const OPACITY = { thin_co2: 0.1, thick_co2: 100, desert: 0.6 };   // As in BUILDERS: how much each greenhouse warms
+
+// Moves a planet out to orbit a, putting right everything that follows from where it is
+function moveOut(rng, planet, a, ctx) {
+    planet.orbit_AU = stable(a, 6);
+    const period = keplerPeriodDays(planet.orbit_AU, planet.host_mass_Msun);
+    planet.period_days = stable(period, 6);
+    if (planet.tidally_locked) planet.day_length_h = dp(period * 24, 1);
+    const tEq = equilibriumTemperature(ctx.L, planet.orbit_AU, planet.albedo);
+    planet.T_eq_K = stable(tEq, 4);
+    if (planet.T_surface_K !== null) planet.T_surface_K = dp(surfaceTemperature(tEq, OPACITY[planet.type] || 0), 0);
+    const inZone = planet.orbit_AU >= ctx.hz.inner && planet.orbit_AU <= ctx.hz.outer;
+    planet.in_hz = ctx.mainSequenceSingle && inZone;
+    // Water only outside the zone, as BUILDERS gives it; a cooler giant has ammonia clouds, and a cooler hot Jupiter no TiO
+    if (inZone && planet.atmosphere_ppm && planet.atmosphere_ppm.H2O) delete planet.atmosphere_ppm.H2O;
+    if (planet.type === 'gas_giant' && tEq < 300 && planet.clouds.kind !== 'NH3') planet.clouds = { kind: 'NH3', cover: dp(rng.range(0.55, 0.95), 2) };
+    if (planet.atmosphere_ppm && planet.atmosphere_ppm.TiO && equilibriumTemperature(ctx.L, planet.orbit_AU, 0.1) <= 1700) delete planet.atmosphere_ppm.TiO;
+    const reflected = planet.albedo * ((planet.radius_Rearth * EARTH_RADIUS_AU) / (2 * planet.orbit_AU)) ** 2;
+    planet.brightness = { flux_Wm2: stable(ctx.flux * reflected, 4), mag: dp(ctx.mag - 2.5 * Math.log10(reflected), 2) };
+}
+
+// The orbits a system's planets need, inner first: each outside its Roche limit and clear of the one inside it, moving out
+// only what must move, and a planet beyond one that has moved at least the ladder's spacing from it. So a spacing is wider
+// than the ladder's only where a planet sits just outside the least orbit it could keep. fixed is a hard-coded planet, which
+// never moves: a planet crowding it from inside is dropped instead, as one that close would have been flung away.
+// -> { orbits } in AU, or { drop: index }
+function settledOrbits(rng, planets, ctx, fixed) {
+    const M = ctx.M;
+    const a = planets.map((p) => p.orbit_AU);
+    const moved = planets.map(() => false);
+    for (let i = 0; i < planets.length; i++) {
+        let need = ROCHE_ROOM * rocheLimitAU(planets[i], M);
+        if (i > 0) need = Math.max(need, a[i - 1] * hillRatio(planets[i - 1], planets[i], M));
+        if (i > 0 && moved[i - 1]) need = Math.max(need, a[i - 1] * LADDER[0]);
+        if (need <= a[i]) continue;
+        if (planets[i] === fixed) {
+            if (i > 0) return { drop: i - 1 };
+            continue;
+        }
+        a[i] = stable(need * rng.range(1, MOVE_JITTER), 6);
+        moved[i] = true;
+    }
+    return { orbits: a };
+}
+
+// Puts a system's planets where they can stay. A hot planet that would have to go too far out to be one is dropped, though
+// never the last one: it would have fallen into its star or been flung away. Returns the planets kept, inner first.
+function settlePlanets(rng, planets, ctx, fixed) {
+    let list = planets.slice();
+    for (let round = 0; round < planets.length; round++) {
+        const { drop, orbits } = settledOrbits(rng.fork(`round:${round}`), list, ctx, fixed);
+        if (drop !== undefined) {
+            list.splice(drop, 1);
+            continue;
+        }
+        const unsuited = list.findIndex((p, i) => orbits[i] !== p.orbit_AU && !suits(p, orbits[i], ctx));
+        if (unsuited >= 0 && list.length > 1) {
+            list.splice(unsuited, 1);
+            continue;
+        }
+        list.forEach((p, i) => { if (orbits[i] !== p.orbit_AU) moveOut(rng, p, orbits[i], ctx); });
+        return list;
+    }
+    return list;
 }
 
 export function addToTally(tally, type) {

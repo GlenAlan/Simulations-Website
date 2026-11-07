@@ -6,7 +6,7 @@ import { isValidCode } from '../core/rng.js';
 import { hzEdges, keplerPeriodDays, fluxFromLuminosity, H0, C_KMS } from '../core/phys.js';
 import { MIN_ALT, MIN_FOV, azAltToVec3, limitingMag, galacticLatitude, angularSeparation } from '../core/sky.js';
 import { STAR_TABLE, RSUN_AU, luminosityFromRT, msLifetimeMyr } from './stellar.js';
-import { PLANET_TYPES, MIN_STELLAR_RADII } from './planets.js';
+import { PLANET_TYPES, MIN_STELLAR_RADII, rocheLimitAU, hillSpacing, hillRatio, HILL_SPACING, ROCHE_ROOM, MOVE_JITTER } from './planets.js';
 import { spacingBetween } from './sky_layout.js';
 import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS } from './quotas.js';
 import { componentStates, cometTailAU, eclipsingOrbits } from './orbits.js';
@@ -315,6 +315,7 @@ function checkPlanets(u, fail) {
         const rStar = hostRadiusAU(body);
         const single = isSingleMainSequence(body);
         let last = null;
+        let inside = null;
         body.planets.forEach((planet) => {
             const a = planet.orbit_AU;
             const inZone = a >= hz.inner && a <= hz.outer;
@@ -335,12 +336,21 @@ function checkPlanets(u, fail) {
             const period = keplerPeriodDays(a, mass);
             if (Math.abs(planet.period_days / period - 1) > 1e-3) fail(`${planet.code}'s period breaks Kepler's third law`);
             if (Math.abs(planet.radial_velocity_kms - body.radial_velocity_kms) > 1e-9) fail(`${planet.code} doesn't inherit its star's velocity`);
+            // Outside its Roche limit, or the star's tides would tear it apart
+            if (a <= rocheLimitAU(planet, mass)) fail(`${planet.code} at ${a} AU is inside its Roche limit (${rocheLimitAU(planet, mass)} AU)`);
+            // Far enough from the planet inside it, round the same stars, not to pull each other off their orbits (Gladman)
+            const sameCentre = inside && String(inside.orbit_centre_stars) === String(planet.orbit_centre_stars);
+            if (sameCentre && !(a > last && hillSpacing(inside, planet, mass) > HILL_SPACING)) fail(`${planet.code} is ${hillSpacing(inside, planet, mass)} shared Hill radii from ${inside.code}`);
             if (!exempt.has(body.code) && last !== null) {
+                // The ladder's spacing, unless the planet had to be moved further out than that to keep its orbit
                 const ratio = a / last;
-                if (ratio < 1.399 || ratio > 2.001) fail(`${planet.code} is spaced ${ratio} from the planet inside it`);
+                const floor = Math.max(ROCHE_ROOM * rocheLimitAU(planet, mass), last * (sameCentre ? hillRatio(inside, planet, mass) : 0));
+                const moved = a <= floor * MOVE_JITTER * 1.0001;
+                if (ratio < 1.399 || (ratio > 2.001 && !moved)) fail(`${planet.code} is spaced ${ratio} from the planet inside it`);
             }
             if (!exempt.has(body.code) && planet.type && !PLANET_TYPES[planet.type]) fail(`${planet.code} has unknown type ${planet.type}`);
             last = a;
+            inside = planet;
         });
         if (body.stars && body.orbits.length && body.architecture !== 'double_double') {
             const widest = body.orbits[body.orbits.length - 1].a_AU;
