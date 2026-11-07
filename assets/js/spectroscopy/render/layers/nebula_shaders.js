@@ -27,7 +27,12 @@ varying vec2 vUv;
 const mat3 OCT = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
 
 float sat(float x) { return clamp(x, 0.0, 1.0); }
-float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+// Where along its step each ray starts. Integer hashing gives the same grain on every GPU, with no diagonal pattern
+float jitter(vec2 p) {
+    uvec2 q = uvec2(ivec2(p)) * uvec2(1597334673u, 3812015801u);
+    uint h = (q.x ^ q.y) * 1597334673u;
+    return float(h) * (1.0 / 4294967295.0);
+}
 vec4 noiseAt(vec3 p) { return textureLod(tNoise, p, 0.0); }
 
 // Each fetch already holds three octaves, so a large step in frequency still leaves the spectrum continuous
@@ -98,6 +103,7 @@ float laneField(vec3 p) {
 // Dust: thin sheets where a noise crosses its middle value, rounded globules from the cellular channel, and big lanes
 float dustField(vec3 pw, vec3 dq, float n) {
     vec4 d = noiseAt(dq);
+    if (uOctaves > 3) d.g += (noiseAt(OCT * dq * 3.7 + 0.41).g - 0.5) * 0.34;
     float ridge = 1.0 - abs(2.0 * d.g - 1.0);
     float sheets = smoothstep(0.58, 1.0, ridge);
     float globules = smoothstep(0.60, 0.80, d.a);
@@ -114,7 +120,7 @@ void main() {
     }
     float zmax = sqrt(1.0 - rr);
     float ds = 2.0 * zmax / float(uSteps);
-    float z = zmax - ds * ign(gl_FragCoord.xy);
+    float z = zmax - ds * 0.6 * jitter(gl_FragCoord.xy);
     float T = 1.0;
     float Tir = 1.0;
     float La = 0.0;
@@ -141,9 +147,10 @@ void main() {
         // Ionisation fronts are thin sheets, and a sheet seen edge-on is a bright thread: this keeps fine structure
         // alive through the integral along the ray, which would otherwise average it away
         float sheetN = noiseAt(qc * 1.45 + vec3(0.19, 0.83, 0.47)).b;
+        if (uOctaves > 3) sheetN += (noiseAt(OCT * qc * 5.1 + vec3(0.67, 0.29, 0.53)).b - 0.5) * 0.30;
         float sheet = 1.0 - abs(2.0 * sheetN - 1.0);
         sheet *= sheet;
-        sheet *= sheet * sheet;
+        sheet *= sheet;
         float faint = smoothstep(-0.5, 0.15, f) * edge * 0.085;
 
         vec3 pw = p + w * 0.6;
@@ -180,7 +187,7 @@ void main() {
             float wd = (r0 - uB.x * 1.12) / (uB.x * 0.30);
             wall = smoothstep(uB.x * 0.62, uB.x * 1.02, r0) * (1.0 + 1.7 * exp(-wd * wd));
         }
-        float g = gas * wall * (0.55 + 2.4 * sheet);
+        float g = gas * wall * (0.38 + 2.9 * sheet);
         float tau = dust * uA.w * ds;
         if (mode > 0.5) {
             // Reflection: starlight scattered by dust, falling off with distance and picking out the wisps
@@ -230,7 +237,7 @@ void main() {
     }
     float zmax = sqrt(1.0 - rr);
     float ds = 2.0 * zmax / float(uSteps);
-    float z = zmax - ds * ign(gl_FragCoord.xy);
+    float z = zmax - ds * 0.6 * jitter(gl_FragCoord.xy);
     float La = 0.0;
     float Lo = 0.0;
     float Ld = 0.0;
@@ -345,7 +352,7 @@ void main() {
     }
     float zmax = sqrt(1.0 - rr);
     float ds = 2.0 * zmax / float(uSteps);
-    float z = zmax - ds * ign(gl_FragCoord.xy);
+    float z = zmax - ds * 0.6 * jitter(gl_FragCoord.xy);
     float L0 = 0.0;
     float L1 = 0.0;
     float L2 = 0.0;
@@ -395,7 +402,7 @@ void main() {
             fil += jet * threads * 2.5;
             sheet += jet * 0.5;
         }
-        float hot = smoothstep(Rs + 0.03, Rs * 0.45, r) * (0.30 + 0.9 * n) + shell * 0.95 * (0.5 + cell);
+        float hot = smoothstep(Rs + 0.03, Rs * 0.45, r) * (0.10 + 0.32 * n) + shell * 0.95 * (0.5 + cell);
         float sync = shell * (0.40 + 0.9 * n) * barrel;
 
         float edge = smoothstep(1.0, 0.90, length(p));

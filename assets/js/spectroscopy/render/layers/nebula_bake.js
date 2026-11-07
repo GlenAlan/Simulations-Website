@@ -202,13 +202,12 @@ function createBaker(engine, app) {
             generateMipmaps: true
         });
         atlas.texture.colorSpace = THREE.NoColorSpace;
-        // Three would regenerate the whole mip chain after every strip: left off here, and done once per finished cell
-        atlas.texture.generateMipmaps = true;
         renderer.setRenderTarget(atlas);
         renderer.setClearColor(0x000000, 0);
         renderer.clear();
         renderer.setClearColor(0x000000, 1);
         renderer.setRenderTarget(null);
+        // Three would rebuild the whole mip chain after every strip: off from here, and done once per finished cell
         atlas.texture.generateMipmaps = false;
         atlasUniform.value = atlas.texture;
         heroUniforms.uAtlasPx.value = atlas.width;
@@ -447,9 +446,7 @@ function createBaker(engine, app) {
         atlas.texture.generateMipmaps = false;
     }
 
-    function nextAtlasJob() {
-        const hero = prev.job;
-        if (hero && !hero.ready) return hero;
+    function nearestUnbakedJob() {
         let best = null;
         let bestD = -2;
         for (let i = 0; i < jobs.length; i++) {
@@ -503,7 +500,7 @@ function createBaker(engine, app) {
                 }
                 continue;
             }
-            if (!job) job = nextAtlasJob();
+            if (!job) job = nearestUnbakedJob();
             if (!job) break;
             const steps = ATLAS_STEPS[q] || 36;
             const octaves = ATLAS_OCTAVES[q] || 2;
@@ -694,6 +691,14 @@ float windowMask(vec2 w) {
     return e.x * e.y;
 }
 
+// A hero is seen at about one texel per pixel, where the raymarch's grain would show: four fetches half a texel apart
+// take most of it out, for a very small loss of sharpness
+vec4 heroFetch(sampler2D tex, vec2 w) {
+    vec2 d = 0.5 / vec2(textureSize(tex, 0));
+    return 0.25 * (textureLod(tex, w + vec2(-d.x, -d.y), 0.0) + textureLod(tex, w + vec2(d.x, -d.y), 0.0)
+        + textureLod(tex, w + vec2(-d.x, d.y), 0.0) + textureLod(tex, w + vec2(d.x, d.y), 0.0));
+}
+
 // q is the position in the sprite (-1..1), cellUv the same position in the atlas
 vec4 fetchBaked(vec2 q, vec2 cellUv) {
     vec2 dx = dFdx(cellUv);
@@ -706,11 +711,11 @@ vec4 fetchBaked(vec2 q, vec2 cellUv) {
     }
     if (vHeroB > 0.5) {
         vec2 w = (q - uHeroBRect.xy) / (2.0 * uHeroBRect.zw) + 0.5;
-        t = mix(t, texture2D(uHeroB, w), windowMask(w) * uHeroBK);
+        t = mix(t, heroFetch(uHeroB, w), windowMask(w) * uHeroBK);
     }
     if (vHeroA > 0.5) {
         vec2 w = (q - uHeroARect.xy) / (2.0 * uHeroARect.zw) + 0.5;
-        t = mix(t, texture2D(uHeroA, w), windowMask(w) * uHeroAK);
+        t = mix(t, heroFetch(uHeroA, w), windowMask(w) * uHeroAK);
     }
     return t;
 }

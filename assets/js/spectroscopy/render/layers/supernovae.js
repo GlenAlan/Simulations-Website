@@ -36,7 +36,7 @@ function shellRadius(t) {
 function writeStage(a, i, sn, t) {
     const isIa = sn.type === 'Ia';
     const bands = supernovaBandsAt(sn, t);
-    const inShell = smooth(12, 80, t);
+    const inShell = smooth(20, 130, t);
     const inFlash = 1 - inShell;
     a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * inShell, bands.visible * inFlash], i * 4);
     a.flash.set([bands.radio * inFlash, bands.ir * inFlash, bands.uv * inFlash, bands.xray * inFlash], i * 4);
@@ -101,7 +101,7 @@ export function createSupernovaeLayer(engine, app) {
         const lop = isIa ? 0.02 : 0.08;
         const S = new THREE.Vector4(0.74, isIa ? rng.range(0.035, 0.05) : rng.range(0.07, 0.10), isIa ? rng.range(0.03, 0.05) : rng.range(0.10, 0.16), isIa ? 0 : 1);
         const asym = new THREE.Vector4(rng.range(-lop, lop), rng.range(-lop, lop), rng.range(-lop, lop), isIa ? rng.range(0.06, 0.1) : rng.range(0.16, 0.26));
-        const C = new THREE.Vector4(isIa ? 1.5 : 0.95, isIa ? 1.1 : 1.5, 1.2, isIa ? 2.2 : 1.8);
+        const C = new THREE.Vector4(isIa ? 1.5 : 0.95, isIa ? 0.9 : 0.85, 1.2, isIa ? 2.2 : 1.8);
         const job = baker.addJob({
             program: 'remnant',
             dir: c,
@@ -129,7 +129,7 @@ export function createSupernovaeLayer(engine, app) {
         aFilCol.set(filament, i * 3);
         stage.lateSheet.push(isIa ? [0.55, 0.72, 1.0] : [oxygen[0] + 0.05, oxygen[1] * 0.85, oxygen[2] * 0.95]);
         const pointShare = writeStage(stage, i, sn, sn.phase0_days);
-        items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, bands: supernovaBandsAt(sn, sn.phase0_days), pointShare, pointDirty: true });
+        items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, bands: supernovaBandsAt(sn, sn.phase0_days), pointShare });
         byCode.set(body.code, i);
     });
 
@@ -247,11 +247,11 @@ export function createSupernovaeLayer(engine, app) {
                 float age = vShape.y;
 
                 // A young shell is bright and smooth; as it sweeps up gas it fades into threads
-                vec3 col = (vSheetCol * sheet * (1.15 - 0.72 * age) + vFilCol * fil * (0.25 + 1.5 * age)) * 2.5 * vShell.z * uBandW[2];
+                vec3 col = (vSheetCol * sheet * (1.15 - 0.85 * age) + vFilCol * fil * (0.25 + 1.5 * age)) * 2.5 * vShell.z * uBandW[2];
                 col += ramp(uBandTint[0], sync * 2.9 * vShell.x) * uBandW[0];
                 col += ramp(uBandTint[1], (sheet * 0.9 + hot * 0.25 + fil * 0.6) * 1.8 * vShell.y) * uBandW[1];
                 col += ramp(uBandTint[3], (sheet * 1.2 + fil * 1.1) * 1.5 * vShell.w) * uBandW[3];
-                col += ramp(uBandTint[4], (hot * 1.4 + sheet * 0.4) * 1.9 * vShellX) * uBandW[4];
+                col += ramp(uBandTint[4], (hot * 1.4 + sheet * 0.3) * 1.5 * vShellX) * uBandW[4];
 
                 // The flash: a small hot core and a wide faint halo, sized in pixels because it is a point of light
                 float r = length(vPx) / max(vGlowPx, 1.0);
@@ -267,6 +267,16 @@ export function createSupernovaeLayer(engine, app) {
     mesh.renderOrder = ORDER.supernovae;
     engine.scene.add(mesh);
 
+    // The bright point is drawn by the stars layer, which is created after this one, so it's reached from update
+    let pointsDirty = true;
+    function sendPoints() {
+        const stars = engine.getLayer('stars');
+        if (!stars) return;
+        pointsDirty = false;
+        if (!stars.setSpriteFlux) return;
+        items.forEach((item) => stars.setSpriteFlux(item.body.code, item.pointShare));
+    }
+
     const offTimeline = bus.on('timeline', ({ code, t_days: tDays }) => {
         const i = byCode.get(code);
         if (i === undefined) return;
@@ -274,7 +284,7 @@ export function createSupernovaeLayer(engine, app) {
         const sn = item.body.supernova;
         const t = sn.phase0_days + tDays;
         item.pointShare = writeStage(stage, i, sn, t);
-        item.pointDirty = true;
+        pointsDirty = true;
         item.bands = supernovaBandsAt(sn, t);
         stageAttrs.forEach((attr) => { attr.needsUpdate = true; });
     });
@@ -285,14 +295,9 @@ export function createSupernovaeLayer(engine, app) {
             baker.beginFrame(frame);
             let changed = false;
             const step = frame.dt > 0 ? frame.dt / 0.5 : 1;
-            // The bright point is drawn by the stars layer, which is created after this one, so it's looked up here
-            const stars = engine.getLayer('stars');
+            if (pointsDirty) sendPoints();
             for (let i = 0; i < n; i++) {
                 const item = items[i];
-                if (item.pointDirty && stars) {
-                    item.pointDirty = false;
-                    if (stars.setSpriteFlux) stars.setSpriteFlux(item.body.code, item.pointShare);
-                }
                 if (item.job.ready && item.shown < 1) {
                     item.shown = frame.reduceMotion ? 1 : Math.min(1, item.shown + step);
                     aReady[i] = item.shown;

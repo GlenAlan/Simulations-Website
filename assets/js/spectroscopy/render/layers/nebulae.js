@@ -69,6 +69,11 @@ function cloudShape(body, palette) {
             blobs.push(new THREE.Vector4(5, 5, 5, 0.01));
         }
     }
+    // The hotter the central star, the more of the gas it ionises
+    const central = body.nebula.central_star;
+    const heat = central ? Math.max(0, Math.min(1, (central.teff_K - 10000) / 30000)) : 0.5;
+    const ionisingPower = 0.45 + 0.55 * heat;
+    const dustiness = body.nebula.dust ?? 0.5;
     const stars = [];
     const count = type === 'emission' ? rng.int(1, 3) : type === 'reflection' ? rng.int(1, 2) : 0;
     for (let i = 0; i < 4; i++) {
@@ -80,7 +85,7 @@ function cloudShape(body, palette) {
                 home.x * 0.6 + dir[0] * spread,
                 home.y * 0.6 + dir[1] * spread,
                 home.z * 0.6 + dir[2] * spread,
-                i === 0 ? rng.range(0.55, 1.0) : rng.range(0.12, 0.45)
+                i === 0 ? ionisingPower : rng.range(0.12, 0.45)
             ));
         } else {
             stars.push(new THREE.Vector4(9, 9, 9, 0));
@@ -96,17 +101,17 @@ function cloudShape(body, palette) {
     const rot = randomRotation(rng);
     const params = { blobs, stars, lanes, off, rot };
     if (type === 'emission') {
-        params.A = new THREE.Vector4(rng.range(0.16, 0.34), rng.range(-0.08, 0.12), rng.range(0.7, 1.3), 8.5);
-        params.B = new THREE.Vector4(rng.chance(0.45) ? rng.range(0.14, 0.34) : 0, (0.05 + palette.excitation * 0.12) * rng.range(0.6, 1.6), rng.range(2, 4), 0);
+        params.A = new THREE.Vector4(rng.range(0.16, 0.34), rng.range(-0.08, 0.12), 0.35 + dustiness * 1.45, 8.5);
+        params.B = new THREE.Vector4(rng.chance(0.45) ? rng.range(0.14, 0.34) : 0, (0.035 + palette.excitation * 0.09) * rng.range(0.6, 1.6), rng.range(2, 4), 0);
         params.C = new THREE.Vector4(1.5, 1.5, 1.3, rng.range(0.07, 0.13));
     } else if (type === 'reflection') {
-        params.A = new THREE.Vector4(rng.range(0.18, 0.36), rng.range(-0.02, 0.14), rng.range(0.25, 0.5), 2.0);
+        params.A = new THREE.Vector4(rng.range(0.18, 0.36), rng.range(-0.02, 0.14), dustiness * 0.75, 2.0);
         params.B = new THREE.Vector4(0, 1, rng.range(0.8, 1.6), 1);
         params.C = new THREE.Vector4(1.6, 1.6, 1.1, 0.1);
     } else {
-        params.A = new THREE.Vector4(rng.range(0.2, 0.38), rng.range(0.0, 0.14), rng.range(1.2, 1.8), 8.0);
+        params.A = new THREE.Vector4(rng.range(0.2, 0.38), rng.range(0.0, 0.14), 0.3 + dustiness * 1.3, 8.0);
         params.B = new THREE.Vector4(0, 1, 0, 2);
-        params.C = new THREE.Vector4(1.0, 1.0, 1.0, 0.12);
+        params.C = new THREE.Vector4(1.0, 1.0, 0.22, 0.12);
     }
     return { program: 'cloud', params };
 }
@@ -124,7 +129,7 @@ function planetaryShape(body, palette) {
         rot,
         off: new THREE.Vector3(rng.next(), rng.next(), rng.next()),
         P: new THREE.Vector4(shape, size, rng.range(0.45, 0.95), rng.range(0.78, 1.0)),
-        C: new THREE.Vector4(1.7, 1.7, 1.6, Math.min(0.5, 0.1 * palette.excitation))
+        C: new THREE.Vector4(1.7, 1.7, 0.8 + (body.nebula.dust ?? 0.1) * 6, Math.min(0.5, 0.1 * palette.excitation))
     };
     return { program: 'planetary', params };
 }
@@ -192,11 +197,12 @@ function embeddedStars(body, shape, frame, half, rect, out) {
     }
     const lit = shape.params.stars.filter((s) => s.w > 0);
     lit.forEach((s, i) => {
-        add(s.x, s.y, s.z, type === 'reflection' ? rng.range(12000, 22000) : rng.range(26000, 42000),
+        const known = i === 0 && body.nebula.central_star;
+        add(s.x, s.y, s.z, known ? known.teff_K : type === 'reflection' ? rng.range(12000, 22000) : rng.range(26000, 42000),
             i === 0 ? 3.6 : 2.8, i === 0 ? 1.5 : 1.0, 0.45, 9.0, 1.5, 22, 90);
     });
-    const r2 = (type === 'emission' ? 0.72 : 0.6) ** 2;
-    const young = type === 'emission' ? rng.int(26, 48) : type === 'reflection' ? rng.int(6, 12) : rng.int(5, 12);
+    const r2 = (body.nebula.star_forming ? 0.72 : 0.6) ** 2;
+    const young = body.nebula.star_forming ? rng.int(26, 48) : type === 'reflection' ? rng.int(6, 12) : rng.int(5, 12);
     for (let i = 0; i < young; i++) {
         let x;
         let y;
@@ -362,7 +368,9 @@ export function createNebulaeLayer(engine, app) {
                 float dust = t.b * t.b;
                 float opacity = t.a;
 
-                vec3 col = (vColA * hyd + vColB * oxy) * 1.35 * vStrength.z * uBandW[2];
+                // Where oxygen dominates the eye sees teal, not teal plus the red of whatever lies in front of it
+                float hydSeen = hyd * mix(1.0, 0.3, smoothstep(0.06, 0.42, oxy));
+                vec3 col = (vColA * hydSeen + vColB * oxy) * 1.35 * vStrength.z * uBandW[2];
 
                 // Radio and X-rays come from broad, smooth gas: a blurred version of the same channels
                 float blendOthers = uBandW[0] + uBandW[4];
