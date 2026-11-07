@@ -153,11 +153,17 @@ export function createOverlaysLayer(engine, app) {
         ctx.fillText(text, x, y);
     }
 
+    // How much of the dome is on show: more than the field of view says, as it's as far back as anything can be
+    function domeFov(fov) {
+        return fov / parallaxFactor(1, fov);
+    }
+
     function drawGrid(frame, view, inset) {
-        const step = gridStep(view.fov);
+        const fov = domeFov(view.fov);
+        const step = gridStep(fov);
         const azStep = step * (view.alt > 65 ? 2 : 1);
         const digits = stepDigits(step);
-        const reach = Math.min(180, Math.hypot(view.fov, view.fov * (frame.width / frame.height)) * 0.62);
+        const reach = Math.min(180, Math.hypot(fov, fov * (frame.width / frame.height)) * 0.62);
         const lineStyle = 'rgba(170, 200, 255, 0.26)';
         const textStyle = 'rgba(205, 222, 255, 0.92)';
         ctx.lineWidth = 1;
@@ -219,7 +225,8 @@ export function createOverlaysLayer(engine, app) {
         // Sample only the stretch near the view, so the lines stay smooth when zoomed far in
         const c = azAltToVec3(view.az, view.alt);
         const centreLon = Math.atan2(c[0] * v[0] + c[1] * v[1] + c[2] * v[2], c[0] * u[0] + c[1] * u[1] + c[2] * u[2]) / RAD;
-        const span = Math.min(180, Math.hypot(view.fov, view.fov * (frame.width / frame.height)) * 0.9 + BAND_EDGE_DEG);
+        const fov = domeFov(view.fov);
+        const span = Math.min(180, Math.hypot(fov, fov * (frame.width / frame.height)) * 0.9 + BAND_EDGE_DEG);
 
         const lineFor = (latDeg) => {
             const points = [];
@@ -257,7 +264,8 @@ export function createOverlaysLayer(engine, app) {
     // because the order is fixed the same ones survive from frame to frame as the view pans.
     function drawObjectMarks(frame, view, inset, showLabels, showShift) {
         const forward = azAltToVec3(view.az, view.alt);
-        const halfDiagonal = Math.min(89, Math.atan(Math.tan(view.fov * RAD / 2) * Math.hypot(1, frame.width / frame.height)) / RAD + 1);
+        // Wide enough for the furthest things, which are drawn nearer the middle than the camera has them
+        const halfDiagonal = Math.min(89, Math.atan(Math.tan(view.fov * RAD / 2) / parallaxFactor(1, view.fov) * Math.hypot(1, frame.width / frame.height)) / RAD + 1);
         const cosLimit = Math.cos(halfDiagonal * RAD);
         const budget = Math.max(5, Math.round((frame.width * frame.height) / AREA_PER_LABEL));
         const placed = [];

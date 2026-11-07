@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { limitingMag } from '../../core/sky.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
 import { bandMagnitudes } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
@@ -145,6 +145,7 @@ export function createGalaxiesLayer(engine, app) {
         const basis = tangentBasis(body.sky.az, body.sky.alt);
         const halfDeg = (body.galaxy.size_deg * IMAGE_R) / 2;
         const mags = bandMagnitudes(body);
+        const light = depthLight(body);
         const { u, v } = quadAxes(basis, body.galaxy.position_angle_deg, worldHalfSize(body.galaxy.size_deg * IMAGE_R));
         return {
             body,
@@ -159,8 +160,9 @@ export function createGalaxiesLayer(engine, app) {
             mags,
             magA: [mags.radio, mags.ir, mags.visible, mags.uv],
             magB: mags.xray,
-            bandA: [body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv],
-            bandB: body.bands.xray,
+            light,
+            bandA: [body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light],
+            bandB: body.bands.xray * light,
             recipe: galaxyRecipe(body),
             tileX: (i % cols) * TILE,
             tileY: Math.floor(i / cols) * TILE,
@@ -217,12 +219,12 @@ export function createGalaxiesLayer(engine, app) {
         const lobed = !!body.galaxy.radio_lobes;
         nucleusPositions.set(g.centre, i * 3);
         nucleusBandA.set([
-            lobed ? body.bands.radio : 0,
-            (g.recipe.starburst ? 0.5 : 0.15) * body.bands.ir,
-            body.bands.visible,
-            active ? 0.6 * body.bands.uv : 0
+            lobed ? body.bands.radio * g.light : 0,
+            (g.recipe.starburst ? 0.5 : 0.15) * body.bands.ir * g.light,
+            body.bands.visible * g.light,
+            active ? 0.6 * body.bands.uv * g.light : 0
         ], i * 4);
-        nucleusBandB[i] = active ? Math.max(0.5, body.bands.xray) : 0;
+        nucleusBandB[i] = active ? Math.max(0.5, body.bands.xray) * g.light : 0;
         nucleusMag[i] = g.mag;
         nucleusColour.set(g.recipe.kind === 2 ? [0.75, 0.85, 1] : [1, 0.82, 0.58], i * 3);
     });
@@ -282,7 +284,7 @@ export function createGalaxiesLayer(engine, app) {
         // The jets leave along the galaxy's spin axis, more or less: square to the disc as we see it
         positionAngleDeg: g.body.galaxy.position_angle_deg + 90 + (g.recipe.off[0] - 45) * 0.3,
         spanDeg: g.body.galaxy.size_deg * (2.2 + (g.recipe.off[1] / 90) * 1.6),
-        strength: Math.max(0.35, g.body.bands.radio),
+        strength: Math.max(0.35, g.body.bands.radio) * g.light,
         seed: g.body.visual_seed,
         depth: g.body.depth
     }));
@@ -381,10 +383,11 @@ export function createGalaxiesLayer(engine, app) {
             for (let i = 0; i < n; i++) {
                 const g = galaxies[i];
                 if (!g.baked || (g.hero && g.hero.wanted)) continue;
-                const px = g.halfDeg * 2 * pxPerDeg * parallaxFactor(g.body.depth, frame.fov);
+                const parallax = parallaxFactor(g.body.depth, frame.fov);
+                const px = g.halfDeg * 2 * pxPerDeg * parallax;
                 if (px <= bestPx) continue;
                 const off = Math.acos(Math.max(-1, Math.min(1, angularDot(g)))) / RAD;
-                if (off > halfView + g.halfDeg) continue;
+                if ((off - g.halfDeg) * parallax > halfView) continue;
                 best = g;
                 bestPx = px;
             }

@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { azAltToVec3 } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, zonePalette } from './nebula_bake.js';
 
@@ -188,7 +188,8 @@ function embeddedStars(body, shape, frame, half, rect, out) {
             fade: [fadeLo, fadeHi, half],
             cell: [rect[0] + (x * 0.5 + 0.5) * rect[2], rect[1] + (y * 0.5 + 0.5) * rect[3]],
             strength: body.bands,
-            depth: body.depth
+            depth: body.depth,
+            light: depthLight(body)
         });
     };
     if (type === 'planetary') {
@@ -265,8 +266,9 @@ export function createNebulaeLayer(engine, app) {
         aRect.set(job.rect, i * 4);
         aColA.set(colours.a, i * 3);
         aColB.set(colours.b, i * 3);
-        aBandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
-        aBandB[i] = body.bands.xray;
+        const light = depthLight(body);
+        aBandA.set([body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light], i * 4);
+        aBandB[i] = body.bands.xray * light;
         aDepth[i] = body.depth;
         items.push({ body, job, frame, tanHalf, shown: 0 });
         embeddedStars(body, shape, frame, tanHalf, job.rect, starList);
@@ -428,7 +430,7 @@ export function createNebulaeLayer(engine, app) {
         sFade.set(s.fade, i * 3);
         sCell.set(s.cell, i * 2);
         // A nebula with no strength in a band keeps its stars out of it too
-        sStrength.set([s.strength.ir, s.strength.visible, s.strength.uv, s.strength.xray], i * 4);
+        sStrength.set([s.strength.ir * s.light, s.strength.visible * s.light, s.strength.uv * s.light, s.strength.xray * s.light], i * 4);
     });
     const starGeometry = new THREE.BufferGeometry();
     starGeometry.setAttribute('position', new THREE.BufferAttribute(sPos, 3));

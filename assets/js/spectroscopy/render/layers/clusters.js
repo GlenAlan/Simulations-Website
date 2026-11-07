@@ -8,7 +8,7 @@ import { bus } from '../../core/state.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB, planck, SIGMA } from '../../core/phys.js';
 import { limitingMag } from '../../core/sky.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, depthLight, parallaxFactor } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, memberDirection, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 
@@ -129,13 +129,14 @@ export function createClustersLayer(engine, app) {
             const visible = Math.max(0.1, 10 ** (-0.4 * 0.3 * (member.brightness.mag - brightest)));
             const isXray = c.xray.has(member.code);
             const youngCorona = !c.globular && T < 6500 && body.cluster.age_Myr < 150;
+            const light = depthLight(body);
             bandA.set([
-                body.bands.radio * 0.2,
-                squeeze(L * shares.ir, REF_IR) * body.bands.ir,
-                visible * body.bands.visible,
-                squeeze(L * shares.uv, REF_UV) * body.bands.uv
+                body.bands.radio * 0.2 * light,
+                squeeze(L * shares.ir, REF_IR) * body.bands.ir * light,
+                visible * body.bands.visible * light,
+                squeeze(L * shares.uv, REF_UV) * body.bands.uv * light
             ], w * 4);
-            bandB[w] = isXray ? Math.max(0.5, body.bands.xray) : (youngCorona ? 0.25 : 0.03) * body.bands.xray;
+            bandB[w] = (isXray ? Math.max(0.5, body.bands.xray) : (youngCorona ? 0.25 : 0.03) * body.bands.xray) * light;
             clusterInfo.set([drawMag(body), areaPerMember], w * 2);
             memberDepth[w] = body.depth;
             w++;
@@ -333,8 +334,9 @@ export function createClustersLayer(engine, app) {
         // Globulars lean golden whatever their few members add up to: their unresolved stars are old
         const golden = c.globular ? [1, 0.74, 0.42] : [mean[0] / peak, mean[1] / peak, mean[2] / peak];
         glowData.aColour.set(golden, i * 3);
-        glowData.aBandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
-        glowData.aBandB[i] = body.bands.xray;
+        const light = depthLight(body);
+        glowData.aBandA.set([body.bands.radio * light, body.bands.ir * light, body.bands.visible * light, body.bands.uv * light], i * 4);
+        glowData.aBandB[i] = body.bands.xray * light;
         glowData.aKind.set([c.globular ? 1 : 0, drawMag(body)], i * 2);
         glowData.aDepth[i] = body.depth;
         if (c.hazeIndex >= 0) {
@@ -589,7 +591,7 @@ export function createClustersLayer(engine, app) {
                 }
                 const dot = c.unit[0] * forward.x + c.unit[1] * forward.y + c.unit[2] * forward.z;
                 const off = Math.acos(Math.max(-1, Math.min(1, dot))) / RAD;
-                if (off * parallaxFactor(c.body.depth, frame.fov) > halfView + c.body.cluster.radius_deg) {
+                if ((off - c.body.cluster.radius_deg) * parallaxFactor(c.body.depth, frame.fov) > halfView) {
                     if (c.decor) c.decor.points.visible = false;
                     continue;
                 }

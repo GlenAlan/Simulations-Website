@@ -12,7 +12,7 @@ import { bus } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
-import { parallaxFactor } from '../../core/depth.js';
+import { depthLight, parallaxFactor } from '../../core/depth.js';
 import { supernovaBandsAt } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, lineRGB } from './nebula_bake.js';
@@ -39,9 +39,11 @@ function writeStage(a, i, sn, t) {
     const bands = supernovaBandsAt(sn, t);
     const inShell = smooth(20, 130, t);
     const inFlash = 1 - inShell;
-    a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * inShell, bands.visible * inFlash], i * 4);
+    // The point's light goes by its magnitude. The shell's is an extended object's: see core/depth.js
+    const shell = inShell * a.shellLight[i];
+    a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * shell, bands.visible * inFlash], i * 4);
     a.flash.set([bands.radio * inFlash, bands.ir * inFlash, bands.uv * inFlash, bands.xray * inFlash], i * 4);
-    a.shell.set([bands.radio * inShell, bands.ir * inShell, bands.uv * inShell, bands.xray * inShell], i * 4);
+    a.shell.set([bands.radio * shell, bands.ir * shell, bands.uv * shell, bands.xray * shell], i * 4);
     // Colour of the flash: a cooling black body. Type II starts hotter and ends redder, on its hydrogen plateau
     const hot = isIa ? 11500 : 19000;
     const cool = isIa ? 5600 : 4400;
@@ -72,7 +74,7 @@ export function createSupernovaeLayer(engine, app) {
     const aPack = f(3); // Half-size, job id, peak magnitude: packed, as WebGL allows only 16 attributes
     const aReady = f(1);
     const aDepth = f(1);
-    const stage = { shape: f(4), flash: f(4), shell: f(4), flashCol: f(3), sheetCol: f(3), lateSheet: [] };
+    const stage = { shape: f(4), flash: f(4), shell: f(4), flashCol: f(3), sheetCol: f(3), lateSheet: [], shellLight: bodies.map(depthLight) };
 
     const items = [];
     const byCode = new Map();

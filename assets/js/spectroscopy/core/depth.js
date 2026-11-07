@@ -4,6 +4,8 @@
 // behind everything). Depth only ever pushes things further away. It works three ways, all render-only:
 //   1. Static size: assignDepths shrinks the size fields once (see DEPTH_TABLE), so layers, picking and framing all agree.
 //   2. Faintness: body.depth_dim_mag. drawMag(body) is what to draw with. body.brightness stays true for the spectrum tools.
+//      The extended layers reveal things softly, so that alone wouldn't dim a bright one: they also multiply their light
+//      by depthLight(body).
 //   3. Zoom: parallaxFactor(depth, fov), or P. Below a field of view of 80 degrees further things zoom more slowly, because
 //      they are drawn P times as far from the centre of the view. So P = 1 at the centre, and the sky keeps moving apart.
 //
@@ -22,6 +24,7 @@
 
 export const ETA = 0.1;
 const FULL_FOV = 80;        // At this field of view and wider, P = 1 at every depth
+const LIGHT_SHARE = 0.5;    // How much of its depth_dim_mag an extended object also loses at every zoom
 
 // near and far: the depth of the nearest and furthest of a kind, by real distance. kSize: how much the furthest shrinks.
 // kDim: how many magnitudes fainter the furthest is. A kind with neither already dims with real distance in its magnitude.
@@ -53,6 +56,11 @@ export function parallaxFactor(depth, fov) {
 // The magnitude to draw with. Works on a body, or on anything inside one that assignDepths reached (a cluster member).
 export function drawMag(entity) {
     return entity.brightness.mag + (entity.depth_dim_mag || 0);
+}
+
+// What an extended object's own light is multiplied by for being far away: 1 at depth 0
+export function depthLight(entity) {
+    return 10 ** (-0.4 * LIGHT_SHARE * (entity.depth_dim_mag || 0));
 }
 
 // Nearest first. A row of one sits at its kind's near end. Ties go by code, so the order never depends on the list's.

@@ -793,7 +793,7 @@ export function createEngine(canvas) {
         const held = now - anchorHeld.at < ANCHOR_HOLD_MS && Math.hypot(px - anchorHeld.x, py - anchorHeld.y) < ANCHOR_HOLD_PX;
         anchorHeld.at = now;
         if (held) return anchorHeld.depth;
-        const code = pick(px, py);
+        const code = pick(px, py, 12);
         const found = code ? app.universe.resolve(code) : null;
         anchorHeld.x = px;
         anchorHeld.y = py;
