@@ -1,5 +1,6 @@
 // A cluster's turn-off, placed by the student. Plotting a cluster puts nothing where the answer is: the turn-off waits low on the
-// main sequence, and the student drags it up to where the stars leave the main sequence and bend away towards the giants. The
+// main sequence, and the student drags it up to the top of the main sequence: where its stars bend away towards the giants, or,
+// in a cluster too young for any to have left yet, its brightest star. The
 // age then follows from where they put it, worked out in steps. Nothing says whether it is right; the catalogue age is the check.
 //
 // ui/hr.js keeps the cluster's state and its draggable handle, and calls these:
@@ -23,14 +24,14 @@ export function newTurnOff() {
 export function turnOffWords(cluster, age, ageText, errorPercent) {
     const notes = [
         'A star about to leave the main sequence is roughly twice as bright as when it formed, hence L ÷ 2. The cluster is about as old as the lifetime of these stars.',
-        `Read the age as ± ${errorPercent}%. These are rough rules: with the line at the bend, this sky's clusters come out between about 0.8 and 1.4 times their catalogue age.`,
+        `Read the age as ± ${errorPercent}%. These are rough rules: with the line at the top of the main sequence, this sky's clusters come out between about 0.8 and 1.4 times their catalogue age.`,
         cluster.type === 'globular'
             ? 'Globular clusters have lost their hot, bright stars, so the main sequence stops low down and red giants stand out.'
             : 'Open clusters are usually young enough to keep hot, bright stars high on the main sequence.',
         'Luminosities come from each star\'s brightness and the cluster\'s distance. Temperatures are catalogue values with a little noise, as nobody measures every star by hand.'
     ];
     if (!cluster.placed) {
-        return { age: '', status: 'Drag the turn-off up the main sequence to where its stars bend away.', working: null, notes };
+        return { age: '', status: 'Drag the turn-off up to the top of the main sequence: where its stars bend away, or its brightest star if none have.', working: null, notes };
     }
     const L = 10 ** cluster.turnOffLogL;
     return {
@@ -58,7 +59,7 @@ export function drawTurnOff(ctx, rect, sx, sy, theme, cluster) {
     ctx.lineTo(rect.x + rect.w, y);
     ctx.stroke();
     ctx.restore();
-    haloText(ctx, cluster.placed ? 'Turn-off' : 'Turn-off: drag up to the bend', rect.x + 6, y - 9, theme, { font: fontOf(theme, 12, 600) });
+    haloText(ctx, cluster.placed ? 'Turn-off' : 'Turn-off: drag up to the top', rect.x + 6, y - 9, theme, { font: fontOf(theme, 12, 600) });
 }
 
 export function turnOffGrip(rect, sx, sy, cluster, msTemperature) {
@@ -69,5 +70,5 @@ export function turnOffGrip(rect, sx, sy, cluster, msTemperature) {
 export function turnOffValueText(cluster, age, ageText) {
     return cluster.placed
         ? `${sig(10 ** cluster.turnOffLogL, 2)} solar luminosities, age estimate ${ageText(age.ageGyr)}`
-        : 'Not placed yet. Move it up to where the main sequence bends.';
+        : 'Not placed yet. Move it up to the top of the main sequence.';
 }

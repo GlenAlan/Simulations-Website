@@ -4633,6 +4633,30 @@ details.description-area > summary::after {
 /* === end UNIVERSE === */
 
 
+/* === TOOLFIX: Spin's pressure lines set apart from its thin ones === */
+.spectro-hands-chipgroup {
+    flex: 0 0 auto;
+    align-self: center;
+    margin-left: 0.4em;
+    font-size: 0.8em;
+    color: var(--color-text);
+}
+
+/* Wien's keyboard marker is for screen readers only: kept to its one pixel, so it can't widen the tool area into a sideways scroll */
+.spectro-spectrum .spectro-hands-pane input[type="range"].spectro-sr-only {
+    width: 1px;
+    min-width: 0;
+    height: 1px;
+    min-height: 0;
+}
+
+/* The speed menu in the plot's header: room for its arrow, so it doesn't sit on the last letters */
+.spectro-pinned .spectro-playback select {
+    padding-right: 26px;
+}
+/* === end TOOLFIX === */
+
+
 /* === PANELFIX: the room in the drawer at every window size, and the Layers menu at laptop heights === */
 /* A docked drawer runs the height of the column beside it, the sky and the About bar under it, so every tab has that room
    as well. Its own content never sets its height, so it is the same on every tab, and it never runs past the screen. On a

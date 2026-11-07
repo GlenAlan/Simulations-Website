@@ -349,8 +349,10 @@ function findLine(spectrum, nearNm, opts = {}) {
     if (!wl || wl.length < 8 || nearNm < wl[0] || nearNm > wl[wl.length - 1]) return null;
     const step = Math.log(wl[1] / wl[0]);
     const i0 = Math.min(wl.length - 1, lowerBound(wl, nearNm));
-    const searchPx = Math.max(2, Math.round((opts.searchNm ?? 0) / (nearNm * step)));
-    let half = Math.max(LINE_WINDOW_PX, searchPx * 3);
+    // A search wider than the largest window, as for a black hole's companion swinging by 800 km/s at high resolution, is looked
+    // through in the largest window there is, rather than not at all
+    const searchPx = Math.min(Math.floor(LINE_WINDOW_MAX_PX / 2), Math.max(2, Math.round((opts.searchNm ?? 0) / (nearNm * step))));
+    let half = Math.min(LINE_WINDOW_MAX_PX, Math.max(LINE_WINDOW_PX, searchPx * 3));
 
     while (half <= LINE_WINDOW_MAX_PX) {
         const a = Math.max(0, i0 - half);
@@ -877,7 +879,8 @@ export function suggestTrackingLines(spectra, count = 5) {
         return { least, most, line };
     });
     combined.sort((a, b) => b.least - a.least || b.most - a.most);
-    return combined.slice(0, count).map(({ line }) => ({ rest_nm: line.rest_nm, label: line.label, species: line.species }));
+    // A line no star scores above nothing at, as in a star too faint to show any, isn't offered
+    return combined.filter((c) => c.line).slice(0, count).map(({ line }) => ({ rest_nm: line.rest_nm, label: line.label, species: line.species }));
 }
 
 // ---------- Doppler ----------

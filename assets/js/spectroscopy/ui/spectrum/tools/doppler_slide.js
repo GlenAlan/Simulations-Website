@@ -24,7 +24,8 @@ import { drawGrip, handTheme, HAND_DASH, holdToRepeat, plotGrab, reachOf } from 
 // ---------- Words for a shift ----------
 
 export function direction(z) {
-    return z >= 0 ? '→ moving away' : '← moving towards us';
+    if (z === 0) return 'neither towards nor away';
+    return z > 0 ? '→ moving away' : '← moving towards us';
 }
 
 // z and v with an uncertainty rounded together: enough digits to show it, no more
@@ -36,7 +37,7 @@ export function zText(z, err) {
 export function velocityText(v, err) {
     const digits = err < 1 ? 1 : 0;
     const shown = err < 1 ? err.toFixed(1) : withCommas(Math.max(1, err));
-    const value = digits ? signed(v, 1) : `${v < 0 ? '−' : '+'}${withCommas(Math.abs(v))}`;
+    const value = v === 0 ? '0' : digits ? signed(v, 1) : `${v < 0 ? '−' : '+'}${withCommas(Math.abs(v))}`;
     return `${value} ± ${shown} km/s`;
 }
 
@@ -131,14 +132,17 @@ export function bestLineFor(overview, { broad = false } = {}) {
         }
         return top > 0 && n ? sum / n / top : 0;
     };
-    let best = null;
-    let bestScore = 0;
+    // A line lost in this object's noise, as a faint galaxy's Hα can be, is a poor line to line up, however strong it is in
+    // theory: any line that can be seen comes first. A faint red dwarf's Na D, lost among its bands here, still shows when zoomed.
+    const best = [null, null];
+    const bestScore = [0, 0];
     lines.forEach((line) => {
         if (line.band || !(Math.abs(line.depth ?? 0) >= BEST_MIN_DEPTH)) return;
         if (!KNOWN_LINES.some((w) => Math.abs(w - line.rest_nm) < 0.05)) return;
         const obs = line.obs_nm ?? line.rest_nm;
         if (obs < SPECTRUM_LO_NM * 1.05 || obs > SPECTRUM_HI_NM * 0.95) return;
         const found = lineCentre(overview, obs, { searchNm: obs * 0.002, type: line.type === 'em' ? 'em' : 'abs' });
+        const seen = !!found && Math.abs(found.centre_nm - obs) <= Math.max(found.fwhm_nm, obs * 1e-3) ? 0 : 1;
         // A quasar's bright lines are all broad, whatever a noisy top seems to measure
         const fwhm = Math.max(found ? found.fwhm_nm : obs / 5000, broad ? obs * QUASAR_LINE_WIDTH : 0);
         const blended = blendAllowance(lines, line.rest_nm, fwhm, obs / line.rest_nm - 1) > 0;
@@ -146,12 +150,12 @@ export function bestLineFor(overview, { broad = false } = {}) {
         const sharp = 1 / (1 + (fwhm / obs) * C_KMS / SHARP_KMS);
         const light = Math.sqrt(Math.max(0.0025, lightAt(obs)));
         const score = Math.sqrt(Math.min(1, Math.abs(line.depth))) * (blended ? 0.35 : 1) * visible * sharp * light;
-        if (score > bestScore) {
-            bestScore = score;
-            best = { rest: line.rest_nm, obs, rel: 1, label: line.label || `${line.species} ${line.rest_nm.toFixed(1)}`, fwhm };
+        if (score > bestScore[seen]) {
+            bestScore[seen] = score;
+            best[seen] = { rest: line.rest_nm, obs, rel: 1, label: line.label || `${line.species} ${line.rest_nm.toFixed(1)}`, fwhm };
         }
     });
-    return best;
+    return best[0] || best[1];
 }
 
 // A lamp's lines, strongest first. A thin lamp's brightness goes as s cubed; the faintest are left out, as they'd only clutter.
@@ -220,6 +224,9 @@ export function createSlide(container, api, { says, single = false }) {
     let settleTimer = 0;
     let framedQuasar = null;
     let framedBest = null;      // The object whose best line was last framed
+    let framedSlide = null;     // The object whose lines were last zoomed to, by the slide
+    // The student has taken hold of the lines on this object: a line left where it started, on a star at rest, is a reading too
+    let handled = false;
 
     // ---------- Building it ----------
 
@@ -248,7 +255,12 @@ export function createSlide(container, api, { says, single = false }) {
 
     function setZ(z, { from = 'drag' } = {}) {
         const next = scale.clamp(z);
-        if (next === zNow()) return;
+        handled = true;
+        if (next === zNow()) {
+            render();
+            settleSoon();
+            return;
+        }
         api.picker.setShiftZ(next);
         if (from !== 'slider') slider.value = String(scale.pos(next));
         width = null;
@@ -287,7 +299,7 @@ export function createSlide(container, api, { says, single = false }) {
     function reading() {
         const line = mainLine();
         const z = zNow();
-        if (!line || !z) return null;
+        if (!line || (!z && !handled)) return null;
         const obs = line.rest * (1 + z);
         const spectrum = api.getSpectrum();
         const R = spectrum ? resolvingPower(spectrum) : 5000;
@@ -313,7 +325,10 @@ export function createSlide(container, api, { says, single = false }) {
             width = { obs, nm, blend: blendAllowance(overview && overview.lines, line.rest, nm, z) };
             render();
             const r = reading();
+            // Said every time the lines come to rest, so what is heard is never an older reading than what is shown. With no
+            // reading, an old one is taken back, and anything else said (such as where the plot zoomed to) is left to be heard.
             if (r) says.textContent = `${answerText(r)}, ${direction(r.z).replace(/^[←→]\s*/, '')}`;
+            else if (/^[vz] = /.test(says.textContent)) says.textContent = 'Not moved yet';
         }, 160);
     }
 
@@ -419,15 +434,16 @@ export function createSlide(container, api, { says, single = false }) {
         width = null;
     }
 
-    function zoomTo(t) {
+    function zoomTo(t, { animate = true } = {}) {
         useLamp(t);
         renderTargets();
+        framedSlide = api.resolved ? api.resolved.entity.code : null;
         const f = 1 + zNow();
         const preset = t.preset && WAVELENGTH_PRESETS.find((p) => p.id === t.preset);
         const centre = t.at.reduce((a, b) => a + b, 0) / t.at.length;
         const lo = preset ? preset.lo : centre * (1 - ZOOM_HALF);
         const hi = preset ? preset.hi : centre * (1 + ZOOM_HALF);
-        plot.setRange(Math.max(SPECTRUM_LO_NM, lo * f), Math.min(SPECTRUM_HI_NM, hi * f), { animate: true });
+        plot.setRange(Math.max(SPECTRUM_LO_NM, lo * f), Math.min(SPECTRUM_HI_NM, hi * f), { animate: animate && !reduceMotion() });
         render();
         settleSoon();
         says.textContent = `${lampName(t.lamp)} lines, zoomed to ${t.label}`;
@@ -567,6 +583,7 @@ export function createSlide(container, api, { says, single = false }) {
         hit,
         start(line, x) {
             grabbed = line;
+            handled = true;
             drag = { line, offset: x - plot.xOf(line.rest * (1 + zNow())) };
             plot.redraw();
         },
@@ -578,6 +595,7 @@ export function createSlide(container, api, { says, single = false }) {
         },
         end() {
             drag = null;
+            render();
             settleSoon();
             plot.redraw();
         }
@@ -610,6 +628,9 @@ export function createSlide(container, api, { says, single = false }) {
                 // A quasar's lines are spread across the whole range, and the whole pattern slides
                 framedQuasar = api.resolved.entity.code;
                 plot.setRange(SPECTRUM_LO_NM, SPECTRUM_HI_NM, { animate: !reduceMotion() });
+            } else if (api.resolved && api.resolved.entity.kind !== 'quasar' && target && framedSlide !== api.resolved.entity.code) {
+                // On a new object, its own first line set, zoomed to, so the dashed lines are in view from the start
+                zoomTo(target);
             }
             useKey = '';
             render();
@@ -626,6 +647,7 @@ export function createSlide(container, api, { says, single = false }) {
             slider.max = String(scale.positions);
             slider.value = String(scale.pos(zNow()));
             useKey = '';
+            handled = false;
             if (single) {
                 const best = bestLineFor(api.getOverview(), { broad: resolved.entity.kind === 'quasar' });
                 lines = best ? [best] : [];
@@ -648,9 +670,14 @@ export function createSlide(container, api, { says, single = false }) {
             hint.textContent = (api.getOverview() || {}).mode === 'emission' ? 'Drag the dashed lines onto the bright lines.' : 'Drag the dashed lines onto the dips.';
             renderTargets();
             if (active) {
-                if (resolved.entity.kind === 'quasar' && framedQuasar !== resolved.entity.code) {
-                    framedQuasar = resolved.entity.code;
-                    plot.setRange(SPECTRUM_LO_NM, SPECTRUM_HI_NM);
+                if (resolved.entity.kind === 'quasar') {
+                    if (framedQuasar !== resolved.entity.code) {
+                        framedQuasar = resolved.entity.code;
+                        plot.setRange(SPECTRUM_LO_NM, SPECTRUM_HI_NM);
+                    }
+                } else if (framedSlide !== resolved.entity.code) {
+                    // A new object: the view goes to its own first line set, as it does when the tool opens
+                    zoomTo(t, { animate: false });
                 }
                 render();
                 settleSoon();

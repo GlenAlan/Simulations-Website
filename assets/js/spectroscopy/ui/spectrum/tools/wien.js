@@ -1,18 +1,18 @@
 // How hot? The student works the temperature out from the spectrum, three ways, one at a time:
 //   Fit a curve     lay a black-body curve over the spectrum and drag it, or its slider, until the shapes match
 //   Standard stars  lay standard stars over it in turn, and find the one with the same dips
-//   Wien's law      mark the top of the curve; the mark snaps to the peak and T = b / lambda max follows, with its working
+//   Wien's law      mark the top of the curve; lambda max is read where the mark is, T = b / lambda max follows with its working,
+//                   and the curve that peaks there is drawn over the light, so a mark off the top shows as a curve that doesn't fit
 // Each reading is what the student set or marked, and nothing says whether it is right. "Use this temperature" sends it on
 // to the H-R diagram, saying where it came from. Light of more than one star is a blend, and says so.
 
 import { registerTool } from './index.js';
-import { app } from '../../../core/state.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { C_KMS, WIEN_B, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
 import { plusMinus, sci, sig, withCommas } from '../../../core/format.js';
 import { STANDARDS, STANDARD_LABELS } from '../../../data/standards.js';
 import { wienPeak, wienCurveAt } from '../../../spectra/measure.js';
-import { topEdge, curveScale, curveAt, fitError, markOnPeak } from '../../../spectra/hand_fit.js';
+import { topEdge, curveScale, curveAt, fitError, markOnPeak, markReading } from '../../../spectra/hand_fit.js';
 import { el } from '../../plot2d.js';
 import { actionRow, diagramLink, fill, hasTab, para, plotLabel, resultLine, statusBox, steps, toolLink } from './common.js';
 import { borrowReference, drawGrip, handTheme, HAND_DASH, modeRow, plotGrab, reachOf } from './hands_on.js';
@@ -93,13 +93,12 @@ function partCount(api) {
 function mount(container, api) {
     const { plot } = api;
     const reference = borrowReference(api);
-    const reduceMotion = () => !!(app.settings && app.settings.reduceMotion);
     const opened = plot.getRange();
     let openedCode = null;
 
     let mode = null;
     let edge = null;          // The top of the spectrum, for laying the curve on
-    let peak = null;          // wienPeak's answer, kept out of sight until the student marks the peak
+    let peak = null;          // wienPeak's answer: only whether there is a peak in range, and which way the light still rises
     let blend = 1;            // How many stars' light this is
     let pending = 0;
     const offs = [];
@@ -298,9 +297,10 @@ function mount(container, api) {
 
     const PARKED = 0.78;      // Where the marker waits, as a share of the width: the same for every star
     let markNm = null;        // Null while parked
-    let marked = null;        // { on: true } once on the peak, { on: false, rising } off it, { off: 'short'|'long' } for no peak in range
+    // Once marked: { reading (markReading's, at the mark), on (inside the flat top), rising (which way the light still climbs
+    // when not) }, or { off: 'short'|'long' } for no peak in range
+    let marked = null;
     let markDrag = false;
-    let glide = 0;
     let markerFocused = false;
 
     function markerNm() {
@@ -345,21 +345,30 @@ function mount(container, api) {
         const theme = handTheme(plot);
         const pane = plot.panes().body;
         const labelY = pane.y + plot.labelBand() + 12;
-        const onPeak = marked && marked.on;
-        if (onPeak && peak.fit) {
-            // The curve that peak belongs to, dashed, so the mark can be seen to sit at its top and not at some spike
+        const read = marked && marked.reading;
+        if (read && markNm !== null) {
             ctx.save();
             ctx.beginPath();
             ctx.rect(pane.x, pane.y, pane.w, pane.h);
             ctx.clip();
+            // How far either way the mark could as well have gone: the curve is that flat across this band
+            const x0 = plot.xOf(read.lo_nm);
+            const x1 = plot.xOf(read.hi_nm);
+            ctx.fillStyle = theme.mark;
+            ctx.globalAlpha = 0.1;
+            ctx.fillRect(Math.min(x0, x1), pane.y, Math.abs(x1 - x0), pane.h);
+            ctx.globalAlpha = 1;
+            // The black body that peaks where the mark is, through the light at the mark: it fits the spectrum only if the mark
+            // is on the top
+            const fit = { T_K: read.T_K, amp: edgeAt(read.peak_nm) / Math.max(1e-300, wienCurveAt({ T_K: read.T_K, amp: 1 }, read.peak_nm)) };
             ctx.strokeStyle = theme.mark;
-            ctx.lineWidth = 1.3;
+            ctx.lineWidth = 1.6;
             ctx.setLineDash(HAND_DASH);
             ctx.beginPath();
             const across = Math.max(24, Math.round(pane.w / 3));
             for (let i = 0; i <= across; i++) {
                 const x = pane.x + (i / across) * pane.w;
-                const y = plot.yOf(wienCurveAt(peak.fit, plot.nmOf(x)));
+                const y = plot.yOf(wienCurveAt(fit, plot.nmOf(x)));
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
@@ -380,8 +389,8 @@ function mount(container, api) {
         }
         ctx.save();
         ctx.strokeStyle = theme.mark;
-        ctx.lineWidth = onPeak ? 2 : 1.6;
-        if (!onPeak) ctx.setLineDash([3, 3]);
+        ctx.lineWidth = read ? 2 : 1.6;
+        if (!read) ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(point.x, pane.y);
         ctx.lineTo(point.x, pane.y + pane.h);
@@ -390,7 +399,7 @@ function mount(container, api) {
         drawGrip(ctx, theme, point.x, point.y, { colour: theme.mark, focused: markerFocused || markDrag });
         if (markNm === null || (marked && marked.off)) return;
         const right = point.x < pane.x + pane.w * 0.6;
-        const text = onPeak ? `λmax = ${sig(peak.peak_nm, 3)} nm` : `${sig(point.nm, 3)} nm`;
+        const text = read ? `λmax = ${sig(read.peak_nm, 3)} nm` : `${sig(point.nm, 3)} nm`;
         plotLabel(ctx, theme, text, point.x + (right ? 15 : -15), point.y, { align: right ? 'left' : 'right', within: pane });
     }
 
@@ -411,7 +420,6 @@ function mount(container, api) {
     }
 
     function moveMarker(nm) {
-        stopGlide();
         markNm = nm;
         if (marked) {
             marked = null;
@@ -421,32 +429,7 @@ function mount(container, api) {
         plot.redraw();
     }
 
-    function stopGlide() {
-        if (glide) cancelAnimationFrame(glide);
-        glide = 0;
-    }
-
-    // To the top, gliding, or in one jump with reduced motion
-    function glideTo(target) {
-        stopGlide();
-        const from = markerNm();
-        if (reduceMotion() || !(from > 0)) {
-            markNm = target;
-            plot.redraw();
-            return;
-        }
-        const started = performance.now();
-        const step = (now) => {
-            const u = Math.min(1, (now - started) / 220);
-            const e = 1 - (1 - u) ** 3;
-            markNm = Math.exp(Math.log(from) + (Math.log(target) - Math.log(from)) * e);
-            plot.redraw();
-            glide = u < 1 ? requestAnimationFrame(step) : 0;
-            if (!glide) syncMarkerInput();
-        };
-        glide = requestAnimationFrame(step);
-    }
-
+    // The reading is wherever the mark was let go: nothing moves it onto the peak
     function tryMark(nm) {
         if (!hasCurve()) return;
         markNm = nm;
@@ -454,8 +437,7 @@ function mount(container, api) {
         else if (peak.aboveRange) marked = { off: 'long' };
         else {
             const m = markOnPeak(peak, nm, slackAt(nm));
-            marked = m.on ? { on: true } : { on: false, rising: m.rising };
-            if (m.on) glideTo(peak.peak_nm);
+            marked = { reading: markReading(api.getOverview(), nm), on: m.on, rising: m.rising };
         }
         renderMark();
         plot.redraw();
@@ -514,17 +496,18 @@ function mount(container, api) {
                     ? 'The light still rises at the short end, so its peak is below 90 nm and too hot to find here. Fit a curve instead.'
                     : 'The light still rises at the long end, so its peak is beyond this range. Fit a curve instead.'),
                 actionRow(el('button', { type: 'button', class: 'spectro-tool-go', text: 'Fit a curve', onclick: () => select('fit') })));
-        } else if (!marked.on) {
-            fill(peakResult, resultLine(marked.rising < 0 ? '← The light is still higher to the left' : 'The light is still higher to the right →'));
         } else {
-            const metres = peak.peak_nm * 1e-9;
-            const answer = plusMinus(peak.T_K, peak.err_K);
+            const read = marked.reading;
+            const metres = read.peak_nm * 1e-9;
+            const answer = plusMinus(read.T_K, read.err_K);
             fill(peakResult,
                 resultLine(blend > 1 ? `Blend: T = ${answer} K` : `T = ${answer} K`, true),
+                // Where the light is plainly still climbing, a nudge: the dashed curve already shows the misfit
+                marked.on ? null : para(marked.rising < 0 ? '← The light is still higher to the left' : 'The light is still higher to the right →'),
                 steps([
-                    `λmax = ${sig(peak.peak_nm, 3)} nm = ${sci(metres, 3)} m`,
-                    `T = b ÷ λmax, with b = ${sci(WIEN_B, 4)} m·K`,
-                    `T = (${sci(WIEN_B, 4)} m·K) ÷ (${sci(metres, 3)} m) = ${withCommas(peak.T_K)} K`
+                    `λmax = ${sig(read.peak_nm, 3)} nm = ${sci(metres, 3)} m`,
+                    `T = b ÷ λmax, b = ${sci(WIEN_B, 4)} m·K`,
+                    `T = ${withCommas(read.T_K)} K`
                 ]));
         }
         renderUse();
@@ -535,7 +518,7 @@ function mount(container, api) {
     function reading() {
         if (mode === 'fit') return touched ? { T, err: fitError(T), source: 'fit' } : null;
         if (mode === 'standards') return standard ? { T: STANDARDS[standard].teff_K, err: standardError(standard), source: 'standard' } : null;
-        if (mode === 'peak') return marked && marked.on ? { T: peak.T_K, err: peak.err_K, source: 'wien' } : null;
+        if (mode === 'peak') return marked && marked.reading ? { T: Math.round(marked.reading.T_K), err: marked.reading.err_K, source: 'wien' } : null;
         return null;
     }
 
@@ -598,7 +581,6 @@ function mount(container, api) {
 
     function select(next, { frame = true } = {}) {
         if (mode === next) return;
-        stopGlide();
         if (mode) memory.views[mode] = plot.getRange();
         mode = next;
         memory.mode = next;
@@ -663,7 +645,6 @@ function mount(container, api) {
     // A click or tap on the plot, or Enter on it, marks there
     offs.push(plot.onClick((nm) => {
         if (mode !== 'peak' || !hasCurve()) return;
-        stopGlide();
         tryMark(nm);
         syncMarkerInput();
     }));
@@ -678,7 +659,6 @@ function mount(container, api) {
     }
 
     function startOver() {
-        stopGlide();
         markNm = null;
         marked = null;
         syncPeakPrompt();
@@ -717,7 +697,6 @@ function mount(container, api) {
         },
         dispose() {
             clearTimeout(pending);
-            stopGlide();
             offs.forEach((off) => off());
             removeOverlay();
             if (mode) memory.views[mode] = plot.getRange();

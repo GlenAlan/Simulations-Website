@@ -109,7 +109,9 @@ function visibleLines(spec, clean, grid, noise) {
             const i = Math.max(0, Math.min(grid.n - 1, Math.round((Math.log(line.obs_nm) - grid.lnLo) / grid.step)));
             const level = Math.max(1e-12, spec.continuum[i] > 0 ? spec.continuum[i] : clean[i]);
             if (line.type === 'em') {
-                needed = (2.5 * Math.sqrt(level * fRef)) / snr;
+                // A broad line spreads over many resolution elements, and the eye sees it through their noise taken together
+                const across = line.fwhm_kms ? Math.max(1, line.fwhm_kms / (2 * grid.dvPix)) : 1;
+                needed = (2.5 * Math.sqrt(level * fRef)) / snr / Math.sqrt(across);
             } else {
                 needed = Math.max(LINE_MIN_DEPTH, 2.5 / (snr * Math.sqrt(level / Math.max(1e-30, fRef))));
             }

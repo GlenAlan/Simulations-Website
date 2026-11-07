@@ -352,8 +352,10 @@ export function renderStars(parts, grid) {
         for (const line of model.lines) {
             const obs = line.w * part.factor;
             if (obs < grid.lo || obs > grid.hi) continue;
-            const depth = line.d * line.prof.peak * (parts.length > 1 ? share(obs) : 1);
-            lines.push({ rest_nm: line.w, obs_nm: obs, species: line.species, label: line.label, depth, depth_zoom: line.dZoom, type: 'abs', code: part.code });
+            // Diluted by the other stars' light at zoom too, so a faint companion's thin lines aren't taken for clear ones
+            const diluted = parts.length > 1 ? share(obs) : 1;
+            const depth = line.d * line.prof.peak * diluted;
+            lines.push({ rest_nm: line.w, obs_nm: obs, species: line.species, label: line.label, depth, depth_zoom: line.dZoom * diluted, type: 'abs', code: part.code });
         }
         for (const b of model.bands) {
             const obs = b.band.c * part.factor;

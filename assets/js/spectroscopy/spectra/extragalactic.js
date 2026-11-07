@@ -262,7 +262,8 @@ export function nucleusSpectrum(entity, grid, host) {
         const had = seen.get(key);
         if (had) had.depth += peak;
         else {
-            const line = { rest_nm: rest, obs_nm: obs, species, label, depth: peak, type: 'em', ...(broad ? { broad: true } : {}) };
+            // A broad line's width goes with it, as a wide, low line still shows through noise that would hide a narrow one
+            const line = { rest_nm: rest, obs_nm: obs, species, label, depth: peak, type: 'em', ...(broad ? { broad: true, fwhm_kms: n.broad_fwhm_kms } : {}) };
             seen.set(key, line);
             lines.push(line);
         }
@@ -314,6 +315,7 @@ const BROAD_WINDOW = 0.07;          // Half the window, as a share of the wavele
 const BROAD_SMOOTH_KMS = 400;
 const BROAD_SIDE = 0.15;            // The share of the window at each end taken as continuum
 const BROAD_FIND_KMS = 2500;        // How far from where it's expected its peak may be
+const BROAD_CLEAR = 20;             // Standard deviations of smoothed noise its peak should stand above, for a clean half height
 
 export const BROAD_LINE_HALF = BROAD_WINDOW;
 
@@ -347,29 +349,31 @@ export function broadLineWidth(spectrum, nearNm) {
     const cont = (x) => yl + ((yr - yl) * (x - xl)) / (xr - xl);
     // Smoothed, over a fixed number of km/s whatever the sampling
     const dv = (wl[a + 1] / wl[a] - 1) * C_KMS;
-    const k = Math.max(1, Math.round(BROAD_SMOOTH_KMS / dv / 2));
     const resid = new Float64Array(n);
     for (let i = 0; i < n; i++) resid[i] = flux[a + i] - cont(wl[a + i]);
     const smooth = new Float64Array(n);
-    let sum = 0;
-    let count = 0;
-    for (let i = 0; i < Math.min(n, k); i++) { sum += resid[i]; count++; }
-    for (let i = 0; i < n; i++) {
-        if (i + k < n) { sum += resid[i + k]; count++; }
-        if (i - k - 1 >= 0) { sum -= resid[i - k - 1]; count--; }
-        smooth[i] = sum / count;
-    }
-    // The noise left after smoothing, from the continuum's own scatter
     const scatter = Math.sqrt(left.concat(right).reduce((s, y, i) => s + (y - (i < side ? yl : yr)) ** 2, 0) / (2 * side));
-    const noise = scatter / Math.sqrt(2 * k + 1);
+    let noise = 0;
     let peak = -1;
-    for (let i = 0; i < n; i++) {
-        if (Math.abs(wl[a + i] / nearNm - 1) * C_KMS > BROAD_FIND_KMS) continue;
-        if (peak < 0 || smooth[i] > smooth[peak]) peak = i;
-    }
-    if (peak < 0 || !(smooth[peak] > 5 * noise) || !(smooth[peak] > 0)) return null;
-    const half = smooth[peak] / 2;
-    const cross = (from, step) => {
+    const smoothBy = (kms) => {
+        const k = Math.max(1, Math.round(kms / dv / 2));
+        let sum = 0;
+        let count = 0;
+        for (let i = 0; i < Math.min(n, k); i++) { sum += resid[i]; count++; }
+        for (let i = 0; i < n; i++) {
+            if (i + k < n) { sum += resid[i + k]; count++; }
+            if (i - k - 1 >= 0) { sum -= resid[i - k - 1]; count--; }
+            smooth[i] = sum / count;
+        }
+        // The noise left after smoothing, from the continuum's own scatter
+        noise = scatter / Math.sqrt(2 * k + 1);
+        peak = -1;
+        for (let i = 0; i < n; i++) {
+            if (Math.abs(wl[a + i] / nearNm - 1) * C_KMS > BROAD_FIND_KMS) continue;
+            if (peak < 0 || smooth[i] > smooth[peak]) peak = i;
+        }
+    };
+    const cross = (from, step, half) => {
         for (let i = from; i > 0 && i < n - 1; i += step) {
             if (smooth[i + step] < half) {
                 const t = (smooth[i] - half) / (smooth[i] - smooth[i + step]);
@@ -378,9 +382,20 @@ export function broadLineWidth(spectrum, nearNm) {
         }
         return null;
     };
-    const l = cross(peak, -1);
-    const r = cross(peak, 1);
-    if (l === null || r === null) return null;
+    const widthNow = () => {
+        if (peak < 0 || !(smooth[peak] > 5 * noise) || !(smooth[peak] > 0)) return null;
+        const l = cross(peak, -1, smooth[peak] / 2);
+        const r = cross(peak, 1, smooth[peak] / 2);
+        return l === null || r === null ? null : { l, r };
+    };
+    // A faint line's noisy top would cut its half height short, so it's smoothed more widely until it stands well clear
+    for (const kms of [BROAD_SMOOTH_KMS, 2 * BROAD_SMOOTH_KMS, 4 * BROAD_SMOOTH_KMS]) {
+        smoothBy(kms);
+        if (peak >= 0 && smooth[peak] > BROAD_CLEAR * noise) break;
+    }
+    const edges = widthNow();
+    if (!edges) return null;
+    const { l, r } = edges;
     const centre = 0.5 * (l + r);
     const R = 1 / (2 * (wl[a + 1] / wl[a] - 1));
     return {
