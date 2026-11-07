@@ -19,6 +19,9 @@ import { MIN_GLOW } from '../engine.js';
 const POINT_KINDS = new Set(['star', 'binary', 'multiple', 'neutron_star', 'black_hole', 'quasar', 'supernova']);
 const SKY_RADIUS = 1000;
 
+export const SPLIT_LO = 6;     // Device pixels between two stars when they start to come apart...
+export const SPLIT_HI = 13;    // ...and when they have
+
 // A body's colour: the mix of its stars' black-body colours, weighted by how much light each gives
 function bodyColour(body) {
     if (body.star) return blackBodyRGB(body.star.teff_K);
@@ -43,7 +46,7 @@ function bodyColour(body) {
 }
 
 // Giants look soft and swollen; white dwarfs and neutron stars tiny and sharp. 1 is an ordinary star.
-function bodySoftness(body) {
+export function bodySoftness(body) {
     const star = body.star;
     if (star) {
         if (star.stage === 'giant' || star.stage === 'supergiant') return star.stage === 'supergiant' ? 1.7 : 1.4;
@@ -66,8 +69,19 @@ attribute float aSeed;
 attribute float aSoft;
 attribute float aFlux;
 attribute float aDepth;
+attribute vec2 aSplit;      // Degrees, in a multiple star: from its sibling, and between its own members. 0 where there are none
+attribute float aSpike;     // 0 for a point that must never grow spikes
 uniform float uDpr;
 varying vec2 vUv;
+
+float resolved(float deg) {
+    return smoothstep(${SPLIT_LO.toFixed(1)}, ${SPLIT_HI.toFixed(1)}, radians(deg) * uPxPerRad * depthP(aDepth));
+}
+
+// A multiple star's point shows until it comes apart: its members (binaries.js) take over as it goes
+float splitShows() {
+    return (aSplit.x > 0.0 ? resolved(aSplit.x) : 1.0) * (1.0 - resolved(aSplit.y));
+}
 
 float skyGlow() {
     return clamp(bandAmount(aBandA, aBandB) * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
@@ -94,7 +108,7 @@ float twinkle(vec3 dir, float seed) {
 `;
 
 function instancedAttributes(geometry, data) {
-    geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(data.centres, 3));
+    geometry.setAttribute('aCentre', data.centres);
     geometry.setAttribute('aColour', new THREE.InstancedBufferAttribute(data.colours, 3));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(data.bandA, 4));
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(data.bandB, 1));
@@ -102,10 +116,12 @@ function instancedAttributes(geometry, data) {
     geometry.setAttribute('aSoft', new THREE.InstancedBufferAttribute(data.soft, 1));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(data.depths, 1));
     geometry.setAttribute('aFlux', data.flux);
+    geometry.setAttribute('aSplit', data.split);
+    geometry.setAttribute('aSpike', new THREE.InstancedBufferAttribute(data.spike, 1));
     geometry.instanceCount = data.count;
 }
 
-function createSprites(data) {
+export function createSprites(data) {
     const geometry = new THREE.InstancedBufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
     geometry.setIndex([0, 1, 2, 0, 2, 3]);
@@ -121,13 +137,14 @@ function createSprites(data) {
             varying float vPeak;
             void main() {
                 float glow = skyGlow();
-                if (glow < ${MIN_GLOW.toFixed(3)} || uSkyFade <= 0.0) {
+                float shows = splitShows();
+                if (glow < ${MIN_GLOW.toFixed(3)} || uSkyFade <= 0.0 || shows <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
                 }
                 float m = glowLevel(glow);
                 // Fades in from nothing rather than popping as the zoom crosses its threshold
-                float amount = smoothstep(0.0, 2.2, m) * uSkyFade;
+                float amount = smoothstep(0.0, 2.2, m) * uSkyFade * shows;
 
                 vec3 dir = aCentre / ${SKY_RADIUS.toFixed(1)};
                 float air = exp(-0.05 / (max(dir.y, 0.0) + 0.05));
@@ -181,7 +198,7 @@ function createSprites(data) {
 }
 
 // Spikes: two long thin quads per star. Far cheaper than covering the whole square a spike reaches into.
-function createSpikes(data) {
+export function createSpikes(data) {
     const geometry = new THREE.InstancedBufferGeometry();
     // position.xy = along, across; z picks which of the two arms
     const arms = [];
@@ -201,7 +218,7 @@ function createSpikes(data) {
                 // Only the brightest, in visible light, fading in rather than popping
                 float glow = clamp(aBandA.z * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
                 float m = glowLevel(glow);
-                float k = smoothstep(6.6, 8.4, m) * uBandW[2] * uSkyFade;
+                float k = smoothstep(6.6, 8.4, m) * uBandW[2] * uSkyFade * aSpike * splitShows();
                 if (k <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -210,7 +227,8 @@ function createSpikes(data) {
                 float air = exp(-0.05 / (max(dir.y, 0.0) + 0.05));
                 float size = uDpr * crispness();
                 float reach = m - 5.8;
-                float len = (10.0 + 4.2 * reach * reach) * size * k;
+                // White dwarfs and neutron stars stay tiny and sharp, however bright a narrow view makes them
+                float len = (10.0 + 4.2 * reach * reach) * size * k * mix(0.45, 1.0, smoothstep(0.55, 1.0, aSoft));
                 float width = (1.2 + 0.1 * m) * size * 3.0;
                 vec3 c = aColour / max(max(aColour.r, aColour.g), aColour.b);
                 vColour = c * k * air * twinkle(dir, aSeed) * (0.55 + 0.32 * reach);
@@ -249,7 +267,7 @@ export function createStarsLayer(engine, app) {
     const n = bodies.length;
     const data = {
         count: n,
-        centres: new Float32Array(n * 3),
+        centres: new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3),
         colours: new Float32Array(n * 3),
         bandA: new Float32Array(n * 4),
         bandB: new Float32Array(n),
@@ -257,14 +275,17 @@ export function createStarsLayer(engine, app) {
         soft: new Float32Array(n),
         depths: new Float32Array(n),
         // One value per star that another layer can change while the sim runs: see setSpriteFlux
-        flux: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1)
+        flux: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1),
+        split: new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2),
+        spike: new Float32Array(n)
     };
     data.flux.setUsage(THREE.DynamicDrawUsage);
+    data.split.setUsage(THREE.DynamicDrawUsage);
     const indexOf = new Map();
     bodies.forEach((body, i) => {
         indexOf.set(body.code, i);
         const v = azAltToVec3(body.sky.az, body.sky.alt);
-        data.centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
+        data.centres.array.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         data.colours.set(bodyColour(body), i * 3);
         // In BANDS order: radio, infrared, visible, ultraviolet here, and X-ray in aBandB
         const glow = BANDS.map((band) => bandSkyBrightness(body, band));
@@ -273,6 +294,8 @@ export function createStarsLayer(engine, app) {
         data.seeds[i] = hashString(body.visual_seed || body.code) / 4294967296;
         data.soft[i] = bodySoftness(body);
         data.depths[i] = body.depth;
+        // A black hole's companion sits inside the lens, which would bend its spikes into grey blocks round the disc
+        data.spike[i] = body.kind === 'black_hole' ? 0 : 1;
     });
 
     const sprites = createSprites(data);
@@ -297,6 +320,13 @@ export function createStarsLayer(engine, app) {
             if (i === undefined || data.flux.array[i] === factor) return;
             data.flux.array[i] = factor;
             data.flux.needsUpdate = true;
+        },
+        // A multiple star's point goes out as it comes apart into its members, at this separation in degrees
+        setSpriteSplit(code, sepDeg) {
+            const i = indexOf.get(code);
+            if (i === undefined || data.split.array[i * 2 + 1] === sepDeg) return;
+            data.split.array[i * 2 + 1] = sepDeg;
+            data.split.needsUpdate = true;
         },
         dispose() {
             unbindQuality();

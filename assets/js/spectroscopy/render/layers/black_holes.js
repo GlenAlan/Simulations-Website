@@ -210,9 +210,10 @@ const LENS_FRAGMENT = /* glsl */`
         float w = smoothstep(uEdge, uEdge * 0.35, b);
         float beta = b - uK * bend * w;
         // The companion's sprite in stars.js sits at the lens centre, and the lens would turn it into a ring. So read
-        // the sky no closer to the centre than the sprite reaches: what's there is the same diffuse glow, with no star
+        // the sky no closer to the centre than the sprite reaches: what's there is the same diffuse glow, with no star.
+        // Reflected at that radius, not held at it, or a star crossing the circle is smeared into a block
         float reach = uMaskPx / uPxPerM;
-        float read = (beta < 0.0 ? -1.0 : 1.0) * max(abs(beta), reach);
+        float read = (beta < 0.0 ? -1.0 : 1.0) * (abs(beta) < reach ? 2.0 * reach - abs(beta) : abs(beta));
         vec3 sky = texture2D(tInput, mirrored((uCentrePx + dir * read * uPxPerM) / uRes)).rgb;
 
         // Everything captured is black
