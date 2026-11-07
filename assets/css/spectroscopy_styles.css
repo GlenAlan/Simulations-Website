@@ -4526,6 +4526,24 @@ details.description-area > summary::after {
     }
 }
 
+/* The dock: a name is never squeezed into the next one. When there are more tools than fit in a narrow drawer, as on a triple
+   star, they go on two rows. */
+#simulationControlsPanel .spectro-tool-bar {
+    flex-wrap: wrap;
+}
+
+#simulationControlsPanel .spectro-tool-bar button.spectro-flat:not(.spectro-help-button) {
+    flex: 1 0 auto;
+    min-width: min-content;
+}
+
+@media (pointer: coarse) {
+    #simulationControlsPanel .spectro-tool-bar button.spectro-flat:not(.spectro-help-button) {
+        flex: 1 0 44px;
+        min-width: min-content;
+    }
+}
+
 /* A note under the plot, such as what a molecule reference can't show, keeps the same edge as everything else there: the
    site's rule for panel paragraphs would otherwise take its margins away */
 .spectro-sim .spectro-area > p {
