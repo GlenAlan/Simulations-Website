@@ -8,8 +8,10 @@
 //                     magnetic_tilt_deg }
 // body.galaxy       { morphology, inclination_deg, position_angle_deg, size_deg, z, radio_lobes, active_nucleus, starburst,
 //                     distance_Mpc, abs_mag, luminosity_Lsun }
-// body.black_hole   { mass_Msun, companion, a_AU, period_days, K_kms, inc_deg, phase0, jets, disc_tilt_deg }.
-//                     K_kms is the companion's true velocity amplitude, K = 2 pi a1 sin i / P.
+// body.black_hole   { mass_Msun, companion, a_AU, period_days, K_kms, inc_deg, phase0, jets, disc_tilt_deg, feeding }.
+//                     K_kms is the companion's true velocity amplitude, K = 2 pi a1 sin i / P. feeding: 'roche' (the companion
+//                     fills its Roche lobe and gas streams onto a disc), 'wind' (a supergiant's wind) or 'none' (quiet and
+//                     detached: no disc, no jets, faint in X-rays). Set by settleHole in data/dynamics.js.
 // body.supernova    { type: 'Ia'|'II', phase0_days, peak_mag, abs_peak_mag, peak_time, remnant_code, remnant_kind,
 //                     shell_deg }. phase0_days is days after peak at t = 0, so peak_time = -phase0_days.
 //                     A supernova's brightness.mag is its peak; its flux_Wm2 is what a photometer reads at t = 0.

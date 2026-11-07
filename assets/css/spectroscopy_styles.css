@@ -38,11 +38,14 @@
     white-space: nowrap;
 }
 
-/* The drawer holds tall content, so its body scrolls */
+/* The drawer holds tall content, so its body scrolls. The scrollbar's room is kept even when nothing scrolls: figures size
+   themselves from the width, and a scrollbar that came and went would change it, which changes their height, which
+   brings the scrollbar back, many times a second. */
 #spectroDrawerBody {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 0.75em 1em 1em;
 }
 

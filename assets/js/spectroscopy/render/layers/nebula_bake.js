@@ -537,7 +537,8 @@ function createBaker(engine, app) {
             if (!job && heroWork) {
                 const w = heroWork;
                 const cost = heroPx * fetchesPerPixel(w.job.program, w.steps, w.octaves);
-                const rows = Math.max(2, Math.min(heroPx - w.row, Math.floor(left / cost)));
+                // One row of the largest hero is about the smallest budget, so a slow GPU never gets more than that at once
+                const rows = Math.max(1, Math.min(heroPx - w.row, Math.floor(left / cost)));
                 renderStrip(w.job.program, w.job, w.target, 0, 0, heroPx, w.row, rows, w.cx, w.cy, w.h, w.steps, w.octaves);
                 w.row += rows;
                 left -= rows * cost;

@@ -20,7 +20,7 @@ import { PLANE_GLSL } from './background.js';
 
 const RAD = Math.PI / 180;
 const LAT_SCALE_DEG = 18;           // Latitudes well inside this get most of the texture's rows
-const STRIP_ROWS_MIN = 8;           // The bake's strips are sized to suit the GPU, between these
+const STRIP_ROWS_MIN = 2;           // The bake's strips are sized to suit the GPU, between these. A slow GPU gets the smallest
 const STRIP_ROWS_MAX = 128;
 const BAKE_START_DELAY_S = 4;       // How long after loading the bake waits, unless these bands are asked for first
 const GLOW_FADE_S = 0.5;

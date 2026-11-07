@@ -329,6 +329,13 @@ export function createPlot(container, opts = {}) {
     let disposed = false;
     let lastDrawMs = 0;
 
+    // If the graphics process restarts, the browser gives a canvas back empty: draw it again
+    canvas.addEventListener('contextrestored', () => {
+        hatch = null;
+        redraw(true);
+    });
+    cursorCanvas.addEventListener('contextrestored', () => drawCursor());
+
     const series = { body: makeSeries(), ref: makeSeries() };
     const overlays = new Set();
     const clickFns = new Set();

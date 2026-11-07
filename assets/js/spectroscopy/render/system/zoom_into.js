@@ -2,8 +2,9 @@
 //
 // The engine shows this every zoom step before the sky gets it (setZoomIntake). While a star is what's being zoomed into,
 // this works out which star that is, gets its system ready in the background, and takes over when the time comes. From
-// then on the gesture moves the flight (see "under a student's hand" in transition.js), and a pause lets it settle at
-// whichever end is nearer. The sky keeps zooming until the system is ready, so a slow machine waits but never freezes.
+// then on the gesture moves the flight (see "under a student's hand" in transition.js). A short pause holds it, and a long
+// one finishes it the way it was going (see createHand). The sky keeps zooming until the system is ready, so a slow machine
+// waits but never freezes.
 //
 // When the move begins:
 //   What's being zoomed into has to be the only thing in play. A star qualifies at a field of view of CAPTURE_FOV or less,
@@ -21,7 +22,7 @@
 import { MIN_FOV } from '../../core/sky.js';
 import { bus } from '../../core/state.js';
 import { ZOOM_RATE } from '../engine.js';
-import { HAND_LOG, smootherstep } from './transition.js';
+import { HAND_LOG, smootherstep, handSeen, handTAt } from './transition.js';
 
 const CAPTURE_FOV = 12;         // No star takes over a wider view than this (degrees)
 const CLEAR_SHARE = 0.15;       // How clear of other stars it has to be, as a share of the view's height
@@ -41,24 +42,28 @@ const KEEP_READY_S = 8;         // How long a system stays ready for a student w
 
 const MOST_PER_S = 1.5;         // The fastest the move goes, of its whole length a second. A big bright star fills much of the
                                 // screen by the end of it, and rocking the wheel must not be able to flash that over 3 times a second.
-const PAUSE_S = 0.5;            // A gesture has stopped after this long: long enough to span slow, single notches
+const HOLD_S = 0.9;             // A pause this short holds the move where it is, so that slow notches add up
+const COMMIT = 0.06;            // A pause with less of the move done than this goes back to where it began: a nudge, not a choice
 const SETTLE_MIN_S = 0.3;       // The move's rest takes this long...
 const SETTLE_PER_T_S = 1.5;     // ... and this much more for the whole of it
-const NEAR_END_LEAN = 0.1;      // Which end is nearer leans this much of the way along towards where the gesture was going
 const REDUCED_THRESHOLD = 0.3;  // Reduce motion: a zoom this much past the point (log of the field of view), then a fade
 const REDUCED_FORGET_S = 0.6;
 const SAY_WAITING_S = 0.6;      // A wait as long as this gets a word in the context bar
 
-// Where the gesture has got to, as a goal that t eases to at the speed the sky's own zoom eases to the wheel's goal
+// Where the gesture has got to. It moves seen progress (see transition.js), so that every notch shows, and eases to it at the
+// speed the sky's own zoom eases to the wheel's goal. A short pause holds it there, so a slow, deliberate student still gets
+// in a notch at a time. Stopped for longer half way, where neither the sky nor the system is properly on show, it finishes
+// the move the way the student was going, unless they had barely started it.
 function createHand(t) {
     const hand = {
-        goal: t,
-        heading: 0,         // +1 inwards, -1 outwards
-        quiet: 0,           // Seconds since the last step
+        seenGoal: handSeen(t),
+        heading: t >= 1 ? -1 : 1,   // +1 inwards, -1 outwards: away from the end it starts at, until a step says otherwise
+        quiet: 0,                   // Seconds since the last step
         settling: null,
+        get goal() { return handTAt(hand.seenGoal); },
         push(log) {
-            hand.goal = Math.max(0, Math.min(1, hand.goal - log / HAND_LOG));
-            hand.heading = log < 0 ? 1 : -1;
+            hand.seenGoal = Math.max(0, Math.min(1, hand.seenGoal - log / HAND_LOG));
+            if (log) hand.heading = log < 0 ? 1 : -1;
             hand.quiet = 0;
             hand.settling = null;
         },
@@ -66,23 +71,25 @@ function createHand(t) {
         hold() { hand.quiet = 0; },
         advance(now, dt) {
             hand.quiet += dt;
+            const seen = handSeen(now);
             if (hand.settling) {
                 const s = hand.settling;
                 s.time += dt;
                 const k = smootherstep(0, s.duration, s.time);
-                const next = s.from + (s.to - s.from) * k;
-                hand.goal = s.time >= s.duration ? s.to : next;
-                return hand.goal;
+                hand.seenGoal = s.time >= s.duration ? s.to : s.from + (s.to - s.from) * k;
+                return handTAt(hand.seenGoal);
             }
-            if (hand.quiet >= PAUSE_S && now > 0 && now < 1 && Math.abs(hand.goal - now) < 0.004) {
-                const to = now + hand.heading * NEAR_END_LEAN >= 0.5 ? 1 : 0;
-                hand.settling = { from: now, to, time: 0, duration: SETTLE_MIN_S + SETTLE_PER_T_S * Math.abs(to - now) };
-                hand.heading = to ? 1 : -1;
+            if (hand.quiet >= HOLD_S && now > 0 && now < 1 && Math.abs(hand.seenGoal - seen) < 0.004) {
+                const done = hand.heading < 0 ? 1 - seen : seen;
+                const forward = done >= COMMIT ? hand.heading : -hand.heading;
+                const to = forward > 0 ? 1 : 0;
+                hand.settling = { from: seen, to, time: 0, duration: SETTLE_MIN_S + SETTLE_PER_T_S * Math.abs(to - seen) };
+                hand.heading = forward;
                 return now;
             }
             const most = MOST_PER_S * dt;
-            const next = now + Math.max(-most, Math.min(most, (hand.goal - now) * (1 - Math.exp(-dt * ZOOM_RATE))));
-            return Math.abs(hand.goal - next) < 1e-3 ? hand.goal : next;
+            const next = seen + Math.max(-most, Math.min(most, (hand.seenGoal - seen) * (1 - Math.exp(-dt * ZOOM_RATE))));
+            return handTAt(Math.abs(hand.seenGoal - next) < 1e-3 ? hand.seenGoal : next);
         },
         // Which way it's going, as the view's modes name it
         modeAt(now, mode) {

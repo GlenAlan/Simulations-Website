@@ -17,6 +17,7 @@ const SHIFT_FONT = '700 11px "Source Sans Pro", system-ui, sans-serif';
 const LINE_H = 13;
 const LABEL_GAP = 6;               // Spare room kept around a label so they never touch
 const AREA_PER_LABEL = 32000;      // CSS pixels of sky for each label: the budget thins them at wide zoom
+const POINT_FRAME_PX = 11;         // Half the width of the frame round something too small to frame by its size
 
 // Two colours that stay distinct under colour blindness, with light values that read on the night sky
 const RED_SHIFT = { text: '#ffab91', rgb: '255, 120, 80' };
@@ -317,7 +318,7 @@ export function createOverlaysLayer(engine, app) {
     function drawObjectMarks(frame, view, inset, showLabels, showShift) {
         const forward = azAltToVec3(view.az, view.alt);
         // Wide enough for the furthest things, which are drawn nearer the middle than the camera has them
-        const halfDiagonal = Math.min(89, Math.atan(Math.tan(view.fov * RAD / 2) / parallaxFactor(1, view.fov) * Math.hypot(1, frame.width / frame.height)) / RAD + 1);
+        const halfDiagonal = Math.min(89, engine.reachDeg(view.fov));
         const cosLimit = Math.cos(halfDiagonal * RAD);
         const budget = Math.max(5, Math.round((frame.width * frame.height) / AREA_PER_LABEL));
         const firstOwn = taken.length;
@@ -378,33 +379,55 @@ export function createOverlaysLayer(engine, app) {
         }
     }
 
+    // The selection: four corners round it, not a ring. A ring is a shape of its own, and reads as something pasted on the
+    // sky; corners only frame what's there, and leave the object itself alone. A point gets a small frame, close in. Something
+    // with a size gets corners at the edge of its light, and keeps them just inside the view when it fills it.
     function drawSelection(frame, at) {
         if (!at) return;
         const { entity, body } = app.selected;
         const p = engine.project(at.az, at.alt, at.depth);
-        if (!p || !p.onScreen) return;
+        if (!p) return;
         const spread = angularRadiusDeg(entity, body) * RAD * (frame.pxPerRad / frame.dpr) * parallaxFactor(body.depth, frame.fov);
-        const r = Math.max(13, Math.min(spread * 1.08, Math.min(frame.width, frame.height) * 0.42));
-        const tickFrom = r;
-        const tickTo = r + 7;
-        const co = Math.SQRT1_2;
+        // A bright star's glare spreads well past its point: the frame goes round that, not inside it. Magnitudes above
+        // where a star starts to be drawn, as stars.js has them
+        const glare = entity === body ? Math.max(0, 1.0857 * Math.log(Math.max(engine.glowOf(body), 0.05)) + 3.25 - 3) * 2.2 : 0;
+        const pointR = POINT_FRAME_PX + Math.min(glare, 24);
+        const point = spread < pointR;
+        const r = point ? pointR : spread * 1.12;
+        // Off the view, unless its frame still reaches in. Wider than the view, and the view is all it: nothing to mark.
+        if (p.x + r < 0 || p.x - r > frame.width || p.y + r < 0 || p.y - r > frame.height) return;
+        if ((p.x - r < 0 && p.x + r > frame.width) || (p.y - r < 0 && p.y + r > frame.height)) return;
+        // Corners that would sit off the view come in to its edge, so a big object part in view is still framed
+        const inset = 10;
+        const left = Math.max(inset, p.x - r);
+        const right = Math.min(frame.width - inset, p.x + r);
+        const top = Math.max(inset, p.y - r);
+        const bottom = Math.min(frame.height - inset, p.y + r);
+        if (right - left < 8 || bottom - top < 8) return;
+        const arm = point ? 4.5 + (r - POINT_FRAME_PX) * 0.2 : Math.max(7, Math.min(22, (right - left) * 0.16, (bottom - top) * 0.16));
 
         const trace = () => {
             ctx.beginPath();
-            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-            ctx.moveTo(p.x + co * tickFrom, p.y - co * tickFrom);
-            ctx.lineTo(p.x + co * tickTo, p.y - co * tickTo);
+            [[left, top, 1, 1], [right, top, -1, 1], [left, bottom, 1, -1], [right, bottom, -1, -1]].forEach(([x, y, sx, sy]) => {
+                ctx.moveTo(x + sx * arm, y);
+                ctx.lineTo(x, y);
+                ctx.lineTo(x, y + sy * arm);
+            });
         };
         ctx.setLineDash([]);
-        // A dark edge keeps the ring visible over a bright nebula
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        // A soft dark edge keeps the corners visible over a bright nebula
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
         trace();
         ctx.stroke();
-        ctx.lineWidth = 1.25;
-        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.82)';
         trace();
         ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'miter';
     }
 
     function drawReticle(frame) {
@@ -444,6 +467,7 @@ export function createOverlaysLayer(engine, app) {
     }
 
     let lastKey = '';
+    canvas.addEventListener('contextrestored', () => { lastKey = ''; }); // Given back empty after a graphics restart
 
     return {
         id: 'overlays',

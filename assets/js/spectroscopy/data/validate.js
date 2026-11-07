@@ -9,7 +9,7 @@ import { STAR_TABLE, RSUN_AU, luminosityFromRT, msLifetimeMyr } from './stellar.
 import { PLANET_TYPES, MIN_STELLAR_RADII } from './planets.js';
 import { spacingBetween } from './sky_layout.js';
 import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS } from './quotas.js';
-import { componentStates, cometTailAU } from './orbits.js';
+import { componentStates, cometTailAU, eclipsingOrbits } from './orbits.js';
 import { systemProblems } from './dynamics.js';
 import { crossesPlanet, MAX_ECC } from './exocomets.js';
 import { unseal } from './sealed.js';
@@ -21,6 +21,7 @@ const FAST_STAR_KMS = 300;          // Spec 12: stars stay within this, but for 
 const FAST_STAR_SHARE = 0.02;
 const FASTEST_STAR_KMS = 450;
 const PECULIAR_GALAXY_KMS = 550;    // The most a galaxy strays from Hubble's law (data/motions.js)
+const MIN_ECLIPSING = 12;           // Sky systems that eclipse: the tight pairs, and those turned edge-on (data/dynamics.js)
 
 // The whole sky's quotas: the first sky's and the deeper sky's together
 const sum = (a, b) => {
@@ -382,6 +383,13 @@ function checkDynamics(u, fail) {
         if (body.interacting) fail(`${body.code} is a deeper-sky pair passing mass across`);
         if (body.cluster && body.cluster.members.some((m) => m.interacting)) fail(`${body.code} is a deeper-sky cluster with a pair passing mass across`);
     });
+    // Black holes fed in the usual mix of ways, and enough eclipsing pairs for the light curve to find
+    const feeding = countBy(u.bodies.filter((b) => b.black_hole), (b) => b.black_hole.feeding);
+    Object.keys(MIX.blackHoleFeeding).forEach((k) => {
+        if (feeding[k] !== MIX.blackHoleFeeding[k]) fail(`${feeding[k]} black holes fed by ${k}, expected ${MIX.blackHoleFeeding[k]}`);
+    });
+    const eclipsing = u.bodies.filter((b) => b.stars && eclipsingOrbits(b).length).length;
+    if (eclipsing < MIN_ECLIPSING) fail(`only ${eclipsing} multi-star systems eclipse`);
 }
 
 function checkMulti(u, fail) {
