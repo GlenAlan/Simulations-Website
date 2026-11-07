@@ -14,8 +14,8 @@
 //
 // The real data may add fields or lack them, so every value is checked and a row with no value is left out.
 
-import { withCommas, sig, signed, wavelength, distance } from '../core/format.js';
-import { AU, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
+import { CZ_REASON, beyondCz, shiftWords, withCommas, sig, signed, wavelength, distance } from '../core/format.js';
+import { AU, C_KMS, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const row = (label, value) => ({ label, value });
@@ -32,11 +32,15 @@ const chem = (formula) => String(formula).replace(/\d/g, (d) => SUBSCRIPT[d]);
 
 const tempText = (T) => (isNum(T) ? `${T >= 1e5 ? sig(T, 3) : withCommas(T)} K` : null);
 
-function velocityText(v) {
-    if (!isNum(v)) return null;
-    if (v === 0) return '0 km/s';
-    const speed = Math.abs(v) >= 1000 ? `${v < 0 ? '−' : '+'}${withCommas(Math.abs(v))}` : signed(v, Math.abs(v) < 10 ? 1 : 0);
-    return `${speed} km/s (moving ${v > 0 ? 'away' : 'towards us'})`;
+// A shift as it is shown everywhere (core/format.js): z always, and v = cz beside it while that applies. z is the object's own
+// where it has one (a galaxy, a quasar), and v ÷ c otherwise.
+function velocityText(v, z) {
+    if (!isNum(v) && !isNum(z)) return null;
+    const shift = isNum(z) ? z : v / C_KMS;
+    if (shift === 0) return 'z = 0, v = 0 km/s';
+    const dir = `moving ${shift > 0 ? 'away' : 'towards us'}`;
+    if (beyondCz(shift)) return `${shiftWords(shift, { reason: false })}, ${dir} (${CZ_REASON})`;
+    return `${shiftWords(shift, { v: isNum(v) ? v : undefined })} (${dir})`;
 }
 
 function distanceText(pc) {
@@ -726,7 +730,7 @@ function galaxyInfo({ entity }) {
         lead: 'Billions of stars, too far away to pick out one by one.',
         summary: 'Billions of stars, too far away to pick out one by one. Their light adds up to a single spectrum, and its redshift tells you how fast the galaxy is moving away.',
         notes: present(
-            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Above about z = 0.1, v = cz starts to fail, so quote z too." },
+            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀, and v = cz while z is 0.1 or less. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Above z = 0.1, v = cz no longer applies, so quote z." },
             { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d with the Brightness tool, add the galaxy to the Hubble plot, and the gradient gives H₀." },
             MORPHOLOGY_NOTE[block.morphology],
             centreNote(entity.nucleus),
@@ -735,8 +739,7 @@ function galaxyInfo({ entity }) {
         rarity: 'Common: the observable Universe holds hundreds of billions. Among bright nearby ones, spirals lead, while the faint dwarfs that outnumber them all are too dim to see at these distances.',
         catalogue: clean([
             row('Shape', capital(words(block.morphology))),
-            row('Redshift, z', isNum(block.z) ? block.z.toFixed(4) : null),
-            row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+            row('Redshift and recession velocity', velocityText(entity.radial_velocity_kms, block.z)),
             row('Distance', distanceText(entity.distance_pc)),
             row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
             row('Radio lobes', yesNo(block.radio_lobes)),
@@ -807,8 +810,7 @@ function nucleusInfo({ entity, body }) {
         row('Broad lines, full width at half height', n.active && isNum(n.broad_fwhm_kms) ? `${withCommas(n.broad_fwhm_kms)} km/s` : null),
         row('Narrow lines, full width at half height', n.active && isNum(n.narrow_fwhm_kms) ? `${withCommas(n.narrow_fwhm_kms)} km/s` : null),
         row("Stars' speeds in the bulge (σ)", num(n.sigma_kms, ' km/s')),
-        row('Redshift, z', isNum(n.z) ? n.z.toFixed(4) : null),
-        row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+        row('Redshift and recession velocity', velocityText(entity.radial_velocity_kms, n.z)),
         row('Distance', distanceText(entity.distance_pc))
     ]);
     if (!n.active) {
@@ -913,7 +915,7 @@ function quasarInfo({ entity }) {
         ],
         rarity: 'Very rare: very roughly 1 in 100,000 galaxies hosts one today. That is only a rough figure, and it depends on how bright counts as a quasar. They were far more common about 10 billion years ago.',
         catalogue: clean([
-            row('Redshift, z', isNum(block.z) ? block.z.toFixed(2) : null),
+            row('Redshift', isNum(block.z) ? velocityText(null, block.z) : null),
             row('Distance', isNum(block.z) || isNum(entity.distance_pc) ? "Too far for Hubble's straight line, v = H₀d, to apply" : null),
             row('Radio-loud', yesNo(block.radio_loud)),
             row('Blazar', block.blazar === true ? 'Yes' : null),

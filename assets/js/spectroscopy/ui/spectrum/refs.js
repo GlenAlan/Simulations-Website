@@ -16,7 +16,7 @@
 
 import { REFERENCE_GROUPS } from '../../data/references.js';
 import { C_KMS, wienPeakNm } from '../../core/phys.js';
-import { withCommas, wavelength } from '../../core/format.js';
+import { CZ_REASON, beyondCz, shiftWords, speedText, withCommas, wavelength, zPlain } from '../../core/format.js';
 
 const NONE = { id: 'none', label: 'No reference', kind: 'none' };
 let nextId = 0;
@@ -86,25 +86,20 @@ export function shiftSettings(entity) {
     return { unit: 'kms', min: -500, max: 500, step: 1 };
 }
 
-// "→ +18 km/s, moving away". Shown as z once v = cz stops being a good description (spec 8.4)
+// "→ z = +0.0000600, v = +18 km/s, moving away": z always, and v = cz beside it until that stops applying (spec 8.4), as
+// every shift is shown (core/format.js)
 export function shiftText(z) {
     if (z === 0) return 'Not shifted';
-    const away = z > 0;
-    const arrow = away ? '→' : '←';
-    const sign = away ? '+' : '−';
-    const dir = away ? 'moving away' : 'moving towards us';
-    const size = Math.abs(z);
-    if (size >= 0.1) return `${arrow} z = ${sign}${size.toFixed(3)}, ${dir}. v = cz no longer applies.`;
-    const v = size * C_KMS;
-    const speed = `${sign}${withCommas(v)} km/s`;
-    return size >= 0.003 ? `${arrow} ${speed}, ${dir} (z = ${sign}${size.toFixed(3)})` : `${arrow} ${speed}, ${dir}`;
+    const arrow = z > 0 ? '→' : '←';
+    const dir = z > 0 ? 'moving away' : 'moving towards us';
+    if (beyondCz(z)) return `${arrow} ${shiftWords(z, { reason: false })}, ${dir}. ${CZ_REASON}.`;
+    return `${arrow} ${shiftWords(z)}, ${dir}`;
 }
 
+// The same, short, for a name: "z = +0.0000600, +18 km/s" or "z = +0.229"
 export function shiftShort(z) {
     if (z === 0) return '';
-    const size = Math.abs(z);
-    const sign = z > 0 ? '+' : '−';
-    return size >= 0.1 ? `z = ${sign}${size.toFixed(3)}` : `${sign}${withCommas(size * C_KMS)} km/s`;
+    return beyondCz(z) ? `z = ${zPlain(z)}` : `z = ${zPlain(z)}, ${speedText(z * C_KMS)}`;
 }
 
 // A button that repeats while it is held, for fine steps by touch or mouse; a key press gives one step

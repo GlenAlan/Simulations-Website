@@ -5,7 +5,7 @@
 import { bus, select } from '../core/state.js';
 import { getMeasurement, recordMeasurement } from '../core/measurements.js';
 import { C_KMS, H0 } from '../core/phys.js';
-import { plusMinus, sig, withCommas } from '../core/format.js';
+import { CZ_LIMIT, CZ_REASON, plusMinus, shiftWords, sig, withCommas, zPlain } from '../core/format.js';
 import { toolWords } from './spectrum/tools/index.js';
 import {
     createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
@@ -13,7 +13,7 @@ import {
     niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved, savedEntries, cleanSaved
 } from './plot2d.js';
 
-const Z_LIMIT = 0.1;          // Above this, v = cz is only an approximation (spec section 8.4)
+const Z_LIMIT = CZ_LIMIT;     // Above this, v = cz no longer applies (spec section 8.4): such a galaxy's speed is only rough
 const SUGGESTED_GALAXIES = 8;
 const RESIDUALS_HEIGHT = 120; // Extra height the residuals panel adds to the figure (px)
 const HEAVY_SHARE = 0.6;      // A galaxy with this much of the fit's weight is setting the line by itself
@@ -207,7 +207,7 @@ function mountHubble(container, app) {
         showResiduals = on;
         figure.redraw();
     }, 'How far each point sits above or below the line');
-    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `|z| above ${Z_LIMIT}: v = cz only roughly`);
+    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `z above ${Z_LIMIT}, where v = cz no longer applies: speed only rough`);
     const legend = el('div', { class: 'spectro-fig-legend', hidden: true },
         el('span', {}, markerIcon('circle'), 'Galaxy'), hollowKey);
     root.append(options, legend);
@@ -261,12 +261,15 @@ function mountHubble(container, app) {
             if (v === null || !(m.distance_pc > 0)) return null;
             const dMpc = m.distance_pc / 1e6;
             const z = Number.isFinite(m.z) ? m.z : v / C_KMS;
-            const lines = [
+            // The shift as it is shown everywhere: z, with v beside it while v = cz applies, and the reason when it doesn't
+            const shift = Math.abs(z) > Z_LIMIT
+                ? `z = ${zPlain(z)}: ${CZ_REASON}, so this speed, from v = cz, is only rough`
+                : shiftWords(z, { v });
+            return [
+                shift,
                 `d = ${sig(m.distance_pc, 3)} pc = ${sig(dMpc, 3)} Mpc`,
                 `v ÷ d = ${signedSpeed(v)} km/s ÷ ${sig(dMpc, 3)} Mpc = ${sig(v / dMpc, 3)} km/s/Mpc`
             ];
-            if (Math.abs(z) > Z_LIMIT) lines.push(`z = ${sig(z, 2)}, above ${Z_LIMIT}, so v = cz is only an approximation here.`);
-            return lines;
         },
         isPlotted: (code) => plotted.has(code),
         onAdd(code) {
@@ -314,7 +317,7 @@ function mountHubble(container, app) {
                 { button: p.code, label: `Select ${p.code}`, onClick: () => select(p.code) },
                 sig(p.dMpc, 3),
                 p.vErr > 0 ? plusMinus(p.v, p.vErr) : withCommas(p.v),
-                sig(p.z, 2),
+                zPlain(p.z, 2),
                 fit ? signedSpeed(p.v - fit.slope * p.dMpc) : ''
             ]);
         }
@@ -350,7 +353,7 @@ function mountHubble(container, app) {
             : `which is a large share of the speed of light, far too much for that simple formula to hold`;
         quasarNote.replaceChildren(
             el('p', { class: 'spectro-fig-card-title', text: `Quasar ${body.code}` }),
-            el('p', { class: 'spectro-fig-readout', text: `z = ${sig(z, 3)}` }),
+            el('p', { class: 'spectro-fig-readout', text: `z = ${zPlain(z)}` }),
             el('p', { class: 'spectro-fig-card-status', text: measuredZ !== null ? 'From your Doppler measurement.' : 'From the catalogue.' }),
             el('div', { class: 'spectro-fig-measure', hidden: measuredZ !== null },
                 el('span', { class: 'spectro-fig-measure-word', text: 'Measure it yourself with' }),
@@ -586,7 +589,7 @@ function mountHubble(container, app) {
             figure.showTip(point.px, point.py, [
                 point.code,
                 `${sig(point.dMpc, 3)} Mpc, ${withCommas(point.v)} km/s`,
-                `z = ${sig(point.z, 2)}`
+                `z = ${zPlain(point.z, 2)}`
             ]);
         } else {
             figure.hideTip();
