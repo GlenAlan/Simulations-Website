@@ -1,5 +1,6 @@
-// Starts the simulation. Each piece is started inside its own try/catch, so that one failing piece shows up
-// in the console without taking the rest of the page down. Tracks fill in their own files; this list is fixed.
+// Starts the simulation, once main.js has loaded this and everything it imports. Each piece is started inside its own
+// try/catch, so that one failing piece shows up in the console without taking the rest of the page down. Tracks fill in
+// their own files; this list is fixed.
 
 import { app, bus, select } from './core/state.js';
 import { generateUniverse } from './data/universe.js';
@@ -63,7 +64,8 @@ function breathe() {
 }
 
 // The sky is drawn and can be dragged before anything else is started. Everything after it joins as it becomes ready.
-async function boot() {
+// main.js calls this once the page's own scripts have set the panel and buttons up.
+export async function boot() {
     sliceStart = performance.now();
     const canvas = document.getElementById('simulationCanvas');
     app.engine = createEngine(canvas);
@@ -134,7 +136,3 @@ async function boot() {
 
     bus.emit('ready', {});
 }
-
-// Modules run before DOMContentLoaded: wait for it, so simulation_ui.js has set the panel and buttons up first
-if (document.readyState === 'complete') boot();
-else document.addEventListener('DOMContentLoaded', boot, { once: true });
