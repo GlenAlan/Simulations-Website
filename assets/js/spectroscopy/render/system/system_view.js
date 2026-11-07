@@ -7,14 +7,16 @@
 //   app.system.enter(code, { onDone, focus })   code: a star, binary, multiple, or one of their planets or members
 //   app.system.exit({ onDone })
 //   app.system.focusPlanet(code)                fly to a planet or star; null flies back to the whole system
-//   app.system.hzAvailable()                    { ok, reason } for the system that's open
-//   app.system.setLogScale(on), isLogScale(), logScaleUseful(), getTime(), getModel(), isFocused(), isBusy()
+//   app.system.hzAvailable(code?)               { ok, reason } for that system, or else the one that's open
+//   app.system.hasSystemView(body)              whether a body is offered a System tab and "Enter system"
+//   app.system.setLogScale(on), isLogScale(), logScaleUseful(), getTime(), getModel(), isFocused(), isBusy(),
+//   readout(code), onChange(fn); names starting with _ are hooks for tests
 
 import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
 import { sharedUniforms } from '../shared.js';
-import { createPlanetMesh } from '../planets/planet_mesh.js';
+import { createPlanetMesh, warmPlanetShaders } from '../planets/planet_mesh.js';
 import { initSystemTab } from '../../ui/system_tab.js';
 import {
     FRAME, buildModel, canDraw, hasSystemView, hzStatus, layout, ringRadius, starRadius, planetRadius,
@@ -154,9 +156,7 @@ export function initSystemView(app) {
         const brightest = model.stars.reduce((best, s, i) => (s.star.luminosity_Lsun > model.stars[best].star.luminosity_Lsun ? i : best), 0);
 
         const planets = model.planets.map((entry) => {
-            const handle = createPlanetMesh(entry.planet, entry.planet.host_teff_K, { quality, renderer: engine.renderer });
-            handle.object3d.frustumCulled = false;
-            group.add(handle.object3d);
+            const handle = makePlanet(entry, quality, group);
             const line = createOrbitLine(planetOrbitPoints(entry.planet), { opacity: 0.36, width: 1.4, trail: 0.8, colour: [0.5, 0.66, 0.95] });
             group.add(line.object);
             return { handle, line, entry };
@@ -220,6 +220,12 @@ export function initSystemView(app) {
 
         scene.add(group);
         return { group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels };
+    }
+
+    function makePlanet(entry, quality, group) {
+        const handle = createPlanetMesh(entry.planet, entry.planet.host_teff_K, { quality, renderer: engine.renderer });
+        group.add(handle.object3d);
+        return handle;
     }
 
     function makeLabel(text) {
@@ -1163,8 +1169,30 @@ export function initSystemView(app) {
     bus.on('select', ({ code }) => { selectedCode = code; });
     bus.on('deselect', () => { selectedCode = null; });
     bus.on('quality', ({ level }) => {
-        if (world) world.stars.forEach((s) => s.setQuality(level));
         if (backdrop) backdrop.setQuality(level);
+        if (!world) return;
+        world.stars.forEach((s) => s.setQuality(level));
+        // A planet fixes its quality when it's made
+        world.planets.forEach((item) => {
+            world.group.remove(item.handle.object3d);
+            item.handle.dispose();
+            item.handle = makePlanet(item.entry, level, world.group);
+        });
+    });
+
+    // Compile the shaders while nothing is going on, so that the first flight doesn't start with a stall.
+    // The warm star is never freed: while a material uses a program, three.js keeps it for the next star to share.
+    bus.on('ready', () => {
+        const warm = () => {
+            const renderer = engine.renderer;
+            if (!renderer) return;
+            warmPlanetShaders(renderer, camera);
+            const warmScene = new THREE.Scene();
+            warmScene.add(createStar({ teff_K: 5800, radius_Rsun: 1, stage: 'main_sequence' }, { seed: 'warm', quality: app.qualityLevel }).group);
+            renderer.compileAsync(warmScene, camera);
+        };
+        if (window.requestIdleCallback) window.requestIdleCallback(warm, { timeout: 4000 });
+        else setTimeout(warm, 1500);
     });
 
     app.system = {
@@ -1203,6 +1231,7 @@ export function initSystemView(app) {
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
         _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null }),
+        _planetsShown: () => (world ? world.planets.filter((item) => item.handle.object3d.children[0].visible).length : 0),
         _project(code) {
             const i = model.planets.findIndex((e) => e.code === code);
             return i < 0 ? null : projectToCss(positions.planets[i], engine.currentFrame());
