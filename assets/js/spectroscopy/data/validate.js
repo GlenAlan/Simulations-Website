@@ -228,7 +228,7 @@ function checkPlacement(u, fail) {
     });
 
     // The target's host keeps the sky round it clear, so it isn't lost among landmarks (spec 9)
-    const host = unseal().target.host;
+    const host = unseal(u.seed).target.host;
     const hostBody = u.resolve(host.code).body;
     u.bodies.forEach((b) => {
         if (b !== hostBody && angularSeparation(b.sky.az, b.sky.alt, hostBody.sky.az, hostBody.sky.alt) < host.clear_deg - 0.2) fail(`${b.code} crowds the target's host`);
@@ -298,7 +298,7 @@ function checkStars(u, fail) {
 }
 
 function checkPlanets(u, fail) {
-    const sealed = unseal();
+    const sealed = unseal(u.seed);
     const exempt = new Set([sealed.target.host.code, ...sealed.decoys.map((d) => d.host.code)]);
     const wet = [];
     u.bodies.forEach((body) => {

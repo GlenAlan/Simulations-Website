@@ -31,7 +31,7 @@ import { makeNebula, makeNeutronStar, makeGalaxy, makeBlackHole, makeSupernova, 
 import { makeExocomet } from './exocomets.js';
 import { layOutSky, layOutDeep, removeFromLayout } from './sky_layout.js';
 import { makeHomePlanets } from './home_system.js';
-import { unseal } from './sealed.js';
+import { unseal, SHOWCASE_CODES } from './sealed.js';
 import { bandStrengths } from './band_table.js';
 import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion } from './quotas.js';
 import { assignVelocities } from './motions.js';
@@ -216,11 +216,11 @@ function setMultiBrightness(body, rng, share, faintest, deep = false) {
 export function generateUniverse(seed = DEFAULT_SEED) {
     const root = new Rng(seed);
     const quota = root.fork('quota');
-    const sealed = unseal();
+    const sealed = unseal(seed);
 
     // Hard-coded codes are reserved first, so a random one can't land on them
     const used = new Set(sealed.codes);
-    ['F8Q3ZN', 'F8Q3ZA', 'F8Q3ZB', 'F8Q3ZC', 'D2W7XK', 'D2W7XA', 'D2W7XB', 'D2W7XC', 'D2W7XD'].forEach((c) => used.add(c));
+    SHOWCASE_CODES.forEach((c) => used.add(c));
     const coder = (label) => {
         const stream = root.fork(`codes:${label}`);
         return () => {
