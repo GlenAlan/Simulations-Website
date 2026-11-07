@@ -47,6 +47,7 @@ const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a
 const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
 const DOUBLE_MS = { mouse: 500, touch: 350 };   // A second click this soon after the first is a double-click (Windows' own
 const DOUBLE_PX = { mouse: 6, touch: 30 };      // time for a mouse, a phone's for a tap), if it lands this near the first
+const HOLD_CLICK_MS = 350;      // How long a click waits to see whether it's the first of two, where that's needed (see release)
 const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
 const PICK_SEEN_MIN = 0.12;     // Drawn fainter than this (see seenAmount), a point can't be made out, so it can't be clicked
@@ -1624,7 +1625,7 @@ export function createEngine(canvas) {
                     // On a narrow screen the panel this opens comes up under the sky and moves it, so the second click of a
                     // double-click would land somewhere else: it waits a moment to see whether one comes
                     releaseHeldClick();
-                    heldClick = { click, timer: setTimeout(releaseHeldClick, DOUBLE_MS[how]) };
+                    heldClick = { click, timer: setTimeout(releaseHeldClick, HOLD_CLICK_MS) };
                 } else {
                     releaseHeldClick();
                     bus.emit('skyclick', click);
