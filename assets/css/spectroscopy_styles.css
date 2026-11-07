@@ -198,6 +198,140 @@
 /* === end CONTENT === */
 
 
+/* === LEGEND: what glows in the current band === */
+/* Always over the sky, which is dark in both site themes, so its colours are fixed rather than the theme's tokens.
+   Over a bright star behind the panel the white text still has at least 7:1 contrast. */
+#spectroLegend {
+    position: absolute;
+    left: 0.75em;
+    bottom: 0.75em;
+    width: min(19em, calc(100% - 1.5em));
+    border-radius: var(--sim-radius);
+    background: rgba(10, 11, 18, 0.74);
+    color: #ffffff;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+}
+
+#spectroLegend[hidden] {
+    display: none;
+}
+
+#spectroLegend .spectro-legend-toggle {
+    -webkit-appearance: none;
+    appearance: none;
+    display: flex;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 0.55em;
+    width: 100%;
+    height: auto;
+    min-height: 44px;
+    margin: 0;
+    padding: 0.2em 0.75em;
+    border: 0;
+    border-radius: var(--sim-radius);
+    background: transparent;
+    box-shadow: none;
+    color: #ffffff !important; /* The site's buttons set their colour with !important */
+    font: inherit;
+    letter-spacing: 0;
+    text-align: left;
+    text-transform: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: none;
+}
+
+#spectroLegend .spectro-legend-toggle:hover,
+#spectroLegend .spectro-legend-toggle:active {
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: none;
+    color: #ffffff !important;
+}
+
+#spectroLegend .spectro-legend-toggle:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: -3px;
+}
+
+.spectro-legend-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.spectro-legend-name {
+    font-weight: 700;
+}
+
+.spectro-legend-tag {
+    padding: 0.05em 0.45em;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 3px;
+    font-size: 0.86em;
+}
+
+.spectro-legend-tag[hidden] {
+    display: none;
+}
+
+.spectro-legend-chevron {
+    flex: 0 0 auto;
+    width: 0.5em;
+    height: 0.5em;
+    margin-left: auto;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(0.1em) rotate(225deg);
+}
+
+.spectro-legend-toggle[aria-expanded="true"] .spectro-legend-chevron {
+    transform: translateY(-0.1em) rotate(45deg);
+}
+
+.spectro-legend-body {
+    padding: 0 0.75em 0.65em;
+}
+
+.spectro-legend-body[hidden] {
+    display: none;
+}
+
+.spectro-legend-text {
+    margin: 0 0 0.55em;
+}
+
+.spectro-legend-ramp {
+    height: 0.6em;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 2px;
+}
+
+.spectro-legend-scale {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.2em;
+    font-size: 0.86em;
+}
+
+/* Phones: it starts collapsed (ui/legend.js), and hugs its one line */
+@media (max-width: 640px) {
+    #spectroLegend {
+        left: 0.4em;
+        bottom: 0.4em;
+        width: auto;
+        max-width: min(17em, calc(100% - 0.8em));
+    }
+}
+/* === end LEGEND === */
+
+
 /* === OVERLAYS: labels and markers over the sky === */
 
 /* === end OVERLAYS === */
