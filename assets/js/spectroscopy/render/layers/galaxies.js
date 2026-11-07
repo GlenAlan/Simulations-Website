@@ -678,10 +678,12 @@ export function createGalaxiesLayer(engine, app) {
                 if (revealGain(g.mags[app.band], lim) < 0.03) continue;
                 const pxPerDegHere = pxPerDeg * parallaxFactor(body.depth, frame.fov);
                 const major = body.galaxy.size_deg / 2;
-                // Close in on a feeding black hole's galaxy, its point answers for itself, ahead of the galaxy round it
+                // Close in on a feeding black hole's galaxy, its point answers for itself, ahead of the galaxy round it. A quiet
+                // hole has no point of its own, but is at the middle all the same, so a zoom there carries on into it too.
                 const majorPx = major * pxPerDegHere;
-                if (g.core && coreShows(g.core, band, lim) && (majorPx >= NUCLEUS_OPENS_PX || (atLimit && majorPx >= NUCLEUS_OPENS_AT_LIMIT_PX))) {
-                    out.push({ code: g.core.code, az: body.sky.az, alt: body.sky.alt, radiusPx: NUCLEUS_REACH_PX, depth: body.depth });
+                const hole = g.core ? (coreShows(g.core, band, lim) ? g.core.code : null) : body.nucleus ? body.nucleus.code : null;
+                if (hole && (majorPx >= NUCLEUS_OPENS_PX || (atLimit && majorPx >= NUCLEUS_OPENS_AT_LIMIT_PX))) {
+                    out.push({ code: hole, az: body.sky.az, alt: body.sky.alt, radiusPx: NUCLEUS_REACH_PX, depth: body.depth });
                 }
                 if (major * pxPerDegHere < 14) {
                     out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth: body.depth });
