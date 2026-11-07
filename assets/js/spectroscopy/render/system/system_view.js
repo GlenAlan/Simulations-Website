@@ -10,6 +10,7 @@
 //   app.system.hzAvailable(code?)               { ok, reason } for that system, or else the one that's open
 //   app.system.hasSystemView(body)              whether a body can be visited
 //   app.system.systemOf(resolved)               what a selection would open: its body, or a cluster member as a body
+//   app.system.entryFov(code)                   the widest sky view at which zooming in on it carries on into its system
 //   app.system.setClock({ speed, playing, read }) what the System tab's playback is doing, in days per second. read() gives
 //                                               the time every frame, for a clock whose 'timeline' events come in steps
 //   app.system.timeScale()                      how much the clock is slowed just now, while a planet is in close-up
@@ -2119,6 +2120,9 @@ export function initSystemView(app) {
             notify();
         },
         systemOf: systemBodyOf,
+        // entryFov(code, widest?): the widest view (no wider than widest) at which a zoom pointing at it would carry on into
+        // its system, or null
+        entryFov: (code, widest) => zoomInto.entryFov(code, widest),
         setClock({ speed, playing, read }) {
             if (speed !== undefined) clock.speed = speed;
             if (playing !== undefined) clock.playing = playing;
