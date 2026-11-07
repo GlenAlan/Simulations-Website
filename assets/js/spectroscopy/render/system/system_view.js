@@ -314,6 +314,8 @@ export function initSystemView(app) {
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
+            lastX: new Float64Array(model.stars.length),
+            lastY: new Float64Array(model.stars.length),
             sizes: createSizes(model),
             smear: createSmear(model),
             parents: new Map(model.nodes.flatMap((n) => (n.children || []).map((c) => [c, n])))
@@ -952,6 +954,7 @@ export function initSystemView(app) {
         sizeView.fwd[1] = -e[9];
         sizeView.fwd[2] = -e[10];
         sizeView.f = f;
+        sizeView.corner = Math.atan(TAN_V * Math.hypot(1, frame.width / Math.max(1, frame.height)));
         sizeView.minSize = stage.minSize;
         sizeView.planets = stage.planets;
         sizeView.focus = focusIndex();
@@ -982,6 +985,13 @@ export function initSystemView(app) {
                 star.setCompanion(q[0], q[1], q[2]);
             }
 
+            // How fast it's crossing the screen, for the sake of the pattern on its surface
+            tmp.set(p[0], p[1], p[2]).project(camera);
+            const across = (tmp.x - world.lastX[i]) * frame.width * 0.5;
+            const down = (tmp.y - world.lastY[i]) * frame.height * 0.5;
+            world.lastX[i] = tmp.x;
+            world.lastY[i] = tmp.y;
+
             const sharp = s.star.stage === 'white_dwarf' || s.star.stage === 'neutron_star';
             star.update({
                 dt: frame.dt,
@@ -993,6 +1003,7 @@ export function initSystemView(app) {
                 reduceMotion: reduce,
                 pxRadius,
                 blur: smear.starBlur[i],
+                pxPerSecond: frame.dt > 0 ? Math.hypot(across, down) / frame.dt : 0,
                 dpr: frame.dpr
             });
         });

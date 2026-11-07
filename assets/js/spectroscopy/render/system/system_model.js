@@ -384,23 +384,34 @@ export function planetRadius(model, planet, m) {
 // view is stretched outwards a little by the perspective, by at most about a fifth in this view.
 export const SIZE_MARGIN = 1.25;
 
-// The apparent size of a sphere, as the tangent of the angle it covers: its pixels are this times the focal length
-function apparent(r, z) {
-    return r / Math.sqrt(Math.max(z * z - r * r, 1e-12));
+// The apparent size of a sphere: the tangent of the angle it covers, seen from distance d. Its pixels are about this times
+// the focal length. It's by angle and not by depth so that it means the same wherever in the view the sphere is.
+function apparent(r, d) {
+    return r / Math.sqrt(Math.max(d * d - r * r, 1e-12));
 }
 
-function radiusFor(a, z) {
-    return (a * z) / Math.sqrt(1 + a * a);
+function radiusFor(a, d) {
+    return (a * d) / Math.sqrt(1 + a * a);
 }
 
 const distance = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+
+// How far the rule bears on a sphere: all the way once any of it may be in view, tailing off to nothing outside that. A star
+// out of sight is no size at all as far as the student can tell, and nothing has to look smaller than it. A planet out of
+// sight needs no star to grow for it. It goes gradually, so that nothing jumps as it comes into view.
+function inView(z, d, r, corner) {
+    const off = Math.acos(Math.max(-1, Math.min(1, z / d)));
+    return 1 - smooth(corner, corner + 0.35, off - Math.asin(Math.min(1, r / d)));
+}
 
 export function createSizes(model) {
     return {
         stars: new Float64Array(model.stars.length),
         planets: new Float64Array(model.planets.length),
         starZ: new Float64Array(model.stars.length),
-        planetZ: new Float64Array(model.planets.length)
+        planetZ: new Float64Array(model.planets.length),
+        starD: new Float64Array(model.stars.length),
+        planetD: new Float64Array(model.planets.length)
     };
 }
 
@@ -413,13 +424,14 @@ export function createSizes(model) {
 // only that one, as the others are faded). Whatever that doesn't settle is settled by making the planet smaller.
 //
 // view = { cam: [x, y, z], fwd: unit vector the camera looks along, f: pixels per unit of tangent at the view's middle,
+//          corner: how far the view reaches from its axis, at its corners, in radians,
 //          minSize: 0 to 1, how far minimum sizes apply, planets: how far planets have faded in, focus: planet index or -1,
 //          starsAt: optional, where to take the stars to be: a star merged into its smear has no one place, and sizes
 //          worked out from where it happens to be this frame would jump about,
 //          gone: optional, for each planet, how far it has merged into its own smear }
 // out comes from createSizes: stars and planets hold world radii of the bodies, rings left out.
 export function drawnSizes(model, pos, m, view, out) {
-    const { cam, fwd, f, minSize, focus } = view;
+    const { cam, fwd, f, corner, minSize, focus } = view;
     const starsAt = view.starsAt || pos.stars;
     const nStars = model.stars.length;
     const nPlanets = model.planets.length;
@@ -427,6 +439,7 @@ export function drawnSizes(model, pos, m, view, out) {
         const p = starsAt[i];
         const z = (p[0] - cam[0]) * fwd[0] + (p[1] - cam[1]) * fwd[1] + (p[2] - cam[2]) * fwd[2];
         out.starZ[i] = z;
+        out.starD[i] = Math.max(distance(p, cam), 1e-9);
         const least = z > 0 ? radiusFor((model.starFloorPx[i] * minSize) / f, z) : 0;
         out.stars[i] = Math.max(starRadius(model, i, m), least);
     }
@@ -434,6 +447,7 @@ export function drawnSizes(model, pos, m, view, out) {
         const p = pos.planets[j];
         const z = (p[0] - cam[0]) * fwd[0] + (p[1] - cam[1]) * fwd[1] + (p[2] - cam[2]) * fwd[2];
         out.planetZ[j] = z;
+        out.planetD[j] = Math.max(distance(p, cam), 1e-9);
         const r = model.planetRadiiTrue[j] + (model.planetRadiiLog[j] - model.planetRadiiTrue[j]) * m;
         const least = z > 0 ? radiusFor((model.planetFloorPx[j] * minSize) / f, z) : 0;
         out.planets[j] = Math.max(r, least);
@@ -443,27 +457,30 @@ export function drawnSizes(model, pos, m, view, out) {
 
     // Keep each star ahead of its planets, leaving out any that have merged into a blur and aren't drawn
     for (let j = 0; j < nPlanets; j++) {
-        if (out.planetZ[j] <= 0 || (gone && gone[j] >= 0.999)) continue;
+        if (gone && gone[j] >= 0.999) continue;
         const reach = planetReach(model.planets[j].planet);
-        const need = apparent(out.planets[j] * reach, out.planetZ[j]) * SIZE_MARGIN;
+        const shown = inView(out.planetZ[j], out.planetD[j], out.planets[j] * reach, corner);
+        if (shown <= 0) continue;
+        const need = apparent(out.planets[j] * reach, out.planetD[j]) * SIZE_MARGIN * shown;
         const { members } = model.planets[j].node;
         for (let h = 0; h < members.length; h++) {
             const i = members[h];
-            if (out.starZ[i] <= 0) continue;
-            const want = radiusFor(need, out.starZ[i]);
+            const weight = inView(out.starZ[i], out.starD[i], out.stars[i], corner);
+            if (weight <= 0) continue;
+            const want = radiusFor(need * weight, out.starD[i]);
             if (want > out.stars[i]) out.stars[i] = Math.max(out.stars[i], Math.min(want, roomFor(model, pos, starsAt, out, i, cam, focus)));
         }
     }
     // Then hold each planet under what its stars came to
     for (let j = 0; j < nPlanets; j++) {
-        if (out.planetZ[j] <= 0) continue;
         const reach = planetReach(model.planets[j].planet);
         const { members } = model.planets[j].node;
         for (let h = 0; h < members.length; h++) {
             const i = members[h];
-            if (out.starZ[i] <= 0) continue;
-            const most = apparent(out.stars[i], out.starZ[i]) / SIZE_MARGIN;
-            if (apparent(out.planets[j] * reach, out.planetZ[j]) > most) out.planets[j] = radiusFor(most, out.planetZ[j]) / reach;
+            const weight = inView(out.starZ[i], out.starD[i], out.stars[i], corner);
+            if (weight <= 0) continue;
+            const most = apparent(out.stars[i], out.starD[i]) / (SIZE_MARGIN * weight);
+            if (apparent(out.planets[j] * reach, out.planetD[j]) > most) out.planets[j] = radiusFor(most, out.planetD[j]) / reach;
         }
     }
     return out;
@@ -473,7 +490,8 @@ export function drawnSizes(model, pos, m, view, out) {
 function roomFor(model, pos, starsAt, out, i, cam, focus) {
     const here = starsAt[i];
     let room = 0.92 * distance(here, cam);
-    for (let k = 0; k < model.stars.length; k++) {
+    // A planet in close-up is what's being looked at, so far behind it a tight pair may swell into one another
+    for (let k = 0; k < model.stars.length && focus < 0; k++) {
         if (k !== i) room = Math.min(room, 0.46 * distance(here, starsAt[k]));
     }
     for (let j = 0; j < model.planets.length; j++) {

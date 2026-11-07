@@ -577,9 +577,11 @@ export function createStar(starData, opts = {}) {
             }
             surfaceMaterial.uniforms.uRot.value = rot;
             // A small star is mostly glare: fade its fine detail and lift its brightness
-            // ... and so must a star going round fast: its pattern would race over the screen faster than the eye can follow
+            // ... and so must a star going round fast, or close to the camera: its pattern would race over the screen,
+            // with more cells passing any one spot in a second than the eye can follow
             const cellPx = s.pxRadius / look.cellScale;
-            const still = 1 - (s.blur || 0);
+            const cellsPerSecond = (s.pxPerSecond || 0) / Math.max(cellPx, 1);
+            const still = (1 - (s.blur || 0)) * (1 - THREE.MathUtils.smoothstep(cellsPerSecond, 1.5, 3));
             surfaceMaterial.uniforms.uDetail.value = THREE.MathUtils.smoothstep(cellPx, 1.6, 4) * still;
             surfaceMaterial.uniforms.uFine.value = look.lane * THREE.MathUtils.smoothstep(cellPx, 12, 32);
             surfaceMaterial.uniforms.uSpotDetail.value = THREE.MathUtils.smoothstep(s.pxRadius, 22, 70) * still;
