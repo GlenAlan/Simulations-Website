@@ -17,8 +17,8 @@ export function holeLook(body) {
 
 // Stylised, as every size is in the system view: the real ring lies far beyond the stars' orbits, but drawn there it would
 // wall the view in. Here it sits just inside the nearest star's closest approach (nucleus_model.js supermassiveRadius).
-const RING_RADIUS = 1.55;       // The dust ring's middle, in the hole's drawn radii (the disc's outer edge)...
-const RING_TUBE = 0.4;          // ...and how thick it is
+const RING_RADIUS = 1.45;       // The dust ring's middle, in the hole's drawn radii (the disc's outer edge)...
+const RING_TUBE = 0.32;         // ...and how thick it is
 
 const RING_VERTEX = /* glsl */`
 varying vec3 vNormal;
@@ -72,7 +72,7 @@ void main() {
     vec3 colour = visible * uBandW[2] + visible * 0.4 * uBandW[3] + uBandTint[1] * warm * 0.7 * uBandW[1];
     // Dust stops visible, ultraviolet and infrared light, but X-rays and radio go through it. It's thinner in places.
     float patchy = 0.72 + 0.28 * smoothstep(0.2, 0.7, clumps);
-    float solid = clamp(uBandW[1] + uBandW[2] + uBandW[3], 0.0, 1.0) * mix(0.45, 0.95, body) * patchy;
+    float solid = clamp(uBandW[1] + uBandW[2] + uBandW[3], 0.0, 1.0) * mix(0.35, 0.9, body) * patchy;
     gl_FragColor = vec4(colour * uReveal * body, solid * uReveal);
 }`;
 

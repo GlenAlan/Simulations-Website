@@ -61,7 +61,7 @@ export function nucleusSystemOf(resolved) {
 
 // How big the hole is drawn: well inside where its nearest star ever comes, so that star never sweeps across the disc,
 // and never more than a fifth of the view
-const HOLE_SHARE = 0.5;
+const HOLE_SHARE = 0.55;
 const HOLE_MOST = 0.22;
 export function supermassiveRadius(model, ringRadius, frame, m) {
     const inner = model.body.orbits[0];

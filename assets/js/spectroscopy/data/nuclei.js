@@ -95,13 +95,13 @@ function makeCloseStars(rng, nextCode, nucleusCode, mass, galaxyBody, inclinatio
             b: [i + 1],
             a_AU: aAU,
             period_days: stable(keplerPeriodDays(aAU, total), 6),
-            ecc: dp(rng.range(0.2, 0.6), 3),
+            ecc: dp(rng.range(0.15, 0.45), 3),
             inc_deg: last ? inclination : dp(rng.range(5, 175), 1),
             omega_deg: dp(rng.range(0, 360), 1),
             phase0: dp(rng.next(), 4)
         });
         inside = total;
-        a *= rng.range(1.8, 2.6);
+        a *= rng.range(1.6, 2.1);
     }
     return { stars, orbits };
 }
