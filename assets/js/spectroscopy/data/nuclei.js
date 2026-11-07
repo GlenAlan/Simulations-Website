@@ -30,6 +30,8 @@ const FWHM_F = 1.1;                         // The virial factor for a line's fu
 const TYPE_1_SHARE = 0.4;                   // Of active nuclei: more are seen through their dust than down its axis
 const TYPE_1_BRIGHT_SHARE = 0.7;            // ...and of those seen down it, this share in the brighter half of the galaxies
 const STARS_EACH = 3;
+const FEEDING = [0.005, 0.3];               // The share of its limit a feeding hole takes, drawn evenly in log between these
+const BROAD_FWHM_KMS = [1200, 18000];       // Real type 1 nuclei's broad lines, narrowest to broadest
 const LIGHT_DAY_M = C_MS * 86400;
 const ERG_PER_LSUN = L_SUN * 1e7;
 
@@ -63,6 +65,31 @@ function blrLightDays(luminosityLsun) {
 
 function broadFwhm(mass, lightDays) {
     return Math.sqrt((G * mass * M_SUN) / (FWHM_F * lightDays * LIGHT_DAY_M)) / 1000;
+}
+
+// The share of its limit a hole of this mass must feed at for its broad lines to be this wide (km/s): the two above run
+// backwards. The more it feeds, the further out the broad-line gas sits, and the slower it moves.
+function feedingForWidth(mass, fwhm) {
+    const lightDays = (G * mass * M_SUN) / (FWHM_F * (fwhm * 1000) ** 2) / LIGHT_DAY_M;
+    const l5100 = 1e44 * (lightDays / 33.65) ** (1 / 0.533);
+    return stable((9 * l5100) / ERG_PER_LSUN / (EDDINGTON_LSUN_PER_MSUN * mass), 6);
+}
+
+// How much of its limit a feeding hole takes, from a draw u in [0, 1): a few per cent of it, held below a few times the
+// galaxy's own light, as a Seyfert's is. Its broad lines must then be as wide as real type 1 nuclei's: from narrow-line
+// Seyfert 1s just wider than the narrow lines, to the broadest seen (no broad-line gas is found moving faster, Laor 2003).
+// A hole whose drawn feeding would take them outside that is drawn again inside it, from the same u. A heavy hole may then
+// have to outshine its galaxy by more than usual, as a quasar does, since a hungrier hole's broad lines are narrower.
+function feedingShare(u, mass, galaxyLuminosity) {
+    const cap = (3 * galaxyLuminosity) / (EDDINGTON_LSUN_PER_MSUN * mass);
+    const drawn = Math.min(FEEDING[0] * (FEEDING[1] / FEEDING[0]) ** u, cap);
+    const lambda = stable(drawn, 9);
+    const least = feedingForWidth(mass, BROAD_FWHM_KMS[1]);
+    const most = feedingForWidth(mass, BROAD_FWHM_KMS[0]);
+    if (lambda >= least && lambda <= most) return drawn;
+    const lo = Math.max(least, Math.min(FEEDING[0], cap));
+    const hi = Math.min(most, Math.max(lo * 1.5, Math.min(FEEDING[1], cap)));
+    return lo * (hi / lo) ** u;
 }
 
 // A few hot young stars on close, stretched orbits, as round the Milky Way's own black hole. Distances are in units of
@@ -114,11 +141,10 @@ function makeNucleus(rng, nextCode, body, flags) {
     const bulge = stable(drawn.bulge, 4);
     const { active, type, radioLoud } = flags;
 
-    // Feeding: a few per cent of what it could take, held below a few times the galaxy's own light, as a Seyfert's is.
-    // Quiet: next to nothing, like the hole at our own Galaxy's centre.
+    // Feeding: a few per cent of what it could take (feedingShare). Quiet: next to nothing, like the hole at our own
+    // Galaxy's centre.
     const eddington = EDDINGTON_LSUN_PER_MSUN * mass;
-    let lambda = active ? rng.logRange(0.005, 0.3) : rng.logRange(1e-7, 1e-5);
-    if (active) lambda = Math.min(lambda, (3 * g.luminosity_Lsun) / eddington);
+    const lambda = active ? feedingShare(rng.next(), mass, g.luminosity_Lsun) : rng.logRange(1e-7, 1e-5);
     const luminosity = stable(lambda * eddington, 4);
     const inclination = dp(type === 1 ? rng.range(12, 40) : type === 2 ? rng.range(60, 85) : rng.range(20, 80), 1);
     const sigma = sigmaFor(mass);
@@ -231,7 +257,9 @@ export function nucleusProblems(u, fail) {
             // The width and radius of the broad-line region must weigh the hole
             const weighed = (FWHM_F * k.blr_light_days * LIGHT_DAY_M * (k.broad_fwhm_kms * 1000) ** 2) / G / M_SUN;
             if (Math.abs(weighed / k.mass_Msun - 1) > 0.01) fail(`${n.code}'s broad lines don't weigh its hole`);
-            if (!(k.broad_fwhm_kms > 1000 && k.broad_fwhm_kms < 20000)) fail(`${n.code}'s broad lines are ${k.broad_fwhm_kms} km/s wide`);
+            // As wide as real type 1 nuclei's, and well clear of the narrow lines
+            if (!(k.broad_fwhm_kms >= BROAD_FWHM_KMS[0] * 0.999 && k.broad_fwhm_kms <= BROAD_FWHM_KMS[1] * 1.001)) fail(`${n.code}'s broad lines are ${k.broad_fwhm_kms} km/s wide`);
+            if (k.broad_fwhm_kms < 1.25 * k.narrow_fwhm_kms) fail(`${n.code}'s broad lines are hardly wider than its narrow ones`);
         } else if (k.broad_fwhm_kms !== null) fail(`${n.code} is quiet but has broad lines`);
         if (k.stars.length !== STARS_EACH || k.orbits.length !== STARS_EACH) fail(`${n.code} has ${k.stars.length} close stars`);
         let inside = k.mass_Msun;

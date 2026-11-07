@@ -705,7 +705,7 @@ function massWords(m) {
     if (!isNum(m)) return null;
     if (m >= 1e9) return `${sig(m / 1e9, 2)} billion`;
     if (m >= 1e6) return `${sig(m / 1e6, 2)} million`;
-    return withCommas(Math.round(Number(sig(m, 2))));
+    return withCommas(Number(m.toPrecision(2)));   // Not Number(sig()): sig puts commas in from 1,000 up
 }
 
 // What a galaxy's own page says of the black hole at its middle
