@@ -11,6 +11,9 @@
 //
 // Each frame: sky scene -> overlay passes -> post effects (all HDR) -> bloom -> tone map, vignette, sRGB, dither.
 // If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
+//
+// If the browser takes the graphics context away and later gives it back, the engine emits bus 'gl-restored'. Whatever
+// a layer baked into a render target is gone by then, so a layer that bakes should listen and bake again.
 
 import * as THREE from 'three';
 import { app, bus } from '../core/state.js';
@@ -336,12 +339,15 @@ export function createEngine(canvas) {
         dpr = Math.min(window.devicePixelRatio || 1, cap);
         renderer.setPixelRatio(dpr);
         renderer.setSize(width, height, false);
+        const unchanged = canvas.width === bufferW && canvas.height === bufferH
+            && bloomTargets.length === QUALITY[app.qualityLevel].bloomLevels;
+        composite.uniforms.uAspect.value = camera.aspect;
+        if (unchanged) return;
         bufferW = canvas.width;
         bufferH = canvas.height;
         targetA.setSize(bufferW, bufferH);
         if (targetB) targetB.setSize(bufferW, bufferH);
         buildBloom();
-        composite.uniforms.uAspect.value = camera.aspect;
     }
 
     function setLevel(level) {
@@ -445,11 +451,15 @@ export function createEngine(canvas) {
         applyView();
     }
 
-    // Jumps straight there. The horizon rule applies, except that a view already below it can stay.
+    // Jumps straight there. In the sky, the horizon rule applies: widening the view lifts it clear of the ground, while
+    // a view a flight left below the rule can stay, but not go lower. The system view's own flights aren't held to it.
     function setView(next) {
         const fov = next.fov !== undefined ? Math.max(MIN_FOV, Math.min(MAX_FOV, next.fov)) : view.fov;
         let alt = next.alt !== undefined ? next.alt : view.alt;
-        alt = Math.max(alt, Math.min(view.alt, altFloor(fov)));
+        if (app.view === 'sky') {
+            const floor = altFloor(fov);
+            alt = fov > view.fov ? Math.max(alt, floor) : Math.max(alt, Math.min(view.alt, floor));
+        }
         placeView(next.az !== undefined ? next.az : view.az, alt, fov);
         zoomGoal = view.fov;
         zoomAnchor = null;
@@ -523,17 +533,50 @@ export function createEngine(canvas) {
         }
     }
 
-    // Keeps the sky under the zoom's anchor point still, so what you point at is what you zoom into
+    // The ray through a screen point, in camera space at a field of view: x right, y up, f forward, length 1
+    const ray = { x: 0, y: 0, f: 1 };
+    function rayThrough(px, py, fov) {
+        const t = Math.tan(fov * RAD * 0.5);
+        const x = ((px / width) * 2 - 1) * t * (width / height);
+        const y = (1 - (py / height) * 2) * t;
+        const length = Math.hypot(x, y, 1);
+        ray.x = x / length;
+        ray.y = y / length;
+        ray.f = 1 / length;
+        return ray;
+    }
+
+    // The zoom's anchor: a screen point, and the direction in the sky under it when the zoom began
+    function anchorZoomAt(px, py) {
+        const r = rayThrough(px, py, view.fov);
+        const p = view.alt * RAD;
+        const a = view.az * RAD;
+        const up = r.y * Math.cos(p) + r.f * Math.sin(p);
+        const back = r.y * Math.sin(p) - r.f * Math.cos(p);
+        zoomAnchor = {
+            x: px,
+            y: py,
+            skyX: r.x * Math.cos(a) - back * Math.sin(a),
+            skyY: up,
+            skyZ: r.x * Math.sin(a) + back * Math.cos(a)
+        };
+    }
+
+    // Keeps the sky under the anchor still, so what you point at is what you zoom into. Solves for the view that puts
+    // the anchor's direction back under its screen point, so errors can't build up over the steps of a zoom.
     function setFovAnchored(next) {
         let { az, alt } = view;
         if (zoomAnchor) {
-            const nx = (zoomAnchor.x / width) * 2 - 1;
-            const ny = 1 - (zoomAnchor.y / height) * 2;
-            const t0 = Math.tan(view.fov * RAD * 0.5);
-            const t1 = Math.tan(next * RAD * 0.5);
-            const aspect = width / height;
-            az += (Math.atan(nx * t0 * aspect) - Math.atan(nx * t1 * aspect)) / RAD / Math.max(Math.cos(alt * RAD), 0.15);
-            alt += (Math.atan(ny * t0) - Math.atan(ny * t1)) / RAD;
+            const r = rayThrough(zoomAnchor.x, zoomAnchor.y, next);
+            const tilt = Math.atan2(r.y, r.f);
+            const reach = Math.asin(Math.max(-1, Math.min(1, zoomAnchor.skyY / Math.hypot(r.y, r.f))));
+            // Two pitches put the anchor at the right height: the one nearer the view, past the zenith or not
+            const near = reach - tilt;
+            const far = Math.PI - reach - tilt;
+            const p = Math.abs(far - alt * RAD) < Math.abs(near - alt * RAD) ? far : near;
+            const back = r.y * Math.sin(p) - r.f * Math.cos(p);
+            alt = p / RAD;
+            az = (Math.atan2(zoomAnchor.skyX, -zoomAnchor.skyZ) - Math.atan2(r.x, -back)) / RAD;
         }
         placeView(az, Math.max(alt, altFloor(next)), next);
     }
@@ -706,7 +749,7 @@ export function createEngine(canvas) {
     }
 
     const liveFrame = {};
-    const stats = { calls: 0, triangles: 0, points: 0, jsMs: 0, fps: 0, textures: 0, geometries: 0 };
+    const stats = { calls: 0, triangles: 0, points: 0, jsMs: 0, fps: 0 };
 
     function renderOnce(dt) {
         const started = performance.now();
@@ -741,7 +784,7 @@ export function createEngine(canvas) {
             const effect = postEffects[i];
             if (effect.isActive && !effect.isActive(frame)) continue;
             if (!targetB) {
-                targetB = makeTarget(true);
+                targetB = makeTarget(false);    // Post effects are full-screen, so this needs no depth
                 targetB.setSize(bufferW, bufferH);
             }
             const output = input === targetA ? targetB : targetA;
@@ -888,9 +931,9 @@ export function createEngine(canvas) {
                 const now = pinchState();
                 if (pinch.dist > 0 && now.dist > 0) {
                     zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * (pinch.dist / now.dist)));
-                    zoomAnchor = { x: now.x, y: now.y };
                 }
                 moveByPixels(now.x - pinch.x, now.y - pinch.y);
+                anchorZoomAt(now.x, now.y);
                 pinch = now;
                 return;
             }
@@ -945,7 +988,8 @@ export function createEngine(canvas) {
             const gain = e.ctrlKey ? 0.008 : 0.0012;
             const step = Math.max(-0.9, Math.min(0.9, e.deltaY * unit * gain));
             zoomGoal = Math.max(MIN_FOV, Math.min(MAX_FOV, zoomGoal * Math.exp(step)));
-            zoomAnchor = canvasPoint(e);
+            const point = canvasPoint(e);
+            anchorZoomAt(point.x, point.y);
             velocity.az = 0;
             velocity.alt = 0;
         }, { passive: false });

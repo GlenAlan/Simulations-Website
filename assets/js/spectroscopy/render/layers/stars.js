@@ -132,14 +132,15 @@ function createSprites(data) {
                 float glint = twinkle(dir, aSeed);
                 float size = uDpr * crispness();
 
-                float sigma = (0.58 + 0.095 * m) * size * mix(1.0, aSoft, 0.55);
+                // Never under about a pixel across, or a faint star would flicker as it crosses pixel boundaries
+                float sigma = max((0.58 + 0.095 * m) * size * mix(1.0, aSoft, 0.55), 0.55 * uDpr);
                 float haloR = sigma * (1.5 + 0.22 * m) * aSoft;
                 // Faint stars have no halo worth drawing, and they are most of them: keep their quads tiny
                 float quad = sigma * 3.0 + haloR * (2.5 + 0.42 * m) * smoothstep(2.5, 6.0, m);
 
                 // Compressed: true flux would run to a thousand times this, and wash out the whole sky
                 vPeak = 0.028 * pow(10.0, 0.293 * m) * amount * air * glint;
-                float haloAmp = 0.00042 * m * m * m * amount * air * mix(1.0, glint, 0.5);
+                float haloAmp = 0.0006 * m * m * m * amount * air * mix(1.0, glint, 0.5);
                 vShape = vec4(quad, sigma, haloR, haloAmp);
 
                 // Real colour shows in the halo: the core saturates to white in tone mapping
@@ -197,7 +198,7 @@ function createSpikes(data) {
                 // Only the brightest, in visible light, fading in rather than popping
                 float glow = clamp(aBandA.z * pow(10.0, 0.4 * (uLimitMag - 6.0)) * aFlux, 0.0, 400.0);
                 float m = glowLevel(glow);
-                float k = smoothstep(7.4, 9.2, m) * uBandW[2] * uSkyFade;
+                float k = smoothstep(6.6, 8.4, m) * uBandW[2] * uSkyFade;
                 if (k <= 0.002) {
                     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
                     return;
@@ -209,7 +210,7 @@ function createSpikes(data) {
                 float len = (10.0 + 4.2 * reach * reach) * size * k;
                 float width = (1.2 + 0.1 * m) * size * 3.0;
                 vec3 c = aColour / max(max(aColour.r, aColour.g), aColour.b);
-                vColour = c * k * air * twinkle(dir, aSeed) * (0.25 + 0.15 * reach);
+                vColour = c * k * air * twinkle(dir, aSeed) * (0.55 + 0.32 * reach);
                 vUv = position.xy;
 
                 float angle = ANGLE + position.z * 1.5707963;
@@ -228,7 +229,7 @@ function createSpikes(data) {
                 // Thin across, with a slow rainbow along: light of each colour diffracts to a different length
                 float across = exp(-vUv.y * vUv.y * 22.0);
                 vec3 reach = pow(max(1.0 - along, 0.0) * vec3(1.0), vec3(1.7, 2.4, 3.3));
-                float falloff = 1.0 / (1.0 + along * along * 60.0);
+                float falloff = 1.0 / (1.0 + along * along * 26.0);
                 vec3 ripple = 1.0 + 0.22 * cos(along * 26.0 + vec3(0.0, 2.1, 4.2));
                 gl_FragColor = vec4(vColour * reach * ripple * across * falloff, 1.0);
             }`

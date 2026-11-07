@@ -770,6 +770,30 @@
 /* === end LEGEND === */
 
 
+/* === SKYCORE: the message shown in the canvas area when the sky can't be drawn === */
+
+.spectro-gl-message {
+    position: absolute;
+    inset: 0;
+    z-index: 4; /* Under the overlay bars, so Go to and the panels stay usable without a sky */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5em;
+    background: #05070d; /* The sky is always dark, whichever site theme is on */
+    color: #e6e9f2;
+    font-size: 0.95em;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.spectro-gl-message[hidden] {
+    display: none;
+}
+
+/* === end SKYCORE === */
+
+
 /* === OVERLAYS: labels and markers over the sky === */
 
 /* === end OVERLAYS === */

@@ -172,16 +172,16 @@ const BAKE_FRAGMENT = /* glsl */`
         // Faint glowing gas here and there along the disc: pink hydrogen and a little teal oxygen
         float gas = smoothstep(0.16, 0.56, fbm(q * 8.0 + vec3(31.0, 7.0, 2.0), 5));
         float gasMask = disc * reach * extinction.g;
-        col += vec3(1.0, 0.22, 0.40) * gas * gas * gasMask * (1.0 - 0.6 * centreness) * 0.11;
-        col += vec3(0.20, 0.55, 0.85) * gas * (1.0 - gas) * gasMask * 0.05;
+        col += vec3(1.0, 0.20, 0.38) * gas * gas * gasMask * (1.0 - 0.5 * centreness) * 0.17;
+        col += vec3(0.20, 0.55, 0.85) * gas * (1.0 - gas) * gasMask * 0.06;
 
         // More colour than the tone curve will leave otherwise
         col = max(mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.35), vec3(0.0));
 
-        // Far from the band the sky is a deep blue, not quite black
-        vec3 base = vec3(0.0052, 0.0076, 0.0165) * (0.9 + 0.5 * fbm(g * 2.2 + vec3(8.0, 8.0, 1.0), 3));
-
-        gl_FragColor = vec4(sqrt(clamp((col + base) / ${SKY_GAIN.toFixed(3)}, 0.0, 1.0)), exp(-tau));
+        // Dithered by one step of the texture: eight bits are too few for such faint gradients, and would show contours
+        uvec3 h = pcg3d(uvec3(gl_FragCoord.xy, 11.0));
+        vec3 dither = (vec3(h >> 8u) / 16777216.0 - 0.5) / 255.0;
+        gl_FragColor = vec4(sqrt(clamp(col / ${SKY_GAIN.toFixed(3)}, 0.0, 1.0)) + dither, exp(-tau));
     }`;
 
 // A small tiling texture of noise (R) and ridges (G), for detail far finer than the bake when zoomed right in
@@ -234,17 +234,17 @@ const SKY_FRAGMENT = /* glsl */`
 
     // One layer of a star field too fine for points, for the view through a narrow field. Each star keeps to the
     // middle of its grid cell, so a single cell is enough.
-    vec3 deepStars(vec2 dome, vec3 d, float cells, float fade, float seed, float shade) {
+    vec3 deepStars(vec2 dome, vec3 d, float cells, float fade, float seed, float shade, float keep) {
         vec2 g = dome * cells;
         vec2 fl = floor(g);
         uvec3 h = pcg3d(uvec3(ivec2(fl) + 131072, int(seed)));
         vec3 r = vec3(h >> 8u) / 16777216.0;
-        if (r.z > 0.5) return vec3(0.0);
+        if (r.z > keep) return vec3(0.0);
         vec3 star = domeDir((fl + 0.28 + r.xy * 0.44) / cells);
         float dist = length(d - star) * uPxPerRad;
-        float rank = 1.0 - r.z / 0.5;
+        float rank = 1.0 - r.z / keep;
         float sigma = (0.62 + 0.55 * rank * rank * rank) * uDpr;
-        float amp = 0.14 + 0.5 * rank * rank + 3.2 * pow(rank, 7.0);
+        float amp = 0.035 + 0.42 * rank * rank * rank + 2.4 * pow(rank, 8.0);
         vec3 tint = mix(vec3(1.0, 0.56, 0.28), vec3(0.50, 0.68, 1.0), fract(r.x * 7.0 + r.y * 3.0));
         tint = mix(vec3(1.0, 0.92, 0.82), tint, 0.8);
         return tint * amp * fade * shade * exp(-dist * dist / (2.0 * sigma * sigma));
@@ -281,10 +281,15 @@ const SKY_FRAGMENT = /* glsl */`
             // Dust dims the deep stars, and there are more of them where the band is bright
             float lum = dot(tex.rgb, vec3(0.3, 0.5, 0.2));
             float shade = mix(0.22, 1.0, tex.a) * (0.35 + 2.2 * lum) * air;
-            col += deepStars(dome, d, 458.0, uDeepFade.x, 1.0, shade);
-            if (uDeepFade.y > 0.0) col += deepStars(dome, d, 1146.0, uDeepFade.y, 2.0, shade * 0.8);
-            if (uDeepFade.z > 0.0) col += deepStars(dome, d, 2865.0, uDeepFade.z, 3.0, shade * 0.65);
+            float keep = mix(0.14, 0.5, smoothstep(0.03, 0.32, lum));
+            col += deepStars(dome, d, 458.0, uDeepFade.x, 1.0, shade, keep);
+            if (uDeepFade.y > 0.0) col += deepStars(dome, d, 1146.0, uDeepFade.y, 2.0, shade * 0.8, keep);
+            if (uDeepFade.z > 0.0) col += deepStars(dome, d, 2865.0, uDeepFade.z, 3.0, shade * 0.65, keep);
         }
+
+        // Far from the band the sky is a deep blue, not quite black. Worked out here, not baked: it sits so near the
+        // bottom of the texture's range that eight bits would draw it as visible contours.
+        col += vec3(0.0052, 0.0076, 0.0165) * (0.92 + 0.16 * d.y);
 
         // Airglow: a faint green-teal band low down, and a wider blue haze above it
         col += vec3(0.020, 0.052, 0.038) * exp(-up / 0.075);
@@ -471,9 +476,10 @@ function createFieldStars(pixels) {
     for (let i = 0; i < 64; i++) {
         const T = 2800 * (20000 / 2800) ** (i / 63);
         const [r, g, b] = blackBodyRGB(T);
-        // A little richer than true colour: faint stars otherwise all read as white
+        // A little richer than true colour, as faint stars otherwise all read as white, but no channel goes quite
+        // to zero, which would turn a cool star into a hard orange speck
         const grey = (r + g + b) / 3;
-        palette.push([r, g, b].map((c) => Math.round(Math.min(1, Math.max(0, grey + (c - grey) * 1.45)) * 255)));
+        palette.push([r, g, b].map((c) => Math.round(Math.min(1, Math.max(0.1, grey + (c - grey) * 1.3)) * 255)));
     }
 
     let placed = 0;
@@ -548,7 +554,7 @@ function createFieldStars(pixels) {
             void main() {
                 vec2 p = (gl_PointCoord - 0.5) * (vRadius * 2.0 + 1.0);
                 float r2 = dot(p, p) / (vRadius * vRadius);
-                gl_FragColor = vec4(vColour * exp(-r2 * 2.6), 1.0);
+                gl_FragColor = vec4(vColour * exp(-r2 * 1.7), 1.0);
             }`
     });
     const points = new THREE.Points(geometry, material);

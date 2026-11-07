@@ -79,8 +79,10 @@ export function createHomePlanetsLayer(engine, app) {
                 // A small steady disc at any zoom, growing as a telescope would show it
                 float grow = clamp(pow(80.0 / uFov, 0.52), 1.0, 22.0);
                 float radius = (0.72 + 0.085 * m) * mix(1.0, aShape.x, 0.75) * grow * uDpr;
-                vFill = (0.5 + 0.34 * pow(10.0, 0.11 * m)) * shown / (1.0 + 0.06 * grow * grow);
-                vLook = vec4(radius, aShape.y, aShape.z, (0.02 + 0.0065 * m * m) * shown);
+                // A point's light is all in a few pixels; a resolved disc spreads it out, and shows its surface
+                float resolved = smoothstep(2.5, 7.0, radius / uDpr);
+                vFill = mix(0.5 + 0.34 * pow(10.0, 0.11 * m), 0.62, resolved) * shown;
+                vLook = vec4(radius, aShape.y, aShape.z, (0.02 + 0.0065 * m * m) * mix(1.0, 0.16, resolved) * shown);
                 vColour = bandColour(aColour);
                 vQuad = radius * (aShape.z > 0.5 ? 2.5 : 1.2) + (4.0 + 2.2 * m) * uDpr;
                 vPx = position.xy * vQuad;

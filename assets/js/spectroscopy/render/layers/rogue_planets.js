@@ -58,7 +58,8 @@ export function createRoguePlanetsLayer(engine, app) {
                 float amount = smoothstep(0.0, 2.2, m) * (0.25 + 0.12 * m) * uBandW[1] * uSkyFade;
                 float open = smoothstep(9.0, 2.2, uFov);
                 float radius = mix(0.0, (5.0 + 16.0 * aLook.y) * pow(9.0 / max(uFov, 0.4), 0.42), open) * uDpr;
-                float halo = (1.0 + 0.9 * aLook.y) * (0.8 + 0.07 * m) * uDpr;
+                // The glow around the point widens with the disc, as heat haze rather than a hard outline
+                float halo = (1.0 + 0.9 * aLook.y) * (0.8 + 0.07 * m) * uDpr + radius * 0.22;
                 vQuad = radius * 1.5 + halo * 5.0;
                 vShape = vec3(radius, halo, open);
                 vAmount = amount;
@@ -88,11 +89,13 @@ export function createRoguePlanetsLayer(engine, app) {
                 float alpha = 0.0;
                 if (radius > 0.5) {
                     float inside = clamp(radius - r + 0.5, 0.0, 1.0);
-                    // A nearly black disc with its own heat showing as a thin bright limb
+                    // A dark globe, shaded as a sphere: its own heat barely shows across the face, and builds up
+                    // towards the limb, where the line of sight passes through the most warm atmosphere
                     float x = min(r / radius, 1.0);
-                    float rim = pow(x, 7.0);
-                    float nightSide = 0.012 + 0.02 * (1.0 - x * x);
-                    col = mix(col, vColour * (nightSide + rim * 0.55) * (0.5 + vAmount), inside);
+                    float x2 = x * x;
+                    float limb = x2 * x2 * x2;
+                    float face = 0.03 + 0.05 * (1.0 - x2) + 0.34 * limb;
+                    col = mix(col, vColour * face * (0.6 + vAmount), inside);
                     alpha = inside * vShape.z;
                 }
                 gl_FragColor = vec4(col, alpha);
