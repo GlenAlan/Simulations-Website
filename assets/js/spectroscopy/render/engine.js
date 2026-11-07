@@ -413,6 +413,8 @@ export function createEngine(canvas) {
 
     function compileInBackground(target, targetCamera = camera) {
         if (!renderer) return Promise.resolve();
+        // Nothing compiles without a context. Whoever asked compiles again on 'gl-restored', as with jobs the loss cut short
+        if (contextLost) return new Promise(() => {});
         return new Promise((resolve) => {
             compileJobs.push({ materials: [...renderer.compile(target, targetCamera)], resolve });
         });
@@ -1408,12 +1410,14 @@ export function createEngine(canvas) {
             if (slew) slewTo({ az: slew.toAz ?? slew.from.az + slew.dAz, alt: slew.toAlt ?? slew.from.alt + slew.dAlt, fov: slew.toFov }, { duration: 0, onDone: slew.onDone });
             zoomGoal = view.fov;
             zoomAnchor = null;
+            document.body.classList.add('spectro-no-sky');  // Hides Enter system, which can't work until it's back
             bus.emit('gl-lost', {});
         });
         canvas.addEventListener('webglcontextrestored', () => {
             contextLost = false;
             clearTimeout(giveUpTimer);
             rememberLoss(false);
+            document.body.classList.remove('spectro-no-sky');
             hideCanvasMessage(canvas);
             readmitAll();
             compileChain();
@@ -1444,7 +1448,7 @@ export function createEngine(canvas) {
         setZoomIntake(fn) { zoomIntake = fn; },
         // With only one thing in play and a long way down to go, a wheel covers the distance in fewer notches
         setWheelBoost(k) { wheelBoost = k; },
-        offerZoom: (step, point, kind) => !!(zoomIntake && zoomIntake(step, point, kind)),
+        offerZoom: (step, point, kind) => !contextLost && !!(zoomIntake && zoomIntake(step, point, kind)),
         // What's left of the last zoom step, as a change in log field of view, and the sky stops there
         takeZoomLeft() {
             const left = Math.log(zoomGoal / view.fov);
