@@ -258,8 +258,10 @@ export function createClustersLayer(engine, app) {
         c.shrunk = 1 - DEPTH_TABLE.cluster.kSize * c.body.depth;
     });
     points.forEach(({ c, member, entity, spot }, w) => {
-        const flux = (star) => 10 ** (-0.4 * star.brightness.mag);
-        const share = member.stars ? flux(entity) / (flux(member.stars[0]) + flux(member.stars[1])) : 1;
+        // A pair's two stars share the light the one point had, by mass: so while they are drawn as one, the middle of their
+        // light is their centre of mass (pairSpots), where the pair is picked and ringed
+        const mass = (star) => star.star.mass_Msun;
+        const share = member.stars ? mass(entity) / (mass(member.stars[0]) + mass(member.stars[1])) : 1;
         memberCap.set([wasLight(member.brightness.mag, c.brightest), share], w * 2);
         const { body } = c;
         const v = offsetVector(c.basis, spot.x, spot.y);
