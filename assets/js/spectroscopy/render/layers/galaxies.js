@@ -6,9 +6,9 @@
 // zoom. The rule is softer than the one for stars, since a galaxy is a small jewel in the wide sky, not a point.
 
 import * as THREE from 'three';
-import { bus } from '../../core/state.js';
-import { skyMaterial, BAND_GLSL, ORDER, sharedUniforms } from '../shared.js';
+import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { limitingMag } from '../../core/sky.js';
+import { bandMagnitudes } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
@@ -29,7 +29,8 @@ const VERT = /* glsl */`
     attribute vec4 aRect;
     attribute vec4 aBandA;
     attribute float aBandB;
-    attribute float aMag;
+    attribute vec4 aMagA;
+    attribute float aMagB;
     attribute float aFade;
     varying vec2 vUv;
     varying vec2 vQ;
@@ -40,9 +41,9 @@ const VERT = /* glsl */`
         vec3 world = aCentre + position.x * aU + position.y * aV;
         vQ = position.xy;
         vUv = aRect.xy + (position.xy * 0.5 + 0.5) * aRect.zw;
-        float gain = revealGain(aMag);
-        vBand = vec4(aBandA.x, aBandA.y, aBandA.z * gain, aBandA.w) * aFade;
-        vXray = aBandB * aFade;
+        // Faint things come up with zoom in every band, each with its own magnitude there
+        vBand = vec4(aBandA.x * revealGain(aMagA.x), aBandA.y * revealGain(aMagA.y), aBandA.z * revealGain(aMagA.z), aBandA.w * revealGain(aMagA.w)) * aFade;
+        vXray = aBandB * revealGain(aMagB) * aFade;
         // Size on screen, in device pixels: the smaller it is, the harder it has to work to read as more than a blob
         float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad * 2.0;
         vJewel = fall(46.0, 10.0, px);
@@ -96,7 +97,8 @@ function quadGeometry(count) {
     add('aRect', 4);
     add('aBandA', 4);
     add('aBandB', 1);
-    add('aMag', 1);
+    add('aMagA', 4);
+    add('aMagB', 1);
     add('aFade', 1);
     geometry.instanceCount = count;
     return geometry;
@@ -109,8 +111,9 @@ function writeInstance(geometry, i, g, rect) {
     geometry.attributes.aRect.array.set(rect, i * 4);
     geometry.attributes.aBandA.array.set(g.bandA, i * 4);
     geometry.attributes.aBandB.array[i] = g.bandB;
-    geometry.attributes.aMag.array[i] = g.mag;
-    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMag'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
+    geometry.attributes.aMagA.array.set(g.magA, i * 4);
+    geometry.attributes.aMagB.array[i] = g.magB;
+    ['aCentre', 'aU', 'aV', 'aRect', 'aBandA', 'aBandB', 'aMagA', 'aMagB'].forEach((name) => { geometry.attributes[name].needsUpdate = true; });
 }
 
 export function createGalaxiesLayer(engine, app) {
@@ -125,6 +128,7 @@ export function createGalaxiesLayer(engine, app) {
     const galaxies = bodies.map((body, i) => {
         const basis = tangentBasis(body.sky.az, body.sky.alt);
         const halfDeg = (body.galaxy.size_deg * IMAGE_R) / 2;
+        const mags = bandMagnitudes(body);
         const { u, v } = quadAxes(basis, body.galaxy.position_angle_deg, worldHalfSize(body.galaxy.size_deg * IMAGE_R));
         return {
             body,
@@ -136,6 +140,9 @@ export function createGalaxiesLayer(engine, app) {
             v,
             halfDeg,
             mag: body.brightness.mag,
+            mags,
+            magA: [mags.radio, mags.ir, mags.visible, mags.uv],
+            magB: mags.xray,
             bandA: [body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv],
             bandB: body.bands.xray,
             recipe: galaxyRecipe(body),
@@ -386,7 +393,7 @@ export function createGalaxiesLayer(engine, app) {
             startJob(baker.bake(tile.recipe, atlas, rect, TILE, frame.quality), () => { tile.baked = true; });
             return;
         }
-        if (baker.scratchIsLarge()) baker.releaseScratch();
+        if (baker.hasScratch()) baker.releaseScratch();
         if (stillFor < 0.12) return;
         for (let i = 0; i < HERO_SLOTS; i++) {
             const h = heroes[i];
@@ -448,7 +455,7 @@ export function createGalaxiesLayer(engine, app) {
                 const g = galaxies[i];
                 const { body } = g;
                 if ((body.bands[app.band] || 0) <= 0.01) continue;
-                if (app.band === 'visible' && revealGain(g.mag, lim) < 0.03) continue;
+                if (revealGain(g.mags[app.band], lim) < 0.03) continue;
                 const major = body.galaxy.size_deg / 2;
                 if (major * pxPerDeg < 14) {
                     out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0 });

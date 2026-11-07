@@ -90,12 +90,12 @@ export function createRadioLobes(engine, sources) {
                 float dx = (q.x - (tip - fat * 1.6)) / (fat * 1.7);
                 float dy = q.y / (fat * (1.0 - 0.35 * smoothstep(-0.6, 1.0, dx)));
                 float d = sqrt(dx * dx + dy * dy);
-                float body = fall(1.02, 0.35, d);
-                float shell = smoothstep(0.4, 0.84, d) * fall(1.1, 0.86, d);
+                float body = fall(1.06, 0.2, d);
+                float shell = smoothstep(0.4, 0.82, d) * fall(1.14, 0.8, d);
                 float n = fbm(q * 7.0 + off * 1.7);
                 float ridge = 1.0 - abs(2.0 * fbm(q * 15.0 + w * 3.0 + off * 2.3) - 1.0);
                 ridge = ridge * ridge * ridge;
-                float light = body * (0.05 + 0.26 * n * n + 0.32 * ridge) + shell * (0.1 + 0.34 * n);
+                float light = body * (0.03 + 0.2 * n * n + 0.26 * ridge) + shell * (0.05 + 0.24 * n);
                 // The hot spot where the jet slams into the gas around the galaxy
                 vec2 h = (p - vec2(tip - fat * 0.16, 0.0)) / (fat * 0.11);
                 light += 3.2 * exp(-dot(h, h));

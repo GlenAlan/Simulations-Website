@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Rng } from '../../core/rng.js';
 import { limitingMag } from '../../core/sky.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
-import { SKY_RADIUS, tangentBasis, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
+import { SKY_RADIUS, tangentBasis, quadAxes, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
 
 const RAD = Math.PI / 180;

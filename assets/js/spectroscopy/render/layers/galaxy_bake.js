@@ -2,15 +2,15 @@
 //
 //   1. Map: the disc seen from straight above, as four maps of young stars, dust, old stars and glowing hydrogen.
 //      Spiral arms follow the density-wave pattern: the logarithmic spiral th = ln(r / r0) / tan(pitch), m-fold.
-//   2. Particles: star clouds and bright knots splatted into the map along the same arms.
-//   3. View: a ray through the tilted disc for each pixel, so that light and dust add up properly along the line
+//   2. View: a ray through the tilted disc for each pixel, so that light and dust add up properly along the line
 //      of sight. That is what gives an edge-on spiral its dust lane, and lets the near side cross in front of the bulge.
-//   4. Sparkle: individual bright stars as points on top, dimmed if they sit behind dust.
-//   5. Resolve: square-root encoded into 8 bits per channel, which costs half the memory of half floats and shows no bands.
+//   3. Particles: star clouds, glowing knots and individual bright stars on top, along the same arms and dimmed by
+//      whatever dust lies in front of them.
+//   4. Resolve: square-root encoded into 8 bits per channel, which costs half the memory of half floats and shows no bands.
 //
 // The result is two images: A = visible RGB and ultraviolet; B = infrared, radio, X-ray. The particles are made from
 // nothing but their index in the vertex shader, so no CPU time or memory goes on them, and the same seed gives the
-// same stars at every size.
+// same particles at every size.
 
 import * as THREE from 'three';
 import { Rng } from '../../core/rng.js';
@@ -34,7 +34,7 @@ export function galaxyRecipe(body) {
         incl: Math.min(g.inclination_deg, 88) * RAD,
         // A little redder the further away: redshift moves the blue light out of the visible band
         redden: Math.max(0, Math.min(0.5, g.z || 0)),
-        starburst: rng.next() < 0.22,
+        starburst: !!g.starburst,
         arms: 2, pitch: 0.3, phase: rng.range(0, Math.PI * 2), armK: 1, barLen: 0, flocc: 0,
         rd: 0.24, rdY: 0.34, young: 1, dust: 0.8, warp: rng.range(-0.05, 0.05),
         hOld: 0.05, hYoung: 0.014, hDust: 0.02,
@@ -67,7 +67,6 @@ export function galaxyRecipe(body) {
         r.boxy = rng.range(1.85, 2.2);
         r.shells = rng.chance(0.18) ? rng.range(0.5, 1) : 0;
         r.laneDust = rng.chance(0.14) ? rng.range(0.5, 1.1) : 0;
-        r.starburst = false;
     } else {
         r.incl *= 0.65;
         r.young = rng.range(0.28, 0.4);
@@ -77,7 +76,6 @@ export function galaxyRecipe(body) {
         r.hDust = 0.035;
         r.bulgeRe = 0.0;
         r.bulgeL = 0.0;
-        r.starburst = rng.next() < 0.4;
     }
     return r;
 }
@@ -228,7 +226,7 @@ vec4 spiral(vec2 p) {
     float wisps = fbm2(q * 8.0 + uOff.yw, uOct);
     float web = 1.0 - abs(2.0 * fbm2(q * 17.0 + uOff.xy + w2 * 3.0, uOct) - 1.0);
     web = web * web * web * web;
-    float dust = exp(-r / 0.5) * smoothstep(0.012, r0 * 0.75, r) * fall(1.04, 0.66, r)
+    float dust = exp(-r / 0.72) * smoothstep(0.012, r0 * 0.75, r) * fall(1.06, 0.72, r)
         * (lane * (0.8 + 6.5 * ridge) * mix(0.5, 1.2, life)
             + (0.45 + 0.8 * uFlocc) * wisps * wisps * 3.5
             + 2.2 * web * (0.25 + lane)
@@ -282,77 +280,13 @@ void main() {
     outMap = uKind > 1.5 ? irregular(p) : spiral(p);
 }`;
 
-// Star clouds and bright knots for the map, generated from gl_VertexID. Output goes straight into the map's channels.
-const MAP_POINT_VERT = /* glsl */`
-uniform float uKind, uArms, uPitch, uPhase, uBarLen, uRdY, uRd, uMapR, uHand, uRes, uFluxK, uLCap;
-uniform vec4 uOff;
-uniform uint uSeedU;
-out vec4 vEmit;
-${PCG_GLSL}
-void main() {
-    uint st = pcg(uint(gl_VertexID) * 3u + uSeedU);
-    float pop = rnd(st);
-    vec2 pos;
-    float radius;
-    vec4 emit;
-    if (uKind > 1.5) {
-        // Irregular: clouds gathered round a few random centres
-        float k = floor(rnd(st) * 7.0);
-        uint cs = pcg(uint(k) + uSeedU * 5u);
-        vec2 c = vec2((rnd(cs) - 0.5) * 1.1, (rnd(cs) - 0.5) * 0.6);
-        pos = c + vec2(gaussian(st), gaussian(st)) * (0.04 + 0.12 * rnd(st));
-    } else {
-        float r0 = max(uBarLen, 0.09);
-        // Two exponentials added: few clouds in the very middle, a peak part way out, a long tail
-        float r = r0 * 0.9 + expRadius(st, uRdY * 0.42, 0.6) + expRadius(st, uRdY * 0.42, 0.6);
-        float arm = floor(rnd(st) * uArms);
-        float spread = pop < 0.08 ? 0.12 : pop < 0.72 ? 0.32 : 1.2;
-        float th = log(r / r0) / tan(uPitch) + (6.2831853 * arm - uPhase) / uArms;
-        th += gaussian(st) * spread / uArms;
-        r *= 1.0 + 0.05 * gaussian(st);
-        pos = r * vec2(cos(th), sin(th));
-    }
-    // A luminosity function, as for real star-forming regions: very many faint clouds, a few giants
-    float L = min(uLCap, 0.02 / max(1.0 - rnd(st), 1e-5));
-    if (pop < 0.08) {
-        // Glowing clouds of hydrogen round the youngest clusters
-        radius = 0.002 + 0.0017 * sqrt(L);
-        emit = vec4(0.15, 0.0, 0.0, 1.0) * L;
-    } else if (pop < 0.72) {
-        // Clouds of blue stars
-        radius = 0.0012 + 0.0014 * sqrt(L);
-        emit = vec4(1.0, 0.0, 0.0, 0.0) * L;
-    } else {
-        // Fainter, older stars between the arms
-        radius = 0.002;
-        emit = vec4(0.25, 0.0, 0.35, 0.0) * min(L, 1.5);
-    }
-    pos.y *= uHand;
-    float pxPerUnit = uRes / (2.0 * uMapR);
-    float rPx = max(radius * pxPerUnit, 0.75);
-    float rWorld = rPx / pxPerUnit;
-    // Keep each cloud's total light the same at any resolution or particle count
-    vEmit = emit * uFluxK / (6.2831853 * rWorld * rWorld);
-    gl_PointSize = rPx * 4.0;
-    gl_Position = vec4(pos / uMapR, 0.0, 1.0);
-}`;
-
-const MAP_POINT_FRAG = /* glsl */`
-precision highp float;
-in vec4 vEmit;
-out vec4 outMap;
-void main() {
-    vec2 c = (gl_PointCoord - 0.5) * 4.0;   // In units of the cloud's radius
-    outMap = vEmit * exp(-0.5 * dot(c, c));
-}`;
-
 // Light and dust along a ray through the tilted galaxy
 const VIEW_FRAG = /* glsl */`
 precision highp float;
 precision highp sampler2D;
 in vec2 vP;
 uniform sampler2D tMap;
-uniform float uKind, uCi, uSi, uImageR, uMapR, uDs, uHOld, uHYoung, uHDust, uRedden, uWarp, uBurst, uHand;
+uniform float uKind, uCi, uSi, uImageR, uMapR, uMapLod, uDs, uHOld, uHYoung, uHDust, uRedden, uWarp, uBurst, uHand;
 uniform float uBulgeRe, uBulgeL, uBulgeN, uBulgeQ, uBoxy, uShells, uLane;
 uniform vec4 uOff;
 layout(location = 0) out vec4 gA;
@@ -419,12 +353,12 @@ void disc(vec2 p, out vec3 vis, out float uvLight, out float ir, out float radio
         float R = length(pos.xy);
         // A slight warp at the rim, as most big discs have
         float z = pos.z - uWarp * R * R * pos.x;
-        vec4 m = texture(tMap, pos.xy / (2.0 * uMapR) + 0.5);
+        vec4 m = textureLod(tMap, pos.xy / (2.0 * uMapR) + 0.5, uMapLod);
         float hOld = uHOld * (1.0 + 0.8 * R);
         float sech = 1.0 / cosh(z / hOld);
         float eOld = m.b * sech * sech / (2.0 * hOld);
         float hY = uHYoung * (1.0 + 0.6 * R);
-        float prof = exp(-abs(z) / hY) / (2.0 * hY);
+        float prof = exp(-0.5 * z * z / (hY * hY)) / (2.5066 * hY);
         float hD = uHDust * (1.0 + 1.3 * R);
         float dz = exp(-0.5 * z * z / (hD * hD)) / (2.5066 * hD);
         float dTau = m.g * dz * ds;
@@ -484,7 +418,7 @@ void main() {
         if (uBulgeL > 0.0) {
             float qApp = sqrt(uBulgeQ * uBulgeQ * uSi * uSi + uCi * uCi);
             float r = length(vec2(p.x, p.y / qApp));
-            float I = softCap(sersic(r, uBulgeRe, uBulgeN) * uBulgeL, 5.0);
+            float I = softCap(sersic(r, uBulgeRe, uBulgeN) * uBulgeL, 5.0) * fall(1.05, 0.4, r);
             vis += I * COL_BULGE * tB;
             uvLight += I * 0.012 * tB.b;
             ir += I * 0.65;
@@ -501,86 +435,161 @@ void main() {
     gB = vec4(ir, radio * 0.25, xray, 1.0);
 }`;
 
-// Individually bright stars, seen through the tilted galaxy
-const SPARK_VERT = /* glsl */`
+// Particles seen through the tilted galaxy, each made from its index alone. uClouds picks the population:
+// 1 = star clouds and glowing knots, which together hold about as much light as the smooth arms under them;
+// 0 = individual stars, drawn crisp at the size of the bake.
+const PARTICLE_VERT = /* glsl */`
 precision highp sampler2D;
 ${FALL_GLSL}
 uniform sampler2D tMap;
-uniform float uKind, uArms, uPitch, uPhase, uBarLen, uRdY, uRd, uMapR, uImageR, uHand, uRes, uCi, uSi, uBulgeRe, uBulgeQ, uAmp;
+uniform float uKind, uArms, uPitch, uPhase, uBarLen, uRdY, uRd, uMapR, uImageR, uHand, uRes, uCi, uSi, uBulgeQ, uAmp, uClouds, uFluxK, uLCap, uHDust, uMapLod, uWideLod;
 uniform uint uSeedU;
 out vec3 vVis;
 out vec2 vBands;
+out float vHard;
 ${PCG_GLSL}
+
+// A place on a spiral arm: spread is how far from the crest, in radians of the pattern
+vec3 onArm(inout uint st, float spread, float thick) {
+    float r0 = max(uBarLen, 0.09);
+    // Two exponentials added: few in the very middle, a peak part way out, a long tail
+    float r = r0 * 0.9 + expRadius(st, uRdY * 0.42, 0.6) + expRadius(st, uRdY * 0.42, 0.6);
+    float arm = floor(rnd(st) * uArms);
+    float th = log(r / r0) / tan(uPitch) + (6.2831853 * arm - uPhase) / uArms + gaussian(st) * spread / uArms;
+    r *= 1.0 + 0.05 * gaussian(st);
+    return vec3(r * vec2(cos(th), sin(th)), gaussian(st) * thick);
+}
+
+// A place in an irregular's clumps: gathered round a few random centres
+vec3 inClump(inout uint st, float thick) {
+    float k = floor(rnd(st) * 7.0);
+    uint cs = pcg(uint(k) + uSeedU * 5u);
+    vec2 c = vec2((rnd(cs) - 0.5) * 1.1, (rnd(cs) - 0.5) * 0.6);
+    return vec3(c + vec2(gaussian(st), gaussian(st)) * (0.04 + 0.13 * rnd(st)), gaussian(st) * thick);
+}
+
 void main() {
-    uint st = pcg(uint(gl_VertexID) * 7u + uSeedU + 91u);
+    uint st = pcg(uint(gl_VertexID) * (uClouds > 0.5 ? 3u : 7u) + uSeedU + (uClouds > 0.5 ? 0u : 91u));
     float pop = rnd(st);
     vec3 pos;
     vec3 col;
-    float hot;
-    // Very many faint stars and very few bright ones: a true power law
-    float amp = min(1.0, 0.0012 / max(1.0 - rnd(st), 1e-5));
-    if (uKind > 0.5 && uKind < 1.5) {
-        // Old stars and globular clusters scattered through an elliptical's halo
-        float r = expRadius(st, 0.2, 1.1) + 0.02;
-        vec3 d = normalize(vec3(gaussian(st), gaussian(st), gaussian(st)));
-        pos = d * r * vec3(1.0, uBulgeQ, 1.0);
-        col = mix(vec3(1.0, 0.72, 0.42), vec3(1.0, 0.9, 0.72), rnd(st));
-        hot = 0.0;
-    } else if (uKind > 1.5) {
-        float k = floor(rnd(st) * 7.0);
-        uint cs = pcg(uint(k) + uSeedU * 5u);
-        vec2 c = vec2((rnd(cs) - 0.5) * 1.1, (rnd(cs) - 0.5) * 0.6);
-        vec2 xy = c + vec2(gaussian(st), gaussian(st)) * (0.05 + 0.14 * rnd(st));
-        pos = vec3(xy, gaussian(st) * 0.05);
-        hot = rnd(st);
-        col = mix(vec3(1.0, 0.88, 0.75), vec3(0.62, 0.78, 1.25), hot);
-    } else if (pop < 0.6) {
-        // Young stars on the arms: mostly blue, a few red supergiants
-        float r0 = max(uBarLen, 0.09);
-        float r = r0 * 0.9 + expRadius(st, uRdY * 0.42, 0.6) + expRadius(st, uRdY * 0.42, 0.6);
-        float arm = floor(rnd(st) * uArms);
-        float th = log(r / r0) / tan(uPitch) + (6.2831853 * arm - uPhase) / uArms + gaussian(st) * 0.42 / uArms;
-        pos = vec3(r * vec2(cos(th), sin(th)), gaussian(st) * 0.018);
-        float red = rnd(st);
-        hot = red < 0.12 ? 0.0 : 1.0;
-        col = red < 0.12 ? vec3(1.0, 0.55, 0.32) : mix(vec3(0.7, 0.82, 1.2), vec3(0.5, 0.7, 1.35), rnd(st));
+    float uvShare;
+    float irShare;
+    float radiusWorld = 0.0;
+    float amp = 1.0;
+    float elliptical = uKind > 0.5 && uKind < 1.5 ? 1.0 : 0.0;
+
+    if (uClouds > 0.5) {
+        // A luminosity function, as for real star-forming regions: very many faint clouds, a few giants
+        float L = min(uLCap, 0.02 / max(1.0 - rnd(st), 1e-5));
+        float spread = pop < 0.05 ? 0.14 : pop < 0.75 ? 0.34 : 1.2;
+        pos = uKind > 1.5 ? inClump(st, 0.03) : onArm(st, spread, 0.012);
+        if (pop < 0.05) {
+            // Glowing clouds of hydrogen round the youngest clusters
+            radiusWorld = 0.002 + 0.0016 * sqrt(L);
+            col = vec3(1.45, 0.32, 0.5) * 0.2;
+            amp = L * 1.1;
+            uvShare = 0.35;
+        } else if (pop < 0.75) {
+            // Clouds of blue stars
+            radiusWorld = 0.0015 + 0.0017 * sqrt(L);
+            col = vec3(0.24, 0.48, 1.4) * 0.2;
+            amp = L;
+            uvShare = 1.0;
+        } else {
+            // Fainter clouds between the arms
+            radiusWorld = 0.002;
+            col = vec3(0.24, 0.48, 1.4) * 0.2;
+            amp = 0.3 * min(L, 1.5);
+            uvShare = 0.8;
+        }
+        irShare = 0.05;
     } else {
-        // Older stars everywhere in the disc
-        float r = expRadius(st, uRd, 1.1);
-        float th = 6.2831853 * rnd(st);
-        pos = vec3(r * vec2(cos(th), sin(th)), gaussian(st) * 0.05);
-        hot = 0.1;
-        amp *= 0.4;
-        col = mix(vec3(1.0, 0.78, 0.55), vec3(1.0, 0.92, 0.8), rnd(st));
+        // Very many faint stars and very few bright ones: a true power law
+        float lum = min(1.0, 0.0012 / max(1.0 - rnd(st), 1e-5));
+        if (elliptical > 0.5) {
+            // Old stars and globular clusters scattered through the halo
+            float r = expRadius(st, 0.2, 1.1) + 0.02;
+            vec3 d = normalize(vec3(gaussian(st), gaussian(st), gaussian(st)));
+            pos = d * r * vec3(1.0, uBulgeQ, 1.0);
+            col = mix(vec3(1.0, 0.72, 0.42), vec3(1.0, 0.9, 0.72), rnd(st));
+            uvShare = 0.0;
+        } else if (uKind > 1.5) {
+            pos = inClump(st, 0.05);
+            float hot = rnd(st);
+            col = mix(vec3(1.0, 0.88, 0.75), vec3(0.62, 0.78, 1.25), hot);
+            uvShare = hot * 1.6;
+        } else if (pop < 0.6) {
+            // Young stars on the arms: mostly blue, a few red supergiants
+            pos = onArm(st, 0.42, 0.018);
+            float red = rnd(st);
+            col = red < 0.12 ? vec3(1.0, 0.55, 0.32) : mix(vec3(0.7, 0.82, 1.2), vec3(0.5, 0.7, 1.35), rnd(st));
+            uvShare = red < 0.12 ? 0.0 : 1.6;
+        } else {
+            // Older stars everywhere in the disc
+            float r = expRadius(st, uRd, 1.1);
+            float th = 6.2831853 * rnd(st);
+            pos = vec3(r * vec2(cos(th), sin(th)), gaussian(st) * 0.05);
+            lum *= 0.4;
+            col = mix(vec3(1.0, 0.78, 0.55), vec3(1.0, 0.92, 0.8), rnd(st));
+            uvShare = 0.16;
+        }
+        amp = lum;
+        irShare = 0.8 * (1.0 - min(uvShare, 1.0));
     }
+
     pos.y *= uHand;
     vec2 img = vec2(pos.x, pos.y * uCi - pos.z * uSi);
-    float depth = pos.y * uSi + pos.z * uCi;
+
+    // What dust lies between this particle and us. Above the midplane on our side there's none; behind it there's the
+    // whole column here. Towards edge-on the ray runs along the disc, so the far side of the galaxy lies behind far more.
     float tau = 0.0;
-    if (uKind < 0.5 || uKind > 1.5) {
-        // Behind the midplane, a star shines through the dust above it, more of it the more tilted the disc is
-        float g = textureLod(tMap, pos.xy / (2.0 * uMapR) + 0.5, 0.0).g;
-        tau = g * smoothstep(-0.015, 0.015, depth) * min(1.0 / max(uCi, 0.01), 5.0);
+    if (elliptical < 0.5) {
+        vec2 mapUv = pos.xy / (2.0 * uMapR) + 0.5;
+        float column = max(textureLod(tMap, mapUv, uMapLod).g, textureLod(tMap, mapUv, uWideLod).g);
+        float behind = smoothstep(-uHDust, uHDust, pos.z);
+        float slant = min(1.0 / max(uCi, 0.01), 6.0);
+        tau = column * (behind * (1.0 + (slant - 1.0) * smoothstep(-0.2, 0.4, pos.y * uSi))
+            + 0.5 * (slant - 1.0) * smoothstep(-0.75, 0.0, pos.y * uSi));
     }
     vec3 T = exp(-tau * vec3(0.86, 1.0, 1.16));
-    float rim = fall(1.08, 0.55, length(pos.xy));
-    float brightness = uAmp * (0.008 + 1.5 * sqrt(amp)) * rim * rim;
-    vVis = col * T * brightness;
-    vBands = vec2(hot * brightness * exp(-tau * 1.7) * 1.6, (1.0 - hot) * brightness * 0.8);
-    float px = uRes / 1024.0;
-    gl_PointSize = clamp((1.15 + 2.2 * sqrt(amp)) * clamp(px, 0.6, 2.0), 1.0, 8.0);
+    float dimUv = exp(-tau * 1.7);
+
+    float brightness;
+    if (uClouds > 0.5) {
+        // Each cloud's total light stays the same at any resolution or particle count
+        float pxPerUnit = uRes / (2.0 * uImageR);
+        float rPx = max(radiusWorld * pxPerUnit, 0.75);
+        float rWorld = rPx / pxPerUnit;
+        // Clouds thin out towards the rim as the smooth light does
+        brightness = amp * uFluxK / (6.2831853 * rWorld * rWorld) * fall(1.1, 0.55, length(pos.xy));
+        gl_PointSize = rPx * 4.0;
+        vHard = 4.0;
+        vVis = col * T * brightness;
+        vBands = vec2(uvShare * dimUv * brightness, irShare * brightness);
+    } else {
+        float rim = fall(1.08, 0.55, length(pos.xy));
+        brightness = uAmp * (0.008 + 1.5 * sqrt(amp)) * rim * rim;
+        float px = uRes / 1024.0;
+        gl_PointSize = clamp((1.15 + 2.2 * sqrt(amp)) * clamp(px, 0.6, 2.0), 1.0, 8.0);
+        vHard = 2.0;
+        vVis = col * T * brightness;
+        vBands = vec2(uvShare * dimUv * brightness, irShare * brightness);
+    }
     gl_Position = vec4(img / uImageR, 0.0, 1.0);
 }`;
 
-const SPARK_FRAG = /* glsl */`
+const PARTICLE_FRAG = /* glsl */`
 precision highp float;
 in vec3 vVis;
 in vec2 vBands;
+in float vHard;
 layout(location = 0) out vec4 gA;
 layout(location = 1) out vec4 gB;
 void main() {
-    vec2 c = (gl_PointCoord - 0.5) * 2.0;
-    float g = exp(-3.2 * dot(c, c));
+    // A Gaussian: the point's edge is vHard/2 of its radii out
+    vec2 c = (gl_PointCoord - 0.5) * vHard;
+    float g = exp(-0.5 * dot(c, c) * (vHard < 3.0 ? 3.2 : 1.0));
     gA = vec4(vVis * g, vBands.x * g);
     gB = vec4(vBands.y * g, 0.0, 0.0, 0.0);
 }`;
@@ -609,15 +618,15 @@ void main() {
     gB = vec4(clamp(sqrt(b.rgb) + d, 0.0, 1.0), 1.0);
 }`;
 
-function hdrTarget(width, height, count) {
+function hdrTarget(width, height, count, mipmaps) {
     return new THREE.WebGLRenderTarget(width, height, {
         count,
         type: THREE.HalfFloatType,
         format: THREE.RGBAFormat,
-        minFilter: THREE.LinearFilter,
+        minFilter: mipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
         depthBuffer: false,
-        generateMipmaps: false
+        generateMipmaps: mipmaps
     });
 }
 
@@ -629,8 +638,8 @@ function bakeSettings(res, quality) {
         mapRes: quality === 'low' ? Math.max(res, 128) : Math.min(res * 2, Math.max(res, 256)),
         oct: res <= 128 ? 4 : res <= 512 ? 5 : 7,
         ds: res <= 128 ? 0.05 : res <= 512 ? 0.034 : 0.024,
-        mapPoints: Math.round(Math.min(420000, Math.max(5000, 130000 * area * k))),
-        sparks: res <= 128 ? 0 : Math.round(Math.min(320000, 110000 * area * k)),
+        clouds: Math.round(Math.min(420000, Math.max(5000, 130000 * area * k))),
+        stars: res <= 128 ? 0 : Math.round(Math.min(320000, 110000 * area * k)),
         tiles: res <= 256 ? 1 : res <= 512 ? 2 : res <= 1024 ? 4 : 6,
         pointChunk: 90000
     };
@@ -650,7 +659,7 @@ export function createGalaxyBaker(renderer) {
         uBoxy: { value: 2 }, uShells: { value: 0 }, uLane: { value: 0 }, uHOld: { value: 0.05 }, uHYoung: { value: 0.02 },
         uHDust: { value: 0.014 }, uRedden: { value: 0 }, uWarp: { value: 0 }, uBurst: { value: 0 },
         uOct: { value: 4 }, uDs: { value: 0.05 }, uRes: { value: 128 }, uFluxK: { value: 1 }, uLCap: { value: 30 }, uAmp: { value: 1 },
-        tMap: { value: null }
+        uClouds: { value: 0 }, uMapLod: { value: 0 }, uWideLod: { value: 0 }, tMap: { value: null }
     };
     const base = { glslVersion: THREE.GLSL3, depthTest: false, depthWrite: false, toneMapped: false };
     const additive = {
@@ -664,8 +673,7 @@ export function createGalaxyBaker(renderer) {
     };
     const mapMaterial = new THREE.ShaderMaterial({ ...base, uniforms: shared, vertexShader: QUAD_VERT, fragmentShader: MAP_FRAG });
     const viewMaterial = new THREE.ShaderMaterial({ ...base, uniforms: shared, vertexShader: QUAD_VERT, fragmentShader: VIEW_FRAG });
-    const mapPointMaterial = new THREE.ShaderMaterial({ ...base, ...additive, uniforms: shared, vertexShader: MAP_POINT_VERT, fragmentShader: MAP_POINT_FRAG });
-    const sparkMaterial = new THREE.ShaderMaterial({ ...base, ...additive, uniforms: shared, vertexShader: SPARK_VERT, fragmentShader: SPARK_FRAG });
+    const particleMaterial = new THREE.ShaderMaterial({ ...base, ...additive, uniforms: shared, vertexShader: PARTICLE_VERT, fragmentShader: PARTICLE_FRAG });
     const resolveUniforms = { tA: { value: null }, tB: { value: null }, uScale: { value: new THREE.Vector2(BAKE_SCALE.a, BAKE_SCALE.b) } };
     const resolveMaterial = new THREE.ShaderMaterial({ ...base, uniforms: resolveUniforms, vertexShader: QUAD_VERT, fragmentShader: RESOLVE_FRAG });
 
@@ -690,7 +698,7 @@ export function createGalaxyBaker(renderer) {
             pointGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count), 1));
             pointGeometry.boundingSphere = new THREE.Sphere();
             if (points) pointScene.remove(points);
-            points = new THREE.Points(pointGeometry, mapPointMaterial);
+            points = new THREE.Points(pointGeometry, particleMaterial);
             points.frustumCulled = false;
             pointScene.add(points);
         }
@@ -720,11 +728,11 @@ export function createGalaxyBaker(renderer) {
     function scratch(mapRes, res) {
         if (!scratchMap || scratchMap.width !== mapRes) {
             if (scratchMap) scratchMap.dispose();
-            scratchMap = hdrTarget(mapRes, mapRes, 1);
+            scratchMap = hdrTarget(mapRes, mapRes, 1, true);
         }
         if (!scratchView || scratchView.width !== res) {
             if (scratchView) scratchView.dispose();
-            scratchView = hdrTarget(res, res, 2);
+            scratchView = hdrTarget(res, res, 2, false);
         }
     }
 
@@ -780,10 +788,9 @@ export function createGalaxyBaker(renderer) {
         }
     }
 
-    function* pointPass(target, material, count, chunk) {
+    function* pointPass(target, count, chunk) {
         if (count <= 0) return;
         const p = pointsFor(count);
-        p.material = material;
         for (let start = 0; start < count; start += chunk) {
             p.geometry.setDrawRange(start, Math.min(chunk, count - start));
             setUniforms();
@@ -800,6 +807,12 @@ export function createGalaxyBaker(renderer) {
         setRecipe(currentRecipe);
         shared.uOct.value = currentSettings.oct;
         shared.uDs.value = currentSettings.ds;
+        // Blur the map for rays that run along the disc, by the same width at any resolution
+        const tilt = Math.cos(currentRecipe.incl);
+        const blur = 0.03 * (1 - Math.min(1, Math.max(0, (tilt - 0.08) / 0.75)));
+        const pxPerUnit = currentSettings.mapRes / (2 * IMAGE_R);
+        shared.uMapLod.value = Math.max(0, Math.log2(Math.max(1e-4, blur * pxPerUnit)));
+        shared.uWideLod.value = Math.max(0, Math.log2(0.14 * pxPerUnit));
     }
 
     // A job is a generator: each next() does one small piece of GPU work. rect is { x, y, w, h } in the output target.
@@ -812,20 +825,22 @@ export function createGalaxyBaker(renderer) {
         const usesMap = recipe.kind !== 1;
         if (usesMap) {
             clear(scratchMap);
-            shared.uRes.value = s.mapRes;
             yield* tiledPass(scratchMap, mapMaterial, s.tiles);
-            // All the clouds together hold about as much light as the smooth arms under them, whatever their number.
-            // 0.15 is the mean of the luminosity function; fewer clouds means no single one may dominate.
-            shared.uFluxK.value = ((recipe.kind === 2 ? 1.2 : 0.6) * recipe.young) / (0.15 * Math.max(1, s.mapPoints));
-            shared.uLCap.value = 30 * Math.min(1, Math.sqrt(s.mapPoints / 130000));
-            yield* pointPass(scratchMap, mapPointMaterial, s.mapPoints, s.pointChunk);
         }
         clear(scratchView);
         shared.tMap.value = usesMap ? scratchMap.texture : null;
         shared.uRes.value = res;
         yield* tiledPass(scratchView, viewMaterial, s.tiles);
+        if (usesMap) {
+            // 0.15 is the mean of the luminosity function. With fewer clouds, no single one may dominate.
+            shared.uFluxK.value = ((recipe.kind === 2 ? 1.1 : 0.5) * recipe.young) / (0.15 * Math.max(1, s.clouds));
+            shared.uLCap.value = 9 * Math.min(1, Math.sqrt(s.clouds / 130000));
+            shared.uClouds.value = 1;
+            yield* pointPass(scratchView, s.clouds, s.pointChunk);
+        }
+        shared.uClouds.value = 0;
         shared.uAmp.value = recipe.kind === 1 ? 0.3 : 0.7;
-        yield* pointPass(scratchView, sparkMaterial, s.sparks, s.pointChunk);
+        yield* pointPass(scratchView, s.stars, s.pointChunk);
 
         resolveUniforms.tA.value = scratchView.textures[0];
         resolveUniforms.tB.value = scratchView.textures[1];
@@ -842,7 +857,7 @@ export function createGalaxyBaker(renderer) {
 
     return {
         bake,
-        // Free the large working textures between bakes; the small ones are worth keeping while the atlas fills
+        // Free the working textures. The small ones are worth keeping while the atlas fills, the rest of the time none are.
         releaseScratch() {
             if (scratchMap) scratchMap.dispose();
             if (scratchView) scratchView.dispose();
@@ -854,11 +869,11 @@ export function createGalaxyBaker(renderer) {
             points = null;
             pointCapacity = 0;
         },
-        scratchIsLarge: () => !!scratchView && scratchView.width > 256,
+        hasScratch: () => !!scratchView,
         dispose() {
             this.releaseScratch();
             quadGeometry.dispose();
-            [mapMaterial, viewMaterial, mapPointMaterial, sparkMaterial, resolveMaterial].forEach((m) => m.dispose());
+            [mapMaterial, viewMaterial, particleMaterial, resolveMaterial].forEach((m) => m.dispose());
         }
     };
 }

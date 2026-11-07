@@ -124,7 +124,7 @@ export function createClustersLayer(engine, app) {
             const L = member.star.luminosity_Lsun;
             const shares = bandShares(T);
             // Visible follows magnitude, relative to the cluster's brightest, gently compressed so all of them show
-            const visible = Math.max(0.05, 10 ** (-0.4 * 0.32 * (member.brightness.mag - brightest)));
+            const visible = Math.max(0.1, 10 ** (-0.4 * 0.3 * (member.brightness.mag - brightest)));
             const isXray = c.xray.has(member.code);
             const youngCorona = !c.globular && T < 6500 && body.cluster.age_Myr < 150;
             bandA.set([
@@ -163,12 +163,12 @@ export function createClustersLayer(engine, app) {
                 float zoom = clamp(pow(pxPerDeg / 8.0, 0.3), 1.0, 3.2);
                 // Crowded stars also lean on their brightest few, which keeps a small cluster from reading as noise
                 float visible = pow(aBandA.z, mix(2.2, 1.0, crowd)) * gain * uBandW[2];
-                float strong = visible * mix(0.45, 1.0, crowd) * 1.15;
+                float strong = visible * mix(0.5, 1.9, crowd);
                 float grey = dot(aColour, vec3(0.3, 0.55, 0.15));
                 vec3 c = max(mix(vec3(grey), aColour, 1.3), 0.0) * strong
                     + uBandTint[0] * uBandW[0] * aBandA.x
-                    + uBandTint[1] * uBandW[1] * aBandA.y * mix(0.5, 1.0, crowd) * 3.2
-                    + uBandTint[3] * uBandW[3] * aBandA.w * mix(0.5, 1.0, crowd) * 4.0
+                    + uBandTint[1] * uBandW[1] * aBandA.y * mix(0.5, 1.0, crowd) * 2.2
+                    + uBandTint[3] * uBandW[3] * aBandA.w * mix(0.5, 1.0, crowd) * 2.2
                     + uBandTint[4] * uBandW[4] * aBandB * 3.0;
                 float peak = max(c.r, max(c.g, c.b));
                 vColour = c;
@@ -350,6 +350,7 @@ export function createClustersLayer(engine, app) {
             varying float vGlobular;
             varying float vHaze;
             varying float vResolved;
+            varying float vSpread;
             void main() {
                 vP = position.xy * ${GLOW_REACH.toFixed(2)};   // 1 at the cluster's radius
                 vUv = aRect.xy + (position.xy * 0.5 + 0.5) * aRect.zw;
@@ -358,7 +359,10 @@ export function createClustersLayer(engine, app) {
                 vGlobular = aKind.x;
                 vHaze = aHazeAmount;
                 // Once the stars can be told apart they carry the cluster, and the glow eases back
-                vResolved = 1.0 - 0.45 * smoothstep(60.0, 400.0, length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad);
+                float px = length(aU) / ${SKY_RADIUS.toFixed(1)} * uPxPerRad;
+                vResolved = 1.0 - 0.45 * smoothstep(60.0, 400.0, px);
+                // While tiny, a broader glow is what makes it read as a ball and not a dot
+                vSpread = 1.0 + 3.5 * (1.0 - smoothstep(8.0, 40.0, px));
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(aCentre + position.x * aU + position.y * aV, 1.0);
             }`,
         fragmentShader: /* glsl */`
@@ -371,6 +375,7 @@ export function createClustersLayer(engine, app) {
             varying float vGlobular;
             varying float vHaze;
             varying float vResolved;
+            varying float vSpread;
             void main() {
                 float r = length(vP);
                 float edge = 1.0 - smoothstep(0.72, ${GLOW_REACH.toFixed(2)}, r);
@@ -380,7 +385,7 @@ export function createClustersLayer(engine, app) {
                     const float rc = 0.16;
                     float a = 1.0 / sqrt(1.0 + r * r / (rc * rc)) - 1.0 / sqrt(1.0 + 1.8 / (rc * rc));
                     light = max(a, 0.0);
-                    light = (light * light * 0.95 + light * 0.1) * vResolved;
+                    light = light * light * 0.95 * vResolved + light * 0.1 * vResolved * vSpread;
                 } else {
                     light = 0.004 * exp(-r * r * 2.2);
                 }
@@ -579,6 +584,9 @@ export function createClustersLayer(engine, app) {
                     });
                 } else if (radius * pxPerDeg > 14) {
                     scatterPicks(out, body.code, c.basis, 0, radius, radius, step);
+                } else {
+                    // Drawn even where a star this faint wouldn't be, so it must be clickable too
+                    out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0 });
                 }
             });
             return out;
