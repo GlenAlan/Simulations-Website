@@ -90,7 +90,7 @@ export function createRoguePlanetsLayer(engine, app) {
                 float window = 1.0 - u * u;
                 window *= window;
                 float glow = exp(-outside * outside / (2.0 * vShape.y * vShape.y));
-                vec3 col = vColour * glow * window * mix(0.95, 0.62, vShape.z) * vAmount;
+                vec3 col = vColour * glow * window * mix(0.95, 0.22, vShape.z) * vAmount;
                 float alpha = 0.0;
                 if (radius > 0.5) {
                     float inside = clamp(radius - r + 0.5, 0.0, 1.0);

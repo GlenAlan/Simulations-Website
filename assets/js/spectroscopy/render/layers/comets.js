@@ -6,7 +6,7 @@
 // glowing in Lyman alpha, radio a faint OH point, and X-rays a faint crescent where the solar wind hits the coma.
 
 import * as THREE from 'three';
-import { azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
+import { azAltToVec3, vec3ToAzAlt, limitingMag } from '../../core/sky.js';
 import { drawMag, parallaxFactor } from '../../core/depth.js';
 import { bandMagnitudes } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
@@ -413,6 +413,8 @@ export function createCometsLayer(engine, app) {
             const list = [];
             comets.forEach(({ body, basis, curve }) => {
                 if (!engine.bodyShows(body)) return;
+                // In visible light a comet is seen only from a little before the zoom's limit: no clicking on empty sky
+                if (frame.band === 'visible' && drawMag(body) > limitingMag(frame.fov) + 0.6) return;
                 const { c, t, n } = basis;
                 const tail = body.comet.tail_deg;
                 const step = 30 / ((frame.pxPerRad * DEG * parallaxFactor(body.depth, frame.fov)) / frame.dpr);

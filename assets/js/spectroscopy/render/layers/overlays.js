@@ -175,16 +175,21 @@ export function createOverlaysLayer(engine, app) {
 
     // Behind a box of text. Nine slices, so that the corners stay soft however it's stretched
     function drawBacking(x, y, w, h) {
-        const pad = 4;
         const r = BACKING_R;
         const m = backing.width - 2 * r;
-        const x0 = x - pad;
-        const y0 = y - pad + 1;
-        const x1 = x + w + pad;
-        const y1 = y + h + pad - 1;
-        const across = [[0, r, x0 - r, r], [r, m, x0, x1 - x0], [r + m, r, x1, r]];
-        const down = [[0, r, y0 - r, r], [r, m, y0, y1 - y0], [r + m, r, y1, r]];
-        down.forEach(([sy, sh, dy, dh]) => across.forEach(([sx, sw, dx, dw]) => ctx.drawImage(backing, sx, sy, sw, sh, dx, dy, dw, dh)));
+        const x0 = x - 4;
+        const y0 = y - 3;
+        const midW = w + 8;
+        const midH = h + 6;
+        for (let row = 0; row < 3; row++) {
+            const sy = row === 0 ? 0 : row === 1 ? r : r + m;
+            const sh = row === 1 ? m : r;
+            const dy = row === 0 ? y0 - r : row === 1 ? y0 : y0 + midH;
+            const dh = row === 1 ? midH : r;
+            ctx.drawImage(backing, 0, sy, r, sh, x0 - r, dy, r, dh);
+            ctx.drawImage(backing, r, sy, m, sh, x0, dy, midW, dh);
+            ctx.drawImage(backing, r + m, sy, r, sh, x0 + midW, dy, r, dh);
+        }
     }
 
     // A label with no job but to be read: dropped if it would land on one already there. x, y as for left and middle
