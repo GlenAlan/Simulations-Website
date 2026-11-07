@@ -35,12 +35,26 @@ function initFirstHint(overlay) {
     hint.hidden = true;
     overlay.appendChild(hint);
 
+    // Only on the sky, and not while "Nothing here" has the same spot: one message at a time
+    let due = false;
+    let nothingShown = false;
+    const paint = () => { hint.hidden = !due || app.view !== 'sky' || nothingShown; };
     // Someone following a link is about to be given an object, so they don't need telling how to choose one
     const timer = new URLSearchParams(window.location.search).has('goto')
         ? 0
-        : setTimeout(() => { hint.hidden = app.view !== 'sky'; }, HINT_DELAY_MS);
+        : setTimeout(() => {
+            due = true;
+            paint();
+        }, HINT_DELAY_MS);
+    const offView = bus.on('view', paint);
+    const offNothing = bus.on('nothinghere', ({ shown }) => {
+        nothingShown = shown;
+        paint();
+    });
     const offSelect = bus.on('select', () => {
         offSelect();
+        offView();
+        offNothing();
         clearTimeout(timer);
         hint.remove();
         rememberHint();

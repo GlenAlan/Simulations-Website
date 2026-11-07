@@ -81,3 +81,37 @@ export function handSkyLog(t, total = Math.log(HAND_SKY_FACTOR)) {
 export function handOffCentre(t) {
     return 1 - smootherstep(0, CENTRE_RUN, t);
 }
+
+// ---------- Every notch shows ----------
+// Along t the star does nearly all its growing in the first half, and in the last fifth the camera has arrived and only the
+// orbits and planets fade in. A wheel moving t evenly would stick there and rush in the middle. So a hand moves "seen"
+// progress instead: part how far the star has grown, part t itself, so that the fading in still takes a notch or so. t is
+// read back from it. Only how many notches each part takes changes: every frame of the move looks as it did.
+const SEEN_SIZE = 0.6;              // The share of seen progress that is the star's growth
+const SEEN_STEPS = 256;
+const seenTable = new Float64Array(SEEN_STEPS + 1);
+for (let i = 0; i <= SEEN_STEPS; i++) {
+    const t = i / SEEN_STEPS;
+    seenTable[i] = SEEN_SIZE * handApproach(easeProgress(t), HAND_ARRIVE) + (1 - SEEN_SIZE) * t;
+}
+
+// Seen progress at t, 0 to 1
+export function handSeen(t) {
+    const x = Math.max(0, Math.min(1, t)) * SEEN_STEPS;
+    const i = Math.min(SEEN_STEPS - 1, Math.floor(x));
+    return seenTable[i] + (seenTable[i + 1] - seenTable[i]) * (x - i);
+}
+
+// And back: the t that has this seen progress
+export function handTAt(seen) {
+    const s = Math.max(0, Math.min(1, seen));
+    let lo = 0;
+    let hi = SEEN_STEPS;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (seenTable[mid] <= s) lo = mid;
+        else hi = mid;
+    }
+    const span = seenTable[hi] - seenTable[lo];
+    return (lo + (span > 0 ? (s - seenTable[lo]) / span : 0)) / SEEN_STEPS;
+}

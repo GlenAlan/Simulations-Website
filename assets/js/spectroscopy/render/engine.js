@@ -47,6 +47,8 @@ const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place 
 const ANCHOR_HOLD_PX = 8;       // A zoom keeps the depth it found under the pointer until the pointer moves this far...
 const ANCHOR_HOLD_MS = 300;     // ...or the wheel has been still this long
 const DRAWER_RESIZE_MS = 700;   // A change of size this soon after the drawer opens or closes is the drawer's doing
+const RECENTRE_AFTER_MS = 600;  // The drawer opening this soon after a slew ended moves what the slew centred...
+const RECENTRE_S = 0.6;         // ...to the new middle, this gently
 
 // What each graphics level spends. dpr caps the pixel ratio; bloom levels are halvings of the screen.
 const LEVELS = ['low', 'medium', 'high'];
@@ -184,6 +186,7 @@ export function createEngine(canvas) {
     const lens = { x: 0, y: 0, zoom: 1, share: 1 };
     let placed = null;          // Where the canvas was on the page at the last resize
     let drawerChangedAt = -Infinity;
+    let lastAim = null;         // What the last slew put in the middle, and when: Go to opens the drawer as its flight ends
 
     // Camera motion
     const velocity = { az: 0, alt: 0 };     // Degrees a second, from a flick
@@ -588,6 +591,11 @@ export function createEngine(canvas) {
         height = next.h;
         camera.aspect = width / height;
         applyProjection();
+        // A flight that has only just put something in the middle meant the middle: it glides on to the new one
+        if (keepStill && lastAim && performance.now() - lastAim.at < RECENTRE_AFTER_MS && !slew && app.view === 'sky') {
+            slewTo(lastAim.aim, { duration: RECENTRE_S });
+        }
+        lastAim = null;
         if (!renderer) return;
         const cap = QUALITY[app.qualityLevel].dpr;
         dpr = Math.min(window.devicePixelRatio || 1, cap);
@@ -816,17 +824,17 @@ export function createEngine(canvas) {
         zoomAnchor = null;
         const duration = renderer ? opts.duration ?? 1.5 : 0; // With no frames to fly through, it only has to get there
         const toFov = target.fov ?? view.fov;
-        let toAz = target.az ?? view.az;
-        let toAlt = target.alt ?? view.alt;
-        // The target goes in the middle of the canvas, wherever the lens has the camera's axis. opts.axis: it's the axis's own.
-        if (lensOffset() && !opts.axis) {
+        // The target goes in the middle of the canvas, wherever the lens has the camera's axis, and it's worked out again as
+        // the slew goes, as the drawer opening for the same click can move the axis meanwhile. opts.axis: it's the axis's own.
+        let aim = null;
+        let to = { az: target.az ?? view.az, alt: target.alt ?? view.alt };
+        if (!opts.axis) {
             const centre = centreDir();
-            const axis = axisPutting(target.az ?? centre.az, target.alt ?? centre.alt, width / 2, height / 2, toFov);
-            toAz = axis.az;
-            toAlt = axis.alt;
+            aim = { az: target.az ?? centre.az, alt: target.alt ?? centre.alt };
+            to = axisFor(aim, toFov);
         }
         if (duration <= 0) {
-            placeView(toAz, toAlt, toFov);
+            placeView(to.az, to.alt, toFov);
             zoomGoal = view.fov;
             slew = null;
             dipToBlack = 1;
@@ -834,17 +842,22 @@ export function createEngine(canvas) {
             return;
         }
         if (app.settings.reduceMotion) {
-            slew = { dip: true, jumped: false, toAz, toAlt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
+            slew = { dip: true, jumped: false, aim, toAz: to.az, toAlt: to.alt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
             return;
         }
-        const dAz = ((((toAz - view.az + 540) % 360) + 360) % 360) - 180;
-        const dAlt = toAlt - view.alt;
+        const dAz = ((((to.az - view.az + 540) % 360) + 360) % 360) - 180;
+        const dAlt = to.alt - view.alt;
         let midFov = null;
         if (opts.pullBack) {
-            const across = Math.hypot(dAz * Math.cos(((view.alt + toAlt) / 2) * RAD), dAlt);
+            const across = Math.hypot(dAz * Math.cos(((view.alt + to.alt) / 2) * RAD), dAlt);
             midFov = Math.min(MAX_FOV, Math.max(Math.max(view.fov, toFov) * 1.25, Math.min(70, across * 0.8)));
         }
-        slew = { from: { ...view }, dAz, dAlt, toFov, midFov, t: 0, duration, onDone: opts.onDone };
+        slew = { from: { ...view }, aim, dAz, dAlt, toFov, midFov, t: 0, duration, onDone: opts.onDone };
+    }
+
+    // The camera's axis for a direction that is to be in the middle of the canvas
+    function axisFor(aim, fov) {
+        return lensOffset() ? axisPutting(aim.az, aim.alt, width / 2, height / 2, fov) : aim;
     }
 
     function stepSlew(dt) {
@@ -854,12 +867,18 @@ export function createEngine(canvas) {
             dipToBlack = Math.abs(1 - slew.t * 2);
             if (slew.t >= 0.5 && !slew.jumped) {
                 slew.jumped = true;
-                placeView(slew.toAz, slew.toAlt, slew.toFov);
+                const to = slew.aim ? axisFor(slew.aim, slew.toFov) : { az: slew.toAz, alt: slew.toAlt };
+                placeView(to.az, to.alt, slew.toFov);
                 zoomGoal = view.fov;
             }
         } else {
             const k = easeInOut(slew.t);
             const { from, midFov, toFov } = slew;
+            if (slew.aim) {
+                const to = axisFor(slew.aim, toFov);
+                slew.dAz = ((((to.az - from.az + 540) % 360) + 360) % 360) - 180;
+                slew.dAlt = to.alt - from.alt;
+            }
             let fov;
             // In log steps, as a zoom feels even when each step is the same ratio
             if (midFov) {
@@ -873,6 +892,7 @@ export function createEngine(canvas) {
         }
         if (slew.t >= 1) {
             const done = slew.onDone;
+            lastAim = slew.aim ? { aim: slew.aim, fov: slew.toFov, at: performance.now() } : null;
             slew = null;
             dipToBlack = 1;
             zoomGoal = view.fov;

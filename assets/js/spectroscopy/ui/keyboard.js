@@ -273,14 +273,17 @@ export function initKeyboard(app) {
     canvas.addEventListener('focus', () => { if (canvas.matches(':focus-visible')) setReticle(true); });
     canvas.addEventListener('blur', (e) => { if (e.relatedTarget) setReticle(false); });
 
-    // Esc steps back one thing at a time: the Layers menu, then the drawer, then the system view, and then fullscreen,
-    // which is left to simulation_ui.js. This runs first, on the way down, so simulation_ui.js can't jump ahead.
+    // Esc steps back one thing at a time: the Layers menu, then the drawer, then the system view, then the selection, and
+    // then fullscreen, which is left to simulation_ui.js. This runs first, on the way down, so simulation_ui.js can't jump ahead.
     function stepBack(e) {
         let handled = true;
         if (app.shell && app.shell.isOpen()) app.shell.close(true);
         else if (app.drawer.isOpen()) app.drawer.close();
         else if (app.view === 'system' && app.system) app.system.exit();
-        else handled = false;
+        else if (app.selected && app.view === 'sky') {
+            select(null);
+            announce('Nothing selected.');
+        } else handled = false;
         if (handled) {
             e.stopPropagation();
             e.preventDefault();
@@ -322,6 +325,13 @@ export function initKeyboard(app) {
         if (app.settings.singleKeys !== false || e.ctrlKey || e.metaKey || e.altKey || !SINGLE_KEYS.has(e.key)) return;
         if (e.target !== canvas && !isField(e.target)) e.stopPropagation();
     }, { capture: true });
+
+    // A click on empty sky lets go of the selection, unless its panel is open: a click that just missed a star, or the end of
+    // a drag, mustn't throw away what the student is reading. The panel's own close button, or Esc, does that.
+    bus.on('skyclick', ({ code }) => {
+        if (code || !app.selected || objectPanelOpen()) return;
+        select(null);
+    });
 
     // Leaving a system is told aloud, as going in is
     bus.on('view', ({ view, from }) => {

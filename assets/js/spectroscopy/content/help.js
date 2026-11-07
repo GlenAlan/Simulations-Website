@@ -42,7 +42,7 @@ const KEYBOARD = definitions([
     [`${key('[')} ${key('Page Up')}`, 'Go back to the object before'],
     [`${key('/')}`, 'Jump to the Go to box'],
     [`${key('Enter')}`, 'After Go to, with the object at the centre of the view: move straight into its panel. Esc brings you back'],
-    [`${key('Esc')}`, 'Step back: close a menu or panel, then leave a system, then leave fullscreen'],
+    [`${key('Esc')}`, 'Step back: close a menu or panel, then leave a system, then clear the selection, then leave fullscreen'],
     [`${key('F')}`, 'Show or hide the frame rate'],
     ['Settings', 'Single-key shortcuts everywhere: turn it off, and these single keys work only while the sky itself has the focus']
 ], 'spectro-help-list spectro-help-keys');

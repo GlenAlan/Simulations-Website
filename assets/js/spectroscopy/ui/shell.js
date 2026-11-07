@@ -119,6 +119,12 @@ function initSkyFit() {
     if (window.scrollY === 0) revealSoon();
 }
 
+// The sky is what's on show: also at the start of a zoom into a system, which may yet settle back, and where the rest of the
+// page hasn't heard of the system yet
+function skyOnShow(app) {
+    return app.view === 'sky' || (!!app.system && app.system.isOpening());
+}
+
 // ---------- Band switcher ----------
 function initBandBar(app) {
     const bar = document.getElementById('spectroBandBar');
@@ -133,14 +139,14 @@ function initBandBar(app) {
         // The name holds the words on the button, so asking for "IR" by voice still finds it
         const { short, label } = BAND_INFO[band];
         b.setAttribute('aria-label', short === label ? label : `${short}, ${label}`);
-        b.addEventListener('click', () => { if (app.view === 'sky') setBand(band); });
+        b.addEventListener('click', () => { if (skyOnShow(app)) setBand(band); });
         bar.appendChild(b);
         return b;
     });
 
     // Bands are a way of looking at the sky: a system is always drawn as it would look to the eye
     function paint() {
-        const inSky = app.view === 'sky';
+        const inSky = skyOnShow(app);
         buttons.forEach((b) => {
             const on = b.dataset.band === app.band;
             b.setAttribute('aria-checked', on ? 'true' : 'false');
@@ -152,7 +158,7 @@ function initBandBar(app) {
     }
 
     bar.addEventListener('keydown', (e) => {
-        if (app.view !== 'sky') return;
+        if (!skyOnShow(app)) return;
         const i = BANDS.indexOf(app.band);
         let next = -1;
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % BANDS.length;
@@ -705,6 +711,72 @@ function keepSelectionInView(app) {
     bus.on('select', () => requestAnimationFrame(() => requestAnimationFrame(() => check())));
 }
 
+// The legend and the context bar share the bottom of the sky, and the bar grows as it gains Reset view and Enter system.
+// Where they would meet, the bar moves over to the right; where there's no room for that, the legend goes up a row.
+function keepBarsApart() {
+    const overlay = document.getElementById('spectroOverlay');
+    const bar = document.getElementById('spectroContextBar');
+    const legend = document.getElementById('spectroLegend');
+    if (!overlay || !bar || !legend || typeof ResizeObserver !== 'function') return;
+    const GAP = 8;
+    let shift = 0;
+    let lift = 0;
+    function fit() {
+        const sky = overlay.getBoundingClientRect();
+        const b = bar.getBoundingClientRect();
+        const l = legend.getBoundingClientRect();
+        let nextShift = 0;
+        let nextLift = 0;
+        if (b.width > 0 && l.width > 0 && sky.width > 0) {
+            // Where each would be left to itself
+            const barLeft = b.left - shift;
+            const barRight = b.right - shift;
+            const legendTop = l.top + lift;
+            const legendBottom = l.bottom + lift;
+            const meet = l.right + GAP - barLeft;
+            if (meet > 0 && legendTop < b.bottom && legendBottom > b.top) {
+                const room = sky.right - GAP - barRight;
+                if (room >= meet) nextShift = meet;
+                else nextLift = legendBottom - b.top + GAP;
+            }
+        }
+        if (nextShift !== shift) {
+            shift = nextShift;
+            bar.style.translate = shift ? `${Math.ceil(shift)}px 0` : '';
+        }
+        if (nextLift !== lift) {
+            lift = nextLift;
+            legend.style.marginBottom = lift ? `${Math.ceil(lift)}px` : '';
+        }
+    }
+    const watch = new ResizeObserver(() => fit());
+    [overlay, bar, legend].forEach((el) => watch.observe(el));
+    bus.on('drawer', () => requestAnimationFrame(fit));
+}
+
+// A zoom that went part way into a system and back out never arrived, so the panel goes back to the tab the student was
+// reading: the System tab took over as the system came into view. Returns a check for each frame, which notes an arrival.
+function keepTabThroughPartZoom(app) {
+    let before = null;
+    let arrived = false;
+    const objectPanel = () => app.drawer.isOpen() && app.drawer.currentView() === 'object';
+    // This hears of the system before the System tab does (initShell runs first), so the tab is still the student's own
+    bus.on('view', ({ view, from }) => {
+        if (view === 'system') {
+            before = objectPanel() ? app.drawer.currentTab() : null;
+            arrived = false;
+            return;
+        }
+        if (from && !arrived && before && before !== 'system' && objectPanel() && app.drawer.currentTab() === 'system') {
+            app.drawer.selectTab(before);
+        }
+        before = null;
+    });
+    return () => {
+        if (!arrived && app.view === 'system' && app.system && !app.system.isBusy()) arrived = true;
+    };
+}
+
 // In the browser's own fullscreen Esc would leave at once. Where the browser lets a page keep the key (Chromium, on
 // https), Esc steps back through the menu, drawer and system view first, as it does everywhere else.
 function initFullscreenEscape() {
@@ -747,13 +819,16 @@ export function initShell(app) {
     // A layer gets called once a frame, so the zoom readout needs no timer of its own
     const updateZoom = initContextBar(app);
     const viewAids = initViewAids(app);
+    const noteArrival = keepTabThroughPartZoom(app);
     app.engine.addLayer({
         id: 'shell',
         update(frame) {
             updateZoom(frame.fov);
             viewAids.update(frame);
+            noteArrival();
         }
     });
 
     initLegend(app);
+    keepBarsApart();
 }

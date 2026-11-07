@@ -5,13 +5,14 @@
 import { DEFAULT_VIEW, azAltToVec3, vec3ToAzAlt, angularSeparation, limitingMag } from '../core/sky.js';
 import { parallaxFactor } from '../core/depth.js';
 import { announce } from './drawer.js';
+import { bus } from '../core/state.js';
 
 const RAD = Math.PI / 180;
 const RESET_BELOW_FOV = DEFAULT_VIEW.fov * 0.8;   // A zoom of 1.25×: a nudge of the wheel doesn't bring the button up
 const RESET_S = 0.9;
 const NEAREST_S = 1.1;
 const CHECK_EVERY_S = 0.12;     // Often enough for the line to go as soon as something comes into view
-const EMPTY_PAUSE_S = 1.2;      // The frame has to stay empty this long, so a pan across a gap doesn't set it off
+const EMPTY_PAUSE_S = 0.5;      // The frame has to stay empty this long, so a pan across a gap doesn't set it off
 const ARROW_STEP_DEG = 4;
 // In magnitudes inside the zoom's limit, measured on screen. Within 0.5 a thing is drawn but can't be made out, so the frame
 // can still be called empty. At 1 it can be made out, so it's somewhere worth flying to.
@@ -80,14 +81,22 @@ export function initViewAids(app) {
         if (button.hidden) return;
         if (document.activeElement === button) canvas.focus({ preventScroll: true });
         button.hidden = true;
+        if (button === nothing) bus.emit('nothinghere', { shown: false });
     }
 
-    reset.addEventListener('click', () => {
+    function resetView() {
         const view = engine.getView();
         // A narrow view can sit lower than a wide one is allowed to, so it's lifted to the height the opening view has
         engine.slewTo({ fov: DEFAULT_VIEW.fov, alt: Math.max(view.alt, DEFAULT_VIEW.alt) }, { duration: RESET_S });
         announce(`Field of view ${DEFAULT_VIEW.fov} degrees`);
+    }
+    // At the start of a zoom into a system the button is still there, as the sky is: it goes back out first
+    reset.addEventListener('click', () => {
+        if (app.view !== 'sky' && app.system) app.system.exit({ onDone: resetView });
+        else resetView();
     });
+
+    const opening = () => !!app.system && app.system.isOpening();
 
     // Without a sky there's no zoom to read and no frame to be empty: leave nothing behind, not even an empty pill
     if (!engine.renderer) {
@@ -199,13 +208,15 @@ export function initViewAids(app) {
         aim(target, frame, view);
         if (nothing.hidden) {
             nothing.hidden = false;
+            bus.emit('nothinghere', { shown: true });
             announce('Nothing in view here. There is a button to fly to the nearest object.');
         }
     }
 
     return {
         update(frame) {
-            const showReset = frame.view === 'sky' && frame.fov < RESET_BELOW_FOV;
+            // Not during the start of a zoom into a system either, so the bar doesn't change width under the pointer
+            const showReset = (frame.view === 'sky' || opening()) && frame.fov < RESET_BELOW_FOV;
             if (showReset) reset.hidden = false;
             else hide(reset);
 
