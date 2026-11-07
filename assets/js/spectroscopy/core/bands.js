@@ -25,7 +25,7 @@ export const BAND_INFO = {
         tint: [1.0, 0.06, 0.3],       // Red-magenta, false colour
         ramp: { low: [0.32, 0.006, 0.11], high: [1.0, 0.26, 0.42] },
         falseColour: true,
-        legend: 'Warm dust and cool objects glow here. Look for small orange points: planets with no star.'
+        legend: 'Warm dust and cool objects glow here. A small, redder point that vanishes in Visible may be a planet with no star.'
     },
     visible: {
         label: 'Visible', short: 'Visible',
