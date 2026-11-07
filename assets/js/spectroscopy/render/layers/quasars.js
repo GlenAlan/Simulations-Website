@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { Rng } from '../../core/rng.js';
 import { limitingMag } from '../../core/sky.js';
-import { drawMag, parallaxFactor } from '../../core/depth.js';
+import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { SKY_RADIUS, tangentBasis, quadAxes, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
@@ -36,8 +36,10 @@ export function createQuasarsLayer(engine, app) {
     const bandB = new Float32Array(n);
     const extra = new Float32Array(n * 2);
     const depths = new Float32Array(n);
+    const pcs = new Float32Array(n);
     quasars.forEach((q, i) => {
         depths[i] = q.body.depth;
+        pcs[i] = travelPc(q.body);
         const axes = quadAxes(q.basis, q.positionAngle, 1);
         centres.set(q.basis.centre.map((c) => c * SKY_RADIUS), i * 3);
         us.set(axes.u, i * 3);
@@ -54,6 +56,7 @@ export function createQuasarsLayer(engine, app) {
     geometry.setAttribute('aBandB', new THREE.InstancedBufferAttribute(bandB, 1));
     geometry.setAttribute('aExtra', new THREE.InstancedBufferAttribute(extra, 2));
     geometry.setAttribute('aDepth', new THREE.InstancedBufferAttribute(depths, 1));
+    geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
     geometry.instanceCount = n;
 
     const material = skyMaterial({
@@ -67,6 +70,7 @@ export function createQuasarsLayer(engine, app) {
             attribute float aBandB;
             attribute vec2 aExtra;
             attribute float aDepth;
+            attribute float aPc;
             varying vec2 vDeg;       // Position in degrees from the core, along the host's axes
             varying vec2 vPx;        // The same in device pixels
             varying vec4 vBand;
@@ -74,18 +78,20 @@ export function createQuasarsLayer(engine, app) {
             varying float vFlat;
             varying float vHost;
             void main() {
+                vec3 centre = aCentre;
+                float near = travel(centre, aPc);
                 float pxPerDeg = uPxPerRad * 0.0174533;
                 // Big enough for whichever is larger on screen: the host's width, or a fixed glow in pixels
                 float halfDeg = max(${(HOST_DEG * 1.1).toFixed(3)}, 46.0 / pxPerDeg);
                 vDeg = position.xy * halfDeg;
                 vPx = vDeg * pxPerDeg;
-                vBand = vec4(aBandA.xy, aBandA.z * revealGain(aExtra.x), aBandA.w);
-                vXray = aBandB;
+                vBand = vec4(aBandA.xy, aBandA.z * revealGain(aExtra.x), aBandA.w) * travelLight(near);
+                vXray = aBandB * travelLight(near);
                 vFlat = aExtra.y;
                 // The host appears only when zoomed right in
                 vHost = smoothstep(120.0, 420.0, pxPerDeg);
                 float h = tan(radians(halfDeg)) * ${SKY_RADIUS.toFixed(1)};
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(aCentre + (position.x * aU + position.y * aV) * h, 1.0);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(centre + (position.x * aU + position.y * aV) * h, 1.0);
                 gl_Position.xy *= depthP(aDepth);
             }`,
         fragmentShader: /* glsl */`
@@ -128,7 +134,8 @@ export function createQuasarsLayer(engine, app) {
         spanDeg: q.span,
         strength: Math.max(0.5, q.body.bands.radio) * 1.2,
         seed: q.body.visual_seed,
-        depth: q.body.depth
+        depth: q.body.depth,
+        pc: travelPc(q.body)
     })));
 
     return {

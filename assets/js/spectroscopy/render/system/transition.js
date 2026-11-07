@@ -53,6 +53,33 @@ export function stagesAt(p, byHand = false, crowded = false) {
     };
 }
 
+// ---------- Travel ----------
+// The flight really goes to the system (core/depth.js, render/shared.js travel): how far along the line to it the traveller
+// has got, in parsecs, at progress p. It runs while the sky is on show, and stops most of the way there, where the system
+// has taken over. It goes in tenfold steps of distance, from about the distance to the planets, so that whatever is passed,
+// the planets, the nearest stars, the far ones, slides past rather than jumping. The steps are quick at first, where the
+// Sun's own system is left behind and there is little else to pass, and ease in to a stop. A pure function of p, so that
+// leaving is arriving played backwards, and exactly 0 at p = 0.
+const TRAVEL_SHARE = 0.9;           // How much of the way the sky goes
+const TRAVEL_FROM_PC = 1e-6;        // Where the steps begin: a fifth of the way to the Sun
+const TRAVEL_EASE = 4;              // How much quicker the first steps are than the average
+const DOME_GONE_PC = [3e3, 3e4];    // A flight out of the galaxy leaves its glow behind over this stretch
+
+export function travelAt(p, distancePc, crowded = false) {
+    const x = Math.min(1, p / (crowded ? 0.36 : 0.62));     // Where the sky has gone: see skyFade in stagesAt
+    if (!(x > 0) || !(distancePc > 0)) return 0;
+    const most = distancePc * TRAVEL_SHARE;
+    const steps = Math.log(most / TRAVEL_FROM_PC);
+    if (!(steps > 0)) return most * x;
+    const e = 1 - (1 - x) ** TRAVEL_EASE;
+    return (most * Math.expm1(steps * e)) / Math.expm1(steps);
+}
+
+// How much of the dome is left: it goes only on a flight out of the galaxy, as the galaxy is left behind
+export function domeAt(travelledPc, distancePc) {
+    return distancePc > DOME_GONE_PC[1] * 3 ? 1 - smoothstep(DOME_GONE_PC[0], DOME_GONE_PC[1], travelledPc) : 1;
+}
+
 // ---------- The same move under a student's hand ----------
 // Zooming drives t directly, and the look of the timed flight stays except where a hand would feel it. Zooming in always
 // makes things bigger and zooming out smaller, so the camera goes straight to the system with no swing in to the surface

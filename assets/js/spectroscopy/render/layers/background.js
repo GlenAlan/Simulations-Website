@@ -651,7 +651,7 @@ function fieldStars(positions, colours, mags, seeds) {
                 float air = exp(-0.055 / (up + 0.03));
                 float wobble = sin(uTime * (1.3 + aSeed * 2.7) + aSeed * 90.0) * sin(uTime * (0.7 + aSeed * 1.9) + aSeed * 37.0);
                 float twinkle = 1.0 + uTwinkle * wobble * mix(0.16, 0.5, exp(-up / 0.3));
-                float bright = level * air * twinkle * uFieldAmount * uSkyFade;
+                float bright = level * air * twinkle * uFieldAmount * uSkyFade * uDomeFade;
                 vRadius = (0.78 + 0.40 * level) * uDpr;
                 gl_PointSize = vRadius * 2.0 + 1.0;
                 vColour = aColour * bright;
@@ -843,7 +843,7 @@ function buildHorizon() {
                 // and must stay darker than the blacker skies of the other bands.
                 float fall = mix(0.6, 1.0, exp(-max(vBelow, 0.0) / 1.4));
                 float lit = mix(0.22, 1.0, uBandW[2]);
-                gl_FragColor = vec4(vColour * fall * lit * uSkyFade, edge * uSkyFade);
+                gl_FragColor = vec4(vColour * fall * lit * uSkyFade * uDomeFade, edge * uSkyFade * uDomeFade);
             }`
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -977,7 +977,8 @@ export function createBackgroundLayer(engine, app) {
                 }
             }
             const visible = frame.bandW[2];
-            const skyFade = material.uniforms.uSkyFade.value;
+            // A flight out of the galaxy leaves the dome behind (core/depth.js)
+            const skyFade = material.uniforms.uSkyFade.value * material.uniforms.uDomeFade.value;
             const amount = visible * skyFade;
             const starsGoal = starsWanted ? 1 : 0;
             if (frame.reduceMotion) starsAmount = starsGoal;
