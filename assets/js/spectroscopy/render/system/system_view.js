@@ -1222,7 +1222,7 @@ export function initSystemView(app) {
             if (tide) {
                 const q = positions.nodes.get(tide.other);
                 tmp.set(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
-                const isDonor = model.stream && model.stream.donor === i;
+                const isDonor = model.stream && !model.stream.wind && model.stream.donor === i;   // A wind's star keeps its shape
                 star.setTide(tmp.x, tmp.y, tmp.z, Math.max(tide.stretch, isDonor ? 0.07 : 0), isDonor ? 0.3 : 0);
             }
             if (star.setCompanion && model.stream) {

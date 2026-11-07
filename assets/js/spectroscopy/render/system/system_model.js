@@ -10,6 +10,7 @@ import { AU, G, M_SUN, R_SUN, R_EARTH, hzEdges, orbitalSpeedKms } from '../../co
 import { componentStates, figureEightPath, planetOrbitCentre } from '../../data/orbits.js';
 import { memberDirection } from '../layers/sky_tangent.js';
 import { cometsOf, cometOrbit } from './comet_orbits.js';
+import { rocheShare } from '../../data/dynamics.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -369,13 +370,26 @@ function computeSizes(model) {
         });
     });
 
-    // The data names who is losing gas and who is gaining it. A black hole's companion always feeds its disc.
+    // The data names who is losing gas and who is gaining it. A black hole is fed only as its companion really could:
+    // a stream once the companion fills its Roche lobe, or a hot massive star's wind, which spreads wide
     model.stream = null;
-    const transfer = model.body.black_hole ? { donor: 1, accretor: 0 } : model.body.transfer;
+    const transfer = model.body.black_hole ? holeFeed(model.body.black_hole) : model.body.transfer;
     if (transfer) {
         const pair = model.nodes.find((n) => n.children && !n.flat && n.members.includes(transfer.donor) && n.members.includes(transfer.accretor) && n.members.length === 2);
-        if (pair) model.stream = { pair, donor: transfer.donor, accretor: transfer.accretor, ontoHole: !!model.body.black_hole };
+        if (pair) model.stream = { pair, donor: transfer.donor, accretor: transfer.accretor, ontoHole: !!model.body.black_hole, wind: !!transfer.wind };
     }
+}
+
+// How a black hole's companion (star 1) feeds it (star 0), if at all: { donor, accretor, wind } or null. Filling its lobe at
+// closest approach (within the data's own 3%, see data/dynamics.js) makes a stream; short of that, only a star bright
+// enough to drive a strong wind loses gas the hole can catch.
+const WIND_LSUN = 1e4;
+function holeFeed(hole) {
+    const star = hole.companion.star;
+    const lobe = rocheShare(star.mass_Msun / hole.mass_Msun) * hole.a_AU * (1 - (hole.ecc || 0));
+    if ((star.radius_Rsun * RSUN_AU) / lobe >= 0.97) return { donor: 1, accretor: 0, wind: false };
+    if (star.luminosity_Lsun >= WIND_LSUN) return { donor: 1, accretor: 0, wind: true };
+    return null;
 }
 
 export function starRadius(model, i, m) {

@@ -1,6 +1,7 @@
 // Gas falling from one star of an interacting pair onto the other: a curved ribbon of flowing gas and a small accretion
 // disc with a hot spot where the stream lands. Placed from the pair's live positions each frame, so it turns with the
-// pair and stays on the orbit the spectra use.
+// pair and stays on the orbit the spectra use. A hot star's wind feeding a black hole (model.stream.wind) is no stream: the
+// same flow drawn broad, soft and faint, a haze of gas leaving the whole star that the hole draws in.
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
@@ -42,16 +43,22 @@ uniform vec3 uColourA;
 uniform vec3 uColourB;
 uniform float uFade;
 uniform float uFlow;
+uniform vec4 uLook;         // Edge softness, steady light, light from lumps, overall gain
+uniform float uFadeIn;      // How far along it takes to come out of the star
 varying float vU;
 varying float vSide;
 void main() {
-    float soft = exp(-vSide * vSide * 3.0);
-    float ends = smoothstep(0.0, 0.05, vU) * (1.0 - smoothstep(0.94, 1.0, vU));
+    float soft = exp(-vSide * vSide * uLook.x);
+    float ends = smoothstep(0.0, uFadeIn, vU) * (1.0 - smoothstep(1.0 - max(0.06, uFadeIn * 0.5), 1.0, vU));
     // Lumps of gas on the move: the pattern runs along the stream, so it visibly falls from one star to the other
     float lumps = fbm3(vec3(vU * 7.0 - uFlow, vSide * 0.7, 3.0));
     vec3 c = bandColour(mix(uColourA, uColourB, vU * vU));
-    gl_FragColor = vec4(c * soft * ends * (0.25 + 1.2 * lumps) * (0.55 + 0.7 * vU) * uFade, 1.0);
+    gl_FragColor = vec4(c * soft * ends * (uLook.y + uLook.z * lumps) * (0.55 + 0.7 * vU) * uLook.w * uFade, 1.0);
 }`;
+const STREAM_LOOK = [3.0, 0.25, 1.2, 1];
+const WIND_LOOK = [6.0, 0.5, 0.45, 0.34];
+// A wind is cooler than a stream until it nears the hole: bright in ultraviolet, little in X-rays (see band_look.js)
+const WIND_BANDS = [0.05, 0.5, 1, 1.4, 0.5];
 
 const DISC_VERTEX = /* glsl */`
 varying vec2 vQ;
@@ -130,6 +137,8 @@ export function createMassStream(model) {
             uW1: { value: 0.05 },
             uMinW: { value: 0.001 },
             uFlow: { value: 0 },
+            uLook: { value: new THREE.Vector4(...(model.stream.wind ? WIND_LOOK : STREAM_LOOK)) },
+            uFadeIn: { value: model.stream.wind ? 0.35 : 0.05 },
             uColourA: { value: new THREE.Color(...blackBodyRGB(donor.teff_K)) },
             uColourB: { value: new THREE.Color(...blackBodyRGB(Math.max(14000, accretor.teff_K))) },
             uFade: fade
@@ -198,8 +207,14 @@ export function createMassStream(model) {
                 a[2] - toA.z * discR * 0.6 + swing.z * discR * 0.8
             );
             u.uP1.value.copy(u.uP0.value).add(u.uP2.value).multiplyScalar(0.5).addScaledVector(swing, sep * 0.05);
-            u.uW0.value = Math.min(rD, sep * 0.2) * 0.16;
-            u.uW1.value = Math.min(rA, sep * 0.2) * 0.1;
+            if (model.stream.wind) {
+                // Wider than the star where it leaves, drawn in to the hole, and soft all the way to its edges
+                u.uW0.value = Math.min(rD * 2.2, sep * 0.45);
+                u.uW1.value = Math.min(rA * 2.6, sep * 0.25);
+            } else {
+                u.uW0.value = Math.min(rD, sep * 0.2) * 0.16;
+                u.uW1.value = Math.min(rA, sep * 0.2) * 0.1;
+            }
             u.uMinW.value = 1.2 / pxPerWorld;
             u.uFlow.value = flow;
 
@@ -212,7 +227,7 @@ export function createMassStream(model) {
             // The disc's plane has its own axes after the quarter turn: (x, -z) in world terms
             du.uSpot.value.set(local.x / discR, -local.z / discR);
             const w = sharedUniforms.uBandW.value;
-            fade.value = opacity * mixBands(w, STREAM_BANDS);
+            fade.value = opacity * mixBands(w, model.stream.wind ? WIND_BANDS : STREAM_BANDS);
             discFade.value = opacity * mixBands(w, DISC_BANDS);
         },
         dispose() {
