@@ -6,10 +6,12 @@
 //   widestSplit(body, from, period, codes?) -> t   the next moment within one period when the followed stars are furthest apart
 //   splitLine(entity, body, overviews, codes, { t, parts }) -> { line, contrast } | null
 //       overviews[i] is the overview spectrum of the star codes[i] alone. null when no line shows two dips plainly.
+//   halfSwing(body, codes, period) -> km/s    half how far the stars' lines spread over one period
+//   readableFirst(lines, overviews, swings, seen, reachKms) -> lines   the same lines, with one every star can follow first
 
 import { C_KMS, R_ZOOM } from '../../../core/phys.js';
 import { spectrumOf } from '../../../spectra/synth.js';
-import { hasLongWings } from '../../../spectra/measure.js';
+import { hasLongWings, lineCentre } from '../../../spectra/measure.js';
 import { componentStates } from '../../../data/orbits.js';
 
 const TRIED = 12;           // Candidates drawn and looked at, the likeliest first
@@ -119,4 +121,74 @@ export function splitLine(entity, body, overviews, codes, { t = 0, parts = null 
     if (!best) return null;
     const { rest_nm, label, species } = best.line;
     return { line: { rest_nm, label, species }, contrast: best.contrast };
+}
+
+// ---------- A line whose swing can be read ----------
+
+const SHOWS_DEPTH = 0.03;   // As the Period tool's: shallower than this, a star doesn't really show a line
+const READS_WELL = 0.35;    // A centre known to this share of the swing, even at the overview's coarse resolution, is plenty
+
+// Half how far the lines of the stars in codes spread, together, over one period
+export function halfSwing(body, codes, period) {
+    const list = Array.isArray(codes) ? codes : [codes];
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let k = 0; k < 48; k++) {
+        componentStates(body, (k / 48) * period).forEach((state) => {
+            if (!list.includes(state.code)) return;
+            lo = Math.min(lo, state.vlos_kms);
+            hi = Math.max(hi, state.vlos_kms);
+        });
+    }
+    return Number.isFinite(lo) ? 0.5 * (hi - lo) : 0;
+}
+
+// How finely the worst-placed star shows the line's centre, at the resolution it will be followed at, as a share of how far its
+// lines swing. A broad line can't follow a small swing, and a white dwarf's hydrogen lines are thousands of km/s wide, however
+// deep. seen.entity and seen.parts[i] say whose light star i's line is read in, as the Period tool reads it.
+function readingShare(line, overviews, swings, seen, reachKms) {
+    let worst = -1;
+    overviews.forEach((overview, i) => {
+        const own = (overview.lines || []).find((l) => !l.band && l.depth > SHOWS_DEPTH && Math.abs(l.rest_nm - line.rest_nm) < 0.01);
+        if (!own) return;
+        const nm = own.obs_nm;
+        // A line about as deep in the same star, within the reach of the search (the swing, and part of the line's own width as the
+        // overview shows it), could be followed in its place, swinging rightly but about the wrong middle
+        const wide = lineCentre(overview, nm, { searchNm: nm * 0.0008, type: 'abs' });
+        // With room to spare: the tool measures the width in all the stars' light together, where lines can blend
+        const reach = 1.2 * reachKms + (wide ? (wide.fwhm_nm / wide.centre_nm) * C_KMS : 80) + 40;
+        const crowded = reachKms > 0 && (overview.lines || []).some((l) => l !== own && !l.band && l.depth > 0.8 * own.depth
+            && (Math.abs(l.obs_nm - nm) / nm) * C_KMS < reach);
+        if (crowded) {
+            worst = Infinity;
+            return;
+        }
+        let found;
+        if (seen) {
+            const half = nm * 0.0015;
+            const opts = { lo_nm: nm - half, hi_nm: nm + half, R: R_ZOOM };
+            if (seen.parts[i]) opts.parts = [seen.parts[i]];
+            found = lineCentre(spectrumOf(seen.entity, opts), nm, { searchNm: nm * 0.0002, type: 'abs' });
+        } else {
+            found = lineCentre(overview, nm, { searchNm: nm * 0.0008, type: 'abs' });
+        }
+        const err = found ? (found.err_nm / found.centre_nm) * C_KMS : Infinity;
+        worst = Math.max(worst, err / Math.max(1, swings[i]));
+    });
+    return worst < 0 ? Infinity : worst;
+}
+
+// The order stays as it was while its first line can be read well enough; otherwise the next that can comes first.
+// reachKms: how far from where it's expected the Period tool looks for a line.
+export function readableFirst(lines, overviews, swings, seen = null, reachKms = 0) {
+    if (lines.length < 2) return lines;
+    const shares = lines.map((line) => readingShare(line, overviews, swings, seen, reachKms));
+    if (shares[0] <= READS_WELL) return lines;
+    // The next in the order that reads well enough, or failing that the one read best
+    let best = shares.findIndex((share) => share <= READS_WELL);
+    if (best < 0) {
+        best = 0;
+        shares.forEach((share, k) => { if (share < shares[best]) best = k; });
+    }
+    return best ? [lines[best], ...lines.filter((_, k) => k !== best)] : lines;
 }

@@ -17,7 +17,7 @@ import { createTimeFigure, everyFew, figureTable, labelledSelect, niceSpeeds, ov
 import { orbitResults } from './orbit_sums.js';
 import { clockFor } from './orbit_clock.js';
 import { createOrbitDial, STAR_SHAPES } from './orbit_dial.js';
-import { splitLine, widestSplit } from './split_lines.js';
+import { halfSwing, readableFirst, splitLine, widestSplit } from './split_lines.js';
 
 const COLUMNS = 240;             // Moments across the picture
 const ROWS = 72;                 // Speeds up its side
@@ -545,6 +545,16 @@ function mount(container, api) {
             }
         }
         lines = split ? [split.line, ...suggestions.filter((l) => !sameLine(l, split.line))].slice(0, 6) : suggestions;
+        // A line too broad for its stars' swing, such as a white dwarf's hydrogen or a cool star's Ca II beside a slow orbit,
+        // can't give a period, so the first offered is one every star can follow
+        try {
+            const swings = stars.map((star) => halfSwing(nextResolved.body, star.code, Math.min(...star.periods)));
+            // About how far from the middle of the swing the line is first looked for (as chooseFraming's reach)
+            const reach = halfSwing(nextResolved.body, stars.map((star) => star.code), shortest);
+            lines = readableFirst(lines, overviews, swings, { entity, parts: stars.map((star) => star.part) }, reach);
+        } catch (err) {
+            console.error('[spectroscopy] choosing a line to follow:', err);
+        }
         line = lines[0] || null;
         linePicked = false;
         stars.forEach((star, s) => {
