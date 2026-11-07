@@ -43,7 +43,8 @@ export function createNeutronStarsLayer(engine, app) {
         const v = skyBasis(body.sky.az, body.sky.alt).centre;
         centres.set([v[0] * SKY_RADIUS, v[1] * SKY_RADIUS, v[2] * SKY_RADIUS], i * 3);
         // The beam's tilt from the spin axis, and the spin axis placed so that the beam sweeps across us
-        const tilt = rng.range(32, 62) * DEG;
+        // Very small tilts are drawn a little larger, or the beam would never be seen side-on
+        const tilt = Math.max(24, Math.min(80, info.magnetic_tilt_deg ?? rng.range(30, 62))) * DEG;
         const roll = rng.range(0, Math.PI * 2);
         spins.set([Math.sin(tilt) * Math.cos(roll), Math.sin(tilt) * Math.sin(roll), Math.cos(tilt)], i * 3);
         const show = info.pulsar ? pulseDisplay(info.pulse_period_s) : { rate: 0, depth: 0 };
@@ -90,7 +91,8 @@ export function createNeutronStarsLayer(engine, app) {
                 vAxis = aSpin * cos(tilt) + (e1 * cos(angle) + e2 * sin(angle)) * sin(tilt);
 
                 // A pulse is the beam crossing our line of sight
-                float crossing = exp(-(1.0 - vAxis.z) / 0.14);
+                // The width is scaled to the tilt so that every pulsar spends about the same share of each turn pointing at us
+                float crossing = exp(-(1.0 - vAxis.z) / (0.14 * (1.0 - cos(2.0 * tilt))));
                 float swing = aPulse.y * uTwinkle;
                 float shimmer = 1.0 + 0.05 * uTwinkle * aInfo.y * sin(uTime * (7.1 + aInfo.w * 3.0));
                 vPulse = mix(1.0, 0.16 + 1.5 * crossing, swing) * shimmer;

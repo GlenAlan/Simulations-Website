@@ -1,4 +1,4 @@
-﻿// Comets: a glowing coma, a curved yellow-white dust tail and a straight blue ion tail, all lying on the sky and all
+// Comets: a glowing coma, a curved yellow-white dust tail and a straight blue ion tail, all lying on the sky and all
 // pointing away from the same Sun, which is below the horizon. Two parts: a shader on one quad per comet gives the
 // smooth glow, and a few hundred drifting particles give it grain and the shimmer.
 //
@@ -6,11 +6,11 @@
 // glowing in Lyman alpha, radio a faint OH point, and X-rays a faint crescent where the solar wind hits the coma.
 
 import * as THREE from 'three';
-import { azAltToVec3 } from '../../core/sky.js';
+import { azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
-import { SKY_RADIUS, bodyRng, instancedQuad, exoticNoise } from './exotic_common.js';
+import { DEG, SKY_RADIUS, bodyRng, instancedQuad, exoticNoise } from './exotic_common.js';
 
-const SUN_ALT = -55;       // How far below the horizon the unseen Sun is: tails point up and away from it
+const SUN_ALT = -70;       // How far below the horizon the unseen Sun is: tails point up and away from it
 const PARTICLES_EACH = 420;
 
 // Rough colour of a spectral line, for mixing the coma's gas glow from its emission lines
@@ -121,7 +121,7 @@ function createGlow(engine, comets) {
                 float reach = max(coma * 3.5, 14.0 * pxDeg);
                 float back = mix(reach, halo * 1.25, uvOn);
                 float front = max(tail * 1.3, mix(reach, halo * 1.25, uvOn));
-                float side = max(max((abs(aExtra.x) * 0.55 + 0.3) * tail, reach), mix(0.0, halo * 1.25, uvOn));
+                float side = max(max((abs(aExtra.x) * 0.8 + 0.3) * tail, reach), mix(0.0, halo * 1.25, uvOn));
                 vXY = vec2(position.x > 0.0 ? front : -back, position.y * side);
                 vShape = aShape;
                 vCurve = aExtra.x;
@@ -185,8 +185,8 @@ function createGlow(engine, comets) {
                 float dust = 0.0;
                 if (xd > -0.03 && xd < 1.6) {
                     float ramp = smoothstep(-0.02, 0.05, xd);
-                    float centre = vCurve * tail * 0.2 * xd * xd;
-                    float wd = max(tail * (0.012 + 0.135 * xd), 1.3 * pxDeg);
+                    float centre = vCurve * tail * 0.3 * xd * xd;
+                    float wd = max(tail * (0.012 + 0.11 * xd), 1.3 * pxDeg);
                     float yn = (y - centre) / wd;
                     float lead = yn * sign(vCurve);
                     float prof = lead > 0.0 ? exp(-lead * lead * 2.6) : exp(-lead * lead * 0.6);
@@ -200,11 +200,11 @@ function createGlow(engine, comets) {
                 float ionW = 0.3 + 1.05 * (1.0 - dustRatio);
 
                 // Visible
-                vec3 dustColour = mix(vec3(1.0, 0.8, 0.5), vec3(1.0, 0.93, 0.78), smoothstep(0.5, 0.0, xd));
-                vec3 ionColour = vec3(0.3, 0.55, 1.0);
+                vec3 dustColour = mix(vec3(1.0, 0.74, 0.4), vec3(1.0, 0.9, 0.7), smoothstep(0.55, 0.0, xd));
+                vec3 ionColour = vec3(0.2, 0.46, 1.0);
                 vec3 visible = dustColour * dust * dustW * 0.8
-                    + ionColour * (ion * 0.95 + ionWide * 0.16) * ionW
-                    + vGas * comaWide * 0.3
+                    + ionColour * (ion * 1.3 + ionWide * 0.2) * ionW
+                    + vGas * comaWide * 0.42
                     + mix(vGas, vec3(1.0), 0.45) * comaCore * 0.8
                     + vec3(1.0, 0.98, 0.92) * nucleus * 4.5;
 
@@ -301,7 +301,7 @@ function createParticles(engine, comets) {
                 } else {
                     float xd = u * 1.1;
                     x = xd * tail * 0.82;
-                    y = aShape.z * tail * 0.2 * xd * xd + aGrain.y * tail * (0.012 + 0.135 * xd) * 1.2;
+                    y = aShape.z * tail * 0.3 * xd * xd + aGrain.y * tail * (0.012 + 0.11 * xd) * 1.2;
                 }
                 vec3 dir = position + (aTail * x + aNormal * y) * RAD * ${SKY_RADIUS}.0;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(dir, 1.0);
@@ -353,6 +353,20 @@ export function createCometsLayer(engine, app) {
                 const share = frame.quality === 'low' ? 0.3 : frame.quality === 'medium' ? 0.65 : 1;
                 particles.geometry.setDrawRange(0, Math.floor(total * share));
             }
+        },
+        // A comet can be clicked anywhere along its tail, not only on its head. Only called on a click
+        picks() {
+            const list = [];
+            comets.forEach(({ body, basis }) => {
+                if (!engine.bodyShows(body)) return;
+                const { c, t } = basis;
+                for (let k = 1; k <= 8; k++) {
+                    const x = (k / 8) * 0.9 * body.comet.tail_deg * DEG;
+                    const sky = vec3ToAzAlt(c[0] + t[0] * x, c[1] + t[1] * x, c[2] + t[2] * x);
+                    list.push({ code: body.code, az: sky.az, alt: sky.alt, radiusPx: 0 });
+                }
+            });
+            return list;
         },
         dispose() {
             [glow, particles].forEach((mesh) => {

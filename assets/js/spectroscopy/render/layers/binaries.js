@@ -1,4 +1,4 @@
-﻿// Binary and multiple stars. Far away, stars.js draws each system as one point. Zoomed in, this layer takes over: the
+// Binary and multiple stars. Far away, stars.js draws each system as one point. Zoomed in, this layer takes over: the
 // point comes apart into its members, level by level, so the double-double D2W7XK is one point, then two, then four.
 //
 // Separations are stylised, tied to the orbital period: real ones would be far too small to see, and would span too
@@ -210,7 +210,6 @@ export function createBinariesLayer(engine, app) {
     }
 
     function build() {
-        teardown();
         systems = app.universe.bodies
             .filter((b) => (b.kind === 'binary' || b.kind === 'multiple') && Array.isArray(b.stars) && b.stars.length > 1)
             .map(makeSystem);
@@ -557,7 +556,6 @@ export function createBinariesLayer(engine, app) {
             }
             return pickList;
         },
-        rebuild: build,          // For when bodies have been edited in place (tests)
         dispose() {
             unsubscribe();
             teardown();

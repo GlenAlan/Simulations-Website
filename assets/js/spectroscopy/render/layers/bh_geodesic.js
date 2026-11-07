@@ -86,13 +86,3 @@ export function bendingTables() {
     }
     return { ray, psiEnd, deflection };
 }
-
-// Bending of a ray at impact parameter b, in radians, for code that needs it outside the shader
-export function deflectionAt(b, tables) {
-    if (b >= 60) return 4 / b + 11.78 / (b * b);
-    if (b <= B_CRIT) return tables.deflection[0];
-    const t = Math.asinh((b - B_CRIT) / TABLE.width);
-    const x = ((t - T0) / (T1 - T0)) * (TABLE.nB - 1);
-    const i = Math.min(TABLE.nB - 2, Math.floor(x));
-    return tables.deflection[i] + (x - i) * (tables.deflection[i + 1] - tables.deflection[i]);
-}

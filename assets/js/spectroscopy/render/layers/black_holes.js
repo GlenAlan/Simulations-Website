@@ -1,4 +1,4 @@
-﻿// Black holes. From far away you only see the companion star (drawn by stars.js), plus a glow in X-rays and, for some,
+// Black holes. From far away you only see the companion star (drawn by stars.js), plus a glow in X-rays and, for some,
 // radio jets. Zoomed in, a full-screen pass bends the light of everything behind the hole, cuts out its shadow, and
 // draws the accretion disc through the same bent rays, so the far side of the disc arches over the shadow as it really
 // would. Sizes are stylised, but the bending, the beaming and the colour shift of the disc follow the real equations.
@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { blackBodyRGB } from '../../core/phys.js';
-import { limitingMag } from '../../core/sky.js';
+import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
 import { componentStates } from '../../data/orbits.js';
 import { sharedUniforms, skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep, exoticNoise } from './exotic_common.js';
@@ -50,11 +50,13 @@ function makeHole(body) {
     const ci = Math.cos(inc);
     const sr = Math.sin(rho);
     const cr = Math.cos(rho);
-    const v = skyBasis(body.sky.az, body.sky.alt).centre;
+    const basis = skyBasis(body.sky.az, body.sky.alt);
+    const v = basis.centre;
     const companion = info.companion.star;
     const bh = {
         body,
         info,
+        basis,
         world: new THREE.Vector3(v[0], v[1], v[2]).multiplyScalar(SKY_RADIUS),
         discDeg: discDegrees(info.mass_Msun),
         // Disc axes on the sky: x right, y up, z towards the viewer. The far side of the orbit shows above the centre
@@ -178,7 +180,7 @@ const LENS_FRAGMENT = /* glsl */`
         // False colour bands. X-rays come only from the hottest gas close in, UV from further out, IR from the cool rim
         float x = pow(Tn, 6.0) * g3 * g * d * 7.0 * uBandStrength.x + 3.0 * spot * uBandStrength.x;
         float u = pow(Tn, 3.5) * g3 * d * 3.4 * uBandStrength.y + 2.2 * spot * uBandStrength.y;
-        float i = (1.0 - 0.6 * Tn) * g * d * 0.9 * uBandStrength.z;
+        float i = (1.0 - 0.6 * Tn) * g * d * 0.35 * uBandStrength.z;
 
         vec3 light = visible * uBandW[2]
             + uBandTint[4] * (uBandW[4] * x) + vec3(1.0) * (uBandW[4] * x * x * 0.03)
@@ -204,15 +206,16 @@ const LENS_FRAGMENT = /* glsl */`
         // reflect the picture: a thin ring close to the shadow, where nobody can tell
         float bend = b < 60.0 ? ends.g : 4.0 / b + 11.78 / (b * b);
         float w = smoothstep(uEdge, uEdge * 0.35, b);
-        float beta = b - uK * uReveal * bend * w;
-        vec3 sky = texture2D(tInput, mirrored((uCentrePx + dir * beta * uPxPerM) / uRes)).rgb;
-
-        // The companion's sprite in stars.js sits at the lens centre; don't let the lens turn it into a ring
-        sky *= mix(1.0, smoothstep(uMaskPx * 0.6, uMaskPx, abs(beta) * uPxPerM), uReveal);
+        float beta = b - uK * bend * w;
+        // The companion's sprite in stars.js sits at the lens centre, and the lens would turn it into a ring. So read
+        // the sky no closer to the centre than the sprite reaches: what's there is the same diffuse glow, with no star
+        float reach = uMaskPx / uPxPerM;
+        float read = (beta < 0.0 ? -1.0 : 1.0) * max(abs(beta), reach);
+        vec3 sky = texture2D(tInput, mirrored((uCentrePx + dir * read * uPxPerM) / uRes)).rgb;
 
         // Everything captured is black
         float outside = smoothstep(B_CRIT - pxM, B_CRIT + pxM, b);
-        sky *= mix(1.0, outside, uReveal);
+        sky *= outside;
 
         // The disc, front to back. A ray stays in the plane through the line of sight and dir, and crosses the disc's
         // plane every pi of swept angle: order 0 is the direct view, 1 the image bent right around the hole, and so on
@@ -251,11 +254,13 @@ const LENS_FRAGMENT = /* glsl */`
         float halo = exp(-beyond * beyond) * outside * w;
         light += warm * halo * 0.035;
 
-        vec3 colour = sky * mix(1.0, clear, uReveal) + light * uReveal;
+        vec3 colour = sky * clear + light;
+        // While it arrives, fade over from the untouched sky: a half-strength lens only smears what's there
+        if (uReveal < 0.999) colour = mix(texture2D(tInput, gl_FragCoord.xy / uRes).rgb, colour, uReveal);
         gl_FragColor = vec4(colour, 1.0);
     }`;
 
-function createLensPass(engine) {
+function createLensPass() {
     const tables = bendingTables();
     const { nB, nY } = TABLE;
     const half = THREE.DataUtils.toHalfFloat;
@@ -371,7 +376,7 @@ function createLensPass(engine) {
             // Thin arcs below a pixel across only flicker, and Low quality saves a read per pixel
             u.uOrders.value = frame.quality === 'low' || hero.pxPerM < 1 ? 2 : 3;
             u.uLod.value = Math.max(0, Math.log2(25 / hero.pxPerM));
-            u.uMaskPx.value = 16 * frame.dpr;
+            u.uMaskPx.value = 22 * frame.dpr;
             u.uHotAngle.value = bh.thetaC + STREAM_LEAD;
             u.uN.value.copy(bh.n);
             u.uE1.value.copy(bh.e1);
@@ -798,14 +803,15 @@ export function createBlackHolesLayer(engine, app) {
     const dprUniform = { value: 1 };
     const heroes = [];
     for (let i = 0; i < MAX_HEROES; i++) {
-        heroes.push({ bh: null, reveal: 0, pxPerM: 1, ndcX: 0, ndcY: 0, companion: null, stream: null, stars: null });
+        heroes.push({ bh: null, reveal: 0, pxPerM: 1, ndcX: 0, ndcY: 0, starX: 0, starY: 0, companion: null, stream: null, stars: null });
     }
     let heroCount = 0;
     const v = new THREE.Vector3();
+    const pickList = [];
 
     function ensureBuilt() {
         if (lens) return;
-        lens = createLensPass(engine);
+        lens = createLensPass();
         plane = new THREE.PlaneGeometry(2, 2);
         streamGeo = streamGeometry();
         starGeo = deepStarGeometry();
@@ -817,7 +823,7 @@ export function createBlackHolesLayer(engine, app) {
         });
     }
 
-    function placeHero(hero, bh, frame, reveal, pxPerM) {
+    function placeHero(hero, bh, reveal, pxPerM) {
         hero.bh = bh;
         hero.reveal = reveal;
         hero.pxPerM = pxPerM;
@@ -842,11 +848,11 @@ export function createBlackHolesLayer(engine, app) {
             if (Math.abs(v.x) > 1 + reach / w || Math.abs(v.y) > 1 + reach / h) continue;
             const reveal = smoothstep(REVEAL_LO, REVEAL_HI, radiusPx) * sharedUniforms.uSkyFade.value;
             if (heroCount < MAX_HEROES) {
-                placeHero(heroes[heroCount++], bh, frame, reveal, pxPerM);
+                placeHero(heroes[heroCount++], bh, reveal, pxPerM);
             } else {
                 let smallest = 0;
                 for (let k = 1; k < MAX_HEROES; k++) if (heroes[k].pxPerM < heroes[smallest].pxPerM) smallest = k;
-                if (pxPerM > heroes[smallest].pxPerM) placeHero(heroes[smallest], bh, frame, reveal, pxPerM);
+                if (pxPerM > heroes[smallest].pxPerM) placeHero(heroes[smallest], bh, reveal, pxPerM);
             }
         }
     }
@@ -874,7 +880,8 @@ export function createBlackHolesLayer(engine, app) {
         const stretch = 0.5 + 0.5 * Math.sqrt(1 + (16 * depth) / (beta * beta));
         ox *= stretch;
         oy *= stretch;
-
+        hero.starX = ox;
+        hero.starY = oy;
 
         const lim = limitingMag(frame.fov);
         const brightness = Math.max(0.55, Math.min(1.5, 0.75 + 0.1 * (lim - bh.body.brightness.mag)));
@@ -908,7 +915,7 @@ export function createBlackHolesLayer(engine, app) {
         gas.uBandStrength.value.set(Math.max(0.5, bh.xray), Math.max(0.5, bh.uv), Math.max(0.3, bh.ir));
         hero.stream.visible = true;
 
-        const basis = bh.basis || (bh.basis = skyBasis(bh.body.sky.az, bh.body.sky.alt));
+        const { basis } = bh;
         const deep = hero.stars.material.uniforms;
         deep.uCentre.value.set(basis.centre[0], basis.centre[1], basis.centre[2]);
         deep.uEast.value.set(basis.east[0], basis.east[1], basis.east[2]);
@@ -954,6 +961,28 @@ export function createBlackHolesLayer(engine, app) {
                     hero.stars.visible = false;
                 }
             }
+        },
+        // Up close the whole disc can be clicked, and the companion star has its own code. Only called on a click
+        picks(frame) {
+            pickList.length = 0;
+            for (let i = 0; i < heroCount; i++) {
+                const hero = heroes[i];
+                const bh = hero.bh;
+                if (hero.reveal < 0.5 || (bh.body.bands[frame.band] || 0) <= 0.01) continue;
+                const cssPerM = hero.pxPerM / frame.dpr;
+                pickList.push({ code: bh.body.code, az: bh.body.sky.az, alt: bh.body.sky.alt, radiusPx: R_OUT * cssPerM });
+                const radPerM = (bh.discDeg * DEG) / (2 * R_OUT);
+                const { centre, east, up } = bh.basis;
+                const dx = hero.starX * radPerM;
+                const dy = hero.starY * radPerM;
+                const sky = vec3ToAzAlt(
+                    centre[0] + east[0] * dx + up[0] * dy,
+                    centre[1] + east[1] * dx + up[1] * dy,
+                    centre[2] + east[2] * dx + up[2] * dy
+                );
+                pickList.push({ code: bh.info.companion.code, az: sky.az, alt: sky.alt, radiusPx: Math.max(6, bh.starR * cssPerM) });
+            }
+            return pickList;
         },
         dispose() {
             unsubscribe();
