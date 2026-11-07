@@ -51,6 +51,7 @@ const SMUDGE_TO_PX2 = 30;           // ...and none by this much
 const SMUDGE_STACKED_PX2 = 2;       // With less than this each, their points land on each other, so each gives less
 const DRAWN_PEAK = 0.004;           // Dimmer than this a member isn't drawn at all
 const SEEN_PEAK = 0.03;             // Dimmer than this it can hardly be seen, so a click on it shouldn't find it
+const STACKED_CORE = 0.5;           // A far cluster's faint stars pile up within this share of its radius, in a dot of their light
 // Every member can be found: at the deepest zoom the limit reaches even the faintest, whatever its true magnitude
 const FAINTEST_DRAWN = limitingMag(MIN_FOV) - SHOW_BY;
 
@@ -357,7 +358,10 @@ export function createClustersLayer(engine, app) {
                 float zoom = clamp(pow(pxPerDeg / (8.0 * uDpr), 0.25), 1.0, 2.4);
                 float size = (1.2 + 4.2 * pow(min(peak, 3.0), 0.8)) * zoom * uDpr;
                 float sizeWas = (1.3 + 2.6 * sqrt(min(peakWas, 2.0))) * clamp(pow(pxPerDeg / 8.0, 0.3), 1.0, 3.2) * uDpr;
-                gl_PointSize = peak < ${DRAWN_PEAK.toFixed(3)} ? 0.0 : min(size, sizeWas);
+                // A star too faint to see alone is a single pixel of its faint light: where a far cluster's hundred such
+                // stars land on the same pixel, they add up to the dot of its unresolved light, which picking counts too
+                // (STACKED_CORE). Drivers differ over drawing a point of size 0, so it's a pixel everywhere.
+                gl_PointSize = peak < ${DRAWN_PEAK.toFixed(3)} ? uDpr : min(size, sizeWas);
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
@@ -865,6 +869,7 @@ export function createClustersLayer(engine, app) {
                 if (!c.table) c.table = pickTable(c, points, bandA, bandB, memberBoost, memberCap);
                 const gain = revealGain(drawMag(body), lim);
                 let any = false;
+                let faint = 0;      // The light of the stars too faint to draw alone (see the members' shader)
                 // One point of light, standing for itself if there's room, and for the cluster if not
                 const offer = (m, room) => {
                     let light;
@@ -873,7 +878,10 @@ export function createClustersLayer(engine, app) {
                         light = Math.min(light, lightWas(m.visible, m.rel, m.share, spread, gain));
                     } else if (band === 'ir' || band === 'uv') light = m[band] * (0.5 + 0.5 * spread) * 2.2;
                     else light = m[band] * (band === 'xray' ? 3 : 1);
-                    if (light < DRAWN_PEAK) return;
+                    if (light < DRAWN_PEAK) {
+                        faint += light;
+                        return;
+                    }
                     any = true;
                     // UV's false colour is a deep blue, which takes more light to see
                     out.push(opened && light >= SEEN_PEAK * (band === 'uv' ? 3 : 1) && room >= apart
@@ -885,7 +893,11 @@ export function createClustersLayer(engine, app) {
                     if (m.parts && m.sepDeg * pxPerDeg * frame.dpr >= PAIR_APART_PX) m.parts.forEach((part) => offer(part, room));
                     else offer(m, room);
                 });
-                if (any && !opened) out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth });
+                // So small on screen that its faint stars land on the same few pixels, where they add up to a dot of their own
+                const stacked = faint / Math.max(1, Math.PI * (radiusPx * STACKED_CORE) ** 2);
+                if ((any && !opened) || stacked >= SEEN_PEAK) {
+                    out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: 0, depth });
+                }
                 // A globular's fainter stars have no codes of their own, and run out past its radius
                 if (c.decor && c.decor.points.visible) {
                     out.push({ code: body.code, az: body.sky.az, alt: body.sky.alt, radiusPx: radiusPx * DECOR_REACH, depth });
