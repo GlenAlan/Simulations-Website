@@ -141,6 +141,8 @@ function mount(container, api) {
         const kind = found.type === 'em' ? 'Bright line' : 'Dark line';
         const where = `${kind} at ${found.centre_nm.toFixed(found.err_nm < 0.01 ? 3 : 2)} ± ${Math.max(found.err_nm, 0.001).toFixed(found.err_nm < 0.01 ? 3 : 2)} nm`;
         picked.append(resultLine(where));
+        const jumpNote = found.jumped ? para('The mark may not be on the dip you meant: others are close by at this zoom, and the uncertainty allows for them. Zoom in to be sure.') : null;
+        if (jumpNote) picked.append(jumpNote);
         if (!options.length) {
             picked.append(para('No known line is close to this one. Try another line, or choose a reference whose lines might match.'));
             pickedSays.textContent = `${where}. No known line is close to this one.`;
@@ -158,6 +160,7 @@ function mount(container, api) {
                         renderCandidates(e.detail === 0);
                     }
                 })));
+            if (jumpNote) picked.append(jumpNote);
             return;
         }
         const group = el('fieldset', { class: 'spectro-tool-options' }, el('legend', { text: 'Which line is it?' }));

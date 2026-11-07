@@ -7,7 +7,7 @@ import { azAltToVec3, GALACTIC_POLE } from '../../core/sky.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { Rng } from '../../core/rng.js';
 import { sharedUniforms, BAND_GLSL } from '../shared.js';
-import { NOISE_GLSL, getNoiseTexture } from './star_surface.js';
+import { NOISE_GLSL, TRUE_COLOUR, getNoiseTexture } from './star_surface.js';
 
 function bodyTemperature(body) {
     if (body.star) return body.star.teff_K;
@@ -80,6 +80,14 @@ void main() {
     gl_FragColor = vec4(bandColour(vec3(0.72, 0.76, 1.0)) * glow * 0.032 * uFade, 1.0);
 }`;
 
+// The same night as the sky's, at half its strength: never a black void, whatever the quality
+const FLOOR_FRAGMENT = /* glsl */`
+uniform float uFade;
+void main() {
+    gl_FragColor = vec4(vec3(0.0021, 0.0037, 0.0100) * uFade, 1.0);
+}`;
+const FLOOR_VERTEX = 'void main(){ gl_Position = vec4(position.xy, 0.99999, 1.0); }';
+
 export function createBackdrop(app, quality = 'medium') {
     const bodies = app.universe.bodies.filter((b) => b.sky && b.bands);
     const fieldCount = FIELD_COUNT[quality] || FIELD_COUNT.medium;
@@ -97,7 +105,7 @@ export function createBackdrop(app, quality = 'medium') {
         const mag = body.brightness ? body.brightness.mag : 12;
         const k = Math.min(1, 10 ** (-0.22 * (mag - 2)));
         size[i] = 1.8 + k * 3.2;
-        bright[i] = 0.1 + k * 0.85;
+        bright[i] = Math.min(1.2, (0.1 + k * 0.85) * 1.5);
         bandA.set([body.bands.radio || 0, body.bands.ir || 0, body.bands.visible || 0, body.bands.uv || 0], i * 4);
         bandB[i] = body.bands.xray || 0;
     });
@@ -117,7 +125,7 @@ export function createBackdrop(app, quality = 'medium') {
         position.set(v, i * 3);
         colour.set(blackBodyRGB(rng.logRange(3000, 16000)), i * 3);
         size[i] = rng.range(1.1, 2.1);
-        bright[i] = rng.range(0.05, 0.4) * rng.next();
+        bright[i] = rng.range(0.075, 0.6) * rng.next();
         bandA.set([0.02, 0.5, 1, 0.3], i * 4);
         bandB[i] = 0.03;
     }
@@ -143,11 +151,15 @@ export function createBackdrop(app, quality = 'medium') {
         blending: THREE.AdditiveBlending,
         vertexShader: STAR_VERTEX,
         fragmentShader: STAR_FRAGMENT,
-        uniforms: { ...sharedUniforms, ...shared }
+        uniforms: { ...sharedUniforms, ...TRUE_COLOUR, ...shared }
     });
     const points = new THREE.Points(geometry, material);
     points.frustumCulled = false;
     points.renderOrder = 1;
+
+    // The field stars are scenery, and follow the sky's own switch for scenery. The catalogue's objects always show.
+    const showFieldStars = (on) => geometry.setDrawRange(0, on ? n : bodies.length);
+    showFieldStars(app.layers.backgroundStars !== false);
 
     const bandGeometry = new THREE.SphereGeometry(1, 40, 24);
     const bandMaterial = new THREE.ShaderMaterial({
@@ -161,6 +173,7 @@ export function createBackdrop(app, quality = 'medium') {
         fragmentShader: BAND_FRAGMENT,
         uniforms: {
             ...sharedUniforms,
+            ...TRUE_COLOUR,
             ...shared,
             tNoise: { value: getNoiseTexture() },
             uPole: { value: new THREE.Vector3(...pole) }
@@ -171,8 +184,23 @@ export function createBackdrop(app, quality = 'medium') {
     band.renderOrder = 0;
     band.visible = quality !== 'low';
 
+    const floorGeometry = new THREE.PlaneGeometry(2, 2);
+    const floorMaterial = new THREE.ShaderMaterial({
+        toneMapped: false,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: FLOOR_VERTEX,
+        fragmentShader: FLOOR_FRAGMENT,
+        uniforms: { uFade: shared.uFade }
+    });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.frustumCulled = false;
+    floor.renderOrder = -1;
+
     const group = new THREE.Group();
-    group.add(band, points);
+    group.add(floor, band, points);
 
     return {
         group,
@@ -185,11 +213,14 @@ export function createBackdrop(app, quality = 'medium') {
         // Which way the catalogue's directions point in the system's world
         setOrientation(q) { group.quaternion.copy(q); },
         setQuality(q) { band.visible = q !== 'low'; },
+        showFieldStars,
         dispose() {
             geometry.dispose();
             material.dispose();
             bandGeometry.dispose();
             bandMaterial.dispose();
+            floorGeometry.dispose();
+            floorMaterial.dispose();
         }
     };
 }

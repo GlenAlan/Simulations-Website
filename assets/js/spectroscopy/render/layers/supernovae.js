@@ -103,9 +103,24 @@ export function createSupernovaeLayer(engine, app) {
         const s = Math.sqrt(1 - z * z);
         const axis = new THREE.Vector3(s * Math.cos(ang), s * Math.sin(ang), z);
         const lop = isIa ? 0.02 : 0.08;
-        const S = new THREE.Vector4(0.74, isIa ? rng.range(0.035, 0.05) : rng.range(0.07, 0.10), isIa ? rng.range(0.03, 0.05) : rng.range(0.10, 0.16), isIa ? 0 : 1);
+        const S = new THREE.Vector4(0.68, isIa ? rng.range(0.035, 0.05) : rng.range(0.07, 0.10), isIa ? rng.range(0.03, 0.05) : rng.range(0.10, 0.16), isIa ? 0 : 1);
         const asym = new THREE.Vector4(rng.range(-lop, lop), rng.range(-lop, lop), rng.range(-lop, lop), isIa ? rng.range(0.06, 0.1) : rng.range(0.16, 0.26));
         const C = new THREE.Vector4(isIa ? 1.5 : 0.95, isIa ? 0.9 : 0.85, 1.2, isIa ? 2.2 : 1.8);
+        // Each has its own outline: a Type Ia is close to round, a Type II lobed, and many have burst out on one side
+        const blowAngle = rng.range(0, Math.PI * 2);
+        const L = new THREE.Vector4(
+            isIa ? rng.range(0.10, 0.22) : rng.range(0.22, 0.42),
+            rng.chance(isIa ? 0.35 : 0.65) ? rng.range(0.12, 0.26) : 0,
+            Math.cos(blowAngle),
+            Math.sin(blowAngle)
+        );
+        // A Type II can be anything from thin, broken arcs to a web of filaments right across it
+        const F = new THREE.Vector4(
+            isIa ? rng.range(0.01, 0.04) : rng.chance(0.3) ? rng.range(0.2, 0.42) : rng.range(0.05, 0.16),
+            isIa ? rng.range(0.09, 0.14) : rng.range(0.14, 0.30),
+            isIa ? rng.range(0.15, 0.4) : rng.range(0.05, 0.25),
+            isIa ? 0 : rng.chance(0.25) ? rng.range(1.0, 2.0) : 0
+        );
         const job = baker.addJob({
             program: 'remnant',
             dir: c,
@@ -116,6 +131,8 @@ export function createSupernovaeLayer(engine, app) {
                 u.uAsym.value = asym;
                 u.uAxis.value = axis;
                 u.uC.value = C;
+                u.uL.value = L;
+                u.uF.value = F;
             },
             onReset() { items[i].shown = 0; aReady[i] = 0; readyAttr.needsUpdate = true; }
         });
@@ -126,13 +143,14 @@ export function createSupernovaeLayer(engine, app) {
         aRect.set(job.rect, i * 4);
         aPack.set([tanHalf, job.id, sn.peak_mag + (body.depth_dim_mag || 0)], i * 3);
         aDepth[i] = body.depth;
-        // Filaments: Balmer-dominated and pale for Type Ia, deep red with [N II] and [S II] for Type II. The sheet
-        // and ejecta: blue-white for a Type Ia's fast shock, oxygen teal for a Type II's oxygen-rich ejecta
+        // Filaments: Balmer-dominated and pale for Type Ia, a warmer red with [N II] and [S II] for Type II. The sheet
+        // and ejecta: blue-white for a Type Ia's fast shock, oxygen teal for a Type II's oxygen-rich ejecta. Both are as
+        // a camera records them, paler than the pure colours of the lines.
         const filament = isIa
-            ? [hydrogen[0] * 0.95 + balmerBlue[0] * 0.25, hydrogen[1] * 0.95 + 0.14, hydrogen[2] * 0.95 + balmerBlue[2] * 0.25]
-            : [hydrogen[0] * 0.55 + nitrogenSulphur[0] * 0.55, 0.06 + rng.range(0, 0.06), 0.06];
+            ? [hydrogen[0] * 0.80 + balmerBlue[0] * 0.25, hydrogen[1] * 0.80 + 0.26, hydrogen[2] * 0.80 + balmerBlue[2] * 0.30]
+            : [hydrogen[0] * 0.50 + nitrogenSulphur[0] * 0.50, 0.18 + rng.range(0, 0.08), 0.17];
         aFilCol.set(filament, i * 3);
-        stage.lateSheet.push(isIa ? [0.55, 0.72, 1.0] : [oxygen[0] + 0.05, oxygen[1] * 0.85, oxygen[2] * 0.95]);
+        stage.lateSheet.push(isIa ? [0.55, 0.72, 1.0] : [oxygen[0] * 0.5 + 0.34, oxygen[1] * 0.45 + 0.27, oxygen[2] * 0.5 + 0.42]);
         const pointShare = writeStage(stage, i, sn, sn.phase0_days);
         items.push({ body, job, c, r, n: nn, tanHalf, shown: 0, bands: supernovaBandsAt(sn, sn.phase0_days), pointShare });
         byCode.set(body.code, i);
@@ -193,8 +211,11 @@ export function createSupernovaeLayer(engine, app) {
             varying float vShellX;
             varying float vReady;
             varying float vGlowPx;
+            varying float vSmall;
             void main() {
                 float aHalf = aPack.x;
+                // Only a few tens of pixels across, a shell is a faint smoke ring on the sky, not yet a bright hoop
+                vSmall = mix(0.5, 1.0, smoothstep(30.0, 170.0, 2.0 * aHalf * aShape.x * uPxPerRad));
                 SET_HERO(aPack.y)
                 // How bright the event looks from here, in the same terms as stars.js uses for its point
                 float over = clamp(pow(10.0, -0.4 * (aPack.z - uLimitMag)), 0.0, 400.0);
@@ -238,6 +259,7 @@ export function createSupernovaeLayer(engine, app) {
             varying float vShellX;
             varying float vReady;
             varying float vGlowPx;
+            varying float vSmall;
 
             vec3 ramp(vec3 tint, float v) {
                 return tint * v + vec3(0.9) * v * v * 0.3;
@@ -248,7 +270,7 @@ export function createSupernovaeLayer(engine, app) {
                 vec2 q = vQ / vShape.x;
                 float inside = step(max(abs(q.x), abs(q.y)), 1.0);
                 vec2 qc = clamp(q, -1.0, 1.0);
-                vec4 t = fetchBaked(qc, vRect.xy + (qc * 0.5 + 0.5) * vRect.zw) * inside * vReady;
+                vec4 t = fetchBaked(qc, vRect.xy + (qc * 0.5 + 0.5) * vRect.zw, 1.0) * inside * vReady;
                 float sheet = t.r * t.r;
                 float fil = t.g * t.g;
                 float hot = t.b * t.b;
@@ -256,7 +278,7 @@ export function createSupernovaeLayer(engine, app) {
                 float age = vShape.y;
 
                 // A young shell is bright and smooth; as it sweeps up gas it fades into threads
-                vec3 col = (vSheetCol * sheet * (1.15 - 0.85 * age) + vFilCol * fil * (0.25 + 1.5 * age)) * 2.5 * vShell.z * uBandW[2];
+                vec3 col = (vSheetCol * sheet * (1.15 - 0.85 * age) * 2.5 + vFilCol * fil * (0.25 + 1.5 * age) * 1.35) * vSmall * vShell.z * uBandW[2];
                 col += ramp(uBandTint[0], sync * 2.9 * vShell.x) * uBandW[0];
                 col += ramp(uBandTint[1], (sheet * 0.9 + hot * 0.25 + fil * 0.6) * 1.8 * vShell.y) * uBandW[1];
                 col += ramp(uBandTint[3], (sheet * 1.2 + fil * 1.1) * 1.5 * vShell.w) * uBandW[3];
