@@ -999,6 +999,11 @@ export function createBlackHolesLayer(engine, app) {
             const s = Math.sin(bh.thetaC);
             return Math.atan2(bh.e1.y * c + bh.e2.y * s, bh.e1.x * c + bh.e2.x * s);
         },
+        // How wide its disc is drawn on the sky, edge to edge, in degrees before depth, so a flight can start at that size
+        discDeg(code) {
+            const bh = byCode.get(code);
+            return bh ? bh.discDeg : 0;
+        },
         update(frame) {
             if (lensReady && lensFade < 1) lensFade = frame.reduceMotion ? 1 : Math.min(1, lensFade + frame.dt / LENS_FADE_S);
             collectHeroes(frame);

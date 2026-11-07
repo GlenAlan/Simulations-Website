@@ -261,6 +261,9 @@ export function createDrawer() {
         if (shown !== tab) hideShown();
         const changed = current !== tab.id;
         current = tab.id;
+        // A link in one tab that leads to another hides itself, and the focus would fall to the page: it goes to the new tab
+        const active = document.activeElement;
+        const focusLeaves = !!active && active !== document.body && body.contains(active) && !(tab.el && tab.el.contains(active));
         hideAll();
         ensureMounted(tab);
         tab.el.hidden = false;
@@ -272,6 +275,10 @@ export function createDrawer() {
         renderTabBar();
         if (changed) body.scrollTop = 0;
         if (tab.instance.onShow) tab.instance.onShow();
+        if (focusLeaves && changed && !tab.el.contains(document.activeElement)) {
+            const button = document.getElementById(`spectroTab-${tab.id}`);
+            if (button) button.focus({ preventScroll: true });
+        }
         bus.emit('drawer', { open: true, view: 'object', tab: tab.id });
     }
 

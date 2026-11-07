@@ -464,7 +464,12 @@ function initContextBar(app) {
         app.system.enter(code, { onDone: planet ? () => app.system.focusPlanet(planet) : undefined });
     });
     back.addEventListener('click', () => { if (app.system) app.system.exit(); });
-    here.addEventListener('click', () => { if (app.systemCode) select(app.systemCode); });
+    // It hides as the panel it opens comes up, so the focus goes on into that panel
+    here.addEventListener('click', () => {
+        if (!app.systemCode) return;
+        select(app.systemCode);
+        app.drawer.focusContent();
+    });
 
     function panelShowsSystem() {
         const shown = app.selected;
@@ -476,7 +481,7 @@ function initContextBar(app) {
         const inSystem = app.view === 'system' && !app.system.isOpening();
         const code = inSystem ? null : systemCodeFor(app, app.selected);
         // Hiding the button that has focus would drop it to the page: pass it to the one taking its place
-        const held = [enter, back].find((b) => b === document.activeElement);
+        const held = [enter, back, here].find((b) => b === document.activeElement);
         readout.hidden = inSystem;
         back.hidden = !inSystem;
         enter.hidden = !code;
@@ -645,36 +650,127 @@ function initHelpPage(app, topRight) {
 }
 
 // ---------- An object shouldn't vanish under the drawer that opened for it, or sit behind a bar ----------
+// The sky holds still as the drawer opens (see the lens in render/engine.js), so this only has work to do when the object
+// really is out of sight: under the drawer, off an edge, or behind a bar. Then the sky moves only as far as brings it into
+// view, with a little room round it, and slowly enough to follow: never a swing to put it in the middle.
 function keepSelectionInView(app) {
     const BARS = ['spectroTopLeft', 'spectroBandBar', 'spectroTopRight', 'spectroContextBar', 'spectroLegend'];
-    const CLEARANCE = 16;
+    const EDGE = 6;         // Nearer the edge than this, a point can't be made out
+    const ROOM = 64;        // Where it's brought to: this far inside the edge, or clear of the bar
     const BIG_PX = 60;      // Something this wide across still shows with its middle behind a bar, or off the edge
-    bus.on('select', () => {
-        // After the drawer has opened and the canvas has taken its new size
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-            const engine = app.engine;
-            if (!app.selected || app.view !== 'sky' || engine.isSlewing()) return;
-            const { az, alt, depth } = drawnSky(engine, app.selected);
-            const p = engine.project(az, alt, depth);
-            const frame = engine.currentFrame();
-            const reach = p ? angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov) : 0;
-            if (reach > BIG_PX) {
-                const shows = BIG_PX - reach;
-                if (p.x > shows && p.x < frame.width - shows && p.y > shows && p.y < frame.height - shows) return;
+    const MOVE_S = 0.8;
+
+    function barRects(sky) {
+        return BARS.map((id) => {
+            const el = document.getElementById(id);
+            const r = el && el.getBoundingClientRect();
+            return r && r.width > 0 && r.height > 0 && getComputedStyle(el).display !== 'none'
+                ? { left: r.left - sky.left, right: r.right - sky.left, top: r.top - sky.top, bottom: r.bottom - sky.top }
+                : null;
+        }).filter(Boolean);
+    }
+
+    function check(tries = 6) {
+        const engine = app.engine;
+        if (!app.selected || app.view !== 'sky' || engine.isSlewing()) return;
+        const frame = engine.currentFrame();
+        const w = frame.width;
+        const h = frame.height;
+        const sky = document.getElementById('simulationCanvas').getBoundingClientRect();
+        // The engine hasn't taken the canvas's new size yet
+        if ((Math.round(sky.width) !== w || Math.round(sky.height) !== h) && tries > 0) {
+            requestAnimationFrame(() => check(tries - 1));
+            return;
+        }
+        const { az, alt, depth } = drawnSky(engine, app.selected);
+        const p = engine.project(az, alt, depth);
+        if (!p) return;
+        const reach = angularRadiusDeg(app.selected.entity, app.selected.body) * (Math.PI / 180) * (frame.pxPerRad / frame.dpr) * parallaxFactor(depth, frame.fov);
+        if (reach > BIG_PX) {
+            const shows = BIG_PX - reach;
+            if (p.x > shows && p.x < w - shows && p.y > shows && p.y < h - shows) return;
+        }
+        const bars = barRects(sky);
+        let x = p.x;
+        let y = p.y;
+        if (x < EDGE || x > w - EDGE) x = Math.max(ROOM, Math.min(w - ROOM, x));
+        if (y < EDGE || y > h - EDGE) y = Math.max(ROOM, Math.min(h - ROOM, y));
+        // Out from behind a bar: up or down, whichever is towards the middle of the sky
+        const bar = bars.find((r) => x > r.left && x < r.right && y > r.top && y < r.bottom);
+        if (bar) y = (bar.top + bar.bottom) / 2 < h / 2 ? bar.bottom + ROOM / 2 : bar.top - ROOM / 2;
+        if (x === p.x && y === p.y) return;
+        const to = engine.axisPutting(az, alt, x, y, frame.fov, depth);
+        engine.slewTo(to, { duration: MOVE_S, axis: true });
+    }
+
+    // After the drawer has opened and the canvas has taken its new size: the engine resizes in the first frame after
+    bus.on('select', () => requestAnimationFrame(() => requestAnimationFrame(() => check())));
+}
+
+// The legend and the context bar share the bottom of the sky, and the bar grows as it gains Reset view and Enter system.
+// Where they would meet, the bar moves over to the right; where there's no room for that, the legend goes up a row.
+function keepBarsApart() {
+    const overlay = document.getElementById('spectroOverlay');
+    const bar = document.getElementById('spectroContextBar');
+    const legend = document.getElementById('spectroLegend');
+    if (!overlay || !bar || !legend || typeof ResizeObserver !== 'function') return;
+    const GAP = 8;
+    let shift = 0;
+    let lift = 0;
+    function fit() {
+        const sky = overlay.getBoundingClientRect();
+        const b = bar.getBoundingClientRect();
+        const l = legend.getBoundingClientRect();
+        let nextShift = 0;
+        let nextLift = 0;
+        if (b.width > 0 && l.width > 0 && sky.width > 0) {
+            // Where each would be left to itself
+            const barLeft = b.left - shift;
+            const barRight = b.right - shift;
+            const legendTop = l.top + lift;
+            const legendBottom = l.bottom + lift;
+            const meet = l.right + GAP - barLeft;
+            if (meet > 0 && legendTop < b.bottom && legendBottom > b.top) {
+                const room = sky.right - GAP - barRight;
+                if (room >= meet) nextShift = meet;
+                else nextLift = legendBottom - b.top + GAP;
             }
-            const onSky = p && p.x > CLEARANCE && p.x < frame.width - CLEARANCE && p.y > CLEARANCE && p.y < frame.height - CLEARANCE;
-            if (onSky) {
-                const sky = document.getElementById('simulationCanvas').getBoundingClientRect();
-                const behindBar = BARS.some((id) => {
-                    const r = document.getElementById(id).getBoundingClientRect();
-                    return r.width > 0 && p.x > r.left - sky.left - CLEARANCE && p.x < r.right - sky.left + CLEARANCE
-                        && p.y > r.top - sky.top - CLEARANCE && p.y < r.bottom - sky.top + CLEARANCE;
-                });
-                if (!behindBar) return;
-            }
-            engine.slewTo({ az, alt }, { duration: 0.5 });
-        }));
+        }
+        if (nextShift !== shift) {
+            shift = nextShift;
+            bar.style.translate = shift ? `${Math.ceil(shift)}px 0` : '';
+        }
+        if (nextLift !== lift) {
+            lift = nextLift;
+            legend.style.marginBottom = lift ? `${Math.ceil(lift)}px` : '';
+        }
+    }
+    const watch = new ResizeObserver(() => fit());
+    [overlay, bar, legend].forEach((el) => watch.observe(el));
+    bus.on('drawer', () => requestAnimationFrame(fit));
+}
+
+// A zoom that went part way into a system and back out never arrived, so the panel goes back to the tab the student was
+// reading: the System tab took over as the system came into view. Returns a check for each frame, which notes an arrival.
+function keepTabThroughPartZoom(app) {
+    let before = null;
+    let arrived = false;
+    const objectPanel = () => app.drawer.isOpen() && app.drawer.currentView() === 'object';
+    // This hears of the system before the System tab does (initShell runs first), so the tab is still the student's own
+    bus.on('view', ({ view, from }) => {
+        if (view === 'system') {
+            before = objectPanel() ? app.drawer.currentTab() : null;
+            arrived = false;
+            return;
+        }
+        if (from && !arrived && before && before !== 'system' && objectPanel() && app.drawer.currentTab() === 'system') {
+            app.drawer.selectTab(before);
+        }
+        before = null;
     });
+    return () => {
+        if (!arrived && app.view === 'system' && app.system && !app.system.isBusy()) arrived = true;
+    };
 }
 
 // In the browser's own fullscreen Esc would leave at once. Where the browser lets a page keep the key (Chromium, on
@@ -719,13 +815,16 @@ export function initShell(app) {
     // A layer gets called once a frame, so the zoom readout needs no timer of its own
     const updateZoom = initContextBar(app);
     const viewAids = initViewAids(app);
+    const noteArrival = keepTabThroughPartZoom(app);
     app.engine.addLayer({
         id: 'shell',
         update(frame) {
             updateZoom(frame.fov);
             viewAids.update(frame);
+            noteArrival();
         }
     });
 
     initLegend(app);
+    keepBarsApart();
 }

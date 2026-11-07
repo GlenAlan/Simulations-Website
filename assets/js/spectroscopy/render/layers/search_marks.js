@@ -42,7 +42,7 @@ export function createSearchMarksLayer(engine, app) {
 
     function cosLimitFor(frame) {
         // Wide enough for the furthest things, which are drawn nearer the middle than the camera has them
-        const half = Math.atan(Math.tan(frame.fov * RAD / 2) / parallaxFactor(1, frame.fov) * Math.hypot(1, frame.width / frame.height)) / RAD + 1;
+        const half = engine.reachDeg(frame.fov);
         return Math.cos(Math.min(89, half) * RAD);
     }
 
