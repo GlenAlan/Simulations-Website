@@ -66,7 +66,7 @@ const VIEW_SHOWN_AT = 0.4;          // A zoom this far in would settle in, not b
 const CARRIED_PAUSE_MS = 450;       // A pause this long ends the zoom that carried the student in (see applyZoom)
 const HOLE_GROW = 1.8;              // A zoom hands a black hole over once the sky draws it this much smaller than its system's
                                     // view will on arrival: about what the sky itself would grow it by over the move
-const HOLE_GROW_LEAST = 1.1;        // Zoomed in past that already, it still grows this much on the way in
+const HOLE_GROW_LEAST = 1.25;       // Zoomed in past that already, it still grows this much on the way in
 const HOLE_SHOWN_PX = 5;            // The sky draws a hole's disc from this many device px of radius (layers/black_holes.js)
 const FRAME_STAR_SHARE = 0.12;      // The arrival framing: a star up to this share of the frame's radius changes nothing...
 const FRAME_STAR_POWER = 0.3;       // ... and past it, its share of a frame that opens out round it grows only as this power
@@ -599,8 +599,10 @@ export function initSystemView(app) {
     // times smaller than the system's own view will draw it on arrival (holeFov). From there the hole is locked to the sky,
     // as a pair is: it starts exactly as big as the sky draws it and grows with the sky as it zooms, so the one comes up
     // through the other, with its companion on the same side, and the camera only comes in, to the whole-system view.
-    // Zoomed in past that point already, it can't get there without shrinking: it arrives that little closer instead, and
-    // stays there. On the way out the hole goes back down to the sky's size, unless it's already smaller than that.
+    // Zoomed in past that point already (after Go to, which frames a faint or close one tighter than that), the sky shows
+    // it bigger than the whole system's view will, and following it would mean arriving close. Instead the camera comes in
+    // HOLE_GROW_LEAST to the whole system as ever, and the sky's bigger picture of the hole fades out over its own. On the
+    // way out the hole goes back down to the sky's size, unless it's already smaller than that.
     function lockHoleToSky(fit, leaving) {
         const holes = engine.getLayer('black_holes');
         const discDeg = holes && holes.discDeg ? holes.discDeg(model.code) : 0;
@@ -610,23 +612,24 @@ export function initSystemView(app) {
         // Not on the sky yet: in from a speck, as a star comes
         if (skyPx * frame.dpr < HOLE_SHOWN_PX) return fit;
         let d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
-        let end = fit;
+        let locked = true;
         if (leaving) {
             if (d0 < fit / HOLE_GROW_LEAST) return fit;
             d0 = Math.max(d0, fit);
         } else if (d0 < fit * HOLE_GROW_LEAST) {
-            end = d0 / HOLE_GROW_LEAST;
+            d0 = fit * HOLE_GROW_LEAST;
+            locked = false;
         }
         path.d0 = d0;
-        path.locked = true;
-        path.skyLog = Math.log(d0 / end) / (1 - ETA * depth);
+        path.locked = locked;
+        path.skyLog = Math.log(d0 / fit) / (1 - ETA * depth);
         const angle = holes.companionAngle ? holes.companionAngle(model.code) : null;
         if (angle !== null) {
             const [hole, star] = positions.stars;
             const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
             path.roll = angle - Math.atan2(along, across);
         }
-        return end;
+        return fit;
     }
 
     // The widest view at which a zoom hands a black hole over to its system: see lockHoleToSky. A system not yet ready is
