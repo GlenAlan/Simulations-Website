@@ -120,9 +120,11 @@ export function createNeutronStarsLayer(engine, app) {
                 // Beacons keep a minimum size in the bands where they are the thing to find
                 float beacon = (uBandW[0] * aBandA.x + uBandW[4] * aBandB) * uViewport.y * 0.022;
                 vHalfPx = max(angularPx, beacon);
-                // Big on the screen, a fast pulsar's beams are drawn as up close: part turning, the rest their blurred sweep
+                // Big on the screen, a fast pulsar's beams are drawn as up close: part turning, the rest their blurred sweep.
+                // Bigger still, the turning part falls as the square of the size, so the area it sweeps stays the same.
                 vSpin = aSpin;
-                vTurn = vec2(tilt, uTwinkle > 0.5 ? mix(1.0, aTurn, smoothstep(uSweepPx.x, uSweepPx.y, vHalfPx)) : 1.0);
+                float most = aTurn * min(1.0, pow(uSweepPx.y / max(vHalfPx, 1.0), 2.0));
+                vTurn = vec2(tilt, uTwinkle > 0.5 && aTurn < 0.999 ? mix(1.0, most, smoothstep(uSweepPx.x, uSweepPx.y, vHalfPx)) : 1.0);
                 float gate = shows > 0.002 ? 1.0 : 0.0;
                 vec4 c = modelViewMatrix * vec4(centre, 1.0);
                 c.xy *= depthP(aDepth);
