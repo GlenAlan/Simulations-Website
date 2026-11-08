@@ -107,7 +107,7 @@ function createHand(t) {
 }
 
 // view: what the system view lends this. prepare(code), isReady(code), dropReady(), beginIn(code, hand, kind),
-// beginOut(hand), hasReady(), enter(code), exit()
+// beginOut(hand), hasReady(), enter(code), exit(), holeFov(code, frame)
 export function createZoomInto(app, view) {
     const engine = app.engine;
     let aim = null;             // { code, fov, seen, alone }: the star a zoom is headed for, and how it stands
@@ -130,7 +130,12 @@ export function createZoomInto(app, view) {
 
     // The field of view at which the sky has shown all it has of this system
     function handOverFov(system, frame) {
-        if (system.black_hole) return LENS_FOV;
+        // A black hole's lens, and on in until the sky draws it a little smaller than the system's view will on arrival, but
+        // never bigger: the move grows it on to that, and never takes the camera back out (system_view.js lockHoleToSky)
+        if (system.black_hole) {
+            const fov = view.holeFov ? view.holeFov(system.code, frame) : null;
+            return fov ? Math.max(LENS_FOV, Math.min(CAPTURE_FOV, fov)) : LENS_FOV;
+        }
         // A pulsar's beams turn on the sky first, so that the student sees the same turn carry on up close
         if (system.neutron_star && system.neutron_star.pulsar) {
             const pulsars = engine.getLayer('neutron_stars');
