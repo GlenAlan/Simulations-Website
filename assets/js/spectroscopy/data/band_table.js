@@ -221,6 +221,9 @@ function galaxyStrengths(body) {
     const edgeOn = smooth(50, 85, g.inclination_deg ?? 45);
     let ir = spiral ? 0.5 + 0.2 * edgeOn : irregular ? 0.65 : 0.25;
     if (g.starburst) ir = 0.95;
+    // The Local Group's spiral (data/local_group.js) is near enough for its own faint glows to show: radio from the gas of
+    // its star-forming ring, X-rays from its bulge's hot gas and X-ray binaries
+    if (g.local_group) return { radio: 0.45, ir, visible: 1, uv: 0.65, xray: 0.3 };
     return {
         radio: g.radio_lobes ? 0.85 : 0.03,
         ir,

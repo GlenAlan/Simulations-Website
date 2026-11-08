@@ -18,6 +18,7 @@ import { LOOP_ZERO_GLSL } from '../shared.js';
 
 export const IMAGE_R = 1.2;                   // The bake covers this far from the centre; the galaxy's edge is at 1
 export const BAKE_SCALE = { a: 8, b: 6 };      // Brightest linear values image A and image B hold
+const X_RAY_BINARIES = 600;                    // For a galaxy that shows its own (recipe.xray)
 
 const RAD = Math.PI / 180;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -40,7 +41,8 @@ export function galaxyRecipe(body) {
         rd: 0.24, rdY: 0.34, young: 1, dust: 0.8, warp: rng.range(-0.05, 0.05),
         hOld: 0.05, hYoung: 0.014, hDust: 0.02,
         bulgeRe: 0.1, bulgeL: 0.6, bulgeN: 2.5, bulgeQ: 0.8,
-        boxy: 2, shells: 0, laneDust: 0
+        boxy: 2, shells: 0, laneDust: 0,
+        xray: 0         // A spiral's own X-rays, for one near enough to show them (below)
     };
     if (kind === 0) {
         // t runs from an early type, all bulge and tight arms, to a late type, all disc and open arms
@@ -78,7 +80,29 @@ export function galaxyRecipe(body) {
         r.bulgeRe = 0.0;
         r.bulgeL = 0.0;
     }
+    if (g.local_group) localLook(r, rng);
     return r;
+}
+
+// The Local Group's spiral (data/local_group.js), as Andromeda looks: an early-type spiral with a big bulge, dusty, its arms
+// wound so tightly that they read as rings of young stars. Near enough that its own X-rays show: hot gas filling the bulge
+// and hundreds of X-ray binaries, most among the bulge's old stars.
+function localLook(r, rng) {
+    const t = rng.range(0.22, 0.38);
+    r.arms = 2;
+    r.pitch = rng.range(10, 13) * RAD;
+    r.armK = rng.range(0.8, 0.95);
+    r.flocc = 0.1;
+    r.barLen = 0;
+    r.rd = lerp(0.21, 0.24, t);
+    r.rdY = lerp(0.36, 0.42, t);
+    r.young = lerp(0.6, 0.85, t);
+    r.dust = rng.range(1.05, 1.25);
+    r.bulgeRe = lerp(0.12, 0.09, t);
+    r.bulgeL = lerp(0.68, 0.58, t);
+    r.bulgeN = lerp(3.2, 2.6, t);
+    r.bulgeQ = rng.range(0.72, 0.85);
+    r.xray = 1;
 }
 
 // 1 at or below b, 0 at or above a. (smoothstep with its edges reversed is undefined in GLSL.)
@@ -299,7 +323,7 @@ precision highp sampler2D;
 in vec2 vP;
 uniform sampler2D tMap;
 uniform float uKind, uCi, uSi, uImageR, uMapR, uMapLod, uDs, uHOld, uHYoung, uHDust, uRedden, uWarp, uBurst, uHand;
-uniform float uBulgeRe, uBulgeL, uBulgeN, uBulgeQ, uBoxy, uShells, uLane;
+uniform float uBulgeRe, uBulgeL, uBulgeN, uBulgeQ, uBoxy, uShells, uLane, uXray;
 uniform vec4 uOff;
 layout(location = 0) out vec4 gA;
 layout(location = 1) out vec4 gB;
@@ -438,6 +462,11 @@ void main() {
             vis += I * COL_BULGE * tB;
             uvLight += I * 0.012 * tB.b;
             ir += I * 0.65;
+            // A nearby spiral's own X-rays: hot gas and unresolved X-ray binaries filling the bulge, and a little along the disc
+            if (uXray > 0.0) {
+                xray += uXray * (0.5 * sqrt(sersic(r, uBulgeRe * 1.2, 1.6)) * fall(0.45, 0.06, r)
+                    + 0.05 * radio * fall(1.0, 0.5, length(p)));
+            }
         }
         // A faint round halo of old stars, so the disc doesn't end against nothing
         float h = 0.008 * exp(-length(vec2(p.x, p.y / max(uCi, 0.55))) / 0.3);
@@ -453,16 +482,18 @@ void main() {
 
 // Particles seen through the tilted galaxy, each made from its index alone. uClouds picks the population:
 // 1 = star clouds and glowing knots, which together hold about as much light as the smooth arms under them;
-// 0 = individual stars, drawn crisp at the size of the bake.
+// 0 = individual stars, drawn crisp at the size of the bake;
+// 2 = X-ray binaries, for a galaxy near enough to show them (recipe.xray).
 const PARTICLE_VERT = /* glsl */`
 precision highp sampler2D;
 ${FALL_GLSL}
 uniform sampler2D tMap;
-uniform float uKind, uArms, uPitch, uPhase, uBarLen, uRdY, uRd, uMapR, uImageR, uHand, uRes, uCi, uSi, uBulgeQ, uAmp, uClouds, uFluxK, uLCap, uHDust, uMapLod, uWideLod;
+uniform float uKind, uArms, uPitch, uPhase, uBarLen, uRdY, uRd, uMapR, uImageR, uHand, uRes, uCi, uSi, uBulgeQ, uBulgeRe, uAmp, uClouds, uFluxK, uLCap, uHDust, uMapLod, uWideLod;
 uniform uint uSeedU;
 out vec3 vVis;
 out vec2 vBands;
 out float vHard;
+out float vXray;
 ${PCG_GLSL}
 
 // A place on a spiral arm: spread is how far from the crest, in radians of the pattern
@@ -485,6 +516,28 @@ vec3 inClump(inout uint st, float thick) {
 }
 
 void main() {
+    vXray = 0.0;
+    if (uClouds > 1.5) {
+        // X-ray binaries: most are old, low-mass pairs among the bulge's stars; the rest young, massive ones on the arms.
+        // Very many faint and a few bright, and seen through any dust, as X-rays are.
+        uint sx = pcg(uint(gl_VertexID) * 11u + uSeedU + 517u);
+        vec3 at;
+        if (rnd(sx) < 0.7) {
+            vec3 d = normalize(vec3(gaussian(sx), gaussian(sx), gaussian(sx)));
+            at = d * (expRadius(sx, uBulgeRe * 1.3, 0.55) + 0.004) * vec3(1.0, 1.0, uBulgeQ);
+        } else {
+            at = onArm(sx, 0.35, 0.012);
+        }
+        at.y *= uHand;
+        float lum = min(1.0, 0.01 / max(1.0 - rnd(sx), 1e-5));
+        vXray = 0.5 + 6.0 * sqrt(lum);
+        vVis = vec3(0.0);
+        vBands = vec2(0.0);
+        vHard = 2.0;
+        gl_PointSize = clamp(1.6 * uRes / 1024.0, 1.0, 3.0);
+        gl_Position = vec4(vec2(at.x, at.y * uCi - at.z * uSi) / uImageR, 0.0, 1.0);
+        return;
+    }
     uint st = pcg(uint(gl_VertexID) * (uClouds > 0.5 ? 3u : 7u) + uSeedU + (uClouds > 0.5 ? 0u : 91u));
     float pop = rnd(st);
     vec3 pos;
@@ -600,6 +653,7 @@ precision highp float;
 in vec3 vVis;
 in vec2 vBands;
 in float vHard;
+in float vXray;
 layout(location = 0) out vec4 gA;
 layout(location = 1) out vec4 gB;
 void main() {
@@ -607,7 +661,7 @@ void main() {
     vec2 c = (gl_PointCoord - 0.5) * vHard;
     float g = exp(-0.5 * dot(c, c) * (vHard < 3.0 ? 3.2 : 1.0));
     gA = vec4(vVis * g, vBands.x * g);
-    gB = vec4(vBands.y * g, 0.0, 0.0, 0.0);
+    gB = vec4(vBands.y * g, 0.0, vXray * g, 0.0);
 }`;
 
 // HDR to 8 bits. Square roots hold the faint end, dithering removes what banding is left, and a soft edge means no quad ever shows.
@@ -673,7 +727,7 @@ export function createGalaxyBaker(engine) {
         uYoung: { value: 1 }, uMapR: { value: IMAGE_R }, uHand: { value: 1 }, uImageR: { value: IMAGE_R },
         uOff: { value: new THREE.Vector4() }, uSeedU: { value: 1 }, uCi: { value: 1 }, uSi: { value: 0 },
         uBulgeRe: { value: 0.1 }, uBulgeL: { value: 0.6 }, uBulgeN: { value: 2 }, uBulgeQ: { value: 0.8 },
-        uBoxy: { value: 2 }, uShells: { value: 0 }, uLane: { value: 0 }, uHOld: { value: 0.05 }, uHYoung: { value: 0.02 },
+        uBoxy: { value: 2 }, uShells: { value: 0 }, uLane: { value: 0 }, uXray: { value: 0 }, uHOld: { value: 0.05 }, uHYoung: { value: 0.02 },
         uHDust: { value: 0.014 }, uRedden: { value: 0 }, uWarp: { value: 0 }, uBurst: { value: 0 },
         uOct: { value: 4 }, uDs: { value: 0.05 }, uRes: { value: 128 }, uFluxK: { value: 1 }, uLCap: { value: 30 }, uAmp: { value: 1 },
         uClouds: { value: 0 }, uMapLod: { value: 0 }, uWideLod: { value: 0 }, tMap: { value: null }
@@ -777,6 +831,7 @@ export function createGalaxyBaker(engine) {
         shared.uBoxy.value = r.boxy;
         shared.uShells.value = r.shells;
         shared.uLane.value = r.laneDust;
+        shared.uXray.value = r.xray;
         shared.uHOld.value = r.hOld;
         shared.uHYoung.value = r.hYoung;
         shared.uHDust.value = r.hDust;
@@ -858,6 +913,11 @@ export function createGalaxyBaker(engine) {
         shared.uClouds.value = 0;
         shared.uAmp.value = recipe.kind === 1 ? 0.3 : 0.7;
         yield* pointPass(scratchView, s.stars, s.pointChunk);
+        if (recipe.xray > 0) {
+            shared.uClouds.value = 2;
+            yield* pointPass(scratchView, X_RAY_BINARIES, s.pointChunk);
+            shared.uClouds.value = 0;
+        }
 
         resolveUniforms.tA.value = scratchView.textures[0];
         resolveUniforms.tB.value = scratchView.textures[1];

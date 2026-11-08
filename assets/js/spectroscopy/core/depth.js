@@ -78,9 +78,13 @@ export function depthLight(entity) {
 // The first sky's bodies rank among themselves, exactly as they did before the deeper sky was added (body.deep, see
 // data/universe.js), so they keep their looks. A deeper body takes the depth its distance would have among them: most are
 // further than all of them, so they sit at the far end, small and dim.
+// The Local Group's galaxy (data/local_group.js) is far nearer than any other: it takes depth 0, as near as anything gets,
+// and stays out of the ranking, so no other galaxy moves for it.
 function rankDepths(list, row) {
     const rank = row.byMag ? (body) => body.brightness.mag : (body) => body.distance_pc;
-    const sorted = list.filter((b) => !b.deep).sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
+    const local = (b) => !!(b.galaxy && b.galaxy.local_group);
+    list.forEach((b) => { if (local(b)) b.depth = 0; });
+    const sorted = list.filter((b) => !b.deep && !local(b)).sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
     const last = Math.max(1, sorted.length - 1);
     const depthAt = (i) => row.near + ((row.far - row.near) * i) / last;
     sorted.forEach((body, i) => { body.depth = depthAt(i); });

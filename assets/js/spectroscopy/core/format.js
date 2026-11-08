@@ -1,5 +1,7 @@
 // Number formatting shared by the panels. Values keep their units in plain text: "5,100 K", not "5100".
 
+import { C_KMS } from './phys.js';
+
 export function withCommas(x) {
     return Math.round(x).toLocaleString('en-AU');
 }
@@ -41,6 +43,40 @@ export function plusMinus(value, err) {
 export function signed(x, digits = 0) {
     const text = Math.abs(x).toFixed(digits);
     return `${x < 0 ? '−' : '+'}${text}`;
+}
+
+// ---------- A shift along the line of sight, said the same way everywhere ----------
+// z always. While |z| is 0.1 or less, the speed v = cz beside it. Above 0.1, v = cz no longer applies (spec 8.4), so z alone,
+// with that reason where there's room for it.
+
+export const CZ_LIMIT = 0.1;
+export const CZ_REASON = 'v = cz no longer applies above z = 0.1';
+
+export function beyondCz(z) {
+    return Math.abs(z) > CZ_LIMIT;
+}
+
+// "+0.0234", "+0.0000600": z as a plain decimal to n significant figures, signed
+export function zPlain(z, n = 3) {
+    if (!Number.isFinite(z)) return String(z);
+    if (z === 0) return '0';
+    const size = Math.abs(z);
+    const places = Math.min(7, Math.max(1, n - 1 - Math.floor(Math.log10(size))));
+    return `${z < 0 ? '−' : '+'}${size.toFixed(places)}`;
+}
+
+// "+18 km/s", "+7,020 km/s", "−2.4 km/s"
+export function speedText(v) {
+    if (!Number.isFinite(v)) return String(v);
+    if (v === 0) return '0 km/s';
+    const size = Math.abs(v);
+    return `${v < 0 ? '−' : '+'}${size >= 1000 ? withCommas(size) : size.toFixed(size < 10 ? 1 : 0)} km/s`;
+}
+
+// "z = +0.0234, v = +7,020 km/s", or "z = +0.229 (v = cz no longer applies above z = 0.1)". v defaults to cz.
+export function shiftWords(z, { v = z * C_KMS, n = 3, reason = true } = {}) {
+    if (beyondCz(z)) return reason ? `z = ${zPlain(z, n)} (${CZ_REASON})` : `z = ${zPlain(z, n)}`;
+    return `z = ${zPlain(z, n)}, v = ${speedText(v)}`;
 }
 
 // A wavelength in the unit that reads best: nm below 1 µm, µm above

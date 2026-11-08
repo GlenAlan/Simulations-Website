@@ -38,6 +38,7 @@ import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion, ROGUE_PLANETS
 import { sortSupernovae, freeNeutronStar, makeFarSupernovae, setFarVelocities } from './far_supernovae.js';
 import { assignVelocities } from './motions.js';
 import { addNuclei, nucleusEntities } from './nuclei.js';
+import { makeLocalGroup } from './local_group.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
@@ -510,6 +511,13 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     // A stream and codes of their own, drawn after every other code, and after the motions they copy (data/nuclei.js)
     addNuclei(root.fork('nuclei'), made, coder('nuclei'));
 
+    // ---------- A galaxy of our own Local Group ----------
+    // Near enough that gravity beats the expansion, so it is coming towards us (data/local_group.js). Last of all, from a
+    // stream and codes of its own, placed round everything else, so nothing above changes.
+    const hardCoded = [target.host.code, ...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK']
+        .map((code) => ({ sky: made.find((b) => b.code === code).sky, clear_deg: code === target.host.code ? target.host.clear_deg : 0 }));
+    const local = makeLocalGroup(root.fork('local group'), coder('local group'), (code) => makeBase('galaxy', code), layout, hardCoded);
+
     // ---------- The sky's proportions (data/quotas.js, round 4) ----------
     // Everything above is made, laid out and set moving as it always was. Now some of it goes, and in its place come
     // supernovae in other galaxies; then the added sky. Streams and codes of their own, so nothing above changes.
@@ -555,7 +563,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     addNuclei(extraRoot.fork('nuclei'), extra.bodies, coder('extra nuclei'));
     const third = extraRoot.fork('order').shuffle(extra.bodies.slice());
 
-    const all = sky.concat(third, home);
+    const all = sky.concat(local, third, home);
 
     // Last of all, because band strengths read every other field. Band strengths are cached by temperature, so the first
     // sky goes first, in the order it always has, and the deeper sky after it: that way nothing nudges the first sky's.
@@ -584,8 +592,10 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const added = new Set(third);
     const before = all.filter((body) => !added.has(body));
     before.forEach((body) => (body.comets || []).forEach((comet) => { comet.bands = bandStrengths(comet); }));
-    // After everything else's, so that nothing they put in the band table's caches can change anyone else's
+    // After everything else's, so that nothing they put in the band table's caches can change anyone else's. The Local
+    // Group's galaxy comes after every other sky body made before the added sky, so its hole's stars are the last of those.
     before.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
+    local.forEach((body) => { body.bands = bandStrengths(body); });
     // And the added sky's after all of those, for the same reason
     bandsOf(third);
     third.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
@@ -617,7 +627,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     return {
         seed,
-        bodies: all,               // The sky bodies, the first sky's, the deeper sky's and the added sky's, then the 7 home planets
+        bodies: all,               // The sky bodies: the first sky's, the deeper sky's, the Local Group's, the added sky's; then the 7 home planets
         cometTailAz: cometSun.az,  // Every comet's tail points away from a Sun below the horizon on this bearing
         cometSun,                  // Where that Sun is: { az, alt }, alt below the horizon
         counts: tallyCounts(all, tally),
