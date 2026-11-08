@@ -18,6 +18,7 @@ import { orbitResults } from './orbit_sums.js';
 import { clockFor } from './orbit_clock.js';
 import { createOrbitDial, STAR_SHAPES } from './orbit_dial.js';
 import { halfSwing, readableFirst, splitLine, widestSplit } from './split_lines.js';
+import { danceTimescale } from '../../../data/unstable.js';
 
 const COLUMNS = 240;             // Moments across the picture
 const ROWS = 72;                 // Speeds up its side
@@ -34,11 +35,22 @@ const MIN_SAMPLES_PER_SWING = 6; // Sampled less often than this, a swing can't 
 const MIN_CYCLES_FOR_PERIOD = 1.5;
 const SPEED_SHARES = [1 / 36, 1 / 18, 1 / 9, 1 / 4.5]; // The time to show covered per second: a full picture in 36 s at the slowest
 const LAST_SLIDER_FRACTION = 0.9995; // The very end of the slider is the end of the picture, not the start of the next
+// A fast spinner's line, or a hot star's hydrogen line, is broad with a wide, flat bottom. Looked at finely, a dip in the noise
+// along that bottom can pass for the line's middle, and a few such moments make a small swing look several times bigger. So a
+// line this broad in the star's own light is smoothed over this share of its width before its middle is looked for.
+const BROAD_TRACK_KMS = 150;
+const BROAD_SMOOTH_SHARE = 1 / 8;
 
 function applies(resolved) {
     const { body } = resolved;
-    return !!(body && (body.black_hole || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
+    return !!(body && (body.black_hole || body.unstable || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
 }
+
+// Stars in no stable orbit (data/unstable.js) have no period. Their lines wander on the time it takes them to cross the group,
+// so that sets the time shown, and the time a swing would need to take for a reading to be tried. The longer time comes first:
+// two stars may swing as a pair for a few crossings, but seldom for twelve.
+const DANCE_SPANS = [12, 3];      // Crossing times on show
+const DANCE_SWING = 0.5;          // A swing, if there were one, as a share of a crossing time
 
 function daysText(d) {
     return d >= 100 ? `${Math.round(d).toLocaleString('en-AU')} days` : `${Number(d.toPrecision(3))} days`;
@@ -48,6 +60,7 @@ function daysText(d) {
 function periodsOfStar(body, code) {
     if (body.black_hole) return [body.black_hole.period_days];
     if (body.figure_eight) return [body.figure_eight.period_days];
+    if (body.unstable) return [DANCE_SWING * danceTimescale(body)];
     const index = body.stars.findIndex((s) => s.code === code);
     return body.orbits.filter((o) => [...o.a, ...o.b].includes(index)).map((o) => o.period_days);
 }
@@ -67,6 +80,7 @@ function periodsFor(resolved, stars) {
     const { body } = resolved;
     if (body.black_hole) return [body.black_hole.period_days];
     if (body.figure_eight) return [body.figure_eight.period_days];
+    if (body.unstable) return [danceTimescale(body)];
     const codes = stars.map((s) => s.code);
     const indexOf = (i) => body.stars[i].code;
     const periods = body.orbits
@@ -74,6 +88,18 @@ function periodsFor(resolved, stars) {
         .map((o) => o.period_days)
         .filter((p) => p > 0 && p < LONGEST_SHOWN_DAYS);
     return [...new Set(periods)].sort((a, b) => a - b);
+}
+
+// Does a swing fitted to all the readings come back the same in each half of them? An orbit's does; lines that only wander
+// about can be fitted by some swing, but never by the same one twice.
+const REPEAT_PERIOD = 0.1;       // The halves' periods agree with the whole's to this share...
+const REPEAT_SWING = 0.25;       // ... and their speed swings to this
+function repeats(points, fit) {
+    const n = points.length;
+    if (n < 24) return false;
+    const halves = [points.slice(0, n >> 1), points.slice(n >> 1)].map(fitOrbit);
+    return halves.every((h) => h && Math.abs(h.period_days / fit.period_days - 1) < REPEAT_PERIOD
+        && Math.abs(h.K_kms / fit.K_kms - 1) < REPEAT_SWING);
 }
 
 function lineTitle(line) {
@@ -242,13 +268,28 @@ function mount(container, api) {
         if (col % TRACK_EVERY === 0) trackColumn(t);
     }
 
+    // How wide a star's line is in its own light, from its spectrum over the whole range, kept for the framing on show
+    function widthOf(star, followed) {
+        const key = followed.rest_nm.toFixed(3);
+        if (!star.widths) star.widths = new Map();
+        if (!star.widths.has(key)) {
+            const middle = followed.rest_nm * (1 + (0.5 * (vLo + vHi)) / C_KMS);
+            const seen = star.overview ? lineCentre(star.overview, middle, { searchNm: followed.rest_nm * ((vHi - vLo) / C_KMS + 0.0015), type: 'abs' }) : null;
+            star.widths.set(key, seen ? (seen.fwhm_nm / seen.centre_nm) * C_KMS : 0);
+        }
+        return star.widths.get(key);
+    }
+
     // One star's line at one moment, as a point for the fit; null if it can't be told from the noise
     function measure(star, followed, t) {
         const rest = followed.rest_nm;
         const spectrum = spectrumOf(entity, sliceOpts(t, star.part, rest));
         const near = star.last ?? rest * (1 + (0.5 * (vLo + vHi)) / C_KMS);
         const search = star.last ? 0.4 * reachKms : reachKms;
-        const found = lineCentre(spectrum, near, { searchNm: (rest * search) / C_KMS, type: 'abs' });
+        const width = widthOf(star, followed);
+        const kmsPerPx = spectrum.wl.length > 1 ? Math.log(spectrum.wl[1] / spectrum.wl[0]) * C_KMS : 0;
+        const smoothPx = width > BROAD_TRACK_KMS && kmsPerPx > 0 ? (BROAD_SMOOTH_SHARE * width) / kmsPerPx : 0;
+        const found = lineCentre(spectrum, near, { searchNm: (rest * search) / C_KMS, type: 'abs', smoothPx });
         if (!found) return null;
         star.last = found.centre_nm;
         const d = dopplerFrom(found.centre_nm, rest, found.err_nm);
@@ -353,9 +394,12 @@ function mount(container, api) {
     function updateResults() {
         fitsDue = false;
         const covered = filledCount >= COLUMNS;
+        const dance = !!resolved.body.unstable;
         stars.forEach((star) => {
             star.fit = !star.tooFast && star.points.length >= 12 && cyclesIn(star) >= MIN_CYCLES_FOR_PERIOD ? fitOrbit(star.points) : null;
-            if (covered && wantsAnotherLine(star)) tryOtherLines(star);
+            if (covered && wantsAnotherLine(star) && !dance) tryOtherLines(star);
+            // A period has to repeat: fitted to each half of the readings on its own, both halves must give it
+            if (dance && star.fit && !repeats(star.points, star.fit)) star.fit = null;
         });
         result.replaceChildren(...orbitResults({
             resolved,
@@ -484,9 +528,11 @@ function mount(container, api) {
             star.points = [];
             star.fit = null;
             star.last = null;
+            star.widths = null;
             star.triedOthers = false;
             const quickest = Math.min(...star.periods);
-            star.tooFast = quickest < MIN_SAMPLES_PER_SWING * sampleGap;
+            // Stars in no stable orbit have no swing to be too quick for the readings: whatever repeats, the readings show
+            star.tooFast = !resolved.body.unstable && quickest < MIN_SAMPLES_PER_SWING * sampleGap;
             star.tooSlow = quickest > span / MIN_CYCLES_FOR_PERIOD;
             // The chosen line if this star shows it at all, or else its own best
             const shows = star.seenLines.some((l) => sameLine(l, line));
@@ -498,6 +544,7 @@ function mount(container, api) {
         api.setResolution('zoom', { lo_nm: line.rest_nm - windowHalf, hi_nm: line.rest_nm + windowHalf });
         holdFloor(line.rest_nm - windowHalf, line.rest_nm + windowHalf);
         if (stars.some((star) => star.tooFast)) updateResults();
+        else if (resolved.body.unstable) result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}A period would show once a swing had repeated.`));
         else result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}The period appears once a swing and a half has gone by.`));
         // The first moment straight away, with each star's mark, so the picture is never an empty box
         if (panelShown) {
@@ -533,6 +580,7 @@ function mount(container, api) {
         // plainly splitting in two at their widest, that one comes first: usually a narrow metal line, as hydrogen's are too
         // broad to part for the eye.
         const overviews = stars.map((star) => spectrumOf(entity, star.part ? { parts: [star.part] } : {}));
+        stars.forEach((star, i) => { star.overview = overviews[i]; });
         const suggestions = suggestTrackingLines(overviews, 6);
         let split = null;
         if (stars.length > 1 && nextResolved.body.stars) {
@@ -564,7 +612,9 @@ function mount(container, api) {
         setOptions(lineField.select, lines.map((l, i) => ({ value: i, label: lineTitle(l) })), 0);
         lineField.wrap.hidden = lines.length < 2;
 
-        const spans = periods.map((p, i) => ({ value: p * CYCLES_SHOWN, label: daysText(p * CYCLES_SHOWN) + (i === 0 && periods.length > 1 ? ', the shortest' : '') }));
+        const spans = nextResolved.body.unstable
+            ? DANCE_SPANS.map((k) => ({ value: k * shortest, label: daysText(k * shortest) }))
+            : periods.map((p, i) => ({ value: p * CYCLES_SHOWN, label: daysText(p * CYCLES_SHOWN) + (i === 0 && periods.length > 1 ? ', the shortest' : '') }));
         span = spans.length ? spans[0].value : shortest * CYCLES_SHOWN;
         setOptions(spanField.select, spans, span);
         spanField.wrap.hidden = spans.length < 2;

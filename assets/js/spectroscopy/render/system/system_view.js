@@ -10,9 +10,12 @@
 //   app.system.hzAvailable(code?)               { ok, reason } for that system, or else the one that's open
 //   app.system.hasSystemView(body)              whether a body can be visited
 //   app.system.systemOf(resolved)               what a selection would open: its body, or a cluster member as a body
+//   app.system.entryFov(code)                   the widest sky view at which zooming in on it carries on into its system
 //   app.system.setClock({ speed, playing, read }) what the System tab's playback is doing, in days per second. read() gives
 //                                               the time every frame, for a clock whose 'timeline' events come in steps
-//   app.system.timeScale()                      how much the clock is slowed just now, while a planet is in close-up
+//   app.system.timeScale()                      how much the clock is slowed just now, for a close-up or for the flash rule
+//   app.system.clockScale(), heldSpeed()        how much a shared clock is held back at its source for the flash rule, and
+//                                               the speed that comes to while it is (null when it isn't)
 //   app.system.isOpening(), skyShows()          a zoom has only just begun; a flight is under way, with the sky on show behind it
 //   app.system.setLogScale(on), isLogScale(), logScaleUseful(), getTime(), getModel(), isFocused(), isBusy(),
 //   readout(code), onChange(fn); names starting with _ are hooks for tests
@@ -20,6 +23,7 @@
 import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
+import { BANDS, BAND_INFO } from '../../core/bands.js';
 import { ETA, parallaxFactor, travelPc } from '../../core/depth.js';
 import { sharedUniforms } from '../shared.js';
 import { wheelZoomStep } from '../engine.js';
@@ -28,12 +32,13 @@ import { initSystemTab } from '../../ui/system_tab.js';
 import { announce as say } from '../../ui/drawer.js';
 import {
     FRAME, ORBITS_PER_SECOND, ORBITS_PER_SECOND_REDUCED, buildModel, createSizes, createSmear, drawnSizes, hasSystemView,
-    hzStatus, layout, ringRadius, starRadius, planetRadius, planetOrbitPoints, planetPhase, childOrbitPoints,
-    figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf, sightDirection
+    hzStatus, layout, ringRadius, starRadius, planetRadius, planetReach, planetOrbitPoints, planetPhase, childOrbitPoints,
+    figureEightWorldPoints, keplerReadout, smearWeights, systemBodyOf, sightDirection, orbitShare, sweptArea,
+    flashSafeRate, FLASHES_PER_S, FLASH_FIELD_PX
 } from './system_model.js';
 import { TRANSITION_S, HAND_ARRIVE, easeProgress, pathAt, stagesAt, smoothstep, handSkyLog, handOffCentre, travelAt, domeAt } from './transition.js';
 import { createZoomInto } from './zoom_into.js';
-import { createStar, surfaceColour } from './star_surface.js';
+import { createStar, surfaceColour, starLook } from './star_surface.js';
 import { createHole, createPulsarBeams } from './remnants.js';
 import { holeLook, createDustRing } from './nucleus_view.js';
 import { createOrbitLine, createOrbitGlow } from './orbit_lines.js';
@@ -42,6 +47,10 @@ import { createMassStream } from './mass_stream.js';
 import { starBandLook, createFlares, FLARE_GAIN, bandRgb } from './band_look.js';
 import { createComets } from './comets.js';
 import { hashString } from '../../core/rng.js';
+import { createDanceTrails } from './dance_trails.js';
+import { danceGovernor, danceFrame } from './dance_model.js';
+import { danceBound } from '../../data/unstable.js';
+import { clockFor } from '../../ui/spectrum/tools/orbit_clock.js';
 
 const RAD = Math.PI / 180;
 const FOV = 36;                     // Vertical field of view of the system camera (degrees)
@@ -56,9 +65,12 @@ const WARM_AFTER_SELECT_MS = 500;
 const KEY_ZOOM_RATE = 1.3;          // Zooming with a key held down, as a log of the field of view a second, as on the sky
 const VIEW_SHOWN_AT = 0.4;          // A zoom this far in would settle in, not back, so the rest of the page can hear about it
 const CARRIED_PAUSE_MS = 450;       // A pause this long ends the zoom that carried the student in (see applyZoom)
-const HOLE_APPROACH = 1.5;          // How far off a zoom into a black hole's system starts, as a share of where it ends
-const HOLE_SKY_ZOOM = 1.25;         // How far the sky narrows meanwhile
-const HOLE_NEAR_FOV = 1;            // The sky draws a black hole about as big as this view does at a field of view like this
+const HOLE_GROW = 1.8;              // A zoom hands a black hole over once the sky draws it this much smaller than its system's
+                                    // view will on arrival: about what the sky itself would grow it by over the move
+const HOLE_GROW_LEAST = 1.25;       // Zoomed in past that already, it still grows this much on the way in
+const HOLE_SHOWN_PX = 5;            // The sky draws a hole's disc from this many device px of radius (layers/black_holes.js)
+const FRAME_STAR_SHARE = 0.12;      // The arrival framing: a star up to this share of the frame's radius changes nothing...
+const FRAME_STAR_POWER = 0.3;       // ... and past it, its share of a frame that opens out round it grows only as this power
 const DAY_SIDE = 0.65;              // How far round from the star a close-up looks at a planet (radians)
 const CLOSE_UP_ORBITS_PER_S = 0.02; // A planet in close-up goes round no faster than this: it's there to be looked at
 const CLOSE_UP_SLOWDOWN = 0.1;      // ... and the clock runs at least this much slower
@@ -166,10 +178,10 @@ export function initSystemView(app) {
     let hand = null;            // The student's zoom is moving tNorm: see zoom_into.js. Otherwise the flight is on a clock.
     let keyZoom = 0;            // A zoom key held down during that move: -1 in, +1 out
     let carriedIn = false;      // A zoom carried the student in, and is still going: see applyZoom
-    let settleAfterCarry = false; // ... and once it stops, the camera settles where the button's flight leaves it
     let lastZoomAt = -Infinity; // performance.now of the last zoom step in the system
     let viewShown = true;       // Has the page been told the view changed? A zoom waits to see if it's really going in.
     let useFade = false;        // This transition is the Reduce motion cross-fade
+    let byZoom = false;         // ... and a zoom asked for it, so the rest of that zoom stops at the whole system as well
     let path = null;            // The flight's fixed values: see beginFlight
     let doneCallbacks = [];
     let tDays = 0;
@@ -188,6 +200,8 @@ export function initSystemView(app) {
     // system's clock is measured as it happens. A clock shared with other views may send its time in steps, so read gives
     // the time as it really is, every frame.
     const clock = { speed: 0, playing: false, read: null, lastRead: 0, otherDays: 0, otherRate: 0, shown: 0 };
+    // How far the clock is held back so that nothing big flashes, and the most days a second that allows (holdClock)
+    const held = { scale: 1, rate: Infinity, fps: 60, off: false };
 
     // What the student controls. Everything except the flight goes through this.
     const cam = {
@@ -200,8 +214,19 @@ export function initSystemView(app) {
         swung: false            // The student has turned the camera since this close-up began, so it stops turning itself
     };
     let fitSmooth = null;
+    // A young multiple in no stable orbit closes in on the stars that stay once one has been thrown out (dance_model.js
+    // danceFrame), and opens out again if the clock goes back. The whole-system view's distance goes with this, and the stars'
+    // drawn sizes too (model.sizeScale), so they stay the size on the screen they were through the dance. It eases, so that a
+    // jump of the clock glides in rather than cuts.
+    let frameK = 1;
+    const FRAME_EASE = 1;           // As a log a second
 
     const notify = () => listeners.forEach((fn) => fn());
+
+    // Do fast orbits blur? Only with Reduce motion, which keeps the clock slower too: there an orbit too fast to follow
+    // becomes a steady ring of light. Otherwise nothing blurs, at any speed, and the clock is held back instead where
+    // something big on the screen would go round fast enough to flash (holdClock).
+    const blurring = () => !!app.settings.reduceMotion;
 
     // ---------- Building a system ----------
     function colourOfChild(child) {
@@ -345,16 +370,24 @@ export function initSystemView(app) {
         if (comets) group.add(comets.group);
         const cometLabels = model.comets.map((e) => makeLabel(e.code));
 
+        // Stars in no stable orbit: trails where they have been, as there are no orbits to draw (dance_trails.js)
+        const trails = model.body.unstable ? createDanceTrails(model) : null;
+        if (trails) group.add(trails.group);
+
         scene.add(group);
         const steady = new Map(model.nodes.map((n) => [n, [0, 0, 0]]));
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
-            bandLooks, flares, bandSeen: null, comets, cometLabels, dust,
+            bandLooks, flares, bandSeen: null, comets, cometLabels, dust, trails,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
             lastStars: new Float64Array(model.stars.length * 3),
             lastPlanets: new Float64Array(model.planets.length * 3),
             sizes: createSizes(model),
             smear: createSmear(model),
+            whirl: createSmear(model),      // The same sums for an orbit too fast to follow, but nothing blurs: see settleOrbits
+            detail: model.stars.map((s) => (s.star.stage === 'black_hole' ? 0 : detailOf(s.star))),   // For holdClock
+            looks: model.stars.map((s) => (s.star.stage === 'black_hole' ? null : starLook(s.star))),
+            flareNow: new Float64Array(model.stars.length),
             parents: new Map(model.nodes.flatMap((n) => (n.children || []).map((c) => [c, n])))
         };
     }
@@ -404,6 +437,10 @@ export function initSystemView(app) {
         }
         if (world.stream) world.stream.dispose();
         if (world.comets) world.comets.dispose();
+        if (world.trails) {
+            world.trails.dispose();
+            governed = 1;
+        }
         labelLayer.replaceChildren();
         world = null;
         positions = null;
@@ -414,39 +451,54 @@ export function initSystemView(app) {
     }
 
     // ---------- Fitting the view ----------
-    function fitDistance(aspect, el) {
+    // Every way in, by zoom, by button or by a link, ends at the same view, and comes straight in to it: the whole system,
+    // with a little room round it. Everything in a system is laid out to reach FRAME from its middle, so that's what is fitted,
+    // unless a star would fill much of it: on its own that would bring a lone star in as a disc across half the screen, and a
+    // contact pair as two, while a wide triple comes in as a scatter of points. So a star bigger than FRAME_STAR_SHARE of the
+    // frame opens the frame out round it, by as much as keeps its share growing only as the FRAME_STAR_POWER power of its size:
+    // a lone Sun-like star comes in at about 0.16 of the frame's radius rather than 0.33, a lone giant at 0.18 rather than
+    // 0.5, a white dwarf at 0.13 rather than 0.15, a contact pair's stars at about 0.19 rather than 0.5 or more. The stars
+    // of most systems with planets, and of every wider multiple, are under the share, and come in just as they did.
+    function framedRadius(m = model, at = mix) {
+        if (!m) return FRAME;
+        let R = 0;
+        for (let i = 0; i < m.stars.length; i++) R = Math.max(R, starRadius(m, i, at) / (m.sizeScale || 1));
+        const share = R / FRAME;
+        return share > FRAME_STAR_SHARE ? FRAME * (share / FRAME_STAR_SHARE) ** (1 - FRAME_STAR_POWER) : FRAME;
+    }
+
+    function fitDistance(aspect, el, framed = framedRadius()) {
         const tanH = TAN_V * aspect;
         // Width of the orbit plane on screen, or its height, whichever runs out first. The near edge of the plane is
         // closer than the centre, so it needs d >= R (sin el / tan + cos el) to stay on screen. Sideways, whatever's a
         // little nearer the camera than the middle reaches furthest out: that's the square root.
         const fill = 0.93;
         const a = Math.abs(el);
-        const needH = Math.hypot(FRAME / (fill * tanH), FRAME * Math.cos(a));
-        const needV = FRAME * (Math.sin(a) / (fill * TAN_V) + Math.cos(a));
+        const needH = Math.hypot(framed / (fill * tanH), framed * Math.cos(a));
+        const needV = framed * (Math.sin(a) / (fill * TAN_V) + Math.cos(a));
         return Math.max(needH, needV);
+    }
+
+    // The whole-system view's zoom on arrival, as a multiple of the fit. With the habitable zone on, it takes that in too, so
+    // that nothing has to move out to it once the student is there.
+    function arrivalZoom() {
+        return Math.max(1, zoneZoom());
     }
 
     function pxPerWorldAt(depth, frame) {
         return frame.height / (2 * TAN_V * Math.max(depth, 1e-6));
     }
 
-    // The radius (world units) the camera sits away from when it is closest to the middle of the system.
-    // Stars fill much of the view; a pair or a figure-eight has to fit.
-    function closestApproach(aspect) {
-        const main = model.stars[world.brightest].star;
-        const R = starRadius(model, world.brightest, mix);
-        const stage = main.stage;
-        const fill = stage === 'white_dwarf' || stage === 'neutron_star' ? 0.13 : (stage === 'giant' || stage === 'supergiant') ? 0.36 : 0.27;
-        let d = R / (2 * fill * TAN_V);
-        if (model.stars.length > 1) {
-            // The flight aims at the centre of mass, which may be empty space: keep the widest orbit's stars in shot
-            const reach = model.root.flat ? FRAME * 0.8 : ringRadius(model, model.root.a_AU, mix) * 0.85;
-            d = Math.max(d, reach / (TAN_V * Math.min(aspect, 1)));
-        }
-        return d;
+    // How far in a dance's view has closed (see frameK): at once, or easing towards it
+    function stepFrame(dt, atOnce = false) {
+        const want = model && model.body.unstable ? danceFrame(model, tDays) : 1;
+        frameK = atOnce || app.settings.reduceMotion ? want : Math.exp(Math.log(frameK) + (Math.log(want) - Math.log(frameK)) * (1 - Math.exp(-dt * FRAME_EASE)));
+        if (Math.abs(Math.log(frameK / want)) < 1e-4) frameK = want;
+        if (model) model.sizeScale = frameK;
     }
 
     function beginFlight(frame) {
+        stepFrame(0, true);
         const star = model.body.sky;
         const dAz = ((star.az - savedView.az + 540) % 360) - 180;
         const fovEnd = Math.min(savedView.fov, Math.max(0.7, savedView.fov / SKY_END_FOV_FACTOR));
@@ -457,25 +509,27 @@ export function initSystemView(app) {
         const az0 = model.sightAz;
         const az1 = HOME_SWING;
         const R = starRadius(model, world.brightest, mix);
-        const fit = fitDistance(aspect, HOME_EL);
-        const dClose = Math.min(closestApproach(aspect), fit * 0.8);
+        const fitWhole = fitDistance(aspect, HOME_EL);
+        const fit = fitWhole * frameK;
+        // Where it arrives: see framedRadius
+        let arrive = fit * arrivalZoom();
         // A speck at the start: under a pixel for a lone star, a few pixels for a whole group
         const speckPx = model.stars.length > 1 ? 3 : 0.8;
-        const speckR = model.stars.length > 1 ? FRAME : R;
-        const d0 = Math.max(dClose * 4, (speckR * frame.height) / (2 * speckPx * TAN_V));
-        path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt), pc: travelPc(model.body), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
-        if (hand) lockStarsToSky(frame, fit);
+        const speckR = model.stars.length > 1 ? FRAME * frameK : R;
+        const d0 = Math.max(arrive * 2, (speckR * frame.height) / (2 * speckPx * TAN_V));
+        path = { star, dAz, fovEnd, el0, az0, az1, d0, dir: azAltToVec3(star.az, star.alt), pc: travelPc(model.body), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
+        if (hand) arrive = lockStarsToSky(frame, arrive);
 
         cam.az = az1;
         cam.azT = az1;
         cam.el = HOME_EL;
         cam.elT = HOME_EL;
-        cam.zoom = path.endZoom || 1;
+        cam.zoom = arrive / fit;
         cam.focus.set(0, 0, 0);
         cam.target = null;
         cam.flight = null;
-        fitSmooth = fit;
-        cam.dist = fit * cam.zoom;
+        fitSmooth = fitWhole;
+        cam.dist = arrive;
         cam.distT = cam.dist;
 
         // Line the faint sky's catalogue up with the line of sight, so what's behind the star is what was behind it
@@ -494,15 +548,12 @@ export function initSystemView(app) {
     // Under a hand a multiple's stars start right where the sky has already drawn them apart, and stay on them: the camera
     // starts as far off as puts the two widest parts of its first split that far apart, turned to match, and comes in just
     // as the sky zooms. A pair lands exactly. The sky draws the spacing in a triple or two pairs in its own way, so they land
-    // close, each part round its place on the sky.
-    function lockStarsToSky(frame, fit) {
-        if (model.body.black_hole) {
-            lockHoleToSky(fit);
-            return;
-        }
+    // close, each part round its place on the sky. fit: where the camera ends up, in the system. Returns where it arrives.
+    function lockStarsToSky(frame, fit, leaving = false) {
+        if (model.body.black_hole) return lockHoleToSky(fit, leaving);
         const binaries = engine.getLayer('binaries');
         const onSky = model.stars.length > 1 && binaries && binaries.firstSplit ? binaries.firstSplit(model.code) : null;
-        if (!onSky || onSky.length < 2) return;
+        if (!onSky || onSky.length < 2) return fit;
         let from = null;
         let to = null;
         let widest = -1;
@@ -514,7 +565,7 @@ export function initSystemView(app) {
                 to = q;
             }
         }));
-        if (!(widest > 0)) return;
+        if (!(widest > 0)) return fit;
         const gap = lockGap.set(0, 0, 0);
         [[to, 1], [from, -1]].forEach(([part, sign]) => {
             let mass = 0;
@@ -529,40 +580,80 @@ export function initSystemView(app) {
         });
         const { across, along } = seenFromPathStart(gap);
         const worldApart = Math.hypot(across, along);
-        if (!(worldApart > 1e-6)) return;
+        if (!(worldApart > 1e-6)) return fit;
         const depth = model.body.depth || 0;
         const skyApart = widest * RAD * parallaxFactor(depth, savedView.fov) / Math.tan(savedView.fov * RAD * 0.5);
         const d0 = worldApart / (TAN_V * skyApart);
-        if (d0 < fit * 1.5) return;
+        if (d0 < fit * 1.5) return fit;
         path.d0 = d0;
         path.locked = true;
         path.roll = Math.atan2(to.y - from.y, to.x - from.x) - Math.atan2(along, across);
         // The sky zooms by just enough, as the camera arrives. Its depth holds it back a little: see core/depth.js.
         path.skyLog = Math.log(d0 / fit) / (1 - ETA * depth);
+        return fit;
     }
 
-    // The sky has already drawn a black hole close up by the time a zoom gets here, about as near as the system's own view:
-    // so there's next to no flying, just one coming up through the other, with its companion on the same side.
-    function lockHoleToSky(fit) {
-        if (savedView.fov > HOLE_NEAR_FOV) return;
+    // A black hole's disc on the sky, in px of radius, at a field of view
+    function skyHolePx(discDeg, depth, fov, frame) {
+        return (discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(depth, fov)) / Math.tan(fov * RAD * 0.5);
+    }
+
+    // The sky has drawn a black hole's disc by the time a zoom gets here: zoom_into.js hands it over once that's HOLE_GROW
+    // times smaller than the system's own view will draw it on arrival (holeFov). From there the hole is locked to the sky,
+    // as a pair is: it starts exactly as big as the sky draws it and grows with the sky as it zooms, so the one comes up
+    // through the other, with its companion on the same side, and the camera only comes in, to the whole-system view.
+    // Zoomed in past that point already (after Go to, which frames a faint or close one tighter than that), the sky shows
+    // it bigger than the whole system's view will, and following it would mean arriving close. Instead the camera comes in
+    // HOLE_GROW_LEAST to the whole system as ever, and the sky's bigger picture of the hole fades out over its own. On the
+    // way out the hole goes back down to the sky's size, unless it's already smaller than that.
+    function lockHoleToSky(fit, leaving) {
         const holes = engine.getLayer('black_holes');
-        const angle = holes && holes.companionAngle ? holes.companionAngle(model.code) : null;
-        path.d0 = fit * HOLE_APPROACH;
-        path.skyLog = Math.log(HOLE_SKY_ZOOM);
-        // Better still, from the sky's own size: the hole starts exactly as big as the sky draws its disc, and on the way in
-        // it's never drawn smaller than that, so zooming in can't shrink it. Its companion may then be off to the side on
-        // arrival; zooming out brings it in.
         const discDeg = holes && holes.discDeg ? holes.discDeg(model.code) : 0;
-        if (discDeg > 0) {
-            const frame = engine.currentFrame();
-            const skyPx = (discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(model.body.depth || 0, savedView.fov)) / Math.tan(savedView.fov * RAD * 0.5);
-            path.d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
-            path.endZoom = Math.max(minDistance() / fit, Math.min(1, path.d0 / (HOLE_SKY_ZOOM * fit)));
+        const frame = engine.currentFrame();
+        const depth = model.body.depth || 0;
+        const skyPx = discDeg > 0 ? skyHolePx(discDeg, depth, savedView.fov, frame) : 0;
+        // Not on the sky yet: in from a speck, as a star comes
+        if (skyPx * frame.dpr < HOLE_SHOWN_PX) return fit;
+        let d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
+        let locked = true;
+        if (leaving) {
+            if (d0 < fit / HOLE_GROW_LEAST) return fit;
+            d0 = Math.max(d0, fit);
+        } else if (d0 < fit * HOLE_GROW_LEAST) {
+            d0 = fit * HOLE_GROW_LEAST;
+            locked = false;
         }
-        if (angle === null) return;
-        const [hole, star] = positions.stars;
-        const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
-        path.roll = angle - Math.atan2(along, across);
+        path.d0 = d0;
+        path.locked = locked;
+        path.skyLog = Math.log(d0 / fit) / (1 - ETA * depth);
+        const angle = holes.companionAngle ? holes.companionAngle(model.code) : null;
+        if (angle !== null) {
+            const [hole, star] = positions.stars;
+            const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
+            path.roll = angle - Math.atan2(along, across);
+        }
+        return fit;
+    }
+
+    // The widest view at which a zoom hands a black hole over to its system: see lockHoleToSky. A system not yet ready is
+    // measured from a model of its own, kept for the next look.
+    let measured = null;
+    function holeFov(code, frame) {
+        const body = systemBodyOf(app.universe.resolve(code));
+        const holes = engine.getLayer('black_holes');
+        const discDeg = body && body.black_hole && holes && holes.discDeg ? holes.discDeg(body.code) : 0;
+        if (!(discDeg > 0)) return null;
+        if (model && model.code === body.code) measured = model;
+        else if (!measured || measured.code !== body.code) measured = buildModel(body);
+        const m = measured;
+        const at = (logChoice === null ? m.startLog : logChoice) && m.logUseful ? 1 : 0;
+        const arrive = fitDistance(frame.width / Math.max(1, frame.height), HOME_EL, framedRadius(m, at));
+        const px = (starRadius(m, 0, at) * frame.height) / (2 * TAN_V * arrive * HOLE_GROW);
+        // Where the sky's disc is that big: its size goes as one over the tangent of half the field of view
+        const depth = body.depth || 0;
+        let fov = 1;
+        for (let k = 0; k < 4; k++) fov = (2 * Math.atan((discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(depth, fov)) / px)) / RAD;
+        return fov;
     }
 
     // A distance in the system, as it lies across the view from where the path begins
@@ -750,12 +841,11 @@ export function initSystemView(app) {
         if (carriedIn && (now - lastZoomAt > CARRIED_PAUSE_MS || factor > 1)) carriedIn = false;
         lastZoomAt = now;
         if (carriedIn) return;
-        settleAfterCarry = false;
         if (cam.target) {
             cam.distT = Math.max(minDistance(), cam.distT * factor);
             // Pulling far enough back from a planet lets go of it
-            if (fitSmooth && cam.distT >= fitSmooth * 0.9) {
-                startFocusFlight(null, cam.distT / fitSmooth);
+            if (fitSmooth && cam.distT >= fitSmooth * frameK * 0.9) {
+                startFocusFlight(null, cam.distT / (fitSmooth * frameK));
             }
             return;
         }
@@ -764,11 +854,16 @@ export function initSystemView(app) {
             zoomInto.zoomedOutPast(Math.log(factor));
             return;
         }
-        cam.zoom = Math.max(minDistance() / (fitSmooth || 1), Math.min(maxZoom(), cam.zoom * factor));
+        cam.zoom = Math.max(minDistance() / ((fitSmooth || 1) * frameK), Math.min(maxZoom(), cam.zoom * factor));
+    }
+
+    // The habitable zone's outer edge, in world units, if it's on show; and as a share of the frame
+    function hzRing(at = mix) {
+        return model && model.hz && app.layers.habitableZone ? ringRadius(model, model.hz.outer, at) : 0;
     }
 
     function hzReach() {
-        return model && model.hz && app.layers.habitableZone ? ringRadius(model, model.hz.outer, mix) / FRAME : 0;
+        return hzRing() / framedRadius();
     }
 
     function maxZoom() {
@@ -834,6 +929,8 @@ export function initSystemView(app) {
         const consider = (q, code, rank) => {
             if (q.ok) offer(Math.max(0, Math.hypot(q.x - x, q.y - y) - q.r) + rank, code);
         };
+        // Too fast to follow, a sharp body is somewhere new every frame: a click on its ring finds it as well
+        const whirl = world.whirl;
         model.planets.forEach((entry, i) => {
             if (Math.max(world.smear.planets[i], world.smear.planetAbove[i]) > 0.5) {
                 offer(fromRing(world.planets[i].line.object, world.planets[i].points), entry.code);
@@ -842,15 +939,17 @@ export function initSystemView(app) {
             const q = onScreen(positions.planets[i], sizes.planets[i]);
             const hidden = stars.some((st) => st.depth < q.depth && Math.hypot(st.x - q.x, st.y - q.y) < st.r);
             if (!hidden) consider(q, entry.code, 0);
+            if (Math.max(whirl.planets[i], whirl.planetAbove[i]) > 0.5) offer(fromRing(world.planets[i].line.object, world.planets[i].points), entry.code);
         });
         const comet = world.comets ? world.comets.pick(x, y, radiusPx) : null;
         if (comet) offer(comet.d, comet.code);
         stars.forEach((st, i) => {
+            const line = world.starLines.find((l) => l.child.index === i);
             if (world.smear.stars[i] <= 0.5) {
                 consider(st, st.code, 6);
+                if (line && whirl.stars[i] > 0.5) offer(fromRing(line.line.object, line.points) + 6, st.code);
                 return;
             }
-            const line = world.starLines.find((l) => l.child.index === i);
             if (line) offer(fromRing(line.line.object, line.points) + 6, st.code);
         });
         return best;
@@ -877,13 +976,17 @@ export function initSystemView(app) {
     // How far each orbit has merged into its smear, from how fast the clock is going. Then where each part of the tree can
     // be said to be: where it is, unless its orbit has merged, when it's no one place and counts as being at what it goes
     // round. The camera holds on that, and sizes are worked out from it, as neither must jump about after a blur.
+    // Only Reduce motion blurs (blurring): otherwise every orbit stays as it is, at any speed.
     function settleOrbits(frame) {
         const cap = app.settings.reduceMotion ? ORBITS_PER_SECOND_REDUCED : ORBITS_PER_SECOND;
         clock.otherRate = Math.max(frame.dt > 0 ? clock.otherDays / frame.dt : 0, clock.otherRate * Math.exp(-frame.dt * 6));
         clock.otherDays = 0;
         const rate = Math.max(clock.playing ? clock.speed * timeScale() : 0, clock.otherRate);
         clock.shown = app.settings.reduceMotion ? rate : Math.max(rate, clock.shown * Math.exp(-frame.dt * 8));
-        smearWeights(model, clock.shown, cap, world.smear);
+        smearWeights(model, blurring() ? clock.shown : 0, cap, world.smear);
+        // Without the blur, an orbit going round that fast is a sharp body in a new place every frame: the same sums say
+        // which, so that a label or the bright end of an orbit's line doesn't chase it, and a click on its ring finds it
+        smearWeights(model, blurring() ? 0 : clock.shown, ORBITS_PER_SECOND, world.whirl);
         // Parents come before their children in this list
         model.nodes.forEach((node) => {
             const out = world.steady.get(node);
@@ -920,11 +1023,12 @@ export function initSystemView(app) {
         return (Math.max(sep * 1.1, ...around.map((r) => r * 1.1)) / TAN_V) / Math.min(1, aspect);
     }
 
-    function startFocusFlight(target, zoomAfter = 1) {
+    // Back to the whole system, it goes back to the view it arrived at
+    function startFocusFlight(target, zoomAfter = arrivalZoom()) {
         const frame = engine.currentFrame();
         const aspect = frame.width / Math.max(1, frame.height);
         const fit = fitDistance(aspect, cam.elT);
-        const toDist = target ? targetDistance(target) : fit * zoomAfter;
+        const toDist = target ? targetDistance(target) : fit * frameK * zoomAfter;
         const duration = app.settings.reduceMotion ? 0 : FLIGHT_S;
         cam.swung = false;
         if (duration === 0) {
@@ -990,10 +1094,15 @@ export function initSystemView(app) {
         startFocusFlight(t);
     }
 
+    // The zoom that fits the whole-system view to the habitable zone's edge, or 0 if that isn't on show
+    function zoneZoom() {
+        return (hzRing(mixTarget) / framedRadius(model, mixTarget)) * 1.08;
+    }
+
     // Fits the whole-system view to the habitable zone's edge, when that's on and would be out of shot, or lost in it
     function frameZone() {
         if (!model || !model.hz || !app.layers.habitableZone || cam.target || !fitSmooth) return;
-        const want = (ringRadius(model, model.hz.outer, mixTarget) / FRAME) * 1.08;
+        const want = zoneZoom();
         if (want > cam.zoom || want < cam.zoom * 0.2) cam.zoom = Math.max(minDistance() / fitSmooth, want);
     }
 
@@ -1004,7 +1113,7 @@ export function initSystemView(app) {
     const sizeView = { cam: [0, 0, 0], fwd: [0, 0, -1], f: 1, minSize: 1, planets: 1, focus: -1 };
     let sysFrame = null;
 
-    const poseAsk = { d0: 1, dClose: 1, dEnd: 1, el0: 0, el1: HOME_EL, az0: 0, az1: 0, arrive: 0 };
+    const poseAsk = { d0: 1, dEnd: 1, el0: 0, el1: HOME_EL, az0: 0, az1: 0, arrive: 0 };
     const poseOut = { dist: 1, el: 0, az: 0 };
 
     function stepCamera(frame, stage) {
@@ -1037,7 +1146,7 @@ export function initSystemView(app) {
                 cam.focus.set(to[0], to[1], to[2]);
             } else {
                 cam.focus.multiplyScalar(1 - k);
-                cam.distT = fitSmooth * cam.zoom;
+                cam.distT = fitSmooth * cam.zoom * frameK;
             }
             cam.dist += (cam.distT - cam.dist) * k;
         }
@@ -1053,10 +1162,9 @@ export function initSystemView(app) {
         let fy = cam.focus.y;
         let fz = cam.focus.z;
         if (w < 1) {
-            // Under a hand there is no swing in close: the camera comes straight to where the student's is
+            // The camera comes straight in to where the student's is, by hand or on the clock
             poseAsk.d0 = path.d0;
-            poseAsk.dClose = path.byHand ? cam.dist : path.dClose;
-            poseAsk.dEnd = path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth);
+            poseAsk.dEnd = cam.dist;
             poseAsk.arrive = path.byHand ? HAND_ARRIVE : 0;
             poseAsk.el0 = path.el0;
             poseAsk.az0 = path.az0;
@@ -1075,7 +1183,7 @@ export function initSystemView(app) {
         camera.aspect = aspect;
         camera.fov = FOV;
         camera.near = Math.max(1e-3, dist * 0.02);
-        camera.far = dist * 6 + FRAME * 12 + hzReach() * FRAME * 4;
+        camera.far = dist * 6 + framedRadius() * 12 + hzRing() * 4;
         camera.updateProjectionMatrix();
         camera.position.set(
             fx + dist * Math.cos(el) * Math.sin(az),
@@ -1176,9 +1284,29 @@ export function initSystemView(app) {
     }
 
     // A disc big enough to fill the screen, swept across its own width several times a second, is a flash over a wide area,
-    // however few orbits it's doing. It gets out of the way until it's slower or further off.
+    // however few orbits it's doing. With Reduce motion it gets out of the way until it's slower or further off. Otherwise
+    // nothing fades: the clock is held back so that it never sweeps that fast (holdClock).
     function sweeping(pxPerSecond, pxRadius) {
+        if (!blurring()) return 0;
         return smoothstep(1.5, 3, pxPerSecond / (2 * Math.max(pxRadius, 1))) * smoothstep(40, 80, pxRadius);
+    }
+
+    // Stars in no stable orbit have no orbit to smear, and a close pass can whip a star past at many times its usual speed.
+    // So their clock, the one the spectrum shares, is held back while a star big on screen would sweep across it, or while
+    // the camera rides with a star that is turning hard (dance_model.js). Down at once, back up gently. holdScale takes it, or
+    // the flash rule's hold if that is slower.
+    let governed = 1;
+    function governDance(frame, f) {
+        let want = 1;
+        if (mode === 'system' && clock.playing) {
+            const { sizes } = world;
+            // A star behind the camera isn't seen at all: the one thrown out can be, once the view has closed in on the rest
+            const px = model.stars.map((_, i) => (sizes.starZ[i] > camera.near ? (sizes.stars[i] * f) / Math.max(sizes.starZ[i], sizes.stars[i], 1e-6) : 0));
+            const target = cam.target && cam.target.kind === 'star' ? cam.target.index : -1;
+            want = danceGovernor(model, tDays, clock.speed, { radii: sizes.stars, px, target });
+        }
+        governed = want < governed ? want : governed + (want - governed) * (1 - Math.exp(-frame.dt * 2));
+        if (governed > 0.999) governed = 1;
     }
 
     // ---------- Bands ----------
@@ -1207,6 +1335,7 @@ export function initSystemView(app) {
                 return;
             }
             const flare = world.flares[i] ? world.flares[i].step(frame.dt, reduce) : 0;
+            world.flareNow[i] = flare;
             let surface = 0;
             let corona = 0;
             for (let b = 0; b < 5; b++) {
@@ -1297,12 +1426,16 @@ export function initSystemView(app) {
                 reduceMotion: reduce,
                 pxRadius,
                 blur: smear.starBlur[i],
-                pxPerSecond,
+                // How fast it crosses the screen: a star's surface or a black hole's streaks blur with it. That's blur
+                // too, so only with Reduce motion; otherwise they stay sharp.
+                pxPerSecond: blurring() ? pxPerSecond : 0,
                 dpr: frame.dpr
             });
         });
         if (world.beams) {
-            world.beams.update({ dt: frame.dt, reveal: showReveal, reduceMotion: reduce, radius: sizes.stars[0] });
+            // How long its beams are on the screen, in CSS pixels: 7 radii of the star, which is where its beams reach
+            const beamPx = (7 * sizes.stars[0] * f) / Math.max(sizes.starZ[0], sizes.stars[0], 1e-6);
+            world.beams.update({ dt: frame.dt, reveal: showReveal, reduceMotion: reduce, radius: sizes.stars[0], beamPx, camera });
         }
         if (world.dust) world.dust.update({ reveal: showReveal * (1 - smear.stars[0]), radius: sizes.stars[0], position: positions.stars[0] });
 
@@ -1365,11 +1498,12 @@ export function initSystemView(app) {
             item.line.object.scale.setScalar(ring);
             // A line carried on a blur would jump about with it, so it goes too
             item.line.object.visible = above < 0.999;
+            // No bright trail on a blur, or on a planet too fast to follow: it would race round the ring
+            const racing = Math.max(own, world.whirl.planets[i]);
             item.line.set({
                 draw: stage.orbits,
-                // No bright trail on a blur: it would race round the ring
-                head: own > 0 ? 0 : planetPhase(item.entry.planet, tDays),
-                trail: 0.8 * (1 - own),
+                head: racing > 0 ? 0 : planetPhase(item.entry.planet, tDays),
+                trail: 0.8 * (1 - racing),
                 opacity: (1 - above) * (focus >= 0 ? 0.6 : 1) * (cam.target && cam.target.code === item.entry.code ? 0.3 : isSel ? 0.7 : 0.25),
                 width: (isSel ? 2.2 : 1.4) * frame.dpr
             });
@@ -1389,7 +1523,8 @@ export function initSystemView(app) {
                 camera,
                 star: world.starsAt[world.brightest],
                 stage,
-                rate: clock.shown,
+                // A comet merges into its orbit only with Reduce motion
+                rate: blurring() ? clock.shown : 0,
                 cap: reduce ? ORBITS_PER_SECOND_REDUCED : ORBITS_PER_SECOND,
                 tDays,
                 dpr: frame.dpr,
@@ -1414,11 +1549,12 @@ export function initSystemView(app) {
             line.object.scale.setScalar(scale);
             const period = node.orbit ? node.orbit.period_days : 0;
             const { own, above } = smear.nodes.get(node);
+            const racing = Math.max(own, world.whirl.nodes.get(node).own);
             line.object.visible = above < 0.999;
             line.set({
                 draw: stage.orbits,
-                head: period && own <= 0 ? ((tDays / period) % 1 + 1) % 1 : 0,
-                trail: 1.2 * (1 - own),
+                head: period && racing <= 0 ? ((tDays / period) % 1 + 1) % 1 : 0,
+                trail: 1.2 * (1 - racing),
                 opacity: (1 - above) * (node === model.root && node.a_AU > 10 ? 0.28 : 0.38),
                 width: 1.2 * frame.dpr
             });
@@ -1451,9 +1587,13 @@ export function initSystemView(app) {
         });
         if (world.eight) {
             const { own } = smear.nodes.get(model.root);
-            const head = own > 0 ? 0 : ((tDays / model.pathPeriodDays) % 1 + 1) % 1;
+            const head = Math.max(own, world.whirl.nodes.get(model.root).own) > 0 ? 0 : ((tDays / model.pathPeriodDays) % 1 + 1) % 1;
             world.eight.glow.set({ draw: stage.orbits, head, opacity: 0.2 + 0.5 * own, width: 11 * frame.dpr });
             world.eight.core.set({ draw: stage.orbits, head, width: 1.4 * frame.dpr });
+        }
+        if (world.trails) {
+            world.trails.update({ tDays, draw: stage.orbits, dpr: frame.dpr, selected: selectedCode });
+            governDance(frame, f);
         }
 
         // Mass transfer
@@ -1525,13 +1665,14 @@ export function initSystemView(app) {
     function placePlanetLabel(i, frame, cls) {
         const el = world.planetLabels[i];
         const item = world.planets[i];
-        const merged = Math.max(world.smear.planets[i], world.smear.planetAbove[i]) > 0.5;
-        // A label can't chase a blur round its orbit: it waits at one place on the ring
+        const merged = Math.max(world.smear.planets[i], world.smear.planetAbove[i], world.whirl.planets[i], world.whirl.planetAbove[i]) > 0.5;
+        // A label can't chase a blur round its orbit, or a planet too fast to follow: it waits at one place on the ring
         let at;
         if (merged) {
             const k = item.points[(i * 53) % item.points.length];
             const ring = item.line.object.scale.x;
-            const c = positions.centres[i];
+            // A ring carried round by stars too fast to follow is put where they can be said to be
+            const c = world.whirl.planetAbove[i] > 0.5 ? whirlCentre(model.planets[i].node) : positions.centres[i];
             at = projectToCss([c[0] + k[0] * ring, c[1] + k[1] * ring, c[2] + k[2] * ring], frame);
         } else {
             at = projectToCss(positions.planets[i], frame);
@@ -1554,14 +1695,24 @@ export function initSystemView(app) {
         placeLabel(el, item.screen.x, item.screen.y - item.screen.coma - 6, frame, cls);
     }
 
+    // Where something going round too fast to follow can be said to be: the middle of the widest such orbit it's on
+    function whirlCentre(node) {
+        let at = node;
+        for (let up = world.parents.get(node); up; up = world.parents.get(up)) {
+            if (world.whirl.nodes.get(up).own > 0.5) at = up;
+        }
+        return positions.nodes.get(at);
+    }
+
     function placeStarLabel(i, frame, cls) {
         const el = world.starLabels[i];
         const merged = world.smear.stars[i] > 0.5;
-        if (merged && cls !== 'selected') {
+        const whirling = world.whirl.stars[i] > 0.5;
+        if ((merged || whirling) && cls !== 'selected') {
             el.hidden = true;
             return;
         }
-        const pos = merged ? targetPosition({ kind: 'star', index: i }) : positions.stars[i];
+        const pos = merged ? targetPosition({ kind: 'star', index: i }) : whirling ? whirlCentre(model.nodes.find((n) => n.index === i)) : positions.stars[i];
         const at = projectToCss(pos, frame);
         if (!at) {
             el.hidden = true;
@@ -1644,13 +1795,15 @@ export function initSystemView(app) {
         }
 
         // A clock shared with other views can't be slowed for one planet's close-up, so here the view falls behind it, and
-        // catches up when the close-up ends
+        // catches up when the close-up ends. It is held back at its source (holdClock), so only what a close-up asks for
+        // beyond that is left to do here.
         if (clock.read) {
             const t = clock.read();
-            const scale = timeScale();
+            const scale = Math.min(1, closeUpScale() / holdScale());
             tDays = scale < 1 ? tDays + (t - clock.lastRead) * scale : t;
             clock.lastRead = t;
         }
+        stepFrame(dt);
 
         // Before the camera moves, so that what it's following can't be a frame behind
         positions = layout(model, tDays, mix, positions);
@@ -1669,7 +1822,7 @@ export function initSystemView(app) {
         } else {
             const p = easeProgress(tNorm);
             const crowded = path.byHand && (model.stars.length > 2 || !!model.body.black_hole);
-            const stage = stagesAt(p, path.byHand, crowded);
+            const stage = stagesAt(p, crowded);
             const ndc = stepSky(stage);
             setTravel(p, crowded);
             sharedUniforms.uSkyFade.value = stage.skyFade;
@@ -1679,18 +1832,8 @@ export function initSystemView(app) {
             updateWorld(frame, stage, ndc);
             backdrop.set(stage.backdrop, stage.backdropZoom, frame.dpr);
         }
+        holdClock(frame);
         if (hold === null) finishIfDone();
-        settleIfCarried();
-    }
-
-    // The zoom that carried the student in has stopped: the camera settles where the button's flight leaves it. Only a black
-    // hole's flight by hand ends closer in than that (lockHoleToSky, so that zooming in never shrinks the hole), and this
-    // brings its companion into view.
-    function settleIfCarried() {
-        if (!settleAfterCarry || mode !== 'system' || performance.now() - lastZoomAt <= CARRIED_PAUSE_MS) return;
-        settleAfterCarry = false;
-        carriedIn = false;
-        if (!cam.flight && !cam.target && cam.zoom < 1) startFocusFlight(null, 1);
     }
 
     function stepHand(dt) {
@@ -1719,7 +1862,8 @@ export function initSystemView(app) {
     function finishIfDone() {
         if (mode === 'enter' && tNorm >= 1) {
             mode = 'system';
-            if (hand) arrivedByHand();
+            if (hand || byZoom) arrivedByHand();
+            byZoom = false;
             hand = null;
             keyZoom = 0;
             sharedUniforms.uSkyFade.value = 0;
@@ -1728,7 +1872,6 @@ export function initSystemView(app) {
             queuedFocus = null;
             runDone();
             if (queued) focusOn(queued);
-            frameZone();
             notify();
         } else if (mode === 'exit' && tNorm <= 0) {
             finishExit();
@@ -1744,7 +1887,6 @@ export function initSystemView(app) {
     // If a panel for something else is open, it moves to where the student has gone. If none is, none opens in their face.
     function arrivedByHand() {
         carriedIn = true;
-        settleAfterCarry = true;
         lastZoomAt = performance.now();
         if (!viewShown) showView();
         const drawer = app.drawer;
@@ -1757,12 +1899,14 @@ export function initSystemView(app) {
         sharedUniforms.uSkyFade.value = 1;
         engine.setSkyVisible(true);
         carriedIn = false;
-        settleAfterCarry = false;
         const previous = model;
         // Back by zoom, the student may well zoom straight in again: it stays ready for a while, undrawn
         const stayReady = !!hand;
         const heardOfIt = viewShown;
         const fingers = hand && pinch && pointers.size === 2 ? [...pointers] : null;
+        if (previous && previous.body.unstable) {
+            governed = 1;
+        }
         hand = null;
         keyZoom = 0;
         viewShown = true;
@@ -1771,6 +1915,8 @@ export function initSystemView(app) {
             model = null;
         }
         mode = 'sky';
+        held.scale = 1;
+        held.rate = Infinity;
         canvas.style.cursor = '';
         canvas.setAttribute('aria-label', skyAria);
         app.view = 'sky';
@@ -1894,11 +2040,14 @@ export function initSystemView(app) {
         doneCallbacks = opts.onDone ? [opts.onDone] : [];
         mode = 'load';
         useFade = !!app.settings.reduceMotion;
+        byZoom = !!opts.byZoom;
         tNorm = 0;
         aimCode = null;
         clock.otherDays = 0;
         clock.otherRate = 0;
         clock.shown = 0;
+        held.scale = 1;
+        held.rate = Infinity;
         app.view = 'system';
         app.systemCode = body.code;
         const things = model.lone ? 'the star' : 'the stars and planets';
@@ -1919,6 +2068,7 @@ export function initSystemView(app) {
         mix = (logChoice === null ? model.startLog : logChoice) && model.logUseful ? 1 : 0;
         mixTarget = mix;
         tDays = lastTimeline && lastTimeline.code === body.code ? lastTimeline.t_days : 0;
+        stepFrame(0, true);
         ensureBackdrop();
         world = buildWorld();
         positions = layout(model, tDays, mix);
@@ -1968,11 +2118,12 @@ export function initSystemView(app) {
             hand = moving;
             // At this end the timed path and this one are the same, so nothing jumps as it changes to this
             path.byHand = true;
-            lockStarsToSky(engine.currentFrame(), cam.dist);
+            lockStarsToSky(engine.currentFrame(), cam.dist, true);
             mode = 'exit';
         },
-        enter(code) { enter(code, { focus: false }); },
-        exit() { exit(); }
+        enter(code) { enter(code, { focus: false, byZoom: true }); },
+        exit() { exit(); },
+        holeFov
     });
 
     // A pinch that began on the sky goes on here without the fingers lifting
@@ -2014,12 +2165,301 @@ export function initSystemView(app) {
         notify();
     }
 
-    // How much the clock is held back. A planet in close-up is there to be looked at, not to race round its star.
+    // How much the clock is held back: for a close-up, or to keep big, fast orbits from flashing (holdClock)
     function timeScale() {
+        return Math.min(closeUpScale(), holdScale());
+    }
+
+    // How much the shared clock is held back at its source: for the flash rule (holdClock), or for a close pass between stars
+    // in no stable orbit (governDance), whichever is slower
+    function holdScale() {
+        return Math.min(held.scale, governed);
+    }
+
+    // A planet in close-up is there to be looked at, not to race round its star
+    function closeUpScale() {
         const t = cam.target;
         if (!model || mode !== 'system' || !t || (t.kind !== 'planet' && t.kind !== 'comet') || !(clock.speed > 0)) return 1;
         const period = t.kind === 'planet' ? model.planets[t.index].planet.period_days : model.comets[t.index].orbit.period_days;
         return Math.min(CLOSE_UP_SLOWDOWN, (CLOSE_UP_ORBITS_PER_S * period) / clock.speed);
+    }
+
+    // ---------- Without the blur: the clock held back ----------
+    // Unless Reduce motion is on, nothing blurs, so something big on the screen going round fast would flash over a wide
+    // area. The clock is held back instead, to what keeps the flash rule (flashSafeRate in system_model.js), worked out
+    // afresh every frame from how big each orbit, and whatever rides on it, is on the screen just now: zooming in may slow
+    // it, zooming out lets it go again. A small thing whirling round is no flash, so it doesn't hold the clock back. A clock
+    // shared with the spectrum is held back at its source, so the two stay together.
+    const STAR_GLOW = 1.3;          // A star's bright edge reaches a little way past its disc
+    // Detail that moves with a star or a black hole flickers as it slides past. Measured at the flash rule's threshold:
+    const HOLE_STREAKS = 0.1;       // A black hole's streaks, about this share of its radius apart...
+    const HOLE_STREAKS_FROM_PX = 150; // ... once its disc is this big on the screen (px of radius): smaller, they're a blur
+    const DETAIL_SPACING = 0.12;    // A star's corona rays, a giant's big cells or a dwarf's granulated surface: this share
+                                    // of its radius apart, over how strongly they show (detailOf)...
+    const DETAIL_FROM_PX = 40;      // ... once it's this big on the screen
+    const GRANULATED = 0.15;        // How strongly a granulated surface shows, with its limb and spots (all but the coolest dwarfs)
+
+    // How strongly a star's moving detail shows: a hot star's bright, turbulent corona rays most, a cool dwarf's faint
+    // ones least, a giant's big, contrasty cells, and a granulated surface
+    function detailOf(star) {
+        const look = starLook(star);
+        const giant = star.stage === 'giant' || star.stage === 'supergiant';
+        return Math.max(look.corona.a2 * look.corona.turb, giant ? look.contrast * 0.5 : 0, GRANULATED * look.lane, 0.02);
+    }
+
+    // ... in the band on show. A star is drawn in each band's own light (band_look.js): a red dwarf, dim in visible light,
+    // has its surface drawn in X-rays in the band's bright false colour, and the same small, contrasty cells then swing
+    // the screen's brightness enough to flash as they slide past, a cell at a time. How far a cell swings it is worked out
+    // every frame, through the engine's tone curve, for the mix of bands showing and any flare under way. Past CELL_SWING
+    // the cells themselves are the detail to hold the clock for; short of it, only the coarser detail above. A star's
+    // corona is drawn brighter in some bands than in visible light, and its rays show that much more.
+    const CELL_SWING = 0.09;        // In shown brightness, from 0 to 1. A flash takes 0.1: infrared's 0.08 measured clear
+    const CELL_FROM_PX = 1.6;       // A cell this many px across or less isn't drawn (star_surface.js)
+    const CORONA_GAIN_MOST = 4;
+    const aces = (x) => Math.min(1, Math.max(0, (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)));
+    const shownLuminance = (r, g, b) => 0.2126 * aces(r) + 0.7152 * aces(g) + 0.0722 * aces(b);
+    const BAND_TINTS = BANDS.map((band) => BAND_INFO[band].tint);
+
+    // A star's detail as the bands show it just now: { cells: px radius share between cells that flicker, or 0; corona:
+    // how much more its rays show than in visible light }. out is reused.
+    function detailInBand(i, out) {
+        const star = model.stars[i].star;
+        const look = world.looks[i];
+        const bandLook = world.bandLooks[i];
+        out.cells = 0;
+        out.corona = 1;
+        if (!look || !bandLook) return out;
+        const w = sharedUniforms.uBandW.value;
+        const flare = world.flareNow[i] || 0;
+        const visible = surfaceColour(star.teff_K);
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let surface = 0;
+        let corona = 0;
+        for (let k = 0; k < 5; k++) {
+            const tint = k === 2 ? visible : BAND_TINTS[k];
+            r += w[k] * tint[0];
+            g += w[k] * tint[1];
+            b += w[k] * tint[2];
+            surface += w[k] * bandLook.surface[k] * (1 + flare * FLARE_GAIN.surface[k]);
+            corona += w[k] * bandLook.corona[k] * (1 + flare * FLARE_GAIN.corona[k]);
+        }
+        // A cell lighter and darker than its neighbours by half the look's contrast either way (a dwarf's fine granules
+        // are fainter than a cool star's or a giant's cells)
+        const half = 0.5 * (look.lane > 0 ? 0.13 * look.grainGain : look.contrast);
+        const s = surface * look.intensity;
+        const swing = shownLuminance(r * s * (1 + half), g * s * (1 + half), b * s * (1 + half))
+            - shownLuminance(r * s * (1 - half), g * s * (1 - half), b * s * (1 - half));
+        if (swing >= CELL_SWING) out.cells = look.lane > 0 ? 1 / 40 : 1 / look.cellScale;
+        const c = corona * look.intensity;
+        const shown = shownLuminance(r * c, g * c, b * c);
+        const inVisible = shownLuminance(visible[0] * bandLook.corona[2] * look.intensity, visible[1] * bandLook.corona[2] * look.intensity, visible[2] * bandLook.corona[2] * look.intensity);
+        out.corona = Math.min(CORONA_GAIN_MOST, Math.max(1, shown / Math.max(inVisible, 1e-3)));
+        return out;
+    }
+    const bandDetail = { cells: 0, corona: 1 };
+
+    // The detail a star carries past each spot it crosses, swinging round this centre with this period
+    function addStarDetail(here, swing, i, period, f, frame) {
+        if (model.stars[i].star.stage === 'black_hole') {
+            addFlashItem(here, swing, world.sizes.stars[i], period, 0, { texture: HOLE_STREAKS, textureFrom: HOLE_STREAKS_FROM_PX }, f, frame);
+            return;
+        }
+        const d = detailInBand(i, bandDetail);
+        addFlashItem(here, swing, world.sizes.stars[i], period, 0, { texture: DETAIL_SPACING / (world.detail[i] * d.corona), textureFrom: DETAIL_FROM_PX }, f, frame);
+        if (d.cells > 0) addFlashItem(here, swing, world.sizes.stars[i], period, 0, { texture: d.cells, textureFrom: CELL_FROM_PX / d.cells }, f, frame);
+    }
+    const HOLD_EASE = 3;            // How fast the clock comes back up to speed, as a log a second. Slowing down is at once.
+    const flashItems = [];
+
+    // What the camera rides along with: a pair it frames, a star, or the group a planet in close-up goes round
+    function followedNode() {
+        const t = cam.target;
+        if (!t || cam.flight) return null;
+        if (t.kind === 'node') return t.node;
+        if (t.kind === 'star') return model.nodes.find((n) => n.index === t.index) || null;
+        if (t.kind === 'planet') return model.planets[t.index].node;
+        return null;
+    }
+
+    const within = (inner, outer) => inner.members.every((i) => outer.members.includes(i));
+    const apart = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+
+    // One thing swinging round a centre, as the flash rule sees it. swing and radius are world units, or radiusPx is px.
+    function addFlashItem(centre, swing, radius, period, passes, opts, f, frame) {
+        if (!(period > 0) || !(swing > 0)) return;
+        const fwd = sizeView.fwd;
+        const cp = camera.position;
+        const zc = (centre[0] - cp.x) * fwd[0] + (centre[1] - cp.y) * fwd[1] + (centre[2] - cp.z) * fwd[2];
+        if (zc + swing <= camera.near) return;
+        // Nearer the camera on one side of its orbit than the other, it's bigger there: what that comes to over a turn
+        const across = opts.inPlane ? swing * Math.hypot(fwd[0], fwd[2]) : swing;
+        const z = Math.max(zc, swing * 0.5, camera.near);
+        const A = Math.min(across, 0.9 * z);
+        const zEff = Math.sqrt((z * z - A * A) ** 1.5 / z);
+        const a = (swing * f) / zEff;
+        const r = opts.radiusPx !== undefined ? opts.radiusPx : (radius * f) / zEff;
+        // Off the screen altogether, it's no flash
+        tmp.set(centre[0], centre[1], centre[2]).project(camera);
+        const x = (tmp.x * 0.5 + 0.5) * frame.width;
+        const y = (-tmp.y * 0.5 + 0.5) * frame.height;
+        const reach = a + r;
+        if (tmp.z < 1 && (x + reach < 0 || x - reach > frame.width || y + reach < 0 || y - reach > frame.height)) return;
+        if (opts.texture) {
+            // A surface's detail, or a black hole's streaks, this far apart pass each spot in the band this many times a
+            // turn, and the disc moves less than its own width a frame long before that's too many. Too small on the
+            // screen to show any detail, it has none to race past.
+            if (r < opts.textureFrom) return;
+            const texturePasses = (2 * Math.PI * a) / Math.max(opts.texture * r, 1);
+            flashItems.push({ period, passes: texturePasses, area: Math.min(4 * Math.PI * a * r, FLASH_FIELD_PX), a, r, texture: true });
+            return;
+        }
+        const discs = opts.discs || 1;
+        const area = opts.frameOnly ? 0 : sweptArea(a, r, FLASHES_PER_S / passes, held.fps, discs);
+        // ... and how much of the screen its leading edges light up from one frame to the next. That's about where it is
+        // now, worked out afresh each frame: off the screen, none; coming on, the clock is held back from the next frame.
+        let sweep = 0;
+        let jump = 0;
+        const at = opts.spotsOnly ? null : opts.at;
+        const zb = at ? (at[0] - cp.x) * fwd[0] + (at[1] - cp.y) * fwd[1] + (at[2] - cp.z) * fwd[2] : 0;
+        if (at && zb > camera.near) {
+            const rb = opts.radiusPx !== undefined ? opts.radiusPx : (radius * f) / zb;
+            tmp.set(at[0], at[1], at[2]).project(camera);
+            const bx = (tmp.x * 0.5 + 0.5) * frame.width;
+            const by = (-tmp.y * 0.5 + 0.5) * frame.height;
+            if (bx + rb >= 0 && bx - rb <= frame.width && by + rb >= 0 && by - rb <= frame.height) {
+                sweep = discs * 4 * Math.PI * ((swing * f) / zb) * rb;
+                jump = Math.min(discs * Math.PI * rb * rb, frame.width * frame.height);
+            }
+        }
+        flashItems.push({ period, passes, area, sweep, jump, a, r });
+    }
+
+    // How far the camera's own riding along changes a swing at this node: none for the side it rides with, and the other
+    // side's swing added for the side it doesn't
+    function swingSeen(node, child, swing, followed) {
+        if (!followed || followed === node || !within(followed, node)) return swing;
+        const side = node.children.find((c) => within(followed, c));
+        if (!side) return swing;
+        if (side === child) return 0;
+        return swing + apart(positions.nodes.get(side), positions.nodes.get(node));
+    }
+
+    function holdClock(frame) {
+        if (frame.dt > 0) held.fps += (1 / frame.dt - held.fps) * Math.min(1, frame.dt * 4);
+        if (blurring() || !world || !positions || mode === 'sky' || mode === 'load') {
+            held.scale = 1;
+            held.rate = Infinity;
+            return;
+        }
+        flashItems.length = 0;
+        const f = frame.height / (2 * TAN_V);
+        const { sizes } = world;
+        const followed = followedNode();
+        if (world.eightReach === undefined) {
+            world.eightReach = model.pathPoints ? Math.max(...figureEightWorldPoints(model).map((q) => Math.hypot(q[0], q[1], q[2]))) : 0;
+        }
+        const { eightReach } = world;
+
+        // Each orbit of the stars. Each side swings round the middle, carrying its stars, as one thing as big as they reach.
+        model.nodes.forEach((node) => {
+            if (!node.children) return;
+            const period = node.flat ? model.pathPeriodDays : node.orbit ? node.orbit.period_days : 0;
+            if (!(period > 0)) return;
+            const here = positions.nodes.get(node);
+            const sides = node.children.map((child) => {
+                const at = positions.nodes.get(child);
+                const side = { swing: 0, reach: 0, members: [], shown: false, at };
+                child.members.forEach((i) => {
+                    if (!world.stars[i].group.visible) return;
+                    side.shown = true;
+                    side.members.push(i);
+                    const hole = model.stars[i].star.stage === 'black_hole';
+                    side.reach = Math.max(side.reach, apart(positions.stars[i], at) + sizes.stars[i] * (hole ? 1 : STAR_GLOW));
+                });
+                if (node.flat) side.swing = followed && followed !== node && within(followed, node) ? (followed === child ? 0 : 2 * eightReach) : eightReach;
+                else side.swing = swingSeen(node, child, apart(at, here), followed);
+                return side;
+            }).filter((side) => side.shown && side.swing > 0);
+            if (!sides.length) return;
+            const share = orbitShare(model, node);
+            // The figure-eight's three stars share one path, and both sides of a pair pass the same ring when they swing
+            // about as far out: the band is the same, passed more often
+            const together = node.flat || (sides.length === 2 && Math.abs(sides[0].swing - sides[1].swing) < sides[0].reach + sides[1].reach);
+            if (together) {
+                const swing = Math.max(...sides.map((s) => s.swing));
+                const reach = Math.max(...sides.map((s) => s.reach));
+                addFlashItem(here, swing, reach, period, (2 * sides.length) / share, { discs: sides.length, spotsOnly: true }, f, frame);
+                sides.forEach((s) => addFlashItem(here, s.swing, s.reach, period, 2 / share, { at: s.at, frameOnly: true }, f, frame));
+            } else {
+                sides.forEach((s) => addFlashItem(here, s.swing, s.reach, period, 2 / share, { at: s.at }, f, frame));
+            }
+            // A star's corona and cells, and a black hole's streaked disc, carry their detail past every spot they cross
+            sides.forEach((s) => s.members.forEach((i) => addStarDetail(here, s.swing, i, period, f, frame)));
+        });
+
+        // A young multiple's stars that stay, going round each other once the last to be thrown out has gone: each of the
+        // orbits they are left in, as any other orbit's sides are. The view closes in on them (frameK), so they can be big.
+        const bound = model.body.unstable ? danceBound(model.body) : null;
+        if (bound && tDays >= bound.leftDays) {
+            const mass = (i) => model.stars[i].star.mass_Msun;
+            const middle = (members) => {
+                const c = [0, 0, 0];
+                let m = 0;
+                members.forEach((i) => {
+                    const q = positions.stars[i];
+                    m += mass(i);
+                    for (let k = 0; k < 3; k++) c[k] += mass(i) * q[k];
+                });
+                return c.map((x) => x / m);
+            };
+            bound.orbits.forEach((orbit) => {
+                const here = middle([...orbit.a, ...orbit.b]);
+                [orbit.a, orbit.b].forEach((members) => {
+                    const at = middle(members);
+                    const shown = members.filter((i) => world.stars[i].group.visible);
+                    if (!shown.length) return;
+                    const reach = Math.max(...shown.map((i) => apart(positions.stars[i], at) + sizes.stars[i] * STAR_GLOW));
+                    addFlashItem(here, apart(at, here), reach, orbit.period_days, 2, { at }, f, frame);
+                    shown.forEach((i) => addStarDetail(here, apart(at, here), i, orbit.period_days, f, frame));
+                });
+            });
+        }
+
+        // Planets: their own orbits, and the orbits of the stars they go round
+        model.planets.forEach((entry, j) => {
+            if (!world.planets[j].handle.object3d.visible) return;
+            const radius = sizes.planets[j] * planetReach(entry.planet);
+            const inFocus = cam.target && cam.target.kind === 'planet' && cam.target.index === j && !cam.flight;
+            if (!inFocus) {
+                addFlashItem(positions.centres[j], ringRadius(model, entry.planet.orbit_AU, mix), radius, entry.planet.period_days, 2, { inPlane: true, at: positions.planets[j] }, f, frame);
+            }
+            let node = model.root;
+            while (node.children && !node.flat) {
+                const child = node.children.find((c) => within(entry.node, c));
+                if (!child) break;
+                const period = node.orbit ? node.orbit.period_days : 0;
+                const swing = swingSeen(node, child, apart(positions.nodes.get(child), positions.nodes.get(node)), followed);
+                addFlashItem(positions.nodes.get(node), swing, radius, period, 2, { at: positions.planets[j] }, f, frame);
+                node = child;
+            }
+        });
+
+        // Comets: the head with some of its tail, round the whole of its orbit
+        if (world.comets) {
+            world.comets.items.forEach((item) => {
+                if (!item.screen.ok) return;
+                const { orbit } = item.entry;
+                addFlashItem([0, 0, 0], ringRadius(model, orbit.a_AU, mix), 0, orbit.period_days, 2, { inPlane: true, radiusPx: item.screen.coma + 0.5 * item.screen.len, at: item.world }, f, frame);
+            });
+        }
+
+        held.rate = flashSafeRate(flashItems, held.fps);
+        const want = held.off ? 1 : clock.speed > 0 && Number.isFinite(held.rate) ? Math.min(1, held.rate / clock.speed) : 1;
+        if (want <= held.scale) held.scale = want;
+        else held.scale = Math.exp(Math.log(held.scale) + (Math.log(want) - Math.log(held.scale)) * (1 - Math.exp(-frame.dt * HOLD_EASE)));
+        if (held.scale > 0.999) held.scale = 1;
     }
 
     // ---------- Things other parts of the page react to ----------
@@ -2119,6 +2559,9 @@ export function initSystemView(app) {
             notify();
         },
         systemOf: systemBodyOf,
+        // entryFov(code, widest?): the widest view (no wider than widest) at which a zoom pointing at it would carry on into
+        // its system, or null
+        entryFov: (code, widest) => zoomInto.entryFov(code, widest),
         setClock({ speed, playing, read }) {
             if (speed !== undefined) clock.speed = speed;
             if (playing !== undefined) clock.playing = playing;
@@ -2128,7 +2571,16 @@ export function initSystemView(app) {
             }
         },
         timeScale,
-        // Has any orbit merged into its smear just now?
+        // How much a clock shared with the spectrum is held back at its source, for the flash rule (holdClock)
+        clockScale: () => holdScale(),
+        // Is the clock held back just now for something big and fast on show, and not just for a close-up? That speed, in
+        // days per second, or null. A few percent isn't worth a word: the speed is said to two figures.
+        heldSpeed() {
+            const scale = holdScale();
+            if (mode === 'sky' || scale >= 0.95 || closeUpScale() <= scale) return null;
+            return clock.speed * scale;
+        },
+        // Has any orbit merged into its smear just now? Only with Reduce motion.
         isBlurred() {
             if (!world) return false;
             return world.smear.planets.some((w) => w > 0.5) || world.smear.stars.some((w) => w > 0.5);
@@ -2154,8 +2606,16 @@ export function initSystemView(app) {
         hasSystemView: (body) => !!engine.renderer && hasSystemView(body),
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
-        _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
+        _state: () => ({ mode, tNorm, mix, dist: cam.dist, frameK, useFade, framed: model ? framedRadius() : null, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
         _saved: () => ({ ...savedView }),
+        // What holds the clock back for the flash rule this frame
+        _held: () => ({
+            scale: held.scale, rate: held.rate, fps: held.fps, items: flashItems.map((it) => ({ ...it })),
+            // What the sums say would flash at the speed the clock is really going
+            area: flashItems.reduce((sum, it) => sum + ((FLASHES_PER_S * it.period) / it.passes < clock.shown ? it.area : 0), 0)
+        }),
+        // Test hook: never hold the clock back, to measure what the hold is for
+        _noHold(on) { held.off = !!on; },
         _starPx: () => {
             if (!world || !positions) return 0;
             const depth = tmp.set(...positions.stars[world.brightest]).distanceTo(camera.position);

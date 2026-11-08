@@ -12,6 +12,8 @@ import { memberDirection } from '../layers/sky_tangent.js';
 import { cometsOf, cometOrbit } from './comet_orbits.js';
 import { rocheShare } from '../../data/dynamics.js';
 import { nucleusSystemOf, supermassiveRadius, CLOSE_STAR_SHARE, CLOSE_STAR_FLOOR_PX } from './nucleus_model.js';
+import { danceReachAU } from '../../data/unstable.js';
+import { danceSpeeds, danceStarCap, recentreLayout } from './dance_model.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -85,7 +87,8 @@ function orbitsOf(body) {
 function buildTree(body, stars) {
     const leaves = stars.map((_, i) => ({ members: [i], index: i, children: null, a_AU: 0, orbit: null, flat: false }));
     if (leaves.length === 1) return leaves[0];
-    if (body.architecture === 'figure_eight') {
+    // Unstable: no orbits at all, just stars round their centre of mass (render/system/dance_model.js)
+    if (body.architecture === 'figure_eight' || body.unstable) {
         return { members: stars.map((_, i) => i), index: -1, children: leaves, a_AU: 0, orbit: null, flat: true };
     }
     const key = (list) => [...list].sort((a, b) => a - b).join(',');
@@ -188,7 +191,7 @@ export function buildModel(body) {
         root: null,
         nodes: [],
         pathPoints: body.architecture === 'figure_eight' ? figureEightPoints() : null,
-        pathPeriodDays: body.figure_eight ? body.figure_eight.period_days : 365.25,
+        pathPeriodDays: body.figure_eight ? body.figure_eight.period_days : body.unstable ? 0 : 365.25,
         unit: 1,                 // World units per AU, true scale
         levels: [],
         hz: null,
@@ -230,6 +233,7 @@ export function buildModel(body) {
         });
     }
     if (model.pathPoints) model.pathPoints.forEach((q) => { extent = Math.max(extent, Math.hypot(q.x, q.y)); });
+    if (body.unstable) extent = Math.max(extent, danceReachAU(body));   // As far out as they go before one is flung out
     model.planets.forEach((e) => {
         let offset = 0;
         for (let k = 0; k < 8; k++) {
@@ -259,7 +263,7 @@ export function buildModel(body) {
     // the widest orbit, but along the long axis (+x) of the figure-eight, so that's where the flight starts from.
     const orbits = orbitsOf(body);
     const widest = body.figure_eight || (orbits.length ? orbits[orbits.length - 1] : null);
-    model.inclination = widest ? widest.inc_deg : null;
+    model.inclination = widest ? widest.inc_deg : body.unstable ? body.chaos.inc_deg : null;
     model.sightAz = body.figure_eight ? -Math.PI / 2 : 0;
 
     const main = stars.length === 1 && (stars[0].star.stage === 'main_sequence');
@@ -333,7 +337,7 @@ function computeSizes(model) {
             });
         // A wide companion or a figure-eight partner just has to stay well clear
         if (model.root.flat) {
-            const minGap = model.pathPoints ? 0.34 * model.unit : Infinity;
+            const minGap = model.pathPoints ? 0.34 * model.unit : model.body.unstable ? danceStarCap(FRAME) : Infinity;
             out.forEach((r, i) => { out[i] = Math.min(r, minGap); });
         }
         return out;
@@ -412,7 +416,7 @@ export function sightDirection(model) {
 }
 
 export function starRadius(model, i, m) {
-    return model.starRadiiTrue[i] + (model.starRadiiLog[i] - model.starRadiiTrue[i]) * m;
+    return (model.starRadiiTrue[i] + (model.starRadiiLog[i] - model.starRadiiTrue[i]) * m) * (model.sizeScale || 1);
 }
 
 // Planets use the stars' size scale, so a giant planet is rightly smaller than a dwarf star
@@ -573,6 +577,7 @@ export function layout(model, tDays, m, out = null) {
         });
     };
     place(model.root, 0, 0, 0);
+    if (model.body.unstable) recentreLayout(model, tDays, o);    // Centred on the stars that stay (dance_model.js)
     model.planets.forEach((entry, i) => {
         const pl = entry.planet;
         const r = ringRadius(model, pl.orbit_AU, m);
@@ -717,6 +722,84 @@ export function smearWeights(model, daysPerSecond, cap, out) {
     return out;
 }
 
+// ---------- Without the blur: how fast the clock may run ----------
+//
+// The smears above are only for Reduce motion. Without it nothing blurs, so whatever is big on the screen and going
+// round fast is kept under the flash rule by slowing the clock instead: no more than three flashes a second over more
+// than a quarter of a 10° field (21,824 px; the field is 341 x 256 px at 1024 x 768).
+//
+// A disc of radius r px swinging a px either way sweeps a band of about 4 pi a r px, and passes each spot in it once a
+// turn, or twice where its path crosses itself as seen at a slant: a flash each time. Moving more than its own width
+// from one frame to the next, it lands on spots here and there, each about fps r / (pi a) times a second: often enough to
+// flash the whole band only if the disc is big beside its swing. If not, then whatever the turns do against the frames,
+// at most the fps / 3.5 places it keeps landing on can light up more than 3.5 times a second. So a small thing may whirl
+// round as fast as it likes, and something big is held to a turn or so a second.
+//
+// Each thing on show going round is { period: days, passes: spots passed per turn, area: px that would flash, sweep and
+// jump: see flashSafeRate }, and the clock may go as fast as the slowest of them allows, once enough of them together
+// would flash over the area allowed. Detail riding on a body (a star's corona, a black hole's streaks) is a thing of its
+// own, passing each spot many times a turn (holdClock in system_view.js, with spacings found by measuring).
+export const FLASH_AREA_PX = 21824;
+export const FLASH_FIELD_PX = 341 * 256;
+export const FLASHES_PER_S = 2.5;           // The most a spot may flash in a second: under three, with room to spare
+const FLASH_AREA_SHARE = 0.5;               // ... and the area that may do it, as a share of the limit
+const FLASH_FPS_LEAST = 60;                 // A screen that draws faster lands on more spots, so never count on fewer frames
+
+// The band a disc of radius r px sweeps, swinging a px either way, that could flash faster than allowed. turnsPerS is how
+// fast it goes round at the most it will be allowed to: past that it only gets faster. discs is how many share the band.
+export function sweptArea(a, r, turnsPerS, fps, discs = 1) {
+    const frames = Math.max(fps || 0, FLASH_FPS_LEAST);
+    let area = 4 * Math.PI * a * r;
+    const skips = (2 * Math.PI * a * turnsPerS) / frames > 2 * r;
+    if (skips && (discs * frames * r) / (Math.PI * Math.max(a, 1e-6)) <= FLASHES_PER_S) {
+        area = Math.min(area, (frames / 3.5) * Math.PI * r * r);
+    }
+    return Math.min(area, FLASH_FIELD_PX);
+}
+
+// The most days a second at which all the items together keep the rule, or Infinity if none of them can break it. Two
+// ways to break it: spots flashing too often (area), and too much of the screen lighting up at once from one frame to the
+// next, as the leading edge of something big sweeps across (sweep: 4 pi a r px a turn, and jump: pi r^2 px once it moves
+// clear of itself each frame). fps is how often the screen is drawn: fewer frames, bigger steps.
+export function flashSafeRate(items, fps = FLASH_FPS_LEAST) {
+    const budget = FLASH_AREA_PX * FLASH_AREA_SHARE;
+    const caps = items.filter((it) => it.period > 0 && it.passes > 0 && it.area > 0)
+        .map((it) => ({ cap: (FLASHES_PER_S * it.period) / it.passes, area: it.area }))
+        .sort((p, q) => p.cap - q.cap);
+    let spots = Infinity;
+    let area = 0;
+    for (let k = 0; k < caps.length; k++) {
+        area += caps[k].area;
+        if (area > budget) {
+            spots = caps[k].cap;
+            break;
+        }
+    }
+    return Math.min(spots, frameSafeRate(items, fps, budget));
+}
+
+// The most days a second at which what lights up between one frame and the next, all told, stays within budget. Each
+// item adds sweep / (period fps) px for each day a second, until it's moving clear of itself and adds its jump.
+function frameSafeRate(items, fps, budget) {
+    const frames = Math.max(fps || 0, 10);
+    const list = items.filter((it) => it.period > 0 && it.sweep > 0 && it.jump > 0)
+        .map((it) => {
+            const k = it.sweep / (it.period * frames);
+            return { k, jump: it.jump, at: it.jump / k };
+        })
+        .sort((p, q) => p.at - q.at);
+    if (list.reduce((sum, it) => sum + it.jump, 0) <= budget) return Infinity;
+    let jumped = 0;
+    let slope = list.reduce((sum, it) => sum + it.k, 0);
+    for (let k = 0; k < list.length; k++) {
+        const rate = slope > 0 ? (budget - jumped) / slope : Infinity;
+        if (rate <= list[k].at) return rate;
+        jumped += list[k].jump;
+        slope -= list[k].k;
+    }
+    return Infinity;
+}
+
 // ---------- Readouts ----------
 
 // r, T, v = 2 pi r / T and both sides of Kepler's third law, for the System tab
@@ -779,6 +862,7 @@ export function hzStatus(body) {
 // Fast enough, the shorter orbits merge into their smears, and the longer ones are what's left to watch. With Reduce
 // motion the top is far lower. Null if nothing here goes round anything.
 export function speedsFor(model, reduceMotion = false, mix = model.startLog ? 1 : 0) {
+    if (model.body.unstable) return danceSpeeds(model, reduceMotion);   // No orbits: paced on its crossing time
     const periods = model.planets.map((e) => e.planet.period_days);
     // A busy orbit (orbitShare) is held to its share of the top speed, as if it were that much shorter
     const shared = [...periods];

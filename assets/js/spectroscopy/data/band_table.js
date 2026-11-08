@@ -221,6 +221,9 @@ function galaxyStrengths(body) {
     const edgeOn = smooth(50, 85, g.inclination_deg ?? 45);
     let ir = spiral ? 0.5 + 0.2 * edgeOn : irregular ? 0.65 : 0.25;
     if (g.starburst) ir = 0.95;
+    // The Local Group's spiral (data/local_group.js) is near enough for its own faint glows to show: radio from the gas of
+    // its star-forming ring, X-rays from its bulge's hot gas and X-ray binaries
+    if (g.local_group) return { radio: 0.45, ir, visible: 1, uv: 0.65, xray: 0.3 };
     return {
         radio: g.radio_lobes ? 0.85 : 0.03,
         ir,
@@ -269,6 +272,14 @@ function cometStrengths(body) {
     };
 }
 
+// A near supernova's visible light is held at SHELL_LIGHT of its peak once its expanding shell's glow takes over (and the
+// filaments add more later). One in another galaxy (host_code) has no shell to be seen, so from where that hand-over would be it
+// goes on fading as real ones do, by so many magnitudes a day: a type Ia on the radioactive decay that powers it, a type II off
+// its plateau and down the tail of cobalt-56's decay. The same as a near one's until then, and never brighter after.
+const SHELL_LIGHT = 0.22;
+const HAND_OVER_DAYS = { Ia: 45 * Math.log(1 / SHELL_LIGHT), II: 110 * Math.cbrt(1 / SHELL_LIGHT - 1) };
+const TAIL_MAG_PER_DAY = { Ia: 0.015, II: 0.0098 };
+
 // What a supernova looks like t days after peak brightness. Exported for the supernova layer's playback.
 export function supernovaBandsAt(sn, t) {
     const coreCollapse = sn.type !== 'Ia';
@@ -277,10 +288,15 @@ export function supernovaBandsAt(sn, t) {
     const lightCurve = t < 0
         ? 0.35 + 0.65 * Math.exp(t / 5)
         : coreCollapse ? 1 / (1 + (t / 110) ** 3) : Math.exp(-t / 45); // II holds a plateau; Ia fades at once
+    const kind = coreCollapse ? 'II' : 'Ia';
+    const handOver = HAND_OVER_DAYS[kind];
+    const visible = !sn.host_code
+        ? Math.max(SHELL_LIGHT + 0.2 * remnant, lightCurve)                             // A bright new star, then filaments
+        : t <= handOver ? lightCurve : SHELL_LIGHT * 10 ** (-0.4 * TAIL_MAG_PER_DAY[kind] * (t - handOver));   // Fading on
     return {
         radio: (coreCollapse ? 1 : 0.7) * (1 - Math.exp(-since / 150)),                 // Rising afterglow
         ir: Math.max(0.15, 0.95 * Math.exp(-since / 150) + 0.35 * remnant),             // Bright, then fading
-        visible: Math.max(0.22 + 0.2 * remnant, lightCurve),                            // A bright new star, then filaments
+        visible,
         uv: Math.min(1, 1.05 * Math.exp(-since / (coreCollapse ? 14 : 9)) + 0.4 * remnant), // Early flash, fading fast
         xray: Math.min(1, Math.exp(-since / 5) + 0.75 * remnant)                        // Flash at outburst, then hot-gas shell
     };

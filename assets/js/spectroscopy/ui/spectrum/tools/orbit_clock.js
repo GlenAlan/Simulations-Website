@@ -11,6 +11,8 @@
 //   clock.t (continuous), clock.steppedT(), clock.playing, clock.speed (days per second), clock.fastest (the shortest
 //   period in the system, days), clock.smoothMax (the speed at MAX_TURNS_PER_S)
 //   clock.setTime(t), clock.play(), clock.pause(), clock.setSpeed(s)
+//   clock.hold = fn() or null        holds the clock back to that share of its speed for now, keeping the speed chosen:
+//                                    the system view's, while something big on show would go round fast enough to flash
 //   clock.onTime(fn(t)) -> remove     every change of the continuous time
 //   clock.onStep(fn(t)) -> remove     every change of the stepped reading
 //   clock.onState(fn()) -> remove     playing or paused, and speed
@@ -18,6 +20,7 @@
 
 import { bus } from '../../../core/state.js';
 import { widestSplit } from './split_lines.js';
+import { danceTimescale } from '../../../data/unstable.js';
 
 // The limit on showing an orbit as it happens. Lines cross twice a turn, so this is two crossings a second: under the
 // rule of no more than three changes a second.
@@ -26,6 +29,7 @@ const STEP_MS = 400;             // 2.5 changes a second
 const FALLBACK_PERIOD_DAYS = 10; // A system with no period to go on, which shouldn't happen
 
 function fastestPeriod(body) {
+    if (body.unstable) return danceTimescale(body);      // No period: its lines swing on its crossing time
     const periods = [];
     if (body.black_hole) periods.push(body.black_hole.period_days);
     if (body.figure_eight) periods.push(body.figure_eight.period_days);
@@ -64,7 +68,7 @@ function makeClock(body) {
 
     function tick(now) {
         raf = requestAnimationFrame(tick);
-        clock.t += (Math.min(100, now - last) / 1000) * clock.speed;
+        clock.t += (Math.min(100, now - last) / 1000) * clock.speed * (clock.hold ? clock.hold() : 1);
         last = now;
         send(now, false);
     }
@@ -74,6 +78,7 @@ function makeClock(body) {
         t: 0,
         playing: false,
         speed: fastest / 6,
+        hold: null,
         fastest,
         smoothMax: fastest * MAX_TURNS_PER_S,
         steppedT: () => reading,

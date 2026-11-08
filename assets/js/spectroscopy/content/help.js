@@ -18,7 +18,7 @@ const USING_THE_SKY = `<ol>
     <li><strong>Select.</strong> Click or tap an object, or type its 6-character code into Go to. Its panel opens at the side.</li>
     <li><strong>Analyse.</strong> The Spectrum tab sets its light beside a reference you can swap. The H-R tab puts stars on the diagram. The Info tab has the notes on what to look for.</li>
     <li><strong>Switch bands.</strong> Some objects can't be seen in visible light at all, only in radio, infrared, ultraviolet or X-rays.</li>
-    <li><strong>Go in.</strong> Keep zooming in on a star to go into its system, and zoom back out to return. Enter system does the same. Click a planet to open it.</li>
+    <li><strong>Go in.</strong> Keep zooming in on a star to go into its system, and zoom back out to return. Enter system does the same. Double-click or double-tap an object to fly up to it first. Click a planet to open it.</li>
 </ol>
 <p>At the bottom of each Info tab are the <strong>Catalogue values</strong>, the true numbers for checking yourself. Work it out first, then look.</p>
 <p>Labels, the grid and the other extras are in <strong>Layers</strong>. Two of them help a long search: <strong>Visited systems</strong> ticks the systems you have been in, and <strong>Stars with planets</strong> marks the stars known to have them. Everything has its own code, and <strong>Copy link</strong> makes a link that opens that object, so a teacher can send you straight there.</p>`;
@@ -60,7 +60,7 @@ const READING = list([
     `<strong>Layout.</strong> Choose a reference in the row under the object's spectrum, or step through them with the arrows, and it is drawn over the object, dashed. Stacked gives it its own plot underneath; Overlay puts it back. The colour strip shows lines as they would look.`,
     `<strong>The shape.</strong> The smooth ${term('continuum')} gives the temperature, through its peak. A hot solid gives one too, close to a ${term('black body')}: the white-hot filament of an incandescent lamp is the everyday example. A gas discharge tube gives bright lines instead, which is what the element lamps show.`,
     `<strong>The lines.</strong> Dark ${term('absorption line', 'absorption lines')} mean cooler gas in front of a hot source. Bright ${term('emission line', 'emission lines')} mean hot, thin gas. Their pattern tells you which atoms and molecules are there.`,
-    `<strong>The shift.</strong> If every line has moved by the same fraction, the object is moving: z = Δλ/λ₀ and v = cz, with positive meaning away. For z above about 0.1, quote z instead.`,
+    `<strong>The shift.</strong> If every line has moved by the same fraction, the object is moving: z = Δλ/λ₀ and v = cz, with positive meaning away. Every shift is shown as that speed, in km/s. Galaxies use this simple formula, though beyond about 30,000 km/s it is only rough. A quasar's light is stretched far more, so for quasars the sim uses one that stays below the speed of light.`,
     `<strong>The width.</strong> Broad lines mean a dense star or a fast spin. The full spectrum shows detail down to about 60 km/s, and the Spin tool, zoomed in on one line, down to about 5 km/s.`,
     `<strong>Planets.</strong> Starlight bounced off a planet, with bites taken out by the gases in its air. A surface can leave its mark too, as plants do on Earth with the ${term('red edge')}.`,
     `<strong>The noise.</strong> Faint objects give noisy spectra, with a low ${term('S/N')}. References have no noise, and tools report a ± ${term('uncertainty')}.`,
@@ -71,7 +71,7 @@ const TOOLS = `<p>Along the bottom of the Spectrum tab, named for what they meas
 ${definitions([
     ['Reference', 'Swap in element lamps, ionised elements, UV lines, molecules, standard stars or a black body. Shift slides it along the wavelength axis.'],
     ['Temperature', `Fit a black-body curve, compare standard stars, or mark the peak, ${term('λmax')}, for ${term("Wien's law")}: T = b/λmax.`],
-    ['Velocity', `By the Doppler shift: line up a reference line with a dip, or click a line and name it, and read ${term('Δλ')}, ${term('z')} and v from ${term('v = cz')}.`],
+    ['Velocity', `By the Doppler shift: line up a reference line with a dip, or click a line and name it, and read how far it moved, ${term('Δλ')}, and the speed that gives, from ${term('z')} = Δλ/λ₀ and ${term('v = cz')}.`],
     ['Spin', `Zooms in on one line and lays the same line, not spinning, over it. Widen it until the two match to find ${term('v sin i')}.`],
     ['Brightness', 'Reads the measured brightness b and the distance d, so you can find L = 4πd²b.'],
     ['Period', 'Follows lines over time for binaries, multiples and black-hole companions, giving the period and the speeds.'],

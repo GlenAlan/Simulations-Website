@@ -45,7 +45,7 @@ export function nextButton(next) {
     button.append(element('span', '', next.label), arrow);
     button.addEventListener('click', () => {
         const body = app.selected && app.selected.body;
-        if (next.split && body && body.stars && body.orbits && body.orbits.length) {
+        if (next.split && body && body.stars && ((body.orbits && body.orbits.length) || body.unstable)) {
             toWidestSplit(body, !(app.settings && app.settings.reduceMotion));
         }
         // This button is about to be hidden, which would drop keyboard focus on the page itself, so focus moves on with it

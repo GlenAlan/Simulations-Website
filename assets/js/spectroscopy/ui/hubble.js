@@ -5,7 +5,8 @@
 import { bus, select } from '../core/state.js';
 import { getMeasurement, recordMeasurement } from '../core/measurements.js';
 import { C_KMS, H0 } from '../core/phys.js';
-import { plusMinus, sig, withCommas } from '../core/format.js';
+import { CZ_LIMIT, plusMinus as plusMinusOf, shiftSpeed, sig as sigOf, withCommas as commasOf } from '../core/format.js';
+import { isLocalGroup } from '../data/local_group.js';
 import { toolWords } from './spectrum/tools/index.js';
 import {
     createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
@@ -13,11 +14,21 @@ import {
     niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved, savedEntries, cleanSaved
 } from './plot2d.js';
 
-const Z_LIMIT = 0.1;          // Above this, v = cz is only an approximation (spec section 8.4)
+// Above this shift, about 30,000 km/s, v = cz no longer holds (spec section 8.4): such a galaxy's speed, cz here as everywhere
+// for a galaxy (core/format.js), is only rough
+const Z_LIMIT = CZ_LIMIT;
+const ROUGH_FROM_KMS = '30,000';
 const SUGGESTED_GALAXIES = 8;
 const RESIDUALS_HEIGHT = 120; // Extra height the residuals panel adds to the figure (px)
 const HEAVY_SHARE = 0.6;      // A galaxy with this much of the fit's weight is setting the line by itself
 const NEARBY_MPC = 50;        // Closer than this, a galaxy's own motion is a real part of its speed
+const LOCAL_GROUP_MPC = 3;    // Closer than this, a galaxy coming towards us is one of our own Local Group
+
+// Numbers as the rest of the panel writes them, with a true minus sign: "−306", not "-306"
+const minus = (text) => String(text).replace(/^-/, '−');
+const sig = (x, n) => minus(sigOf(x, n));
+const plusMinus = (value, err) => minus(plusMinusOf(value, err));
+const withCommas = (x) => minus(commasOf(x));
 
 // ---------- Session state ----------
 
@@ -26,6 +37,7 @@ let nextNumber = 1;
 let refreshTab = () => {};    // The mounted tab's refresh
 let tab = null;               // The mounted tab's announce and focus
 let saveKey = null;
+let localCodes = new Set();   // The sky's Local Group galaxies
 
 function persist() {
     if (!saveKey) return;
@@ -77,11 +89,21 @@ function galaxyPoint(code) {
     const m = getMeasurement(code) || {};
     const v = velocityOf(m);
     if (v === null || !(m.distance_pc > 0)) return null;
-    return { code, v, vErr: m.v_err_kms || 0, dMpc: m.distance_pc / 1e6, z: Number.isFinite(m.z) ? m.z : v / C_KMS };
+    return { code, v, vErr: m.v_err_kms || 0, dMpc: m.distance_pc / 1e6, z: Number.isFinite(m.z) ? m.z : v / C_KMS, local: localCodes.has(code) };
 }
 
 function galaxyPoints() {
     return [...plotted.keys()].map(galaxyPoint).filter(Boolean);
+}
+
+// The exception: a galaxy of our own Local Group, whose speed is its own motion in the group's pull, not the expansion. It is
+// plotted, but always left out of the line.
+function inLocalGroup(p) {
+    return !!p.local || (p.v < 0 && p.dMpc <= LOCAL_GROUP_MPC);
+}
+
+function linePoints(points) {
+    return points.filter((p) => !inLocalGroup(p));
 }
 
 // "+23,400", so a blueshift's sign is never lost
@@ -90,15 +112,16 @@ function signedSpeed(v) {
 }
 
 function currentFit() {
-    const points = galaxyPoints();
+    const points = linePoints(galaxyPoints());
     return fitThroughOrigin(points.map((p) => p.dMpc), points.map((p) => p.v));
 }
 
 // Plain words on the student's own points, without saying what H₀ should come out as. A line through the origin is
 // weighted by distance squared, so one far galaxy can set it alone, and nearby galaxies scatter because their own motion
 // through space is a large share of their speed.
-export function hubbleAdvice(points, useLog) {
+export function hubbleAdvice(plottedPoints, useLog) {
     const out = [];
+    const points = linePoints(plottedPoints);
     const weights = points.map((p) => p.dMpc * p.dMpc);
     const total = weights.reduce((sum, w) => sum + w, 0);
     if (points.length >= 3 && total > 0) {
@@ -110,6 +133,14 @@ export function hubbleAdvice(points, useLog) {
             const without = fit.err !== null ? `${plusMinus(fit.slope, fit.err)} km/s/Mpc` : `about ${sig(fit.slope, 3)} km/s/Mpc`;
             out.push(`One galaxy is setting this line: ${points[at].code}, at ${sig(points[at].dMpc, 3)} Mpc, carries ${Math.round(share * 100)}% of the weight. Without it, H₀ would be ${without}. More far galaxies would share the load.`);
         }
+    }
+    // The exception: near enough that gravity wins over the expansion
+    const local = plottedPoints.filter(inLocalGroup);
+    if (local.length) {
+        const left = points.length ? ', so the line leaves it out' : '';
+        out.push(local[0].v < 0
+            ? `${local[0].code} is coming towards us. It is so close that the pull between it and our galaxy beats the expansion: both belong to our Local Group${left}.`
+            : `${local[0].code} belongs to our Local Group: it is so close that the pull between it and our galaxy beats the expansion${left}.`);
     }
     const near = points.filter((p) => p.dMpc <= NEARBY_MPC);
     if (near.length >= 2) {
@@ -145,6 +176,7 @@ export function initHubbleTab(app) {
         appliesTo: (resolved) => resolved.path === 'body' && ['galaxy', 'quasar'].includes(resolved.body.kind),
         mount: (container) => mountHubble(container, app)
     });
+    localCodes = new Set(app.universe.bodies.filter(isLocalGroup).map((body) => body.code));
     restore(app);
 
     // How the Spectrum tab's tools hand their results over
@@ -207,7 +239,7 @@ function mountHubble(container, app) {
         showResiduals = on;
         figure.redraw();
     }, 'How far each point sits above or below the line');
-    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `|z| above ${Z_LIMIT}: v = cz only roughly`);
+    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `Beyond about ${ROUGH_FROM_KMS} km/s: speed only rough`);
     const legend = el('div', { class: 'spectro-fig-legend', hidden: true },
         el('span', {}, markerIcon('circle'), 'Galaxy'), hollowKey);
     root.append(options, legend);
@@ -261,12 +293,11 @@ function mountHubble(container, app) {
             if (v === null || !(m.distance_pc > 0)) return null;
             const dMpc = m.distance_pc / 1e6;
             const z = Number.isFinite(m.z) ? m.z : v / C_KMS;
-            const lines = [
+            return [
+                Math.abs(z) > Z_LIMIT ? `Beyond about ${ROUGH_FROM_KMS} km/s this speed is only rough` : null,
                 `d = ${sig(m.distance_pc, 3)} pc = ${sig(dMpc, 3)} Mpc`,
                 `v ÷ d = ${signedSpeed(v)} km/s ÷ ${sig(dMpc, 3)} Mpc = ${sig(v / dMpc, 3)} km/s/Mpc`
-            ];
-            if (Math.abs(z) > Z_LIMIT) lines.push(`z = ${sig(z, 2)}, above ${Z_LIMIT}, so v = cz is only an approximation here.`);
-            return lines;
+            ].filter(Boolean);
         },
         isPlotted: (code) => plotted.has(code),
         onAdd(code) {
@@ -306,15 +337,14 @@ function mountHubble(container, app) {
     const list = createPlottedList(root, 'Your galaxies', () => readout, clearGalaxies);
     const table = createDataTable(root, {
         label: 'Plotted galaxies',
-        columns: ['Point', 'Code', 'Distance (Mpc)', 'Speed (km/s)', 'z', 'Residual (km/s)'],
+        columns: ['Point', 'Code', 'Distance (Mpc)', 'Speed (km/s)', 'Residual (km/s)'],
         rows() {
             const fit = currentFit();
             return galaxyPoints().map((p) => [
                 String(plotted.get(p.code)),
                 { button: p.code, label: `Select ${p.code}`, onClick: () => select(p.code) },
                 sig(p.dMpc, 3),
-                p.vErr > 0 ? plusMinus(p.v, p.vErr) : withCommas(p.v),
-                sig(p.z, 2),
+                `${p.vErr > 0 ? plusMinus(p.v, p.vErr) : withCommas(p.v)}${Math.abs(p.z) > Z_LIMIT ? ' (rough)' : ''}`,
                 fit ? signedSpeed(p.v - fit.slope * p.dMpc) : ''
             ]);
         }
@@ -346,11 +376,11 @@ function mountHubble(container, app) {
         const z = measuredZ !== null ? measuredZ : body.quasar.z;
         const v = z * C_KMS;
         const compared = z >= 1
-            ? `which is faster than light. That can't be right: nothing moves through space that fast`
-            : `which is a large share of the speed of light, far too much for that simple formula to hold`;
+            ? 'faster than light, which can\'t be right: nothing moves through space that fast'
+            : 'a large share of the speed of light, far too much for that simple formula to hold';
         quasarNote.replaceChildren(
             el('p', { class: 'spectro-fig-card-title', text: `Quasar ${body.code}` }),
-            el('p', { class: 'spectro-fig-readout', text: `z = ${sig(z, 3)}` }),
+            el('p', { class: 'spectro-fig-readout', text: shiftSpeed(z, { quasar: true }) }),
             el('p', { class: 'spectro-fig-card-status', text: measuredZ !== null ? 'From your Doppler measurement.' : 'From the catalogue.' }),
             el('div', { class: 'spectro-fig-measure', hidden: measuredZ !== null },
                 el('span', { class: 'spectro-fig-measure-word', text: 'Measure it yourself with' }),
@@ -358,10 +388,10 @@ function mountHubble(container, app) {
                     type: 'button',
                     class: 'spectro-fig-tool',
                     text: toolWords({ id: 'doppler' }).short,
-                    'aria-label': `Measure z with ${toolWords({ id: 'doppler' }).short}, in the Spectrum tab`,
+                    'aria-label': `Measure its speed with ${toolWords({ id: 'doppler' }).short}, in the Spectrum tab`,
                     onclick: () => app.spectrumPanel.openTool('doppler', { from: 'hubble', focus: true })
                 })),
-            el('p', { text: `A quasar can't go on this plot. Using v = cz here would give ${sig(v, 3)} km/s, ${compared}. Its light has been stretched by the expanding Universe during a very long journey, so astronomers quote z itself instead of a speed.` }));
+            el('p', { text: `A quasar can't go on this plot: it is too far away for Hubble's straight line. The simple v = cz would give ${sig(v, 3)} km/s, ${compared}, so the speed above comes from a formula that stays below the speed of light. Even that is only a rough picture: its light has been stretched by the expanding Universe during a very long journey.` }));
     }
 
     function refresh() {
@@ -377,13 +407,13 @@ function mountHubble(container, app) {
         const n = points.length;
         if (!fit) {
             readout.textContent = 'H₀ = ?';
-            readoutNote.textContent = 'The line\'s gradient, once there are galaxies';
+            readoutNote.textContent = n ? 'The line\'s gradient, once there are galaxies beyond our Local Group' : 'The line\'s gradient, once there are galaxies';
         } else if (fit.err === null) {
             readout.textContent = `H₀ ≈ ${sig(fit.slope, 3)} km/s/Mpc`;
             readoutNote.textContent = `1 galaxy of ${SUGGESTED_GALAXIES}`;
         } else {
             readout.textContent = `H₀ = ${plusMinus(fit.slope, fit.err)} km/s/Mpc`;
-            readoutNote.textContent = n < SUGGESTED_GALAXIES ? `${n} galaxies of ${SUGGESTED_GALAXIES}` : `${n} galaxies`;
+            readoutNote.textContent = fit.n < SUGGESTED_GALAXIES ? `${fit.n} galaxies of ${SUGGESTED_GALAXIES}` : `${fit.n} galaxies`;
         }
         readoutNote.title = 'The best-fit line through the origin. Aim for at least ' + SUGGESTED_GALAXIES + ' galaxies.';
 
@@ -585,8 +615,7 @@ function mountHubble(container, app) {
         if (point) {
             figure.showTip(point.px, point.py, [
                 point.code,
-                `${sig(point.dMpc, 3)} Mpc, ${withCommas(point.v)} km/s`,
-                `z = ${sig(point.z, 2)}`
+                `${sig(point.dMpc, 3)} Mpc, ${withCommas(point.v)} km/s`
             ]);
         } else {
             figure.hideTip();

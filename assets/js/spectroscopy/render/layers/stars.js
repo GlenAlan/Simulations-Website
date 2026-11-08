@@ -10,18 +10,21 @@ import * as THREE from 'three';
 import { bus } from '../../core/state.js';
 import { BANDS } from '../../core/bands.js';
 import { hashString } from '../../core/rng.js';
-import { azAltToVec3 } from '../../core/sky.js';
+import { azAltToVec3, limitingMag } from '../../core/sky.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { bandSkyBrightness } from '../../data/band_table.js';
-import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
+import { skyMaterial, sharedUniforms, BAND_GLSL, ORDER } from '../shared.js';
 import { MIN_GLOW } from '../engine.js';
 import { travelPc } from '../../core/depth.js';
 
 const POINT_KINDS = new Set(['star', 'binary', 'multiple', 'neutron_star', 'black_hole', 'quasar', 'supernova']);
 const SKY_RADIUS = 1000;
+const RAD = Math.PI / 180;
 
 export const SPLIT_LO = 6;     // Device pixels between two stars when they start to come apart...
 export const SPLIT_HI = 13;    // ...and when they have
+const SPIKE_GLOW = 21.9;       // The glow at which a point's spikes start (glowLevel 6.6: see createSpikes)
+const SPARE = 0.9;             // What can show is worked out with this much to spare in glow, and 2% in separation
 
 // A body's colour: the mix of its stars' black-body colours, weighted by how much light each gives
 function bodyColour(body) {
@@ -272,6 +275,179 @@ export function createSpikes(data) {
     return { mesh, geometry, material };
 }
 
+// Only the points that can show go to the GPU. The shaders above throw the rest away, but a slow GPU still pays for every
+// one's vertices, and most of the sky's points are too faint to show until the zoom is well in, or are off the screen. So the
+// sprites and spikes draw from a copy of the data that holds only the points that can show, by the shaders' own rules (skyGlow,
+// splitShows and the spikes' start, with a little to spare) and inside the view with room for the widest halo. The copy is
+// made for a little more than the view needs, a wider cone and a deeper limit, and made again only once the view has moved out
+// of that. On a flight, which brightens and spreads what it nears, and away from the sky, every point is drawn.
+//
+// data is the owner's, in its own order, and stays so: a change to it is noticed when the owner calls changed(), or when it
+// flags the drawn geometry's attribute as changed (attribute.needsUpdate), as a setter written for the plain sprites does.
+// Every field of data is copied, so a field added to data and to instancedAttributes comes along. withSpikes: false for
+// sprites alone.
+const CONE_MORE = 0.25;         // The copy's cone is this share wider than the view's reach, and at least...
+const CONE_MORE_MIN_DEG = 2;    // ...this many degrees wider
+const HALO_PX = 120;            // Device pixels, per unit of pixel ratio, that a point's halo or spikes reach at most
+const LIM_MORE = 0.5;           // The copy holds points this many magnitudes fainter than the limit...
+const LIM_LESS = 1.5;           // ...and is made again for a view this much shallower
+const SCALE_MORE = 1.2;         // Separations are judged for a view this much nearer or further
+
+export function createSpriteSet(data, withSpikes = true) {
+    const n = data.count;
+    const drawn = { count: n };
+    const copies = [];          // [the owner's array, the drawn copy, numbers per point]
+    Object.entries(data).forEach(([key, value]) => {
+        if (value && value.isBufferAttribute) {
+            const copy = new THREE.InstancedBufferAttribute(new value.array.constructor(value.array.length), value.itemSize);
+            copy.setUsage(THREE.DynamicDrawUsage);
+            drawn[key] = copy;
+            copies.push([value.array, copy.array, value.itemSize]);
+        } else if (ArrayBuffer.isView(value)) {
+            drawn[key] = new value.constructor(value.length);
+            copies.push([value, drawn[key], n ? value.length / n : 1]);
+        } else {
+            drawn[key] = value;
+        }
+    });
+    const sprites = createSprites(drawn);
+    const spikes = withSpikes ? createSpikes(drawn) : null;
+    sprites.geometry.instanceCount = 0;
+    if (spikes) spikes.geometry.instanceCount = 0;
+    const attributes = [];
+    [sprites, spikes].forEach((part) => {
+        if (!part) return;
+        Object.values(part.geometry.attributes).forEach((attr) => {
+            if (attr.isInstancedBufferAttribute && !attributes.includes(attr)) attributes.push(attr);
+        });
+    });
+    const versions = new Map();
+    const picked = new Int32Array(n);        // The owner's index of the point in each drawn slot...
+    const slotOf = new Int32Array(n).fill(-1);   // ...and the other way, -1 if it isn't drawn
+    const axis = new THREE.Vector3();
+    let made = null;            // What the copy was made for
+    let dirty = true;
+    let spiked = 0;
+
+    function changedOutside() {
+        for (let k = 0; k < attributes.length; k++) if (versions.get(attributes[k]) !== attributes[k].version) return true;
+        return false;
+    }
+
+    // Can the owner's i-th point show in the view the copy is made for? 0 no, 1 yes, 2 with spikes
+    function test(i, m) {
+        if (!m.still) return 2;
+        const C = data.centres.array;
+        const x = C[i * 3];
+        const y = C[i * 3 + 1];
+        const z = C[i * 3 + 2];
+        if (x * m.axis.x + y * m.axis.y + z * m.axis.z < m.cosCone * Math.hypot(x, y, z)) return 0;
+        const S = data.split.array;
+        const apart = S[i * 2];
+        if (apart > 0 && apart * m.ppd * SCALE_MORE <= SPLIT_LO * 0.98) return 0;
+        if ((S[i * 2 + 1] * m.ppd) / SCALE_MORE >= SPLIT_HI * 1.02) return 0;
+        const A = data.bandA;
+        const f = data.flux.array[i] * m.gain;
+        let glow = m.xray ? data.bandB[i] : 0;
+        for (let k = 0; k < m.bands.length; k++) glow = Math.max(glow, A[i * 4 + m.bands[k]]);
+        if (glow * f < MIN_GLOW) return 0;
+        return withSpikes && m.visible && data.spike[i] > 0 && A[i * 4 + 2] * f >= SPIKE_GLOW ? 2 : 1;
+    }
+
+    function copyPoint(i, j) {
+        for (let c = 0; c < copies.length; c++) {
+            const [from, to, size] = copies[c];
+            for (let e = 0; e < size; e++) to[j * size + e] = from[i * size + e];
+        }
+    }
+
+    // Copies the points that can show into the drawn data, those with spikes first
+    function make(still, frame, mask, reach, haloDeg) {
+        const lim = limitingMag(frame.fov) + LIM_MORE;
+        const cone = reach + haloDeg + Math.max(CONE_MORE_MIN_DEG, reach * CONE_MORE);
+        const m = {
+            still, mask, axis: axis.clone(), cone, cosCone: cone >= 180 ? -2 : Math.cos(cone * RAD), lim,
+            gain: 10 ** (0.4 * (lim - 6)) / SPARE, ppd: frame.pxPerRad * RAD,
+            bands: [0, 1, 2, 3].filter((b) => mask & (1 << b)), xray: !!(mask & 16), visible: !!(mask & 4)
+        };
+        let shown = 0;
+        const rest = [];
+        slotOf.fill(-1);
+        for (let i = 0; i < n; i++) {
+            const t = test(i, m);
+            if (t === 2) picked[shown++] = i;
+            else if (t === 1) rest.push(i);
+        }
+        spiked = shown;
+        for (let k = 0; k < rest.length; k++) picked[shown++] = rest[k];
+        for (let j = 0; j < shown; j++) {
+            slotOf[picked[j]] = j;
+            copyPoint(picked[j], j);
+        }
+        attributes.forEach((attr) => {
+            attr.clearUpdateRanges();
+            attr.addUpdateRange(0, Math.max(1, shown) * attr.itemSize);
+            attr.needsUpdate = true;
+            versions.set(attr, attr.version);
+        });
+        sprites.geometry.instanceCount = shown;
+        if (spikes) spikes.geometry.instanceCount = spiked;
+        made = m;
+        dirty = false;
+    }
+
+    return {
+        sprites,
+        spikes,
+        // The owner has changed its data: its i-th point's, or any of it. A drawn point that still shows as it did is
+        // changed in place; anything else makes the copy again.
+        changed(i) {
+            if (i === undefined || !made || dirty) {
+                dirty = true;
+                return;
+            }
+            const j = slotOf[i];
+            const t = test(i, made);
+            if (j < 0 ? t > 0 : t !== (j < spiked ? 2 : 1)) {
+                dirty = true;
+                return;
+            }
+            if (j < 0) return;
+            copyPoint(i, j);
+            attributes.forEach((attr) => {
+                attr.addUpdateRange(j * attr.itemSize, attr.itemSize);
+                attr.needsUpdate = true;
+                versions.set(attr, attr.version);
+            });
+        },
+        // For tests: how many points are drawn now, and how many there are
+        drawnCount: () => sprites.geometry.instanceCount,
+        update(frame) {
+            const t = sharedUniforms.uTravel.value;
+            const still = frame.view === 'sky' && t.x === 0 && t.y === 0 && t.z === 0;
+            const w = frame.bandW;
+            let mask = 0;
+            for (let b = 0; b < 5; b++) if (w[b] > 0) mask |= 1 << b;
+            frame.camera.getWorldDirection(axis);
+            // How far from the camera's axis the canvas reaches, with the lens's offset, and how far a halo reaches beyond it
+            const tan = Math.tan(frame.fov * RAD * 0.5) / (frame.zoom || 1);
+            const reach = Math.atan(Math.hypot(tan * (frame.width / frame.height) * (1 + Math.abs(frame.shiftX || 0)), tan * (1 + Math.abs(frame.shiftY || 0)))) / RAD;
+            const haloDeg = (HALO_PX * frame.dpr) / (frame.pxPerRad * RAD);
+            let again = dirty || !made || made.still !== still || changedOutside();
+            if (!again && still) {
+                const lim = limitingMag(frame.fov);
+                const ppd = frame.pxPerRad * RAD;
+                const need = reach + haloDeg;
+                const moved = Math.acos(Math.max(-1, Math.min(1, axis.dot(made.axis)))) / RAD;
+                again = made.mask !== mask || lim > made.lim || lim < made.lim - LIM_MORE - LIM_LESS
+                    || ppd > made.ppd * SCALE_MORE || ppd < made.ppd / SCALE_MORE
+                    || (made.cone < 180 && moved + need > made.cone) || made.cone > 2 * (need + Math.max(CONE_MORE_MIN_DEG, reach * CONE_MORE)) + 5;
+            }
+            if (again) make(still, frame, mask, reach, haloDeg);
+        }
+    };
+}
+
 export function createStarsLayer(engine, app) {
     const bodies = app.universe.bodies.filter((b) => POINT_KINDS.has(b.kind));
     const n = bodies.length;
@@ -310,8 +486,9 @@ export function createStarsLayer(engine, app) {
         data.spike[i] = body.kind === 'black_hole' ? 0 : 1;
     });
 
-    const sprites = createSprites(data);
-    const spikes = createSpikes(data);
+    // Only those that can show are drawn (createSpriteSet): data stays as it is, in the bodies' order
+    const set = createSpriteSet(data);
+    const { sprites, spikes } = set;
     engine.scene.add(sprites.mesh);
     engine.scene.add(spikes.mesh);
 
@@ -324,6 +501,7 @@ export function createStarsLayer(engine, app) {
         update(frame) {
             sprites.material.uniforms.uDpr.value = frame.dpr;
             spikes.material.uniforms.uDpr.value = frame.dpr;
+            set.update(frame);
         },
         // For a layer whose body changes brightness (a supernova) or draws its own sprite: multiplies the sprite's
         // glow by this factor. 1 is normal; 0 hides it.
@@ -331,14 +509,23 @@ export function createStarsLayer(engine, app) {
             const i = indexOf.get(code);
             if (i === undefined || data.flux.array[i] === factor) return;
             data.flux.array[i] = factor;
-            data.flux.needsUpdate = true;
+            set.changed(i);
+        },
+        // For a body whose colour changes (a supernova cooling): its true colour, linear RGB as blackBodyRGB gives it
+        setSpriteColour(code, rgb) {
+            const i = indexOf.get(code);
+            if (i === undefined) return;
+            const c = data.colours;
+            if (c[i * 3] === rgb[0] && c[i * 3 + 1] === rgb[1] && c[i * 3 + 2] === rgb[2]) return;
+            c.set(rgb, i * 3);
+            set.changed(i);
         },
         // A multiple star's point goes out as it comes apart into its members, at this separation in degrees
         setSpriteSplit(code, sepDeg) {
             const i = indexOf.get(code);
             if (i === undefined || data.split.array[i * 2 + 1] === sepDeg) return;
             data.split.array[i * 2 + 1] = sepDeg;
-            data.split.needsUpdate = true;
+            set.changed(i);
         },
         dispose() {
             unbindQuality();

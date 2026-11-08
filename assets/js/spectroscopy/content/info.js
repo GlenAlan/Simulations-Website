@@ -14,8 +14,11 @@
 //
 // The real data may add fields or lack them, so every value is checked and a row with no value is left out.
 
-import { withCommas, sig, signed, wavelength, distance } from '../core/format.js';
-import { AU, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
+import { shiftDirection, shiftSpeed, withCommas, sig, signed, wavelength, distance } from '../core/format.js';
+import { AU, C_KMS, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
+import { pulsarKind } from '../data/deep_sky.js';
+import { supernovaShellShows } from '../spectra/supernova.js';
+import { danceFacts } from '../data/unstable.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const row = (label, value) => ({ label, value });
@@ -32,11 +35,18 @@ const chem = (formula) => String(formula).replace(/\d/g, (d) => SUBSCRIPT[d]);
 
 const tempText = (T) => (isNum(T) ? `${T >= 1e5 ? sig(T, 3) : withCommas(T)} K` : null);
 
-function velocityText(v) {
-    if (!isNum(v)) return null;
-    if (v === 0) return '0 km/s';
-    const speed = Math.abs(v) >= 1000 ? `${v < 0 ? '−' : '+'}${withCommas(Math.abs(v))}` : signed(v, Math.abs(v) < 10 ? 1 : 0);
-    return `${speed} km/s (moving ${v > 0 ? 'away' : 'towards us'})`;
+// A shift as it is shown everywhere (core/format.js): a speed in km/s, by the formula for big shifts for a quasar, and which
+// way. The shift is the object's own where it has one (a galaxy, a quasar), and v ÷ c otherwise.
+function velocityText(v, z, quasar = false) {
+    if (!isNum(v) && !isNum(z)) return null;
+    const shift = isNum(z) ? z : v / C_KMS;
+    if (shift === 0) return '0 km/s';
+    return `${shiftSpeed(shift, { v: isNum(v) ? v : undefined, quasar })} (${shiftDirection(shift)})`;
+}
+
+// A galaxy moving away is receding with the expansion; one coming towards us, as the Local Group's can, has only a radial velocity
+function shiftLabel(v) {
+    return isNum(v) && v < 0 ? 'Radial velocity' : 'Recession velocity';
 }
 
 function distanceText(pc) {
@@ -266,6 +276,19 @@ function componentInfo({ entity, body }) {
             catalogue: clean([row('Black hole system', parent), starRows(star), observedRows(entity, body, "System's radial velocity"), starMakeupRows(star)])
         };
     }
+    if (body?.unstable) {
+        return {
+            kindLabel: 'Star in an unstable group',
+            lead: 'One star of a young group with no stable orbits, taken on its own.',
+            summary: `One star of the system${code}, seen on its own. It has no steady orbit, so its lines shift without a pattern as it swings round the others.`,
+            notes: [
+                { heading: 'Its system', text: 'Taken alone, this star\'s lines are easier to follow than in the combined spectrum. The Velocity tool reads its speed at any moment. The Period tool finds no period that lasts: its swings don\'t repeat.' },
+                ...starNotes(star)
+            ],
+            rarity: UNSTABLE_RARITY,
+            catalogue: clean([row('System', parent), starRows(star), observedRows(entity, body, "System's radial velocity"), starMakeupRows(star)])
+        };
+    }
     return {
         kindLabel: 'Star in a multiple system',
         lead: 'One star of a multiple system, taken on its own.',
@@ -287,8 +310,48 @@ const ARCHITECTURE = {
     binary: 'Binary: two stars',
     hierarchical_triple: 'Hierarchical triple: a close pair with a third star on a wide orbit',
     figure_eight: 'Figure-eight: three stars sharing one path',
-    double_double: 'Double-double: two close pairs, far apart'
+    double_double: 'Double-double: two close pairs, far apart',
+    non_hierarchical: 'Unstable: stars swinging round one another, with no lasting orbit'
 };
+
+const UNSTABLE_RARITY = 'Rare to catch. Young stars are often born in small groups like this, but such a group lasts only a few hundred or a few thousand years before it breaks up.';
+
+// A number of years as the panel says it: a round figure, for something worked out by following the stars
+function yearsText(years) {
+    return years < 100 ? String(Math.round(years)) : sig(years, 2);
+}
+
+// Young stars in no stable orbit (data/unstable.js). The numbers come from following the stars with gravity: how long one
+// takes to cross the group, and when the first is flung out.
+function unstableInfo(entity) {
+    const stars = Array.isArray(entity.stars) ? entity.stars : [];
+    const chaos = entity.chaos || {};
+    const facts = danceFacts(entity);
+    const many = stars.length === 4 ? 'Four' : 'Three';
+    const out = isNum(facts.ejectYears) ? yearsText(facts.ejectYears) : null;
+    const crossing = isNum(facts.crossingYears) ? yearsText(facts.crossingYears) : null;
+    const age = stars[0] && stars[0].star ? stars[0].star.age_Myr : null;
+    return {
+        kindLabel: stars.length === 4 ? 'Unstable quadruple star' : 'Unstable triple star',
+        lead: `These stars aren't in stable orbits. Within about ${out} years one will probably be thrown out.`,
+        summary: `${many} young stars swinging round one another with no lasting orbit. Within about ${out} years one will probably be thrown out, and the rest will settle down.`,
+        next: SEE_SPLIT,
+        notes: [
+            { heading: 'No stable orbits', text: 'Most multiple stars are hierarchies: a close pair, with any other star far out, so that each orbit is nearly a simple ellipse and lasts. These stars are about as far from one another as from the middle, so each keeps pulling the others off course and their paths never repeat.' },
+            { heading: 'It won\'t last', text: `Groups like this break up within about a hundred crossing times, most often by throwing out the lightest star. Here a crossing takes about ${crossing} years. Run the clock in the system view to watch one go.` },
+            { heading: 'Young', text: `These stars are only about ${age === null ? 'a' : sig(age, 2)} million years old, and still by the nebula they formed in. The four bright stars of the Trapezium, at the heart of the Orion Nebula, are thought to be a young group like this.` },
+            { heading: 'What to look for', text: 'Each star\'s lines shift as it moves, but not in a steady swing. The Velocity tool reads a star\'s speed at any moment. The Period tool finds no period that lasts.' }
+        ],
+        rarity: UNSTABLE_RARITY,
+        catalogue: clean([
+            systemRows(entity),
+            row('Crossing time', crossing && `about ${crossing} years`),
+            row('First star thrown out', out && `in about ${out} years`),
+            row('Born by', chaos.host),
+            observedRows(entity, entity, "System's radial velocity")
+        ])
+    };
+}
 
 function orbitRows(body) {
     const orbits = Array.isArray(body.orbits) ? body.orbits : [];
@@ -356,6 +419,7 @@ const SEE_SPLIT = { label: 'See the lines split', tab: 'spectrum', tool: 'time-s
 function multipleInfo({ entity }) {
     if (entity.architecture === 'figure_eight') return { ...figureEightInfo(entity), next: SEE_SPLIT };
     if (entity.architecture === 'double_double') return { ...doubleDoubleInfo(entity), next: SEE_SPLIT };
+    if (entity.unstable) return unstableInfo(entity);
     const count = Array.isArray(entity.stars) ? entity.stars.length : 0;
     const [kindLabel, many] = COUNT_WORDS[count] || ['Multiple star', 'Several stars'];
     return {
@@ -667,13 +731,26 @@ function clusterInfo({ entity }) {
     };
 }
 
+// What this pulsar's past and spin say about it (data/deep_sky.js pulsarKind)
+const PULSAR_KIND_TEXT = {
+    young: (block) => `This one is young, born in the supernova ${block.remnant_of} less than a year ago.`,
+    magnetar: () => 'This one is slow. A magnetic field about a thousand times a normal pulsar\'s has braked it hard: it may be a magnetar.'
+};
+
+function pulsarNote(block) {
+    const parts = ['Beams of radio waves stream from its magnetic poles. As it spins, they sweep past us once per turn, so the pulse period is its spin period. Switch to Radio to see it pulse.'];
+    const kind = PULSAR_KIND_TEXT[pulsarKind(block)];
+    if (kind) parts.push(kind(block));
+    return { heading: 'The lighthouse model', text: parts.join(' ') };
+}
+
 function neutronStarInfo({ entity }) {
     const block = entity.neutron_star || {};
     const pulsar = block.pulsar === true;
     const notes = [
         { heading: 'What it is', text: 'When a massive star explodes as a supernova, its core can collapse until protons and electrons are squeezed into neutrons. A teaspoon of it would have about the mass of a mountain.' },
         pulsar
-            ? { heading: 'The lighthouse model', text: 'Beams of radio waves stream from its magnetic poles. As it spins, they sweep past us once per turn, so the pulse period is its spin period. Switch to Radio to see it pulse.' }
+            ? pulsarNote(block)
             : { heading: 'A quiet one', text: 'Not every neutron star pulses for us: the beams may miss us, or may have faded with age. Switch to X-ray to see the heat of its surface.' },
         { heading: 'A faint spectrum', text: 'In visible light there is almost nothing to see: a faint, nearly featureless thermal glow. It is so hot that its peak lies far off the chart, in the X-rays.' }
     ];
@@ -718,15 +795,42 @@ function centreNote(nucleus) {
     return { heading: 'Its black hole', text: `Like nearly every big galaxy, it has a black hole at its centre, ${nucleus.code}, of about ${massWords(n.mass_Msun)} times the Sun's mass. Hardly any gas is falling in, so it is quiet and nothing of it shows.` };
 }
 
+// The Local Group's big spiral (data/local_group.js): the same page, without what isn't so of it. Which way it moves is for the
+// student to find; the Hubble tab says why once they plot it.
+function localGalaxyInfo(entity, block) {
+    return {
+        kindLabel: 'Spiral galaxy',
+        lead: 'Billions of stars in a big spiral, one of our own galaxy\'s nearest neighbours.',
+        summary: 'Billions of stars in a big spiral, near enough to see by eye. Their light adds up to a single spectrum, and the shift of its lines tells you how the galaxy is moving.',
+        notes: present(
+            { heading: 'Measuring the shift', text: 'Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far, and which way, they have moved. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool.' },
+            { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. Read d with the Brightness tool and add this galaxy to the Hubble plot. Does it follow the law?" },
+            MORPHOLOGY_NOTE.spiral,
+            centreNote(entity.nucleus)
+        ),
+        rarity: 'Rare: only a couple of big galaxies lie this close to our own.',
+        catalogue: clean([
+            row('Shape', capital(words(block.morphology))),
+            row(shiftLabel(entity.radial_velocity_kms), velocityText(entity.radial_velocity_kms, block.z)),
+            row('Distance', distanceText(entity.distance_pc)),
+            row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
+            row('Central black hole', entity.nucleus ? entity.nucleus.code : null),
+            row('Measured brightness', isNum(entity.brightness?.flux_Wm2) ? `${sig(entity.brightness.flux_Wm2, 3)} W/m²` : null),
+            row('Apparent magnitude', num(entity.brightness?.mag))
+        ])
+    };
+}
+
 function galaxyInfo({ entity }) {
     const block = entity.galaxy || {};
+    if (block.local_group) return localGalaxyInfo(entity, block);
     const shape = MORPHOLOGY_NOTE[block.morphology] ? capital(block.morphology) : null;
     return {
         kindLabel: shape ? `${shape} galaxy` : 'Galaxy',
         lead: 'Billions of stars, too far away to pick out one by one.',
         summary: 'Billions of stars, too far away to pick out one by one. Their light adds up to a single spectrum, and its redshift tells you how fast the galaxy is moving away.',
         notes: present(
-            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Above about z = 0.1, v = cz starts to fail, so quote z too." },
+            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Beyond about 30,000 km/s, the speed from v = cz is only rough." },
             { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d with the Brightness tool, add the galaxy to the Hubble plot, and the gradient gives H₀." },
             MORPHOLOGY_NOTE[block.morphology],
             centreNote(entity.nucleus),
@@ -735,8 +839,7 @@ function galaxyInfo({ entity }) {
         rarity: 'Common: the observable Universe holds hundreds of billions. Among bright nearby ones, spirals lead, while the faint dwarfs that outnumber them all are too dim to see at these distances.',
         catalogue: clean([
             row('Shape', capital(words(block.morphology))),
-            row('Redshift, z', isNum(block.z) ? block.z.toFixed(4) : null),
-            row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+            row(shiftLabel(entity.radial_velocity_kms), velocityText(entity.radial_velocity_kms, block.z)),
             row('Distance', distanceText(entity.distance_pc)),
             row('Tilt', isNum(block.inclination_deg) ? `${Math.round(block.inclination_deg)}°` : null),
             row('Radio lobes', yesNo(block.radio_lobes)),
@@ -807,8 +910,7 @@ function nucleusInfo({ entity, body }) {
         row('Broad lines, full width at half height', n.active && isNum(n.broad_fwhm_kms) ? `${withCommas(n.broad_fwhm_kms)} km/s` : null),
         row('Narrow lines, full width at half height', n.active && isNum(n.narrow_fwhm_kms) ? `${withCommas(n.narrow_fwhm_kms)} km/s` : null),
         row("Stars' speeds in the bulge (σ)", num(n.sigma_kms, ' km/s')),
-        row('Redshift, z', isNum(n.z) ? n.z.toFixed(4) : null),
-        row('Recession velocity', velocityText(entity.radial_velocity_kms)),
+        row(shiftLabel(entity.radial_velocity_kms), velocityText(entity.radial_velocity_kms, n.z)),
         row('Distance', distanceText(entity.distance_pc))
     ]);
     if (!n.active) {
@@ -878,6 +980,11 @@ const SUPERNOVA_TYPE = {
 function supernovaInfo({ entity }) {
     const block = entity.supernova || {};
     const phase = block.phase0_days;
+    // One in another galaxy (data/far_supernovae.js) is far too distant for its remnant ever to be seen; any other whose shell is
+    // too small to see doesn't speak of watching it (supernovaShellShows)
+    const behind = 'Each kind scatters heavy elements into space, ready for new stars and planets. The iron in your blood was made in stars and spread by explosions like this.'
+        + (block.host_code ? ' This one is in another galaxy, far too distant for its remnant to be seen.'
+            : supernovaShellShows(block) ? ' Play on to watch the expanding shell become a remnant.' : '');
     return {
         kindLabel: 'Supernova',
         lead: 'A star exploding, for a few weeks about as bright as a whole galaxy.',
@@ -886,13 +993,14 @@ function supernovaInfo({ entity }) {
         notes: [
             { heading: 'Which type?', text: 'Type Ia: no hydrogen lines, and a strong Si II line near 615 nm. Type II: strong hydrogen Balmer lines with P Cygni profiles. Compare the spectrum with the H and Si II references.' },
             { heading: 'P Cygni profiles', text: 'An expanding shell makes a bright emission peak with a blueshifted dark dip beside it. The dip comes from the gas in front, rushing towards you. The peak comes from the gas round the sides.' },
-            { heading: 'What it leaves behind', text: 'Each kind scatters heavy elements into space, ready for new stars and planets. The iron in your blood was made in stars and spread by explosions like this. Play on to watch the expanding shell become a remnant.' }
+            { heading: 'What it leaves behind', text: behind }
         ],
         rarity: 'In a galaxy like the Milky Way, roughly 1 to 3 per century. The last one seen in our galaxy was in 1604, just before the telescope. Seeing several at once, as you can here, would never happen.',
         catalogue: clean([
             row('Type', SUPERNOVA_TYPE[block.type] || (block.type ? `Type ${block.type}` : null)),
             row('Starts at', isNum(phase) ? `${sig(Math.abs(phase), 3)} days ${phase < 0 ? 'before' : 'after'} its peak` : null),
             row('Peak apparent magnitude', num(block.peak_mag)),
+            row('In galaxy', block.host_code || null),
             row('Remnant', block.remnant_code || null),
             row('Radial velocity', velocityText(entity.radial_velocity_kms)),
             row('Distance', distanceText(entity.distance_pc))
@@ -908,13 +1016,13 @@ function quasarInfo({ entity }) {
         summary: 'It looks like a faint star, but it is the blazing core of a very distant galaxy, powered by gas falling into a supermassive black hole.',
         notes: [
             { heading: 'A huge redshift', text: 'The bright lines (Hα, Hβ, Mg II and Lyman-α) have moved so far that they are hard to recognise at first: λ = (1 + z)λ₀. Lyman-α sits at 121.6 nm in the lab, deep in the ultraviolet, but here it can land in visible light. Try matching the pattern of spacings.' },
-            { heading: 'Where v = cz fails', text: 'v = cz only works for small redshifts. It fails badly at a redshift this large, and above z = 1 it would even give a speed faster than light. The light has been stretched by the expansion of space on its way here, so quote z itself.' },
+            { heading: 'Where v = cz fails', text: 'v = cz only works for small redshifts. It fails badly at a redshift this large, and above z = 1 it would even give a speed faster than light, so the sim uses a formula that stays below the speed of light. Even that speed is only a rough picture: the light has been stretched by the expansion of space on its way here.' },
             { heading: 'Broad bright lines', text: 'Gas close to the black hole moves at thousands of km/s, so Doppler shifts spread its emission lines very wide. Compare them with the narrow lines of a nebula.' }
         ],
         rarity: 'Very rare: very roughly 1 in 100,000 galaxies hosts one today. That is only a rough figure, and it depends on how bright counts as a quasar. They were far more common about 10 billion years ago.',
         catalogue: clean([
-            row('Redshift, z', isNum(block.z) ? block.z.toFixed(2) : null),
-            row('Distance', isNum(block.z) || isNum(entity.distance_pc) ? "Too far for Hubble's straight line, v = H₀d, to apply" : null),
+            row('Recession velocity', isNum(block.z) ? velocityText(null, block.z, true) : null),
+            row('Distance', isNum(block.z) || isNum(entity.distance_pc) ? "Too far for Hubble's straight line to apply" : null),
             row('Radio-loud', yesNo(block.radio_loud)),
             row('Blazar', block.blazar === true ? 'Yes' : null),
             row('Measured brightness', isNum(entity.brightness?.flux_Wm2) ? `${sig(entity.brightness.flux_Wm2, 3)} W/m²` : null),

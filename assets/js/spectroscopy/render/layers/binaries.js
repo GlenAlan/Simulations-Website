@@ -12,10 +12,11 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
+import { danceReady, onDance } from '../../data/unstable.js';
 import { bandSkyBrightness, bandMagnitude } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
-import { createSprites, createSpikes, bodySoftness, SPLIT_LO, SPLIT_HI } from './stars.js';
+import { createSpriteSet, bodySoftness, SPLIT_LO, SPLIT_HI } from './stars.js';
 
 // Stylised on-sky separation in degrees: slow, wide orbits show first. Three days gives about 0.03 deg (seen apart at
 // a field of view near 2 deg), a thousand years about 0.25 deg (seen apart near 15 deg).
@@ -146,6 +147,8 @@ export function createBinariesLayer(engine, app) {
     let flat = [];          // Every drawn node of every system, in instance order
     let points = null;      // The members, drawn just as stars.js draws any star, and their diffraction spikes
     let spikes = null;
+    let set = null;         // Only those that can show are drawn (stars.js createSpriteSet), from master, in the order of flat
+    let master = null;
     let bridges = null;
     let aura = null;
     let pairs = [];         // Interacting pairs, in instance order of the bridges and auras
@@ -171,7 +174,13 @@ export function createBinariesLayer(engine, app) {
     function layOutSystem(system, tDays) {
         const { body } = system;
         const widest = body.orbits && body.orbits.length ? body.orbits[body.orbits.length - 1] : null;
-        const ctx = { body, states: componentStates(body, tDays), rho: system.rho, inc: widest ? widest.inc_deg ?? 60 : 60 };
+        // Stars in no stable orbit have no widest orbit, but a line of sight of their own (data/unstable.js). Their dance isn't
+        // found until something needs it: until then they sit evenly round their middle, as layOut places any star it has no
+        // state for, and move to their true places once it is (onDance, below).
+        const inc = widest ? widest.inc_deg ?? 60 : body.chaos ? body.chaos.inc_deg : 60;
+        const states = body.unstable && !danceReady(body) ? [] : componentStates(body, tDays);
+        system.t = tDays;
+        const ctx = { body, states, rho: system.rho, inc };
         const out = [];
         layOut(system.tree, 0, 0, 0, ctx, out);
         // The root is the sprite that stars.js draws, so it isn't drawn here
@@ -255,8 +264,10 @@ export function createBinariesLayer(engine, app) {
             data.depths[i] = system.body.depth;
             data.pcs[i] = travelPc(system.body);
         });
-        points = createSprites(data);
-        spikes = createSpikes(data);
+        master = data;
+        set = createSpriteSet(data);
+        points = set.sprites;
+        spikes = set.spikes;
         points.mesh.renderOrder = ORDER.exotic;
         spikes.mesh.renderOrder = ORDER.exotic + 1;
         spikes.mesh.visible = app.qualityLevel !== 'low';
@@ -463,20 +474,25 @@ export function createBinariesLayer(engine, app) {
         const resolved = app.universe.resolve(code);
         const system = resolved && byCode.get(resolved.body.code);
         if (!system || !points) return;
+        moveSystem(system, stepped_t_days ?? t_days); // Points of light: above the speed limit they step rather than strobe
+    });
+    // Stars in no stable orbit go to their true places once their dance is found
+    const unhearDance = onDance((body) => {
+        const system = byCode.get(body.code);
+        if (system && points) moveSystem(system, system.t || 0);
+    });
+
+    function moveSystem(system, tDays) {
         const previous = system.nodes;
-        layOutSystem(system, stepped_t_days ?? t_days); // Points of light: above the speed limit they step rather than strobe
+        layOutSystem(system, tDays);
         sendSplits(system);
-        // The same tree in the same order, so nodes keep their instance slots
-        const position = points.geometry.getAttribute('aCentre');
-        const seps = points.geometry.getAttribute('aSplit');
+        // The same tree in the same order, so nodes keep their places in the data
         previous.forEach((node, k) => {
             const i = system.first + k;
-            const p = worldOf(system, node.x, node.y);
-            position.setXYZ(i, p[0], p[1], p[2]);
-            seps.setXY(i, node.sepParent, node.sepSelf);
+            master.centres.array.set(worldOf(system, node.x, node.y), i * 3);
+            master.split.array.set([node.sepParent, node.sepSelf], i * 2);
+            set.changed(i);
         });
-        position.needsUpdate = true;
-        seps.needsUpdate = true;
         pairs.forEach(({ system: owner, node }, i) => {
             if (owner !== system) return;
             const [donor, gainer] = bridgeEnds(system, node);
@@ -493,7 +509,7 @@ export function createBinariesLayer(engine, app) {
             toAttr.needsUpdate = true;
             centreAttr.needsUpdate = true;
         });
-    });
+    }
 
     const unbindQuality = bus.on('quality', ({ level }) => { if (spikes) spikes.mesh.visible = level !== 'low'; });
 
@@ -503,6 +519,7 @@ export function createBinariesLayer(engine, app) {
             if (!points) return;
             points.material.uniforms.uDpr.value = frame.dpr;
             spikes.material.uniforms.uDpr.value = frame.dpr;
+            set.update(frame);
         },
         // The first split of this system: where each part is drawn just now, in degrees from its centre (east, up), and
         // which stars it is, as indices into body.stars
@@ -521,7 +538,9 @@ export function createBinariesLayer(engine, app) {
             };
             walk(system.tree);
             if (tightest === Infinity) return 0;
-            const fov = (tightest * frame.height * frame.dpr) / SPLIT_HI;
+            // At the scale the stars are drawn at (frame.pxPerRad): with the lens's zoom too, which keeps the sky's scale on the
+            // page as a phone's sheet comes up and shortens the canvas, so the answer doesn't change with the sheet
+            const fov = (tightest * frame.height * frame.dpr * (frame.zoom || 1)) / SPLIT_HI;
             return fov * parallaxFactor(system.body.depth, fov);
         },
         // Where one star of a system is drawn at this zoom: the point it's part of, for as long as it hasn't come apart
@@ -563,6 +582,7 @@ export function createBinariesLayer(engine, app) {
         },
         dispose() {
             unsubscribe();
+            unhearDance();
             unbindQuality();
             teardown();
         }

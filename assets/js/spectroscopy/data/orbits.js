@@ -11,8 +11,11 @@
 // shared centre of mass. Adding up every orbit a star belongs to gives its place in any nested hierarchy: a triple
 // is [{ a: [0], b: [1] }, { a: [0, 1], b: [2] }], a double-double is [{ a: [0], b: [1] }, { a: [2], b: [3] },
 // { a: [0, 1], b: [2, 3] }]. The figure-eight's single entry only records its period; it reads a stored path (see below).
+// A young multiple in no stable orbit (body.unstable) has no orbits at all: its stars come from a gravity integration
+// (data/unstable.js), in the same frame, with the same sign of speed.
 
 import { AU, R_SUN } from '../core/phys.js';
+import { danceStates } from './unstable.js';
 
 const TWO_PI = 2 * Math.PI;
 const RAD = Math.PI / 180;
@@ -253,6 +256,7 @@ export function figureEightPath(samples = 512, massMsun = 0.8, periodDays = 365.
 }
 
 export function componentStates(body, tDays = 0) {
+    if (body.unstable) return danceStates(body, tDays);     // No orbits: a gravity integration (data/unstable.js)
     if (body.figure_eight) return figureEightStates(body, tDays);
     if (body.stars && body.orbits && body.orbits.length) return nestedStates(body, tDays);
     if (body.black_hole) return blackHoleStates(body, tDays);

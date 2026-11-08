@@ -78,9 +78,13 @@ export function depthLight(entity) {
 // The first sky's bodies rank among themselves, exactly as they did before the deeper sky was added (body.deep, see
 // data/universe.js), so they keep their looks. A deeper body takes the depth its distance would have among them: most are
 // further than all of them, so they sit at the far end, small and dim.
+// The Local Group's galaxy (data/local_group.js) is far nearer than any other: it takes depth 0, as near as anything gets,
+// and stays out of the ranking, so no other galaxy moves for it.
 function rankDepths(list, row) {
     const rank = row.byMag ? (body) => body.brightness.mag : (body) => body.distance_pc;
-    const sorted = list.filter((b) => !b.deep).sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
+    const local = (b) => !!(b.galaxy && b.galaxy.local_group);
+    list.forEach((b) => { if (local(b)) b.depth = 0; });
+    const sorted = list.filter((b) => !b.deep && !local(b)).sort((a, b) => rank(a) - rank(b) || (a.code < b.code ? -1 : 1));
     const last = Math.max(1, sorted.length - 1);
     const depthAt = (i) => row.near + ((row.far - row.near) * i) / last;
     sorted.forEach((body, i) => { body.depth = depthAt(i); });
@@ -188,12 +192,20 @@ export function assignDepths(universe) {
         taken.add(Math.fround(x));
         return x;
     };
-    universe.bodies.forEach((body) => { body.travel_pc = unique(body.distance_pc); });
+    // The young multiples in no stable orbit (data/unstable.js) take theirs last of all, after every cluster member's, so that
+    // none of them can take a distance another already had and push it on
+    const last = (body) => !!body.unstable;
+    universe.bodies.forEach((body) => { if (!last(body)) body.travel_pc = unique(body.distance_pc); });
 
     universe.bodies.forEach((body) => {
         const row = DEPTH_TABLE[body.kind] || DEPTH_TABLE.star;
         body.depth_dim_mag = row.kDim * body.depth;
         if (row.kSize) scaleSizes(body, 1 - row.kSize * body.depth);
+        if (!last(body)) passDown(body, unique);
+    });
+    universe.bodies.forEach((body) => {
+        if (!last(body)) return;
+        body.travel_pc = unique(body.distance_pc);
         passDown(body, unique);
     });
 }

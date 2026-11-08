@@ -411,7 +411,8 @@ export function createPlot(container, opts = {}) {
         const plotW = Math.max(10, cssW - left - right);
         const rulerH = chrome.top;
         const titleH = chrome.headers;
-        const stripH = compact ? 10 : 13;
+        // The colour strip under each spectrum: tall enough to read the lines in it as bands of colour
+        const stripH = compact ? 15 : 20;
         const stripGap = 2;
         const paneGap = compact ? 4 : 7;
         const axisH = 20;

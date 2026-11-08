@@ -327,7 +327,8 @@ function darkShape(body) {
         rot: randomRotation(rng),
         A: new THREE.Vector4(rng.range(0.28, 0.52), rng.range(0.95, 1.35), rng.range(0.75, 0.95), 0.5 + dustiness * 0.7),
         B: new THREE.Vector4(Math.cos(light), Math.sin(light), rng.range(3.0, 4.6), rng.range(0.5, 1.0)),
-        C: new THREE.Vector4(1.0, 1.0, 0.75, 0)
+        // No haze of star clouds of its own: a dark cloud shows only by what it hides of the sky's own light, and never glows
+        C: new THREE.Vector4(1.0, 0.0, 0.75, 0)
     };
     return { program: 'dust', params };
 }
@@ -450,8 +451,8 @@ function spriteColours(body, palette) {
         return { a: blue, b: pale };
     }
     if (type === 'dark') {
-        // No lines of its own: only the galaxy's light, reddened, from dust thin enough to let it out again; and the
-        // colour of the band's star clouds behind it, for the haze that gives it something to hide
+        // No lines of its own, and no light of its own in visible light either: it shows by what it hides (see the sprite's
+        // shader), so these go unused
         return { a: [0.085, 0.066, 0.054], b: [0.135, 0.155, 0.225] };
     }
     if (type === 'emission') {
@@ -884,7 +885,8 @@ export function createNebulaeLayer(engine, app) {
                     float hydSeen = hyd * mix(1.0, 0.3, smoothstep(0.06, 0.42, oxy));
                     visible = (vColA * hydSeen + vColB * oxy) * 1.35;
                 } else {
-                    visible = vColA * hyd + vColB * oxy;
+                    // A dark cloud gives no light of its own in visible light: it shows only by what it hides (dustMesh)
+                    visible = vec3(0.0);
                 }
                 vec3 col = visible * vGain * vStrength.z;
                 if (vKind < 0.5 || vKind > 2.5) {
@@ -894,8 +896,9 @@ export function createNebulaeLayer(engine, app) {
                     if (peak > 0.55) col *= (0.55 + 0.6 * (1.0 - exp((0.55 - peak) / 0.6))) / peak;
                 }
                 col *= uBandW[2];
-                // The sky's own faint glow is airglow, in front of any dust: nothing out there can be darker than that
-                col += vec3(0.0052, 0.0076, 0.0165) * opacity * vDim * uBandW[2];
+                // The sky's own faint glow is airglow, in front of any dust: nothing out there can be darker than that. A dark
+                // cloud keeps less of it, so that it reads as dark against the sky round it even where nothing bright is behind.
+                col += vec3(0.0052, 0.0076, 0.0165) * opacity * vDim * uBandW[2] * (vKind > 1.5 && vKind < 2.5 ? 0.35 : 1.0);
 
                 float blendOthers = uBandW[0] + uBandW[4];
                 if (blendOthers > 0.001) {
@@ -919,7 +922,7 @@ export function createNebulaeLayer(engine, app) {
                 // A soft stand-in until the bake arrives, then a quick fade across to it
                 float stand = exp(-r2 * 5.0) * smoothstep(1.0, 0.5, sqrt(r2)) * 0.05;
                 // An emission nebula's second colour is its oxygen at full strength, which would turn this grey
-                vec3 waiting = (vKind < 0.5 ? vColA : vColA + vColB) * stand * vGain * vStrength.z * uBandW[2];
+                vec3 waiting = (vKind < 0.5 ? vColA : vKind > 1.5 && vKind < 2.5 ? vec3(0.0) : vColA + vColB) * stand * vGain * vStrength.z * uBandW[2];
                 col = mix(waiting, col, vReady);
 
                 // Tiny grain so faint gradients don't band on an 8-bit screen

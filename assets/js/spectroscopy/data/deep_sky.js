@@ -76,9 +76,37 @@ function neutronStarLuminosity(radiusKm, teff) {
     return stable(luminosityFromRT(rRsun, teff), 4);
 }
 
+// How many times a second a pulsar turns. The sky shows each flashing at its true rate (render/layers/exotic_common.js), and
+// rates are kept inside this range.
+export const PULSE_SHOWN_HZ = { min: 0.1, max: 10 };
+
+// How fast a pulsar spins, as the owner asked: the log of its rate is normal, round 2 turns a second, with a spread of
+// 0.3 dex, so that most turn between once and four times a second. One outside PULSE_SHOWN_HZ is drawn again, so none piles up
+// at a limit. Most real pulsars are in this range, round a second; the young ones (the Crab turns 30 times a second) and the
+// old ones spun up by a companion (hundreds of times) are faster, and none is here. rng is the pulsar's own fork, so no
+// other draw moves.
+export const PULSAR_SPIN_HZ = { median: 2, dex: 0.3 };
+
+export function pulsePeriod(rng) {
+    for (let tries = 0; tries < 60; tries++) {
+        const f = PULSAR_SPIN_HZ.median * 10 ** rng.gauss(0, PULSAR_SPIN_HZ.dex);
+        if (f >= PULSE_SHOWN_HZ.min && f <= PULSE_SHOWN_HZ.max) return stable(1 / f, 4);
+    }
+    return stable(1 / PULSAR_SPIN_HZ.median, 4);
+}
+
+// What sort of pulsar its past and its period say it is
+export function pulsarKind(neutron) {
+    if (!neutron || !neutron.pulsar || !neutron.pulse_period_s) return null;
+    if (neutron.remnant_of) return 'young';
+    if (neutron.pulse_period_s >= 2) return 'magnetar';
+    return 'normal';
+}
+
 // A neutron star is far too small to see by eye; the pulsars here are generously faint points, about as bright in
-// visible light as the Crab pulsar, so that a zoomed-in observer can just find them
-export function makeNeutronStar(rng, body, pulsar, remnant) {
+// visible light as the Crab pulsar, so that a zoomed-in observer can just find them. spin: a stream of its own for a
+// pulsar's period (pulsePeriod). One not in a supernova's shell is placed again last of all (data/neutron_field.js).
+export function makeNeutronStar(rng, body, pulsar, remnant, spin = null) {
     const teff = stable(rng.logRange(3e5, 2e6), 4);
     const radiusKm = dp(rng.range(10, 14), 2);
     const luminosity = neutronStarLuminosity(radiusKm, teff);
@@ -87,10 +115,12 @@ export function makeNeutronStar(rng, body, pulsar, remnant) {
     const gamma = pulsar && rng.chance(0.2);
     body.distance_pc = distance;
     body.radial_velocity_kms = dp(rng.range(-300, 300), 1);
+    // The period once came from this stream. The draw stays, unused, so that every draw after it is the one it was
+    if (pulsar) rng.next();
     body.brightness = { flux_Wm2: stable(fluxFromLuminosity(luminosity, distance), 5), mag };
     body.neutron_star = {
         pulsar,
-        pulse_period_s: pulsar ? stable(rng.logRange(0.001, 5), 4) : null,
+        pulse_period_s: pulsar ? pulsePeriod(spin || rng.fork('spin')) : null,
         gamma,
         remnant_of: remnant ? remnant.code : null,
         teff_K: teff,
@@ -101,14 +131,15 @@ export function makeNeutronStar(rng, body, pulsar, remnant) {
     };
 }
 
-// d comes in from a stratified list, so that the Hubble plot has galaxies all along its length
+// d comes in from a stratified list, so that the Hubble plot has galaxies all along its length. flags.faintest, if given, is
+// the faintest it may look in place of 17.2.
 export function makeGalaxy(rng, body, morphology, dMpc, flags) {
     const distance = dMpc * 1e6;
     const velocity = dp(H0 * dMpc + rng.range(-300, 300), 1);
     const modulus = distanceModulus(distance);
     // Bright ellipticals, modest spirals, faint irregulars; lifted where needed to stay within reach of a zoomed scope
     const typical = morphology === 'elliptical' ? -21.8 : morphology === 'spiral' ? -21 : -19.6;
-    const absMag = Math.min(typical + rng.range(-1, 1), 17.2 - modulus);
+    const absMag = Math.min(typical + rng.range(-1, 1), (flags.faintest ?? 17.2) - modulus);
     const mag = dp(absMag + modulus, 3);
     const luminosity = stable(10 ** (-0.4 * (absMag - 4.74)), 4);
     body.distance_pc = distance;

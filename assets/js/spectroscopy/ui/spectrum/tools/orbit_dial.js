@@ -3,6 +3,7 @@
 // lines. Beside it, the same in words. Shapes match the Time series marks, so colour is never the only thing telling stars apart.
 
 import { componentStates, visibleShares } from '../../../data/orbits.js';
+import { danceTimescale, danceReachAU, danceCentreAU, danceInfo } from '../../../data/unstable.js';
 import { blackBodyCss, createFigure, drawMarker, fontOf } from '../../plot2d.js';
 
 export const STAR_SHAPES = ['circle', 'square', 'triangle', 'diamond'];
@@ -50,6 +51,24 @@ function dialsOf(body) {
         }];
     }
     const starMember = (i) => ({ code: body.stars[i].code, T: body.stars[i].star.teff_K, shape: STAR_SHAPES[i % STAR_SHAPES.length] });
+    if (body.unstable) {
+        // No orbit to draw: where each star has been over the last crossing time, seen from above the line of sight
+        const inc = body.chaos.inc_deg * RAD;
+        const s = Math.sin(inc);
+        const c = Math.cos(inc);
+        return [{
+            period: danceTimescale(body),
+            trail: true,
+            fits: danceReachAU(body),
+            span: [-Math.min(danceInfo(body).today_days, danceTimescale(body)), danceInfo(body).eject_days],
+            members: body.stars.map((st, i) => starMember(i)),
+            // About the stars that stay, as the system view is (data/unstable.js danceCentreAU)
+            place(t) {
+                const m = danceCentreAU(body, t);
+                return componentStates(body, t).map((q) => ({ x: q.x_AU - m[0], y: (q.y_AU - m[1]) * s - (q.z_AU - m[2]) * c, v: q.vlos_kms }));
+            }
+        }];
+    }
     if (body.figure_eight) {
         return [{
             period: body.figure_eight.period_days,
@@ -90,11 +109,22 @@ function dialsOf(body) {
     });
 }
 
-// One orbit's paths, its reach and each member's top speed, sampled once
+// One orbit's paths, its reach and each member's top speed, sampled once. Stars in no stable orbit have trails instead, drawn
+// afresh as time goes on (trailFrom), within the reach and at the speeds they have while they dance.
 function traced(dial) {
     const paths = dial.members.map(() => new Float32Array(TRACE_POINTS * 2));
     const tops = dial.members.map(() => 0);
     let reach = 0;
+    if (dial.trail) {
+        const [from, to] = dial.span;
+        for (let k = 0; k <= 4 * TRACE_POINTS; k++) {
+            dial.place(from + (k / (4 * TRACE_POINTS)) * (to - from)).forEach((p, m) => {
+                reach = Math.max(reach, Math.hypot(p.x, p.y));
+                tops[m] = Math.max(tops[m], Math.abs(p.v));
+            });
+        }
+        return { ...dial, paths, reach: dial.fits || reach || 1, tops: tops.map((top) => top || 1) };
+    }
     for (let k = 0; k < TRACE_POINTS; k++) {
         dial.place((k / TRACE_POINTS) * dial.period).forEach((p, m) => {
             paths[m][2 * k] = p.x;
@@ -104,6 +134,24 @@ function traced(dial) {
         });
     }
     return { ...dial, paths, reach: reach || 1, tops: tops.map((top) => top || 1) };
+}
+
+// A point no further out than the dial reaches: a star flung out waits at its edge
+function inside(p, reach) {
+    const r = Math.hypot(p.x, p.y);
+    const k = r > reach ? reach / r : 1;
+    return { x: p.x * k, y: p.y * k, v: p.v };
+}
+
+// Where each star has been over the last dial.period, up to time
+function trailFrom(dial, time) {
+    for (let k = 0; k < TRACE_POINTS; k++) {
+        dial.place(Math.max(dial.span[0], time - dial.period * (1 - k / (TRACE_POINTS - 1)))).forEach((p, m) => {
+            const q = inside(p, dial.reach);
+            dial.paths[m][2 * k] = q.x;
+            dial.paths[m][2 * k + 1] = q.y;
+        });
+    }
 }
 
 function motionWord(v, top) {
@@ -185,7 +233,8 @@ export function createOrbitDial(parent, body) {
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'alphabetic';
                 ctx.fillText('you', cx, height - 4);
-                // Paths
+                // Paths, or the trails of stars in no stable orbit, kept inside the dial
+                if (dial.trail) trailFrom(dial, time);
                 ctx.strokeStyle = theme.border;
                 ctx.lineWidth = 1.2;
                 dial.paths.forEach((path) => {
@@ -196,11 +245,11 @@ export function createOrbitDial(parent, body) {
                         if (k === 0) ctx.moveTo(x, y);
                         else ctx.lineTo(x, y);
                     }
-                    ctx.closePath();
+                    if (!dial.trail) ctx.closePath();
                     ctx.stroke();
                 });
                 // Stars
-                const now = dial.place(time);
+                const now = dial.place(time).map((p) => (dial.trail ? inside(p, dial.reach) : p));
                 dial.members.forEach((member, m) => {
                     const p = now[m];
                     const x = cx + p.x * s;

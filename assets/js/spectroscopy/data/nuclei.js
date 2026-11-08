@@ -136,7 +136,8 @@ function makeCloseStars(rng, nextCode, nucleusCode, mass, galaxyBody, inclinatio
 function makeNucleus(rng, nextCode, body, flags) {
     const g = body.galaxy;
     const code = nextCode();
-    const drawn = holeMass(rng, g);
+    // A mass given is a hole of that size, its bulge the usual multiple of it
+    const drawn = flags.mass ? { mass: flags.mass, bulge: flags.mass / BULGE_SHARE } : holeMass(rng, g);
     const mass = stable(drawn.mass, 4);
     const bulge = stable(drawn.bulge, 4);
     const { active, type, radioLoud } = flags;
@@ -217,6 +218,11 @@ export function addNuclei(rng, bodies, nextCode) {
             radioLoud: !!body.galaxy.radio_lobes
         });
     });
+}
+
+// A quiet hole of the mass given, for the Local Group's galaxy (data/local_group.js), from a stream and codes of its own
+export function addQuietNucleus(rng, body, nextCode, massMsun) {
+    body.nucleus = makeNucleus(rng, nextCode, body, { active: false, type: 0, radioLoud: false, mass: massMsun });
 }
 
 // The nucleus and its close stars, for anything that walks every entity

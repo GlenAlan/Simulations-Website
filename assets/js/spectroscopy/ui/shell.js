@@ -559,6 +559,41 @@ function initContextBar(app) {
     };
 }
 
+// ---------- Reduce motion ----------
+// It starts as the device asks (core/state.js), and follows the device if that changes while the page is open, unless the
+// student has set it for themselves in Settings: their choice is kept in this browser and wins from then on.
+const MOTION_STORE = 'spectro.reduceMotion';
+
+function storedMotion() {
+    try {
+        const kept = localStorage.getItem(MOTION_STORE);
+        return kept === 'on' || kept === 'off' ? kept : null;
+    } catch (err) {
+        return null;    // Blocked: the device's setting, and the student's choice for as long as the page is open
+    }
+}
+
+let motionChosen = null;
+
+function chooseReduceMotion(on) {
+    motionChosen = on ? 'on' : 'off';
+    try {
+        localStorage.setItem(MOTION_STORE, motionChosen);
+    } catch (err) { /* As above */ }
+    setSetting('reduceMotion', on);
+}
+
+function initReduceMotion() {
+    motionChosen = storedMotion();
+    if (motionChosen) setSetting('reduceMotion', motionChosen === 'on');
+    const device = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    if (device && device.addEventListener) {
+        device.addEventListener('change', (e) => {
+            if (!motionChosen) setSetting('reduceMotion', e.matches);
+        });
+    }
+}
+
 // ---------- Settings page ----------
 const QUALITY_WORDS = { low: 'Low', medium: 'Medium', high: 'High' };
 
@@ -593,7 +628,7 @@ function initSettingsPage(app) {
         motion.id = 'spectroReduceMotion';
         const motionLabel = element('label', '', 'Reduce motion');
         motionLabel.htmlFor = motion.id;
-        motion.addEventListener('change', () => setSetting('reduceMotion', motion.checked));
+        motion.addEventListener('change', () => chooseReduceMotion(motion.checked));
         const fps = element('input');
         fps.type = 'checkbox';
         fps.id = 'spectroShowFps';
@@ -609,7 +644,7 @@ function initSettingsPage(app) {
         checks.append(motion, motionLabel, fps, fpsLabel, keys, keysLabel);
         toggles.append(
             checks,
-            element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for quick fades.'),
+            element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle, swaps camera flights for quick fades, and turns orbits too fast to follow into steady rings of light.'),
             element('p', 'spectro-setting-note', 'Turn single-key shortcuts off if speech input or a stray key sets them off. They then work only while the sky itself has the focus.')
         );
 
@@ -865,6 +900,7 @@ export function initShell(app) {
     // Reduce motion also reaches the page's own transitions
     const applyMotion = () => document.body.classList.toggle('spectro-reduce-motion', !!app.settings.reduceMotion);
     bus.on('settings', ({ key }) => { if (key === 'reduceMotion') applyMotion(); });
+    initReduceMotion();
     applyMotion();
 
     // A layer gets called once a frame, so the zoom readout needs no timer of its own

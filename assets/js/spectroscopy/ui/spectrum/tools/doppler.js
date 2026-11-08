@@ -1,17 +1,18 @@
 // How is it moving? Two ways, one at a time:
 //   Slide the lines    drag a lamp's lines onto the object's own, and read how far they moved (doppler_slide.js)
-//   Measure one line   click an observed line, say which line it is, and read off the shift, z and v = cz. Several lines can
-//                      be measured and are averaged, which also catches a line given the wrong name. The precise route.
+//   Measure one line   click an observed line, say which line it is, and read off how far it moved and the speed that gives.
+//                      Several lines can be measured and are averaged, which also catches a line given the wrong name. The
+//                      precise route.
 
 import { registerTool } from './index.js';
 import { getMeasurement, recordMeasurement } from '../../../core/measurements.js';
 import { C_KMS } from '../../../core/phys.js';
-import { signed, sig } from '../../../core/format.js';
+import { beyondCz, isQuasar, shiftSpeed, signed } from '../../../core/format.js';
 import { blendAllowance, lineCentre, dopplerFrom, combineDoppler } from '../../../spectra/measure.js';
 import { el } from '../../plot2d.js';
 import { actionRow, diagramLink, fill, hasTab, overlayTheme, para, plotLabel, plotMark, resultLine, searchNmAt, statusBox, termLine, toolLink } from './common.js';
 import { borrowReference, modeRow } from './hands_on.js';
-import { createSlide, direction, galaxyWarning, velocityText, zText } from './doppler_slide.js';
+import { createSlide, direction, galaxyWarning, movedText, readingText } from './doppler_slide.js';
 
 const MAX_CANDIDATES = 6;
 // Faster than this along the line of sight, and a star has almost certainly been given the wrong rest line
@@ -184,7 +185,7 @@ function mountExact(container, api, isActive) {
         if (listEl.hidden) return;
         const rows = measured.map((m, i) => el('tr', {},
             el('td', { text: `${lineName(m.line)} ${m.line.rest_nm.toFixed(1)}` }),
-            el('td', { text: Math.abs(m.d.z) > 0.1 ? `z ${signed(m.d.z, 3)}` : `${signed(m.d.v_kms, 0)} km/s` }),
+            el('td', { text: shiftSpeed(m.d.z, { v: m.d.v_kms, quasar: isQuasar(api.resolved.entity) }) }),
             el('td', {}, el('button', {
                 type: 'button',
                 class: 'spectro-tool-remove',
@@ -224,13 +225,13 @@ function mountExact(container, api, isActive) {
         const code = api.resolved.entity.code;
         recordMeasurement(code, { v_kms: combined.v_kms, v_err_kms: combined.err_kms, z: combined.z, v_source: 'line' });
         const last = measured[measured.length - 1];
-        const beyond = Math.abs(combined.z) > 0.1;
+        const beyond = beyondCz(combined.z);
         const m = getMeasurement(code) || {};
         const seen = new Set();
-        const shift = `Δλ = ${last.d.dlambda_nm >= 0 ? '+' : '−'}${Math.abs(last.d.dlambda_nm).toFixed(Math.abs(last.d.dlambda_nm) < 1 ? 3 : 2)} nm from ${lineName(last.line)}`;
-        const answer = beyond ? `z = ${zText(combined.z, combined.err_z)}` : `v = ${velocityText(combined.v_kms, combined.err_kms)}`;
+        const quasar = isQuasar(api.resolved.entity);
+        const moved = movedText(lineName(last.line), last.d.dlambda_nm, last.line.rest_nm, last.d.z, Math.abs(last.d.dlambda_nm) < 1 ? 3 : 2, quasar);
         fill(result,
-            el('p', { class: 'spectro-tool-answer' }, answer, el('span', { class: 'spectro-tool-direction', text: direction(combined.z) })),
+            el('p', { class: 'spectro-tool-answer' }, readingText(combined, quasar), el('span', { class: 'spectro-tool-direction', text: direction(combined.z) })),
             wrongLineWarning(combined.v_kms, beyond),
             // The way on comes before the explaining, so that it's on screen along with the answer
             actionRow(
@@ -238,8 +239,7 @@ function mountExact(container, api, isActive) {
                 hasTab('hubble') && api.resolved.entity.kind === 'galaxy' && !(m.distance_pc > 0) ? toolLink(api, 'photometer', 'Brightness next') : null,
                 keyboardUsed ? el('button', { type: 'button', class: 'spectro-tool-next', text: 'Measure another line', onclick: () => plot.canvas.focus() }) : null
             ),
-            termLine(beyond ? shift : `${shift}, so z = Δλ ÷ λ₀ = ${zText(combined.z, combined.err_z)}, and v = cz`, seen),
-            beyond ? termLine(`z is above 0.1, so v = cz no longer applies: it would give ${sig(combined.v_kms, 3)} km/s, but light this stretched has crossed an expanding Universe. Astronomers quote z itself.`, seen, 'spectro-tool-text') : null,
+            termLine(moved, seen),
             measured.length > 1 ? para(`The average of ${measured.length} lines.`) : para('Measure another line to check: all lines of one object share the same shift. Narrow lines give the sharpest speed.'),
             last.d.blended ? para('Another line sits inside this dip, so it may be two lines run together, and the uncertainty allows for that. A line standing alone gives a sharper speed.') : null,
             combined.disagree ? para('These lines don\'t agree. One of them may have been given the wrong rest line.') : null

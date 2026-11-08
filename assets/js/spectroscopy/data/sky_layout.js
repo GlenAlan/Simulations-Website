@@ -8,7 +8,7 @@
 // sky grow dense where it is faint. It keeps further from the first sky's bodies, so as not to crowd them.
 
 import { MIN_ALT, azAltToVec3, vec3ToAzAlt, galacticLatitude } from '../core/sky.js';
-import { dp } from './stellar.js';
+import { dp, dpAz } from './stellar.js';
 
 export const MIN_SPACING_DEG = 1;     // Points this far apart stay distinct at the default zoom
 const MARGIN_DEG = 0.2;               // Room for the jitter
@@ -137,7 +137,7 @@ export function layOutSky(entries, rng) {
                 c * a[1] + s * (ca * e1[1] + sa * e2[1]),
                 c * a[2] + s * (ca * e1[2] + sa * e2[2])
             );
-            const az = dp(pos.az, 4);
+            const az = dpAz(pos.az, 4);
             const alt = dp(pos.alt, 4);
             if (alt < MIN_ALT + 0.3) continue;
             const v = azAltToVec3(az, alt);
@@ -165,7 +165,7 @@ export function layOutSky(entries, rng) {
         const sky = entry.body.sky;
         const alt = Math.max(MIN_ALT + 0.05, sky.alt + r * Math.sin(angle));
         const az = sky.az + (r * Math.cos(angle)) / Math.max(0.05, Math.cos(sky.alt * RAD));
-        sky.az = dp(az - 360 * Math.floor(az / 360), 3);
+        sky.az = dpAz(az, 3);
         sky.alt = dp(alt, 3);
     });
 
@@ -176,19 +176,20 @@ export function layOutSky(entries, rng) {
     return { placed, maxRadius: placed.reduce((m, p) => Math.max(m, p.radius), 0), maxClear: placed.reduce((m, p) => Math.max(m, p.clear), 0) };
 }
 
-// How far apart a new body and one already placed must be, with room for rounding
+// How far apart a new body and one already placed must be, with room for rounding. An entry with clear_deg keeps that much
+// sky clear round itself, from what is already there and from what comes after.
 function deepSeparation(entry, other) {
     const a = entry.radius_deg || 0;
     const b = other.radius;
     const reach = a > 0 && b > 0 ? a + b : 0.5 * Math.max(a, b);
     const point = other.deep ? Math.min(entry.spacing, other.spacing) : Math.max(entry.spacing, DEEP_CLEAR_DEG);
-    return Math.max(point * DEEP_MARGIN, reach, other.clear || 0);   // And out of any space kept clear round a body
+    return Math.max(point * DEEP_MARGIN, reach, other.clear || 0, entry.clear_deg || 0);   // And out of any space kept clear round a body
 }
 
 // Only a body nearer than the widest separation this entry could need is worth the full rule
 function widestSeparation(layout, entry) {
     const a = entry.radius_deg || 0;
-    return Math.max(Math.max(entry.spacing, DEEP_CLEAR_DEG) * DEEP_MARGIN, a + layout.maxRadius, 0.5 * Math.max(a, layout.maxRadius), layout.maxClear);
+    return Math.max(Math.max(entry.spacing, DEEP_CLEAR_DEG) * DEEP_MARGIN, a + layout.maxRadius, 0.5 * Math.max(a, layout.maxRadius), layout.maxClear, entry.clear_deg || 0);
 }
 
 function deepFits(layout, v, entry, skip) {
@@ -206,7 +207,12 @@ function deepFits(layout, v, entry, skip) {
 
 function addPlaced(layout, entry, az, alt) {
     entry.body.sky = { az, alt };
-    layout.placed.push({ entry, v: azAltToVec3(az, alt), radius: entry.radius_deg || 0, deep: true, spacing: entry.spacing });
+    const placed = { entry, v: azAltToVec3(az, alt), radius: entry.radius_deg || 0, deep: true, spacing: entry.spacing };
+    if (entry.clear_deg) {
+        placed.clear = entry.clear_deg;
+        layout.maxClear = Math.max(layout.maxClear, entry.clear_deg);
+    }
+    layout.placed.push(placed);
     layout.maxRadius = Math.max(layout.maxRadius, entry.radius_deg || 0);
 }
 
@@ -221,7 +227,7 @@ export function layOutDeep(layout, entries, rng) {
         const lowest = MIN_ALT + 0.3 + (entry.radius_deg || 0);
         const keep = KEEP_RULES[entry.rule] || KEEP_RULES.even;
         for (let tries = 0; ; tries++) {
-            const az = dp(stream.range(0, 360), 4);
+            const az = dpAz(stream.range(0, 360), 4);
             const alt = dp(Math.asin(stream.next()) / RAD, 4);
             if (alt < lowest) continue;
             const lat = dp(Math.abs(galacticLatitude(az, alt)), 3);
@@ -238,7 +244,7 @@ export function layOutDeep(layout, entries, rng) {
 export function placeOne(layout, entry, candidates) {
     const sep = Math.max(MIN_SPACING_DEG + MARGIN_DEG, entry.radius_deg || 0);
     for (const c of candidates) {
-        const az = dp(c.az - 360 * Math.floor(c.az / 360), 3);
+        const az = dpAz(c.az, 3);
         const alt = dp(c.alt, 3);
         if (alt < MIN_ALT + 0.3) continue;
         const v = azAltToVec3(az, alt);
@@ -251,6 +257,23 @@ export function placeOne(layout, entry, candidates) {
             entry.body.sky = { az, alt };
             layout.placed = layout.placed.filter((p) => p.entry !== entry);
             layout.placed.push({ entry, v, radius: entry.radius_deg || 0, deep: false, spacing: MIN_SPACING_DEG, clear: 0 });
+            return { az, alt };
+        }
+    }
+    return null;
+}
+
+// One body of the deeper sky at the first of a list of candidate spots { az, alt } that keeps the deeper sky's rules from
+// everything placed but `inside`, the body it is seen against (a supernova on its galaxy). Returns the spot used, or null.
+export function placeDeepAt(layout, entry, candidates, inside = null) {
+    entry.spacing = deepSpacingDeg(entry.body);
+    const skip = inside ? layout.placed.find((p) => p.entry.body === inside) : null;
+    for (const c of candidates) {
+        const az = dpAz(c.az, 3);
+        const alt = dp(c.alt, 3);
+        if (alt < MIN_ALT + 0.3) continue;
+        if (deepFits(layout, azAltToVec3(az, alt), entry, skip && skip.entry)) {
+            addPlaced(layout, entry, az, alt);
             return { az, alt };
         }
     }

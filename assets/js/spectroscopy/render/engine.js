@@ -13,6 +13,10 @@
 // Each frame: sky scene -> overlay passes -> post effects (all HDR) -> bloom -> tone map, vignette, sRGB, dither.
 // If WebGL can't start, the engine still returns this API but draws nothing, and the canvas area says why.
 //
+// A click on the sky emits bus 'skyclick' { code, x, y } (code null for empty sky), and the second of two quick clicks on
+// the same spot 'skydoubleclick' { code, x, y } as well, a tap's as a click's. On a narrow screen, where the panel a click
+// opens moves the sky, a click on an object is told a moment late, in case a second one is coming.
+//
 // If the browser takes the graphics context away the engine emits bus 'gl-lost', and if it later gives it back,
 // 'gl-restored'. Whatever a layer baked into a render target is gone by then, so a layer that bakes should listen and
 // bake again.
@@ -41,10 +45,14 @@ const INERTIA_RATE = 4.2;       // How fast a flicked sky slows down (1/s)
 export const ZOOM_RATE = 11;    // How fast the zoom catches up with the wheel (1/s)
 const CLICK_SLOP_MOUSE = 5;     // Pointer travel (px) that turns a click into a drag
 const CLICK_SLOP_TOUCH = 12;    // Fingers wobble more
+const DOUBLE_MS = { mouse: 500, touch: 350 };   // A second click this soon after the first is a double-click (Windows' own
+const DOUBLE_PX = { mouse: 6, touch: 30 };      // time for a mouse, a phone's for a tap), if it lands this near the first
+const HOLD_CLICK_MS = 350;      // How long a click waits to see whether it's the first of two, where that's needed (see release)
 const PICK_RADIUS_MOUSE = 24;
 const PICK_RADIUS_TOUCH = 44;   // As generous as a touch target
 const PICK_SEEN_MIN = 0.12;     // Drawn fainter than this (see seenAmount), a point can't be made out, so it can't be clicked
 const PICK_FAINT_REACH = 0.25;  // The faintest that can be clicked must be clicked this near, as a share of the usual reach
+const ROGUE_SEEN_SOONER = 0.25; // Magnitudes: a rogue planet can be made out this much sooner than a star (see seenAmount)
 const CLUSTER_INSIDE = 0.45;    // A cluster's radius, as a share of the view's smaller side, once you are in among its stars
 const REDUCED_SLEW_S = 0.3;     // Reduce motion: a quick dip to black in place of a flight
 const DRAWER_RESIZE_MS = 700;   // A change of size this soon after the drawer opens or closes is the drawer's doing
@@ -617,6 +625,23 @@ export function createEngine(canvas) {
         return Math.min(max, size * 1.08);
     }
 
+    // After a yes from bakesAllowed: has the GPU room for another piece this frame? Only one that is keeping up easily.
+    function bakeRoom() {
+        return gpu.behind < 2 && lastRealDt <= BAKE_ONE_ONLY_ABOVE_S;
+    }
+
+    // Where the view is going: the end of a flight (Go to, a double-click), or the field of view an easing zoom is closing
+    // on. { az, alt, fov, flight }, az and alt for the middle of the canvas, or null when the view is already there. For a
+    // layer that prepares what will show (a galaxy's picture), so that it can start at take-off.
+    function viewGoal() {
+        if (slew) {
+            const aim = slew.aim || (slew.dip ? { az: slew.toAz, alt: slew.toAlt } : { az: slew.from.az + slew.dAz, alt: slew.from.alt + slew.dAlt });
+            return { az: aim.az, alt: aim.alt, fov: slew.toFov, flight: true };
+        }
+        if (Math.abs(Math.log(zoomGoal / view.fov)) > 1e-3) return { ...centreDir(), fov: zoomGoal, flight: false };
+        return null;
+    }
+
     // ---------- Size and graphics level ----------
 
     // keepStill: the drawer has changed the canvas's size, and what's on screen should stay where it is on the page
@@ -857,9 +882,10 @@ export function createEngine(canvas) {
         zoomAnchor = null;
     }
 
-    // Fly the camera along the shortest way round. opts: { duration (s), pullBack, onDone }. Duration 0 jumps.
-    // pullBack widens the view on the way, more for a long flight, so the sky doesn't whip past. Reduce motion
-    // replaces the flight with a quick dip to black.
+    // Fly the camera along the shortest way round. opts: { duration (s), pullBack, glide, onDone }. Duration 0 jumps.
+    // pullBack widens the view on the way, more for a long flight, so the sky doesn't whip past. glide: a target already on
+    // screen slides from where it is to the middle in a straight line as the zoom goes, so a zoom right in on something
+    // never swings it off the screen on the way. Reduce motion replaces the flight with a quick dip to black.
     function slewTo(target, opts = {}) {
         velocity.az = 0;
         velocity.alt = 0;
@@ -870,12 +896,20 @@ export function createEngine(canvas) {
         // the slew goes, as the drawer opening for the same click can move the axis meanwhile. opts.axis: it's the axis's own.
         let aim = null;
         let to = { az: target.az ?? view.az, alt: target.alt ?? view.alt };
+        // Near the zenith, an axis off the middle may not be able to bring the target to the middle at all: the camera would
+        // have to tip over the top. Then the axis goes back to the middle on the way, which nobody sees while the sky moves.
+        let toCentre = null;
         if (!opts.axis) {
             const centre = centreDir();
             aim = { az: target.az ?? centre.az, alt: target.alt ?? centre.alt };
+            if (lensOffset() && !middleReaches(aim, toFov)) toCentre = { x: lens.x, y: lens.y, k: 0 };
             to = axisFor(aim, toFov);
         }
         if (duration <= 0) {
+            if (toCentre) {
+                moveLens(toCentre, 1);
+                to = axisFor(aim, toFov);
+            }
             placeView(to.az, to.alt, toFov);
             zoomGoal = view.fov;
             slew = null;
@@ -884,7 +918,7 @@ export function createEngine(canvas) {
             return;
         }
         if (app.settings.reduceMotion) {
-            slew = { dip: true, jumped: false, aim, toAz: to.az, toAlt: to.alt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
+            slew = { dip: true, jumped: false, aim, toCentre, toAz: to.az, toAlt: to.alt, toFov, t: 0, duration: REDUCED_SLEW_S, onDone: opts.onDone };
             return;
         }
         const dAz = ((((to.az - view.az + 540) % 360) + 360) % 360) - 180;
@@ -894,7 +928,59 @@ export function createEngine(canvas) {
             const across = Math.hypot(dAz * Math.cos(((view.alt + to.alt) / 2) * RAD), dAlt);
             midFov = Math.min(MAX_FOV, Math.max(Math.max(view.fov, toFov) * 1.25, Math.min(70, across * 0.8)));
         }
-        slew = { from: { ...view }, aim, dAz, dAlt, toFov, midFov, t: 0, duration, onDone: opts.onDone };
+        let glide = null;
+        if (aim && opts.glide) {
+            const p = project(aim.az, aim.alt);
+            if (p && p.onScreen) glide = { x: p.x - width / 2, y: p.y - height / 2 };
+        }
+        slew = { from: { ...view }, aim, toCentre, dAz, dAlt, toFov, midFov: glide ? null : midFov, glide, t: 0, duration, onDone: opts.onDone };
+    }
+
+    // Can the middle of the canvas be brought onto this direction, with the lens as it is? See rayThrough and solveAxis.
+    function middleReaches(aim, fov) {
+        const r = rayThrough(width / 2, height / 2, fov);
+        if (Math.abs(Math.sin(aim.alt * RAD)) > Math.hypot(r.y, r.f) - 1e-9) return false;
+        const axis = axisPutting(aim.az, aim.alt, width / 2, height / 2, fov);
+        return axis.alt <= ALT_MAX && axis.alt >= ALT_SLEW_MIN;
+    }
+
+    // Takes the lens's offset back towards none, to k of the way: by steps, so that the drawer can still move it meanwhile
+    function moveLens(state, k) {
+        lens.x -= state.x * (k - state.k);
+        lens.y -= state.y * (k - state.k);
+        state.k = k;
+        if (k >= 1) {
+            if (Math.abs(lens.x) < 0.01) lens.x = 0;
+            if (Math.abs(lens.y) < 0.01) lens.y = 0;
+        }
+        projectionDirty = true;
+    }
+
+    // A glide's view at k of the way: the zoom eases in log steps as any flight's does, and the target sits on the straight
+    // line from where it was to the middle, solved from scratch each frame so that nothing builds up
+    function glideView(k) {
+        const { from, toFov, glide, aim } = slew;
+        if (k >= 1) return { ...axisFor(aim, toFov), fov: toFov };
+        const fov = from.fov * (toFov / from.fov) ** k;
+        const axis = axisPutting(aim.az, aim.alt, width / 2 + glide.x * (1 - k), height / 2 + glide.y * (1 - k), fov);
+        return { az: axis.az, alt: axis.alt, fov };
+    }
+
+    // Answers a question about another view without drawing it: the camera looks from there while fn runs, and then every
+    // digit of this view comes back. For working out what a zoom would find before it gets there.
+    function atView(next, fn) {
+        const was = { az: view.az, alt: view.alt, fov: view.fov, goal: zoomGoal, anchor: zoomAnchor };
+        try {
+            placeView(next.az, next.alt, next.fov);
+            return fn();
+        } finally {
+            view.az = was.az;
+            view.alt = was.alt;
+            view.fov = was.fov;
+            zoomGoal = was.goal;
+            zoomAnchor = was.anchor;
+            applyView();
+        }
     }
 
     // The camera's axis for a direction that is to be in the middle of the canvas
@@ -909,13 +995,19 @@ export function createEngine(canvas) {
             dipToBlack = Math.abs(1 - slew.t * 2);
             if (slew.t >= 0.5 && !slew.jumped) {
                 slew.jumped = true;
+                if (slew.toCentre) moveLens(slew.toCentre, 1);
                 const to = slew.aim ? axisFor(slew.aim, slew.toFov) : { az: slew.toAz, alt: slew.toAlt };
                 placeView(to.az, to.alt, slew.toFov);
                 zoomGoal = view.fov;
             }
+        } else if (slew.glide) {
+            if (slew.toCentre) moveLens(slew.toCentre, easeInOut(slew.t));
+            const to = glideView(easeInOut(slew.t));
+            placeView(to.az, to.alt, to.fov);
         } else {
             const k = easeInOut(slew.t);
             const { from, midFov, toFov } = slew;
+            if (slew.toCentre) moveLens(slew.toCentre, k);
             if (slew.aim) {
                 const to = axisFor(slew.aim, toFov);
                 slew.dAz = ((((to.az - from.az + 540) % 360) + 360) % 360) - 180;
@@ -1080,7 +1172,10 @@ export function createEngine(canvas) {
     // ---------- Picking ----------
 
     // Extended bodies can be clicked anywhere on them, using the size in their data. Layers may add better shapes.
-    function extendedRadiusDeg(body) {
+    // The Local Group's galaxy (data/local_group.js) is long, thin and bright: while it is small on screen, only its bright
+    // middle answers for it, so that a star by its tip can still be clicked.
+    function extendedRadiusDeg(body, pxPerDeg) {
+        if (body.galaxy && body.galaxy.local_group && body.galaxy.size_deg * 0.45 * pxPerDeg <= 12) return body.galaxy.size_deg * 0.15;
         if (body.nebula) return body.nebula.size_deg * 0.4;
         if (body.galaxy) return body.galaxy.size_deg * 0.45;
         if (body.cluster) return body.cluster.radius_deg;
@@ -1126,6 +1221,9 @@ export function createEngine(canvas) {
     function seenAmount(body, glow, lim) {
         if (body.comet && app.band === 'visible') return smooth01((lim - drawMag(body) + 0.6) / 1.2);
         const m = 1.0857 * Math.log(Math.max(glow, MIN_GLOW)) + 3.25;
+        // A rogue planet's own layer (rogue_planets.js) draws a faint one as a warm haze, plainer to see than stars.js's
+        // point of the same glow, and doesn't dim it towards the horizon
+        if (body.kind === 'rogue_planet') return smooth01((m + ROGUE_SEEN_SOONER) / 2.2);
         const up = Math.max(Math.sin(body.sky.alt * RAD), 0);
         return smooth01(m / 2.2) * Math.exp(-0.05 / (up + 0.05));
     }
@@ -1159,7 +1257,7 @@ export function createEngine(canvas) {
             for (let i = 0; i < bodies.length; i++) {
                 const body = bodies[i];
                 if (bodyShows(body, lim)) {
-                    const radiusPx = extendedRadiusDeg(body) * pxPerDeg;
+                    const radiusPx = extendedRadiusDeg(body, pxPerDeg) * pxPerDeg;
                     // Inside an open cluster the dark between its stars is just sky: only the stars answer a click
                     if (body.cluster && body.cluster.type === 'open' && radiusPx > CLUSTER_INSIDE * Math.min(width, height)) continue;
                     let reach = maxPx;
@@ -1380,11 +1478,36 @@ export function createEngine(canvas) {
 
     const dragPointers = new Map(); // pointerId -> { x, y }
     let press = null;               // The press that may yet turn out to be a click
+    let lastClick = null;           // The click before, which another may make a double-click: { at, x, y, how, code }
     let pinch = null;
     const dragTrail = { x: 0, y: 0, time: 0 };
     const hover = { x: 0, y: 0, dirty: false, lastAt: 0 };
 
     const inputActive = () => app.view === 'sky' && !slew && !contextLost;
+
+    // Two clicks in quick succession on the same spot are a double-click, and a third starts afresh. The same spot on the
+    // page, not on the canvas: the panel the first click opens can move the canvas while the sky holds still.
+    function isSecondClick(e, touch) {
+        const first = lastClick;
+        const how = touch ? 'touch' : 'mouse';
+        return !!first && first.how === how && performance.now() - first.at <= DOUBLE_MS[how]
+            && Math.hypot(e.clientX - first.x, e.clientY - first.y) <= DOUBLE_PX[how];
+    }
+
+    // A click held back for a moment (see release), now told
+    let heldClick = null;
+    function releaseHeldClick() {
+        if (!heldClick) return;
+        const { click, timer } = heldClick;
+        heldClick = null;
+        clearTimeout(timer);
+        bus.emit('skyclick', click);
+    }
+
+    // The panel a click opens is a sheet under the sky on a narrow screen, which shrinks the sky and scrolls the page
+    function clicksMoveTheSky() {
+        return !!app.drawer && !app.drawer.isOpen() && document.body.classList.contains('sim-panel-sheet');
+    }
 
     function canvasPoint(e) {
         const rect = canvas.getBoundingClientRect();
@@ -1411,7 +1534,13 @@ export function createEngine(canvas) {
 
     if (renderer) {
         canvas.addEventListener('pointerdown', (e) => {
-            if (!inputActive() || (e.pointerType === 'mouse' && e.button !== 0)) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            // The first click can set the sky moving, to bring what it chose out from under a bar or the panel. That doesn't
+            // stop a second click from making it a double-click, though it stops anything else.
+            const second = !inputActive() && !dragPointers.size && app.view === 'sky' && !contextLost && isSecondClick(e, e.pointerType !== 'mouse');
+            // Anything but the second click of a double-click lets a click held back go at once
+            if (heldClick && (dragPointers.size || !isSecondClick(e, e.pointerType !== 'mouse'))) releaseHeldClick();
+            if (!inputActive() && !second) return;
             const p = canvasPoint(e);
             dragPointers.set(e.pointerId, p);
             try {
@@ -1422,7 +1551,7 @@ export function createEngine(canvas) {
             zoomAnchor = null;
             zoomGoal = view.fov;
             if (dragPointers.size === 1) {
-                press = { x: p.x, y: p.y, moved: 0, touch: e.pointerType !== 'mouse' };
+                press = { x: p.x, y: p.y, moved: 0, touch: e.pointerType !== 'mouse', second };
                 dragTrail.time = performance.now();
             } else if (dragPointers.size === 2) {
                 press = null; // Two fingers are never a click
@@ -1468,6 +1597,7 @@ export function createEngine(canvas) {
                 const slop = press.touch ? CLICK_SLOP_TOUCH : CLICK_SLOP_MOUSE;
                 if (press.moved <= slop) return; // Still might be a click: hold the sky still
                 press = null;
+                releaseHeldClick();
             }
             const moved = moveByPixels(dx, dy);
             // The flick's speed: an average over the last moments of the drag
@@ -1490,10 +1620,39 @@ export function createEngine(canvas) {
                 velocity.az = 0;
                 velocity.alt = 0;
             }
-            if (press && !cancelled && inputActive()) {
+            if (press && !cancelled && press.second) {
+                // Pressed while the sky was moving: it can only be the second click of a double-click, on what the first found
+                const p = canvasPoint(e);
+                const first = lastClick;
+                const double = isSecondClick(e, press.touch);
+                lastClick = null;
+                if (double && first.code) bus.emit('skydoubleclick', { code: first.code, x: p.x, y: p.y });
+            } else if (press && !cancelled && inputActive()) {
                 const p = canvasPoint(e);
                 const code = pick(p.x, p.y, press.touch ? PICK_RADIUS_TOUCH : PICK_RADIUS_MOUSE);
-                bus.emit('skyclick', { code, x: p.x, y: p.y });
+                const first = lastClick;
+                const double = isSecondClick(e, press.touch);
+                const how = press.touch ? 'touch' : 'mouse';
+                lastClick = double ? null : { at: performance.now(), x: e.clientX, y: e.clientY, how, code };
+                const click = { code, x: p.x, y: p.y };
+                if (double) {
+                    // A held first click is the one to go with: nothing has moved since it
+                    if (heldClick) releaseHeldClick();
+                    else bus.emit('skyclick', click);
+                    // The first click's find stands: the second can just miss it, or the sky may have moved it from under the pointer
+                    if (first.code || code) bus.emit('skydoubleclick', { code: first.code || code, x: p.x, y: p.y });
+                } else if (code && clicksMoveTheSky()) {
+                    // On a narrow screen the panel this opens comes up under the sky and moves it, so the second click of a
+                    // double-click would land somewhere else: it waits a moment to see whether one comes
+                    releaseHeldClick();
+                    heldClick = { click, timer: setTimeout(releaseHeldClick, HOLD_CLICK_MS) };
+                } else {
+                    releaseHeldClick();
+                    bus.emit('skyclick', click);
+                }
+            } else {
+                lastClick = null;   // A drag or a pinch in between: not a double-click
+                releaseHeldClick();
             }
             press = null;
         };
@@ -1609,8 +1768,9 @@ export function createEngine(canvas) {
         setView,                    // setView({ az, alt, fov }) jumps straight there
         flyView,
         getView: () => ({ ...view }),
-        slewTo,                     // slewTo({ az, alt, fov }, { duration, pullBack, onDone })
+        slewTo,                     // slewTo({ az, alt, fov }, { duration, pullBack, glide, onDone })
         isSlewing: () => !!slew,
+        atView,                     // atView({ az, alt, fov }, fn): fn's answer from that view, which is never drawn
         // setZoomIntake(fn): fn(step, point, kind) sees every zoom step before the sky does, and returns true to keep it.
         // step is the change in the natural log of the field of view, negative going in. point is in CSS pixels, or null for
         // the centre of the view. kind is 'wheel', 'touch' or 'key'. The system view uses this to carry a zoom into a star.
@@ -1685,6 +1845,8 @@ export function createEngine(canvas) {
         // Should a layer's bake go ahead this frame? See "Bakes" above
         bakesAllowed,
         bakePace,
+        bakeRoom,
+        viewGoal,
         stats: () => ({ ...stats, bloomLevels: bloomTargets.length, dpr, bufferW, bufferH, level: app.qualityLevel, gpuBehind: gpu.behind, joining: joining.size }),
         start() {
             if (running || !renderer) return;

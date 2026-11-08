@@ -8,12 +8,20 @@ import { MIN_ALT, MIN_FOV, azAltToVec3, limitingMag, galacticLatitude, angularSe
 import { STAR_TABLE, RSUN_AU, luminosityFromRT, msLifetimeMyr } from './stellar.js';
 import { PLANET_TYPES, MIN_STELLAR_RADII, rocheLimitAU, hillSpacing, hillRatio, HILL_SPACING, ROCHE_ROOM, MOVE_JITTER } from './planets.js';
 import { spacingBetween } from './sky_layout.js';
-import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS } from './quotas.js';
+import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, SUPERNOVAE, ROGUE_PLANETS_KEPT, EXTRA, EXTRA_STARS } from './quotas.js';
+import { FAR_INTERNAL_LIMIT_KMS, FAR_DEPTH_DIM_MAG } from './far_supernovae.js';
+import { distanceModulus } from './stellar.js';
+import { supernovaBandsAt } from './band_table.js';
 import { componentStates, cometTailAU, eclipsingOrbits } from './orbits.js';
 import { systemProblems } from './dynamics.js';
 import { crossesPlanet, MAX_ECC } from './exocomets.js';
 import { unseal } from './sealed.js';
 import { nucleusEntities, nucleusProblems } from './nuclei.js';
+import { LOCAL_GROUP_GALAXIES, localGroupProblems } from './local_group.js';
+import { UNSTABLE_MULTIPLES } from './quotas.js';
+import { UNSTABLE_ARCH, unstableProblems } from './unstable.js';
+import { PULSE_SHOWN_HZ, PULSAR_SPIN_HZ } from './deep_sky.js';
+import { FIELD_NEUTRON_STARS } from './neutron_field.js';
 
 const RAD = Math.PI / 180;
 const DEFAULT_FOV = 80;
@@ -24,26 +32,48 @@ const FASTEST_STAR_KMS = 450;
 const PECULIAR_GALAXY_KMS = 550;    // The most a galaxy strays from Hubble's law (data/motions.js)
 const MIN_ECLIPSING = 12;           // Sky systems that eclipse: the tight pairs, and those turned edge-on (data/dynamics.js)
 
-// The whole sky's quotas: the first sky's and the deeper sky's together
+// The whole sky's quotas: the first sky's, the deeper sky's and the added sky's together, less what went (data/quotas.js)
 const sum = (a, b) => {
     const out = { ...a };
     Object.keys(b).forEach((k) => { out[k] = (out[k] || 0) + b[k]; });
     return out;
 };
+const total = (table) => Object.values(table).reduce((a, b) => a + b, 0);
+const SUPERNOVA_TYPES = sum(SUPERNOVAE.near, SUPERNOVAE.far);
+const ROGUES = ROGUE_PLANETS_KEPT.first + ROGUE_PLANETS_KEPT.deep;
+// The rogue planets' types can only be told when each sky keeps all of its own or none
+const rogueMix = (kept, made, mix) => (kept === made ? mix : kept === 0 ? {} : null);
+const ROGUE_MIX = [rogueMix(ROGUE_PLANETS_KEPT.first, BODY_COUNTS.rogue_planet, MIX.rogue_planet), rogueMix(ROGUE_PLANETS_KEPT.deep, DEEP.counts.rogue_planet, DEEP.mix.rogue_planet)];
 const TOTAL = {
-    counts: { ...sum(BODY_COUNTS, DEEP.counts), comet: SKY_COMETS },
-    triples: MIX.triples + DEEP.mix.triples,
-    multiWithPlanets: MIX.multiWithPlanets + DEEP.mix.multiWithPlanets,
+    counts: {
+        ...sum(sum(BODY_COUNTS, DEEP.counts), { star: EXTRA_STARS.total, multi: EXTRA.multi, galaxy: total(EXTRA.galaxy) }),
+        comet: SKY_COMETS,
+        supernova: total(SUPERNOVA_TYPES),
+        rogue_planet: ROGUES
+    },
+    triples: MIX.triples + DEEP.mix.triples + EXTRA.triples,
+    multiWithPlanets: MIX.multiWithPlanets + DEEP.mix.multiWithPlanets + EXTRA.withPlanets,
     nebula: sum(MIX.nebula, DEEP.mix.nebula),
     cluster: sum(MIX.cluster, DEEP.mix.cluster),
-    galaxy: sum(MIX.galaxy, DEEP.mix.galaxy),
-    rogue_planet: sum(MIX.rogue_planet, DEEP.mix.rogue_planet),
-    starbursts: MIX.starbursts + DEEP.mix.starbursts,
-    population: sum(MIX.population, DEEP.mix.population),
+    galaxy: sum(sum(MIX.galaxy, DEEP.mix.galaxy), EXTRA.galaxy),
+    rogue_planet: ROGUE_MIX.every(Boolean) ? sum(ROGUE_MIX[0], ROGUE_MIX[1]) : null,
+    starbursts: MIX.starbursts + DEEP.mix.starbursts + EXTRA.starbursts,
+    population: sum(sum(MIX.population, DEEP.mix.population), EXTRA_STARS.mix.population),
     stars: Object.fromEntries(Object.keys(STAR_TABLE).map((c) => [c, {
-        count: STAR_TABLE[c].count + DEEP.stars[c].count, withPlanets: STAR_TABLE[c].withPlanets + DEEP.stars[c].withPlanets
+        count: STAR_TABLE[c].count + DEEP.stars[c].count + EXTRA_STARS.stars[c].count,
+        withPlanets: STAR_TABLE[c].withPlanets + DEEP.stars[c].withPlanets + EXTRA_STARS.stars[c].withPlanets
     }]))
 };
+// And the Local Group's spiral, on top of the quotas (data/local_group.js)
+TOTAL.counts.galaxy += LOCAL_GROUP_GALAXIES;
+TOTAL.galaxy.spiral += LOCAL_GROUP_GALAXIES;
+// And the unstable multiples, on top of them too (data/unstable.js)
+const UNSTABLE_COUNT = UNSTABLE_MULTIPLES.triples + UNSTABLE_MULTIPLES.quadruples;
+TOTAL.counts.multi += UNSTABLE_COUNT;
+// Of all the multi-star systems, the share in stable orbits must be at least this, and less than all of them
+const LEAST_STABLE_SHARE = 0.9;
+// Kinds that only the first sky has, but for supernovae in other galaxies
+const DEEP_KINDS = new Set([...Object.keys(DEEP.counts), 'star', 'multi', 'galaxy', ...(total(SUPERNOVAE.far) ? ['supernova'] : [])]);
 
 function hasWater(planet) {
     const pct = planet.atmosphere_pct || {};
@@ -132,17 +162,22 @@ function checkCounts(u, fail) {
         if (kind === 'multi') return;
         if (kinds[kind] !== TOTAL.counts[kind]) fail(`${kinds[kind]} of ${kind}, expected ${TOTAL.counts[kind]}`);
     });
-    // The rare kinds are only ever in the first sky
+    // The rare kinds are only ever in the first sky, but for supernovae in other galaxies
     sky.filter((b) => b.deep).forEach((b) => {
-        if (!DEEP.counts[b.kind === 'binary' || b.kind === 'multiple' ? 'multi' : b.kind]) fail(`${b.code} is a ${b.kind} in the deeper sky`);
+        const kind = b.kind === 'binary' || b.kind === 'multiple' ? 'multi' : b.kind;
+        if (!DEEP_KINDS.has(kind) || (kind === 'rogue_planet' && !ROGUE_PLANETS_KEPT.deep)) fail(`${b.code} is a ${b.kind} in the deeper sky`);
+        if (b.supernova && !b.supernova.host_code) fail(`${b.code} is a supernova in the deeper sky without a galaxy`);
     });
     const multis = sky.filter((b) => b.stars);
     if (multis.length !== TOTAL.counts.multi) fail(`${multis.length} multi-star systems`);
     const arch = countBy(multis, (b) => b.architecture);
-    const random = TOTAL.counts.multi - 2;
-    if (arch.binary !== random - TOTAL.triples || arch.hierarchical_triple !== TOTAL.triples || arch.figure_eight !== 1 || arch.double_double !== 1) {
+    const random = TOTAL.counts.multi - 2 - UNSTABLE_COUNT;
+    if (arch.binary !== random - TOTAL.triples || arch.hierarchical_triple !== TOTAL.triples || arch.figure_eight !== 1 || arch.double_double !== 1
+        || (arch[UNSTABLE_ARCH] || 0) !== UNSTABLE_COUNT) {
         fail(`multi-star mix ${JSON.stringify(arch)}`);
     }
+    const sizes = countBy(multis.filter((b) => b.architecture === UNSTABLE_ARCH), (b) => b.stars.length);
+    if ((sizes[3] || 0) !== UNSTABLE_MULTIPLES.triples || (sizes[4] || 0) !== UNSTABLE_MULTIPLES.quadruples) fail(`unstable multiples of sizes ${JSON.stringify(sizes)}`);
     const randoms = multis.filter((b) => b.architecture === 'binary' || b.architecture === 'hierarchical_triple');
     const withPlanets = randoms.filter((b) => b.planets.length > 0).length;
     if (withPlanets !== TOTAL.multiWithPlanets) fail(`${withPlanets} random multi-star systems with planets`);
@@ -175,8 +210,12 @@ function checkCounts(u, fail) {
     expectMix(sky.filter((b) => b.cluster), (b) => b.cluster.type, TOTAL.cluster, 'clusters');
     expectMix(sky.filter((b) => b.neutron_star), (b) => (b.neutron_star.pulsar ? 'pulsar' : 'quiet'), MIX.neutron_star, 'neutron stars');
     expectMix(sky.filter((b) => b.galaxy), (b) => b.galaxy.morphology, TOTAL.galaxy, 'galaxies');
-    expectMix(sky.filter((b) => b.supernova), (b) => b.supernova.type, MIX.supernova, 'supernovae');
-    expectMix(sky.filter((b) => b.rogue_planet), (b) => b.rogue_planet.type, TOTAL.rogue_planet, 'rogue planets');
+    expectMix(sky.filter((b) => b.supernova), (b) => b.supernova.type, SUPERNOVA_TYPES, 'supernovae');
+    expectMix(sky.filter((b) => b.supernova && !b.supernova.host_code), (b) => b.supernova.type, SUPERNOVAE.near, 'nearby supernovae');
+    if (TOTAL.rogue_planet) expectMix(sky.filter((b) => b.rogue_planet), (b) => b.rogue_planet.type, TOTAL.rogue_planet, 'rogue planets');
+    const giants = sky.filter((b) => b.star && (b.star.stage === 'giant' || b.star.stage === 'supergiant'));
+    const giantKind = (s) => (s.stage === 'giant' ? 'red_giant' : s.class === 'M' || s.class === 'K' ? 'red_supergiant' : 'blue_supergiant');
+    expectMix(giants, (b) => giantKind(b.star), sum(sum(MIX.giants, DEEP.mix.giants), EXTRA.giants), 'giants');
     const bursts = sky.filter((b) => b.galaxy && b.galaxy.starburst);
     if (bursts.length !== TOTAL.starbursts || bursts.some((b) => b.galaxy.morphology === 'elliptical')) fail(`${bursts.length} starburst galaxies`);
     const radioLoud = sky.filter((b) => b.quasar && b.quasar.radio_loud).length;
@@ -205,6 +244,7 @@ function checkPlacement(u, fail) {
     const linked = new Map();
     u.bodies.forEach((b) => {
         if (b.neutron_star && b.neutron_star.remnant_of) linked.set(b.code, b.neutron_star.remnant_of);
+        if (b.supernova && b.supernova.host_code) linked.set(b.code, b.supernova.host_code);    // Seen against its galaxy
     });
     const vecs = u.bodies.map((b) => azAltToVec3(b.sky.az, b.sky.alt));
     // No pair is ever further apart than this and still too close, so only pairs inside it need the full rule
@@ -395,16 +435,33 @@ function checkComets(body, fail) {
 
 // Every system of stars could really exist: Kepler, a stable hierarchy, Roche lobes, round close orbits, planets in stable
 // zones, stars born together (data/dynamics.js). Sky systems, pairs in clusters, and black holes with their companions.
-// The deeper sky adds none of the few pairs that pass mass across.
+// The deeper sky adds none of the few pairs that pass mass across; the added sky adds exactly EXTRA.interacting.
+// The young multiples flagged unstable (data/unstable.js) fail the hierarchy test, as they must, and nothing else: they are
+// exactly the systems that fail it, they pass every check of their own, and the stable share of all multi-star systems is at
+// least LEAST_STABLE_SHARE but not all of them.
 function checkDynamics(u, fail) {
     const systems = [];
     u.bodies.forEach((body) => {
         if (body.stars || body.black_hole) systems.push(body);
         if (body.cluster) body.cluster.members.forEach((m) => { if (m.stars) systems.push(m); });
     });
-    systems.forEach((system) => systemProblems(system).forEach((p) => fail(`${p.test}: ${p.message}`)));
+    let unstable = 0;
+    systems.forEach((system) => {
+        const problems = systemProblems(system);
+        const failsHierarchy = problems.some((p) => p.test === 'hierarchy');
+        if (failsHierarchy) unstable++;
+        if (failsHierarchy !== !!system.unstable) fail(`${system.code} ${system.unstable ? 'is flagged unstable but passes the hierarchy test' : 'fails the hierarchy test but isn\'t flagged unstable'}`);
+        problems.forEach((p) => {
+            if (!(system.unstable && p.test === 'hierarchy')) fail(`${p.test}: ${p.message}`);
+        });
+        if (system.unstable) unstableProblems(system, u).forEach((message) => fail(`unstable: ${message}`));
+    });
+    const stableShare = (systems.length - unstable) / systems.length;
+    if (!(stableShare >= LEAST_STABLE_SHARE && stableShare < 1)) fail(`${(100 * stableShare).toFixed(1)}% of multi-star systems are in stable orbits`);
+    const passing = u.bodies.filter((b) => b.deep && b.interacting).length;
+    if (passing !== EXTRA.interacting) fail(`${passing} deeper-sky pairs pass mass across, expected ${EXTRA.interacting}`);
     u.bodies.filter((b) => b.deep).forEach((body) => {
-        if (body.interacting) fail(`${body.code} is a deeper-sky pair passing mass across`);
+        if (body.interacting && body.planets.length) fail(`${body.code} is an added pair passing mass across with planets`);
         if (body.cluster && body.cluster.members.some((m) => m.interacting)) fail(`${body.code} is a deeper-sky cluster with a pair passing mass across`);
     });
     // Black holes fed in the usual mix of ways, and enough eclipsing pairs for the light curve to find
@@ -418,7 +475,8 @@ function checkDynamics(u, fail) {
 
 function checkMulti(u, fail) {
     u.bodies.filter((b) => b.stars).forEach((body) => {
-        if (body.stars.length !== { binary: 2, hierarchical_triple: 3, figure_eight: 3, double_double: 4 }[body.architecture]) {
+        const counts = { binary: [2], hierarchical_triple: [3], figure_eight: [3], double_double: [4], [UNSTABLE_ARCH]: [3, 4] }[body.architecture];
+        if (!counts || !counts.includes(body.stars.length)) {
             fail(`${body.code} has ${body.stars.length} stars for ${body.architecture}`);
         }
         if (body.kind !== (body.architecture === 'binary' ? 'binary' : 'multiple')) fail(`${body.code} has kind ${body.kind}`);
@@ -481,7 +539,16 @@ function checkDeepSky(u, fail) {
             if (Math.abs(msLifetimeMyr(c.turnoff_Msun) / c.age_Myr - 1) > 0.02) fail(`${body.code}'s turn-off doesn't match its age`);
         }
         if (body.neutron_star && body.neutron_star.pulsar) {
-            if (!within(body.neutron_star.pulse_period_s, 0.001, 5)) fail(`${body.code} has period ${body.neutron_star.pulse_period_s}`);
+            // Every pulsar turns as the sky shows it, within PULSE_SHOWN_HZ (data/deep_sky.js pulsePeriod)
+            const period = body.neutron_star.pulse_period_s;
+            if (!(period > 0) || !within(1 / period, PULSE_SHOWN_HZ.min, PULSE_SHOWN_HZ.max, 0.001)) fail(`${body.code} has period ${period}`);
+        }
+        if (body.neutron_star && !body.neutron_star.remnant_of) {
+            // One of our galaxy's own, where real ones are (data/neutron_field.js)
+            const f = FIELD_NEUTRON_STARS;
+            const z = body.distance_pc * Math.sin(Math.abs(galacticLatitude(body.sky.az, body.sky.alt)) * RAD);
+            if (!within(body.distance_pc, f.pc[0], f.pc[1])) fail(`${body.code} is a neutron star ${body.distance_pc} pc away`);
+            if (z > f.mostHeightPc * 1.01) fail(`${body.code} is a neutron star ${Math.round(z)} pc off the galactic plane`);
         }
         if (body.galaxy) {
             const expected = H0 * body.galaxy.distance_Mpc;
@@ -498,8 +565,38 @@ function checkDeepSky(u, fail) {
             fail(`${body.code} has no central white dwarf`);
         }
     });
+    // As populations: the pulsars spin round PULSAR_SPIN_HZ (over 200 skies, a sky's mean log rate is within 0.19 dex of it),
+    // and our galaxy's neutron stars keep mostly near its plane (a sky's median |b| is 2 to 12 degrees)
+    const rates = u.bodies.filter((b) => b.neutron_star && b.neutron_star.pulsar).map((b) => Math.log10(1 / b.neutron_star.pulse_period_s));
+    const meanRate = rates.reduce((sum, x) => sum + x, 0) / Math.max(1, rates.length);
+    if (rates.length && Math.abs(meanRate - Math.log10(PULSAR_SPIN_HZ.median)) > 0.3) fail(`the pulsars spin ${(10 ** meanRate).toFixed(2)} times a second on average`);
+    const lats = u.bodies.filter((b) => b.neutron_star && !b.neutron_star.remnant_of).map((b) => Math.abs(galacticLatitude(b.sky.az, b.sky.alt))).sort((a, b) => a - b);
+    if (lats.length && lats[Math.floor(lats.length / 2)] > 15) fail('our galaxy\'s neutron stars are too far from its plane');
     const phases = u.bodies.filter((b) => b.supernova).map((b) => b.supernova.phase0_days);
     if (new Set(phases).size !== phases.length) fail('two supernovae share a phase');
+    u.bodies.filter((b) => b.supernova && b.supernova.host_code).forEach((b) => checkFarSupernova(u, b, fail));
+}
+
+// A supernova in another galaxy (data/far_supernovae.js): on its galaxy, at its distance, moving with it, a standard candle that
+// agrees with that distance, caught near its peak and bright enough to find zoomed in, with no remnant to see
+function checkFarSupernova(u, body, fail) {
+    const sn = body.supernova;
+    const r = u.resolve(sn.host_code);
+    const host = r && r.path === 'body' && r.body.kind === 'galaxy' ? r.body : null;
+    if (!host) return fail(`${body.code}'s galaxy ${sn.host_code} isn't one`);
+    if (!body.deep) fail(`${body.code} is a supernova in another galaxy but not in the deeper sky`);
+    if (body.distance_pc !== host.distance_pc) fail(`${body.code} isn't as far away as its galaxy`);
+    if (Math.abs(body.radial_velocity_kms - host.radial_velocity_kms) > FAR_INTERNAL_LIMIT_KMS + 0.1) fail(`${body.code} doesn't move with its galaxy`);
+    if (Math.abs(sn.peak_mag - (sn.abs_peak_mag + distanceModulus(body.distance_pc))) > 0.006) fail(`${body.code}'s peak doesn't match its distance`);
+    if (!within(sn.peak_mag, SUPERNOVAE.farPeakMag[0], SUPERNOVAE.farPeakMag[1], 0.001)) fail(`${body.code} peaks at magnitude ${sn.peak_mag}`);
+    if (sn.phase0_days < SUPERNOVAE.farPhaseDays[0] || sn.phase0_days > SUPERNOVAE.farPhaseDays[1]) fail(`${body.code} starts ${sn.phase0_days} days from its peak`);
+    const now = sn.peak_mag - 2.5 * Math.log10(Math.max(0.001, supernovaBandsAt(sn, sn.phase0_days).visible));
+    if (now + FAR_DEPTH_DIM_MAG > SUPERNOVAE.farFaintestNow + 0.01) fail(`${body.code} is drawn at magnitude ${now + FAR_DEPTH_DIM_MAG} to start with`);
+    if (sn.remnant_code || !(sn.shell_deg > 0 && sn.shell_deg < 1e-3)) fail(`${body.code} has a remnant to see`);
+    const g = host.galaxy;
+    const sep = angularSeparation(body.sky.az, body.sky.alt, host.sky.az, host.sky.alt);
+    if (sep > (g.size_deg / 2) * SUPERNOVAE.farOffset[1] + 1e-3) fail(`${body.code} is ${sep.toFixed(3)} degrees from the middle of its galaxy`);
+    return null;
 }
 
 export function validateUniverse(u) {
@@ -515,5 +612,10 @@ export function validateUniverse(u) {
     checkDynamics(u, fail);
     checkDeepSky(u, fail);
     nucleusProblems(u, fail);
+    const sealed = unseal(u.seed);
+    localGroupProblems(u, fail, [
+        { code: sealed.target.host.code, clear: sealed.target.host.clear_deg },
+        ...[...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK'].map((code) => ({ code, clear: 0 }))
+    ]);
     return failures;
 }
