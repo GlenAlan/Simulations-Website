@@ -2081,7 +2081,7 @@ export function initSystemView(app) {
     // Detail that moves with a star or a black hole flickers as it slides past. Measured at the flash rule's threshold:
     const HOLE_STREAKS = 0.1;       // A black hole's streaks, about this share of its radius apart...
     const HOLE_STREAKS_FROM_PX = 150; // ... once its disc is this big on the screen (px of radius): smaller, they're a blur
-    const DETAIL_SPACING = 0.2;     // A star's corona rays and a giant's big cells: this share of its radius apart, over
+    const DETAIL_SPACING = 0.12;    // A star's corona rays and a giant's big cells: this share of its radius apart, over
                                     // how strongly they show (detailOf)...
     const DETAIL_FROM_PX = 40;      // ... once it's this big on the screen
 
