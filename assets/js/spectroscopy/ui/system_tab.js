@@ -61,7 +61,7 @@ function summaryOf(model, canView) {
 const keptClocks = new Map();
 
 // How the motion is drawn: for orbits, and for stars in no stable orbit (data/unstable.js)
-const ABOUT_ORBITS = 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. An orbit too fast to follow turns into a steady ring of light, so that the slower ones can still be watched.';
+const ABOUT_ORBITS = 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. When something big on the screen would go round too fast to follow, the clock slows down, and says so. With Reduce motion on, an orbit too fast to follow becomes a steady ring of light instead.';
 const ABOUT_DANCE = 'Distances are to scale. These stars have no orbits to follow: their paths are worked out step by step from gravity, sped up by the time control, and each leaves a trail. The clock slows by itself while a star sweeps past close up.';
 
 export function initSystemTab(app) {
@@ -109,6 +109,8 @@ export function initSystemTab(app) {
         const { body } = model;
         systemClock = (body.orbits && body.orbits.length) || body.black_hole || body.unstable ? clockFor(body) : null;
         if (systemClock && !systemClock.playing) systemClock.setSpeed(speed);
+        // The view may hold this clock back while something big on show goes round fast. Its own clock it holds by scale.
+        if (systemClock) systemClock.hold = () => view.clockScale();
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
             range,
@@ -137,7 +139,10 @@ export function initSystemTab(app) {
         quiet = true;
         if (playback) playback.dispose();
         playback = null;
-        if (systemClock) systemClock.pause();
+        if (systemClock) {
+            systemClock.hold = null;
+            systemClock.pause();
+        }
         systemClock = null;
         tellClock();
         quiet = false;
@@ -149,8 +154,10 @@ export function initSystemTab(app) {
         const now = performance.now();
         if (now - lastPaint < 150) return;
         lastPaint = now;
-        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up'
-            : playback.playing && view.danceSlowed() ? ', slowed for a fast pass' : '';
+        // Held back so that nothing big flashes, it says how fast it's really going. Only Reduce motion blurs.
+        const held = playback.playing ? view.heldSpeed() : null;
+        const slowed = held !== null ? `, slowed to ${speedWords(held)}`
+            : playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
         const blurred = view.isBlurred() ? '. The fastest orbits are a blur at this speed.' : '';
         parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}${blurred}`;
     }
