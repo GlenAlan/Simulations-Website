@@ -180,6 +180,7 @@ export function initSystemView(app) {
     let lastZoomAt = -Infinity; // performance.now of the last zoom step in the system
     let viewShown = true;       // Has the page been told the view changed? A zoom waits to see if it's really going in.
     let useFade = false;        // This transition is the Reduce motion cross-fade
+    let byZoom = false;         // ... and a zoom asked for it, so the rest of that zoom stops at the whole system as well
     let path = null;            // The flight's fixed values: see beginFlight
     let doneCallbacks = [];
     let tDays = 0;
@@ -1852,7 +1853,8 @@ export function initSystemView(app) {
     function finishIfDone() {
         if (mode === 'enter' && tNorm >= 1) {
             mode = 'system';
-            if (hand) arrivedByHand();
+            if (hand || byZoom) arrivedByHand();
+            byZoom = false;
             hand = null;
             keyZoom = 0;
             sharedUniforms.uSkyFade.value = 0;
@@ -2029,6 +2031,7 @@ export function initSystemView(app) {
         doneCallbacks = opts.onDone ? [opts.onDone] : [];
         mode = 'load';
         useFade = !!app.settings.reduceMotion;
+        byZoom = !!opts.byZoom;
         tNorm = 0;
         aimCode = null;
         clock.otherDays = 0;
@@ -2109,7 +2112,7 @@ export function initSystemView(app) {
             lockStarsToSky(engine.currentFrame(), cam.dist, true);
             mode = 'exit';
         },
-        enter(code) { enter(code, { focus: false }); },
+        enter(code) { enter(code, { focus: false, byZoom: true }); },
         exit() { exit(); },
         holeFov
     });
