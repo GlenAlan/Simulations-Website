@@ -55,7 +55,12 @@ export function smoothstep(lo, hi, x) {
 //   - Each spot a close beam passes also brightens and dims about 2.8 times a turn, so above FLICKER_HZ turns a second
 //     those spots would flash more than three times a second. There the turning light is FAST_SHARE of it, too faint to
 //     count as a flash anywhere (under a tenth of full brightness), and still enough to be seen turning.
-//   - The sky's beams, small, are as they were at every rate.
+//   - The sky's beams are as they were while they're small, and at every size for a pulsar turning up to SKY_FLICKER_HZ
+//     times a second: each spot of the sky one passes is lit once a turn, which is three flashes a second at most. Turning
+//     faster, a beam does that over all it sweeps, and as a zoom makes it bigger, that grows as its size squared, to twice
+//     the most allowed at the deepest zoom. So from SKY_SWEEP_PX[0] to [1], its half-size in CSS pixels, the sky's beams
+//     go over to the close-up's way, their turning light down to the close-up's share and the rest their blurred sweep,
+//     ready for the system view to take over. The pulse itself, a small bright point, keeps flashing at the true rate.
 //   - With Reduce motion nothing turns: the beam holds still at HELD_ANGLE, seen side-on, and the light is steady.
 // The angle at a moment is turns a second x the shared clock (sharedUniforms.uTime) plus the pulsar's own start, so a
 // pulse on the sky is the beam pointing at the camera in the system view, and zooming in keeps the phase.
@@ -65,6 +70,12 @@ export const FAST_SHARE = 0.3;             // The soft beam peaks at 0.284 lumin
 export const HELD_ANGLE = 1.3;
 export const PULSAR_BEAM_SLOPE = 0.13;     // A beam's half-width per unit of its length, in both views
 export const SWEEP_SAMPLES = 24;           // Beam directions the blurred sweep is the average of
+// Measured on the sky at 1024 x 768, at the deepest zoom (a half-size of about 207 px), whole beams flash over 2,700 px
+// turning once a second, 6,000 at 2 and 2.5, 10,600 at 3, then 46,700 at 3.5 and 40,000-48,000 up to 10. At 10 a second
+// they flash over about their half-size squared: 7,200 px at 83 px, 16,500 at 127, 22,000 at 150. With the turning share
+// eased from 1 to FAST_SHARE over SKY_SWEEP_PX, the most anywhere on the way down is under 17,000 px.
+export const SKY_FLICKER_HZ = 3;
+export const SKY_SWEEP_PX = [100, 190];
 
 // The turns a second a pulsar is shown at, from its true period
 export function shownRate(periodS) {
@@ -76,6 +87,11 @@ export function shownRate(periodS) {
 export function turningShare(rate) {
     if (rate <= SPIN_SHOWN) return 1;
     return rate <= FLICKER_HZ ? SPIN_SHOWN / rate : FAST_SHARE;
+}
+
+// On the sky, the share that turns once the beams are bigger than SKY_SWEEP_PX[1]
+export function skyTurningShare(rate) {
+    return rate > SKY_FLICKER_HZ ? turningShare(rate) : 1;
 }
 // Everything both views need to draw one pulsar's spin, from its own stream (rng = bodyRng(body, 'pulsar'), read in this
 // order, which the sky layer goes on reading after). In the frame of the view at the pulsar: x right, y up, z towards us.
