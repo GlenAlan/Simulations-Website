@@ -105,6 +105,8 @@ export function initSystemTab(app) {
         const { body } = model;
         systemClock = (body.orbits && body.orbits.length) || body.black_hole ? clockFor(body) : null;
         if (systemClock && !systemClock.playing) systemClock.setSpeed(speed);
+        // The view may hold this clock back while something big on show goes round fast. Its own clock it holds by scale.
+        if (systemClock) systemClock.hold = () => view.clockScale();
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
             range,
@@ -133,7 +135,10 @@ export function initSystemTab(app) {
         quiet = true;
         if (playback) playback.dispose();
         playback = null;
-        if (systemClock) systemClock.pause();
+        if (systemClock) {
+            systemClock.hold = null;
+            systemClock.pause();
+        }
         systemClock = null;
         tellClock();
         quiet = false;
@@ -145,7 +150,10 @@ export function initSystemTab(app) {
         const now = performance.now();
         if (now - lastPaint < 150) return;
         lastPaint = now;
-        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
+        // Held back so that nothing big flashes, it says how fast it's really going. Only Reduce motion blurs.
+        const held = playback.playing ? view.heldSpeed() : null;
+        const slowed = held !== null ? `, slowed to ${speedWords(held)}`
+            : playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
         const blurred = view.isBlurred() ? '. The fastest orbits are a blur at this speed.' : '';
         parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}${blurred}`;
     }
@@ -238,7 +246,7 @@ export function initSystemTab(app) {
         about.append(
             el('summary', '', 'About the scale'),
             el('p', 'spectro-system-note', 'Sizes are not to scale. Real stars and planets would be invisible specks beside these orbits, so every size is compressed the same way (radius to the power 0.3). A giant is still bigger than a dwarf, and a planet is always drawn smaller than its star.'),
-            el('p', 'spectro-system-note', 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. An orbit too fast to follow turns into a steady ring of light, so that the slower ones can still be watched.')
+            el('p', 'spectro-system-note', 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. When something big on the screen would go round too fast to follow, the clock slows down, and says so. With Reduce motion on, an orbit too fast to follow becomes a steady ring of light instead.')
         );
 
         box.append(summary, action, whole, timeGroup, scaleWrap, detail, listGroup, cometGroup, starGroup, about);
