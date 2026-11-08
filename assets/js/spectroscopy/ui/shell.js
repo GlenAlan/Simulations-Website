@@ -644,7 +644,7 @@ function initSettingsPage(app) {
         checks.append(motion, motionLabel, fps, fpsLabel, keys, keysLabel);
         toggles.append(
             checks,
-            element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle and swaps camera flights for quick fades.'),
+            element('p', 'spectro-setting-note', 'Reduce motion stops the twinkle, swaps camera flights for quick fades, and turns orbits too fast to follow into steady rings of light.'),
             element('p', 'spectro-setting-note', 'Turn single-key shortcuts off if speech input or a stray key sets them off. They then work only while the sky itself has the focus.')
         );
 
