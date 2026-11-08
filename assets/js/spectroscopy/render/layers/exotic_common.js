@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { azAltToVec3 } from '../../core/sky.js';
 import { hashString, Rng } from '../../core/rng.js';
+import { PULSE_SHOWN_HZ } from '../../data/deep_sky.js';
 
 export const SKY_RADIUS = 1000; // Sky objects sit on a sphere this far from the observer
 export const DEG = Math.PI / 180;
@@ -40,35 +41,42 @@ export function smoothstep(lo, hi, x) {
 
 // ---------- A pulsar's spin, the same on the sky (neutron_stars.js) and up close (system/remnants.js) ----------
 //
-// The rule for how fast a pulsar is shown turning. Real ones turn from about once a second to hundreds of times a second,
-// which would be a strobe, so both views slow them by the same rule, and show the same turn at the same moment:
-//   - Each turns at its true rate, but never more than MAX_TURNS_PER_S, once every two seconds. On the sky one turn is one
-//     pulse, as the beam crosses our line of sight. Up close a beam sweeps over a large part of the screen, and changes much
-//     of it from one frame to the next: three such changes a second is the most photosensitive viewers can take. At a
-//     turn a second a close beam did that eight times a second; at half that, with the soft beam in system/remnants.js,
-//     it stays under two. Slowing both views keeps the pulse on the sky and the beam up close in step.
-//   - The faster one really turns, the less its light swings on the sky, down to a faint shimmer below SHIMMER_BELOW_S.
+// The rule for how fast a pulsar is shown turning, the same in both views, which show the same turn at the same moment:
+//   - Each turns at its true rate, kept between PULSE_SHOWN_HZ.min and .max turns a second (0.1 to 10 Hz, from
+//     data/deep_sky.js). Most real pulsars are inside that. A young or millisecond one turns faster, and is shown at 10 a
+//     second; the Pulse timing tool and the Info tab give its true period, and say so. On the sky one turn is one pulse, as
+//     the beam crosses our line of sight: a small point, which may flash that fast.
+//   - Up close a beam sweeps over a large part of the screen, and three changes a second over a wide area is the most
+//     photosensitive viewers can take. Zoomed in, the soft beam in system/remnants.js does that 1.5 times a second at
+//     0.6 turns a second, but 4 times at 0.75 and 8 at 1. So up to SPIN_SHOWN turns a second the close beams are drawn
+//     just as they were. Above it the turning beams fade, to SPIN_SHOWN / rate of their light, and the rest of it is their
+//     sweep blurred into the cones they trace, as the eye sees a fast lighthouse: still turning at the true rate, but
+//     changing the screen from one frame to the next no more than at SPIN_SHOWN.
+//   - Each spot a close beam passes also brightens and dims about 2.8 times a turn, so above FLICKER_HZ turns a second
+//     those spots would flash more than three times a second. There the turning light is FAST_SHARE of it, too faint to
+//     count as a flash anywhere (under a tenth of full brightness), and still enough to be seen turning.
+//   - The sky's beams, small, are as they were at every rate.
 //   - With Reduce motion nothing turns: the beam holds still at HELD_ANGLE, seen side-on, and the light is steady.
 // The angle at a moment is turns a second x the shared clock (sharedUniforms.uTime) plus the pulsar's own start, so a
-// pulse on the sky is the beam pointing at the camera in the system view, and zooming in keeps the phase. The Pulse timing
-// tool reads the true period, never this.
-export const MAX_TURNS_PER_S = 0.5;
-const SHIMMER_BELOW_S = 0.25;
+// pulse on the sky is the beam pointing at the camera in the system view, and zooming in keeps the phase.
+export const SPIN_SHOWN = 0.6;
+export const FLICKER_HZ = 1;
+export const FAST_SHARE = 0.3;             // The soft beam peaks at 0.284 luminance: 0.3 of that is 0.085
 export const HELD_ANGLE = 1.3;
 export const PULSAR_BEAM_SLOPE = 0.13;     // A beam's half-width per unit of its length, in both views
+export const SWEEP_SAMPLES = 24;           // Beam directions the blurred sweep is the average of
 
-// { rate: turns a second shown, depth: 0..1 how far the light swings on the sky }
-export function pulseDisplay(periodS) {
-    if (!periodS) return { rate: 0, depth: 0 };
-    const f = 1 / periodS;
-    const rate = Math.min(f, MAX_TURNS_PER_S);
-    if (periodS < SHIMMER_BELOW_S) {
-        const fastness = Math.max(0, Math.min(1, Math.log10(SHIMMER_BELOW_S / periodS) / 2.4));
-        return { rate, depth: 0.2 - 0.08 * fastness };
-    }
-    return { rate, depth: 1 - 0.35 * smoothstep(MAX_TURNS_PER_S, 1 / SHIMMER_BELOW_S, f) };
+// The turns a second a pulsar is shown at, from its true period
+export function shownRate(periodS) {
+    if (!periodS) return 0;
+    return Math.max(PULSE_SHOWN_HZ.min, Math.min(PULSE_SHOWN_HZ.max, 1 / periodS));
 }
 
+// Up close, the share of the beams' light that turns at that rate; the rest is their blurred sweep
+export function turningShare(rate) {
+    if (rate <= SPIN_SHOWN) return 1;
+    return rate <= FLICKER_HZ ? SPIN_SHOWN / rate : FAST_SHARE;
+}
 // Everything both views need to draw one pulsar's spin, from its own stream (rng = bodyRng(body, 'pulsar'), read in this
 // order, which the sky layer goes on reading after). In the frame of the view at the pulsar: x right, y up, z towards us.
 // The spin axis is tilted from our line of sight by the beam's own tilt, so the beam sweeps across us once a turn.
@@ -77,13 +85,13 @@ export function pulsarSpin(body, rng) {
     // Very small tilts are drawn a little larger, or the beam would never be seen side-on
     const tilt = Math.max(24, Math.min(80, info.magnetic_tilt_deg ?? rng.range(30, 62))) * DEG;
     const roll = rng.range(0, Math.PI * 2);
-    const show = info.pulsar ? pulseDisplay(info.pulse_period_s) : { rate: 0, depth: 0 };
+    const rate = info.pulsar ? shownRate(info.pulse_period_s) : 0;
     const phase = rng.range(0, Math.PI * 2);
     const axis = [Math.sin(tilt) * Math.cos(roll), Math.sin(tilt) * Math.sin(roll), Math.cos(tilt)];
     // At angle 0 the beam points straight at us: e1 is the part of the line of sight square to the spin axis
     const e1 = [-axis[0] * Math.cos(tilt) / Math.sin(tilt), -axis[1] * Math.cos(tilt) / Math.sin(tilt), (1 - axis[2] * Math.cos(tilt)) / Math.sin(tilt)];
     const e2 = [axis[1] * e1[2] - axis[2] * e1[1], axis[2] * e1[0] - axis[0] * e1[2], axis[0] * e1[1] - axis[1] * e1[0]];
-    return { tilt, roll, rate: show.rate, depth: show.depth, phase, axis, e1, e2 };
+    return { tilt, roll, rate, depth: info.pulsar ? 1 : 0, spin: turningShare(rate), phase, axis, e1, e2 };
 }
 
 // The beam's angle round the spin axis at a time on the shared clock, as the sky's shader works it out
