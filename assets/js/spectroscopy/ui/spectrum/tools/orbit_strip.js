@@ -22,7 +22,7 @@ const DIAL_MS = 50;
 
 function applies(resolved) {
     const { body } = resolved;
-    return !!(body && (body.black_hole || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
+    return !!(body && (body.black_hole || body.unstable || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
 }
 
 function inThisSystem(clock) {

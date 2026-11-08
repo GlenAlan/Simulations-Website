@@ -12,6 +12,7 @@ import { blackBodyRGB } from '../../core/phys.js';
 import { limitingMag, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
 import { componentStates } from '../../data/orbits.js';
+import { danceReady, onDance } from '../../data/unstable.js';
 import { bandSkyBrightness, bandMagnitude } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
@@ -173,7 +174,13 @@ export function createBinariesLayer(engine, app) {
     function layOutSystem(system, tDays) {
         const { body } = system;
         const widest = body.orbits && body.orbits.length ? body.orbits[body.orbits.length - 1] : null;
-        const ctx = { body, states: componentStates(body, tDays), rho: system.rho, inc: widest ? widest.inc_deg ?? 60 : 60 };
+        // Stars in no stable orbit have no widest orbit, but a line of sight of their own (data/unstable.js). Their dance isn't
+        // found until something needs it: until then they sit evenly round their middle, as layOut places any star it has no
+        // state for, and move to their true places once it is (onDance, below).
+        const inc = widest ? widest.inc_deg ?? 60 : body.chaos ? body.chaos.inc_deg : 60;
+        const states = body.unstable && !danceReady(body) ? [] : componentStates(body, tDays);
+        system.t = tDays;
+        const ctx = { body, states, rho: system.rho, inc };
         const out = [];
         layOut(system.tree, 0, 0, 0, ctx, out);
         // The root is the sprite that stars.js draws, so it isn't drawn here
@@ -467,8 +474,17 @@ export function createBinariesLayer(engine, app) {
         const resolved = app.universe.resolve(code);
         const system = resolved && byCode.get(resolved.body.code);
         if (!system || !points) return;
+        moveSystem(system, stepped_t_days ?? t_days); // Points of light: above the speed limit they step rather than strobe
+    });
+    // Stars in no stable orbit go to their true places once their dance is found
+    const unhearDance = onDance((body) => {
+        const system = byCode.get(body.code);
+        if (system && points) moveSystem(system, system.t || 0);
+    });
+
+    function moveSystem(system, tDays) {
         const previous = system.nodes;
-        layOutSystem(system, stepped_t_days ?? t_days); // Points of light: above the speed limit they step rather than strobe
+        layOutSystem(system, tDays);
         sendSplits(system);
         // The same tree in the same order, so nodes keep their places in the data
         previous.forEach((node, k) => {
@@ -493,7 +509,7 @@ export function createBinariesLayer(engine, app) {
             toAttr.needsUpdate = true;
             centreAttr.needsUpdate = true;
         });
-    });
+    }
 
     const unbindQuality = bus.on('quality', ({ level }) => { if (spikes) spikes.mesh.visible = level !== 'low'; });
 
@@ -564,6 +580,7 @@ export function createBinariesLayer(engine, app) {
         },
         dispose() {
             unsubscribe();
+            unhearDance();
             unbindQuality();
             teardown();
         }

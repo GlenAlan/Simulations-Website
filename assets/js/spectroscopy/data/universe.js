@@ -39,6 +39,7 @@ import { sortSupernovae, freeNeutronStar, makeFarSupernovae, setFarVelocities } 
 import { assignVelocities } from './motions.js';
 import { addNuclei, nucleusEntities } from './nuclei.js';
 import { makeLocalGroup } from './local_group.js';
+import { makeUnstableMultiples } from './unstable.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
@@ -111,6 +112,20 @@ function quotaList(table) {
     const list = [];
     Object.keys(table).forEach((key) => { for (let i = 0; i < table[key]; i++) list.push(key); });
     return list;
+}
+
+// Which sort of pulsar each neutron star is (data/deep_sky.js pulsePeriod), each with a stream of its own: the first
+// `remnants` are a supernova's, so young. Of the rest, about a fifth are millisecond pulsars and one or two magnetars.
+// rng is a fork of its own, so that nothing else in the sky moves.
+function pulsarRoles(rng, pulsars, remnants) {
+    const older = pulsars.flatMap((pulsar, i) => (pulsar && i >= remnants ? [i] : []));
+    const order = shuffled(rng, older);
+    const fast = Math.round(older.length * 0.2);
+    const slow = older.length ? Math.max(1, Math.round(older.length / 14)) : 0;
+    const roles = new Map(order.map((i, k) => [i, k < fast ? 'millisecond' : k < fast + slow ? 'magnetar' : 'normal']));
+    return pulsars.map((pulsar, i) => (pulsar
+        ? { rng: rng.fork(`spin:${i}`), role: i < remnants ? 'young' : roles.get(i) }
+        : null));
 }
 
 // Decides every single star before any is built: class, whether it has planets, population. Metal-poor stars are old,
@@ -403,12 +418,13 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     const neutronStars = root.fork('neutron_stars');
     const pulsars = shuffled(quota, quotaList(MIX.neutron_star)).map((k) => k === 'pulsar');
+    const spins = pulsarRoles(root.fork('pulsar_spins'), pulsars, remnantSources.length);
     const neutronBodies = new Map();
     pulsars.forEach((pulsar, i) => {
         const r = neutronStars.fork(`ns:${i}`);
         const source = remnantSources[i] || null;
         const body = makeBase('neutron_star', otherCode());
-        makeNeutronStar(r, body, pulsar, source ? source.body : null);
+        makeNeutronStar(r, body, pulsar, source ? source.body : null, spins[i]);
         neutronBodies.set(body.code, body);
         if (source) {
             source.body.supernova.remnant_code = body.code;
@@ -563,7 +579,13 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     addNuclei(extraRoot.fork('nuclei'), extra.bodies, coder('extra nuclei'));
     const third = extraRoot.fork('order').shuffle(extra.bodies.slice());
 
-    const all = sky.concat(local, third, home);
+    // ---------- Young multiples in no stable orbit ----------
+    // By star-forming nebulae, and soon to fling a star out (data/unstable.js). Last of all, from a stream and codes of their
+    // own, placed round everything else, so nothing above changes.
+    const unstable = makeUnstableMultiples(root.fork('unstable'), coder('unstable'), (code) => makeBase('multiple', code), layout, sky);
+
+
+    const all = sky.concat(local, third, unstable, home);
 
     // Last of all, because band strengths read every other field. Band strengths are cached by temperature, so the first
     // sky goes first, in the order it always has, and the deeper sky after it: that way nothing nudges the first sky's.
@@ -596,7 +618,13 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     // Group's galaxy comes after every other sky body made before the added sky, so its hole's stars are the last of those.
     before.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
     local.forEach((body) => { body.bands = bandStrengths(body); });
-    // And the added sky's after all of those, for the same reason
+    // And the unstable multiples' after that, for the same reason
+    unstable.forEach((body) => {
+        body.stars.forEach((star) => { star.bands = bandStrengths(star); });
+        body.bands = bandStrengths(body);
+    });
+    // And the added sky's after all of those, for the same reason: after the unstable multiples' too, which then have just the
+    // light they have without it
     bandsOf(third);
     third.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
 
@@ -627,7 +655,8 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     return {
         seed,
-        bodies: all,               // The sky bodies: the first sky's, the deeper sky's, the Local Group's, the added sky's; then the 7 home planets
+        bodies: all,               // The sky bodies: the first sky's, the deeper sky's, the Local Group's, the added sky's, the
+                                   // unstable multiples'; then the 7 home planets
         cometTailAz: cometSun.az,  // Every comet's tail points away from a Sun below the horizon on this bearing
         cometSun,                  // Where that Sun is: { az, alt }, alt below the horizon
         counts: tallyCounts(all, tally),

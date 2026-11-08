@@ -34,6 +34,14 @@ export const MIX = {
 export const SKY_COMETS = 2;
 export const EXOCOMETS = 24;
 
+// Young multiple stars in no stable orbit, by star-forming nebulae (data/unstable.js): they are added on top of everything
+// else, from streams and codes of their own, so changing these moves nothing else, and raising the triples keeps every one
+// already there as it is. The owner asked for about 5 to 10% of the systems of three or more stars to be unstable, and well
+// over 90% of all the multi-star systems stable but not all (data/validate.js checks the second). With the 40 hierarchical
+// triples, the figure-eight and the double-double, 3 + 1 of these made 4 of 46: 8.7%. The sky's proportions (EXTRA, below)
+// bring the hierarchical triples to 91, and 6 + 1 make 7 of 100: 7%, with 99.5% of all 1,314 multi-star systems stable.
+export const UNSTABLE_MULTIPLES = { triples: 6, quadruples: 1 };
+
 // How many times the first sky's common kinds there are now. The first set is made exactly as it always was, so every code
 // and place in it stays, and a deeper, fainter set is added behind it: SKY_SCALE - 1 times each common kind, in the same mix.
 // Rare kinds (supernovae, quasars, black holes, neutron stars, comets, the hard-coded systems) keep their counts, and none of

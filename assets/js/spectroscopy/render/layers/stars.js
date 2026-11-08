@@ -511,6 +511,15 @@ export function createStarsLayer(engine, app) {
             data.flux.array[i] = factor;
             set.changed(i);
         },
+        // For a body whose colour changes (a supernova cooling): its true colour, linear RGB as blackBodyRGB gives it
+        setSpriteColour(code, rgb) {
+            const i = indexOf.get(code);
+            if (i === undefined) return;
+            const c = data.colours;
+            if (c[i * 3] === rgb[0] && c[i * 3 + 1] === rgb[1] && c[i * 3 + 2] === rgb[2]) return;
+            c.set(rgb, i * 3);
+            set.changed(i);
+        },
         // A multiple star's point goes out as it comes apart into its members, at this separation in degrees
         setSpriteSplit(code, sepDeg) {
             const i = indexOf.get(code);

@@ -18,6 +18,8 @@ import { crossesPlanet, MAX_ECC } from './exocomets.js';
 import { unseal } from './sealed.js';
 import { nucleusEntities, nucleusProblems } from './nuclei.js';
 import { LOCAL_GROUP_GALAXIES, localGroupProblems } from './local_group.js';
+import { UNSTABLE_MULTIPLES } from './quotas.js';
+import { UNSTABLE_ARCH, unstableProblems } from './unstable.js';
 
 const RAD = Math.PI / 180;
 const DEFAULT_FOV = 80;
@@ -63,6 +65,11 @@ const TOTAL = {
 // And the Local Group's spiral, on top of the quotas (data/local_group.js)
 TOTAL.counts.galaxy += LOCAL_GROUP_GALAXIES;
 TOTAL.galaxy.spiral += LOCAL_GROUP_GALAXIES;
+// And the unstable multiples, on top of them too (data/unstable.js)
+const UNSTABLE_COUNT = UNSTABLE_MULTIPLES.triples + UNSTABLE_MULTIPLES.quadruples;
+TOTAL.counts.multi += UNSTABLE_COUNT;
+// Of all the multi-star systems, the share in stable orbits must be at least this, and less than all of them
+const LEAST_STABLE_SHARE = 0.9;
 // Kinds that only the first sky has, but for supernovae in other galaxies
 const DEEP_KINDS = new Set([...Object.keys(DEEP.counts), 'star', 'multi', 'galaxy', ...(total(SUPERNOVAE.far) ? ['supernova'] : [])]);
 
@@ -162,10 +169,13 @@ function checkCounts(u, fail) {
     const multis = sky.filter((b) => b.stars);
     if (multis.length !== TOTAL.counts.multi) fail(`${multis.length} multi-star systems`);
     const arch = countBy(multis, (b) => b.architecture);
-    const random = TOTAL.counts.multi - 2;
-    if (arch.binary !== random - TOTAL.triples || arch.hierarchical_triple !== TOTAL.triples || arch.figure_eight !== 1 || arch.double_double !== 1) {
+    const random = TOTAL.counts.multi - 2 - UNSTABLE_COUNT;
+    if (arch.binary !== random - TOTAL.triples || arch.hierarchical_triple !== TOTAL.triples || arch.figure_eight !== 1 || arch.double_double !== 1
+        || (arch[UNSTABLE_ARCH] || 0) !== UNSTABLE_COUNT) {
         fail(`multi-star mix ${JSON.stringify(arch)}`);
     }
+    const sizes = countBy(multis.filter((b) => b.architecture === UNSTABLE_ARCH), (b) => b.stars.length);
+    if ((sizes[3] || 0) !== UNSTABLE_MULTIPLES.triples || (sizes[4] || 0) !== UNSTABLE_MULTIPLES.quadruples) fail(`unstable multiples of sizes ${JSON.stringify(sizes)}`);
     const randoms = multis.filter((b) => b.architecture === 'binary' || b.architecture === 'hierarchical_triple');
     const withPlanets = randoms.filter((b) => b.planets.length > 0).length;
     if (withPlanets !== TOTAL.multiWithPlanets) fail(`${withPlanets} random multi-star systems with planets`);
@@ -424,13 +434,28 @@ function checkComets(body, fail) {
 // Every system of stars could really exist: Kepler, a stable hierarchy, Roche lobes, round close orbits, planets in stable
 // zones, stars born together (data/dynamics.js). Sky systems, pairs in clusters, and black holes with their companions.
 // The deeper sky adds none of the few pairs that pass mass across; the added sky adds exactly EXTRA.interacting.
+// The young multiples flagged unstable (data/unstable.js) fail the hierarchy test, as they must, and nothing else: they are
+// exactly the systems that fail it, they pass every check of their own, and the stable share of all multi-star systems is at
+// least LEAST_STABLE_SHARE but not all of them.
 function checkDynamics(u, fail) {
     const systems = [];
     u.bodies.forEach((body) => {
         if (body.stars || body.black_hole) systems.push(body);
         if (body.cluster) body.cluster.members.forEach((m) => { if (m.stars) systems.push(m); });
     });
-    systems.forEach((system) => systemProblems(system).forEach((p) => fail(`${p.test}: ${p.message}`)));
+    let unstable = 0;
+    systems.forEach((system) => {
+        const problems = systemProblems(system);
+        const failsHierarchy = problems.some((p) => p.test === 'hierarchy');
+        if (failsHierarchy) unstable++;
+        if (failsHierarchy !== !!system.unstable) fail(`${system.code} ${system.unstable ? 'is flagged unstable but passes the hierarchy test' : 'fails the hierarchy test but isn\'t flagged unstable'}`);
+        problems.forEach((p) => {
+            if (!(system.unstable && p.test === 'hierarchy')) fail(`${p.test}: ${p.message}`);
+        });
+        if (system.unstable) unstableProblems(system, u).forEach((message) => fail(`unstable: ${message}`));
+    });
+    const stableShare = (systems.length - unstable) / systems.length;
+    if (!(stableShare >= LEAST_STABLE_SHARE && stableShare < 1)) fail(`${(100 * stableShare).toFixed(1)}% of multi-star systems are in stable orbits`);
     const passing = u.bodies.filter((b) => b.deep && b.interacting).length;
     if (passing !== EXTRA.interacting) fail(`${passing} deeper-sky pairs pass mass across, expected ${EXTRA.interacting}`);
     u.bodies.filter((b) => b.deep).forEach((body) => {
@@ -448,7 +473,8 @@ function checkDynamics(u, fail) {
 
 function checkMulti(u, fail) {
     u.bodies.filter((b) => b.stars).forEach((body) => {
-        if (body.stars.length !== { binary: 2, hierarchical_triple: 3, figure_eight: 3, double_double: 4 }[body.architecture]) {
+        const counts = { binary: [2], hierarchical_triple: [3], figure_eight: [3], double_double: [4], [UNSTABLE_ARCH]: [3, 4] }[body.architecture];
+        if (!counts || !counts.includes(body.stars.length)) {
             fail(`${body.code} has ${body.stars.length} stars for ${body.architecture}`);
         }
         if (body.kind !== (body.architecture === 'binary' ? 'binary' : 'multiple')) fail(`${body.code} has kind ${body.kind}`);
@@ -511,7 +537,11 @@ function checkDeepSky(u, fail) {
             if (Math.abs(msLifetimeMyr(c.turnoff_Msun) / c.age_Myr - 1) > 0.02) fail(`${body.code}'s turn-off doesn't match its age`);
         }
         if (body.neutron_star && body.neutron_star.pulsar) {
-            if (!within(body.neutron_star.pulse_period_s, 0.001, 5)) fail(`${body.code} has period ${body.neutron_star.pulse_period_s}`);
+            // A real pulsar's spin, by what it is (data/deep_sky.js pulsePeriod): a supernova's own is young and spins tens of
+            // times a second, and none is faster than about 700 turns a second or slower than about 10 s
+            const { pulse_period_s: period, remnant_of: remnant } = body.neutron_star;
+            if (!within(period, 0.0015, 10)) fail(`${body.code} has period ${period}`);
+            if (remnant && !within(period, 0.016, 0.12)) fail(`${body.code} is a young pulsar with period ${period}`);
         }
         if (body.galaxy) {
             const expected = H0 * body.galaxy.distance_Mpc;

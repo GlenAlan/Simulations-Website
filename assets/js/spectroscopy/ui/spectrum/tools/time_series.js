@@ -18,6 +18,7 @@ import { orbitResults } from './orbit_sums.js';
 import { clockFor } from './orbit_clock.js';
 import { createOrbitDial, STAR_SHAPES } from './orbit_dial.js';
 import { halfSwing, readableFirst, splitLine, widestSplit } from './split_lines.js';
+import { danceTimescale } from '../../../data/unstable.js';
 
 const COLUMNS = 240;             // Moments across the picture
 const ROWS = 72;                 // Speeds up its side
@@ -42,8 +43,14 @@ const BROAD_SMOOTH_SHARE = 1 / 8;
 
 function applies(resolved) {
     const { body } = resolved;
-    return !!(body && (body.black_hole || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
+    return !!(body && (body.black_hole || body.unstable || (body.stars && body.orbits && body.orbits.length))) && resolved.path !== 'planet';
 }
+
+// Stars in no stable orbit (data/unstable.js) have no period. Their lines wander on the time it takes them to cross the group,
+// so that sets the time shown, and the time a swing would need to take for a reading to be tried. The longer time comes first:
+// two stars may swing as a pair for a few crossings, but seldom for twelve.
+const DANCE_SPANS = [12, 3];      // Crossing times on show
+const DANCE_SWING = 0.5;          // A swing, if there were one, as a share of a crossing time
 
 function daysText(d) {
     return d >= 100 ? `${Math.round(d).toLocaleString('en-AU')} days` : `${Number(d.toPrecision(3))} days`;
@@ -53,6 +60,7 @@ function daysText(d) {
 function periodsOfStar(body, code) {
     if (body.black_hole) return [body.black_hole.period_days];
     if (body.figure_eight) return [body.figure_eight.period_days];
+    if (body.unstable) return [DANCE_SWING * danceTimescale(body)];
     const index = body.stars.findIndex((s) => s.code === code);
     return body.orbits.filter((o) => [...o.a, ...o.b].includes(index)).map((o) => o.period_days);
 }
@@ -72,6 +80,7 @@ function periodsFor(resolved, stars) {
     const { body } = resolved;
     if (body.black_hole) return [body.black_hole.period_days];
     if (body.figure_eight) return [body.figure_eight.period_days];
+    if (body.unstable) return [danceTimescale(body)];
     const codes = stars.map((s) => s.code);
     const indexOf = (i) => body.stars[i].code;
     const periods = body.orbits
@@ -79,6 +88,18 @@ function periodsFor(resolved, stars) {
         .map((o) => o.period_days)
         .filter((p) => p > 0 && p < LONGEST_SHOWN_DAYS);
     return [...new Set(periods)].sort((a, b) => a - b);
+}
+
+// Does a swing fitted to all the readings come back the same in each half of them? An orbit's does; lines that only wander
+// about can be fitted by some swing, but never by the same one twice.
+const REPEAT_PERIOD = 0.1;       // The halves' periods agree with the whole's to this share...
+const REPEAT_SWING = 0.25;       // ... and their speed swings to this
+function repeats(points, fit) {
+    const n = points.length;
+    if (n < 24) return false;
+    const halves = [points.slice(0, n >> 1), points.slice(n >> 1)].map(fitOrbit);
+    return halves.every((h) => h && Math.abs(h.period_days / fit.period_days - 1) < REPEAT_PERIOD
+        && Math.abs(h.K_kms / fit.K_kms - 1) < REPEAT_SWING);
 }
 
 function lineTitle(line) {
@@ -373,9 +394,12 @@ function mount(container, api) {
     function updateResults() {
         fitsDue = false;
         const covered = filledCount >= COLUMNS;
+        const dance = !!resolved.body.unstable;
         stars.forEach((star) => {
             star.fit = !star.tooFast && star.points.length >= 12 && cyclesIn(star) >= MIN_CYCLES_FOR_PERIOD ? fitOrbit(star.points) : null;
-            if (covered && wantsAnotherLine(star)) tryOtherLines(star);
+            if (covered && wantsAnotherLine(star) && !dance) tryOtherLines(star);
+            // A period has to repeat: fitted to each half of the readings on its own, both halves must give it
+            if (dance && star.fit && !repeats(star.points, star.fit)) star.fit = null;
         });
         result.replaceChildren(...orbitResults({
             resolved,
@@ -507,7 +531,8 @@ function mount(container, api) {
             star.widths = null;
             star.triedOthers = false;
             const quickest = Math.min(...star.periods);
-            star.tooFast = quickest < MIN_SAMPLES_PER_SWING * sampleGap;
+            // Stars in no stable orbit have no swing to be too quick for the readings: whatever repeats, the readings show
+            star.tooFast = !resolved.body.unstable && quickest < MIN_SAMPLES_PER_SWING * sampleGap;
             star.tooSlow = quickest > span / MIN_CYCLES_FOR_PERIOD;
             // The chosen line if this star shows it at all, or else its own best
             const shows = star.seenLines.some((l) => sameLine(l, line));
@@ -519,6 +544,7 @@ function mount(container, api) {
         api.setResolution('zoom', { lo_nm: line.rest_nm - windowHalf, hi_nm: line.rest_nm + windowHalf });
         holdFloor(line.rest_nm - windowHalf, line.rest_nm + windowHalf);
         if (stars.some((star) => star.tooFast)) updateResults();
+        else if (resolved.body.unstable) result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}A period would show once a swing had repeated.`));
         else result.replaceChildren(para(`${clock.playing ? '' : 'Press Play. '}The period appears once a swing and a half has gone by.`));
         // The first moment straight away, with each star's mark, so the picture is never an empty box
         if (panelShown) {
@@ -586,7 +612,9 @@ function mount(container, api) {
         setOptions(lineField.select, lines.map((l, i) => ({ value: i, label: lineTitle(l) })), 0);
         lineField.wrap.hidden = lines.length < 2;
 
-        const spans = periods.map((p, i) => ({ value: p * CYCLES_SHOWN, label: daysText(p * CYCLES_SHOWN) + (i === 0 && periods.length > 1 ? ', the shortest' : '') }));
+        const spans = nextResolved.body.unstable
+            ? DANCE_SPANS.map((k) => ({ value: k * shortest, label: daysText(k * shortest) }))
+            : periods.map((p, i) => ({ value: p * CYCLES_SHOWN, label: daysText(p * CYCLES_SHOWN) + (i === 0 && periods.length > 1 ? ', the shortest' : '') }));
         span = spans.length ? spans[0].value : shortest * CYCLES_SHOWN;
         setOptions(spanField.select, spans, span);
         spanField.wrap.hidden = spans.length < 2;

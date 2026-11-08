@@ -60,6 +60,10 @@ function summaryOf(model, canView) {
 // What the student last chose for each system's clock, kept between visits
 const keptClocks = new Map();
 
+// How the motion is drawn: for orbits, and for stars in no stable orbit (data/unstable.js)
+const ABOUT_ORBITS = 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. An orbit too fast to follow turns into a steady ring of light, so that the slower ones can still be watched.';
+const ABOUT_DANCE = 'Distances are to scale. These stars have no orbits to follow: their paths are worked out step by step from gravity, sped up by the time control, and each leaves a trail. The clock slows by itself while a star sweeps past close up.';
+
 export function initSystemTab(app) {
     const view = app.system;
 
@@ -103,7 +107,7 @@ export function initSystemTab(app) {
         quiet = true;
         // Stars' orbits run on the clock the spectrum shares; a single star's planets need only this control
         const { body } = model;
-        systemClock = (body.orbits && body.orbits.length) || body.black_hole ? clockFor(body) : null;
+        systemClock = (body.orbits && body.orbits.length) || body.black_hole || body.unstable ? clockFor(body) : null;
         if (systemClock && !systemClock.playing) systemClock.setSpeed(speed);
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
@@ -145,7 +149,8 @@ export function initSystemTab(app) {
         const now = performance.now();
         if (now - lastPaint < 150) return;
         lastPaint = now;
-        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
+        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up'
+            : playback.playing && view.danceSlowed() ? ', slowed for a fast pass' : '';
         const blurred = view.isBlurred() ? '. The fastest orbits are a blur at this speed.' : '';
         parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}${blurred}`;
     }
@@ -235,15 +240,16 @@ export function initSystemTab(app) {
         starGroup.append(el('span', 'sim-control-group-label', 'Stars'), starList);
 
         const about = el('details', 'sim-controls-more');
+        const aboutMotion = el('p', 'spectro-system-note', ABOUT_ORBITS);
         about.append(
             el('summary', '', 'About the scale'),
             el('p', 'spectro-system-note', 'Sizes are not to scale. Real stars and planets would be invisible specks beside these orbits, so every size is compressed the same way (radius to the power 0.3). A giant is still bigger than a dwarf, and a planet is always drawn smaller than its star.'),
-            el('p', 'spectro-system-note', 'Orbit distances are to scale unless you choose the log scale. Orbital speeds always follow Kepler\'s laws, sped up by the time control. An orbit too fast to follow turns into a steady ring of light, so that the slower ones can still be watched.')
+            aboutMotion
         );
 
         box.append(summary, action, whole, timeGroup, scaleWrap, detail, listGroup, cometGroup, starGroup, about);
         container.appendChild(box);
-        return { summary, action, whole, timeGroup, time, scaleWrap, logBox, logLabel, hzBox, hzLabel, hzTip, hzNote, detail, listGroup, list, listLabel, cometGroup, cometList, starGroup, starList };
+        return { summary, action, whole, timeGroup, time, scaleWrap, logBox, logLabel, hzBox, hzLabel, hzTip, hzNote, detail, listGroup, list, listLabel, cometGroup, cometList, starGroup, starList, aboutMotion };
     }
 
     function renderList(model) {
@@ -368,6 +374,7 @@ export function initSystemTab(app) {
         const inThis = app.view === 'system' && app.systemCode === body.code;
 
         parts.summary.textContent = summaryOf(model, !!(app.engine && app.engine.renderer));
+        parts.aboutMotion.textContent = body.unstable ? ABOUT_DANCE : ABOUT_ORBITS;
 
         // The way back to the sky is on the context bar, always in the same place. Without graphics there's no going in.
         parts.action.hidden = inThis || !(app.engine && app.engine.renderer);
