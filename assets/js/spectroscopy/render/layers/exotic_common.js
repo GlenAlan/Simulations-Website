@@ -96,8 +96,9 @@ export function shownRate(periodS) {
 //     So a student orbiting to look down the axis, at any zoom, is covered too.
 const CLOSE_AIM_PX = 11500;                 // 53% of the 21,824 px allowed, so that the worst tilt and view measured stay near 60%
 const BEAM_REF_PX = 372;
-const BEAM_FLASH_PX = [[0.75, 1000], [1, 750], [1.25, 650], [1.5, 235], [2, 520], [3, 470], [4, 400]];
+const BEAM_FLASH_PX = [[0.75, 1000], [1, 750], [1.25, 650], [1.5, 235], [1.75, 300], [2, 520], [3, 470], [4, 400]];
 const CLOSE_TWICE = [[0, 100], [0.35, 75], [0.5, 55], [0.7, 19], [0.9, 3], [1.4, 3], [2, 34], [2.7, 72]];   // Thousands of px
+const CLOSE_EDGE_ON = 28;                   // Thousands of px crossed twice a turn seen edge-on, at any tilt
 const CLOSE_ONCE = 109;                     // Thousands of px crossed once a turn, at the worst tilt and view measured
 const TWICE_BY_RATE = [[1.5, 0], [1.75, 1], [2.5, 1], [3, 1.27]];
 export const CLOSE_TURNING_LIGHT = 0.021;   // 0.15 of the radio beam's light, the brightest band's
@@ -116,7 +117,9 @@ function tableAt(table, x) {
 function closeFullPx(rate, light, tilt, cosView) {
     const sin2 = Math.sin(tilt) ** 2;
     const c = Math.min(Math.abs(cosView), 1);
-    const twice = sin2 * tableAt(CLOSE_TWICE, Math.sqrt(1 - c * c) / Math.max(c, 1e-3) / Math.tan(tilt));
+    const t = Math.sqrt(1 - c * c) / Math.max(c, 1e-3) / Math.tan(tilt);
+    // Seen edge-on a beam goes to and fro over the same strip whatever its tilt, so a small tilt doesn't save it there
+    const twice = Math.max(sin2 * tableAt(CLOSE_TWICE, t), CLOSE_EDGE_ON * smoothstep(2.5, 5, t));
     const area = 1000 * (twice * tableAt(TWICE_BY_RATE, rate) * (1 - smoothstep(3, 3.5, rate)) + CLOSE_ONCE * smoothstep(3, 3.5, rate))
         * Math.pow(Math.min(1, light / RADIO_BEAM_LIGHT), 1.25);    // A dimmer beam, as in X-rays, flashes over less of the screen
     return Math.min(tableAt(BEAM_FLASH_PX, rate), area > 0 ? BEAM_REF_PX * Math.sqrt(CLOSE_AIM_PX / area) : Infinity);
