@@ -7,7 +7,7 @@
 import { registerTool } from './index.js';
 import { getMeasurement, recordMeasurement } from '../../../core/measurements.js';
 import { C_KMS } from '../../../core/phys.js';
-import { beyondCz, shiftSpeed, signed } from '../../../core/format.js';
+import { beyondCz, isQuasar, shiftSpeed, signed } from '../../../core/format.js';
 import { blendAllowance, lineCentre, dopplerFrom, combineDoppler } from '../../../spectra/measure.js';
 import { el } from '../../plot2d.js';
 import { actionRow, diagramLink, fill, hasTab, overlayTheme, para, plotLabel, plotMark, resultLine, searchNmAt, statusBox, termLine, toolLink } from './common.js';
@@ -185,7 +185,7 @@ function mountExact(container, api, isActive) {
         if (listEl.hidden) return;
         const rows = measured.map((m, i) => el('tr', {},
             el('td', { text: `${lineName(m.line)} ${m.line.rest_nm.toFixed(1)}` }),
-            el('td', { text: shiftSpeed(m.d.z, m.d.v_kms) }),
+            el('td', { text: shiftSpeed(m.d.z, { v: m.d.v_kms, quasar: isQuasar(api.resolved.entity) }) }),
             el('td', {}, el('button', {
                 type: 'button',
                 class: 'spectro-tool-remove',
@@ -228,9 +228,10 @@ function mountExact(container, api, isActive) {
         const beyond = beyondCz(combined.z);
         const m = getMeasurement(code) || {};
         const seen = new Set();
-        const moved = movedText(lineName(last.line), last.d.dlambda_nm, last.line.rest_nm, last.d.z, Math.abs(last.d.dlambda_nm) < 1 ? 3 : 2);
+        const quasar = isQuasar(api.resolved.entity);
+        const moved = movedText(lineName(last.line), last.d.dlambda_nm, last.line.rest_nm, last.d.z, Math.abs(last.d.dlambda_nm) < 1 ? 3 : 2, quasar);
         fill(result,
-            el('p', { class: 'spectro-tool-answer' }, readingText(combined), el('span', { class: 'spectro-tool-direction', text: direction(combined.z) })),
+            el('p', { class: 'spectro-tool-answer' }, readingText(combined, quasar), el('span', { class: 'spectro-tool-direction', text: direction(combined.z) })),
             wrongLineWarning(combined.v_kms, beyond),
             // The way on comes before the explaining, so that it's on screen along with the answer
             actionRow(

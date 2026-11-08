@@ -26,7 +26,7 @@
 import { bus } from '../../core/state.js';
 import { spectrumOf, referenceSpectrum, autoRange } from '../../spectra/synth.js';
 import { R_OVERVIEW, R_ZOOM, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../core/phys.js';
-import { wavelength } from '../../core/format.js';
+import { isQuasar, wavelength } from '../../core/format.js';
 import { createPlot, WAVELENGTH_PRESETS } from './plot.js';
 import { createRefPicker, shiftShort } from './refs.js';
 import { linkToolNames, listTools, toolWords } from './tools/index.js';
@@ -327,7 +327,7 @@ function createSpectrumPanel(app, container) {
     function refName() {
         const st = picker.state();
         if (!st.item) return '';
-        const shift = shiftShort(st.z);
+        const shift = shiftShort(st.z, isQuasar(resolved && resolved.entity));
         const name = st.item.kind === 'blackbody' ? `Black body, ${Math.round(st.T).toLocaleString('en-AU')} K` : st.item.label;
         return shift ? `${name}, shifted ${shift}` : name;
     }

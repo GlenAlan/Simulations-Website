@@ -14,9 +14,8 @@ import {
     niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved, savedEntries, cleanSaved
 } from './plot2d.js';
 
-// Above this shift, about 30,000 km/s, v = cz no longer holds (spec section 8.4): such a galaxy's speed is only rough. The plot
-// and its line still use cz for it, as Hubble's straight line does, so H₀ is as it always was; the rest of the panel gives the
-// speed for big shifts instead (core/format.js).
+// Above this shift, about 30,000 km/s, v = cz no longer holds (spec section 8.4): such a galaxy's speed, cz here as everywhere
+// for a galaxy (core/format.js), is only rough
 const Z_LIMIT = CZ_LIMIT;
 const ROUGH_FROM_KMS = '30,000';
 const SUGGESTED_GALAXIES = 8;
@@ -294,14 +293,8 @@ function mountHubble(container, app) {
             if (v === null || !(m.distance_pc > 0)) return null;
             const dMpc = m.distance_pc / 1e6;
             const z = Number.isFinite(m.z) ? m.z : v / C_KMS;
-            // Beyond the limit the plot still takes a tool's c × Δλ ÷ λ₀, as Hubble's straight line does, and says so
-            const rough = Math.abs(z) > Z_LIMIT
-                ? (Number.isFinite(m.z)
-                    ? `This plot uses c × Δλ ÷ λ₀ for every galaxy, as Hubble's straight line does. Beyond about ${ROUGH_FROM_KMS} km/s that speed is only rough`
-                    : `Beyond about ${ROUGH_FROM_KMS} km/s a speed is only rough`)
-                : null;
             return [
-                rough,
+                Math.abs(z) > Z_LIMIT ? `Beyond about ${ROUGH_FROM_KMS} km/s this speed is only rough` : null,
                 `d = ${sig(m.distance_pc, 3)} pc = ${sig(dMpc, 3)} Mpc`,
                 `v ÷ d = ${signedSpeed(v)} km/s ÷ ${sig(dMpc, 3)} Mpc = ${sig(v / dMpc, 3)} km/s/Mpc`
             ].filter(Boolean);
@@ -387,7 +380,7 @@ function mountHubble(container, app) {
             : 'a large share of the speed of light, far too much for that simple formula to hold';
         quasarNote.replaceChildren(
             el('p', { class: 'spectro-fig-card-title', text: `Quasar ${body.code}` }),
-            el('p', { class: 'spectro-fig-readout', text: shiftSpeed(z) }),
+            el('p', { class: 'spectro-fig-readout', text: shiftSpeed(z, { quasar: true }) }),
             el('p', { class: 'spectro-fig-card-status', text: measuredZ !== null ? 'From your Doppler measurement.' : 'From the catalogue.' }),
             el('div', { class: 'spectro-fig-measure', hidden: measuredZ !== null },
                 el('span', { class: 'spectro-fig-measure-word', text: 'Measure it yourself with' }),

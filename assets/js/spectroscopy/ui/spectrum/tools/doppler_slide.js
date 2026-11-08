@@ -10,7 +10,7 @@
 import { app } from '../../../core/state.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { C_KMS, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
-import { beyondCz, sci, shiftDirection, shiftSpeed, signed, speedText, withCommas } from '../../../core/format.js';
+import { isQuasar, sci, shiftDirection, shiftSpeed, signed, speedText, withCommas } from '../../../core/format.js';
 import { LINES } from '../../../data/lines.js';
 import { getReference } from '../../../data/references.js';
 import { blendAllowance, dopplerFrom, lineCentre, resolvingPower } from '../../../spectra/measure.js';
@@ -37,17 +37,17 @@ export function velocityText(v, err) {
 }
 
 // A reading, the same in every way of measuring it and everywhere else a shift is shown (core/format.js): a speed in km/s,
-// v = cz with its uncertainty while that holds, and beyond it the speed for big shifts to 3 figures, whose last figure is
-// already coarser than the uncertainty. Takes { z, err_z, v_kms, err_kms }.
-export function readingText(d) {
-    return beyondCz(d.z) ? shiftSpeed(d.z) : velocityText(d.v_kms, d.err_kms);
+// v = cz with its uncertainty, or for a quasar the speed for big shifts to 3 figures, whose last figure is already coarser than
+// the uncertainty. Takes { z, err_z, v_kms, err_kms }.
+export function readingText(d, quasar = false) {
+    return quasar ? shiftSpeed(d.z, { quasar }) : velocityText(d.v_kms, d.err_kms);
 }
 
 // "Hα moved +2.10 nm from 656.28 nm → +960 km/s, moving away.": the working, from the move to the speed
-export function movedText(label, dlambdaNm, restNm, z, digits) {
+export function movedText(label, dlambdaNm, restNm, z, digits, quasar = false) {
     const name = String(label || '').replace(/\s*\d+(\.\d+)?$/, '') || label || 'The line';
     const dl = `${dlambdaNm < 0 ? '−' : '+'}${Math.abs(dlambdaNm).toFixed(digits)} nm`;
-    return `${name} moved ${dl} from ${restNm.toFixed(2)} nm → ${shiftSpeed(z)}, ${shiftDirection(z)}.`;
+    return `${name} moved ${dl} from ${restNm.toFixed(2)} nm → ${shiftSpeed(z, { quasar })}, ${shiftDirection(z)}.`;
 }
 
 // Every galaxy in this sky is moving away from us, as nearly all are in the real one. A far galaxy's lines move a long way, so a
@@ -349,12 +349,15 @@ export function createSlide(container, api, { says, single = false }) {
         }, 160);
     }
 
+    // A quasar's speed comes from the formula for big shifts; everything else's from c × Δλ ÷ λ₀
+    const quasarNow = () => isQuasar(api.resolved && api.resolved.entity);
+
     function answerText(r) {
-        return readingText(r.d);
+        return readingText(r.d, quasarNow());
     }
 
-    // The single line's sum, from where the student has put it: rest, observed and the move, then the speed it gives, c × Δλ ÷ λ₀
-    // while that holds and the formula for big shifts beyond it
+    // The single line's sum, from where the student has put it: rest, observed and the move, then the speed it gives, c × Δλ ÷ λ₀,
+    // or for a quasar the formula for big shifts
     function renderSteps(r) {
         workSteps.hidden = !r;
         if (!r) return;
@@ -365,8 +368,8 @@ export function createSlide(container, api, { says, single = false }) {
         workItems[0].textContent = `λ₀ = ${rest} nm: ${r.line.label} at rest`;
         workItems[1].textContent = `λ = ${obs.toFixed(2)} nm: where you put it, so Δλ = λ − λ₀ = ${r.d.dlambda_nm < 0 ? '−' : '+'}${dl} nm`;
         const factor = r.d.dlambda_nm < 0 ? `(−${dl})` : dl;
-        workItems[2].textContent = r.d.beyondCz
-            ? `Too big a shift for c × Δλ ÷ λ₀, so the formula for big shifts gives ${shiftSpeed(r.d.z)}`
+        workItems[2].textContent = quasarNow()
+            ? `Too big a shift for c × Δλ ÷ λ₀, so the formula for big shifts gives ${shiftSpeed(r.d.z, { quasar: true })}`
             : `c × Δλ ÷ λ₀ = ${sci(C_KMS, 3)} km/s × ${factor} ÷ ${rest} = ${speedText(r.d.v_kms)}`;
     }
 
@@ -381,7 +384,7 @@ export function createSlide(container, api, { says, single = false }) {
         } else {
             answer.replaceChildren(answerText(r), el('span', { class: 'spectro-tool-direction', text: direction(r.z) }));
             working.hidden = false;
-            working.textContent = movedText(r.line.label, r.d.dlambda_nm, r.line.rest, r.d.z, nmDigits(r.d.dlambda_nm));
+            working.textContent = movedText(r.line.label, r.d.dlambda_nm, r.line.rest, r.d.z, nmDigits(r.d.dlambda_nm), quasarNow());
         }
         const warn = r ? galaxyWarning(api.resolved && api.resolved.entity, r.z) : '';
         if (warning.textContent !== warn) warning.textContent = warn;

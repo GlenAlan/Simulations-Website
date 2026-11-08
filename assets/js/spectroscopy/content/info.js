@@ -35,13 +35,13 @@ const chem = (formula) => String(formula).replace(/\d/g, (d) => SUBSCRIPT[d]);
 
 const tempText = (T) => (isNum(T) ? `${T >= 1e5 ? sig(T, 3) : withCommas(T)} K` : null);
 
-// A shift as it is shown everywhere (core/format.js): a speed in km/s, and which way. The shift is the object's own where it
-// has one (a galaxy, a quasar), and v ÷ c otherwise.
-function velocityText(v, z) {
+// A shift as it is shown everywhere (core/format.js): a speed in km/s, by the formula for big shifts for a quasar, and which
+// way. The shift is the object's own where it has one (a galaxy, a quasar), and v ÷ c otherwise.
+function velocityText(v, z, quasar = false) {
     if (!isNum(v) && !isNum(z)) return null;
     const shift = isNum(z) ? z : v / C_KMS;
     if (shift === 0) return '0 km/s';
-    return `${shiftSpeed(shift, isNum(v) ? v : undefined)} (${shiftDirection(shift)})`;
+    return `${shiftSpeed(shift, { v: isNum(v) ? v : undefined, quasar })} (${shiftDirection(shift)})`;
 }
 
 // A galaxy moving away is receding with the expansion; one coming towards us, as the Local Group's can, has only a radial velocity
@@ -834,7 +834,7 @@ function galaxyInfo({ entity }) {
         lead: 'Billions of stars, too far away to pick out one by one.',
         summary: 'Billions of stars, too far away to pick out one by one. Their light adds up to a single spectrum, and its redshift tells you how fast the galaxy is moving away.',
         notes: present(
-            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Beyond about 30,000 km/s, v = cz no longer works, so the tool uses a formula that stays below the speed of light." },
+            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Beyond about 30,000 km/s, the speed from v = cz is only rough." },
             { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d with the Brightness tool, add the galaxy to the Hubble plot, and the gradient gives H₀." },
             MORPHOLOGY_NOTE[block.morphology],
             centreNote(entity.nucleus),
@@ -1025,7 +1025,7 @@ function quasarInfo({ entity }) {
         ],
         rarity: 'Very rare: very roughly 1 in 100,000 galaxies hosts one today. That is only a rough figure, and it depends on how bright counts as a quasar. They were far more common about 10 billion years ago.',
         catalogue: clean([
-            row('Recession velocity', isNum(block.z) ? velocityText(null, block.z) : null),
+            row('Recession velocity', isNum(block.z) ? velocityText(null, block.z, true) : null),
             row('Distance', isNum(block.z) || isNum(entity.distance_pc) ? "Too far for Hubble's straight line to apply" : null),
             row('Radio-loud', yesNo(block.radio_loud)),
             row('Blazar', block.blazar === true ? 'Yes' : null),

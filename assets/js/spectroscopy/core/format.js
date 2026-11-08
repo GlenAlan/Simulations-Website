@@ -46,9 +46,10 @@ export function signed(x, digits = 0) {
 }
 
 // ---------- A shift along the line of sight, said the same way everywhere: as a speed in km/s ----------
-// Up to a shift z = Δλ/λ₀ of 0.1, about 30,000 km/s, the speed is v = cz. Beyond that v = cz no longer holds (spec 8.4), and for
-// a quasar it would pass the speed of light, so the speed is the relativistic Doppler one, which stays below c, to 3 figures.
-// Only what is shown changes: measurements, and the Hubble plot's speeds, stay cz.
+// Everything but a quasar gives v = cz, galaxies included: the farthest here is at z 0.37, 0.37c, so it never passes the speed
+// of light, though beyond z = 0.1, about 30,000 km/s, it is only rough (spec 8.4). A quasar's light is stretched so far that cz
+// would pass c, so a quasar's speed is the relativistic Doppler one, which stays below c, to 3 figures. The same formula for
+// one object at every shift, so a speed never jumps. Only what is shown changes: measurements stay cz.
 
 export const CZ_LIMIT = 0.1;
 
@@ -56,9 +57,13 @@ export function beyondCz(z) {
     return Math.abs(z) > CZ_LIMIT;
 }
 
-// The speed a shift gives: cz up to the limit, and past it c((1+z)² − 1)/((1+z)² + 1)
-export function speedOfShift(z) {
-    if (!beyondCz(z)) return z * C_KMS;
+export function isQuasar(entity) {
+    return !!entity && (entity.kind === 'quasar' || !!entity.quasar);
+}
+
+// The speed a shift gives: cz, or for a quasar c((1+z)² − 1)/((1+z)² + 1)
+export function speedOfShift(z, quasar = false) {
+    if (!quasar) return z * C_KMS;
     const s = (1 + z) ** 2;
     return (C_KMS * (s - 1)) / (s + 1);
 }
@@ -71,17 +76,17 @@ export function speedText(v) {
     return `${v < 0 ? '−' : '+'}${size >= 1000 ? withCommas(size) : size.toFixed(size < 10 ? 1 : 0)} km/s`;
 }
 
-// "+91,400 km/s": a speed to 3 significant figures
+// "+276,000 km/s": a speed to 3 significant figures
 export function roundSpeedText(v) {
     if (!Number.isFinite(v)) return String(v);
     if (v === 0) return '0 km/s';
     return `${v < 0 ? '−' : '+'}${Number(Math.abs(v).toPrecision(3)).toLocaleString('en-AU')} km/s`;
 }
 
-// A shift as its speed: "+7,020 km/s" while v = cz holds, from v if given (an object's own catalogue speed) and cz if not, and
-// "+91,400 km/s", to 3 figures, beyond it
-export function shiftSpeed(z, v) {
-    if (beyondCz(z)) return roundSpeedText(speedOfShift(z));
+// A shift as its speed: "+7,020 km/s", from v if given (an object's own catalogue speed) and cz if not, or for a quasar
+// "+276,000 km/s", to 3 figures
+export function shiftSpeed(z, { v, quasar = false } = {}) {
+    if (quasar) return roundSpeedText(speedOfShift(z, true));
     return speedText(Number.isFinite(v) ? v : z * C_KMS);
 }
 

@@ -59,7 +59,7 @@ function shiftLabel(body) {
     const z = Number.isFinite(given) ? given : v / C_KMS;
     if (!Number.isFinite(z)) return null;
     if (z === 0) return STILL;
-    return shiftSpeed(z, Number.isFinite(v) ? v : undefined);
+    return shiftSpeed(z, { v: Number.isFinite(v) ? v : undefined, quasar: !!body.quasar });
 }
 
 // A soft disc, drawn once for each colour and stamped at any size
