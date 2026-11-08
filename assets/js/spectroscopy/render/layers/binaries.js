@@ -538,7 +538,9 @@ export function createBinariesLayer(engine, app) {
             };
             walk(system.tree);
             if (tightest === Infinity) return 0;
-            const fov = (tightest * frame.height * frame.dpr) / SPLIT_HI;
+            // At the scale the stars are drawn at (frame.pxPerRad): with the lens's zoom too, which keeps the sky's scale on the
+            // page as a phone's sheet comes up and shortens the canvas, so the answer doesn't change with the sheet
+            const fov = (tightest * frame.height * frame.dpr * (frame.zoom || 1)) / SPLIT_HI;
             return fov * parallaxFactor(system.body.depth, fov);
         },
         // Where one star of a system is drawn at this zoom: the point it's part of, for as long as it hasn't come apart
