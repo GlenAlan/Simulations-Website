@@ -36,7 +36,7 @@ export const GLOSSARY = {
     'radial velocity': 'Speed along your line of sight, positive when moving away.',
     'Δλ': 'How far a line has moved from where it sits in the lab: Δλ = λ − λ₀. Positive means towards the red.',
     'z': 'Redshift: how far a line has moved, as a fraction of its lab wavelength, z = Δλ/λ₀. It is negative for a blueshift.',
-    'v = cz': 'Speed from redshift, where c is the speed of light. It no longer applies above z = 0.1, so past that, quote z alone.',
+    'v = cz': 'Speed from redshift, where c is the speed of light. Beyond about 30,000 km/s it is only rough. A quasar\'s light is stretched so far that it would give more than the speed of light, so for quasars the sim uses a formula that stays below it.',
     'v sin i': "The part of a star's spin that you can measure. v is the true speed of its equator, and i is the tilt of its spin axis from your line of sight: 90° means you see it side-on, and 0° pole-on. Only motion towards or away from you shifts light, so you measure v × sin i, which is never more than v.",
     'rotational broadening': 'Even, symmetric widening of every line, because one side of a spinning star comes towards you as the other moves away.',
     'pressure broadening': 'Widening of lines because atoms in dense gas are constantly jostled by their neighbours.',

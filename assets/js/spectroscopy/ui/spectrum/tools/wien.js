@@ -9,7 +9,7 @@
 import { registerTool } from './index.js';
 import { recordMeasurement, getMeasurement } from '../../../core/measurements.js';
 import { WIEN_B, SPECTRUM_LO_NM, SPECTRUM_HI_NM } from '../../../core/phys.js';
-import { plusMinus, sci, shiftWords, sig, withCommas } from '../../../core/format.js';
+import { isQuasar, plusMinus, sci, shiftSpeed, sig, withCommas } from '../../../core/format.js';
 import { STANDARDS, STANDARD_LABELS } from '../../../data/standards.js';
 import { wienPeak, wienCurveAt } from '../../../spectra/measure.js';
 import { topEdge, curveScale, curveAt, fitError, markOnPeak, markReading } from '../../../spectra/hand_fit.js';
@@ -262,7 +262,7 @@ function mount(container, api) {
     function syncShiftNote() {
         const z = api.picker.state().z;
         if (z) {
-            fill(stdShift, para(`Shifted by your slide: ${shiftWords(z)}`));
+            fill(stdShift, para(`Shifted by your slide: ${shiftSpeed(z, { quasar: isQuasar(api.resolved && api.resolved.entity) })}`));
         } else {
             fill(stdShift, actionRow(toolLink(api, 'doppler', 'Moving? Slide the lines first')));
         }

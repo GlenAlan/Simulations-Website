@@ -35,12 +35,6 @@ export function redshiftOf(body) {
     return (body.radial_velocity_kms ?? 0) / C_KMS;
 }
 
-function shiftNote(z) {
-    return z >= 0.1
-        ? `This object is so far away that z = ${z.toFixed(2)} is too large for v = cz to be accurate, so quote z itself.`
-        : '';
-}
-
 export function galaxySpectrum(body, grid) {
     const galaxy = body.galaxy;
     const mix = MIXES[galaxy.morphology] || MIXES.spiral;
@@ -85,7 +79,8 @@ export function galaxySpectrum(body, grid) {
         fRef: out.fRef,
         snr: snrFromFlux(effectiveFlux(body.brightness)),
         mode: 'absorption',
-        note: shiftNote(z)
+        // Nothing said about its shift, however far away: it reads as a speed like any other (core/format.js)
+        note: ''
     };
 }
 
@@ -146,7 +141,7 @@ export function quasarSpectrum(body, grid) {
     }
     for (let i = 0; i < n; i++) flux[i] *= forest[i];
 
-    const note = `This quasar's lines are shifted by a huge z = ${z.toFixed(2)}, which is too large for v = cz to work: that sum would give a speed above the speed of light at z above 1. Quote z itself.`;
+    const note = 'This quasar\'s lines have moved a very long way, too far for v = cz to work: at shifts this big it can give a speed above the speed of light.';
     return {
         flux,
         continuum,
@@ -292,7 +287,7 @@ export function nucleusSpectrum(entity, grid, host) {
             list(rest, label, species, emit(rest, label, species, h * local, n.narrow_fwhm_kms));
         });
     }
-    const note = n.active ? shiftNote(z)
+    const note = n.active ? ''
         : 'The black hole here is quiet: it adds nothing you can see, so this is the light of the stars round it.';
     return {
         flux,

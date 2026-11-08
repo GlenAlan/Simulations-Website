@@ -16,7 +16,7 @@
 
 import { REFERENCE_GROUPS } from '../../data/references.js';
 import { C_KMS, wienPeakNm } from '../../core/phys.js';
-import { CZ_REASON, beyondCz, shiftWords, speedText, withCommas, wavelength, zPlain } from '../../core/format.js';
+import { isQuasar, shiftDirection, shiftSpeed, withCommas, wavelength } from '../../core/format.js';
 
 const NONE = { id: 'none', label: 'No reference', kind: 'none' };
 let nextId = 0;
@@ -81,25 +81,21 @@ function tToSlider(T, min, max) {
 export function shiftSettings(entity) {
     const kind = entity ? entity.kind : '';
     if (kind === 'quasar') return { unit: 'z', min: -0.1, max: 5, step: 0.001 };
-    if (kind === 'galaxy' || kind === 'nucleus') return { unit: 'kms', min: -2000, max: 100000, step: 10 };
+    // Past the farthest galaxy, at z 0.37 (111,600 km/s), with some to spare
+    if (kind === 'galaxy' || kind === 'nucleus') return { unit: 'kms', min: -2000, max: 120000, step: 10 };
     if (kind === 'supernova') return { unit: 'kms', min: -30000, max: 30000, step: 10 };
     return { unit: 'kms', min: -500, max: 500, step: 1 };
 }
 
-// "→ z = +0.0000600, v = +18 km/s, moving away": z always, and v = cz beside it until that stops applying (spec 8.4), as
-// every shift is shown (core/format.js)
-export function shiftText(z) {
+// "→ +18 km/s, moving away": as a speed, as every shift is shown (core/format.js), by the formula for big shifts for a quasar
+export function shiftText(z, quasar = false) {
     if (z === 0) return 'Not shifted';
-    const arrow = z > 0 ? '→' : '←';
-    const dir = z > 0 ? 'moving away' : 'moving towards us';
-    if (beyondCz(z)) return `${arrow} ${shiftWords(z, { reason: false })}, ${dir}. ${CZ_REASON}.`;
-    return `${arrow} ${shiftWords(z)}, ${dir}`;
+    return `${z > 0 ? '→' : '←'} ${shiftSpeed(z, { quasar })}, ${shiftDirection(z)}`;
 }
 
-// The same, short, for a name: "z = +0.0000600, +18 km/s" or "z = +0.229"
-export function shiftShort(z) {
-    if (z === 0) return '';
-    return beyondCz(z) ? `z = ${zPlain(z)}` : `z = ${zPlain(z)}, ${speedText(z * C_KMS)}`;
+// The same, short, for a name: "+18 km/s"
+export function shiftShort(z, quasar = false) {
+    return z === 0 ? '' : shiftSpeed(z, { quasar });
 }
 
 // A button that repeats while it is held, for fine steps by touch or mouse; a key press gives one step
@@ -487,6 +483,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
     // ---------- Shift ----------
 
     let settings = shiftSettings(null);
+    let quasar = false;       // A quasar's shift reads by the formula for big shifts
 
     function zFromSlider() {
         const v = Number(shiftSlider.value);
@@ -498,10 +495,10 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
     }
 
     function syncShift() {
-        const text = shiftText(state.z);
+        const text = shiftText(state.z, quasar);
         shiftValue.textContent = text;
         shiftSlider.setAttribute('aria-valuetext', text);
-        shiftSummaryValue.textContent = shiftShort(state.z);
+        shiftSummaryValue.textContent = shiftShort(state.z, quasar);
         shiftReset.hidden = state.z === 0;
     }
 
@@ -553,6 +550,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
         },
         setEntity(resolved) {
             settings = shiftSettings(resolved ? resolved.entity : null);
+            quasar = isQuasar(resolved && resolved.entity);
             state.z = 0;
             applySettings();
             syncShift();
@@ -588,7 +586,7 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
             const zOf = (value) => (settings.unit === 'z' ? value : value / C_KMS);
             const lo = zOf(settings.min);
             const hi = zOf(settings.max);
-            const texts = [lo, hi, Math.max(lo, -0.0999), Math.min(hi, 0.0999)].map(shiftText);
+            const texts = [lo, hi, Math.max(lo, -0.0999), Math.min(hi, 0.0999)].map((z) => shiftText(z, quasar));
             const longest = texts.reduce((best, text) => (text.length > best.length ? text : best), '');
             const copy = shiftDetails.cloneNode(true);
             copy.open = true;
