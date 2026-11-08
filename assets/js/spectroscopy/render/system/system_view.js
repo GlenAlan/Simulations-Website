@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 import { bus, select } from '../../core/state.js';
 import { azAltToVec3 } from '../../core/sky.js';
+import { BANDS, BAND_INFO } from '../../core/bands.js';
 import { ETA, parallaxFactor, travelPc } from '../../core/depth.js';
 import { sharedUniforms } from '../shared.js';
 import { wheelZoomStep } from '../engine.js';
@@ -385,6 +386,8 @@ export function initSystemView(app) {
             smear: createSmear(model),
             whirl: createSmear(model),      // The same sums for an orbit too fast to follow, but nothing blurs: see settleOrbits
             detail: model.stars.map((s) => (s.star.stage === 'black_hole' ? 0 : detailOf(s.star))),   // For holdClock
+            looks: model.stars.map((s) => (s.star.stage === 'black_hole' ? null : starLook(s.star))),
+            flareNow: new Float64Array(model.stars.length),
             parents: new Map(model.nodes.flatMap((n) => (n.children || []).map((c) => [c, n])))
         };
     }
@@ -1332,6 +1335,7 @@ export function initSystemView(app) {
                 return;
             }
             const flare = world.flares[i] ? world.flares[i].step(frame.dt, reduce) : 0;
+            world.flareNow[i] = flare;
             let surface = 0;
             let corona = 0;
             for (let b = 0; b < 5; b++) {
@@ -2200,6 +2204,70 @@ export function initSystemView(app) {
         const giant = star.stage === 'giant' || star.stage === 'supergiant';
         return Math.max(look.corona.a2 * look.corona.turb, giant ? look.contrast * 0.5 : 0, GRANULATED * look.lane, 0.02);
     }
+
+    // ... in the band on show. A star is drawn in each band's own light (band_look.js): a red dwarf, dim in visible light,
+    // has its surface drawn in X-rays in the band's bright false colour, and the same small, contrasty cells then swing
+    // the screen's brightness enough to flash as they slide past, a cell at a time. How far a cell swings it is worked out
+    // every frame, through the engine's tone curve, for the mix of bands showing and any flare under way. Past CELL_SWING
+    // the cells themselves are the detail to hold the clock for; short of it, only the coarser detail above. A star's
+    // corona is drawn brighter in some bands than in visible light, and its rays show that much more.
+    const CELL_SWING = 0.09;        // In shown brightness, from 0 to 1. A flash takes 0.1: infrared's 0.08 measured clear
+    const CELL_FROM_PX = 1.6;       // A cell this many px across or less isn't drawn (star_surface.js)
+    const CORONA_GAIN_MOST = 4;
+    const aces = (x) => Math.min(1, Math.max(0, (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)));
+    const shownLuminance = (r, g, b) => 0.2126 * aces(r) + 0.7152 * aces(g) + 0.0722 * aces(b);
+    const BAND_TINTS = BANDS.map((band) => BAND_INFO[band].tint);
+
+    // A star's detail as the bands show it just now: { cells: px radius share between cells that flicker, or 0; corona:
+    // how much more its rays show than in visible light }. out is reused.
+    function detailInBand(i, out) {
+        const star = model.stars[i].star;
+        const look = world.looks[i];
+        const bandLook = world.bandLooks[i];
+        out.cells = 0;
+        out.corona = 1;
+        if (!look || !bandLook) return out;
+        const w = sharedUniforms.uBandW.value;
+        const flare = world.flareNow[i] || 0;
+        const visible = surfaceColour(star.teff_K);
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let surface = 0;
+        let corona = 0;
+        for (let k = 0; k < 5; k++) {
+            const tint = k === 2 ? visible : BAND_TINTS[k];
+            r += w[k] * tint[0];
+            g += w[k] * tint[1];
+            b += w[k] * tint[2];
+            surface += w[k] * bandLook.surface[k] * (1 + flare * FLARE_GAIN.surface[k]);
+            corona += w[k] * bandLook.corona[k] * (1 + flare * FLARE_GAIN.corona[k]);
+        }
+        // A cell lighter and darker than its neighbours by half the look's contrast either way (a dwarf's fine granules
+        // are fainter than a cool star's or a giant's cells)
+        const half = 0.5 * (look.lane > 0 ? 0.13 * look.grainGain : look.contrast);
+        const s = surface * look.intensity;
+        const swing = shownLuminance(r * s * (1 + half), g * s * (1 + half), b * s * (1 + half))
+            - shownLuminance(r * s * (1 - half), g * s * (1 - half), b * s * (1 - half));
+        if (swing >= CELL_SWING) out.cells = look.lane > 0 ? 1 / 40 : 1 / look.cellScale;
+        const c = corona * look.intensity;
+        const shown = shownLuminance(r * c, g * c, b * c);
+        const inVisible = shownLuminance(visible[0] * bandLook.corona[2] * look.intensity, visible[1] * bandLook.corona[2] * look.intensity, visible[2] * bandLook.corona[2] * look.intensity);
+        out.corona = Math.min(CORONA_GAIN_MOST, Math.max(1, shown / Math.max(inVisible, 1e-3)));
+        return out;
+    }
+    const bandDetail = { cells: 0, corona: 1 };
+
+    // The detail a star carries past each spot it crosses, swinging round this centre with this period
+    function addStarDetail(here, swing, i, period, f, frame) {
+        if (model.stars[i].star.stage === 'black_hole') {
+            addFlashItem(here, swing, world.sizes.stars[i], period, 0, { texture: HOLE_STREAKS, textureFrom: HOLE_STREAKS_FROM_PX }, f, frame);
+            return;
+        }
+        const d = detailInBand(i, bandDetail);
+        addFlashItem(here, swing, world.sizes.stars[i], period, 0, { texture: DETAIL_SPACING / (world.detail[i] * d.corona), textureFrom: DETAIL_FROM_PX }, f, frame);
+        if (d.cells > 0) addFlashItem(here, swing, world.sizes.stars[i], period, 0, { texture: d.cells, textureFrom: CELL_FROM_PX / d.cells }, f, frame);
+    }
     const HOLD_EASE = 3;            // How fast the clock comes back up to speed, as a log a second. Slowing down is at once.
     const flashItems = [];
 
@@ -2326,13 +2394,7 @@ export function initSystemView(app) {
                 sides.forEach((s) => addFlashItem(here, s.swing, s.reach, period, 2 / share, { at: s.at }, f, frame));
             }
             // A star's corona and cells, and a black hole's streaked disc, carry their detail past every spot they cross
-            sides.forEach((s) => {
-                s.members.forEach((i) => {
-                    const hole = model.stars[i].star.stage === 'black_hole';
-                    const texture = hole ? HOLE_STREAKS : DETAIL_SPACING / world.detail[i];
-                    addFlashItem(here, s.swing, sizes.stars[i], period, 0, { texture, textureFrom: hole ? HOLE_STREAKS_FROM_PX : DETAIL_FROM_PX }, f, frame);
-                });
-            });
+            sides.forEach((s) => s.members.forEach((i) => addStarDetail(here, s.swing, i, period, f, frame)));
         });
 
         // A young multiple's stars that stay, going round each other once the last to be thrown out has gone: each of the
@@ -2358,7 +2420,7 @@ export function initSystemView(app) {
                     if (!shown.length) return;
                     const reach = Math.max(...shown.map((i) => apart(positions.stars[i], at) + sizes.stars[i] * STAR_GLOW));
                     addFlashItem(here, apart(at, here), reach, orbit.period_days, 2, { at }, f, frame);
-                    shown.forEach((i) => addFlashItem(here, apart(at, here), sizes.stars[i], orbit.period_days, 0, { texture: DETAIL_SPACING / world.detail[i], textureFrom: DETAIL_FROM_PX }, f, frame));
+                    shown.forEach((i) => addStarDetail(here, apart(at, here), i, orbit.period_days, f, frame));
                 });
             });
         }
