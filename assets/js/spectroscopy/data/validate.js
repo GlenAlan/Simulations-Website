@@ -20,6 +20,8 @@ import { nucleusEntities, nucleusProblems } from './nuclei.js';
 import { LOCAL_GROUP_GALAXIES, localGroupProblems } from './local_group.js';
 import { UNSTABLE_MULTIPLES } from './quotas.js';
 import { UNSTABLE_ARCH, unstableProblems } from './unstable.js';
+import { PULSE_SHOWN_HZ, PULSAR_SPIN_HZ } from './deep_sky.js';
+import { FIELD_NEUTRON_STARS } from './neutron_field.js';
 
 const RAD = Math.PI / 180;
 const DEFAULT_FOV = 80;
@@ -537,11 +539,16 @@ function checkDeepSky(u, fail) {
             if (Math.abs(msLifetimeMyr(c.turnoff_Msun) / c.age_Myr - 1) > 0.02) fail(`${body.code}'s turn-off doesn't match its age`);
         }
         if (body.neutron_star && body.neutron_star.pulsar) {
-            // A real pulsar's spin, by what it is (data/deep_sky.js pulsePeriod): a supernova's own is young and spins tens of
-            // times a second, and none is faster than about 700 turns a second or slower than about 10 s
-            const { pulse_period_s: period, remnant_of: remnant } = body.neutron_star;
-            if (!within(period, 0.0015, 10)) fail(`${body.code} has period ${period}`);
-            if (remnant && !within(period, 0.016, 0.12)) fail(`${body.code} is a young pulsar with period ${period}`);
+            // Every pulsar turns as the sky shows it, within PULSE_SHOWN_HZ (data/deep_sky.js pulsePeriod)
+            const period = body.neutron_star.pulse_period_s;
+            if (!(period > 0) || !within(1 / period, PULSE_SHOWN_HZ.min, PULSE_SHOWN_HZ.max, 0.001)) fail(`${body.code} has period ${period}`);
+        }
+        if (body.neutron_star && !body.neutron_star.remnant_of) {
+            // One of our galaxy's own, where real ones are (data/neutron_field.js)
+            const f = FIELD_NEUTRON_STARS;
+            const z = body.distance_pc * Math.sin(Math.abs(galacticLatitude(body.sky.az, body.sky.alt)) * RAD);
+            if (!within(body.distance_pc, f.pc[0], f.pc[1])) fail(`${body.code} is a neutron star ${body.distance_pc} pc away`);
+            if (z > f.mostHeightPc * 1.01) fail(`${body.code} is a neutron star ${Math.round(z)} pc off the galactic plane`);
         }
         if (body.galaxy) {
             const expected = H0 * body.galaxy.distance_Mpc;
@@ -558,6 +565,13 @@ function checkDeepSky(u, fail) {
             fail(`${body.code} has no central white dwarf`);
         }
     });
+    // As populations: the pulsars spin round PULSAR_SPIN_HZ (over 200 skies, a sky's mean log rate is within 0.19 dex of it),
+    // and our galaxy's neutron stars keep mostly near its plane (a sky's median |b| is 2 to 12 degrees)
+    const rates = u.bodies.filter((b) => b.neutron_star && b.neutron_star.pulsar).map((b) => Math.log10(1 / b.neutron_star.pulse_period_s));
+    const meanRate = rates.reduce((sum, x) => sum + x, 0) / Math.max(1, rates.length);
+    if (rates.length && Math.abs(meanRate - Math.log10(PULSAR_SPIN_HZ.median)) > 0.3) fail(`the pulsars spin ${(10 ** meanRate).toFixed(2)} times a second on average`);
+    const lats = u.bodies.filter((b) => b.neutron_star && !b.neutron_star.remnant_of).map((b) => Math.abs(galacticLatitude(b.sky.az, b.sky.alt))).sort((a, b) => a - b);
+    if (lats.length && lats[Math.floor(lats.length / 2)] > 15) fail('our galaxy\'s neutron stars are too far from its plane');
     const phases = u.bodies.filter((b) => b.supernova).map((b) => b.supernova.phase0_days);
     if (new Set(phases).size !== phases.length) fail('two supernovae share a phase');
     u.bodies.filter((b) => b.supernova && b.supernova.host_code).forEach((b) => checkFarSupernova(u, b, fail));

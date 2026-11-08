@@ -6,7 +6,6 @@ import { registerTool } from './index.js';
 import { app, bus } from '../../../core/state.js';
 import { Rng } from '../../../core/rng.js';
 import { sig } from '../../../core/format.js';
-import { PULSE_SHOWN_HZ } from '../../../data/deep_sky.js';
 import { createPlayback } from '../../playback.js';
 import { el, fontOf } from '../../plot2d.js';
 import { createTimeFigure, figureTable, para } from './common.js';
@@ -159,12 +158,9 @@ function mount(container, api) {
             // Speeds that keep the trace at or below 2 pulses a second, however fast the star really turns
             const scaled = period * unit.perS;
             const speeds = [scaled / 2, scaled, 2 * scaled].map((s) => Number(s.toPrecision(2)));
-            // The sky shows no pulsar flashing faster than PULSE_SHOWN_HZ.max: say so, so that a count there doesn't mislead
-            rate.textContent = pulses > PULSE_SHOWN_HZ.max
-                ? `${pulsesText}. Too fast to show: the sky flashes it ${PULSE_SHOWN_HZ.max} times a second, and this trace at most 2 a second.`
-                : pulses > 2
-                    ? `${pulsesText}. Slowed right down here, to at most 2 a second, so that it can be watched.`
-                    : `${pulsesText}. Played at a rate that's easy to follow.`;
+            rate.textContent = pulses > 2
+                ? `${pulsesText}. Slowed right down here, to at most 2 a second, so that it can be watched.`
+                : `${pulsesText}. Played at a rate that's easy to follow.`;
             playback = createPlayback(controls, {
                 label: 'Pulse playback',
                 speeds,

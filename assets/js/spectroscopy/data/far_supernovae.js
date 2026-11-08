@@ -19,7 +19,7 @@ import { SUPERNOVAE } from './quotas.js';
 
 const ABS_PEAK = { Ia: [-19.5, -19.1], II: [-17.5, -16.5] };   // As data/deep_sky.js makeSupernova draws them
 const REMNANT_PC = 10;              // How big a young remnant is, for the size its shell is given: far below anything drawn
-const FIELD_NS_PC = [100, 5000];    // A neutron star of our galaxy's, as data/deep_sky.js makeNeutronStar places one
+const FIELD_NS_PC = [100, 5000];    // As data/deep_sky.js makeNeutronStar first places one; data/neutron_field.js then moves it
 const INTERNAL_KMS = 120;           // A supernova's own motion in its galaxy, about the galaxy's middle (one-dimensional)
 const INTERNAL_LIMIT = 300;
 const PLACE_TRIES = 40;

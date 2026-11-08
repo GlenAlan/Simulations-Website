@@ -42,10 +42,9 @@ export function smoothstep(lo, hi, x) {
 // ---------- A pulsar's spin, the same on the sky (neutron_stars.js) and up close (system/remnants.js) ----------
 //
 // The rule for how fast a pulsar is shown turning, the same in both views, which show the same turn at the same moment:
-//   - Each turns at its true rate, kept between PULSE_SHOWN_HZ.min and .max turns a second (0.1 to 10 Hz, from
-//     data/deep_sky.js). Most real pulsars are inside that. A young or millisecond one turns faster, and is shown at 10 a
-//     second; the Pulse timing tool and the Info tab give its true period, and say so. On the sky one turn is one pulse, as
-//     the beam crosses our line of sight: a small point, which may flash that fast.
+//   - Each turns at its true rate, between PULSE_SHOWN_HZ.min and .max turns a second (0.1 to 10 Hz, from
+//     data/deep_sky.js, which draws every pulsar's rate inside that). On the sky one turn is one pulse, as the beam
+//     crosses our line of sight: a small point, which may flash that fast.
 //   - Up close a beam sweeps over a large part of the screen, and three changes a second over a wide area is the most
 //     photosensitive viewers can take. Zoomed in, the soft beam in system/remnants.js does that 1.5 times a second at
 //     0.6 turns a second, but 4 times at 0.75 and 8 at 1. So up to SPIN_SHOWN turns a second the close beams are drawn
