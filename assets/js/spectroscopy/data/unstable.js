@@ -16,7 +16,7 @@ import { Rng, stable } from '../core/rng.js';
 import { fluxFromLuminosity } from '../core/phys.js';
 import { MIN_ALT, azAltToVec3, vec3ToAzAlt } from '../core/sky.js';
 import { DEPTH_TABLE } from '../core/depth.js';
-import { dp, RSUN_AU, starFromMass, makeComposition, msLifetimeMyr, apparentMag } from './stellar.js';
+import { dp, dpAz, RSUN_AU, starFromMass, makeComposition, msLifetimeMyr, apparentMag } from './stellar.js';
 import { systemAbsoluteMag, systemLuminosity, fillComponentFields } from './multi.js';
 import { deepSpacingDeg, DEEP_CLEAR_DEG } from './sky_layout.js';
 import { rocheShare } from './dynamics.js';
@@ -517,7 +517,7 @@ function placeBy(rng, body, host, hostRadius, layout) {
             const s = Math.sin(sep);
             const c = Math.cos(sep);
             const p = vec3ToAzAlt(...[0, 1, 2].map((k) => c * a[k] + s * (Math.cos(angle) * e1[k] + Math.sin(angle) * e2[k])));
-            const az = dp(p.az - 360 * Math.floor(p.az / 360), 3);
+            const az = dpAz(p.az, 3);
             const alt = dp(p.alt, 3);
             if (alt < MIN_ALT + 0.3) continue;
             const v = azAltToVec3(az, alt);
@@ -578,8 +578,11 @@ export function makeUnstableMultiples(rng, nextCode, base, layout, sky) {
             inc_deg: dp(Math.acos(r.range(0, 1)) / RAD, 2),
             host: host.code
         };
-        // As far away as the gas it was born in, and moving with it
-        const distance = stable(host.distance_pc * r.range(1 - DEPTH_SPREAD, 1 + DEPTH_SPREAD), 5);
+        // As far away as the gas it was born in, and moving with it. Rounding can carry a distance drawn right at the edge of
+        // that a hair beyond it: then it is kept just inside. No other distance changes.
+        let distance = stable(host.distance_pc * r.range(1 - DEPTH_SPREAD, 1 + DEPTH_SPREAD), 5);
+        const off = distance / host.distance_pc - 1;
+        if (Math.abs(off) > DEPTH_SPREAD) distance = stable(host.distance_pc * (1 + Math.sign(off) * DEPTH_SPREAD * 0.999), 5);
         body.distance_pc = distance;
         body.radial_velocity_kms = dp(host.radial_velocity_kms + r.range(-RV_SPREAD_KMS, RV_SPREAD_KMS), 1);
         body.brightness = {

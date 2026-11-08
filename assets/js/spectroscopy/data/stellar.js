@@ -31,6 +31,13 @@ export function dp(x, places = 3) {
     return Math.round(x * k) / k;
 }
 
+// An azimuth in degrees, rounded the same way and kept in [0, 360): an azimuth just short of 360 rounds up to 360, which is 0.
+// Any other azimuth comes out exactly as dp of it, wrapped, always has.
+export function dpAz(az, places = 3) {
+    const a = dp(az - 360 * Math.floor(az / 360), places);
+    return a >= 360 ? a - 360 : a;
+}
+
 export function clamp(x, lo, hi) {
     return Math.min(hi, Math.max(lo, x));
 }

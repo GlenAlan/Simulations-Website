@@ -8,7 +8,7 @@
 // sky grow dense where it is faint. It keeps further from the first sky's bodies, so as not to crowd them.
 
 import { MIN_ALT, azAltToVec3, vec3ToAzAlt, galacticLatitude } from '../core/sky.js';
-import { dp } from './stellar.js';
+import { dp, dpAz } from './stellar.js';
 
 export const MIN_SPACING_DEG = 1;     // Points this far apart stay distinct at the default zoom
 const MARGIN_DEG = 0.2;               // Room for the jitter
@@ -137,7 +137,7 @@ export function layOutSky(entries, rng) {
                 c * a[1] + s * (ca * e1[1] + sa * e2[1]),
                 c * a[2] + s * (ca * e1[2] + sa * e2[2])
             );
-            const az = dp(pos.az, 4);
+            const az = dpAz(pos.az, 4);
             const alt = dp(pos.alt, 4);
             if (alt < MIN_ALT + 0.3) continue;
             const v = azAltToVec3(az, alt);
@@ -165,7 +165,7 @@ export function layOutSky(entries, rng) {
         const sky = entry.body.sky;
         const alt = Math.max(MIN_ALT + 0.05, sky.alt + r * Math.sin(angle));
         const az = sky.az + (r * Math.cos(angle)) / Math.max(0.05, Math.cos(sky.alt * RAD));
-        sky.az = dp(az - 360 * Math.floor(az / 360), 3);
+        sky.az = dpAz(az, 3);
         sky.alt = dp(alt, 3);
     });
 
@@ -227,7 +227,7 @@ export function layOutDeep(layout, entries, rng) {
         const lowest = MIN_ALT + 0.3 + (entry.radius_deg || 0);
         const keep = KEEP_RULES[entry.rule] || KEEP_RULES.even;
         for (let tries = 0; ; tries++) {
-            const az = dp(stream.range(0, 360), 4);
+            const az = dpAz(stream.range(0, 360), 4);
             const alt = dp(Math.asin(stream.next()) / RAD, 4);
             if (alt < lowest) continue;
             const lat = dp(Math.abs(galacticLatitude(az, alt)), 3);
@@ -244,7 +244,7 @@ export function layOutDeep(layout, entries, rng) {
 export function placeOne(layout, entry, candidates) {
     const sep = Math.max(MIN_SPACING_DEG + MARGIN_DEG, entry.radius_deg || 0);
     for (const c of candidates) {
-        const az = dp(c.az - 360 * Math.floor(c.az / 360), 3);
+        const az = dpAz(c.az, 3);
         const alt = dp(c.alt, 3);
         if (alt < MIN_ALT + 0.3) continue;
         const v = azAltToVec3(az, alt);
@@ -269,7 +269,7 @@ export function placeDeepAt(layout, entry, candidates, inside = null) {
     entry.spacing = deepSpacingDeg(entry.body);
     const skip = inside ? layout.placed.find((p) => p.entry.body === inside) : null;
     for (const c of candidates) {
-        const az = dp(c.az - 360 * Math.floor(c.az / 360), 3);
+        const az = dpAz(c.az, 3);
         const alt = dp(c.alt, 3);
         if (alt < MIN_ALT + 0.3) continue;
         if (deepFits(layout, azAltToVec3(az, alt), entry, skip && skip.entry)) {

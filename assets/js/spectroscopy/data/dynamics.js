@@ -25,6 +25,7 @@ export const DETACHED_FILL = 0.9;       // A pair that isn't passing mass keeps 
 export const P_TYPE_MARGIN = 1.2;       // How far beyond the edge of the unstable zone a circumbinary orbit must be
 export const S_TYPE_MARGIN = 0.8;       // How far inside the stable zone an orbit round one part of a system must be
 const ROUND = 0.01;                     // An orbit with less eccentricity than this counts as round
+const TWIN_ROOM = 1.002;                // Twins passing mass sit this much wider than just filling: each fills 0.998 of its lobe
 const AGE_SPREAD = 0.02;                // Stars born together, within this share of their age
 
 // Black holes and how they are fed (black_hole.feeding): 'roche', a companion that fills its Roche lobe and spills gas onto a
@@ -294,6 +295,9 @@ function settlePair(rng, stars, orbit, passing) {
     if (passing) {
         makeRound(orbit);
         orbit.a_AU = stable(fillingSeparation(stars, orbit), 6);
+        // Twins fill their lobes alike, and rounding can leave both a hair over: then they sit just far enough apart that
+        // neither overfills, the one that passes mass still all but filling its lobe. No other pair moves.
+        if (Math.min(...lobeFills(stars, orbit)) >= 1) orbit.a_AU = stable(fillingSeparation(stars, orbit) * TWIN_ROOM, 6);
     } else {
         const fill = Math.max(...lobeFills(stars, orbit));
         if (fill > DETACHED_FILL) orbit.a_AU = stable(orbit.a_AU * (fill / DETACHED_FILL) * rng.range(1.05, 1.6), 5);
