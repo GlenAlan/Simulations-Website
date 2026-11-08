@@ -11,7 +11,7 @@
 import { stable } from '../core/rng.js';
 import { C_KMS, fluxFromLuminosity } from '../core/phys.js';
 import { MIN_ALT, azAltToVec3, galacticLatitude } from '../core/sky.js';
-import { dp, distanceModulus } from './stellar.js';
+import { dp, dpAz, distanceModulus } from './stellar.js';
 import { addQuietNucleus } from './nuclei.js';
 
 export const LOCAL_GROUP_GALAXIES = 1;
@@ -86,7 +86,7 @@ function placeGalaxy(rng, body, layout, avoid) {
     };
     let spot = null;
     for (let tries = 0; tries < 6000 && !spot; tries++) {
-        const az = dp(rng.range(0, 360), 3);
+        const az = dpAz(rng.range(0, 360), 3);
         const alt = dp(Math.asin(rng.range(sinLo, sinHi)) / RAD, 3);
         const lat = dp(Math.abs(galacticLatitude(az, alt)), 3);
         if (lat < LATITUDE_DEG[0] || lat > LATITUDE_DEG[1]) continue;

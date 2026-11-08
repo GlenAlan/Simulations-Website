@@ -5,7 +5,8 @@
 import { bus, select } from '../core/state.js';
 import { getMeasurement, recordMeasurement } from '../core/measurements.js';
 import { C_KMS, H0 } from '../core/phys.js';
-import { CZ_LIMIT, CZ_REASON, plusMinus, shiftWords, sig, withCommas, zPlain } from '../core/format.js';
+import { CZ_LIMIT, CZ_REASON, plusMinus as plusMinusOf, shiftWords, sig as sigOf, withCommas as commasOf, zPlain } from '../core/format.js';
+import { isLocalGroup } from '../data/local_group.js';
 import { toolWords } from './spectrum/tools/index.js';
 import {
     createToggle, createDataTable, createFigure, createLabelPlacer, createMeasureCard, createPlottedList, drawErrorBar,
@@ -20,6 +21,12 @@ const HEAVY_SHARE = 0.6;      // A galaxy with this much of the fit's weight is 
 const NEARBY_MPC = 50;        // Closer than this, a galaxy's own motion is a real part of its speed
 const LOCAL_GROUP_MPC = 3;    // Closer than this, a galaxy coming towards us is one of our own Local Group
 
+// Numbers as the rest of the panel writes them, with a true minus sign: "−306", not "-306"
+const minus = (text) => String(text).replace(/^-/, '−');
+const sig = (x, n) => minus(sigOf(x, n));
+const plusMinus = (value, err) => minus(plusMinusOf(value, err));
+const withCommas = (x) => minus(commasOf(x));
+
 // ---------- Session state ----------
 
 const plotted = new Map();    // code -> number shown beside the point
@@ -27,6 +34,7 @@ let nextNumber = 1;
 let refreshTab = () => {};    // The mounted tab's refresh
 let tab = null;               // The mounted tab's announce and focus
 let saveKey = null;
+let localCodes = new Set();   // The sky's Local Group galaxies
 
 function persist() {
     if (!saveKey) return;
@@ -78,11 +86,21 @@ function galaxyPoint(code) {
     const m = getMeasurement(code) || {};
     const v = velocityOf(m);
     if (v === null || !(m.distance_pc > 0)) return null;
-    return { code, v, vErr: m.v_err_kms || 0, dMpc: m.distance_pc / 1e6, z: Number.isFinite(m.z) ? m.z : v / C_KMS };
+    return { code, v, vErr: m.v_err_kms || 0, dMpc: m.distance_pc / 1e6, z: Number.isFinite(m.z) ? m.z : v / C_KMS, local: localCodes.has(code) };
 }
 
 function galaxyPoints() {
     return [...plotted.keys()].map(galaxyPoint).filter(Boolean);
+}
+
+// The exception: a galaxy of our own Local Group, whose speed is its own motion in the group's pull, not the expansion. It is
+// plotted, but always left out of the line.
+function inLocalGroup(p) {
+    return !!p.local || (p.v < 0 && p.dMpc <= LOCAL_GROUP_MPC);
+}
+
+function linePoints(points) {
+    return points.filter((p) => !inLocalGroup(p));
 }
 
 // "+23,400", so a blueshift's sign is never lost
@@ -91,15 +109,16 @@ function signedSpeed(v) {
 }
 
 function currentFit() {
-    const points = galaxyPoints();
+    const points = linePoints(galaxyPoints());
     return fitThroughOrigin(points.map((p) => p.dMpc), points.map((p) => p.v));
 }
 
 // Plain words on the student's own points, without saying what H₀ should come out as. A line through the origin is
 // weighted by distance squared, so one far galaxy can set it alone, and nearby galaxies scatter because their own motion
 // through space is a large share of their speed.
-export function hubbleAdvice(points, useLog) {
+export function hubbleAdvice(plottedPoints, useLog) {
     const out = [];
+    const points = linePoints(plottedPoints);
     const weights = points.map((p) => p.dMpc * p.dMpc);
     const total = weights.reduce((sum, w) => sum + w, 0);
     if (points.length >= 3 && total > 0) {
@@ -113,11 +132,14 @@ export function hubbleAdvice(points, useLog) {
         }
     }
     // The exception: near enough that gravity wins over the expansion
-    const local = points.filter((p) => p.v < 0 && p.dMpc <= LOCAL_GROUP_MPC);
+    const local = plottedPoints.filter(inLocalGroup);
     if (local.length) {
-        out.push(`${local[0].code} is coming towards us. It is so close that the pull between it and our galaxy beats the expansion: both belong to our Local Group.`);
+        const left = points.length ? ', so the line leaves it out' : '';
+        out.push(local[0].v < 0
+            ? `${local[0].code} is coming towards us. It is so close that the pull between it and our galaxy beats the expansion: both belong to our Local Group${left}.`
+            : `${local[0].code} belongs to our Local Group: it is so close that the pull between it and our galaxy beats the expansion${left}.`);
     }
-    const near = points.filter((p) => p.dMpc <= NEARBY_MPC && !local.includes(p));
+    const near = points.filter((p) => p.dMpc <= NEARBY_MPC);
     if (near.length >= 2) {
         const rates = near.map((p) => p.v / p.dMpc);
         out.push(`Nearby galaxies scatter: yours give v ÷ d from ${sig(Math.min(...rates), 2)} to ${sig(Math.max(...rates), 2)} km/s/Mpc. A galaxy's own motion through space matters most when its expansion speed is small, so far galaxies tell you more.`);
@@ -151,6 +173,7 @@ export function initHubbleTab(app) {
         appliesTo: (resolved) => resolved.path === 'body' && ['galaxy', 'quasar'].includes(resolved.body.kind),
         mount: (container) => mountHubble(container, app)
     });
+    localCodes = new Set(app.universe.bodies.filter(isLocalGroup).map((body) => body.code));
     restore(app);
 
     // How the Spectrum tab's tools hand their results over
@@ -386,13 +409,13 @@ function mountHubble(container, app) {
         const n = points.length;
         if (!fit) {
             readout.textContent = 'H₀ = ?';
-            readoutNote.textContent = 'The line\'s gradient, once there are galaxies';
+            readoutNote.textContent = n ? 'The line\'s gradient, once there are galaxies beyond our Local Group' : 'The line\'s gradient, once there are galaxies';
         } else if (fit.err === null) {
             readout.textContent = `H₀ ≈ ${sig(fit.slope, 3)} km/s/Mpc`;
             readoutNote.textContent = `1 galaxy of ${SUGGESTED_GALAXIES}`;
         } else {
             readout.textContent = `H₀ = ${plusMinus(fit.slope, fit.err)} km/s/Mpc`;
-            readoutNote.textContent = n < SUGGESTED_GALAXIES ? `${n} galaxies of ${SUGGESTED_GALAXIES}` : `${n} galaxies`;
+            readoutNote.textContent = fit.n < SUGGESTED_GALAXIES ? `${fit.n} galaxies of ${SUGGESTED_GALAXIES}` : `${fit.n} galaxies`;
         }
         readoutNote.title = 'The best-fit line through the origin. Aim for at least ' + SUGGESTED_GALAXIES + ' galaxies.';
 

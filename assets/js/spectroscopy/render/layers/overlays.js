@@ -5,7 +5,7 @@
 import { bus } from '../../core/state.js';
 import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
-import { beyondCz, withCommas, zPlain } from '../../core/format.js';
+import { shiftWords } from '../../core/format.js';
 import { C_KMS } from '../../core/phys.js';
 import { drawnSky } from './sky_tangent.js';
 import { sharedUniforms, travelSize } from '../shared.js';
@@ -51,17 +51,16 @@ export function angularRadiusDeg(entity, body) {
     return 0;
 }
 
-// As every shift is shown (core/format.js): z always, and the speed beside it while v = cz still applies (spec 8.4)
-const STILL = 'z = 0, 0 km/s';      // Neither towards us nor away
-function shiftWords(body) {
+// As every shift is shown, in the same words as the panel's (core/format.js): z always, and the speed beside it while v = cz
+// still applies (spec 8.4), with z to the same figures, so a z just over 0.1 never reads as 0.1
+const STILL = 'z = 0, v = 0 km/s';      // Neither towards us nor away
+function shiftLabel(body) {
     const v = body.radial_velocity_kms;
     const given = body.quasar ? body.quasar.z : (body.galaxy ? body.galaxy.z : null);
     const z = Number.isFinite(given) ? given : v / C_KMS;
     if (!Number.isFinite(z)) return null;
-    if (beyondCz(z)) return `z = ${zPlain(z, 2)}`;
-    const speed = Math.abs(v) >= 1000 ? withCommas(Math.abs(v)) : Math.abs(v).toFixed(0);
-    if (speed === '0') return STILL;
-    return `z = ${zPlain(z, 2)}, ${v < 0 ? '−' : '+'}${speed} km/s`;
+    if (z === 0) return STILL;
+    return shiftWords(z, { v: Number.isFinite(v) ? v : undefined, reason: false });
 }
 
 // A soft disc, drawn once for each colour and stamped at any size
@@ -340,7 +339,7 @@ export function createOverlaysLayer(engine, app) {
             if (p.y < inset.top || p.y > frame.height - inset.bottom) continue;
 
             const name = showLabels ? (body.name || body.code) : null;
-            const shift = showShift && body.kind !== 'home_planet' ? shiftWords(body) : null;
+            const shift = showShift && body.kind !== 'home_planet' ? shiftLabel(body) : null;
             if (!name && !shift) continue;
             const v = body.radial_velocity_kms;
             const shiftText = shift ? (shift === STILL ? shift : `${v >= 0 ? '→' : '←'} ${shift}`) : null;

@@ -140,7 +140,7 @@ export function supernovaStage(body, t) {
 export function supernovaMag(body, t) {
     const phase = phaseOf(body, t);
     if (phase < FIRST_LIGHT) return Infinity;
-    return body.supernova.peak_mag - 2.5 * Math.log10(Math.max(0.001, explosionLight(body.supernova, phase)));
+    return body.supernova.peak_mag - 2.5 * Math.log10(Math.max(1e-6, explosionLight(body.supernova, phase)));
 }
 
 // The band table's visible light, 1 at peak. Later on that rises again as the sky draws the spreading filaments of the

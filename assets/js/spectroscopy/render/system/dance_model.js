@@ -6,7 +6,7 @@
 // faster than SWEEP_PER_S of its own width a second, and that when the camera rides with one star, what's round it never swings
 // past faster than TURNS_PER_S. danceGovernor says how much to slow the clock for that, frame by frame.
 
-import { danceMotion, danceAccelerations, danceTimescale, danceCentreAU, danceInfo } from '../../data/unstable.js';
+import { danceMotion, danceAccelerations, danceTimescale, danceCentreAU, danceInfo, danceBound } from '../../data/unstable.js';
 
 const BREAK_UP_S = 45;            // At the top speed, the first star leaves within this many seconds
 const SECONDS_PER_CROSSING = 8;   // The speed it opens at: about one crossing of the group in this long
@@ -77,6 +77,22 @@ export function recentreLayout(model, tDays, o) {
 function smoothstep(a, b, x) {
     const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
+}
+
+// How far the view closes in once a star has been thrown out, as a share of the dance's own frame (system_model.js FRAME, as
+// far out as the stars go while they dance): 1 until the middle has moved over to the stars that stay (data/unstable.js
+// danceBound), then over FRAME_OVER_TCR crossing times on to the frame that fits them as they go on round each other, so they
+// read as the stars they are rather than as one blob of light. Played back to before then, it opens out the same way.
+// A function of the time alone, so it is the same however the clock got there.
+const FRAME_OVER_TCR = 2;
+const FRAME_MARGIN = 1.1;         // The stars that stay reach this much less than the edge of the frame, at their furthest
+const FRAME_LEAST = 0.03;
+export function danceFrame(model, tDays) {
+    const bound = danceBound(model.body);
+    if (!bound) return 1;
+    const k = Math.max(FRAME_LEAST, Math.min(1, (FRAME_MARGIN * bound.reachAU) / model.extent));
+    const g = smoothstep(bound.settledDays, bound.settledDays + FRAME_OVER_TCR * danceTimescale(model.body), tDays);
+    return g > 0 ? k ** g : 1;
 }
 
 // How much the clock may run this frame, from 0 to 1, at speed days per second. view: { radii: drawn radius of each star in

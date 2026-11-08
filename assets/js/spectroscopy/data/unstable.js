@@ -16,7 +16,7 @@ import { Rng, stable } from '../core/rng.js';
 import { fluxFromLuminosity } from '../core/phys.js';
 import { MIN_ALT, azAltToVec3, vec3ToAzAlt } from '../core/sky.js';
 import { DEPTH_TABLE } from '../core/depth.js';
-import { dp, RSUN_AU, starFromMass, makeComposition, msLifetimeMyr, apparentMag } from './stellar.js';
+import { dp, dpAz, RSUN_AU, starFromMass, makeComposition, msLifetimeMyr, apparentMag } from './stellar.js';
 import { systemAbsoluteMag, systemLuminosity, fillComponentFields } from './multi.js';
 import { deepSpacingDeg, DEEP_CLEAR_DEG } from './sky_layout.js';
 import { rocheShare } from './dynamics.js';
@@ -225,6 +225,66 @@ export function danceCentreAU(body, tDays) {
         c[2] += m * x[3 * i + 2];
     });
     return [c[0] / mass, c[1] / mass, c[2] / mass];
+}
+
+// The stars that stay once the last star to leave has gone, and how far out they go round their own middle on the orbits they
+// are left in: { stay (their indices), leftDays (the time, as tDays, when the last to go left them), settledDays (by when the
+// middle has moved over to them: see danceCentreAU), reachAU, orbits: [{ a, b (star indices of its two sides), period_days }] },
+// or null if no star is thrown out. Found once, from the integration's own two-body ending.
+const BOUND_SPAN_TCR = 30;      // Looked at over this many crossing times after the dance ends...
+const BOUND_SAMPLES = 1200;     // ... at this many moments, so that the widest swing is caught to within a percent or so
+export function danceBound(body) {
+    const dance = danceOf(body);
+    if (dance.bound !== undefined) return dance.bound;
+    const chaos = dance.info;
+    const { run } = dance;
+    const all = body.stars.map((s, i) => i);
+    const going = all.filter((i) => chaos.escapers.includes(body.stars[i].code));
+    const stay = all.filter((i) => !going.includes(i));
+    if (!going.length || !stay.length || !run.tree) {
+        dance.bound = null;
+        return null;
+    }
+    const left = Math.max(...going.map((i) => leftTime(run, i)));
+    const masses = massesOf(body);
+    const mass = stay.reduce((sum, i) => sum + masses[i], 0);
+    const x = new Float64Array(3 * dance.n);
+    const v = new Float64Array(3 * dance.n);
+    const from = Math.max(run.end, left);
+    const span = BOUND_SPAN_TCR * chaos.crossing_days;
+    let reach = 0;
+    for (let k = 0; k < BOUND_SAMPLES; k++) {
+        readRun(run, from + (span * (k + 0.5)) / BOUND_SAMPLES, x, v);
+        const c = [0, 1, 2].map((q) => stay.reduce((sum, i) => sum + masses[i] * x[3 * i + q], 0) / mass);
+        stay.forEach((i) => {
+            reach = Math.max(reach, Math.hypot(x[3 * i] - c[0], x[3 * i + 1] - c[1], x[3 * i + 2] - c[2]));
+        });
+    }
+    // The orbits they are left in: every bound node of the ending's two-body tree that holds only stars that stay
+    const orbits = [];
+    const membersOf = (node) => (node.leaf !== undefined ? [node.leaf] : [...membersOf(node.a), ...membersOf(node.b)]);
+    const walk = (node) => {
+        if (node.leaf !== undefined) return;
+        const a = membersOf(node.a);
+        const b = membersOf(node.b);
+        const r = Math.hypot(node.r[0], node.r[1], node.r[2]);
+        const energy = (node.v[0] ** 2 + node.v[1] ** 2 + node.v[2] ** 2) / 2 - node.mu / r;
+        if (energy < 0 && [...a, ...b].every((i) => stay.includes(i))) {
+            const semi = -node.mu / (2 * energy);
+            orbits.push({ a, b, period_days: 2 * Math.PI * Math.sqrt(semi ** 3 / node.mu) });
+        }
+        walk(node.a);
+        walk(node.b);
+    };
+    (run.tree.roots || run.tree.straight.map((part) => part.node)).forEach(walk);
+    dance.bound = {
+        stay,
+        leftDays: left - chaos.today_days,
+        settledDays: left + SETTLE_TCR * chaos.crossing_days - chaos.today_days,
+        reachAU: reach,
+        orbits
+    };
+    return dance.bound;
 }
 
 // How hard each star is being pulled just now (AU per day per day), for how sharply it turns
@@ -517,7 +577,7 @@ function placeBy(rng, body, host, hostRadius, layout) {
             const s = Math.sin(sep);
             const c = Math.cos(sep);
             const p = vec3ToAzAlt(...[0, 1, 2].map((k) => c * a[k] + s * (Math.cos(angle) * e1[k] + Math.sin(angle) * e2[k])));
-            const az = dp(p.az - 360 * Math.floor(p.az / 360), 3);
+            const az = dpAz(p.az, 3);
             const alt = dp(p.alt, 3);
             if (alt < MIN_ALT + 0.3) continue;
             const v = azAltToVec3(az, alt);
@@ -578,8 +638,11 @@ export function makeUnstableMultiples(rng, nextCode, base, layout, sky) {
             inc_deg: dp(Math.acos(r.range(0, 1)) / RAD, 2),
             host: host.code
         };
-        // As far away as the gas it was born in, and moving with it
-        const distance = stable(host.distance_pc * r.range(1 - DEPTH_SPREAD, 1 + DEPTH_SPREAD), 5);
+        // As far away as the gas it was born in, and moving with it. Rounding can carry a distance drawn right at the edge of
+        // that a hair beyond it: then it is kept just inside. No other distance changes.
+        let distance = stable(host.distance_pc * r.range(1 - DEPTH_SPREAD, 1 + DEPTH_SPREAD), 5);
+        const off = distance / host.distance_pc - 1;
+        if (Math.abs(off) > DEPTH_SPREAD) distance = stable(host.distance_pc * (1 + Math.sign(off) * DEPTH_SPREAD * 0.999), 5);
         body.distance_pc = distance;
         body.radial_velocity_kms = dp(host.radial_velocity_kms + r.range(-RV_SPREAD_KMS, RV_SPREAD_KMS), 1);
         body.brightness = {

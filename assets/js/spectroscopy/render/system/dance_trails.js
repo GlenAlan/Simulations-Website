@@ -14,7 +14,7 @@ import { surfaceColour } from './star_surface.js';
 import { danceWorld, danceCentreWorld, trailDays } from './dance_model.js';
 import { danceInfo } from '../../data/unstable.js';
 
-const POINTS = 160;               // Points along each trail
+const POINTS = 480;               // Points along each trail: enough for the orbits of the stars that stay to be smooth, close up
 const WIDTH_PX = 1.5;
 const OPACITY = 0.55;
 
@@ -149,11 +149,23 @@ export function createDanceTrails(model) {
     const step = trailDays(model) / POINTS;
     // Back to the start of the integration at most: before it, the stars would need running backwards
     const earliest = -danceInfo(model.body).today_days;
+    // Where each star was, from the view's middle as it was then: that middle moves over to the stars that stay once one has
+    // been thrown out, and they drift on together, so their trails are the orbits they go round, not a coil left behind them
+    const fromMiddle = (t) => {
+        const p = danceWorld(model, t);
+        const c = danceCentreWorld(model, t);
+        p.forEach((q) => {
+            q[0] -= c[0];
+            q[1] -= c[1];
+            q[2] -= c[2];
+        });
+        return p;
+    };
     const cache = new Map();
     const at = (k) => {
         let p = cache.get(k);
         if (!p) {
-            p = danceWorld(model, Math.max(earliest, k * step));
+            p = fromMiddle(Math.max(earliest, k * step));
             cache.set(k, p);
         }
         return p;
@@ -173,10 +185,7 @@ export function createDanceTrails(model) {
         if (key === lastKey) return;
         lastKey = key;
         const kNow = Math.floor(tDays / step);
-        const now = danceWorld(model, tDays);
-        // The trails stay where the stars went; the view's middle moves with the stars that stay
-        const centre = danceCentreWorld(model, tDays);
-        group.position.set(-centre[0], -centre[1], -centre[2]);
+        const now = fromMiddle(tDays);
         // POINTS - 1 grid points behind the star, then where it is just now
         for (let j = 0; j < POINTS; j++) {
             const p = at(kNow - (POINTS - 1) + j);

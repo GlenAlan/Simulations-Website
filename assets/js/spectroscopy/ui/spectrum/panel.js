@@ -261,6 +261,27 @@ function createSpectrumPanel(app, container) {
     parts.label.classList.add('spectro-sr-only');
     area.append(toolsEl, parts.list, parts.tRow, parts.frameButton, parts.refNote, parts.shiftDetails, dialSlot, help, refHost);
 
+    // In a tall drawer a lone spectrum leaves room under it for the reference's Shift, so that Shift opens without moving the
+    // plot (see the CSS). The room is what Shift really takes, open, readout and Reset and all, over the dock as it is: measured
+    // from a copy of it at the width it has, out of sight and taking up no room. Neither depends on the plot's height, so
+    // setting the room can't change what it was measured from.
+    const shiftProbe = make('div', { class: 'spectro-shift-probe', 'aria-hidden': 'true' });
+    shiftProbe.inert = true;
+    area.appendChild(shiftProbe);
+    let restRoom = '';
+    function fitRestRoom() {
+        if (!area.getClientRects().length || !shiftProbe.getClientRects().length) return;   // Not laid out just now
+        shiftProbe.style.width = `${Math.max(0, area.offsetWidth - 24)}px`;   // Shift's width with no scrollbar beside it
+        shiftProbe.replaceChildren(picker.shiftProbe());
+        const room = `${Math.ceil(shiftProbe.scrollHeight + toolBar.getBoundingClientRect().height) + 1}px`;
+        shiftProbe.replaceChildren();
+        if (room === restRoom) return;
+        restRoom = room;
+        instrument.style.setProperty('--spectro-rest-room', room);
+    }
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitRestRoom()).observe(toolBar);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitRestRoom);
+
     // ---------- Stacked or overlay, zoom ----------
 
     // Overlay unless the student asks for the two stacked: with no reference, that is the object alone at full height
@@ -502,6 +523,7 @@ function createSpectrumPanel(app, container) {
         bodySpectrum = null;
         bodyCover = null;
         picker.setEntity(resolved);
+        fitRestRoom();      // The slider's reach, and so its longest readout, goes with the kind of object
 
         let spectrum;
         try {

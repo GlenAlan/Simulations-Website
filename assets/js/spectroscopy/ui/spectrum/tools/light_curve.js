@@ -164,7 +164,9 @@ function mountSupernova(container, api) {
             reset(entity && entity !== resolved.entity ? entity.code : null);
             entity = resolved.entity;
             curve = lightCurve(entity);
-            caveat.textContent = supernovaShellShows(entity.supernova) ? CAVEAT_SHELL : CAVEAT_POINT;
+            // One in another galaxy fades on as a real one does (data/band_table.js), so its curve needs no word of explanation
+            caveat.textContent = entity.supernova.host_code ? '' : supernovaShellShows(entity.supernova) ? CAVEAT_SHELL : CAVEAT_POINT;
+            caveat.hidden = !caveat.textContent;
             figure.setLabel(`Light curve: magnitude against days after peak, reaching magnitude ${curve.peak_mag.toFixed(1)} at its peak, with a sketch of the explosion up close at the time shown in the top right corner. The values are in the table under Show as table.`);
             updateTable();
             playback.pause();

@@ -582,6 +582,24 @@ export function createRefPicker(container, { onChange = () => {}, onLabels = () 
             shiftSlider.value = sliderFromZ(z);
             setZ(z);
         },
+        // A copy of Shift as it is when open, with Reset showing and the longest readout its slider can give here, for the
+        // panel to measure the room Shift takes. It has no ids, so nothing points at it.
+        shiftProbe() {
+            const zOf = (value) => (settings.unit === 'z' ? value : value / C_KMS);
+            const lo = zOf(settings.min);
+            const hi = zOf(settings.max);
+            const texts = [lo, hi, Math.max(lo, -0.0999), Math.min(hi, 0.0999)].map(shiftText);
+            const longest = texts.reduce((best, text) => (text.length > best.length ? text : best), '');
+            const copy = shiftDetails.cloneNode(true);
+            copy.open = true;
+            copy.querySelectorAll('[id], [for]').forEach((el) => {
+                el.removeAttribute('id');
+                el.removeAttribute('for');
+            });
+            copy.querySelector('.spectro-shift-value').textContent = longest;
+            copy.querySelector('.spectro-text-button').hidden = false;
+            return copy;
+        },
         // Line labels: the reference's lines are named, and matching them to the object's is left to the student
         setLabels(on) {
             state.labels = !!on;
