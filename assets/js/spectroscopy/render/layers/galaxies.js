@@ -44,6 +44,7 @@ const STEPS_MOST = 4;              // Steps of baking a frame, at most, on a GPU
 const HERO_SLOTS = 2;              // At most this many galaxies have their own large picture at once
 const HERO_CAP = { low: 640, medium: 1280, high: 2048 };
 const HERO_LINGER_S = 15;          // Keep a large picture this long after it goes out of use, in case of a return
+const HERO_SETTLE_S = 0.12;        // A large picture comes in once the view has been still this long
 
 // A feeding black hole's point can be picked on its own once its galaxy is this big on screen (radius, CSS pixels)...
 const NUCLEUS_OPENS_PX = 150;
@@ -628,8 +629,10 @@ export function createGalaxiesLayer(engine, app) {
     let job = null;
     let jobDone = null;
     let jobSlot = null;             // A full picture's place being baked into, which can't be given away meanwhile
-    let stillFor = 0;
+    let stillFor = 0;               // Seconds since the field of view last changed
+    let settledFor = 0;             // ...and since the view last moved at all
     let lastFov = -1;
+    const lastForward = new THREE.Vector3();
     let stepsPerFrame = 1;
     const forward = new THREE.Vector3();
     const views = { now: null, goal: null };
@@ -938,6 +941,11 @@ export function createGalaxiesLayer(engine, app) {
             frame.camera.getWorldDirection(forward);
             if (Math.abs(frame.fov - lastFov) > frame.fov * 0.001) stillFor = 0;
             else stillFor += Math.max(dt, 0.008);
+            // Settled: neither turning nor zooming by more than a twentieth of a pixel a frame
+            const turnedPx = Math.acos(Math.max(-1, Math.min(1, forward.dot(lastForward)))) * frame.pxPerRad;
+            const zoomedPx = (Math.abs(frame.fov - lastFov) / frame.fov) * frame.height * frame.dpr;
+            settledFor = turnedPx + zoomedPx > 0.05 ? 0 : settledFor + Math.max(dt, 0.008);
+            lastForward.copy(forward);
             lastFov = frame.fov;
 
             if (app.view === 'sky') {
@@ -962,12 +970,14 @@ export function createGalaxiesLayer(engine, app) {
             }
 
             // Fades add up to one, since drawing is additive: a galaxy's first picture comes in, a full one takes over from a
-            // small one (and gives way to it again), and then a large picture takes over from both
+            // small one (and gives way to it again), and then a large picture takes over from both. A large picture baked at a
+            // flight's take-off waits for the view to settle before it comes in, as one baked there would: its fine detail
+            // swept across the screen by a moving view would flicker.
             for (let i = 0; i < HERO_SLOTS; i++) {
                 const h = heroes[i];
                 if (!h.galaxy) continue;
                 const target = h.wanted && h.target ? 1 : 0;
-                if (h.fade !== target) {
+                if (h.fade !== target && (target < h.fade || settledFor >= HERO_SETTLE_S)) {
                     h.fade = target > h.fade ? Math.min(1, h.fade + dt / 0.35) : Math.max(0, h.fade - dt / 0.25);
                     h.geometry.attributes.aFade.array[0] = h.fade;
                     h.geometry.attributes.aFade.needsUpdate = true;

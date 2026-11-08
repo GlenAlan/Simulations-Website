@@ -530,9 +530,7 @@ void main() {
         }
         at.y *= uHand;
         float lum = min(1.0, 0.01 / max(1.0 - rnd(sx), 1e-5));
-        // A pixel each, at the least. In a bake smaller than a full picture's, that pixel covers more of the galaxy, and is
-        // dimmed to hold the light a full picture's would
-        vXray = (0.5 + 6.0 * sqrt(lum)) * min(1.0, uRes * uRes / 16384.0);
+        vXray = 0.5 + 6.0 * sqrt(lum);
         vVis = vec3(0.0);
         vBands = vec2(0.0);
         vHard = 2.0;
@@ -782,11 +780,8 @@ export function createGalaxyBaker(engine) {
     let points = null;
     const pointScene = new THREE.Scene();
 
-    // Working textures, kept by size: small and full pictures take turns while the sky fills in
     let scratchMap = null;
     let scratchView = null;
-    const scratchMaps = new Map();
-    const scratchViews = new Map();
 
     function pointsFor(count) {
         if (count > pointCapacity) {
@@ -825,10 +820,14 @@ export function createGalaxyBaker(engine) {
     }
 
     function scratch(mapRes, res) {
-        if (!scratchMaps.has(mapRes)) scratchMaps.set(mapRes, hdrTarget(mapRes, mapRes, 1, true));
-        if (!scratchViews.has(res)) scratchViews.set(res, hdrTarget(res, res, 2, false));
-        scratchMap = scratchMaps.get(mapRes);
-        scratchView = scratchViews.get(res);
+        if (!scratchMap || scratchMap.width !== mapRes) {
+            if (scratchMap) scratchMap.dispose();
+            scratchMap = hdrTarget(mapRes, mapRes, 1, true);
+        }
+        if (!scratchView || scratchView.width !== res) {
+            if (scratchView) scratchView.dispose();
+            scratchView = hdrTarget(res, res, 2, false);
+        }
     }
 
     function setRecipe(r) {
@@ -976,10 +975,8 @@ export function createGalaxyBaker(engine) {
         bake,
         // Free the working textures. The small ones are worth keeping while the atlas fills, the rest of the time none are.
         releaseScratch() {
-            scratchMaps.forEach((target) => target.dispose());
-            scratchViews.forEach((target) => target.dispose());
-            scratchMaps.clear();
-            scratchViews.clear();
+            if (scratchMap) scratchMap.dispose();
+            if (scratchView) scratchView.dispose();
             scratchMap = null;
             scratchView = null;
             if (pointGeometry) pointGeometry.dispose();
