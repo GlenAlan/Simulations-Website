@@ -12,6 +12,8 @@ import { memberDirection } from '../layers/sky_tangent.js';
 import { cometsOf, cometOrbit } from './comet_orbits.js';
 import { rocheShare } from '../../data/dynamics.js';
 import { nucleusSystemOf, supermassiveRadius, CLOSE_STAR_SHARE, CLOSE_STAR_FLOOR_PX } from './nucleus_model.js';
+import { danceReachAU } from '../../data/unstable.js';
+import { danceSpeeds, danceStarCap, recentreLayout } from './dance_model.js';
 
 export const FRAME = 10;                // World units from the centre to the edge of the default view
 const RSUN_AU = R_SUN / AU;
@@ -85,7 +87,8 @@ function orbitsOf(body) {
 function buildTree(body, stars) {
     const leaves = stars.map((_, i) => ({ members: [i], index: i, children: null, a_AU: 0, orbit: null, flat: false }));
     if (leaves.length === 1) return leaves[0];
-    if (body.architecture === 'figure_eight') {
+    // Unstable: no orbits at all, just stars round their centre of mass (render/system/dance_model.js)
+    if (body.architecture === 'figure_eight' || body.unstable) {
         return { members: stars.map((_, i) => i), index: -1, children: leaves, a_AU: 0, orbit: null, flat: true };
     }
     const key = (list) => [...list].sort((a, b) => a - b).join(',');
@@ -188,7 +191,7 @@ export function buildModel(body) {
         root: null,
         nodes: [],
         pathPoints: body.architecture === 'figure_eight' ? figureEightPoints() : null,
-        pathPeriodDays: body.figure_eight ? body.figure_eight.period_days : 365.25,
+        pathPeriodDays: body.figure_eight ? body.figure_eight.period_days : body.unstable ? 0 : 365.25,
         unit: 1,                 // World units per AU, true scale
         levels: [],
         hz: null,
@@ -230,6 +233,7 @@ export function buildModel(body) {
         });
     }
     if (model.pathPoints) model.pathPoints.forEach((q) => { extent = Math.max(extent, Math.hypot(q.x, q.y)); });
+    if (body.unstable) extent = Math.max(extent, danceReachAU(body));   // As far out as they go before one is flung out
     model.planets.forEach((e) => {
         let offset = 0;
         for (let k = 0; k < 8; k++) {
@@ -259,7 +263,7 @@ export function buildModel(body) {
     // the widest orbit, but along the long axis (+x) of the figure-eight, so that's where the flight starts from.
     const orbits = orbitsOf(body);
     const widest = body.figure_eight || (orbits.length ? orbits[orbits.length - 1] : null);
-    model.inclination = widest ? widest.inc_deg : null;
+    model.inclination = widest ? widest.inc_deg : body.unstable ? body.chaos.inc_deg : null;
     model.sightAz = body.figure_eight ? -Math.PI / 2 : 0;
 
     const main = stars.length === 1 && (stars[0].star.stage === 'main_sequence');
@@ -333,7 +337,7 @@ function computeSizes(model) {
             });
         // A wide companion or a figure-eight partner just has to stay well clear
         if (model.root.flat) {
-            const minGap = model.pathPoints ? 0.34 * model.unit : Infinity;
+            const minGap = model.pathPoints ? 0.34 * model.unit : model.body.unstable ? danceStarCap(FRAME) : Infinity;
             out.forEach((r, i) => { out[i] = Math.min(r, minGap); });
         }
         return out;
@@ -573,6 +577,7 @@ export function layout(model, tDays, m, out = null) {
         });
     };
     place(model.root, 0, 0, 0);
+    if (model.body.unstable) recentreLayout(model, tDays, o);    // Centred on the stars that stay (dance_model.js)
     model.planets.forEach((entry, i) => {
         const pl = entry.planet;
         const r = ringRadius(model, pl.orbit_AU, m);
@@ -779,6 +784,7 @@ export function hzStatus(body) {
 // Fast enough, the shorter orbits merge into their smears, and the longer ones are what's left to watch. With Reduce
 // motion the top is far lower. Null if nothing here goes round anything.
 export function speedsFor(model, reduceMotion = false, mix = model.startLog ? 1 : 0) {
+    if (model.body.unstable) return danceSpeeds(model, reduceMotion);   // No orbits: paced on its crossing time
     const periods = model.planets.map((e) => e.planet.period_days);
     // A busy orbit (orbitShare) is held to its share of the top speed, as if it were that much shorter
     const shared = [...periods];

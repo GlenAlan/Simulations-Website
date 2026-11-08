@@ -18,6 +18,7 @@
 
 import { bus } from '../../../core/state.js';
 import { widestSplit } from './split_lines.js';
+import { danceTimescale } from '../../../data/unstable.js';
 
 // The limit on showing an orbit as it happens. Lines cross twice a turn, so this is two crossings a second: under the
 // rule of no more than three changes a second.
@@ -26,6 +27,7 @@ const STEP_MS = 400;             // 2.5 changes a second
 const FALLBACK_PERIOD_DAYS = 10; // A system with no period to go on, which shouldn't happen
 
 function fastestPeriod(body) {
+    if (body.unstable) return danceTimescale(body);      // No period: its lines swing on its crossing time
     const periods = [];
     if (body.black_hole) periods.push(body.black_hole.period_days);
     if (body.figure_eight) periods.push(body.figure_eight.period_days);
@@ -64,7 +66,7 @@ function makeClock(body) {
 
     function tick(now) {
         raf = requestAnimationFrame(tick);
-        clock.t += (Math.min(100, now - last) / 1000) * clock.speed;
+        clock.t += (Math.min(100, now - last) / 1000) * clock.speed * clock.governor;
         last = now;
         send(now, false);
     }
@@ -74,6 +76,8 @@ function makeClock(body) {
         t: 0,
         playing: false,
         speed: fastest / 6,
+        // Below 1 while the system view holds the clock back, for stars in no stable orbit (render/system/dance_model.js)
+        governor: 1,
         fastest,
         smoothMax: fastest * MAX_TURNS_PER_S,
         steppedT: () => reading,

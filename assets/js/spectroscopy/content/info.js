@@ -18,6 +18,7 @@ import { CZ_REASON, beyondCz, shiftWords, withCommas, sig, signed, wavelength, d
 import { AU, C_KMS, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
 import { pulsarKind, PULSE_SHOWN_HZ } from '../data/deep_sky.js';
 import { supernovaShellShows } from '../spectra/supernova.js';
+import { danceFacts } from '../data/unstable.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const row = (label, value) => ({ label, value });
@@ -277,6 +278,19 @@ function componentInfo({ entity, body }) {
             catalogue: clean([row('Black hole system', parent), starRows(star), observedRows(entity, body, "System's radial velocity"), starMakeupRows(star)])
         };
     }
+    if (body?.unstable) {
+        return {
+            kindLabel: 'Star in an unstable group',
+            lead: 'One star of a young group with no stable orbits, taken on its own.',
+            summary: `One star of the system${code}, seen on its own. It has no steady orbit, so its lines shift without a pattern as it swings round the others.`,
+            notes: [
+                { heading: 'Its system', text: 'Taken alone, this star\'s lines are easier to follow than in the combined spectrum. The Velocity tool reads its speed at any moment. The Period tool finds no period that lasts: its swings don\'t repeat.' },
+                ...starNotes(star)
+            ],
+            rarity: UNSTABLE_RARITY,
+            catalogue: clean([row('System', parent), starRows(star), observedRows(entity, body, "System's radial velocity"), starMakeupRows(star)])
+        };
+    }
     return {
         kindLabel: 'Star in a multiple system',
         lead: 'One star of a multiple system, taken on its own.',
@@ -298,8 +312,48 @@ const ARCHITECTURE = {
     binary: 'Binary: two stars',
     hierarchical_triple: 'Hierarchical triple: a close pair with a third star on a wide orbit',
     figure_eight: 'Figure-eight: three stars sharing one path',
-    double_double: 'Double-double: two close pairs, far apart'
+    double_double: 'Double-double: two close pairs, far apart',
+    non_hierarchical: 'Unstable: stars swinging round one another, with no lasting orbit'
 };
+
+const UNSTABLE_RARITY = 'Rare to catch. Young stars are often born in small groups like this, but such a group lasts only a few hundred or a few thousand years before it breaks up.';
+
+// A number of years as the panel says it: a round figure, for something worked out by following the stars
+function yearsText(years) {
+    return years < 100 ? String(Math.round(years)) : sig(years, 2);
+}
+
+// Young stars in no stable orbit (data/unstable.js). The numbers come from following the stars with gravity: how long one
+// takes to cross the group, and when the first is flung out.
+function unstableInfo(entity) {
+    const stars = Array.isArray(entity.stars) ? entity.stars : [];
+    const chaos = entity.chaos || {};
+    const facts = danceFacts(entity);
+    const many = stars.length === 4 ? 'Four' : 'Three';
+    const out = isNum(facts.ejectYears) ? yearsText(facts.ejectYears) : null;
+    const crossing = isNum(facts.crossingYears) ? yearsText(facts.crossingYears) : null;
+    const age = stars[0] && stars[0].star ? stars[0].star.age_Myr : null;
+    return {
+        kindLabel: stars.length === 4 ? 'Unstable quadruple star' : 'Unstable triple star',
+        lead: `These stars aren't in stable orbits. Within about ${out} years one will probably be thrown out.`,
+        summary: `${many} young stars swinging round one another with no lasting orbit. Within about ${out} years one will probably be thrown out, and the rest will settle down.`,
+        next: SEE_SPLIT,
+        notes: [
+            { heading: 'No stable orbits', text: 'Most multiple stars are hierarchies: a close pair, with any other star far out, so that each orbit is nearly a simple ellipse and lasts. These stars are about as far from one another as from the middle, so each keeps pulling the others off course and their paths never repeat.' },
+            { heading: 'It won\'t last', text: `Groups like this break up within about a hundred crossing times, most often by throwing out the lightest star. Here a crossing takes about ${crossing} years. Run the clock in the system view to watch one go.` },
+            { heading: 'Young', text: `These stars are only about ${age === null ? 'a' : sig(age, 2)} million years old, and still by the nebula they formed in. The four bright stars of the Trapezium, at the heart of the Orion Nebula, are thought to be a young group like this.` },
+            { heading: 'What to look for', text: 'Each star\'s lines shift as it moves, but not in a steady swing. The Velocity tool reads a star\'s speed at any moment. The Period tool finds no period that lasts.' }
+        ],
+        rarity: UNSTABLE_RARITY,
+        catalogue: clean([
+            systemRows(entity),
+            row('Crossing time', crossing && `about ${crossing} years`),
+            row('First star thrown out', out && `in about ${out} years`),
+            row('Born by', chaos.host),
+            observedRows(entity, entity, "System's radial velocity")
+        ])
+    };
+}
 
 function orbitRows(body) {
     const orbits = Array.isArray(body.orbits) ? body.orbits : [];
@@ -367,6 +421,7 @@ const SEE_SPLIT = { label: 'See the lines split', tab: 'spectrum', tool: 'time-s
 function multipleInfo({ entity }) {
     if (entity.architecture === 'figure_eight') return { ...figureEightInfo(entity), next: SEE_SPLIT };
     if (entity.architecture === 'double_double') return { ...doubleDoubleInfo(entity), next: SEE_SPLIT };
+    if (entity.unstable) return unstableInfo(entity);
     const count = Array.isArray(entity.stars) ? entity.stars.length : 0;
     const [kindLabel, many] = COUNT_WORDS[count] || ['Multiple star', 'Several stars'];
     return {
