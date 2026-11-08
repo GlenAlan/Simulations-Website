@@ -42,6 +42,9 @@ import { createMassStream } from './mass_stream.js';
 import { starBandLook, createFlares, FLARE_GAIN, bandRgb } from './band_look.js';
 import { createComets } from './comets.js';
 import { hashString } from '../../core/rng.js';
+import { createDanceTrails } from './dance_trails.js';
+import { danceGovernor } from './dance_model.js';
+import { clockFor } from '../../ui/spectrum/tools/orbit_clock.js';
 
 const RAD = Math.PI / 180;
 const FOV = 36;                     // Vertical field of view of the system camera (degrees)
@@ -345,11 +348,15 @@ export function initSystemView(app) {
         if (comets) group.add(comets.group);
         const cometLabels = model.comets.map((e) => makeLabel(e.code));
 
+        // Stars in no stable orbit: trails where they have been, as there are no orbits to draw (dance_trails.js)
+        const trails = model.body.unstable ? createDanceTrails(model) : null;
+        if (trails) group.add(trails.group);
+
         scene.add(group);
         const steady = new Map(model.nodes.map((n) => [n, [0, 0, 0]]));
         return {
             group, stars, planets, starLines, eight, hz, stream, brightest, starLabels, planetLabels, beams, halo, steady,
-            bandLooks, flares, bandSeen: null, comets, cometLabels, dust,
+            bandLooks, flares, bandSeen: null, comets, cometLabels, dust, trails,
             starsAt: model.stars.map((_, i) => steady.get(model.nodes.find((n) => n.index === i))),
             lastStars: new Float64Array(model.stars.length * 3),
             lastPlanets: new Float64Array(model.planets.length * 3),
@@ -404,6 +411,11 @@ export function initSystemView(app) {
         }
         if (world.stream) world.stream.dispose();
         if (world.comets) world.comets.dispose();
+        if (world.trails) {
+            world.trails.dispose();
+            clockFor(model.body).governor = 1;
+            governed = 1;
+        }
         labelLayer.replaceChildren();
         world = null;
         positions = null;
@@ -1181,6 +1193,24 @@ export function initSystemView(app) {
         return smoothstep(1.5, 3, pxPerSecond / (2 * Math.max(pxRadius, 1))) * smoothstep(40, 80, pxRadius);
     }
 
+    // Stars in no stable orbit have no orbit to smear, and a close pass can whip a star past at many times its usual speed.
+    // So their clock, the one the spectrum shares, is held back while a star big on screen would sweep across it, or while
+    // the camera rides with a star that is turning hard (dance_model.js). Down at once, back up gently.
+    let governed = 1;
+    function governDance(frame, f) {
+        const shared = clockFor(model.body);
+        let want = 1;
+        if (mode === 'system' && clock.playing) {
+            const { sizes } = world;
+            const px = model.stars.map((_, i) => (sizes.stars[i] * f) / Math.max(sizes.starZ[i], sizes.stars[i], 1e-6));
+            const target = cam.target && cam.target.kind === 'star' ? cam.target.index : -1;
+            want = danceGovernor(model, tDays, clock.speed, { radii: sizes.stars, px, target });
+        }
+        governed = want < governed ? want : governed + (want - governed) * (1 - Math.exp(-frame.dt * 2));
+        if (governed > 0.999) governed = 1;
+        shared.governor = governed;
+    }
+
     // ---------- Bands ----------
     const HOLE_LIGHT = [0.05, 0.5, 1, 0.6, 1.5];   // A black hole merged into its smear: its disc's light, roughly
     const bandTmp = [0, 0, 0];
@@ -1454,6 +1484,10 @@ export function initSystemView(app) {
             const head = own > 0 ? 0 : ((tDays / model.pathPeriodDays) % 1 + 1) % 1;
             world.eight.glow.set({ draw: stage.orbits, head, opacity: 0.2 + 0.5 * own, width: 11 * frame.dpr });
             world.eight.core.set({ draw: stage.orbits, head, width: 1.4 * frame.dpr });
+        }
+        if (world.trails) {
+            world.trails.update({ tDays, draw: stage.orbits, dpr: frame.dpr, selected: selectedCode });
+            governDance(frame, f);
         }
 
         // Mass transfer
@@ -1763,6 +1797,10 @@ export function initSystemView(app) {
         const stayReady = !!hand;
         const heardOfIt = viewShown;
         const fingers = hand && pinch && pointers.size === 2 ? [...pointers] : null;
+        if (previous && previous.body.unstable) {
+            clockFor(previous.body).governor = 1;
+            governed = 1;
+        }
         hand = null;
         keyZoom = 0;
         viewShown = true;
@@ -2128,6 +2166,8 @@ export function initSystemView(app) {
             }
         },
         timeScale,
+        // Is the clock of stars in no stable orbit being held back just now, for a close pass?
+        danceSlowed: () => !!(model && model.body.unstable && mode === 'system' && governed < 0.98),
         // Has any orbit merged into its smear just now?
         isBlurred() {
             if (!world) return false;

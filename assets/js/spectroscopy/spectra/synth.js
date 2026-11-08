@@ -262,6 +262,8 @@ function systemTiming(body) {
     if (body.black_hole) {
         return { kind: 'black_hole', period_days: body.black_hole.period_days };
     }
+    // Stars in no stable orbit: no period, only the time they take to cross the group (data/unstable.js)
+    if (body.unstable) return { kind: 'unstable', period_days: null, crossing_days: body.chaos.crossing_days };
     const orbits = body.orbits || [];
     const periods = orbits.map((o) => o.period_days).filter((p) => p > 0).sort((a, b) => a - b);
     const shortest = periods[0];

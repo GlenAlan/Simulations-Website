@@ -171,7 +171,9 @@ export function createBinariesLayer(engine, app) {
     function layOutSystem(system, tDays) {
         const { body } = system;
         const widest = body.orbits && body.orbits.length ? body.orbits[body.orbits.length - 1] : null;
-        const ctx = { body, states: componentStates(body, tDays), rho: system.rho, inc: widest ? widest.inc_deg ?? 60 : 60 };
+        // Stars in no stable orbit have no widest orbit, but a line of sight of their own (data/unstable.js)
+        const inc = widest ? widest.inc_deg ?? 60 : body.chaos ? body.chaos.inc_deg : 60;
+        const ctx = { body, states: componentStates(body, tDays), rho: system.rho, inc };
         const out = [];
         layOut(system.tree, 0, 0, 0, ctx, out);
         // The root is the sprite that stars.js draws, so it isn't drawn here

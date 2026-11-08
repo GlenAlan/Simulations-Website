@@ -37,6 +37,7 @@ import { BODY_COUNTS, MIX, DEEP, SKY_COMETS, EXOCOMETS, apportion } from './quot
 import { assignVelocities } from './motions.js';
 import { addNuclei, nucleusEntities } from './nuclei.js';
 import { makeLocalGroup } from './local_group.js';
+import { makeUnstableMultiples } from './unstable.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
@@ -508,7 +509,12 @@ export function generateUniverse(seed = DEFAULT_SEED) {
         .map((code) => ({ sky: sky.find((b) => b.code === code).sky, clear_deg: code === target.host.code ? target.host.clear_deg : 0 }));
     const local = makeLocalGroup(root.fork('local group'), coder('local group'), (code) => makeBase('galaxy', code), layout, hardCoded);
 
-    const all = sky.concat(local, home);
+    // ---------- Young multiples in no stable orbit ----------
+    // By star-forming nebulae, and soon to fling a star out (data/unstable.js). Last of all, from a stream and codes of their
+    // own, placed round everything else, so nothing above changes.
+    const unstable = makeUnstableMultiples(root.fork('unstable'), coder('unstable'), (code) => makeBase('multiple', code), layout, sky);
+
+    const all = sky.concat(local, unstable, home);
 
     // Last of all, because band strengths read every other field. Band strengths are cached by temperature, so the first
     // sky goes first, in the order it always has, and the deeper sky after it: that way nothing nudges the first sky's.
@@ -538,6 +544,11 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     // Group's galaxy comes after every other sky body, so its hole's stars are the last of all.
     all.forEach((body) => nucleusEntities(body).forEach((entity) => { entity.bands = bandStrengths(entity); }));
     local.forEach((body) => { body.bands = bandStrengths(body); });
+    // And the unstable multiples' after that, for the same reason
+    unstable.forEach((body) => {
+        body.stars.forEach((star) => { star.bands = bandStrengths(star); });
+        body.bands = bandStrengths(body);
+    });
 
     const byCode = new Map();
     const register = (entity, body, path) => byCode.set(entity.code, { entity, body, path });
@@ -566,7 +577,8 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     return {
         seed,
-        bodies: all,               // The sky bodies, the first sky's, the deeper sky's, the Local Group's; then the 7 home planets
+        bodies: all,               // The sky bodies, the first sky's, the deeper sky's, the Local Group's, the unstable multiples';
+                                   // then the 7 home planets
         cometTailAz: cometSun.az,  // Every comet's tail points away from a Sun below the horizon on this bearing
         cometSun,                  // Where that Sun is: { az, alt }, alt below the horizon
         counts: tallyCounts(all, tally),

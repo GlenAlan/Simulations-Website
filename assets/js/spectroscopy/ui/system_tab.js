@@ -103,7 +103,7 @@ export function initSystemTab(app) {
         quiet = true;
         // Stars' orbits run on the clock the spectrum shares; a single star's planets need only this control
         const { body } = model;
-        systemClock = (body.orbits && body.orbits.length) || body.black_hole ? clockFor(body) : null;
+        systemClock = (body.orbits && body.orbits.length) || body.black_hole || body.unstable ? clockFor(body) : null;
         if (systemClock && !systemClock.playing) systemClock.setSpeed(speed);
         playback = createPlayback(timeBox, {
             label: 'Orbit time',
@@ -145,7 +145,8 @@ export function initSystemTab(app) {
         const now = performance.now();
         if (now - lastPaint < 150) return;
         lastPaint = now;
-        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up' : '';
+        const slowed = playback.playing && view.timeScale() < 1 ? ', running slowly for this close-up'
+            : playback.playing && view.danceSlowed() ? ', slowed for a fast pass' : '';
         const blurred = view.isBlurred() ? '. The fastest orbits are a blur at this speed.' : '';
         parts.time.textContent = `Time passed: ${timeText(Math.max(0, playback.t))}${slowed}${blurred}`;
     }

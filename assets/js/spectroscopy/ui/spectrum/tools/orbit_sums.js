@@ -107,8 +107,27 @@ function namesOf(stars) {
     return codes.length < 2 ? codes.join('') : `${codes.slice(0, -1).join(', ')} and ${codes[codes.length - 1]}`;
 }
 
+// Stars in no stable orbit (data/unstable.js): a period only where the readings really repeat, and never the two-body sums.
+// A line too broad to find the middle of gives no readings at all, and then that is what it says.
+const FEW_READINGS = 12;
+function danceResults(stars, covered) {
+    if (stars.some((s) => s.fit)) {
+        return [
+            periodTable(stars),
+            para('For now, two of these stars swing round each other as a pair. It won\'t last: these stars aren\'t in stable orbits.')
+        ];
+    }
+    if (covered && stars.every((s) => s.points.length < FEW_READINGS)) {
+        return [para('This line is too broad to follow here: hot stars that spin fast have broad lines. Try another line.')];
+    }
+    return [para(covered
+        ? 'No period. The lines shift to and fro, but no swing repeats: these stars aren\'t in stable orbits, so there is no period to find.'
+        : 'The lines wander. A period would show once a swing had repeated.')];
+}
+
 export function orbitResults({ resolved, stars, covered, span, line, sampleGap }) {
     const { body } = resolved;
+    if (body.unstable) return danceResults(stars, covered);
     const any = stars.some((s) => s.fit);
     const tooFast = stars.filter((s) => s.tooFast);
     const items = [];
