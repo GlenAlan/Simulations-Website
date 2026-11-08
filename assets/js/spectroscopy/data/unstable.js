@@ -6,18 +6,13 @@
 // Made last of all, from a stream and codes of their own, so nothing else in the sky changes. Each is a multi-star body
 // (data/multi.js) with:
 //   architecture 'non_hierarchical', unstable: true, orbits: [] (there are none to list), deep: true (data/sky_layout.js)
-//   chaos { x_AU, v_AU_day   where each star starts, and how fast: [[x, y, z], ...] in the stars' order
-//           today_days       how long after that start today is
-//           eta, eps_AU      the integration's step and softening (data/nbody.js)
-//           inc_deg          the line of sight: away from us is (0, sin i, -cos i), as for the widest orbit of any other system
-//           crossing_days    the crossing time, G M^(5/2) / (-2E)^(3/2)
-//           eject_days       how long after today the first star leaves the others for good
-//           escapers         the codes of the stars flung out, first to leave first
-//           host             the nebula it is in or by }
+//   chaos { seed      the seed its dance is found from, when first needed (danceOf and danceInfo, below)
+//           inc_deg   the line of sight: away from us is (0, sin i, -cos i), as for the widest orbit of any other system
+//           host      the nebula it is in or by }
 // Its stars' places and speeds come from the integration (componentStates in data/orbits.js reads danceStates here), so the
 // system view, the sky and the spectrum all show the same motion.
 
-import { stable } from '../core/rng.js';
+import { Rng, stable } from '../core/rng.js';
 import { fluxFromLuminosity } from '../core/phys.js';
 import { MIN_ALT, azAltToVec3, vec3ToAzAlt } from '../core/sky.js';
 import { DEPTH_TABLE } from '../core/depth.js';
@@ -88,9 +83,20 @@ function toCentre(list, masses) {
 
 const flat = (list) => list.flatMap((p) => p);
 
-// ---------- The integration, kept for each system ----------
+// ---------- The dance, found the first time it is needed ----------
+// Finding a start that suits (findDance, below) means following trial starts until one does: some tens of milliseconds a
+// system. So it isn't done while the sky is made, but the first time anything needs these stars' places: the system is chosen,
+// zoomed into or checked. It comes from the system's own seed (chaos.seed), so it is the same whenever and wherever it is found.
+// A dance: { info, start, run, ... }, where info holds what the search chose:
+//   x_AU, v_AU_day   where each star starts, and how fast: [[x, y, z], ...] in the stars' order
+//   today_days       how long after that start today is
+//   eta, eps_AU      the integration's step and softening (data/nbody.js)
+//   virial_AU, crossing_days   the virial radius, G M^2 / (-2E), and the crossing time, G M^(5/2) / (-2E)^(3/2)
+//   eject_days       how long after today the first star leaves the others for good
+//   escapers         the codes of the stars that leave, first to leave first; the heaviest part left behind stays
 
 const dances = new WeakMap();
+const listeners = new Set();
 
 function massesOf(body) {
     return body.stars.map((s) => s.star.mass_Msun);
@@ -100,47 +106,63 @@ function radiiOf(body) {
     return body.stars.map((s) => s.star.radius_Rsun * RSUN_AU);
 }
 
-function runFrom(masses, radii, x, v, chaos, maxT) {
+function runFrom(masses, radii, x, v, info, maxT) {
     return integrate(masses, x, v, maxT, {
-        eta: chaos.eta,
-        eps: chaos.eps_AU,
+        eta: info.eta,
+        eps: info.eps_AU,
         radii,
-        outAU: LEFT_RV * chaos.virial_AU,
+        outAU: LEFT_RV * info.virial_AU,
         giveUpAt: 0
     });
 }
 
-// The start exactly as the integration took it when the system was made: the stored places and speeds, already about the
-// centre of mass. Not one digit may differ, or the dance goes another way.
-function startOf(body) {
-    return { masses: massesOf(body), x: flat(body.chaos.x_AU), v: flat(body.chaos.v_AU_day) };
+// Long enough for any start that was chosen to have ended its dance
+function capOf(body, info) {
+    return 4 * (CAP_TCR[body.stars.length] || 70) * info.crossing_days;
 }
 
-// Long enough for any start that was chosen to have ended its dance: the run stops there, at the same step as it did then
-function capOf(body) {
-    return 4 * (CAP_TCR[body.stars.length] || 70) * body.chaos.crossing_days;
+function search(body) {
+    const made = findDance(new Rng(body.chaos.seed), body.stars.map((s) => s.star));
+    if (!made) throw new Error(`No unstable start suited ${body.code}`);
+    const c = made.chaos;
+    const info = { ...c, escapers: c.leavers.map((k) => body.stars[k].code) };
+    delete info.leavers;
+    return { info, start: { masses: massesOf(body), x: flat(c.x_AU), v: flat(c.v_AU_day) }, run: made.run, back: null, n: body.stars.length, memo: [] };
 }
 
-function danceRecord(start, run) {
-    return { start, run, back: null, n: start.masses.length, memo: [] };
+// Hears of each system whose dance has just been found: fn(body). Returns a function that stops it.
+export function onDance(fn) {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
 }
 
-// The run from the start to the end of the dance, made once. fresh: made again, for validation to compare with the one kept.
+// Has this system's dance been found yet? Something drawing it without needing it can wait for onDance.
+export function danceReady(body) {
+    return dances.has(body);
+}
+
+// The dance, found once. fresh: found again from the seed, for validation to compare with the one kept.
 export function danceOf(body, { fresh = false } = {}) {
-    let dance = fresh ? null : dances.get(body);
+    if (fresh) return search(body);
+    let dance = dances.get(body);
     if (!dance) {
-        const start = startOf(body);
-        dance = danceRecord(start, runFrom(start.masses, radiiOf(body), start.x, start.v, body.chaos, capOf(body)));
-        if (!fresh) dances.set(body, dance);
+        dance = search(body);
+        dances.set(body, dance);
+        listeners.forEach((fn) => fn(body));
     }
     return dance;
+}
+
+// What the search chose (see above)
+export function danceInfo(body) {
+    return danceOf(body).info;
 }
 
 // The same stars with every speed reversed: the time before the start, only if anything asks for it
 function backRun(body, dance) {
     if (!dance.back) {
         const v = dance.start.v.map((q) => -q);
-        dance.back = runFrom(dance.start.masses, radiiOf(body), dance.start.x, v, body.chaos, capOf(body));
+        dance.back = runFrom(dance.start.masses, radiiOf(body), dance.start.x, v, dance.info, capOf(body, dance.info));
     }
     return dance.back;
 }
@@ -150,7 +172,7 @@ export function danceMotion(body, tDays) {
     const dance = danceOf(body);
     const memo = dance.memo.find((m) => m.t === tDays);
     if (memo) return memo;
-    const runT = body.chaos.today_days + tDays;
+    const runT = dance.info.today_days + tDays;
     const x = new Float64Array(3 * dance.n);
     const v = new Float64Array(3 * dance.n);
     if (runT >= 0) {
@@ -186,7 +208,7 @@ const SETTLE_TCR = 4;
 export function danceCentreAU(body, tDays) {
     const dance = danceOf(body);
     const { x } = danceMotion(body, tDays);
-    const { chaos } = body;
+    const chaos = dance.info;
     const runT = chaos.today_days + tDays;
     let mass = 0;
     const c = [0, 0, 0];
@@ -208,12 +230,12 @@ export function danceCentreAU(body, tDays) {
 // How hard each star is being pulled just now (AU per day per day), for how sharply it turns
 export function danceAccelerations(body, tDays) {
     const { x } = danceMotion(body, tDays);
-    return accelerationsAt(massesOf(body), x, body.chaos.eps_AU);
+    return accelerationsAt(massesOf(body), x, danceInfo(body).eps_AU);
 }
 
 // The time over which the stars' lines swing: the crossing time, in days. Clocks, tools and the view pace themselves on it.
 export function danceTimescale(body) {
-    return body.chaos.crossing_days;
+    return danceInfo(body).crossing_days;
 }
 
 // How far out the stars go while they dance, from a crossing time before today to when the first leaves, in AU: as far as the
@@ -222,7 +244,7 @@ const REACH_SHARE = 0.85;
 export function danceReachAU(body) {
     const dance = danceOf(body);
     if (dance.reach) return dance.reach;
-    const { chaos } = body;
+    const chaos = dance.info;
     const from = chaos.today_days - chaos.crossing_days;
     const to = chaos.today_days + chaos.eject_days;
     const { run } = dance;
@@ -255,7 +277,7 @@ export function danceReachAU(body) {
 
 // What the panel says about it, from the integration: { years until one is flung out, crossing time in years, which went }
 export function danceFacts(body) {
-    const { chaos } = body;
+    const chaos = danceInfo(body);
     const light = body.stars.reduce((best, s) => (s.star.mass_Msun < best.star.mass_Msun ? s : best), body.stars[0]);
     return {
         ejectYears: chaos.eject_days / 365.25,
@@ -531,8 +553,7 @@ export function makeUnstableMultiples(rng, nextCode, base, layout, sky) {
         const r = rng.fork(name);
         const body = base(nextCode());
         const stars = makeStars(r.fork('stars'), n);
-        const made = findDance(r.fork('dance'), stars);
-        if (!made) throw new Error(`No unstable start suited ${name} of seed stream ${rng.state}`);
+        const danceSeed = r.fork('dance').state;
         const components = stars.map((star) => {
             const code = nextCode();
             return { code, kind: 'star_component', parent: body.code, star, visual_seed: code };
@@ -551,18 +572,10 @@ export function makeUnstableMultiples(rng, nextCode, base, layout, sky) {
             planets: [],
             deep: true
         });
-        const c = made.chaos;
+        // The dance itself is found from this seed when first needed (danceOf, above)
         body.chaos = {
-            x_AU: c.x_AU,
-            v_AU_day: c.v_AU_day,
-            today_days: c.today_days,
-            eta: c.eta,
-            eps_AU: c.eps_AU,
-            virial_AU: c.virial_AU,
+            seed: danceSeed,
             inc_deg: dp(Math.acos(r.range(0, 1)) / RAD, 2),
-            crossing_days: c.crossing_days,
-            eject_days: c.eject_days,
-            escapers: c.leavers.map((k) => components[k].code),
             host: host.code
         };
         // As far away as the gas it was born in, and moving with it
@@ -574,8 +587,6 @@ export function makeUnstableMultiples(rng, nextCode, base, layout, sky) {
             mag: apparentMag(systemAbsoluteMag(components), distance)
         };
         fillComponentFields(body, (l, d) => stable(fluxFromLuminosity(l, d), 6));
-        // The run that chose it is the one the view will play
-        dances.set(body, danceRecord(startOf(body), made.run));
         placeBy(r.fork('sky'), body, host, radii.get(host) || 0, layout);
         return body;
     });
@@ -588,9 +599,9 @@ export function makeUnstableMultiples(rng, nextCode, base, layout, sky) {
 export function unstableProblems(body, u) {
     const out = [];
     const fail = (message) => out.push(`${body.code} ${message}`);
-    const { chaos } = body;
     if (body.kind !== 'multiple' || body.architecture !== UNSTABLE_ARCH) fail(`is a ${body.kind} '${body.architecture}'`);
-    if (!chaos) return [...out, `${body.code} has no chaos block`];
+    if (!body.chaos || !Number.isInteger(body.chaos.seed)) return [...out, `${body.code} has no seed for its dance`];
+    const chaos = danceInfo(body);
     if (!(body.stars.length === 3 || body.stars.length === 4)) fail(`has ${body.stars.length} stars`);
     if ((body.planets || []).length || (body.comets || []).length) fail('has planets or comets');
     if (body.orbits.length) fail('lists orbits it hasn\'t got');
@@ -608,11 +619,13 @@ export function unstableProblems(body, u) {
     if (!(totalEnergy(masses, x, v).total < 0)) fail('isn\'t bound');
     presentProblems(body.stars, masses, x).forEach((p) => fail(`now: ${p}`));
     if (presentHierarchy(body).stable) fail('passes the hierarchy test now, so it isn\'t unstable');
-    // The integration, made again from the data: the same to the last digit, a star flung out when it says, by the stars it
-    // names, no two stars ever touching, and energy kept
+    // The dance, found again from its seed: the same to the last digit, a star flung out when it says, by the stars it names,
+    // no two stars ever touching, and energy kept
     const kept = danceOf(body);
     const fresh = danceOf(body, { fresh: true });
-    if (fresh.run.end !== kept.run.end || fresh.run.steps !== kept.run.steps) fail('integrates differently when made again');
+    if (fresh.run.end !== kept.run.end || fresh.run.steps !== kept.run.steps || fresh.info.today_days !== kept.info.today_days) {
+        fail('dances differently when found again');
+    }
     if (!fresh.run.final) fail('never settles');
     const leaver = firstLeaver(fresh.run, masses);
     if (!leaver) {
@@ -628,8 +641,8 @@ export function unstableProblems(body, u) {
     const drift = energyDrift(fresh.run, masses, fresh.start.x, fresh.start.v);
     if (drift > MAX_DRIFT) fail(`loses ${drift} of its energy in the integration`);
     // Young, so in or by a star-forming nebula, at its distance
-    const host = u && u.resolve(chaos.host);
-    if (!host || !host.body.nebula || !host.body.nebula.star_forming) fail(`is not by a star-forming nebula (${chaos.host})`);
+    const host = u && u.resolve(body.chaos.host);
+    if (!host || !host.body.nebula || !host.body.nebula.star_forming) fail(`is not by a star-forming nebula (${body.chaos.host})`);
     else if (Math.abs(body.distance_pc / host.body.distance_pc - 1) > DEPTH_SPREAD + 1e-6) fail('is not as far away as its nebula');
     return out;
 }

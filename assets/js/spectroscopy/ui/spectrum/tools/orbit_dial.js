@@ -3,7 +3,7 @@
 // lines. Beside it, the same in words. Shapes match the Time series marks, so colour is never the only thing telling stars apart.
 
 import { componentStates, visibleShares } from '../../../data/orbits.js';
-import { danceTimescale, danceReachAU, danceCentreAU } from '../../../data/unstable.js';
+import { danceTimescale, danceReachAU, danceCentreAU, danceInfo } from '../../../data/unstable.js';
 import { blackBodyCss, createFigure, drawMarker, fontOf } from '../../plot2d.js';
 
 export const STAR_SHAPES = ['circle', 'square', 'triangle', 'diamond'];
@@ -60,7 +60,7 @@ function dialsOf(body) {
             period: danceTimescale(body),
             trail: true,
             fits: danceReachAU(body),
-            span: [-Math.min(body.chaos.today_days, danceTimescale(body)), body.chaos.eject_days],
+            span: [-Math.min(danceInfo(body).today_days, danceTimescale(body)), danceInfo(body).eject_days],
             members: body.stars.map((st, i) => starMember(i)),
             // About the stars that stay, as the system view is (data/unstable.js danceCentreAU)
             place(t) {

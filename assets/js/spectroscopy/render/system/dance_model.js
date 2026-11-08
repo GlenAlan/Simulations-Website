@@ -6,7 +6,7 @@
 // faster than SWEEP_PER_S of its own width a second, and that when the camera rides with one star, what's round it never swings
 // past faster than TURNS_PER_S. danceGovernor says how much to slow the clock for that, frame by frame.
 
-import { danceMotion, danceAccelerations, danceTimescale, danceCentreAU } from '../../data/unstable.js';
+import { danceMotion, danceAccelerations, danceTimescale, danceCentreAU, danceInfo } from '../../data/unstable.js';
 
 const BREAK_UP_S = 45;            // At the top speed, the first star leaves within this many seconds
 const SECONDS_PER_CROSSING = 8;   // The speed it opens at: about one crossing of the group in this long
@@ -25,7 +25,7 @@ export function isDance(model) {
 export function danceSpeeds(model, reduceMotion = false) {
     const body = model.body;
     const tcr = danceTimescale(body);
-    const top = Math.max(tcr / 2, body.chaos.eject_days / BREAK_UP_S);
+    const top = Math.max(tcr / 2, danceInfo(body).eject_days / BREAK_UP_S);
     const max = reduceMotion ? tcr / REDUCED_CROSSING_S : top;
     return { min: tcr / 400, max, speed: Math.min(max, tcr / SECONDS_PER_CROSSING) };
 }

@@ -16,6 +16,7 @@
 
 import { withCommas, sig, signed, wavelength, distance } from '../core/format.js';
 import { AU, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
+import { danceFacts } from '../data/unstable.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const row = (label, value) => ({ label, value });
@@ -316,9 +317,10 @@ function yearsText(years) {
 function unstableInfo(entity) {
     const stars = Array.isArray(entity.stars) ? entity.stars : [];
     const chaos = entity.chaos || {};
+    const facts = danceFacts(entity);
     const many = stars.length === 4 ? 'Four' : 'Three';
-    const out = isNum(chaos.eject_days) ? yearsText(chaos.eject_days / 365.25) : null;
-    const crossing = isNum(chaos.crossing_days) ? yearsText(chaos.crossing_days / 365.25) : null;
+    const out = isNum(facts.ejectYears) ? yearsText(facts.ejectYears) : null;
+    const crossing = isNum(facts.crossingYears) ? yearsText(facts.crossingYears) : null;
     const age = stars[0] && stars[0].star ? stars[0].star.age_Myr : null;
     return {
         kindLabel: stars.length === 4 ? 'Unstable quadruple star' : 'Unstable triple star',

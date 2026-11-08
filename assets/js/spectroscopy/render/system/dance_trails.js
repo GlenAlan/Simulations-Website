@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { sharedUniforms } from '../shared.js';
 import { surfaceColour } from './star_surface.js';
 import { danceWorld, danceCentreWorld, trailDays } from './dance_model.js';
+import { danceInfo } from '../../data/unstable.js';
 
 const POINTS = 160;               // Points along each trail
 const WIDTH_PX = 1.5;
@@ -147,7 +148,7 @@ export function createDanceTrails(model) {
     });
     const step = trailDays(model) / POINTS;
     // Back to the start of the integration at most: before it, the stars would need running backwards
-    const earliest = -model.body.chaos.today_days;
+    const earliest = -danceInfo(model.body).today_days;
     const cache = new Map();
     const at = (k) => {
         let p = cache.get(k);
