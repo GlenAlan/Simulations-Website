@@ -485,7 +485,11 @@ function checkDeepSky(u, fail) {
             if (Math.abs(msLifetimeMyr(c.turnoff_Msun) / c.age_Myr - 1) > 0.02) fail(`${body.code}'s turn-off doesn't match its age`);
         }
         if (body.neutron_star && body.neutron_star.pulsar) {
-            if (!within(body.neutron_star.pulse_period_s, 0.001, 5)) fail(`${body.code} has period ${body.neutron_star.pulse_period_s}`);
+            // A real pulsar's spin, by what it is (data/deep_sky.js pulsePeriod): a supernova's own is young and spins tens of
+            // times a second, and none is faster than about 700 turns a second or slower than about 10 s
+            const { pulse_period_s: period, remnant_of: remnant } = body.neutron_star;
+            if (!within(period, 0.0015, 10)) fail(`${body.code} has period ${period}`);
+            if (remnant && !within(period, 0.016, 0.12)) fail(`${body.code} is a young pulsar with period ${period}`);
         }
         if (body.galaxy) {
             const expected = H0 * body.galaxy.distance_Mpc;

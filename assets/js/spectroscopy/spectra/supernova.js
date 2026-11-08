@@ -94,6 +94,48 @@ function typeOf(body) {
 
 const phaseOf = (body, t) => (body.supernova.phase0_days ?? 0) + t;
 
+// Days from peak when the explosion is first seen; before then a type II's star is still there, a type Ia's is not
+export const SUPERNOVA_FIRST_LIGHT = FIRST_LIGHT;
+// How long the Light curve tool plays before first light, to show what was there
+const BEFORE_DAYS = 8;
+
+// Whether its expanding shell can be seen at all, so that the sky draws it and the Light curve speaks of it. One in another
+// galaxy (host_code) can't be: its remnant is far smaller than the finest zoom shows, so it stays a point that brightens
+// and fades. Nor can any shell under SHELL_SEEN_DEG across.
+const SHELL_SEEN_DEG = 0.005;
+export function supernovaShellShows(sn) {
+    return !sn.host_code && (sn.shell_deg ?? 0) >= SHELL_SEEN_DEG;
+}
+
+// The explosion's own visible light at a phase, 1 at peak: the curve the Light curve draws
+export function supernovaLight(sn, phase) {
+    return phase < FIRST_LIGHT ? 0 : explosionLight(sn, phase);
+}
+
+// The colour temperature of its light at a phase (days from peak): the same as its spectrum's continuum
+export function supernovaTemperature(sn, phase) {
+    return curve((sn.type === 'Ia' ? TYPES.Ia : TYPES.II).temperature, Math.max(phase, FIRST_LIGHT));
+}
+
+// Where a supernova is in its story at time t, for a picture of it: { phase, exploded, days (since first light), T, light,
+// continuum, nebular, speed, outerSpeed }. light is the explosion's own visible light, 1 at peak; continuum how much of the
+// spectrum is still a hot photosphere's, nebular how much is the thinning gas's emission lines (both as the spectrum has
+// them); speed the photosphere's speed (km/s, the absorption lines'), outerSpeed the fastest gas's.
+export function supernovaStage(body, t) {
+    const type = typeOf(body);
+    const phase = phaseOf(body, t);
+    const out = { phase, exploded: phase >= FIRST_LIGHT, days: phase - FIRST_LIGHT, outerSpeed: type.speed[0][1] };
+    if (!out.exploded) return out;
+    const contWeight = curve(type.continuum, phase);
+    const nebWeight = curve(type.nebular, phase);
+    out.T = curve(type.temperature, phase);
+    out.light = explosionLight(body.supernova, phase);
+    out.continuum = contWeight;
+    out.nebular = nebWeight;
+    out.speed = curve(type.speed, phase);
+    return out;
+}
+
 // Apparent magnitude at time t, or Infinity before the explosion
 export function supernovaMag(body, t) {
     const phase = phaseOf(body, t);
@@ -207,7 +249,8 @@ export function supernovaSpectrum(body, grid, opts) {
 // The light curve across a span of times, in the same t that the spectrum takes
 export function supernovaLightCurve(body, opts = {}) {
     const phase0 = body.supernova.phase0_days ?? 0;
-    const from = opts.from_days ?? Math.min(0, FIRST_LIGHT - phase0);
+    // From a little before first light, so that what was there before can be seen
+    const from = opts.from_days ?? Math.min(0, FIRST_LIGHT - BEFORE_DAYS - phase0);
     const to = opts.to_days ?? Math.max(from + 60, SUPERNOVA_SPAN_DAYS - phase0);
     const n = opts.samples ?? 260;
     const t_days = new Float64Array(n);

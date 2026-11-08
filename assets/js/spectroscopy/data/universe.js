@@ -111,6 +111,20 @@ function quotaList(table) {
     return list;
 }
 
+// Which sort of pulsar each neutron star is (data/deep_sky.js pulsePeriod), each with a stream of its own: the first
+// `remnants` are a supernova's, so young. Of the rest, about a fifth are millisecond pulsars and one or two magnetars.
+// rng is a fork of its own, so that nothing else in the sky moves.
+function pulsarRoles(rng, pulsars, remnants) {
+    const older = pulsars.flatMap((pulsar, i) => (pulsar && i >= remnants ? [i] : []));
+    const order = shuffled(rng, older);
+    const fast = Math.round(older.length * 0.2);
+    const slow = older.length ? Math.max(1, Math.round(older.length / 14)) : 0;
+    const roles = new Map(order.map((i, k) => [i, k < fast ? 'millisecond' : k < fast + slow ? 'magnetar' : 'normal']));
+    return pulsars.map((pulsar, i) => (pulsar
+        ? { rng: rng.fork(`spin:${i}`), role: i < remnants ? 'young' : roles.get(i) }
+        : null));
+}
+
 // Decides every single star before any is built: class, whether it has planets, population. Metal-poor stars are old,
 // so only classes that can live that long may be Population II; carbon and barium stars are giants; Ap and Am stars
 // are the chemically odd hot dwarfs.
@@ -395,11 +409,12 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     const neutronStars = root.fork('neutron_stars');
     const pulsars = shuffled(quota, quotaList(MIX.neutron_star)).map((k) => k === 'pulsar');
+    const spins = pulsarRoles(root.fork('pulsar_spins'), pulsars, remnantSources.length);
     pulsars.forEach((pulsar, i) => {
         const r = neutronStars.fork(`ns:${i}`);
         const source = remnantSources[i] || null;
         const body = makeBase('neutron_star', otherCode());
-        makeNeutronStar(r, body, pulsar, source ? source.body : null);
+        makeNeutronStar(r, body, pulsar, source ? source.body : null, spins[i]);
         if (source) {
             source.body.supernova.remnant_code = body.code;
             add(body, 'stars', { near: source, near_deg: [0.35, 0.6] });

@@ -7,9 +7,10 @@
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { hashString, Rng } from '../../core/rng.js';
-import { sharedUniforms } from '../shared.js';
+import { sharedUniforms, LOOP_ZERO_GLSL } from '../shared.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from '../layers/bh_geodesic.js';
-import { exoticNoise, bodyRng, pulsarSpin, pulsarAngle, pulsarBeam, smoothstep, PULSAR_BEAM_SLOPE } from '../layers/exotic_common.js';
+import { exoticNoise, bodyRng, pulsarSpin, pulsarAngle, pulsarBeam, smoothstep, PULSAR_BEAM_SLOPE,
+    SWEEP_SAMPLES } from '../layers/exotic_common.js';
 import { HOLE_DISC, JET_BANDS, BEAM_BANDS, BEAM_TRUE, bandRgb, falseTint } from './band_look.js';
 
 // Lengths in units of the hole's mass M, as on the sky. The radius the system view gives a hole is its disc's outer edge.
@@ -491,11 +492,114 @@ function createSoftBeams({ slope, sides }) {
     };
 }
 
+// Above SPIN_SHOWN turns a second (layers/exotic_common.js) a pulsar's beams are seen as the eye sees a fast lighthouse:
+// their sweep blurred into the two cones they trace round the spin axis. This is the soft beam above, averaged over
+// SWEEP_SAMPLES directions round the cone, on a ball that holds the cones, so that every line of sight is worked out once.
+// A different start for each pixel turns what would be spokes into a fine grain, which holds still.
+const SWEPT_FRAGMENT = /* glsl */`
+${LOOP_ZERO_GLSL}
+uniform vec3 uColour;
+uniform float uAmount;
+uniform vec3 uApex;
+uniform vec3 uSpin;
+uniform vec3 uE1;
+uniform vec3 uE2;
+uniform float uTilt;
+uniform float uLength;
+uniform float uSlope;
+uniform float uStar;        // The star's radius, which hides what's behind it
+varying vec3 vWorld;
+
+float softBeam(vec3 rd, vec3 w0, vec3 axis, float hidden) {
+    float b = dot(rd, axis);
+    float t = max((b * dot(axis, w0) - dot(rd, w0)) / max(1.0 - b * b, 1e-4), 0.0);
+    if (t > hidden) return 0.0;
+    vec3 p = w0 + rd * t;
+    float s = abs(dot(p, axis));
+    float across = length(p - axis * dot(p, axis)) / max(s * uSlope, uLength * 0.004);
+    float a = s / uLength;
+    float fade = (1.0 - smoothstep(0.1, 1.0, a)) * smoothstep(0.0, 0.08, a);
+    return exp(-across * across) * fade;
+}
+
+void main() {
+    vec3 rd = normalize(vWorld - cameraPosition);
+    vec3 w0 = cameraPosition - uApex;
+    // Where this line of sight meets the star, if it does
+    float mid = -dot(w0, rd);
+    float gap = dot(w0, w0) - mid * mid;
+    float hidden = gap < uStar * uStar ? mid - sqrt(uStar * uStar - gap) : 1e20;
+    float start = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    float light = 0.0;
+    for (int k = 0; k < ${SWEEP_SAMPLES} + uLoopZero; k++) {
+        float a = (float(k) + start) * ${(2 * Math.PI / SWEEP_SAMPLES).toFixed(6)};
+        light += softBeam(rd, w0, uSpin * cos(uTilt) + (uE1 * cos(a) + uE2 * sin(a)) * sin(uTilt), hidden);
+    }
+    // Each line of sight met each soft cone twice; here it's worked out once
+    gl_FragColor = vec4(uColour * light * ${(2 / SWEEP_SAMPLES).toFixed(6)} * uAmount, 1.0);
+}`;
+
+function createSweptBeams({ slope, spin }) {
+    const geometry = new THREE.SphereGeometry(1, 32, 16);
+    const material = new THREE.ShaderMaterial({
+        toneMapped: false,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        vertexShader: SOFT_BEAM_VERTEX,
+        fragmentShader: SWEPT_FRAGMENT,
+        uniforms: {
+            uColour: { value: new THREE.Color(...BEAM_TRUE) },
+            uAmount: { value: 0 },
+            uApex: { value: new THREE.Vector3() },
+            uSpin: { value: new THREE.Vector3().fromArray(spin.axis) },
+            uE1: { value: new THREE.Vector3().fromArray(spin.e1) },
+            uE2: { value: new THREE.Vector3().fromArray(spin.e2) },
+            uTilt: { value: spin.tilt },
+            uLength: { value: 1 },
+            uSlope: { value: slope },
+            uStar: { value: 0 }
+        }
+    });
+    const object = new THREE.Mesh(geometry, material);
+    object.frustumCulled = false;
+    object.renderOrder = 3;
+    let amount = SOFT_BEAM_MOST;
+    let dark = false;
+    return {
+        object,
+        // The same light as the soft beam's, by the luminance of its colour
+        setColour(rgb) {
+            material.uniforms.uColour.value.setRGB(rgb[0], rgb[1], rgb[2]);
+            const light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            amount = Math.min(SOFT_BEAM_MOST, SOFT_BEAM_LIGHT / Math.max(light, 1e-3));
+            dark = rgb[0] + rgb[1] + rgb[2] <= 0.002;
+        },
+        // share: how much of the beams' light is the blur. A ball of the beams' length round the star holds them.
+        update({ reveal, scale, share, star }) {
+            object.scale.setScalar(scale * 1.02);
+            object.visible = !dark && share > 0.001 && reveal > 0.001;
+            object.updateWorldMatrix(true, false);
+            const u = material.uniforms;
+            object.getWorldPosition(u.uApex.value);
+            u.uLength.value = scale;
+            u.uStar.value = star;
+            u.uAmount.value = amount * reveal * share;
+        },
+        dispose() {
+            geometry.dispose();
+            material.dispose();
+        }
+    };
+}
+
 // The pulsar the sky shows, turning the same way at the same moment (pulsarSpin in layers/exotic_common.js): the same tilt,
 // beam width and turns a second, on the shared clock. sight is the unit vector towards us, where the flight in starts: the
 // sky's view of the pulsar is laid along it, so whenever the sky shows a pulse, the beam here points back along the flight.
+// Turning faster than SPIN_SHOWN, its beams fade and their blurred sweep takes the rest of their light.
 export function createPulsarBeams(body, sight) {
-    const beams = createSoftBeams({ slope: PULSAR_BEAM_SLOPE, sides: 28 });
     const spin = pulsarSpin(body, bodyRng(body, 'pulsar'));
     // The sky's frame at the pulsar (right, up, towards us) in this world: up is the world's up, square to the line of sight
     const z = new THREE.Vector3(...sight).normalize();
@@ -503,21 +607,35 @@ export function createPulsarBeams(body, sight) {
     const x = new THREE.Vector3().crossVectors(y, z);
     const toWorld = (v) => new THREE.Vector3().addScaledVector(x, v[0]).addScaledVector(y, v[1]).addScaledVector(z, v[2]);
     const local = { ...spin, axis: toWorld(spin.axis).toArray(), e1: toWorld(spin.e1).toArray(), e2: toWorld(spin.e2).toArray() };
+    const beams = createSoftBeams({ slope: PULSAR_BEAM_SLOPE, sides: 28 });
+    const swept = spin.spin < 1 ? createSweptBeams({ slope: PULSAR_BEAM_SLOPE, spin: local }) : null;
+    const object = swept ? new THREE.Group().add(beams.object, swept.object) : beams.object;
     const along = [0, 0, 0];
     const pointing = new THREE.Vector3();
     const Y = new THREE.Vector3(0, 1, 0);
     const rgb = [0, 0, 0];
     return {
-        object: beams.object,
+        object,
         // Radio first; some pulsars sweep X-rays too. In visible light they stay the stylised beams they were.
-        setBand(w) { beams.setColour(bandRgb(w, BEAM_TRUE, BEAM_BANDS, rgb)); },
+        setBand(w) {
+            bandRgb(w, BEAM_TRUE, BEAM_BANDS, rgb);
+            beams.setColour(rgb);
+            if (swept) swept.setColour(rgb);
+        },
         update({ reveal, radius }) {
-            const angle = pulsarAngle(spin, sharedUniforms.uTime.value, sharedUniforms.uTwinkle.value < 0.5);
+            const still = sharedUniforms.uTwinkle.value < 0.5;
+            const angle = pulsarAngle(spin, sharedUniforms.uTime.value, still);
             pulsarBeam(local, angle, along);
+            // With Reduce motion it holds still, so its beams are whole
+            const share = still ? 1 : spin.spin;
             // The beams lie along the object's y axis
             beams.object.quaternion.setFromUnitVectors(Y, pointing.fromArray(along).normalize());
-            beams.update({ reveal, scale: radius * 7 });
+            beams.update({ reveal: reveal * share, scale: radius * 7 });
+            if (swept) swept.update({ reveal, scale: radius * 7, share: 1 - share, star: radius });
         },
-        dispose: beams.dispose
+        dispose() {
+            beams.dispose();
+            if (swept) swept.dispose();
+        }
     };
 }

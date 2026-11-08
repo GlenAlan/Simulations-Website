@@ -2,16 +2,14 @@
 // the spin, like a lighthouse. The geometry is real: each beam's axis is tilted from the spin axis, and the beam crosses
 // our line of sight once a turn, which is what makes the pulse. In radio they are beacons at every zoom.
 //
-// Flashing is capped for photosensitive viewers, by the rule the system view's beams share: see pulseDisplay in
-// exotic_common.js. Nothing flashes at all with Reduce motion.
+// How fast each turns is the rule the system view's beams share: see shownRate in exotic_common.js. Here a pulsar is a
+// small point, which may flash as fast as it is shown turning. Nothing flashes at all with Reduce motion.
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { parallaxFactor, travelPc } from '../../core/depth.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, pulsarSpin, HELD_ANGLE, PULSAR_BEAM_SLOPE } from './exotic_common.js';
-
-export { pulseDisplay } from './exotic_common.js';
 
 const BEAMS_SHOW_PX = 64;   // Half-size, in device pixels, at which the beams are well on show (vDetail about 0.6)
 

@@ -76,9 +76,47 @@ function neutronStarLuminosity(radiusKm, teff) {
     return stable(luminosityFromRT(rRsun, teff), 4);
 }
 
+// How fast a pulsar spins, as real ones are spread (the ATNF catalogue): its role picks the population.
+//   young: born in one of the sky's supernovae, under a year ago. Tens of milliseconds, like the Crab (33 ms) or Vela (89 ms).
+//   normal: most pulsars, older and slowed down. Log-normal round about 0.6 s.
+//   millisecond: old pulsars spun up again by gas from a companion star, a few milliseconds.
+//   magnetar: slow, with a huge magnetic field that has braked it hard, 2 to 10 s.
+// Each kept to its own range, so the Info tab can tell them apart by period alone (pulsarKind). rng is the pulsar's own
+// fork, so no other draw moves.
+const PULSAR_SPINS = {
+    young: { median: 0.04, dex: 0.18, lo: 0.016, hi: 0.12 },
+    normal: { median: 0.6, dex: 0.33, lo: 0.1, hi: 1.99 },
+    millisecond: { median: 0.004, dex: 0.2, lo: 0.0015, hi: 0.0099 },
+    magnetar: { lo: 2, hi: 10 }
+};
+
+export function pulsePeriod(rng, role) {
+    const spin = PULSAR_SPINS[role] || PULSAR_SPINS.normal;
+    if (!spin.median) return stable(rng.logRange(spin.lo, spin.hi), 4);
+    for (let tries = 0; tries < 40; tries++) {
+        const p = spin.median * 10 ** rng.gauss(0, spin.dex);
+        if (p >= spin.lo && p <= spin.hi) return stable(p, 4);
+    }
+    return stable(spin.median, 4);
+}
+
+// The sky shows a pulsar flashing at its true rate, kept inside this range, in turns a second (render/layers/exotic_common.js).
+// What tells a student the true rate (the Pulse timing tool, the Info tab) says so where the two differ.
+export const PULSE_SHOWN_HZ = { min: 0.1, max: 10 };
+
+// What sort of pulsar a period and its past say it is: the same lines PULSAR_SPINS draws
+export function pulsarKind(neutron) {
+    if (!neutron || !neutron.pulsar || !neutron.pulse_period_s) return null;
+    if (neutron.remnant_of) return 'young';
+    if (neutron.pulse_period_s < 0.012) return 'millisecond';
+    if (neutron.pulse_period_s >= 2) return 'magnetar';
+    return 'normal';
+}
+
 // A neutron star is far too small to see by eye; the pulsars here are generously faint points, about as bright in
-// visible light as the Crab pulsar, so that a zoomed-in observer can just find them
-export function makeNeutronStar(rng, body, pulsar, remnant) {
+// visible light as the Crab pulsar, so that a zoomed-in observer can just find them. spin: { rng, role } for a pulsar's
+// period (pulsePeriod), drawn from a stream of its own.
+export function makeNeutronStar(rng, body, pulsar, remnant, spin = null) {
     const teff = stable(rng.logRange(3e5, 2e6), 4);
     const radiusKm = dp(rng.range(10, 14), 2);
     const luminosity = neutronStarLuminosity(radiusKm, teff);
@@ -87,10 +125,12 @@ export function makeNeutronStar(rng, body, pulsar, remnant) {
     const gamma = pulsar && rng.chance(0.2);
     body.distance_pc = distance;
     body.radial_velocity_kms = dp(rng.range(-300, 300), 1);
+    // The period once came from this stream. The draw stays, unused, so that every draw after it is the one it was
+    if (pulsar) rng.next();
     body.brightness = { flux_Wm2: stable(fluxFromLuminosity(luminosity, distance), 5), mag };
     body.neutron_star = {
         pulsar,
-        pulse_period_s: pulsar ? stable(rng.logRange(0.001, 5), 4) : null,
+        pulse_period_s: pulsar ? pulsePeriod(spin ? spin.rng : rng.fork('spin'), spin ? spin.role : (remnant ? 'young' : 'normal')) : null,
         gamma,
         remnant_of: remnant ? remnant.code : null,
         teff_K: teff,
