@@ -11,6 +11,8 @@
 //   clock.t (continuous), clock.steppedT(), clock.playing, clock.speed (days per second), clock.fastest (the shortest
 //   period in the system, days), clock.smoothMax (the speed at MAX_TURNS_PER_S)
 //   clock.setTime(t), clock.play(), clock.pause(), clock.setSpeed(s)
+//   clock.hold = fn() or null        holds the clock back to that share of its speed for now, keeping the speed chosen:
+//                                    the system view's, while something big on show would go round fast enough to flash
 //   clock.onTime(fn(t)) -> remove     every change of the continuous time
 //   clock.onStep(fn(t)) -> remove     every change of the stepped reading
 //   clock.onState(fn()) -> remove     playing or paused, and speed
@@ -66,7 +68,7 @@ function makeClock(body) {
 
     function tick(now) {
         raf = requestAnimationFrame(tick);
-        clock.t += (Math.min(100, now - last) / 1000) * clock.speed * clock.governor;
+        clock.t += (Math.min(100, now - last) / 1000) * clock.speed * (clock.hold ? clock.hold() : 1);
         last = now;
         send(now, false);
     }
@@ -76,8 +78,7 @@ function makeClock(body) {
         t: 0,
         playing: false,
         speed: fastest / 6,
-        // Below 1 while the system view holds the clock back, for stars in no stable orbit (render/system/dance_model.js)
-        governor: 1,
+        hold: null,
         fastest,
         smoothMax: fastest * MAX_TURNS_PER_S,
         steppedT: () => reading,

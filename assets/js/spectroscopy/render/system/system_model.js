@@ -722,6 +722,84 @@ export function smearWeights(model, daysPerSecond, cap, out) {
     return out;
 }
 
+// ---------- Without the blur: how fast the clock may run ----------
+//
+// The smears above are only for Reduce motion. Without it nothing blurs, so whatever is big on the screen and going
+// round fast is kept under the flash rule by slowing the clock instead: no more than three flashes a second over more
+// than a quarter of a 10° field (21,824 px; the field is 341 x 256 px at 1024 x 768).
+//
+// A disc of radius r px swinging a px either way sweeps a band of about 4 pi a r px, and passes each spot in it once a
+// turn, or twice where its path crosses itself as seen at a slant: a flash each time. Moving more than its own width
+// from one frame to the next, it lands on spots here and there, each about fps r / (pi a) times a second: often enough to
+// flash the whole band only if the disc is big beside its swing. If not, then whatever the turns do against the frames,
+// at most the fps / 3.5 places it keeps landing on can light up more than 3.5 times a second. So a small thing may whirl
+// round as fast as it likes, and something big is held to a turn or so a second.
+//
+// Each thing on show going round is { period: days, passes: spots passed per turn, area: px that would flash, sweep and
+// jump: see flashSafeRate }, and the clock may go as fast as the slowest of them allows, once enough of them together
+// would flash over the area allowed. Detail riding on a body (a star's corona, a black hole's streaks) is a thing of its
+// own, passing each spot many times a turn (holdClock in system_view.js, with spacings found by measuring).
+export const FLASH_AREA_PX = 21824;
+export const FLASH_FIELD_PX = 341 * 256;
+export const FLASHES_PER_S = 2.5;           // The most a spot may flash in a second: under three, with room to spare
+const FLASH_AREA_SHARE = 0.5;               // ... and the area that may do it, as a share of the limit
+const FLASH_FPS_LEAST = 60;                 // A screen that draws faster lands on more spots, so never count on fewer frames
+
+// The band a disc of radius r px sweeps, swinging a px either way, that could flash faster than allowed. turnsPerS is how
+// fast it goes round at the most it will be allowed to: past that it only gets faster. discs is how many share the band.
+export function sweptArea(a, r, turnsPerS, fps, discs = 1) {
+    const frames = Math.max(fps || 0, FLASH_FPS_LEAST);
+    let area = 4 * Math.PI * a * r;
+    const skips = (2 * Math.PI * a * turnsPerS) / frames > 2 * r;
+    if (skips && (discs * frames * r) / (Math.PI * Math.max(a, 1e-6)) <= FLASHES_PER_S) {
+        area = Math.min(area, (frames / 3.5) * Math.PI * r * r);
+    }
+    return Math.min(area, FLASH_FIELD_PX);
+}
+
+// The most days a second at which all the items together keep the rule, or Infinity if none of them can break it. Two
+// ways to break it: spots flashing too often (area), and too much of the screen lighting up at once from one frame to the
+// next, as the leading edge of something big sweeps across (sweep: 4 pi a r px a turn, and jump: pi r^2 px once it moves
+// clear of itself each frame). fps is how often the screen is drawn: fewer frames, bigger steps.
+export function flashSafeRate(items, fps = FLASH_FPS_LEAST) {
+    const budget = FLASH_AREA_PX * FLASH_AREA_SHARE;
+    const caps = items.filter((it) => it.period > 0 && it.passes > 0 && it.area > 0)
+        .map((it) => ({ cap: (FLASHES_PER_S * it.period) / it.passes, area: it.area }))
+        .sort((p, q) => p.cap - q.cap);
+    let spots = Infinity;
+    let area = 0;
+    for (let k = 0; k < caps.length; k++) {
+        area += caps[k].area;
+        if (area > budget) {
+            spots = caps[k].cap;
+            break;
+        }
+    }
+    return Math.min(spots, frameSafeRate(items, fps, budget));
+}
+
+// The most days a second at which what lights up between one frame and the next, all told, stays within budget. Each
+// item adds sweep / (period fps) px for each day a second, until it's moving clear of itself and adds its jump.
+function frameSafeRate(items, fps, budget) {
+    const frames = Math.max(fps || 0, 10);
+    const list = items.filter((it) => it.period > 0 && it.sweep > 0 && it.jump > 0)
+        .map((it) => {
+            const k = it.sweep / (it.period * frames);
+            return { k, jump: it.jump, at: it.jump / k };
+        })
+        .sort((p, q) => p.at - q.at);
+    if (list.reduce((sum, it) => sum + it.jump, 0) <= budget) return Infinity;
+    let jumped = 0;
+    let slope = list.reduce((sum, it) => sum + it.k, 0);
+    for (let k = 0; k < list.length; k++) {
+        const rate = slope > 0 ? (budget - jumped) / slope : Infinity;
+        if (rate <= list[k].at) return rate;
+        jumped += list[k].jump;
+        slope -= list[k].k;
+    }
+    return Infinity;
+}
+
 // ---------- Readouts ----------
 
 // r, T, v = 2 pi r / T and both sides of Kepler's third law, for the System tab
