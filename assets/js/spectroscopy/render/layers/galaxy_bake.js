@@ -670,6 +670,7 @@ precision highp float;
 in vec2 vP;
 uniform sampler2D tA, tB;
 uniform vec2 uScale;
+uniform int uK;
 layout(location = 0) out vec4 gA;
 layout(location = 1) out vec4 gB;
 ${FALL_GLSL}
@@ -680,6 +681,28 @@ float dither(vec2 p) {
 }
 void main() {
     vec2 uv = vP * 0.5 + 0.5;
+    if (uK > 1) {
+        // Baked uK times bigger than it is kept: each pixel the mean of uK x uK baked ones, each encoded first as it would be
+        // in a picture kept at full size, so that it holds what that picture's mipmap would
+        ivec2 size = textureSize(tA, 0);
+        ivec2 base = ivec2(floor(uv * vec2(size) / float(uK))) * uK;
+        vec4 sa = vec4(0.0);
+        vec3 sb = vec3(0.0);
+        for (int j = 0; j < 4; j++) {
+            if (j >= uK) break;
+            for (int i = 0; i < 4; i++) {
+                if (i >= uK) break;
+                ivec2 t = base + ivec2(i, j);
+                float edge = fall(1.0, 0.86, length((vec2(t) + 0.5) / vec2(size) * 2.0 - 1.0));
+                float d = dither(vec2(t) + 0.5);
+                sa += clamp(sqrt(max(texelFetch(tA, t, 0), 0.0) * edge / uScale.x) + d, 0.0, 1.0);
+                sb += clamp(sqrt(max(texelFetch(tB, t, 0).rgb, 0.0) * edge / uScale.y) + d, 0.0, 1.0);
+            }
+        }
+        gA = sa / float(uK * uK);
+        gB = vec4(sb / float(uK * uK), 1.0);
+        return;
+    }
     float edge = fall(1.0, 0.86, length(vP));
     vec4 a = max(texture(tA, uv), 0.0) * edge / uScale.x;
     vec4 b = max(texture(tB, uv), 0.0) * edge / uScale.y;
@@ -745,7 +768,7 @@ export function createGalaxyBaker(engine) {
     const mapMaterial = new THREE.ShaderMaterial({ ...base, uniforms: shared, vertexShader: QUAD_VERT, fragmentShader: MAP_FRAG });
     const viewMaterial = new THREE.ShaderMaterial({ ...base, uniforms: shared, vertexShader: QUAD_VERT, fragmentShader: VIEW_FRAG });
     const particleMaterial = new THREE.ShaderMaterial({ ...base, ...additive, uniforms: shared, vertexShader: PARTICLE_VERT, fragmentShader: PARTICLE_FRAG });
-    const resolveUniforms = { tA: { value: null }, tB: { value: null }, uScale: { value: new THREE.Vector2(BAKE_SCALE.a, BAKE_SCALE.b) } };
+    const resolveUniforms = { tA: { value: null }, tB: { value: null }, uScale: { value: new THREE.Vector2(BAKE_SCALE.a, BAKE_SCALE.b) }, uK: { value: 1 } };
     const resolveMaterial = new THREE.ShaderMaterial({ ...base, uniforms: resolveUniforms, vertexShader: QUAD_VERT, fragmentShader: RESOLVE_FRAG });
 
     const quad = new THREE.Mesh(quadGeometry, mapMaterial);
@@ -921,6 +944,7 @@ export function createGalaxyBaker(engine) {
 
         resolveUniforms.tA.value = scratchView.textures[0];
         resolveUniforms.tB.value = scratchView.textures[1];
+        resolveUniforms.uK.value = Math.max(1, Math.round(res / rect.w));
         output.viewport.set(rect.x, rect.y, rect.w, rect.h);
         output.scissor.set(rect.x, rect.y, rect.w, rect.h);
         output.scissorTest = true;

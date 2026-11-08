@@ -141,14 +141,15 @@ export function makeNeutronStar(rng, body, pulsar, remnant, spin = null) {
     };
 }
 
-// d comes in from a stratified list, so that the Hubble plot has galaxies all along its length
+// d comes in from a stratified list, so that the Hubble plot has galaxies all along its length. flags.faintest, if given, is
+// the faintest it may look in place of 17.2.
 export function makeGalaxy(rng, body, morphology, dMpc, flags) {
     const distance = dMpc * 1e6;
     const velocity = dp(H0 * dMpc + rng.range(-300, 300), 1);
     const modulus = distanceModulus(distance);
     // Bright ellipticals, modest spirals, faint irregulars; lifted where needed to stay within reach of a zoomed scope
     const typical = morphology === 'elliptical' ? -21.8 : morphology === 'spiral' ? -21 : -19.6;
-    const absMag = Math.min(typical + rng.range(-1, 1), 17.2 - modulus);
+    const absMag = Math.min(typical + rng.range(-1, 1), (flags.faintest ?? 17.2) - modulus);
     const mag = dp(absMag + modulus, 3);
     const luminosity = stable(10 ** (-0.4 * (absMag - 4.74)), 4);
     body.distance_pc = distance;

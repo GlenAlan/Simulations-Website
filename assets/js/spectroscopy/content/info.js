@@ -986,6 +986,11 @@ const SUPERNOVA_TYPE = {
 function supernovaInfo({ entity }) {
     const block = entity.supernova || {};
     const phase = block.phase0_days;
+    // One in another galaxy (data/far_supernovae.js) is far too distant for its remnant ever to be seen; any other whose shell is
+    // too small to see doesn't speak of watching it (supernovaShellShows)
+    const behind = 'Each kind scatters heavy elements into space, ready for new stars and planets. The iron in your blood was made in stars and spread by explosions like this.'
+        + (block.host_code ? ' This one is in another galaxy, far too distant for its remnant to be seen.'
+            : supernovaShellShows(block) ? ' Play on to watch the expanding shell become a remnant.' : '');
     return {
         kindLabel: 'Supernova',
         lead: 'A star exploding, for a few weeks about as bright as a whole galaxy.',
@@ -994,14 +999,14 @@ function supernovaInfo({ entity }) {
         notes: [
             { heading: 'Which type?', text: 'Type Ia: no hydrogen lines, and a strong Si II line near 615 nm. Type II: strong hydrogen Balmer lines with P Cygni profiles. Compare the spectrum with the H and Si II references.' },
             { heading: 'P Cygni profiles', text: 'An expanding shell makes a bright emission peak with a blueshifted dark dip beside it. The dip comes from the gas in front, rushing towards you. The peak comes from the gas round the sides.' },
-            // One in another galaxy is too far for its shell to be seen (supernovaShellShows)
-            { heading: 'What it leaves behind', text: `Each kind scatters heavy elements into space, ready for new stars and planets. The iron in your blood was made in stars and spread by explosions like this.${supernovaShellShows(block) ? ' Play on to watch the expanding shell become a remnant.' : ''}` }
+            { heading: 'What it leaves behind', text: behind }
         ],
         rarity: 'In a galaxy like the Milky Way, roughly 1 to 3 per century. The last one seen in our galaxy was in 1604, just before the telescope. Seeing several at once, as you can here, would never happen.',
         catalogue: clean([
             row('Type', SUPERNOVA_TYPE[block.type] || (block.type ? `Type ${block.type}` : null)),
             row('Starts at', isNum(phase) ? `${sig(Math.abs(phase), 3)} days ${phase < 0 ? 'before' : 'after'} its peak` : null),
             row('Peak apparent magnitude', num(block.peak_mag)),
+            row('In galaxy', block.host_code || null),
             row('Remnant', block.remnant_code || null),
             row('Radial velocity', velocityText(entity.radial_velocity_kms)),
             row('Distance', distanceText(entity.distance_pc))

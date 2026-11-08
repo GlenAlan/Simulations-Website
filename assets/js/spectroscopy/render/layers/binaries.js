@@ -16,7 +16,7 @@ import { danceReady, onDance } from '../../data/unstable.js';
 import { bandSkyBrightness, bandMagnitude } from '../../data/band_table.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, smoothstep } from './exotic_common.js';
-import { createSprites, createSpikes, bodySoftness, SPLIT_LO, SPLIT_HI } from './stars.js';
+import { createSpriteSet, bodySoftness, SPLIT_LO, SPLIT_HI } from './stars.js';
 
 // Stylised on-sky separation in degrees: slow, wide orbits show first. Three days gives about 0.03 deg (seen apart at
 // a field of view near 2 deg), a thousand years about 0.25 deg (seen apart near 15 deg).
@@ -147,6 +147,8 @@ export function createBinariesLayer(engine, app) {
     let flat = [];          // Every drawn node of every system, in instance order
     let points = null;      // The members, drawn just as stars.js draws any star, and their diffraction spikes
     let spikes = null;
+    let set = null;         // Only those that can show are drawn (stars.js createSpriteSet), from master, in the order of flat
+    let master = null;
     let bridges = null;
     let aura = null;
     let pairs = [];         // Interacting pairs, in instance order of the bridges and auras
@@ -262,8 +264,10 @@ export function createBinariesLayer(engine, app) {
             data.depths[i] = system.body.depth;
             data.pcs[i] = travelPc(system.body);
         });
-        points = createSprites(data);
-        spikes = createSpikes(data);
+        master = data;
+        set = createSpriteSet(data);
+        points = set.sprites;
+        spikes = set.spikes;
         points.mesh.renderOrder = ORDER.exotic;
         spikes.mesh.renderOrder = ORDER.exotic + 1;
         spikes.mesh.visible = app.qualityLevel !== 'low';
@@ -482,17 +486,13 @@ export function createBinariesLayer(engine, app) {
         const previous = system.nodes;
         layOutSystem(system, tDays);
         sendSplits(system);
-        // The same tree in the same order, so nodes keep their instance slots
-        const position = points.geometry.getAttribute('aCentre');
-        const seps = points.geometry.getAttribute('aSplit');
+        // The same tree in the same order, so nodes keep their places in the data
         previous.forEach((node, k) => {
             const i = system.first + k;
-            const p = worldOf(system, node.x, node.y);
-            position.setXYZ(i, p[0], p[1], p[2]);
-            seps.setXY(i, node.sepParent, node.sepSelf);
+            master.centres.array.set(worldOf(system, node.x, node.y), i * 3);
+            master.split.array.set([node.sepParent, node.sepSelf], i * 2);
+            set.changed(i);
         });
-        position.needsUpdate = true;
-        seps.needsUpdate = true;
         pairs.forEach(({ system: owner, node }, i) => {
             if (owner !== system) return;
             const [donor, gainer] = bridgeEnds(system, node);
@@ -519,6 +519,7 @@ export function createBinariesLayer(engine, app) {
             if (!points) return;
             points.material.uniforms.uDpr.value = frame.dpr;
             spikes.material.uniforms.uDpr.value = frame.dpr;
+            set.update(frame);
         },
         // The first split of this system: where each part is drawn just now, in degrees from its centre (east, up), and
         // which stars it is, as indices into body.stars
