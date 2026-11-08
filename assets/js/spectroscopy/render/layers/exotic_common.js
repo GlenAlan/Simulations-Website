@@ -53,7 +53,7 @@ export function smoothstep(lo, hi, x) {
 //     changing the screen from one frame to the next no more than at SPIN_SHOWN.
 //   - Each spot a close beam passes also brightens and dims about 2.8 times a turn, so above FLICKER_HZ turns a second
 //     those spots would flash more than three times a second. There the turning light is FAST_SHARE of it, too faint to
-//     count as a flash anywhere (under a tenth of full brightness), and still enough to be seen turning.
+//     count as a flash while the beams are small, and still enough to be seen turning; zoomed in, less (closeTurningShare).
 //   - The sky's beams are as they were while they're small, and at every size for a pulsar turning up to SKY_FLICKER_HZ
 //     times a second: each spot of the sky one passes is lit once a turn, which is three flashes a second at most. Turning
 //     faster, a beam does that over all it sweeps, and as a zoom makes it bigger, that grows as its size squared, to twice
@@ -88,6 +88,21 @@ export function shownRate(periodS) {
 export function turningShare(rate) {
     if (rate <= SPIN_SHOWN) return 1;
     return rate <= FLICKER_HZ ? SPIN_SHOWN / rate : FAST_SHARE;
+}
+
+// Up close, the share that turns, with the beams lengthPx long on the screen (CSS pixels) and light the luminance of their
+// colour times its strength (system/remnants.js): FAST_SHARE was set with the beams small. Zoomed in, a beam turning faster
+// than FLICKER_HZ grows over the screen, and where the two cones and both their sides line up its turning light still steps
+// by more than a tenth: at 10 turns a second, 3,200 px flash at the entry's 230 px, 17,400 at 515 and 24,800 at 680. So from
+// CLOSE_SWEEP_PX[0] to [1] its turning light eases down to CLOSE_TURNING_LIGHT, too faint to flash at any size (none did
+// at any zoom), with the rest of it in the blurred sweep. A dimmer beam, as in X-rays, keeps more of its light turning.
+export const CLOSE_SWEEP_PX = [250, 500];
+export const CLOSE_TURNING_LIGHT = 0.021;   // 0.15 of the radio beam's light, the brightest band's
+export function closeTurningShare(rate, lengthPx, light) {
+    const share = turningShare(rate);
+    if (rate <= FLICKER_HZ) return share;
+    const most = Math.min(share, CLOSE_TURNING_LIGHT / Math.max(light, 1e-3));
+    return share - (share - most) * smoothstep(CLOSE_SWEEP_PX[0], CLOSE_SWEEP_PX[1], lengthPx);
 }
 
 // On the sky, the share that turns once the beams are SKY_SWEEP_PX[1] big (and less beyond); 1 for one that never blurs
