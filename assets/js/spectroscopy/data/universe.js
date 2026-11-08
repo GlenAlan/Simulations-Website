@@ -495,50 +495,55 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     const leaving = new Set(cometBodies.slice(SKY_COMETS));
     removeFromLayout(layout, cometBodies);
     const cometSun = placeSkyComets(root.fork('sky comets'), skyComets, layout);
+    const made = first.filter((body) => !leaving.has(body)).concat(second);
+    makeExocomets(root.fork('exocomets'), made, [...leaving].map((b) => b.code), coder('exocomets'), sealed);
+
+    // A few detached close pairs turned edge-on, to join the tight pairs that eclipse already
+    tiltEclipses(root.fork('eclipses'), made.filter((b) => b.stars && b.architecture !== 'figure_eight' && b.architecture !== 'double_double'), MIX.eclipsingTilted);
+
+    // ---------- Motions ----------
+    // After the layout, since a body's direction sets much of its motion. The hard-coded systems keep theirs.
+    const fixedMotion = new Set([target.host.code, ...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK']);
+    assignVelocities(made, root.fork('motions'), fixedMotion);
+
+    // ---------- Black holes at the centres of galaxies ----------
+    // A stream and codes of their own, drawn after every other code, and after the motions they copy (data/nuclei.js)
+    addNuclei(root.fork('nuclei'), made, coder('nuclei'));
 
     // ---------- The sky's proportions (data/quotas.js, round 4) ----------
-    // Everything above is made and laid out as it always was. Now some of it goes, and in its place come supernovae in other
-    // galaxies; the added sky comes last of all, below.
+    // Everything above is made, laid out and set moving as it always was. Now some of it goes, and in its place come
+    // supernovae in other galaxies; then the added sky. Streams and codes of their own, so nothing above changes.
     // Rogue planets: the first made of each sky's stay
     const goneRogues = [...rogueBodies.slice(ROGUE_PLANETS_KEPT.first), ...deep.rogues.slice(ROGUE_PLANETS_KEPT.deep)];
     // Supernovae: the nearest stay, and the codes of the rest go to supernovae in other galaxies. A neutron star that one of
-    // them left stays where it is, as one of our own galaxy's.
+    // them left stays where it is, as one of our own galaxy's, and moves as one does at its new distance (each body's motion
+    // comes from a stream keyed by its code, so it is the motion it would have had there all along).
     const supernovaSort = sortSupernovae(supernovaEntries.map((e) => e.body));
     const moving = supernovaSort.far.map((f) => f.body).filter(Boolean);
     const freed = root.fork('freed neutron stars');
+    const freedBodies = [];
     [...supernovaSort.gone, ...moving].forEach((body) => {
         const ns = neutronBodies.get(body.supernova.remnant_code);
-        if (ns) freeNeutronStar(freed.fork(ns.code), ns);
+        if (!ns) return;
+        freeNeutronStar(freed.fork(ns.code), ns);
+        freedBodies.push(ns);
     });
+    assignVelocities(freedBodies, root.fork('motions'), new Set());
     const gone = new Set([...goneRogues, ...supernovaSort.gone]);
     removeFromLayout(layout, [...gone, ...moving]);
     const farCode = coder('far supernovae');
     const farNew = [];
-    const keptSky = first.filter((body) => !leaving.has(body) && !gone.has(body)).concat(second.filter((body) => !gone.has(body)));
-    const farBodies = makeFarSupernovae(root.fork('far supernovae'), supernovaSort.far, keptSky.filter((b) => b.kind === 'galaxy'), layout,
+    const kept = made.filter((body) => !gone.has(body));
+    const farBodies = makeFarSupernovae(root.fork('far supernovae'), supernovaSort.far, kept.filter((b) => b.kind === 'galaxy'), layout,
         new Set(supernovaSort.near.map((b) => b.supernova.phase0_days)), () => {
             const body = makeBase('supernova', farCode());
             farNew.push(body);
             return body;
         });
-
-    const sky = keptSky.concat(farNew);
-    makeExocomets(root.fork('exocomets'), sky, [...leaving].map((b) => b.code), coder('exocomets'), sealed);
-
-    // A few detached close pairs turned edge-on, to join the tight pairs that eclipse already
-    tiltEclipses(root.fork('eclipses'), sky.filter((b) => b.stars && b.architecture !== 'figure_eight' && b.architecture !== 'double_double'), MIX.eclipsingTilted);
-
-    // ---------- Motions ----------
-    // After the layout, since a body's direction sets much of its motion. The hard-coded systems keep theirs.
-    const fixedMotion = new Set([target.host.code, ...sealed.decoys.map((d) => d.host.code), 'F8Q3ZN', 'D2W7XK']);
-    assignVelocities(sky, root.fork('motions'), fixedMotion);
     // A supernova in another galaxy moves with it
-    const galaxyByCode = new Map(sky.filter((b) => b.kind === 'galaxy').map((b) => [b.code, b]));
+    const galaxyByCode = new Map(kept.filter((b) => b.kind === 'galaxy').map((b) => [b.code, b]));
     setFarVelocities(root.fork('far supernova motions'), farBodies, (code) => galaxyByCode.get(code));
-
-    // ---------- Black holes at the centres of galaxies ----------
-    // A stream and codes of their own, drawn after every other code, and after the motions they copy (data/nuclei.js)
-    addNuclei(root.fork('nuclei'), sky, coder('nuclei'));
+    const sky = kept.concat(farNew);
 
     // ---------- The added sky (data/quotas.js EXTRA) ----------
     // Last of all, from streams and codes of its own, laid out among and behind everything above, so that nothing above moves
