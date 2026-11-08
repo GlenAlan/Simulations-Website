@@ -66,9 +66,9 @@ const VIEW_SHOWN_AT = 0.4;          // A zoom this far in would settle in, not b
 const CARRIED_PAUSE_MS = 450;       // A pause this long ends the zoom that carried the student in (see applyZoom)
 const HOLE_GROW = 1.8;              // A zoom hands a black hole over once the sky draws it this much smaller than its system's
                                     // view will on arrival: about what the sky itself would grow it by over the move
-const HOLE_GROW_LEAST = 1.25;       // Zoomed in past that already, it still grows this much on the way in
+const HOLE_GROW_LEAST = 1.1;        // Zoomed in past that already, it still grows this much on the way in
 const HOLE_SHOWN_PX = 5;            // The sky draws a hole's disc from this many device px of radius (layers/black_holes.js)
-const FRAME_STAR_SHARE = 0.1;       // The arrival framing: a star up to this share of the frame's radius changes nothing...
+const FRAME_STAR_SHARE = 0.12;      // The arrival framing: a star up to this share of the frame's radius changes nothing...
 const FRAME_STAR_POWER = 0.3;       // ... and past it, its share of a frame that opens out round it grows only as this power
 const DAY_SIDE = 0.65;              // How far round from the star a close-up looks at a planet (radians)
 const CLOSE_UP_ORBITS_PER_S = 0.02; // A planet in close-up goes round no faster than this: it's there to be looked at
@@ -452,9 +452,9 @@ export function initSystemView(app) {
     // unless a star would fill much of it: on its own that would bring a lone star in as a disc across half the screen, and a
     // contact pair as two, while a wide triple comes in as a scatter of points. So a star bigger than FRAME_STAR_SHARE of the
     // frame opens the frame out round it, by as much as keeps its share growing only as the FRAME_STAR_POWER power of its size:
-    // a lone Sun-like star comes in at about 0.14 of the frame's radius rather than 0.33, a lone giant at 0.16 rather than
-    // 0.5, a white dwarf at 0.11 rather than 0.15. The planets, comets and stars of nearly every wider system are well under
-    // the share, and come in just as they did.
+    // a lone Sun-like star comes in at about 0.16 of the frame's radius rather than 0.33, a lone giant at 0.18 rather than
+    // 0.5, a white dwarf at 0.13 rather than 0.15, a contact pair's stars at about 0.19 rather than 0.5 or more. The stars
+    // of most systems with planets, and of every wider multiple, are under the share, and come in just as they did.
     function framedRadius(m = model, at = mix) {
         if (!m) return FRAME;
         let R = 0;
