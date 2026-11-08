@@ -1540,7 +1540,8 @@ html.dark-mode .spectro-sim {
     container: spectro-room / size;
     --spectro-plot-min: 237px;      /* A plot with about 100 px of curve, under its header and over its axis, colour strip and reference row */
     --spectro-tool-room: clamp(290px, 48cqh, 470px);    /* An open tool's share, with the dock */
-    --spectro-rest-room: 176px;     /* Left empty under a lone spectrum in a tall drawer: about what the reference's Shift takes */
+    --spectro-rest-room: 225px;     /* Left empty under a lone spectrum in a tall drawer: what the reference's Shift takes over the
+                                       dock, until the panel has measured it (ui/spectrum/panel.js fitRestRoom) */
 }
 
 @media (pointer: coarse) {
@@ -1610,10 +1611,10 @@ html.dark-mode .spectro-sim {
     --spectro-tool-room: clamp(340px, 58cqh, 560px);
 }
 
-/* At rest in a tall drawer, one spectrum on its own (Overlay, or no reference yet) leaves about the room the reference's Shift
-   takes empty under it: stretched up the whole drawer, a spectrum's lines only get taller, not clearer. Shift then opens into
-   that room without moving the plot. Stacked keeps the whole height for its two panes, and a laptop's drawer, a short one or a
-   phone's sheet keeps the plot as big as it can be (see "A short drawer" below). */
+/* At rest in a tall drawer, one spectrum on its own (Overlay, or no reference yet) leaves the room the reference's Shift takes,
+   readout and Reset and all, empty under it, over the dock: stretched up the whole drawer, a spectrum's lines only get taller,
+   not clearer. Shift then opens into that room without moving the plot. Stacked keeps the whole height for its two panes, and
+   a laptop's drawer, a short one or a phone's sheet keeps the plot as big as it can be (see "A short drawer" below). */
 @container spectro-room (height > 600px) {
     body:not(.sim-panel-sheet) .spectro-spectrum:not(.is-picking) > .spectro-instrument:not(.has-tool):not(.is-stacked) > .spectro-head {
         flex: 0 0 auto;
@@ -2074,13 +2075,27 @@ html.dark-mode .spectro-sim {
 }
 
 .spectro-area > details:not([open]),
-.spectro-area > details > summary {
+.spectro-area > details > summary,
+.spectro-shift-probe summary {
     display: none;
 }
 
-.spectro-area > details[open] {
+.spectro-area > details[open],
+.spectro-shift-probe > details[open] {
     padding: 0.5em 0;
     border-top: 1px solid var(--color-border);
+}
+
+/* A copy of Shift that the panel measures (ui/spectrum/panel.js fitRestRoom): laid out at Shift's own width, but taking no room
+   and never seen */
+.spectro-area > .spectro-shift-probe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .spectro-area > .spectro-ref-list {
