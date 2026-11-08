@@ -1435,7 +1435,7 @@ export function initSystemView(app) {
         if (world.beams) {
             // How long its beams are on the screen, in CSS pixels: 7 radii of the star, which is where its beams reach
             const beamPx = (7 * sizes.stars[0] * f) / Math.max(sizes.starZ[0], sizes.stars[0], 1e-6);
-            world.beams.update({ dt: frame.dt, reveal: showReveal, reduceMotion: reduce, radius: sizes.stars[0], beamPx });
+            world.beams.update({ dt: frame.dt, reveal: showReveal, reduceMotion: reduce, radius: sizes.stars[0], beamPx, camera });
         }
         if (world.dust) world.dust.update({ reveal: showReveal * (1 - smear.stars[0]), radius: sizes.stars[0], position: positions.stars[0] });
 

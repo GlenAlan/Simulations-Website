@@ -45,15 +45,13 @@ export function smoothstep(lo, hi, x) {
 //   - Each turns at its true rate, between PULSE_SHOWN_HZ.min and .max turns a second (0.1 to 10 Hz, from
 //     data/deep_sky.js, which draws every pulsar's rate inside that). On the sky one turn is one pulse, as the beam
 //     crosses our line of sight: a small point, which may flash that fast.
-//   - Up close a beam sweeps over a large part of the screen, and three changes a second over a wide area is the most
-//     photosensitive viewers can take. Zoomed in, the soft beam in system/remnants.js does that 1.5 times a second at
-//     0.6 turns a second, but 4 times at 0.75 and 8 at 1. So up to SPIN_SHOWN turns a second the close beams are drawn
-//     just as they were. Above it the turning beams fade, to SPIN_SHOWN / rate of their light, and the rest of it is their
-//     sweep blurred into the cones they trace, as the eye sees a fast lighthouse: still turning at the true rate, but
-//     changing the screen from one frame to the next no more than at SPIN_SHOWN.
-//   - Each spot a close beam passes also brightens and dims about 2.8 times a turn, so above FLICKER_HZ turns a second
-//     those spots would flash more than three times a second. There the turning light is FAST_SHARE of it, too faint to
-//     count as a flash while the beams are small, and still enough to be seen turning; zoomed in, less (closeTurningShare).
+//   - Up close a beam sweeps over a large part of the screen, and three flashes a second over a wide area is the most
+//     photosensitive viewers can take. The beams are drawn at their full brightness, just as they were, for as long as
+//     they're short enough on the screen for that to hold: how long depends on how fast they turn and where they're seen
+//     from (closeTurningShare), and most turning up to about 3 times a second arrive at full brightness. Longer than that,
+//     as the zoom makes them, the turning beams dim only as much as they have to, and the rest of their light is their
+//     sweep blurred into the cones they trace, as the eye sees a fast lighthouse: still turning at the true rate. No
+//     faster than SPIN_SHOWN, a beam can be any length.
 //   - The sky's beams are as they were while they're small, and at every size for a pulsar turning up to SKY_FLICKER_HZ
 //     times a second: each spot of the sky one passes is lit once a turn, which is three flashes a second at most. Turning
 //     faster, a beam does that over all it sweeps, and as a zoom makes it bigger, that grows as its size squared, to twice
@@ -84,30 +82,63 @@ export function shownRate(periodS) {
     return Math.max(PULSE_SHOWN_HZ.min, Math.min(PULSE_SHOWN_HZ.max, 1 / periodS));
 }
 
-// Up close, the share of the beams' light that turns at that rate; the rest is their blurred sweep
-export function turningShare(rate) {
-    if (rate <= SPIN_SHOWN) return 1;
-    return rate <= FLICKER_HZ ? SPIN_SHOWN / rate : FAST_SHARE;
+// How long a beam can be on the screen, up close, and still turn at full brightness, in CSS pixels, from its star to where
+// its light ends. Two things set it, both measured on the real picture at 1024 x 768 in radio (the brightest band), forcing
+// the rate and the brightness, so that no more than CLOSE_AIM_PX flashes more than 3 times a second in any 10 degree field
+// and no more than 2 large-area flashes come in a second:
+//   - The beam sweeping over more of the whole screen at a time than is allowed, up and down: BEAM_FLASH_PX, by rate.
+//   - The area each spot of which is lit often enough to count as flashing, which goes as the beam's length squared. A spot
+//     has to be crossed at least 3.5 / rate times a turn for that: from 3.5 turns a second once is enough, which is everything
+//     the beams sweep. Below that it takes twice: spots swept by both beams, or by a beam on its way out and on its way back,
+//     which comes down to where the view is from. CLOSE_TWICE gives that area per sin^2(tilt) when the beam is 372 px long, by
+//     tan(view angle) / tan(tilt), view angle being from the spin axis to the camera. It's biggest looking along the
+//     axis, where both beams sweep the same disc, and vanishes with the beam's tilt and the view the same, where they don't.
+//     So a student orbiting to look down the axis, at any zoom, is covered too.
+const CLOSE_AIM_PX = 11500;                 // 53% of the 21,824 px allowed, so that the worst tilt and view measured stay near 60%
+const BEAM_REF_PX = 372;
+const BEAM_FLASH_PX = [[0.75, 1000], [1, 750], [1.25, 650], [1.5, 235], [2, 520], [3, 470], [4, 400]];
+const CLOSE_TWICE = [[0, 100], [0.35, 75], [0.5, 55], [0.7, 19], [0.9, 3], [1.4, 3], [2, 34], [2.7, 72]];   // Thousands of px
+const CLOSE_ONCE = 109;                     // Thousands of px crossed once a turn, at the worst tilt and view measured
+const TWICE_BY_RATE = [[1.5, 0], [1.75, 1], [2.5, 1], [3, 1.27]];
+export const CLOSE_TURNING_LIGHT = 0.021;   // 0.15 of the radio beam's light, the brightest band's
+const RADIO_BEAM_LIGHT = 0.142;
+
+function tableAt(table, x) {
+    if (x <= table[0][0]) return table[0][1];
+    for (let i = 1; i < table.length; i++) {
+        if (x <= table[i][0]) return table[i - 1][1] + ((table[i][1] - table[i - 1][1]) * (x - table[i - 1][0])) / (table[i][0] - table[i - 1][0]);
+    }
+    return table[table.length - 1][1];
 }
 
-// Up close, the share that turns, with the beams lengthPx long on the screen (CSS pixels) and light the luminance of their
-// colour times its strength (system/remnants.js): FAST_SHARE was set with the beams small. Zoomed in, a beam turning faster
-// than FLICKER_HZ grows over the screen, and where the two cones and both their sides line up its turning light still steps
-// by more than a tenth: at 10 turns a second, 3,200 px flash at the entry's 230 px, 17,400 at 515 and 24,800 at 680. So from
-// CLOSE_SWEEP_PX[0] to [1] its turning light eases down to CLOSE_TURNING_LIGHT, too faint to flash at any size (none did
-// at any zoom), with the rest of it in the blurred sweep. A dimmer beam, as in X-rays, keeps more of its light turning.
-export const CLOSE_SWEEP_PX = [250, 500];
-export const CLOSE_TURNING_LIGHT = 0.021;   // 0.15 of the radio beam's light, the brightest band's
-export function closeTurningShare(rate, lengthPx, light) {
-    const share = turningShare(rate);
-    if (rate <= FLICKER_HZ) return share;
-    const most = Math.min(share, CLOSE_TURNING_LIGHT / Math.max(light, 1e-3));
-    return share - (share - most) * smoothstep(CLOSE_SWEEP_PX[0], CLOSE_SWEEP_PX[1], lengthPx);
+// The longest the beams can be on the screen and still be whole: light is how bright they are (remnants.js, setBand), tilt
+// the beam's from the spin axis and cosView the cosine of the angle from the spin axis to the camera
+function closeFullPx(rate, light, tilt, cosView) {
+    const sin2 = Math.sin(tilt) ** 2;
+    const c = Math.min(Math.abs(cosView), 1);
+    const twice = sin2 * tableAt(CLOSE_TWICE, Math.sqrt(1 - c * c) / Math.max(c, 1e-3) / Math.tan(tilt));
+    const area = 1000 * (twice * tableAt(TWICE_BY_RATE, rate) * (1 - smoothstep(3, 3.5, rate)) + CLOSE_ONCE * smoothstep(3, 3.5, rate))
+        * Math.pow(Math.min(1, light / RADIO_BEAM_LIGHT), 1.25);    // A dimmer beam, as in X-rays, flashes over less of the screen
+    return Math.min(tableAt(BEAM_FLASH_PX, rate), area > 0 ? BEAM_REF_PX * Math.sqrt(CLOSE_AIM_PX / area) : Infinity);
+}
+
+// The share of a close beam's light that turns, with the beams lengthPx long on the screen (CSS pixels), light the luminance
+// of their colour times its strength, and tilt and cosView as above. No slower than SPIN_SHOWN turns a second, 1 at any size.
+export function closeTurningShare(rate, lengthPx, light, tilt, cosView) {
+    if (rate <= SPIN_SHOWN) return 1;
+    const full = closeFullPx(rate, light, tilt, cosView);
+    if (lengthPx <= full) return 1;
+    // Past that it dims as its length grows: as one over its length turning once a turn is enough, which holds the area it
+    // flashes over, and faster where spots must be crossed twice, where the two sweeps are wider apart. There's no need to go
+    // below CLOSE_TURNING_LIGHT, or SPIN_SHOWN / rate if it turns no faster than FLICKER_HZ: too faint to flash over a wide
+    // area at any size. All the rest of its light goes into its blurred sweep.
+    const least = rate > FLICKER_HZ ? Math.min(1, CLOSE_TURNING_LIGHT / Math.max(light, 1e-3)) : SPIN_SHOWN / rate;
+    return Math.max(least, Math.pow(full / lengthPx, 1.6 - 0.6 * smoothstep(3, 3.5, rate)));
 }
 
 // On the sky, the share that turns once the beams are SKY_SWEEP_PX[1] big (and less beyond); 1 for one that never blurs
 export function skyTurningShare(rate) {
-    return rate > SKY_FLICKER_HZ ? turningShare(rate) : 1;
+    return rate > SKY_FLICKER_HZ ? FAST_SHARE : 1;
 }
 // Everything both views need to draw one pulsar's spin, from its own stream (rng = bodyRng(body, 'pulsar'), read in this
 // order, which the sky layer goes on reading after). In the frame of the view at the pulsar: x right, y up, z towards us.
@@ -123,7 +154,7 @@ export function pulsarSpin(body, rng) {
     // At angle 0 the beam points straight at us: e1 is the part of the line of sight square to the spin axis
     const e1 = [-axis[0] * Math.cos(tilt) / Math.sin(tilt), -axis[1] * Math.cos(tilt) / Math.sin(tilt), (1 - axis[2] * Math.cos(tilt)) / Math.sin(tilt)];
     const e2 = [axis[1] * e1[2] - axis[2] * e1[1], axis[2] * e1[0] - axis[0] * e1[2], axis[0] * e1[1] - axis[1] * e1[0]];
-    return { tilt, roll, rate, depth: info.pulsar ? 1 : 0, spin: turningShare(rate), phase, axis, e1, e2 };
+    return { tilt, roll, rate, depth: info.pulsar ? 1 : 0, phase, axis, e1, e2 };
 }
 
 // The beam's angle round the spin axis at a time on the shared clock, as the sky's shader works it out

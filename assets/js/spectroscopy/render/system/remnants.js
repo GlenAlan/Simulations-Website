@@ -10,7 +10,7 @@ import { hashString, Rng } from '../../core/rng.js';
 import { sharedUniforms, LOOP_ZERO_GLSL } from '../shared.js';
 import { bendingTables, B_CRIT, TABLE, TABLE_T0, TABLE_T1 } from '../layers/bh_geodesic.js';
 import { exoticNoise, bodyRng, pulsarSpin, pulsarAngle, pulsarBeam, closeTurningShare, smoothstep, PULSAR_BEAM_SLOPE,
-    SWEEP_SAMPLES } from '../layers/exotic_common.js';
+    SPIN_SHOWN, SWEEP_SAMPLES } from '../layers/exotic_common.js';
 import { HOLE_DISC, JET_BANDS, BEAM_BANDS, BEAM_TRUE, bandRgb, falseTint } from './band_look.js';
 
 // Lengths in units of the hole's mass M, as on the sky. The radius the system view gives a hole is its disc's outer edge.
@@ -493,9 +493,10 @@ function createSoftBeams({ slope, sides }) {
     };
 }
 
-// Above SPIN_SHOWN turns a second (layers/exotic_common.js) a pulsar's beams are seen as the eye sees a fast lighthouse:
-// their sweep blurred into the two cones they trace round the spin axis. This is the soft beam above, averaged over
-// SWEEP_SAMPLES directions round the cone, on a ball that holds the cones, so that every line of sight is worked out once.
+// When a pulsar's beams are too long on the screen to turn at full brightness (closeTurningShare in layers/exotic_common.js),
+// the rest of their light is seen as the eye sees a fast lighthouse: their sweep blurred into the two cones they trace
+// round the spin axis. This is the soft beam above, averaged over SWEEP_SAMPLES directions round the cone, on a ball that
+// holds the cones, so that every line of sight is worked out once.
 // A different start for each pixel turns what would be spokes into a fine grain, which holds still.
 const SWEPT_FRAGMENT = /* glsl */`
 ${LOOP_ZERO_GLSL}
@@ -599,8 +600,8 @@ function createSweptBeams({ slope, spin }) {
 // The pulsar the sky shows, turning the same way at the same moment (pulsarSpin in layers/exotic_common.js): the same tilt,
 // beam width and turns a second, on the shared clock. sight is the unit vector towards us, where the flight in starts: the
 // sky's view of the pulsar is laid along it, so whenever the sky shows a pulse, the beam here points back along the flight.
-// Turning faster than SPIN_SHOWN, its beams fade and their blurred sweep takes the rest of their light; turning faster than
-// FLICKER_HZ, more so as they grow on the screen (closeTurningShare).
+// Its beams are at their full brightness until they're too long on the screen for how fast they turn (closeTurningShare);
+// from there they fade as they grow, and their blurred sweep takes the rest of their light.
 export function createPulsarBeams(body, sight) {
     const spin = pulsarSpin(body, bodyRng(body, 'pulsar'));
     // The sky's frame at the pulsar (right, up, towards us) in this world: up is the world's up, square to the line of sight
@@ -610,11 +611,14 @@ export function createPulsarBeams(body, sight) {
     const toWorld = (v) => new THREE.Vector3().addScaledVector(x, v[0]).addScaledVector(y, v[1]).addScaledVector(z, v[2]);
     const local = { ...spin, axis: toWorld(spin.axis).toArray(), e1: toWorld(spin.e1).toArray(), e2: toWorld(spin.e2).toArray() };
     const beams = createSoftBeams({ slope: PULSAR_BEAM_SLOPE, sides: 28 });
-    const swept = spin.spin < 1 ? createSweptBeams({ slope: PULSAR_BEAM_SLOPE, spin: local }) : null;
+    const swept = spin.rate > SPIN_SHOWN ? createSweptBeams({ slope: PULSAR_BEAM_SLOPE, spin: local }) : null;
     const object = swept ? new THREE.Group().add(beams.object, swept.object) : beams.object;
     const along = [0, 0, 0];
     const pointing = new THREE.Vector3();
     const Y = new THREE.Vector3(0, 1, 0);
+    const spinAxis = new THREE.Vector3().fromArray(local.axis).normalize();
+    const here = new THREE.Vector3();
+    const toCamera = new THREE.Vector3();
     const rgb = [0, 0, 0];
     let light = SOFT_BEAM_LIGHT;
     return {
@@ -626,12 +630,16 @@ export function createPulsarBeams(body, sight) {
             if (swept) swept.setColour(rgb);
         },
         // beamPx: how long the beams are on the screen, in CSS pixels (closeTurningShare)
-        update({ reveal, radius, beamPx = 0 }) {
+        update({ reveal, radius, beamPx = 0, camera }) {
             const still = sharedUniforms.uTwinkle.value < 0.5;
             const angle = pulsarAngle(spin, sharedUniforms.uTime.value, still);
             pulsarBeam(local, angle, along);
             // With Reduce motion it holds still, so its beams are whole
-            const share = still ? 1 : closeTurningShare(spin.rate, beamPx, light);
+            let share = 1;
+            if (!still) {
+                beams.object.getWorldPosition(here);
+                share = closeTurningShare(spin.rate, beamPx, light, spin.tilt, spinAxis.dot(toCamera.copy(camera.position).sub(here).normalize()));
+            }
             // The beams lie along the object's y axis
             beams.object.quaternion.setFromUnitVectors(Y, pointing.fromArray(along).normalize());
             beams.update({ reveal: reveal * share, scale: radius * 7 });
