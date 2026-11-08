@@ -14,7 +14,7 @@ import { Rng, hashString } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { supernovaBandsAt } from '../../data/band_table.js';
-import { supernovaTemperature, SUPERNOVA_FIRST_LIGHT } from '../../spectra/supernova.js';
+import { supernovaTemperature, supernovaShellShows, supernovaLight, SUPERNOVA_FIRST_LIGHT } from '../../spectra/supernova.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
 import { getBaker, SPRITE_FETCH_GLSL, SPRITE_ID_GLSL, lineRGB } from './nebula_bake.js';
 
@@ -50,6 +50,8 @@ const PROGENITOR_ABS_MAG = -6.5;                     // ... and how bright it is
 // look brighter than the one it replaces, so each is dimmed to look no brighter than the one before.
 //   Before first light a type II's red supergiant is a faint red point, about ten magnitudes below the explosion's peak.
 // A type Ia's white dwarf can't be seen at all.
+//   One whose shell can't be seen (supernovaShellShows: one in another galaxy) has no shell drawn: its point carries the
+// light curve all the way, brightening and fading on its galaxy, as a telescope would see it.
 function writeStage(a, i, sn, t) {
     const isIa = sn.type === 'Ia';
     if (t < SUPERNOVA_FIRST_LIGHT) {
@@ -63,11 +65,13 @@ function writeStage(a, i, sn, t) {
         return { share: star / Math.max(supernovaBandsAt(sn, sn.phase0_days).visible, 1e-3), T: PROGENITOR_K };
     }
     const bands = supernovaBandsAt(sn, t);
-    const inShell = smooth(20, 130, t);
+    const seen = supernovaShellShows(sn);
+    const inShell = seen ? smooth(20, 130, t) : 0;
     const inFlash = 1 - inShell;
     // The point's light goes by its magnitude. The shell's is an extended object's: see core/depth.js
     const shell = inShell * a.shellLight[i];
-    a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * shell, bands.visible * inFlash], i * 4);
+    const point = seen ? bands.visible * inFlash : supernovaLight(sn, t);
+    a.shape.set([shellRadius(t), smooth(150, 400, t), bands.visible * shell, point], i * 4);
     a.flash.set([bands.radio * inFlash, bands.ir * inFlash, bands.uv * inFlash, bands.xray * inFlash], i * 4);
     a.shell.set([bands.radio * shell, bands.ir * shell, bands.uv * shell, bands.xray * shell], i * 4);
     // Colour of the flash: a cooling black body, the spectrum's own. Type II starts hotter and ends redder, on its
@@ -88,7 +92,7 @@ function writeStage(a, i, sn, t) {
         warm[1] * young + late[1] * (1 - young),
         warm[2] * young + late[2] * (1 - young)
     ], i * 3);
-    return { share: bands.visible * inFlash * noBrighter(POINT_WAS, colour), T };
+    return { share: point * noBrighter(POINT_WAS, colour), T };
 }
 
 export function createSupernovaeLayer(engine, app) {

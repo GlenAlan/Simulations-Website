@@ -99,6 +99,19 @@ export const SUPERNOVA_FIRST_LIGHT = FIRST_LIGHT;
 // How long the Light curve tool plays before first light, to show what was there
 const BEFORE_DAYS = 8;
 
+// Whether its expanding shell can be seen at all, so that the sky draws it and the Light curve speaks of it. One in another
+// galaxy (host_code) can't be: its remnant is far smaller than the finest zoom shows, so it stays a point that brightens
+// and fades. Nor can any shell under SHELL_SEEN_DEG across.
+const SHELL_SEEN_DEG = 0.005;
+export function supernovaShellShows(sn) {
+    return !sn.host_code && (sn.shell_deg ?? 0) >= SHELL_SEEN_DEG;
+}
+
+// The explosion's own visible light at a phase, 1 at peak: the curve the Light curve draws
+export function supernovaLight(sn, phase) {
+    return phase < FIRST_LIGHT ? 0 : explosionLight(sn, phase);
+}
+
 // The colour temperature of its light at a phase (days from peak): the same as its spectrum's continuum
 export function supernovaTemperature(sn, phase) {
     return curve((sn.type === 'Ia' ? TYPES.Ia : TYPES.II).temperature, Math.max(phase, FIRST_LIGHT));

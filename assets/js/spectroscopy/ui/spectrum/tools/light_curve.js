@@ -7,6 +7,7 @@ import { bus } from '../../../core/state.js';
 import { sig } from '../../../core/format.js';
 import { eclipsingOrbits } from '../../../data/orbits.js';
 import { lightCurve } from '../../../spectra/synth.js';
+import { supernovaShellShows } from '../../../spectra/supernova.js';
 import { createPlayback } from '../../playback.js';
 import { el } from '../../plot2d.js';
 import { createTimeFigure, everyFew, figureTable, niceSpeeds, para, timeSlider } from './common.js';
@@ -25,7 +26,10 @@ function dayText(phase) {
 
 function mountSupernova(container, api) {
     const note = para('The spectrum and the sky follow this time. Drag Time back to the start and play it to see the flash, and compare the spectrum near peak with later on.');
-    const caveat = para('This curve is the explosion\'s own visible light, and it is held flat 1.64 magnitudes below peak, where the simulation hands over to the glow of the expanding shell. A real supernova goes on fading for years. The shell\'s slow brightening after about 150 days shows in the sky but isn\'t drawn here.');
+    const caveat = para('');
+    // Only a supernova whose shell can be seen has one to hand over to (supernovaShellShows)
+    const CAVEAT_SHELL = 'This curve is the explosion\'s own visible light, and it is held flat 1.64 magnitudes below peak, where the simulation hands over to the glow of the expanding shell. A real supernova goes on fading for years. The shell\'s slow brightening after about 150 days shows in the sky but isn\'t drawn here.';
+    const CAVEAT_POINT = 'This curve is the explosion\'s own visible light, held flat 1.64 magnitudes below peak. A real supernova goes on fading for years.';
     const readout = el('p', { class: 'spectro-tool-answer' });
     // Says where it has got to when it stops, not several times a second while it plays
     const spoken = el('p', { class: 'spectro-sr-only', role: 'status' });
@@ -160,6 +164,7 @@ function mountSupernova(container, api) {
             reset(entity && entity !== resolved.entity ? entity.code : null);
             entity = resolved.entity;
             curve = lightCurve(entity);
+            caveat.textContent = supernovaShellShows(entity.supernova) ? CAVEAT_SHELL : CAVEAT_POINT;
             figure.setLabel(`Light curve: magnitude against days after peak, reaching magnitude ${curve.peak_mag.toFixed(1)} at its peak, with a sketch of the explosion up close at the time shown in the top right corner. The values are in the table under Show as table.`);
             updateTable();
             playback.pause();
