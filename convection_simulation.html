@@ -229,6 +229,7 @@
                                             </div>
                                             <div id="fpsDisplay" class="sim-fps-display">FPS: 0</div>
                                             <p class="thermal-hint" id="thermalHint" aria-hidden="true">Press and drag in the fluid to heat it</p>
+                                            <p class="thermal-hint is-hidden" id="gridNotice" role="status"></p>
                                         </div>
                                         <div class="sim-info-bar">
                                             <span class="sim-info-item">Avg. temperature: <span id="avgDensityVal" class="sim-value" style="--chars: 4">50.0</span> °C</span>
@@ -301,6 +302,7 @@
 			<script src="assets/js/util.js"></script>
 			<script src="assets/js/main.js"></script>
 			<script src="assets/js/simulation_ui.js"></script>
+			<script src="assets/js/convection_gpu.js" defer></script>
 			<script src="assets/js/convection_core.js" defer></script>
 	</body>
 </html>
