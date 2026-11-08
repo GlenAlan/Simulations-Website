@@ -1,6 +1,11 @@
-// Distant galaxies. Every galaxy is baked once into a tile of a shared atlas, nearest first, so the whole sky costs
-// one draw call. A galaxy that grows beyond its tile is baked again at the size it fills, into one of a few larger
-// textures, and that picture fades in over the tile. See galaxy_bake.js for how the picture itself is made.
+// Distant galaxies. Every galaxy has a small picture in a shared atlas, which is all a galaxy needs while it is small on screen,
+// as most are most of the time. Those are cheap, and baked a few to a step soon after loading, nearest the view first. A galaxy
+// drawn bigger than its small picture can hold gets a full one, in one of a fixed number of places in a second atlas: baked when
+// the zoom nears it, nearest the view first, or at take-off for a flight that will arrive at it. The full picture fades in over
+// the small one, which is the same picture at a quarter the size, so the change can't be seen. A place whose galaxy has gone
+// small or out of view is given to the next galaxy that needs one, so the memory stays fixed. A galaxy that grows beyond its
+// full picture is baked again at the size it fills, into one of a few larger textures, and that picture fades in over the
+// rest. Each atlas is one draw call. See galaxy_bake.js for how the picture itself is made.
 //
 // Sky rule: the fainter a galaxy is, the dimmer it starts, and it comes up as the limiting magnitude falls with
 // zoom. The rule is softer than the one for stars, since a galaxy is a small jewel in the wide sky, not a point.
@@ -14,17 +19,28 @@ import { bus } from '../../core/state.js';
 import { Rng } from '../../core/rng.js';
 import { blackBodyRGB } from '../../core/phys.js';
 import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
-import { limitingMag, MIN_FOV } from '../../core/sky.js';
+import { limitingMag, MIN_FOV, azAltToVec3 } from '../../core/sky.js';
 import { drawMag, depthLight, parallaxFactor, travelPc } from '../../core/depth.js';
 import { bandMagnitudes, bandSkyBrightness } from '../../data/band_table.js';
 import { IMAGE_R, BAKE_SCALE, FALL_GLSL, galaxyRecipe, createGalaxyBaker, createBakeTarget } from './galaxy_bake.js';
 import { SKY_RADIUS, tangentBasis, offsetVector, quadAxes, worldHalfSize, scatterPicks, revealGain, REVEAL_GLSL } from './sky_tangent.js';
 import { createRadioLobes } from './radio_lobes.js';
-import { createSprites } from './stars.js';
+import { createSprites, createSpriteSet } from './stars.js';
 import { MIN_GLOW } from '../engine.js';
 
 const RAD = Math.PI / 180;
-const TILE = 128;                  // Pixels per galaxy in the atlas
+const TILE = 128;                  // Pixels across a full picture
+const SMALL = 32;                  // Pixels across every galaxy's small picture: baked as a full one and kept as its mipmap would be
+const SMALL_PER_STEP = 3;          // Small pictures to a step of baking. A full or small picture is a few milliseconds' work even
+                                   // on the slowest GPU, so each is baked whole in a step: it's the steps that take the time
+const TILE_GRID = 7;               // Full pictures are kept for at most this many squared galaxies at once
+const TILE_FROM_PX = 14;           // A galaxy in view gets its full picture once drawn this big (device pixels across)...
+const TILE_KEEP_PX = 9;            // ...and keeps it while it stays this big, or until its place is wanted
+const IN_VIEW = 1.15;              // In view: its edge within this share of the view's half-diagonal from the middle
+const APPEAR_S = 0.4;              // A galaxy's first picture fades in this fast
+const MIX_IN_S = 0.35;             // A full picture fades in over the small one this fast...
+const MIX_OUT_S = 0.25;            // ...and out again, when its place goes to another galaxy while it is still in view
+const STEPS_MOST = 4;              // Steps of baking a frame, at most, on a GPU with room to spare
 const HERO_SLOTS = 2;              // At most this many galaxies have their own large picture at once
 const HERO_CAP = { low: 640, medium: 1280, high: 2048 };
 const HERO_LINGER_S = 15;          // Keep a large picture this long after it goes out of use, in case of a return
@@ -365,7 +381,8 @@ export function createGalaxiesLayer(engine, app) {
     const n = bodies.length;
     const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
     const rows = Math.max(1, Math.ceil(n / cols));
-    const atlas = createBakeTarget(cols * TILE, rows * TILE);
+    const smallAtlas = createBakeTarget(cols * SMALL, rows * SMALL);
+    const tileAtlas = createBakeTarget(TILE_GRID * TILE, TILE_GRID * TILE);
     const baker = createGalaxyBaker(engine);
     let bakerReady = false;
     let compileRun = 0;
@@ -402,28 +419,45 @@ export function createGalaxiesLayer(engine, app) {
             bandB: body.bands.xray * light,
             recipe: galaxyRecipe(body),
             local: !!body.galaxy.local_group,
-            tileX: (i % cols) * TILE,
-            tileY: Math.floor(i / cols) * TILE,
-            baked: false,
-            tileFade: 0,
+            smallRect: { x: (i % cols) * SMALL, y: Math.floor(i / cols) * SMALL, w: SMALL, h: SMALL },
+            small: false,       // Its small picture is baked
+            slot: null,         // Its place in the full pictures' atlas, if it has one
+            releasing: false,   // Fading back to its small picture, before its place goes to another galaxy
+            wantTile: false,    // Wants a full picture this frame...
+            rank: 0,            // ...this soon: lower first
+            off: 180,           // Degrees from the middle of the view
+            inView: false,      // In the view as it is...
+            goalInView: false,  // ...or as it will be at the end of a flight or a zoom
+            appear: 0,          // Its first picture fading in
+            mix: 0,             // How much of it is its full picture rather than its small one
             hero: null
         };
     });
 
-    // The atlas mesh
-    const atlasGeometry = quadGeometry(n);
-    galaxies.forEach((g, i) => {
-        writeInstance(atlasGeometry, i, g, [(g.tileX + 0.5) / atlas.width, (g.tileY + 0.5) / atlas.height, (TILE - 1) / atlas.width, (TILE - 1) / atlas.height]);
-    });
-    const atlasMaterial = skyMaterial({
-        uniforms: { tA: { value: atlas.textures[0] }, tB: { value: atlas.textures[1] } },
-        vertexShader: VERT,
-        fragmentShader: FRAG
-    });
-    const atlasMesh = new THREE.Mesh(atlasGeometry, atlasMaterial);
-    atlasMesh.frustumCulled = false;
-    atlasMesh.renderOrder = ORDER.galaxies;
-    scene.add(atlasMesh);
+    // The small pictures: one instance each, all in one draw
+    const atlasRect = (target, r) => [(r.x + 0.5) / target.width, (r.y + 0.5) / target.height, (r.w - 1) / target.width, (r.h - 1) / target.height];
+    function atlasMeshOf(target, count) {
+        const geometry = quadGeometry(count);
+        const material = skyMaterial({
+            uniforms: { tA: { value: target.textures[0] }, tB: { value: target.textures[1] } },
+            vertexShader: VERT,
+            fragmentShader: FRAG
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = ORDER.galaxies;
+        scene.add(mesh);
+        return { geometry, material, mesh };
+    }
+    const smalls = atlasMeshOf(smallAtlas, n);
+    galaxies.forEach((g, i) => writeInstance(smalls.geometry, i, g, atlasRect(smallAtlas, g.smallRect)));
+
+    // The full pictures: an instance for each place in their atlas, standing for whichever galaxy has it
+    const slots = [];
+    for (let i = 0; i < TILE_GRID * TILE_GRID; i++) {
+        slots.push({ index: i, rect: { x: (i % TILE_GRID) * TILE, y: Math.floor(i / TILE_GRID) * TILE, w: TILE, h: TILE }, galaxy: null, baked: false, lastWanted: -1e9 });
+    }
+    const tiles = atlasMeshOf(tileAtlas, slots.length);
 
     // Large pictures: a mesh each, the same shader as the atlas with its own textures
     const heroes = [];
@@ -439,7 +473,8 @@ export function createGalaxiesLayer(engine, app) {
         mesh.renderOrder = ORDER.galaxies;
         mesh.visible = false;
         scene.add(mesh);
-        heroes.push({ geometry, material, mesh, galaxy: null, target: null, res: 0, wantRes: 0, fade: 0, lastWanted: 0, wanted: false, baking: false });
+        // wanted: by the view as it is, which shows it; forGoal: by the view a flight is going to, which only bakes it
+        heroes.push({ geometry, material, mesh, galaxy: null, target: null, res: 0, wantRes: 0, goalRes: 0, fade: 0, lastWanted: 0, wanted: false, forGoal: false, baking: false });
     }
 
     // Nuclei: a crisp point at each centre. In visible it's a pinprick that keeps a tiny galaxy from being a blob;
@@ -512,7 +547,9 @@ export function createGalaxiesLayer(engine, app) {
         scene.add(coreSpikes.mesh);
     }
     const resolvedData = resolvedStarData(galaxies.filter((g) => g.local));
-    const resolved = resolvedData ? createSprites(resolvedData) : null;
+    // Only those in view and bright enough at this zoom are drawn (stars.js createSpriteSet)
+    const resolvedSet = resolvedData ? createSpriteSet(resolvedData, false) : null;
+    const resolved = resolvedSet ? resolvedSet.sprites : null;
     if (resolved) scene.add(resolved.mesh);
     const applyCoreQuality = (level) => { if (coreSpikes) coreSpikes.mesh.visible = level !== 'low'; };
     applyCoreQuality(app.qualityLevel);
@@ -584,35 +621,170 @@ export function createGalaxiesLayer(engine, app) {
     }));
     const lobes = createRadioLobes(engine, lobeSources);
 
-    // One bake runs at a time. Atlas tiles come first, nearest the view first; then large pictures on request.
+    // ---------- Baking ----------
+    // One bake runs at a time, in this order: full pictures for the Local Group's spiral and for where a flight is going; the
+    // large picture there; full pictures for what is big in view; small pictures for what is in view, nearest the middle first;
+    // full pictures an easing zoom will want; the other small pictures; and large pictures for the view, once it is still.
     let job = null;
     let jobDone = null;
+    let jobSlot = null;             // A full picture's place being baked into, which can't be given away meanwhile
     let stillFor = 0;
     let lastFov = -1;
+    let stepsPerFrame = 1;
     const forward = new THREE.Vector3();
+    const views = { now: null, goal: null };
 
-    function startJob(generator, onDone) {
+    function startJob(generator, onDone, slot = null) {
         job = generator;
         jobDone = onDone;
+        jobSlot = slot;
     }
 
-    function angularDot(g) {
-        return g.unit[0] * forward.x + g.unit[1] * forward.y + g.unit[2] * forward.z;
+    function stepJob() {
+        const result = job.next();
+        if (result.done) {
+            const done = jobDone;
+            job = null;
+            jobDone = null;
+            jobSlot = null;
+            if (done) done();
+        }
     }
 
-    function nextTile() {
-        let best = null;
-        let bestDot = -2;
+    // A view as the plans below need it: its middle (a unit vector), how many device pixels a degree is, and how far it reaches
+    function viewSpec(dir, fov, frame) {
+        const scale = Math.tan(frame.fov * RAD * 0.5) / Math.tan(fov * RAD * 0.5);
+        return { dir, fov, pxPerDeg: frame.pxPerRad * RAD * scale, halfView: Math.hypot(fov, (fov * frame.width) / frame.height) * 0.5 };
+    }
+
+    function offDeg(g, view) {
+        const d = g.unit[0] * view.dir[0] + g.unit[1] * view.dir[1] + g.unit[2] * view.dir[2];
+        return Math.acos(Math.max(-1, Math.min(1, d))) / RAD;
+    }
+
+    // Device pixels across a galaxy's picture in a view, or 0 if it is out of the view
+    function sizeIn(g, view, off = offDeg(g, view)) {
+        const parallax = parallaxFactor(g.body.depth, view.fov);
+        if ((off - g.halfDeg) * parallax > view.halfView * IN_VIEW) return 0;
+        return g.halfDeg * 2 * view.pxPerDeg * parallax;
+    }
+
+    function giveSlot(s, g, t) {
+        s.galaxy = g;
+        s.baked = false;
+        s.lastWanted = t;
+        g.slot = s;
+        g.mix = 0;
+        g.releasing = false;
+        writeInstance(tiles.geometry, s.index, g, atlasRect(tileAtlas, s.rect));
+    }
+
+    function clearSlot(s) {
+        const g = s.galaxy;
+        if (g) {
+            g.slot = null;
+            g.mix = 0;
+            g.releasing = false;
+        }
+        s.galaxy = null;
+        s.baked = false;
+    }
+
+    // Which galaxies want a full picture this frame, and how soon (rank, lower first); and places for them. The Local Group's
+    // spiral always has one. A flight's destination comes next, then what is big in view, nearest the middle first, then what an
+    // easing zoom will make big.
+    function planTiles(frame) {
+        const { now, goal } = views;
         for (let i = 0; i < n; i++) {
             const g = galaxies[i];
-            if (g.baked) continue;
-            const d = angularDot(g);
-            if (d > bestDot) {
-                bestDot = d;
-                best = g;
+            g.off = offDeg(g, now);
+            const px = sizeIn(g, now, g.off);
+            g.inView = px > 0;
+            g.wantTile = g.local;
+            g.rank = g.local ? -100 : Infinity;
+            if (g.inView && px >= (g.slot && g.slot.baked ? TILE_KEEP_PX : TILE_FROM_PX)) {
+                g.wantTile = true;
+                g.rank = Math.min(g.rank, g.off / now.halfView);
+            }
+            g.goalInView = false;
+            if (goal) {
+                const off = offDeg(g, goal);
+                const gpx = sizeIn(g, goal, off);
+                g.goalInView = gpx > 0;
+                if (gpx >= TILE_FROM_PX) {
+                    g.wantTile = true;
+                    g.rank = Math.min(g.rank, (goal.flight ? -10 : 2) + off / goal.halfView);
+                }
             }
         }
+        const waiting = [];
+        slots.forEach((s) => {
+            if (!s.galaxy || !s.galaxy.wantTile) return;
+            s.lastWanted = frame.t;
+            s.galaxy.releasing = false;
+        });
+        for (let i = 0; i < n; i++) if (galaxies[i].wantTile && !galaxies[i].slot) waiting.push(galaxies[i]);
+        if (!waiting.length) return;
+        waiting.sort((a, b) => a.rank - b.rank);
+        let w = 0;
+        for (let i = 0; i < slots.length && w < waiting.length; i++) if (!slots[i].galaxy) giveSlot(slots[i], waiting[w++], frame.t);
+        if (w >= waiting.length) return;
+        // Then the places no one wants now, longest unwanted first. One whose galaxy can be seen fades back to its small picture
+        // first, and goes once it has; one whose galaxy has no small picture yet stays while it can be seen.
+        const spare = slots.filter((s) => s.galaxy && !s.galaxy.wantTile && s !== jobSlot && !(s.galaxy.inView && !s.galaxy.small));
+        spare.sort((a, b) => a.lastWanted - b.lastWanted);
+        let fading = 0;
+        for (let i = 0; i < spare.length && w + fading < waiting.length; i++) {
+            const s = spare[i];
+            if (s.galaxy.inView && s.galaxy.mix > 0) {
+                s.galaxy.releasing = true;
+                fading++;
+            } else {
+                clearSlot(s);
+                giveSlot(s, waiting[w++], frame.t);
+            }
+        }
+    }
+
+    function nextTile(belowRank) {
+        let best = null;
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            const g = s.galaxy;
+            if (!g || s.baked || !g.wantTile || g.rank >= belowRank) continue;
+            if (!best || g.rank < best.galaxy.rank) best = s;
+        }
         return best;
+    }
+
+    // Every pass of a bake at once
+    function* whole(bake) {
+        while (!bake.next().done) { /* The next pass */ }
+    }
+
+    function bakeTile(s, frame) {
+        startJob(whole(baker.bake(s.galaxy.recipe, tileAtlas, s.rect, TILE, frame.quality)), () => { s.baked = true; }, s);
+    }
+
+    // The next few galaxies without a small picture, nearest the middle of the view first
+    function nextSmalls(inViewOnly) {
+        const list = [];
+        for (let i = 0; i < n; i++) {
+            const g = galaxies[i];
+            if (g.small || (inViewOnly && !g.inView && !g.goalInView)) continue;
+            list.push(g);
+        }
+        list.sort((a, b) => a.off - b.off);
+        return list.slice(0, SMALL_PER_STEP);
+    }
+
+    // A few small pictures in one step. Each is baked just as its full picture would be, and kept a quarter the size, each pixel
+    // the mean of 4 x 4 as that picture's mipmap has it (galaxy_bake.js): so the full picture, when it comes, looks the same.
+    function* smallJob(list, quality) {
+        for (const g of list) {
+            yield* whole(baker.bake(g.recipe, smallAtlas, g.smallRect, TILE, quality));
+            g.small = true;
+        }
     }
 
     function startHeroBake(hero, res, frame) {
@@ -658,84 +830,95 @@ export function createGalaxiesLayer(engine, app) {
         let best = null;
         for (let i = 0; i < HERO_SLOTS; i++) {
             const h = heroes[i];
-            if (h.wanted || h.baking) continue;
+            if (h.wanted || h.forGoal || h.baking) continue;
             if (!h.galaxy) return h;
             if (!best || h.lastWanted < best.lastWanted) best = h;
         }
         return best;
     }
 
-    function chooseHeroes(frame) {
-        const pxPerDeg = frame.pxPerRad * RAD;
-        const halfView = Math.hypot(frame.fov, (frame.fov * frame.width) / frame.height) * 0.5;
-        const cap = HERO_CAP[frame.quality] || HERO_CAP.medium;
-        for (let i = 0; i < HERO_SLOTS; i++) heroes[i].wanted = false;
-        // The biggest galaxies on screen, in order; there are only ever a couple
-        for (let rank = 0; rank < HERO_SLOTS; rank++) {
-            let best = null;
-            let bestPx = TILE * 1.25;
-            for (let i = 0; i < n; i++) {
-                const g = galaxies[i];
-                if (!g.baked || (g.hero && g.hero.wanted)) continue;
-                const parallax = parallaxFactor(g.body.depth, frame.fov);
-                const px = g.halfDeg * 2 * pxPerDeg * parallax;
-                if (px <= bestPx) continue;
-                const off = Math.acos(Math.max(-1, Math.min(1, angularDot(g)))) / RAD;
-                if ((off - g.halfDeg) * parallax > halfView) continue;
-                best = g;
-                bestPx = px;
-            }
-            if (!best) break;
-            const hero = slotFor(best);
-            if (!hero) break;
-            if (hero.galaxy !== best) assignHero(hero, best);
-            hero.wanted = true;
-            hero.lastWanted = frame.t;
-            hero.wantRes = Math.min(cap, 2 ** Math.ceil(Math.log2(bestPx * 0.85)));
+    // The biggest galaxies on screen in a view, biggest first; there are only ever a couple
+    function biggestIn(view) {
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const g = galaxies[i];
+            const parallax = parallaxFactor(g.body.depth, view.fov);
+            const px = g.halfDeg * 2 * view.pxPerDeg * parallax;
+            if (px <= TILE * 1.25) continue;
+            if ((offDeg(g, view) - g.halfDeg) * parallax > view.halfView) continue;
+            out.push({ g, px });
         }
+        return out.sort((a, b) => b.px - a.px).slice(0, HERO_SLOTS);
     }
 
-    function stepJob() {
-        const result = job.next();
-        if (result.done) {
-            const done = jobDone;
-            job = null;
-            jobDone = null;
-            if (done) done();
+    // Large pictures for the view as it is, which show; and for where a flight is going, which are baked at take-off
+    function chooseHeroes(frame) {
+        const cap = HERO_CAP[frame.quality] || HERO_CAP.medium;
+        const resFor = (px) => Math.min(cap, 2 ** Math.ceil(Math.log2(px * 0.85)));
+        for (let i = 0; i < HERO_SLOTS; i++) {
+            heroes[i].wanted = false;
+            heroes[i].forGoal = false;
         }
+        const take = (list, mark) => list.forEach(({ g, px }) => {
+            const hero = slotFor(g);
+            if (!hero) return;
+            if (hero.galaxy !== g) assignHero(hero, g);
+            hero.lastWanted = frame.t;
+            if (mark === 'now') {
+                hero.wanted = true;
+                hero.wantRes = resFor(px);
+            } else {
+                hero.forGoal = true;
+                hero.goalRes = resFor(px);
+            }
+        });
+        take(biggestIn(views.now), 'now');
+        if (views.goal && views.goal.flight) take(biggestIn(views.goal), 'goal');
     }
 
     function pickWork(frame) {
-        const tile = nextTile();
-        if (tile) {
-            const rect = { x: tile.tileX, y: tile.tileY, w: TILE, h: TILE };
-            startJob(baker.bake(tile.recipe, atlas, rect, TILE, frame.quality), () => { tile.baked = true; });
-            return;
-        }
-        if (baker.hasScratch()) baker.releaseScratch();
-        if (stillFor < 0.12) return;
+        const cap = HERO_CAP[frame.quality] || HERO_CAP.medium;
+        let s = nextTile(0);
+        if (s) return bakeTile(s, frame);
         for (let i = 0; i < HERO_SLOTS; i++) {
             const h = heroes[i];
-            const cap = HERO_CAP[frame.quality] || HERO_CAP.medium;
-            if (h.wanted && (h.wantRes > h.res || h.res > cap)) {
-                startHeroBake(h, h.wantRes, frame);
-                return;
-            }
+            if (h.forGoal && !h.baking && (h.goalRes > h.res || h.res > cap)) return startHeroBake(h, h.goalRes, frame);
         }
+        s = nextTile(1.5);
+        if (s) return bakeTile(s, frame);
+        let list = nextSmalls(true);
+        if (list.length) return startJob(smallJob(list, frame.quality), null);
+        s = nextTile(Infinity);
+        if (s) return bakeTile(s, frame);
+        list = nextSmalls(false);
+        if (list.length) return startJob(smallJob(list, frame.quality), null);
+        if (baker.hasScratch()) baker.releaseScratch();
+        if (stillFor < 0.12) return null;
+        for (let i = 0; i < HERO_SLOTS; i++) {
+            const h = heroes[i];
+            if (h.wanted && (h.wantRes > h.res || h.res > cap)) return startHeroBake(h, h.wantRes, frame);
+        }
+        return null;
     }
 
     // Every bake went with the context, and the programs with them
     const offRestored = bus.on('gl-restored', () => {
         job = null;
         jobDone = null;
+        jobSlot = null;
         heroes.forEach((h) => {
             h.baking = false;
             h.wanted = false;
+            h.forGoal = false;
             releaseHero(h);
         });
+        slots.forEach((s) => {
+            clearSlot(s);
+            s.lastWanted = -1e9;
+        });
         galaxies.forEach((g) => {
-            g.baked = false;
-            g.tileFade = 0;
+            g.small = false;
+            g.appear = 0;
         });
         baker.releaseScratch();
         compileBaker();
@@ -750,19 +933,36 @@ export function createGalaxiesLayer(engine, app) {
                 resolved.material.uniforms.uDpr.value = frame.dpr;
                 // Off in the wide sky, where none of them shows yet, so they cost nothing there. A flight draws them as it nears.
                 resolved.mesh.visible = app.view !== 'sky' || resolvedData.topGlow * 10 ** (0.4 * (limitingMag(frame.fov) - 6)) >= MIN_GLOW * 0.5;
+                if (resolved.mesh.visible) resolvedSet.update(frame);
             }
             frame.camera.getWorldDirection(forward);
             if (Math.abs(frame.fov - lastFov) > frame.fov * 0.001) stillFor = 0;
             else stillFor += Math.max(dt, 0.008);
             lastFov = frame.fov;
 
-            if (app.view === 'sky' && bakerReady) {
-                chooseHeroes(frame);
-                if (!job) pickWork(frame);
-                if (job && engine.bakesAllowed()) stepJob();
+            if (app.view === 'sky') {
+                views.now = viewSpec([forward.x, forward.y, forward.z], frame.fov, frame);
+                const goal = engine.viewGoal();
+                views.goal = goal ? { ...viewSpec(azAltToVec3(goal.az, goal.alt), goal.fov, frame), flight: goal.flight } : null;
+                planTiles(frame);
+                if (bakerReady) {
+                    chooseHeroes(frame);
+                    if (!job) pickWork(frame);
+                    if (job && engine.bakesAllowed()) {
+                        // One step a frame, and a few more on a GPU with room to spare
+                        stepsPerFrame = engine.bakePace(stepsPerFrame, 1, STEPS_MOST);
+                        stepJob();
+                        for (let k = 1; k < Math.floor(stepsPerFrame) && engine.bakeRoom(); k++) {
+                            if (!job) pickWork(frame);
+                            if (!job) break;
+                            stepJob();
+                        }
+                    }
+                }
             }
 
-            // Fades add up to one, since drawing is additive: first a baked tile comes in, then a large picture takes over
+            // Fades add up to one, since drawing is additive: a galaxy's first picture comes in, a full one takes over from a
+            // small one (and gives way to it again), and then a large picture takes over from both
             for (let i = 0; i < HERO_SLOTS; i++) {
                 const h = heroes[i];
                 if (!h.galaxy) continue;
@@ -772,20 +972,39 @@ export function createGalaxiesLayer(engine, app) {
                     h.geometry.attributes.aFade.array[0] = h.fade;
                     h.geometry.attributes.aFade.needsUpdate = true;
                 }
-                if (!h.wanted && !h.baking && h.fade <= 0 && frame.t - h.lastWanted > HERO_LINGER_S) releaseHero(h);
+                if (!h.wanted && !h.forGoal && !h.baking && h.fade <= 0 && frame.t - h.lastWanted > HERO_LINGER_S) releaseHero(h);
             }
-            const fades = atlasGeometry.attributes.aFade;
-            let dirty = false;
+            const smallFades = smalls.geometry.attributes.aFade;
+            const tileFades = tiles.geometry.attributes.aFade;
+            let smallDirty = false;
+            let tileDirty = false;
             for (let i = 0; i < n; i++) {
                 const g = galaxies[i];
-                if (g.baked && g.tileFade < 1) g.tileFade = Math.min(1, g.tileFade + dt / 0.4);
-                const value = g.tileFade * (g.hero ? 1 - g.hero.fade : 1);
-                if (fades.array[i] !== value) {
-                    fades.array[i] = value;
-                    dirty = true;
+                const full = !!(g.slot && g.slot.baked);
+                if (g.small || full) g.appear = Math.min(1, g.appear + dt / APPEAR_S);
+                if (!full) g.mix = 0;
+                else if (!g.small) g.mix = 1;
+                else if (g.releasing) g.mix = Math.max(0, g.mix - dt / MIX_OUT_S);
+                else g.mix = Math.min(1, g.mix + dt / MIX_IN_S);
+                if (g.releasing && g.mix <= 0) clearSlot(g.slot);
+                const shown = g.appear * (g.hero ? 1 - g.hero.fade : 1);
+                const small = g.small ? shown * (1 - g.mix) : 0;
+                if (smallFades.array[i] !== small) {
+                    smallFades.array[i] = small;
+                    smallDirty = true;
+                }
+                if (g.slot && tileFades.array[g.slot.index] !== shown * g.mix) {
+                    tileFades.array[g.slot.index] = shown * g.mix;
+                    tileDirty = true;
                 }
             }
-            if (dirty) fades.needsUpdate = true;
+            for (let i = 0; i < slots.length; i++) {
+                if (slots[i].galaxy || tileFades.array[i] === 0) continue;
+                tileFades.array[i] = 0;
+                tileDirty = true;
+            }
+            if (smallDirty) smallFades.needsUpdate = true;
+            if (tileDirty) tileFades.needsUpdate = true;
         },
 
         picks(frame) {
@@ -837,9 +1056,40 @@ export function createGalaxiesLayer(engine, app) {
             return Math.max(MIN_FOV, fov);
         },
 
-        // For tests: is everything that's wanted baked?
+        // For tests: is everything that's wanted baked? Every small picture, the full ones wanted where there's room for them,
+        // and the large ones.
         idle() {
-            return !job && galaxies.every((g) => g.baked) && heroes.every((h) => !h.wanted || h.wantRes <= h.res);
+            if (job) return false;
+            for (let i = 0; i < n; i++) {
+                const g = galaxies[i];
+                if (!g.small || g.releasing || (g.wantTile && g.slot && !g.slot.baked)) return false;
+            }
+            return heroes.every((h) => (!h.wanted || h.wantRes <= h.res) && (!h.forGoal || h.goalRes <= h.res));
+        },
+
+        // For tests: bytes of GPU memory the pictures hold now, mipmaps and all (each target is two 8-bit images)
+        textureBytes() {
+            const bytes = (t) => (t ? (t.width * t.height * 8 * 4) / 3 : 0);
+            return { atlases: bytes(smallAtlas) + bytes(tileAtlas), large: heroes.reduce((sum, h) => sum + bytes(h.target), 0) };
+        },
+
+        // For tests: how many galaxies have a full picture in place, and how many want one; and what one galaxy has
+        tileStats() {
+            return {
+                held: slots.filter((s) => s.galaxy && s.baked).length,
+                wanted: galaxies.filter((g) => g.wantTile).length,
+                small: galaxies.filter((g) => g.small).length,
+                slots: slots.length
+            };
+        },
+        pictureOf(code) {
+            const g = galaxies.find((x) => x.body.code === code);
+            if (!g) return null;
+            return {
+                small: g.small, tile: !!(g.slot && g.slot.baked), mix: g.mix, appear: g.appear,
+                large: g.hero ? g.hero.res : 0, largeWanted: g.hero ? Math.max(g.hero.wanted ? g.hero.wantRes : 0, g.hero.forGoal ? g.hero.goalRes : 0) : 0,
+                largeFade: g.hero ? g.hero.fade : 0
+            };
         },
 
         dispose() {
@@ -851,13 +1101,16 @@ export function createGalaxiesLayer(engine, app) {
                 h.geometry.dispose();
                 h.material.dispose();
             });
-            scene.remove(atlasMesh);
+            [smalls, tiles].forEach((part) => {
+                scene.remove(part.mesh);
+                part.geometry.dispose();
+                part.material.dispose();
+            });
             scene.remove(nuclei);
-            atlasGeometry.dispose();
-            atlasMaterial.dispose();
             nucleusGeometry.dispose();
             nucleusMaterial.dispose();
-            atlas.dispose();
+            smallAtlas.dispose();
+            tileAtlas.dispose();
             baker.dispose();
             lobes.dispose();
             offCoreQuality();

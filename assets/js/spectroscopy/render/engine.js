@@ -625,6 +625,23 @@ export function createEngine(canvas) {
         return Math.min(max, size * 1.08);
     }
 
+    // After a yes from bakesAllowed: has the GPU room for another piece this frame? Only one that is keeping up easily.
+    function bakeRoom() {
+        return gpu.behind < 2 && lastRealDt <= BAKE_ONE_ONLY_ABOVE_S;
+    }
+
+    // Where the view is going: the end of a flight (Go to, a double-click), or the field of view an easing zoom is closing
+    // on. { az, alt, fov, flight }, az and alt for the middle of the canvas, or null when the view is already there. For a
+    // layer that prepares what will show (a galaxy's picture), so that it can start at take-off.
+    function viewGoal() {
+        if (slew) {
+            const aim = slew.aim || (slew.dip ? { az: slew.toAz, alt: slew.toAlt } : { az: slew.from.az + slew.dAz, alt: slew.from.alt + slew.dAlt });
+            return { az: aim.az, alt: aim.alt, fov: slew.toFov, flight: true };
+        }
+        if (Math.abs(Math.log(zoomGoal / view.fov)) > 1e-3) return { ...centreDir(), fov: zoomGoal, flight: false };
+        return null;
+    }
+
     // ---------- Size and graphics level ----------
 
     // keepStill: the drawer has changed the canvas's size, and what's on screen should stay where it is on the page
@@ -1828,6 +1845,8 @@ export function createEngine(canvas) {
         // Should a layer's bake go ahead this frame? See "Bakes" above
         bakesAllowed,
         bakePace,
+        bakeRoom,
+        viewGoal,
         stats: () => ({ ...stats, bloomLevels: bloomTargets.length, dpr, bufferW, bufferH, level: app.qualityLevel, gpuBehind: gpu.behind, joining: joining.size }),
         start() {
             if (running || !renderer) return;
