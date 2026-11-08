@@ -14,6 +14,8 @@ const REDUCED_CROSSING_S = 40;    // With Reduce motion, the most it goes
 const STAR_SHARE = 0.03;          // Its stars are drawn no bigger than this share of the view's half-width...
 const SWEEP_PER_S = 1.2;          // ... and a big one never crosses more than this many of its own widths a second...
 const BIG_PX = [24, 48];          // ... where big means a radius in this range of pixels, or more
+const SWEEP_CLOSE = 0.4;          // Zoomed right in, this share of it: the same flicker of its surface then covers enough of the
+const CLOSE_PX = [60, 140];       // screen to count as a flash, so a disc of this radius in pixels or more goes slower
 const TURNS_PER_S = 0.6;          // Riding with a star, the rest swings round no faster than this
 const TRAIL_CROSSINGS = 1;        // A trail is where each star has been over this many crossing times
 
@@ -114,7 +116,8 @@ export function danceGovernor(model, tDays, speed, view) {
         const w = vel(i);
         const across = Math.hypot(w[0] - ride[0], w[1] - ride[1], w[2] - ride[2]) / (2 * Math.max(view.radii[i], 1e-9));
         // Widths a day; slowed in proportion to how big it is, so that nothing jumps as a disc grows
-        const allowed = SWEEP_PER_S / (across * speed);
+        const sweep = SWEEP_PER_S * (1 - (1 - SWEEP_CLOSE) * smoothstep(CLOSE_PX[0], CLOSE_PX[1], view.px[i]));
+        const allowed = sweep / (across * speed);
         g = Math.min(g, 1 - big + big * Math.min(1, allowed));
     }
     if (t >= 0) {
