@@ -435,8 +435,12 @@ export function createGalaxiesLayer(engine, app) {
         };
     });
 
-    // The small pictures: one instance each, all in one draw
-    const atlasRect = (target, r) => [(r.x + 0.5) / target.width, (r.y + 0.5) / target.height, (r.w - 1) / target.width, (r.h - 1) / target.height];
+    // The small pictures: one instance each, all in one draw. A full picture is drawn from half a texel in at each edge; a small
+    // one from the same share of itself in, so the two are drawn exactly the same size.
+    const atlasRect = (target, r) => {
+        const inset = (0.5 * r.w) / TILE;
+        return [(r.x + inset) / target.width, (r.y + inset) / target.height, (r.w - 2 * inset) / target.width, (r.h - 2 * inset) / target.height];
+    };
     function atlasMeshOf(target, count) {
         const geometry = quadGeometry(count);
         const material = skyMaterial({
