@@ -96,7 +96,7 @@ export function shownRate(periodS) {
 //     So a student orbiting to look down the axis, at any zoom, is covered too.
 const CLOSE_AIM_PX = 11500;                 // 53% of the 21,824 px allowed, so that the worst tilt and view measured stay near 60%
 const BEAM_REF_PX = 372;
-const BEAM_FLASH_PX = [[0.75, 1000], [1, 750], [1.25, 650], [1.5, 235], [1.75, 300], [2, 520], [3, 470], [4, 400]];
+const BEAM_FLASH_PX = [[0.75, 1000], [1, 750], [1.25, 650], [1.5, 235], [1.75, 240], [2, 520], [3, 470], [4, 400]];
 const CLOSE_TWICE = [[0, 100], [0.35, 75], [0.5, 55], [0.7, 19], [0.9, 3], [1.4, 3], [2, 34], [2.7, 72]];   // Thousands of px
 const CLOSE_EDGE_ON = 28;                   // Thousands of px crossed twice a turn seen edge-on, at any tilt
 const CLOSE_ONCE = 109;                     // Thousands of px crossed once a turn, at the worst tilt and view measured
