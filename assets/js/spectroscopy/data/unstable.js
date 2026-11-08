@@ -227,6 +227,66 @@ export function danceCentreAU(body, tDays) {
     return [c[0] / mass, c[1] / mass, c[2] / mass];
 }
 
+// The stars that stay once the last star to leave has gone, and how far out they go round their own middle on the orbits they
+// are left in: { stay (their indices), leftDays (the time, as tDays, when the last to go left them), settledDays (by when the
+// middle has moved over to them: see danceCentreAU), reachAU, orbits: [{ a, b (star indices of its two sides), period_days }] },
+// or null if no star is thrown out. Found once, from the integration's own two-body ending.
+const BOUND_SPAN_TCR = 30;      // Looked at over this many crossing times after the dance ends...
+const BOUND_SAMPLES = 1200;     // ... at this many moments, so that the widest swing is caught to within a percent or so
+export function danceBound(body) {
+    const dance = danceOf(body);
+    if (dance.bound !== undefined) return dance.bound;
+    const chaos = dance.info;
+    const { run } = dance;
+    const all = body.stars.map((s, i) => i);
+    const going = all.filter((i) => chaos.escapers.includes(body.stars[i].code));
+    const stay = all.filter((i) => !going.includes(i));
+    if (!going.length || !stay.length || !run.tree) {
+        dance.bound = null;
+        return null;
+    }
+    const left = Math.max(...going.map((i) => leftTime(run, i)));
+    const masses = massesOf(body);
+    const mass = stay.reduce((sum, i) => sum + masses[i], 0);
+    const x = new Float64Array(3 * dance.n);
+    const v = new Float64Array(3 * dance.n);
+    const from = Math.max(run.end, left);
+    const span = BOUND_SPAN_TCR * chaos.crossing_days;
+    let reach = 0;
+    for (let k = 0; k < BOUND_SAMPLES; k++) {
+        readRun(run, from + (span * (k + 0.5)) / BOUND_SAMPLES, x, v);
+        const c = [0, 1, 2].map((q) => stay.reduce((sum, i) => sum + masses[i] * x[3 * i + q], 0) / mass);
+        stay.forEach((i) => {
+            reach = Math.max(reach, Math.hypot(x[3 * i] - c[0], x[3 * i + 1] - c[1], x[3 * i + 2] - c[2]));
+        });
+    }
+    // The orbits they are left in: every bound node of the ending's two-body tree that holds only stars that stay
+    const orbits = [];
+    const membersOf = (node) => (node.leaf !== undefined ? [node.leaf] : [...membersOf(node.a), ...membersOf(node.b)]);
+    const walk = (node) => {
+        if (node.leaf !== undefined) return;
+        const a = membersOf(node.a);
+        const b = membersOf(node.b);
+        const r = Math.hypot(node.r[0], node.r[1], node.r[2]);
+        const energy = (node.v[0] ** 2 + node.v[1] ** 2 + node.v[2] ** 2) / 2 - node.mu / r;
+        if (energy < 0 && [...a, ...b].every((i) => stay.includes(i))) {
+            const semi = -node.mu / (2 * energy);
+            orbits.push({ a, b, period_days: 2 * Math.PI * Math.sqrt(semi ** 3 / node.mu) });
+        }
+        walk(node.a);
+        walk(node.b);
+    };
+    (run.tree.roots || run.tree.straight.map((part) => part.node)).forEach(walk);
+    dance.bound = {
+        stay,
+        leftDays: left - chaos.today_days,
+        settledDays: left + SETTLE_TCR * chaos.crossing_days - chaos.today_days,
+        reachAU: reach,
+        orbits
+    };
+    return dance.bound;
+}
+
 // How hard each star is being pulled just now (AU per day per day), for how sharply it turns
 export function danceAccelerations(body, tDays) {
     const { x } = danceMotion(body, tDays);

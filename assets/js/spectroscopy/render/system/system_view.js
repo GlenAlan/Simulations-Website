@@ -47,7 +47,8 @@ import { starBandLook, createFlares, FLARE_GAIN, bandRgb } from './band_look.js'
 import { createComets } from './comets.js';
 import { hashString } from '../../core/rng.js';
 import { createDanceTrails } from './dance_trails.js';
-import { danceGovernor } from './dance_model.js';
+import { danceGovernor, danceFrame } from './dance_model.js';
+import { danceBound } from '../../data/unstable.js';
 import { clockFor } from '../../ui/spectrum/tools/orbit_clock.js';
 
 const RAD = Math.PI / 180;
@@ -209,6 +210,12 @@ export function initSystemView(app) {
         swung: false            // The student has turned the camera since this close-up began, so it stops turning itself
     };
     let fitSmooth = null;
+    // A young multiple in no stable orbit closes in on the stars that stay once one has been thrown out (dance_model.js
+    // danceFrame), and opens out again if the clock goes back. The whole-system view's distance goes with this, and the stars'
+    // drawn sizes too (model.sizeScale), so they stay the size on the screen they were through the dance. It eases, so that a
+    // jump of the clock glides in rather than cuts.
+    let frameK = 1;
+    const FRAME_EASE = 1;           // As a log a second
 
     const notify = () => listeners.forEach((fn) => fn());
 
@@ -470,7 +477,16 @@ export function initSystemView(app) {
         return d;
     }
 
+    // How far in a dance's view has closed (see frameK): at once, or easing towards it
+    function stepFrame(dt, atOnce = false) {
+        const want = model && model.body.unstable ? danceFrame(model, tDays) : 1;
+        frameK = atOnce || app.settings.reduceMotion ? want : Math.exp(Math.log(frameK) + (Math.log(want) - Math.log(frameK)) * (1 - Math.exp(-dt * FRAME_EASE)));
+        if (Math.abs(Math.log(frameK / want)) < 1e-4) frameK = want;
+        if (model) model.sizeScale = frameK;
+    }
+
     function beginFlight(frame) {
+        stepFrame(0, true);
         const star = model.body.sky;
         const dAz = ((star.az - savedView.az + 540) % 360) - 180;
         const fovEnd = Math.min(savedView.fov, Math.max(0.7, savedView.fov / SKY_END_FOV_FACTOR));
@@ -481,11 +497,12 @@ export function initSystemView(app) {
         const az0 = model.sightAz;
         const az1 = HOME_SWING;
         const R = starRadius(model, world.brightest, mix);
-        const fit = fitDistance(aspect, HOME_EL);
+        const fitWhole = fitDistance(aspect, HOME_EL);
+        const fit = fitWhole * frameK;
         const dClose = Math.min(closestApproach(aspect), fit * 0.8);
         // A speck at the start: under a pixel for a lone star, a few pixels for a whole group
         const speckPx = model.stars.length > 1 ? 3 : 0.8;
-        const speckR = model.stars.length > 1 ? FRAME : R;
+        const speckR = model.stars.length > 1 ? FRAME * frameK : R;
         const d0 = Math.max(dClose * 4, (speckR * frame.height) / (2 * speckPx * TAN_V));
         path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt), pc: travelPc(model.body), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
         if (hand) lockStarsToSky(frame, fit);
@@ -498,7 +515,7 @@ export function initSystemView(app) {
         cam.focus.set(0, 0, 0);
         cam.target = null;
         cam.flight = null;
-        fitSmooth = fit;
+        fitSmooth = fitWhole;
         cam.dist = fit * cam.zoom;
         cam.distT = cam.dist;
 
@@ -778,8 +795,8 @@ export function initSystemView(app) {
         if (cam.target) {
             cam.distT = Math.max(minDistance(), cam.distT * factor);
             // Pulling far enough back from a planet lets go of it
-            if (fitSmooth && cam.distT >= fitSmooth * 0.9) {
-                startFocusFlight(null, cam.distT / fitSmooth);
+            if (fitSmooth && cam.distT >= fitSmooth * frameK * 0.9) {
+                startFocusFlight(null, cam.distT / (fitSmooth * frameK));
             }
             return;
         }
@@ -788,7 +805,7 @@ export function initSystemView(app) {
             zoomInto.zoomedOutPast(Math.log(factor));
             return;
         }
-        cam.zoom = Math.max(minDistance() / (fitSmooth || 1), Math.min(maxZoom(), cam.zoom * factor));
+        cam.zoom = Math.max(minDistance() / ((fitSmooth || 1) * frameK), Math.min(maxZoom(), cam.zoom * factor));
     }
 
     function hzReach() {
@@ -956,7 +973,7 @@ export function initSystemView(app) {
         const frame = engine.currentFrame();
         const aspect = frame.width / Math.max(1, frame.height);
         const fit = fitDistance(aspect, cam.elT);
-        const toDist = target ? targetDistance(target) : fit * zoomAfter;
+        const toDist = target ? targetDistance(target) : fit * frameK * zoomAfter;
         const duration = app.settings.reduceMotion ? 0 : FLIGHT_S;
         cam.swung = false;
         if (duration === 0) {
@@ -1069,7 +1086,7 @@ export function initSystemView(app) {
                 cam.focus.set(to[0], to[1], to[2]);
             } else {
                 cam.focus.multiplyScalar(1 - k);
-                cam.distT = fitSmooth * cam.zoom;
+                cam.distT = fitSmooth * cam.zoom * frameK;
             }
             cam.dist += (cam.distT - cam.dist) * k;
         }
@@ -1088,7 +1105,7 @@ export function initSystemView(app) {
             // Under a hand there is no swing in close: the camera comes straight to where the student's is
             poseAsk.d0 = path.d0;
             poseAsk.dClose = path.byHand ? cam.dist : path.dClose;
-            poseAsk.dEnd = path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth);
+            poseAsk.dEnd = path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth * frameK);
             poseAsk.arrive = path.byHand ? HAND_ARRIVE : 0;
             poseAsk.el0 = path.el0;
             poseAsk.az0 = path.az0;
@@ -1224,7 +1241,8 @@ export function initSystemView(app) {
         let want = 1;
         if (mode === 'system' && clock.playing) {
             const { sizes } = world;
-            const px = model.stars.map((_, i) => (sizes.stars[i] * f) / Math.max(sizes.starZ[i], sizes.stars[i], 1e-6));
+            // A star behind the camera isn't seen at all: the one thrown out can be, once the view has closed in on the rest
+            const px = model.stars.map((_, i) => (sizes.starZ[i] > camera.near ? (sizes.stars[i] * f) / Math.max(sizes.starZ[i], sizes.stars[i], 1e-6) : 0));
             const target = cam.target && cam.target.kind === 'star' ? cam.target.index : -1;
             want = danceGovernor(model, tDays, clock.speed, { radii: sizes.stars, px, target });
         }
@@ -1723,6 +1741,7 @@ export function initSystemView(app) {
             tDays = scale < 1 ? tDays + (t - clock.lastRead) * scale : t;
             clock.lastRead = t;
         }
+        stepFrame(dt);
 
         // Before the camera moves, so that what it's following can't be a frame behind
         positions = layout(model, tDays, mix, positions);
@@ -1999,6 +2018,7 @@ export function initSystemView(app) {
         mix = (logChoice === null ? model.startLog : logChoice) && model.logUseful ? 1 : 0;
         mixTarget = mix;
         tDays = lastTimeline && lastTimeline.code === body.code ? lastTimeline.t_days : 0;
+        stepFrame(0, true);
         ensureBackdrop();
         world = buildWorld();
         positions = layout(model, tDays, mix);
@@ -2270,6 +2290,34 @@ export function initSystemView(app) {
             });
         });
 
+        // A young multiple's stars that stay, going round each other once the last to be thrown out has gone: each of the
+        // orbits they are left in, as any other orbit's sides are. The view closes in on them (frameK), so they can be big.
+        const bound = model.body.unstable ? danceBound(model.body) : null;
+        if (bound && tDays >= bound.leftDays) {
+            const mass = (i) => model.stars[i].star.mass_Msun;
+            const middle = (members) => {
+                const c = [0, 0, 0];
+                let m = 0;
+                members.forEach((i) => {
+                    const q = positions.stars[i];
+                    m += mass(i);
+                    for (let k = 0; k < 3; k++) c[k] += mass(i) * q[k];
+                });
+                return c.map((x) => x / m);
+            };
+            bound.orbits.forEach((orbit) => {
+                const here = middle([...orbit.a, ...orbit.b]);
+                [orbit.a, orbit.b].forEach((members) => {
+                    const at = middle(members);
+                    const shown = members.filter((i) => world.stars[i].group.visible);
+                    if (!shown.length) return;
+                    const reach = Math.max(...shown.map((i) => apart(positions.stars[i], at) + sizes.stars[i] * STAR_GLOW));
+                    addFlashItem(here, apart(at, here), reach, orbit.period_days, 2, { at }, f, frame);
+                    shown.forEach((i) => addFlashItem(here, apart(at, here), sizes.stars[i], orbit.period_days, 0, { texture: DETAIL_SPACING / world.detail[i], textureFrom: DETAIL_FROM_PX }, f, frame));
+                });
+            });
+        }
+
         // Planets: their own orbits, and the orbits of the stars they go round
         model.planets.forEach((entry, j) => {
             if (!world.planets[j].handle.object3d.visible) return;
@@ -2449,7 +2497,7 @@ export function initSystemView(app) {
         hasSystemView: (body) => !!engine.renderer && hasSystemView(body),
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
-        _state: () => ({ mode, tNorm, mix, dist: cam.dist, useFade, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
+        _state: () => ({ mode, tNorm, mix, dist: cam.dist, frameK, useFade, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
         _saved: () => ({ ...savedView }),
         // What holds the clock back for the flash rule this frame
         _held: () => ({

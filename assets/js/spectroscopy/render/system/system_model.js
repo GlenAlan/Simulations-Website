@@ -416,7 +416,7 @@ export function sightDirection(model) {
 }
 
 export function starRadius(model, i, m) {
-    return model.starRadiiTrue[i] + (model.starRadiiLog[i] - model.starRadiiTrue[i]) * m;
+    return (model.starRadiiTrue[i] + (model.starRadiiLog[i] - model.starRadiiTrue[i]) * m) * (model.sizeScale || 1);
 }
 
 // Planets use the stars' size scale, so a giant planet is rightly smaller than a dwarf star
