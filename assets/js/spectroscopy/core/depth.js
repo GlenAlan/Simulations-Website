@@ -192,12 +192,20 @@ export function assignDepths(universe) {
         taken.add(Math.fround(x));
         return x;
     };
-    universe.bodies.forEach((body) => { body.travel_pc = unique(body.distance_pc); });
+    // The young multiples in no stable orbit (data/unstable.js) take theirs last of all, after every cluster member's, so that
+    // none of them can take a distance another already had and push it on
+    const last = (body) => !!body.unstable;
+    universe.bodies.forEach((body) => { if (!last(body)) body.travel_pc = unique(body.distance_pc); });
 
     universe.bodies.forEach((body) => {
         const row = DEPTH_TABLE[body.kind] || DEPTH_TABLE.star;
         body.depth_dim_mag = row.kDim * body.depth;
         if (row.kSize) scaleSizes(body, 1 - row.kSize * body.depth);
+        if (!last(body)) passDown(body, unique);
+    });
+    universe.bodies.forEach((body) => {
+        if (!last(body)) return;
+        body.travel_pc = unique(body.distance_pc);
         passDown(body, unique);
     });
 }
