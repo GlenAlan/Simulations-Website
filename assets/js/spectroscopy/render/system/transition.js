@@ -20,12 +20,14 @@ export function easeProgress(t) {
 
 const lerp = (a, b, k) => a + (b - a) * k;
 
-// d0: the star is a speck. dClose: its surface fills the view. dEnd: the whole system fits. arrive: where in p the camera
-// arrives on a move that never turns back, as under a student's hand: see below.
-export function pathAt(p, { d0, dClose, dEnd, el0, el1, az0, az1, arrive = 0 }, out = {}) {
-    const approach = arrive ? handApproach(p, arrive) : smoothstep(0, 0.62, p);
-    const pull = smootherstep(0.5, 1, p);
-    const logD = lerp(lerp(Math.log(d0), Math.log(dClose), approach), Math.log(dEnd), pull);
+// d0: the star is a speck. dEnd: the whole system fits, as every way in leaves it. The camera only ever comes in, from one
+// to the other, and never goes past the end to come back out to it. arrive: where in p the camera arrives under a
+// student's hand (see below); on the clock it lands, gently, at ARRIVE_TIMED.
+const ARRIVE_TIMED = 0.74;
+
+export function pathAt(p, { d0, dEnd, el0, el1, az0, az1, arrive = 0 }, out = {}) {
+    const approach = arrive ? handApproach(p, arrive) : smoothstep(0, ARRIVE_TIMED, p);
+    const logD = lerp(Math.log(d0), Math.log(dEnd), approach);
     const tilt = smootherstep(0.3, 0.96, p);
     out.dist = Math.exp(logD);
     out.el = lerp(el0, el1, tilt);
@@ -33,22 +35,23 @@ export function pathAt(p, { d0, dClose, dEnd, el0, el1, az0, az1, arrive = 0 }, 
     return out;
 }
 
-// byHand: a student's zoom is moving this. crowded: there the sky's points of light and the real stars don't quite land on
-// each other, so one set is gone sooner and the other comes later, to show as few as possible at once.
-export function stagesAt(p, byHand = false, crowded = false) {
+// crowded: there the sky's points of light and the real stars don't quite land on each other, so one set is gone sooner and
+// the other comes later, to show as few as possible at once.
+export function stagesAt(p, crowded = false) {
     return {
         skyCentre: smootherstep(0, 0.48, p),        // The sky camera turns to put the star dead ahead
         skyZoom: smoothstep(0, 0.74, p),            // ... and narrows, so stars stream outward
         skyFade: 1 - (crowded ? smoothstep(0.1, 0.36, p) : smoothstep(0.12, 0.62, p)),
         reveal: crowded ? smoothstep(0.14, 0.38, p) : smoothstep(0.02, 0.24, p),    // The real star takes over from the point in the sky
         minSize: smoothstep(0.78, 1, p),            // Minimum on-screen sizes only matter at the far end
-        // Under a hand its size keeps going through the last of the sky's own point of light, which here fills the gap
-        pointGlow: byHand ? smoothstep(0.08, 0.32, p) * (1 - smoothstep(0.34, 0.62, p)) : smoothstep(0.02, 0.18, p) * (1 - smoothstep(0.26, 0.42, p)),
-        // Under a hand there's no great bright star to look at while the sky goes, so its faint copy comes up sooner
-        backdrop: byHand ? smoothstep(0.3, 0.9, p) : smoothstep(0.5, 1, p),
-        backdropZoom: 0.62 + 0.38 * (byHand ? smoothstep(0.3, 1, p) : smoothstep(0.48, 1, p)),
+        // The camera comes no closer than the whole system, so the star is never a great bright disc on the way: its size
+        // keeps going through the last of the sky's own point of light, which here fills the gap...
+        pointGlow: smoothstep(0.08, 0.32, p) * (1 - smoothstep(0.34, 0.62, p)),
+        // ... and the sky's faint copy comes up while the sky itself goes, so the view is never empty
+        backdrop: smoothstep(0.3, 0.9, p),
+        backdropZoom: 0.62 + 0.38 * smoothstep(0.3, 1, p),
         orbits: smootherstep(0.56, 0.86, p),
-        planets: smootherstep(0.84, 1, p),          // Once the camera has pulled back: a big half-faded planet looks wrong
+        planets: smootherstep(0.84, 1, p),          // Once the camera has arrived: a big half-faded planet looks wrong
         userBlend: smoothstep(0.82, 1, p)           // On the way out: from wherever the student left the camera
     };
 }
@@ -82,9 +85,9 @@ export function domeAt(travelledPc, distancePc) {
 
 // ---------- The same move under a student's hand ----------
 // Zooming drives t directly, and the look of the timed flight stays except where a hand would feel it. Zooming in always
-// makes things bigger and zooming out smaller, so the camera goes straight to the system with no swing in to the surface
-// and back, and the student can carry on in to the surface. The sky goes on zooming at the speed the wheel had when the
-// move took over, then gathers pace, and the star comes in to the centre in screen terms, never first drifting outwards.
+// makes things bigger and zooming out smaller, so the camera goes straight to the system, as the timed flight does, and the
+// student can carry on in to the surface. The sky goes on zooming at the speed the wheel had when the move took over, then
+// gathers pace, and the star comes in to the centre in screen terms, never first drifting outwards.
 
 export const HAND_LOG = 0.9;        // Zooming the whole move takes, as a log of the field of view: seven or eight notches of a wheel
 export const HAND_ARRIVE = 0.8;     // Where in p the camera arrives

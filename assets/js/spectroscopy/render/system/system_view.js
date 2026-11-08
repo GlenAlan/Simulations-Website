@@ -64,9 +64,12 @@ const WARM_AFTER_SELECT_MS = 500;
 const KEY_ZOOM_RATE = 1.3;          // Zooming with a key held down, as a log of the field of view a second, as on the sky
 const VIEW_SHOWN_AT = 0.4;          // A zoom this far in would settle in, not back, so the rest of the page can hear about it
 const CARRIED_PAUSE_MS = 450;       // A pause this long ends the zoom that carried the student in (see applyZoom)
-const HOLE_APPROACH = 1.5;          // How far off a zoom into a black hole's system starts, as a share of where it ends
-const HOLE_SKY_ZOOM = 1.25;         // How far the sky narrows meanwhile
-const HOLE_NEAR_FOV = 1;            // The sky draws a black hole about as big as this view does at a field of view like this
+const HOLE_GROW = 1.8;              // A zoom hands a black hole over once the sky draws it this much smaller than its system's
+                                    // view will on arrival: about what the sky itself would grow it by over the move
+const HOLE_GROW_LEAST = 1.25;       // Zoomed in past that already, it still grows this much on the way in
+const HOLE_SHOWN_PX = 5;            // The sky draws a hole's disc from this many device px of radius (layers/black_holes.js)
+const FRAME_STAR_SHARE = 0.1;       // The arrival framing: a star up to this share of the frame's radius changes nothing...
+const FRAME_STAR_POWER = 0.3;       // ... and past it, its share of a frame that opens out round it grows only as this power
 const DAY_SIDE = 0.65;              // How far round from the star a close-up looks at a planet (radians)
 const CLOSE_UP_ORBITS_PER_S = 0.02; // A planet in close-up goes round no faster than this: it's there to be looked at
 const CLOSE_UP_SLOWDOWN = 0.1;      // ... and the clock runs at least this much slower
@@ -174,7 +177,6 @@ export function initSystemView(app) {
     let hand = null;            // The student's zoom is moving tNorm: see zoom_into.js. Otherwise the flight is on a clock.
     let keyZoom = 0;            // A zoom key held down during that move: -1 in, +1 out
     let carriedIn = false;      // A zoom carried the student in, and is still going: see applyZoom
-    let settleAfterCarry = false; // ... and once it stops, the camera settles where the button's flight leaves it
     let lastZoomAt = -Infinity; // performance.now of the last zoom step in the system
     let viewShown = true;       // Has the page been told the view changed? A zoom waits to see if it's really going in.
     let useFade = false;        // This transition is the Reduce motion cross-fade
@@ -445,36 +447,42 @@ export function initSystemView(app) {
     }
 
     // ---------- Fitting the view ----------
-    function fitDistance(aspect, el) {
+    // Every way in, by zoom, by button or by a link, ends at the same view, and comes straight in to it: the whole system,
+    // with a little room round it. Everything in a system is laid out to reach FRAME from its middle, so that's what is fitted,
+    // unless a star would fill much of it: on its own that would bring a lone star in as a disc across half the screen, and a
+    // contact pair as two, while a wide triple comes in as a scatter of points. So a star bigger than FRAME_STAR_SHARE of the
+    // frame opens the frame out round it, by as much as keeps its share growing only as the FRAME_STAR_POWER power of its size:
+    // a lone Sun-like star comes in at about 0.14 of the frame's radius rather than 0.33, a lone giant at 0.16 rather than
+    // 0.5, a white dwarf at 0.11 rather than 0.15. The planets, comets and stars of nearly every wider system are well under
+    // the share, and come in just as they did.
+    function framedRadius(m = model, at = mix) {
+        if (!m) return FRAME;
+        let R = 0;
+        for (let i = 0; i < m.stars.length; i++) R = Math.max(R, starRadius(m, i, at) / (m.sizeScale || 1));
+        const share = R / FRAME;
+        return share > FRAME_STAR_SHARE ? FRAME * (share / FRAME_STAR_SHARE) ** (1 - FRAME_STAR_POWER) : FRAME;
+    }
+
+    function fitDistance(aspect, el, framed = framedRadius()) {
         const tanH = TAN_V * aspect;
         // Width of the orbit plane on screen, or its height, whichever runs out first. The near edge of the plane is
         // closer than the centre, so it needs d >= R (sin el / tan + cos el) to stay on screen. Sideways, whatever's a
         // little nearer the camera than the middle reaches furthest out: that's the square root.
         const fill = 0.93;
         const a = Math.abs(el);
-        const needH = Math.hypot(FRAME / (fill * tanH), FRAME * Math.cos(a));
-        const needV = FRAME * (Math.sin(a) / (fill * TAN_V) + Math.cos(a));
+        const needH = Math.hypot(framed / (fill * tanH), framed * Math.cos(a));
+        const needV = framed * (Math.sin(a) / (fill * TAN_V) + Math.cos(a));
         return Math.max(needH, needV);
+    }
+
+    // The whole-system view's zoom on arrival, as a multiple of the fit. With the habitable zone on, it takes that in too, so
+    // that nothing has to move out to it once the student is there.
+    function arrivalZoom() {
+        return Math.max(1, zoneZoom());
     }
 
     function pxPerWorldAt(depth, frame) {
         return frame.height / (2 * TAN_V * Math.max(depth, 1e-6));
-    }
-
-    // The radius (world units) the camera sits away from when it is closest to the middle of the system.
-    // Stars fill much of the view; a pair or a figure-eight has to fit.
-    function closestApproach(aspect) {
-        const main = model.stars[world.brightest].star;
-        const R = starRadius(model, world.brightest, mix);
-        const stage = main.stage;
-        const fill = stage === 'white_dwarf' || stage === 'neutron_star' ? 0.13 : (stage === 'giant' || stage === 'supergiant') ? 0.36 : 0.27;
-        let d = R / (2 * fill * TAN_V);
-        if (model.stars.length > 1) {
-            // The flight aims at the centre of mass, which may be empty space: keep the widest orbit's stars in shot
-            const reach = model.root.flat ? FRAME * 0.8 : ringRadius(model, model.root.a_AU, mix) * 0.85;
-            d = Math.max(d, reach / (TAN_V * Math.min(aspect, 1)));
-        }
-        return d;
     }
 
     // How far in a dance's view has closed (see frameK): at once, or easing towards it
@@ -499,24 +507,25 @@ export function initSystemView(app) {
         const R = starRadius(model, world.brightest, mix);
         const fitWhole = fitDistance(aspect, HOME_EL);
         const fit = fitWhole * frameK;
-        const dClose = Math.min(closestApproach(aspect), fit * 0.8);
+        // Where it arrives: see framedRadius
+        let arrive = fit * arrivalZoom();
         // A speck at the start: under a pixel for a lone star, a few pixels for a whole group
         const speckPx = model.stars.length > 1 ? 3 : 0.8;
         const speckR = model.stars.length > 1 ? FRAME * frameK : R;
-        const d0 = Math.max(dClose * 4, (speckR * frame.height) / (2 * speckPx * TAN_V));
-        path = { star, dAz, fovEnd, el0, az0, az1, d0, dClose, dir: azAltToVec3(star.az, star.alt), pc: travelPc(model.body), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
-        if (hand) lockStarsToSky(frame, fit);
+        const d0 = Math.max(arrive * 2, (speckR * frame.height) / (2 * speckPx * TAN_V));
+        path = { star, dAz, fovEnd, el0, az0, az1, d0, dir: azAltToVec3(star.az, star.alt), pc: travelPc(model.body), byHand: !!hand, skyLog: undefined, locked: false, roll: 0 };
+        if (hand) arrive = lockStarsToSky(frame, arrive);
 
         cam.az = az1;
         cam.azT = az1;
         cam.el = HOME_EL;
         cam.elT = HOME_EL;
-        cam.zoom = path.endZoom || 1;
+        cam.zoom = arrive / fit;
         cam.focus.set(0, 0, 0);
         cam.target = null;
         cam.flight = null;
         fitSmooth = fitWhole;
-        cam.dist = fit * cam.zoom;
+        cam.dist = arrive;
         cam.distT = cam.dist;
 
         // Line the faint sky's catalogue up with the line of sight, so what's behind the star is what was behind it
@@ -535,15 +544,12 @@ export function initSystemView(app) {
     // Under a hand a multiple's stars start right where the sky has already drawn them apart, and stay on them: the camera
     // starts as far off as puts the two widest parts of its first split that far apart, turned to match, and comes in just
     // as the sky zooms. A pair lands exactly. The sky draws the spacing in a triple or two pairs in its own way, so they land
-    // close, each part round its place on the sky.
-    function lockStarsToSky(frame, fit) {
-        if (model.body.black_hole) {
-            lockHoleToSky(fit);
-            return;
-        }
+    // close, each part round its place on the sky. fit: where the camera ends up, in the system. Returns where it arrives.
+    function lockStarsToSky(frame, fit, leaving = false) {
+        if (model.body.black_hole) return lockHoleToSky(fit, leaving);
         const binaries = engine.getLayer('binaries');
         const onSky = model.stars.length > 1 && binaries && binaries.firstSplit ? binaries.firstSplit(model.code) : null;
-        if (!onSky || onSky.length < 2) return;
+        if (!onSky || onSky.length < 2) return fit;
         let from = null;
         let to = null;
         let widest = -1;
@@ -555,7 +561,7 @@ export function initSystemView(app) {
                 to = q;
             }
         }));
-        if (!(widest > 0)) return;
+        if (!(widest > 0)) return fit;
         const gap = lockGap.set(0, 0, 0);
         [[to, 1], [from, -1]].forEach(([part, sign]) => {
             let mass = 0;
@@ -570,40 +576,77 @@ export function initSystemView(app) {
         });
         const { across, along } = seenFromPathStart(gap);
         const worldApart = Math.hypot(across, along);
-        if (!(worldApart > 1e-6)) return;
+        if (!(worldApart > 1e-6)) return fit;
         const depth = model.body.depth || 0;
         const skyApart = widest * RAD * parallaxFactor(depth, savedView.fov) / Math.tan(savedView.fov * RAD * 0.5);
         const d0 = worldApart / (TAN_V * skyApart);
-        if (d0 < fit * 1.5) return;
+        if (d0 < fit * 1.5) return fit;
         path.d0 = d0;
         path.locked = true;
         path.roll = Math.atan2(to.y - from.y, to.x - from.x) - Math.atan2(along, across);
         // The sky zooms by just enough, as the camera arrives. Its depth holds it back a little: see core/depth.js.
         path.skyLog = Math.log(d0 / fit) / (1 - ETA * depth);
+        return fit;
     }
 
-    // The sky has already drawn a black hole close up by the time a zoom gets here, about as near as the system's own view:
-    // so there's next to no flying, just one coming up through the other, with its companion on the same side.
-    function lockHoleToSky(fit) {
-        if (savedView.fov > HOLE_NEAR_FOV) return;
+    // A black hole's disc on the sky, in px of radius, at a field of view
+    function skyHolePx(discDeg, depth, fov, frame) {
+        return (discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(depth, fov)) / Math.tan(fov * RAD * 0.5);
+    }
+
+    // The sky has drawn a black hole's disc by the time a zoom gets here: zoom_into.js hands it over once that's HOLE_GROW
+    // times smaller than the system's own view will draw it on arrival (holeFov). From there the hole is locked to the sky,
+    // as a pair is: it starts exactly as big as the sky draws it and grows with the sky as it zooms, so the one comes up
+    // through the other, with its companion on the same side, and the camera only comes in, to the whole-system view.
+    // Zoomed in past that point already, it can't get there without shrinking: it arrives that little closer instead, and
+    // stays there. On the way out the hole goes back down to the sky's size, unless it's already smaller than that.
+    function lockHoleToSky(fit, leaving) {
         const holes = engine.getLayer('black_holes');
-        const angle = holes && holes.companionAngle ? holes.companionAngle(model.code) : null;
-        path.d0 = fit * HOLE_APPROACH;
-        path.skyLog = Math.log(HOLE_SKY_ZOOM);
-        // Better still, from the sky's own size: the hole starts exactly as big as the sky draws its disc, and on the way in
-        // it's never drawn smaller than that, so zooming in can't shrink it. Its companion may then be off to the side on
-        // arrival; zooming out brings it in.
         const discDeg = holes && holes.discDeg ? holes.discDeg(model.code) : 0;
-        if (discDeg > 0) {
-            const frame = engine.currentFrame();
-            const skyPx = (discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(model.body.depth || 0, savedView.fov)) / Math.tan(savedView.fov * RAD * 0.5);
-            path.d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
-            path.endZoom = Math.max(minDistance() / fit, Math.min(1, path.d0 / (HOLE_SKY_ZOOM * fit)));
+        const frame = engine.currentFrame();
+        const depth = model.body.depth || 0;
+        const skyPx = discDeg > 0 ? skyHolePx(discDeg, depth, savedView.fov, frame) : 0;
+        // Not on the sky yet: in from a speck, as a star comes
+        if (skyPx * frame.dpr < HOLE_SHOWN_PX) return fit;
+        let d0 = (starRadius(model, 0, mix) * frame.height) / (2 * TAN_V * skyPx);
+        let end = fit;
+        if (leaving) {
+            if (d0 < fit / HOLE_GROW_LEAST) return fit;
+            d0 = Math.max(d0, fit);
+        } else if (d0 < fit * HOLE_GROW_LEAST) {
+            end = d0 / HOLE_GROW_LEAST;
         }
-        if (angle === null) return;
-        const [hole, star] = positions.stars;
-        const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
-        path.roll = angle - Math.atan2(along, across);
+        path.d0 = d0;
+        path.locked = true;
+        path.skyLog = Math.log(d0 / end) / (1 - ETA * depth);
+        const angle = holes.companionAngle ? holes.companionAngle(model.code) : null;
+        if (angle !== null) {
+            const [hole, star] = positions.stars;
+            const { across, along } = seenFromPathStart(lockGap.set(star[0] - hole[0], star[1] - hole[1], star[2] - hole[2]));
+            path.roll = angle - Math.atan2(along, across);
+        }
+        return end;
+    }
+
+    // The widest view at which a zoom hands a black hole over to its system: see lockHoleToSky. A system not yet ready is
+    // measured from a model of its own, kept for the next look.
+    let measured = null;
+    function holeFov(code, frame) {
+        const body = systemBodyOf(app.universe.resolve(code));
+        const holes = engine.getLayer('black_holes');
+        const discDeg = body && body.black_hole && holes && holes.discDeg ? holes.discDeg(body.code) : 0;
+        if (!(discDeg > 0)) return null;
+        if (model && model.code === body.code) measured = model;
+        else if (!measured || measured.code !== body.code) measured = buildModel(body);
+        const m = measured;
+        const at = (logChoice === null ? m.startLog : logChoice) && m.logUseful ? 1 : 0;
+        const arrive = fitDistance(frame.width / Math.max(1, frame.height), HOME_EL, framedRadius(m, at));
+        const px = (starRadius(m, 0, at) * frame.height) / (2 * TAN_V * arrive * HOLE_GROW);
+        // Where the sky's disc is that big: its size goes as one over the tangent of half the field of view
+        const depth = body.depth || 0;
+        let fov = 1;
+        for (let k = 0; k < 4; k++) fov = (2 * Math.atan((discDeg * 0.5 * RAD * frame.height * 0.5 * parallaxFactor(depth, fov)) / px)) / RAD;
+        return fov;
     }
 
     // A distance in the system, as it lies across the view from where the path begins
@@ -791,7 +834,6 @@ export function initSystemView(app) {
         if (carriedIn && (now - lastZoomAt > CARRIED_PAUSE_MS || factor > 1)) carriedIn = false;
         lastZoomAt = now;
         if (carriedIn) return;
-        settleAfterCarry = false;
         if (cam.target) {
             cam.distT = Math.max(minDistance(), cam.distT * factor);
             // Pulling far enough back from a planet lets go of it
@@ -808,8 +850,13 @@ export function initSystemView(app) {
         cam.zoom = Math.max(minDistance() / ((fitSmooth || 1) * frameK), Math.min(maxZoom(), cam.zoom * factor));
     }
 
+    // The habitable zone's outer edge, in world units, if it's on show; and as a share of the frame
+    function hzRing(at = mix) {
+        return model && model.hz && app.layers.habitableZone ? ringRadius(model, model.hz.outer, at) : 0;
+    }
+
     function hzReach() {
-        return model && model.hz && app.layers.habitableZone ? ringRadius(model, model.hz.outer, mix) / FRAME : 0;
+        return hzRing() / framedRadius();
     }
 
     function maxZoom() {
@@ -969,7 +1016,8 @@ export function initSystemView(app) {
         return (Math.max(sep * 1.1, ...around.map((r) => r * 1.1)) / TAN_V) / Math.min(1, aspect);
     }
 
-    function startFocusFlight(target, zoomAfter = 1) {
+    // Back to the whole system, it goes back to the view it arrived at
+    function startFocusFlight(target, zoomAfter = arrivalZoom()) {
         const frame = engine.currentFrame();
         const aspect = frame.width / Math.max(1, frame.height);
         const fit = fitDistance(aspect, cam.elT);
@@ -1039,10 +1087,15 @@ export function initSystemView(app) {
         startFocusFlight(t);
     }
 
+    // The zoom that fits the whole-system view to the habitable zone's edge, or 0 if that isn't on show
+    function zoneZoom() {
+        return (hzRing(mixTarget) / framedRadius(model, mixTarget)) * 1.08;
+    }
+
     // Fits the whole-system view to the habitable zone's edge, when that's on and would be out of shot, or lost in it
     function frameZone() {
         if (!model || !model.hz || !app.layers.habitableZone || cam.target || !fitSmooth) return;
-        const want = (ringRadius(model, model.hz.outer, mixTarget) / FRAME) * 1.08;
+        const want = zoneZoom();
         if (want > cam.zoom || want < cam.zoom * 0.2) cam.zoom = Math.max(minDistance() / fitSmooth, want);
     }
 
@@ -1053,7 +1106,7 @@ export function initSystemView(app) {
     const sizeView = { cam: [0, 0, 0], fwd: [0, 0, -1], f: 1, minSize: 1, planets: 1, focus: -1 };
     let sysFrame = null;
 
-    const poseAsk = { d0: 1, dClose: 1, dEnd: 1, el0: 0, el1: HOME_EL, az0: 0, az1: 0, arrive: 0 };
+    const poseAsk = { d0: 1, dEnd: 1, el0: 0, el1: HOME_EL, az0: 0, az1: 0, arrive: 0 };
     const poseOut = { dist: 1, el: 0, az: 0 };
 
     function stepCamera(frame, stage) {
@@ -1102,10 +1155,9 @@ export function initSystemView(app) {
         let fy = cam.focus.y;
         let fz = cam.focus.z;
         if (w < 1) {
-            // Under a hand there is no swing in close: the camera comes straight to where the student's is
+            // The camera comes straight in to where the student's is, by hand or on the clock
             poseAsk.d0 = path.d0;
-            poseAsk.dClose = path.byHand ? cam.dist : path.dClose;
-            poseAsk.dEnd = path.byHand ? cam.dist : Math.max(path.dClose * 1.01, fitSmooth * frameK);
+            poseAsk.dEnd = cam.dist;
             poseAsk.arrive = path.byHand ? HAND_ARRIVE : 0;
             poseAsk.el0 = path.el0;
             poseAsk.az0 = path.az0;
@@ -1124,7 +1176,7 @@ export function initSystemView(app) {
         camera.aspect = aspect;
         camera.fov = FOV;
         camera.near = Math.max(1e-3, dist * 0.02);
-        camera.far = dist * 6 + FRAME * 12 + hzReach() * FRAME * 4;
+        camera.far = dist * 6 + framedRadius() * 12 + hzRing() * 4;
         camera.updateProjectionMatrix();
         camera.position.set(
             fx + dist * Math.cos(el) * Math.sin(az),
@@ -1760,7 +1812,7 @@ export function initSystemView(app) {
         } else {
             const p = easeProgress(tNorm);
             const crowded = path.byHand && (model.stars.length > 2 || !!model.body.black_hole);
-            const stage = stagesAt(p, path.byHand, crowded);
+            const stage = stagesAt(p, crowded);
             const ndc = stepSky(stage);
             setTravel(p, crowded);
             sharedUniforms.uSkyFade.value = stage.skyFade;
@@ -1772,17 +1824,6 @@ export function initSystemView(app) {
         }
         holdClock(frame);
         if (hold === null) finishIfDone();
-        settleIfCarried();
-    }
-
-    // The zoom that carried the student in has stopped: the camera settles where the button's flight leaves it. Only a black
-    // hole's flight by hand ends closer in than that (lockHoleToSky, so that zooming in never shrinks the hole), and this
-    // brings its companion into view.
-    function settleIfCarried() {
-        if (!settleAfterCarry || mode !== 'system' || performance.now() - lastZoomAt <= CARRIED_PAUSE_MS) return;
-        settleAfterCarry = false;
-        carriedIn = false;
-        if (!cam.flight && !cam.target && cam.zoom < 1) startFocusFlight(null, 1);
     }
 
     function stepHand(dt) {
@@ -1820,7 +1861,6 @@ export function initSystemView(app) {
             queuedFocus = null;
             runDone();
             if (queued) focusOn(queued);
-            frameZone();
             notify();
         } else if (mode === 'exit' && tNorm <= 0) {
             finishExit();
@@ -1836,7 +1876,6 @@ export function initSystemView(app) {
     // If a panel for something else is open, it moves to where the student has gone. If none is, none opens in their face.
     function arrivedByHand() {
         carriedIn = true;
-        settleAfterCarry = true;
         lastZoomAt = performance.now();
         if (!viewShown) showView();
         const drawer = app.drawer;
@@ -1849,7 +1888,6 @@ export function initSystemView(app) {
         sharedUniforms.uSkyFade.value = 1;
         engine.setSkyVisible(true);
         carriedIn = false;
-        settleAfterCarry = false;
         const previous = model;
         // Back by zoom, the student may well zoom straight in again: it stays ready for a while, undrawn
         const stayReady = !!hand;
@@ -2068,11 +2106,12 @@ export function initSystemView(app) {
             hand = moving;
             // At this end the timed path and this one are the same, so nothing jumps as it changes to this
             path.byHand = true;
-            lockStarsToSky(engine.currentFrame(), cam.dist);
+            lockStarsToSky(engine.currentFrame(), cam.dist, true);
             mode = 'exit';
         },
         enter(code) { enter(code, { focus: false }); },
-        exit() { exit(); }
+        exit() { exit(); },
+        holeFov
     });
 
     // A pinch that began on the sky goes on here without the fingers lifting
@@ -2497,7 +2536,7 @@ export function initSystemView(app) {
         hasSystemView: (body) => !!engine.renderer && hasSystemView(body),
         // Test hook: hold the flight at a fraction of its time (null lets go)
         _hold(x) { hold = x; },
-        _state: () => ({ mode, tNorm, mix, dist: cam.dist, frameK, useFade, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
+        _state: () => ({ mode, tNorm, mix, dist: cam.dist, frameK, useFade, framed: model ? framedRadius() : null, target: cam.target ? cam.target.code : null, zoom: cam.zoom, rate: clock.shown, hand: hand ? { goal: hand.goal, settling: !!hand.settling } : null, compiled, ready: mode === 'sky' && model ? model.code : null }),
         _saved: () => ({ ...savedView }),
         // What holds the clock back for the flash rule this frame
         _held: () => ({
