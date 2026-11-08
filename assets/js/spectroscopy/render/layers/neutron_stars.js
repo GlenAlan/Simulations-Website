@@ -67,7 +67,7 @@ export function createNeutronStarsLayer(engine, app) {
             attribute vec3 aCentre;
             attribute vec3 aSpin;
             attribute vec4 aPulse;    // Turns a second shown, swing 0..1, beam tilt from the spin axis, start angle
-            attribute float aTurn;    // The share of the beams' light that turns once they're big (turningShare)
+            attribute float aTurn;    // The share of the beams' light that turns once they're big (skyTurningShare)
             attribute vec4 aInfo;     // On-sky half-size (deg), is a pulsar, emits gamma pulses, seed
             attribute vec3 aThermal;
             attribute vec4 aBandA;
