@@ -40,6 +40,7 @@ import { assignVelocities } from './motions.js';
 import { addNuclei, nucleusEntities } from './nuclei.js';
 import { makeLocalGroup } from './local_group.js';
 import { makeUnstableMultiples } from './unstable.js';
+import { placeFieldNeutronStars } from './neutron_field.js';
 import { memberDirection } from '../render/layers/sky_tangent.js';
 
 export { validateUniverse } from './validate.js';
@@ -114,18 +115,10 @@ function quotaList(table) {
     return list;
 }
 
-// Which sort of pulsar each neutron star is (data/deep_sky.js pulsePeriod), each with a stream of its own: the first
-// `remnants` are a supernova's, so young. Of the rest, about a fifth are millisecond pulsars and one or two magnetars.
-// rng is a fork of its own, so that nothing else in the sky moves.
-function pulsarRoles(rng, pulsars, remnants) {
-    const older = pulsars.flatMap((pulsar, i) => (pulsar && i >= remnants ? [i] : []));
-    const order = shuffled(rng, older);
-    const fast = Math.round(older.length * 0.2);
-    const slow = older.length ? Math.max(1, Math.round(older.length / 14)) : 0;
-    const roles = new Map(order.map((i, k) => [i, k < fast ? 'millisecond' : k < fast + slow ? 'magnetar' : 'normal']));
-    return pulsars.map((pulsar, i) => (pulsar
-        ? { rng: rng.fork(`spin:${i}`), role: i < remnants ? 'young' : roles.get(i) }
-        : null));
+// Each pulsar's spin (data/deep_sky.js pulsePeriod) comes from a stream of its own, from a fork of its own, so that nothing
+// else in the sky moves
+function pulsarSpins(rng, pulsars) {
+    return pulsars.map((pulsar, i) => (pulsar ? rng.fork(`spin:${i}`) : null));
 }
 
 // Decides every single star before any is built: class, whether it has planets, population. Metal-poor stars are old,
@@ -418,7 +411,7 @@ export function generateUniverse(seed = DEFAULT_SEED) {
 
     const neutronStars = root.fork('neutron_stars');
     const pulsars = shuffled(quota, quotaList(MIX.neutron_star)).map((k) => k === 'pulsar');
-    const spins = pulsarRoles(root.fork('pulsar_spins'), pulsars, remnantSources.length);
+    const spins = pulsarSpins(root.fork('pulsar_spins'), pulsars);
     const neutronBodies = new Map();
     pulsars.forEach((pulsar, i) => {
         const r = neutronStars.fork(`ns:${i}`);
@@ -584,6 +577,11 @@ export function generateUniverse(seed = DEFAULT_SEED) {
     // own, placed round everything else, so nothing above changes.
     const unstable = makeUnstableMultiples(root.fork('unstable'), coder('unstable'), (code) => makeBase('multiple', code), layout, sky);
 
+    // ---------- Our galaxy's neutron stars, where real ones are (round 4) ----------
+    // At the distances and heights off the galactic plane real ones have (data/neutron_field.js), each moving as one does
+    // there. Last of all, from a stream of its own, placed round everything else, so nothing above changes.
+    const fieldNeutronStars = placeFieldNeutronStars(root.fork('neutron star places'), sky, layout);
+    assignVelocities(fieldNeutronStars, root.fork('motions'), new Set());
 
     const all = sky.concat(local, third, unstable, home);
 

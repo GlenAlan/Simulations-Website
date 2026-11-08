@@ -42,10 +42,9 @@ export function smoothstep(lo, hi, x) {
 // ---------- A pulsar's spin, the same on the sky (neutron_stars.js) and up close (system/remnants.js) ----------
 //
 // The rule for how fast a pulsar is shown turning, the same in both views, which show the same turn at the same moment:
-//   - Each turns at its true rate, kept between PULSE_SHOWN_HZ.min and .max turns a second (0.1 to 10 Hz, from
-//     data/deep_sky.js). Most real pulsars are inside that. A young or millisecond one turns faster, and is shown at 10 a
-//     second; the Pulse timing tool and the Info tab give its true period, and say so. On the sky one turn is one pulse, as
-//     the beam crosses our line of sight: a small point, which may flash that fast.
+//   - Each turns at its true rate, between PULSE_SHOWN_HZ.min and .max turns a second (0.1 to 10 Hz, from
+//     data/deep_sky.js, which draws every pulsar's rate inside that). On the sky one turn is one pulse, as the beam
+//     crosses our line of sight: a small point, which may flash that fast.
 //   - Up close a beam sweeps over a large part of the screen, and three changes a second over a wide area is the most
 //     photosensitive viewers can take. Zoomed in, the soft beam in system/remnants.js does that 1.5 times a second at
 //     0.6 turns a second, but 4 times at 0.75 and 8 at 1. So up to SPIN_SHOWN turns a second the close beams are drawn
@@ -54,8 +53,15 @@ export function smoothstep(lo, hi, x) {
 //     changing the screen from one frame to the next no more than at SPIN_SHOWN.
 //   - Each spot a close beam passes also brightens and dims about 2.8 times a turn, so above FLICKER_HZ turns a second
 //     those spots would flash more than three times a second. There the turning light is FAST_SHARE of it, too faint to
-//     count as a flash anywhere (under a tenth of full brightness), and still enough to be seen turning.
-//   - The sky's beams, small, are as they were at every rate.
+//     count as a flash while the beams are small, and still enough to be seen turning; zoomed in, less (closeTurningShare).
+//   - The sky's beams are as they were while they're small, and at every size for a pulsar turning up to SKY_FLICKER_HZ
+//     times a second: each spot of the sky one passes is lit once a turn, which is three flashes a second at most. Turning
+//     faster, a beam does that over all it sweeps, and as a zoom makes it bigger, that grows as its size squared, to twice
+//     the most allowed at the deepest zoom. So from SKY_SWEEP_PX[0] to [1], its half-size in CSS pixels, the sky's beams
+//     go over to the close-up's way, their turning light down to the close-up's share and the rest their blurred sweep,
+//     ready for the system view to take over. Bigger than that, as at the deepest zoom or on a big screen, the turning
+//     light falls on as the square of the size, so the area it flashes over grows no more. The pulse itself, a small
+//     bright point, keeps flashing at the true rate.
 //   - With Reduce motion nothing turns: the beam holds still at HELD_ANGLE, seen side-on, and the light is steady.
 // The angle at a moment is turns a second x the shared clock (sharedUniforms.uTime) plus the pulsar's own start, so a
 // pulse on the sky is the beam pointing at the camera in the system view, and zooming in keeps the phase.
@@ -65,6 +71,12 @@ export const FAST_SHARE = 0.3;             // The soft beam peaks at 0.284 lumin
 export const HELD_ANGLE = 1.3;
 export const PULSAR_BEAM_SLOPE = 0.13;     // A beam's half-width per unit of its length, in both views
 export const SWEEP_SAMPLES = 24;           // Beam directions the blurred sweep is the average of
+// Measured on the sky at 1024 x 768, at the deepest zoom (a half-size of about 207 px), whole beams flash over 2,700 px
+// turning once a second, 6,000 at 2 and 2.5, 8,700 at 2.99, then 46,700 at 3.5 and 40,000-48,000 up to 10. Turning
+// faster than 3 a second they flash over 1 to 1.2 times their half-size squared: 7,200 px at 83 px, 16,500 at 127,
+// 22,000 at 150 for one turning 10 times a second, 14,800 at 110 for one turning 5.5 times.
+export const SKY_FLICKER_HZ = 3;
+export const SKY_SWEEP_PX = [80, 170];
 
 // The turns a second a pulsar is shown at, from its true period
 export function shownRate(periodS) {
@@ -76,6 +88,26 @@ export function shownRate(periodS) {
 export function turningShare(rate) {
     if (rate <= SPIN_SHOWN) return 1;
     return rate <= FLICKER_HZ ? SPIN_SHOWN / rate : FAST_SHARE;
+}
+
+// Up close, the share that turns, with the beams lengthPx long on the screen (CSS pixels) and light the luminance of their
+// colour times its strength (system/remnants.js): FAST_SHARE was set with the beams small. Zoomed in, a beam turning faster
+// than FLICKER_HZ grows over the screen, and where the two cones and both their sides line up its turning light still steps
+// by more than a tenth: at 10 turns a second, 3,200 px flash at the entry's 230 px, 17,400 at 515 and 24,800 at 680. So from
+// CLOSE_SWEEP_PX[0] to [1] its turning light eases down to CLOSE_TURNING_LIGHT, too faint to flash at any size (none did
+// at any zoom), with the rest of it in the blurred sweep. A dimmer beam, as in X-rays, keeps more of its light turning.
+export const CLOSE_SWEEP_PX = [250, 500];
+export const CLOSE_TURNING_LIGHT = 0.021;   // 0.15 of the radio beam's light, the brightest band's
+export function closeTurningShare(rate, lengthPx, light) {
+    const share = turningShare(rate);
+    if (rate <= FLICKER_HZ) return share;
+    const most = Math.min(share, CLOSE_TURNING_LIGHT / Math.max(light, 1e-3));
+    return share - (share - most) * smoothstep(CLOSE_SWEEP_PX[0], CLOSE_SWEEP_PX[1], lengthPx);
+}
+
+// On the sky, the share that turns once the beams are SKY_SWEEP_PX[1] big (and less beyond); 1 for one that never blurs
+export function skyTurningShare(rate) {
+    return rate > SKY_FLICKER_HZ ? turningShare(rate) : 1;
 }
 // Everything both views need to draw one pulsar's spin, from its own stream (rng = bodyRng(body, 'pulsar'), read in this
 // order, which the sky layer goes on reading after). In the frame of the view at the pulsar: x right, y up, z towards us.

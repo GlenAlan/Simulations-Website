@@ -16,7 +16,7 @@
 
 import { shiftDirection, shiftSpeed, withCommas, sig, signed, wavelength, distance } from '../core/format.js';
 import { AU, C_KMS, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
-import { pulsarKind, PULSE_SHOWN_HZ } from '../data/deep_sky.js';
+import { pulsarKind } from '../data/deep_sky.js';
 import { supernovaShellShows } from '../spectra/supernova.js';
 import { danceFacts } from '../data/unstable.js';
 
@@ -731,10 +731,9 @@ function clusterInfo({ entity }) {
     };
 }
 
-// What this pulsar's spin says about it (data/deep_sky.js pulsarKind), and how the sky shows one too fast to draw
+// What this pulsar's past and spin say about it (data/deep_sky.js pulsarKind)
 const PULSAR_KIND_TEXT = {
-    young: (block) => `This one is young, born in the supernova ${block.remnant_of} less than a year ago, and spins tens of times a second, as the Crab pulsar does.`,
-    millisecond: () => 'This is a millisecond pulsar: an old one, spun up again to hundreds of turns a second by gas falling on it from a companion star.',
+    young: (block) => `This one is young, born in the supernova ${block.remnant_of} less than a year ago.`,
     magnetar: () => 'This one is slow. A magnetic field about a thousand times a normal pulsar\'s has braked it hard: it may be a magnetar.'
 };
 
@@ -742,9 +741,6 @@ function pulsarNote(block) {
     const parts = ['Beams of radio waves stream from its magnetic poles. As it spins, they sweep past us once per turn, so the pulse period is its spin period. Switch to Radio to see it pulse.'];
     const kind = PULSAR_KIND_TEXT[pulsarKind(block)];
     if (kind) parts.push(kind(block));
-    if (isNum(block.pulse_period_s) && 1 / block.pulse_period_s > PULSE_SHOWN_HZ.max) {
-        parts.push(`The sky shows it flashing ${PULSE_SHOWN_HZ.max} times a second, much slower than it really does.`);
-    }
     return { heading: 'The lighthouse model', text: parts.join(' ') };
 }
 

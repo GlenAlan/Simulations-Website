@@ -82,6 +82,14 @@ export function galacticLonLat(az, alt) {
     return { l, b: Math.asin(Math.max(-1, Math.min(1, dot(z)))) / RAD };
 }
 
+// The direction on the dome at a galactic longitude and latitude, in degrees: galacticLonLat the other way round
+export function galacticToAzAlt(l, b) {
+    const { x, y, z } = axes();
+    const cb = Math.cos(b * RAD);
+    const p = [0, 1, 2].map((i) => cb * (Math.cos(l * RAD) * x[i] + Math.sin(l * RAD) * y[i]) + Math.sin(b * RAD) * z[i]);
+    return vec3ToAzAlt(p[0], p[1], p[2]);
+}
+
 // The faintest apparent magnitude drawn at a given field of view, so faint objects appear as you zoom in.
 // Generation keeps every body that shows in visible light brighter than limitingMag(MIN_FOV) (about 17.5).
 export function limitingMag(fovDeg) {

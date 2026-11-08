@@ -3,13 +3,15 @@
 // our line of sight once a turn, which is what makes the pulse. In radio they are beacons at every zoom.
 //
 // How fast each turns is the rule the system view's beams share: see shownRate in exotic_common.js. Here a pulsar is a
-// small point, which may flash as fast as it is shown turning. Nothing flashes at all with Reduce motion.
+// small point, which may flash as fast as it is shown turning. Zoomed in until its beams are big, a fast one's beams blur
+// into their sweep as up close (skyTurningShare). Nothing flashes at all with Reduce motion.
 
 import * as THREE from 'three';
 import { blackBodyRGB } from '../../core/phys.js';
 import { parallaxFactor, travelPc } from '../../core/depth.js';
-import { skyMaterial, BAND_GLSL, ORDER } from '../shared.js';
-import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, pulsarSpin, HELD_ANGLE, PULSAR_BEAM_SLOPE } from './exotic_common.js';
+import { skyMaterial, BAND_GLSL, LOOP_ZERO_GLSL, ORDER } from '../shared.js';
+import { DEG, SKY_RADIUS, bodyRng, skyBasis, instancedQuad, pulsarSpin, skyTurningShare, HELD_ANGLE, PULSAR_BEAM_SLOPE,
+    SWEEP_SAMPLES, SKY_SWEEP_PX } from './exotic_common.js';
 
 const BEAMS_SHOW_PX = 64;   // Half-size, in device pixels, at which the beams are well on show (vDetail about 0.6)
 
@@ -20,6 +22,7 @@ export function createNeutronStarsLayer(engine, app) {
     const centres = new Float32Array(n * 3);
     const spins = new Float32Array(n * 3);
     const pulses = new Float32Array(n * 4);
+    const turns = new Float32Array(n);
     const infos = new Float32Array(n * 4);
     const thermals = new Float32Array(n * 3);
     const bandA = new Float32Array(n * 4);
@@ -39,6 +42,7 @@ export function createNeutronStarsLayer(engine, app) {
         const spin = pulsarSpin(body, rng);
         spins.set(spin.axis, i * 3);
         pulses.set([spin.rate, spin.depth, spin.tilt, spin.phase], i * 4);
+        turns[i] = skyTurningShare(spin.rate);
         infos.set([rng.range(0.11, 0.17), info.pulsar ? 1 : 0, info.gamma ? 1 : 0, rng.next()], i * 4);
         thermals.set(blackBodyRGB(Math.min(40000, info.teff_K || 30000)), i * 3);
         bandA.set([body.bands.radio, body.bands.ir, body.bands.visible, body.bands.uv], i * 4);
@@ -48,6 +52,7 @@ export function createNeutronStarsLayer(engine, app) {
     geometry.setAttribute('aCentre', new THREE.InstancedBufferAttribute(centres, 3));
     geometry.setAttribute('aSpin', new THREE.InstancedBufferAttribute(spins, 3));
     geometry.setAttribute('aPulse', new THREE.InstancedBufferAttribute(pulses, 4));
+    geometry.setAttribute('aTurn', new THREE.InstancedBufferAttribute(turns, 1));
     geometry.setAttribute('aInfo', new THREE.InstancedBufferAttribute(infos, 4));
     geometry.setAttribute('aThermal', new THREE.InstancedBufferAttribute(thermals, 3));
     geometry.setAttribute('aBandA', new THREE.InstancedBufferAttribute(bandA, 4));
@@ -56,19 +61,24 @@ export function createNeutronStarsLayer(engine, app) {
     geometry.setAttribute('aPc', new THREE.InstancedBufferAttribute(pcs, 1));
 
     const material = skyMaterial({
+        uniforms: { uSweepPx: { value: new THREE.Vector2(SKY_SWEEP_PX[0], SKY_SWEEP_PX[1]) } },
         vertexShader: /* glsl */`
             ${BAND_GLSL}
             attribute vec3 aCentre;
             attribute vec3 aSpin;
             attribute vec4 aPulse;    // Turns a second shown, swing 0..1, beam tilt from the spin axis, start angle
+            attribute float aTurn;    // The share of the beams' light that turns once they're big (skyTurningShare)
             attribute vec4 aInfo;     // On-sky half-size (deg), is a pulsar, emits gamma pulses, seed
             attribute vec3 aThermal;
             attribute vec4 aBandA;
             attribute float aBandB;
             attribute float aDepth;
             attribute float aPc;
+            uniform vec2 uSweepPx;    // SKY_SWEEP_PX, in device pixels
             varying vec2 vP;
             varying vec3 vAxis;
+            varying vec3 vSpin;
+            varying vec2 vTurn;       // Beam tilt, and the share of the beams' light turning; the rest is their sweep
             varying float vPulse;
             varying float vDetail;
             varying float vHalfPx;
@@ -110,6 +120,11 @@ export function createNeutronStarsLayer(engine, app) {
                 // Beacons keep a minimum size in the bands where they are the thing to find
                 float beacon = (uBandW[0] * aBandA.x + uBandW[4] * aBandB) * uViewport.y * 0.022;
                 vHalfPx = max(angularPx, beacon);
+                // Big on the screen, a fast pulsar's beams are drawn as up close: part turning, the rest their blurred sweep.
+                // Bigger still, the turning part falls as the square of the size, so the area it sweeps stays the same.
+                vSpin = aSpin;
+                float most = aTurn * min(1.0, pow(uSweepPx.y / max(vHalfPx, 1.0), 2.0));
+                vTurn = vec2(tilt, uTwinkle > 0.5 && aTurn < 0.999 ? mix(1.0, most, smoothstep(uSweepPx.x, uSweepPx.y, vHalfPx)) : 1.0);
                 float gate = shows > 0.002 ? 1.0 : 0.0;
                 vec4 c = modelViewMatrix * vec4(centre, 1.0);
                 c.xy *= depthP(aDepth);
@@ -118,8 +133,11 @@ export function createNeutronStarsLayer(engine, app) {
             }`,
         fragmentShader: /* glsl */`
             ${BAND_GLSL}
+            ${LOOP_ZERO_GLSL}
             varying vec2 vP;
             varying vec3 vAxis;
+            varying vec3 vSpin;
+            varying vec2 vTurn;
             varying float vPulse;
             varying float vDetail;
             varying float vHalfPx;
@@ -140,6 +158,22 @@ export function createNeutronStarsLayer(engine, app) {
                 float across = v / w;
                 float fade = u / len;
                 return exp(-across * across * 1.3) * exp(-fade * fade * 2.6) * (0.45 + 0.75 * a.z + 0.3);
+            }
+
+            // Both beams, averaged over SWEEP_SAMPLES turns of them round the spin axis: the blur of their sweep, as the eye
+            // sees a fast lighthouse. A different start for each pixel, as up close (system/remnants.js), holds still.
+            float swept(vec2 p) {
+                float tilt = vTurn.x;
+                vec3 e1 = (vec3(0.0, 0.0, 1.0) - vSpin * cos(tilt)) / sin(tilt);
+                vec3 e2 = cross(vSpin, e1);
+                float start = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+                float sum = 0.0;
+                for (int k = 0; k < ${SWEEP_SAMPLES} + uLoopZero; k++) {
+                    float a = (float(k) + start) * ${(2 * Math.PI / SWEEP_SAMPLES).toFixed(6)};
+                    vec3 axis = vSpin * cos(tilt) + (e1 * cos(a) + e2 * sin(a)) * sin(tilt);
+                    sum += beam(p, axis) + 0.8 * beam(p, -axis);
+                }
+                return sum * ${(1 / SWEEP_SAMPLES).toFixed(6)};
             }
 
             // Shells of a dipole field: a field line obeys r = L sin^2(theta), theta measured from the magnetic axis
@@ -164,7 +198,11 @@ export function createNeutronStarsLayer(engine, app) {
                 float beams = 0.0;
                 float field = 0.0;
                 if (vDetail > 0.001) {
-                    if (vInfo.x > 0.5) beams = (beam(vP, vAxis) + 0.8 * beam(vP, -vAxis)) * vDetail;
+                    if (vInfo.x > 0.5) {
+                        beams = beam(vP, vAxis) + 0.8 * beam(vP, -vAxis);
+                        if (vTurn.y < 0.999) beams = mix(swept(vP), beams, vTurn.y);
+                        beams *= vDetail;
+                    }
                     field = dipole(vP, r, vAxis) * vDetail;
                 }
 
@@ -189,7 +227,10 @@ export function createNeutronStarsLayer(engine, app) {
 
     return {
         id: 'neutron_stars',
-        update() {},
+        // The sizes are in CSS pixels, so that a pulsar flashes over the same share of a viewer's sight on any screen
+        update(frame) {
+            material.uniforms.uSweepPx.value.set(SKY_SWEEP_PX[0] * frame.dpr, SKY_SWEEP_PX[1] * frame.dpr);
+        },
         // What this layer draws can be clicked, even where the star's magnitude wouldn't have it show yet. Same rules as the
         // shader above. Only called on a click or a hover
         picks(frame) {

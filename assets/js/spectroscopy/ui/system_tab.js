@@ -45,7 +45,7 @@ function summaryOf(model, canView) {
     if (body.black_hole) return 'A black hole and the star going round it. Gas from the star falls onto the disc.';
     if (body.neutron_star) {
         return body.neutron_star.pulsar
-            ? 'A neutron star, with its beams slowed right down. Really it turns far too fast to draw.'
+            ? 'A neutron star, turning as fast as it really does: its beams sweep past us once a turn.'
             : `A neutron star, on its own.${canView ? ' Drag to look round it.' : ''}`;
     }
     const n = model.planets.length;
