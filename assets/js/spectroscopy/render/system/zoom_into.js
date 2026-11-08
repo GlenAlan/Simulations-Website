@@ -337,7 +337,8 @@ export function createZoomInto(app, view) {
     // or null if none would: a double-click's flight stops a little short of it (ui/goto.js). The way down is scanned from
     // the widest it could be, then the last step is split a few times.
     function entryFov(code, widest = Infinity) {
-        const system = systemOf(app.universe.resolve(code));
+        const resolved = app.universe.resolve(code);
+        const system = systemOf(resolved);
         if (!system || app.view !== 'sky') return null;
         const frame = engine.currentFrame();
         let fov = Math.max(LIMIT_FOV, Math.min(handOverFov(system, frame), CAPTURE_FOV, widest));
@@ -348,17 +349,21 @@ export function createZoomInto(app, view) {
         }
         let wider = null;
         const started = performance.now();
+        // Only a cluster's star has a budget: anywhere else there are a few cheap looks, and where the flight stops mustn't
+        // depend on how busy the computer is
+        const inCluster = !!(resolved.body && resolved.body.cluster);
+        const overBudget = () => inCluster && performance.now() - started > ENTRY_BUDGET_MS;
         while (!wouldEnter(system, fov)) {
             if (fov <= LIMIT_FOV) return null;
             wider = fov;
             fov = Math.max(LIMIT_FOV, fov * ENTRY_SCAN_STEP);
             // Deep in a globular every look is a sweep through thousands of stars: past the budget, only the deepest zoom is
             // asked about, where whatever is pointed at goes in
-            if (performance.now() - started > ENTRY_BUDGET_MS && fov > LIMIT_FOV) {
+            if (overBudget() && fov > LIMIT_FOV) {
                 return wouldEnter(system, LIMIT_FOV) ? LIMIT_FOV : null;
             }
         }
-        for (let i = 0; wider && i < ENTRY_SPLITS && performance.now() - started <= ENTRY_BUDGET_MS; i++) {
+        for (let i = 0; wider && i < ENTRY_SPLITS && !overBudget(); i++) {
             const mid = Math.sqrt(fov * wider);
             if (wouldEnter(system, mid)) fov = mid;
             else wider = mid;
