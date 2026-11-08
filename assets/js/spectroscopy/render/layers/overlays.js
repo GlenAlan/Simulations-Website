@@ -5,7 +5,7 @@
 import { bus } from '../../core/state.js';
 import { GALACTIC_POLE, azAltToVec3, vec3ToAzAlt } from '../../core/sky.js';
 import { drawMag, parallaxFactor, travelPc } from '../../core/depth.js';
-import { shiftWords } from '../../core/format.js';
+import { shiftSpeed } from '../../core/format.js';
 import { C_KMS } from '../../core/phys.js';
 import { drawnSky } from './sky_tangent.js';
 import { sharedUniforms, travelSize } from '../shared.js';
@@ -51,16 +51,15 @@ export function angularRadiusDeg(entity, body) {
     return 0;
 }
 
-// As every shift is shown, in the same words as the panel's (core/format.js): z always, and the speed beside it while v = cz
-// still applies (spec 8.4), with z to the same figures, so a z just over 0.1 never reads as 0.1
-const STILL = 'z = 0, v = 0 km/s';      // Neither towards us nor away
+// As every shift is shown, in the same words as the panel's (core/format.js): a speed in km/s, from the object's own shift
+const STILL = '0 km/s';      // Neither towards us nor away
 function shiftLabel(body) {
     const v = body.radial_velocity_kms;
     const given = body.quasar ? body.quasar.z : (body.galaxy ? body.galaxy.z : null);
     const z = Number.isFinite(given) ? given : v / C_KMS;
     if (!Number.isFinite(z)) return null;
     if (z === 0) return STILL;
-    return shiftWords(z, { v: Number.isFinite(v) ? v : undefined, reason: false });
+    return shiftSpeed(z, Number.isFinite(v) ? v : undefined);
 }
 
 // A soft disc, drawn once for each colour and stamped at any size

@@ -14,7 +14,7 @@
 //
 // The real data may add fields or lack them, so every value is checked and a row with no value is left out.
 
-import { CZ_REASON, beyondCz, shiftWords, withCommas, sig, signed, wavelength, distance } from '../core/format.js';
+import { shiftDirection, shiftSpeed, withCommas, sig, signed, wavelength, distance } from '../core/format.js';
 import { AU, C_KMS, PC, LY_PER_PC, wienPeakNm, orbitalSpeedKms } from '../core/phys.js';
 import { pulsarKind, PULSE_SHOWN_HZ } from '../data/deep_sky.js';
 import { supernovaShellShows } from '../spectra/supernova.js';
@@ -35,20 +35,18 @@ const chem = (formula) => String(formula).replace(/\d/g, (d) => SUBSCRIPT[d]);
 
 const tempText = (T) => (isNum(T) ? `${T >= 1e5 ? sig(T, 3) : withCommas(T)} K` : null);
 
-// A shift as it is shown everywhere (core/format.js): z always, and v = cz beside it while that applies. z is the object's own
-// where it has one (a galaxy, a quasar), and v ÷ c otherwise.
+// A shift as it is shown everywhere (core/format.js): a speed in km/s, and which way. The shift is the object's own where it
+// has one (a galaxy, a quasar), and v ÷ c otherwise.
 function velocityText(v, z) {
     if (!isNum(v) && !isNum(z)) return null;
     const shift = isNum(z) ? z : v / C_KMS;
-    if (shift === 0) return 'z = 0, v = 0 km/s';
-    const dir = `moving ${shift > 0 ? 'away' : 'towards us'}`;
-    if (beyondCz(shift)) return `${shiftWords(shift, { reason: false })}, ${dir} (${CZ_REASON})`;
-    return `${shiftWords(shift, { v: isNum(v) ? v : undefined })} (${dir})`;
+    if (shift === 0) return '0 km/s';
+    return `${shiftSpeed(shift, isNum(v) ? v : undefined)} (${shiftDirection(shift)})`;
 }
 
-// A galaxy coming towards us, as the Local Group's can, has a blueshift and no recession
+// A galaxy moving away is receding with the expansion; one coming towards us, as the Local Group's can, has only a radial velocity
 function shiftLabel(v) {
-    return isNum(v) && v < 0 ? 'Blueshift and radial velocity' : 'Redshift and recession velocity';
+    return isNum(v) && v < 0 ? 'Radial velocity' : 'Recession velocity';
 }
 
 function distanceText(pc) {
@@ -836,7 +834,7 @@ function galaxyInfo({ entity }) {
         lead: 'Billions of stars, too far away to pick out one by one.',
         summary: 'Billions of stars, too far away to pick out one by one. Their light adds up to a single spectrum, and its redshift tells you how fast the galaxy is moving away.',
         notes: present(
-            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀, and v = cz while z is 0.1 or less. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Above z = 0.1, v = cz no longer applies, so quote z." },
+            { heading: 'Measuring the redshift', text: "Find the dark lines of starlight (Ca II H and K, Mg b, Na D) and see how far they have moved to longer wavelengths. Then z = Δλ/λ₀ and v = cz. Use the Velocity tool. A far galaxy's lines move a long way, so a dip near Hα's rest place may be another line moved there: check the pattern of several lines. Beyond about 30,000 km/s, v = cz no longer works, so the tool uses a formula that stays below the speed of light." },
             { heading: "Hubble's law", text: "In 1929 Edwin Hubble showed that the further away a galaxy is, the faster it recedes: v = H₀d. That is the evidence that the Universe is expanding. Read d with the Brightness tool, add the galaxy to the Hubble plot, and the gradient gives H₀." },
             MORPHOLOGY_NOTE[block.morphology],
             centreNote(entity.nucleus),
@@ -1022,13 +1020,13 @@ function quasarInfo({ entity }) {
         summary: 'It looks like a faint star, but it is the blazing core of a very distant galaxy, powered by gas falling into a supermassive black hole.',
         notes: [
             { heading: 'A huge redshift', text: 'The bright lines (Hα, Hβ, Mg II and Lyman-α) have moved so far that they are hard to recognise at first: λ = (1 + z)λ₀. Lyman-α sits at 121.6 nm in the lab, deep in the ultraviolet, but here it can land in visible light. Try matching the pattern of spacings.' },
-            { heading: 'Where v = cz fails', text: 'v = cz only works for small redshifts. It fails badly at a redshift this large, and above z = 1 it would even give a speed faster than light. The light has been stretched by the expansion of space on its way here, so quote z itself.' },
+            { heading: 'Where v = cz fails', text: 'v = cz only works for small redshifts. It fails badly at a redshift this large, and above z = 1 it would even give a speed faster than light, so the sim uses a formula that stays below the speed of light. Even that speed is only a rough picture: the light has been stretched by the expansion of space on its way here.' },
             { heading: 'Broad bright lines', text: 'Gas close to the black hole moves at thousands of km/s, so Doppler shifts spread its emission lines very wide. Compare them with the narrow lines of a nebula.' }
         ],
         rarity: 'Very rare: very roughly 1 in 100,000 galaxies hosts one today. That is only a rough figure, and it depends on how bright counts as a quasar. They were far more common about 10 billion years ago.',
         catalogue: clean([
-            row('Redshift', isNum(block.z) ? velocityText(null, block.z) : null),
-            row('Distance', isNum(block.z) || isNum(entity.distance_pc) ? "Too far for Hubble's straight line, v = H₀d, to apply" : null),
+            row('Recession velocity', isNum(block.z) ? velocityText(null, block.z) : null),
+            row('Distance', isNum(block.z) || isNum(entity.distance_pc) ? "Too far for Hubble's straight line to apply" : null),
             row('Radio-loud', yesNo(block.radio_loud)),
             row('Blazar', block.blazar === true ? 'Yes' : null),
             row('Measured brightness', isNum(entity.brightness?.flux_Wm2) ? `${sig(entity.brightness.flux_Wm2, 3)} W/m²` : null),

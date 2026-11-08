@@ -16,7 +16,7 @@
 
 import { REFERENCE_GROUPS } from '../../data/references.js';
 import { C_KMS, wienPeakNm } from '../../core/phys.js';
-import { CZ_REASON, beyondCz, shiftWords, speedText, withCommas, wavelength, zPlain } from '../../core/format.js';
+import { shiftDirection, shiftSpeed, withCommas, wavelength } from '../../core/format.js';
 
 const NONE = { id: 'none', label: 'No reference', kind: 'none' };
 let nextId = 0;
@@ -86,20 +86,15 @@ export function shiftSettings(entity) {
     return { unit: 'kms', min: -500, max: 500, step: 1 };
 }
 
-// "→ z = +0.0000600, v = +18 km/s, moving away": z always, and v = cz beside it until that stops applying (spec 8.4), as
-// every shift is shown (core/format.js)
+// "→ +18 km/s, moving away": as a speed, as every shift is shown (core/format.js)
 export function shiftText(z) {
     if (z === 0) return 'Not shifted';
-    const arrow = z > 0 ? '→' : '←';
-    const dir = z > 0 ? 'moving away' : 'moving towards us';
-    if (beyondCz(z)) return `${arrow} ${shiftWords(z, { reason: false })}, ${dir}. ${CZ_REASON}.`;
-    return `${arrow} ${shiftWords(z)}, ${dir}`;
+    return `${z > 0 ? '→' : '←'} ${shiftSpeed(z)}, ${shiftDirection(z)}`;
 }
 
-// The same, short, for a name: "z = +0.0000600, +18 km/s" or "z = +0.229"
+// The same, short, for a name: "+18 km/s"
 export function shiftShort(z) {
-    if (z === 0) return '';
-    return beyondCz(z) ? `z = ${zPlain(z)}` : `z = ${zPlain(z)}, ${speedText(z * C_KMS)}`;
+    return z === 0 ? '' : shiftSpeed(z);
 }
 
 // A button that repeats while it is held, for fine steps by touch or mouse; a key press gives one step

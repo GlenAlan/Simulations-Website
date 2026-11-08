@@ -5,7 +5,7 @@
 import { bus, select } from '../core/state.js';
 import { getMeasurement, recordMeasurement } from '../core/measurements.js';
 import { C_KMS, H0 } from '../core/phys.js';
-import { CZ_LIMIT, CZ_REASON, plusMinus as plusMinusOf, shiftWords, sig as sigOf, withCommas as commasOf, zPlain } from '../core/format.js';
+import { CZ_LIMIT, plusMinus as plusMinusOf, shiftSpeed, sig as sigOf, withCommas as commasOf } from '../core/format.js';
 import { isLocalGroup } from '../data/local_group.js';
 import { toolWords } from './spectrum/tools/index.js';
 import {
@@ -14,7 +14,11 @@ import {
     niceCeil, niceTicks, powerLabel, readSaved, showFigure, writeSaved, savedEntries, cleanSaved
 } from './plot2d.js';
 
-const Z_LIMIT = CZ_LIMIT;     // Above this, v = cz no longer applies (spec section 8.4): such a galaxy's speed is only rough
+// Above this shift, about 30,000 km/s, v = cz no longer holds (spec section 8.4): such a galaxy's speed is only rough. The plot
+// and its line still use cz for it, as Hubble's straight line does, so H₀ is as it always was; the rest of the panel gives the
+// speed for big shifts instead (core/format.js).
+const Z_LIMIT = CZ_LIMIT;
+const ROUGH_FROM_KMS = '30,000';
 const SUGGESTED_GALAXIES = 8;
 const RESIDUALS_HEIGHT = 120; // Extra height the residuals panel adds to the figure (px)
 const HEAVY_SHARE = 0.6;      // A galaxy with this much of the fit's weight is setting the line by itself
@@ -236,7 +240,7 @@ function mountHubble(container, app) {
         showResiduals = on;
         figure.redraw();
     }, 'How far each point sits above or below the line');
-    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `z above ${Z_LIMIT}, where v = cz no longer applies: speed only rough`);
+    const hollowKey = el('span', { hidden: true }, markerIcon('circle', { hollow: true }), `Beyond about ${ROUGH_FROM_KMS} km/s: speed only rough`);
     const legend = el('div', { class: 'spectro-fig-legend', hidden: true },
         el('span', {}, markerIcon('circle'), 'Galaxy'), hollowKey);
     root.append(options, legend);
@@ -290,15 +294,17 @@ function mountHubble(container, app) {
             if (v === null || !(m.distance_pc > 0)) return null;
             const dMpc = m.distance_pc / 1e6;
             const z = Number.isFinite(m.z) ? m.z : v / C_KMS;
-            // The shift as it is shown everywhere: z, with v beside it while v = cz applies, and the reason when it doesn't
-            const shift = Math.abs(z) > Z_LIMIT
-                ? `z = ${zPlain(z)}: ${CZ_REASON}, so this speed, from v = cz, is only rough`
-                : shiftWords(z, { v });
+            // Beyond the limit the plot still takes a tool's c × Δλ ÷ λ₀, as Hubble's straight line does, and says so
+            const rough = Math.abs(z) > Z_LIMIT
+                ? (Number.isFinite(m.z)
+                    ? `This plot uses c × Δλ ÷ λ₀ for every galaxy, as Hubble's straight line does. Beyond about ${ROUGH_FROM_KMS} km/s that speed is only rough`
+                    : `Beyond about ${ROUGH_FROM_KMS} km/s a speed is only rough`)
+                : null;
             return [
-                shift,
+                rough,
                 `d = ${sig(m.distance_pc, 3)} pc = ${sig(dMpc, 3)} Mpc`,
                 `v ÷ d = ${signedSpeed(v)} km/s ÷ ${sig(dMpc, 3)} Mpc = ${sig(v / dMpc, 3)} km/s/Mpc`
-            ];
+            ].filter(Boolean);
         },
         isPlotted: (code) => plotted.has(code),
         onAdd(code) {
@@ -338,15 +344,14 @@ function mountHubble(container, app) {
     const list = createPlottedList(root, 'Your galaxies', () => readout, clearGalaxies);
     const table = createDataTable(root, {
         label: 'Plotted galaxies',
-        columns: ['Point', 'Code', 'Distance (Mpc)', 'Speed (km/s)', 'z', 'Residual (km/s)'],
+        columns: ['Point', 'Code', 'Distance (Mpc)', 'Speed (km/s)', 'Residual (km/s)'],
         rows() {
             const fit = currentFit();
             return galaxyPoints().map((p) => [
                 String(plotted.get(p.code)),
                 { button: p.code, label: `Select ${p.code}`, onClick: () => select(p.code) },
                 sig(p.dMpc, 3),
-                p.vErr > 0 ? plusMinus(p.v, p.vErr) : withCommas(p.v),
-                zPlain(p.z, 2),
+                `${p.vErr > 0 ? plusMinus(p.v, p.vErr) : withCommas(p.v)}${Math.abs(p.z) > Z_LIMIT ? ' (rough)' : ''}`,
                 fit ? signedSpeed(p.v - fit.slope * p.dMpc) : ''
             ]);
         }
@@ -378,11 +383,11 @@ function mountHubble(container, app) {
         const z = measuredZ !== null ? measuredZ : body.quasar.z;
         const v = z * C_KMS;
         const compared = z >= 1
-            ? `which is faster than light. That can't be right: nothing moves through space that fast`
-            : `which is a large share of the speed of light, far too much for that simple formula to hold`;
+            ? 'faster than light, which can\'t be right: nothing moves through space that fast'
+            : 'a large share of the speed of light, far too much for that simple formula to hold';
         quasarNote.replaceChildren(
             el('p', { class: 'spectro-fig-card-title', text: `Quasar ${body.code}` }),
-            el('p', { class: 'spectro-fig-readout', text: `z = ${zPlain(z)}` }),
+            el('p', { class: 'spectro-fig-readout', text: shiftSpeed(z) }),
             el('p', { class: 'spectro-fig-card-status', text: measuredZ !== null ? 'From your Doppler measurement.' : 'From the catalogue.' }),
             el('div', { class: 'spectro-fig-measure', hidden: measuredZ !== null },
                 el('span', { class: 'spectro-fig-measure-word', text: 'Measure it yourself with' }),
@@ -390,10 +395,10 @@ function mountHubble(container, app) {
                     type: 'button',
                     class: 'spectro-fig-tool',
                     text: toolWords({ id: 'doppler' }).short,
-                    'aria-label': `Measure z with ${toolWords({ id: 'doppler' }).short}, in the Spectrum tab`,
+                    'aria-label': `Measure its speed with ${toolWords({ id: 'doppler' }).short}, in the Spectrum tab`,
                     onclick: () => app.spectrumPanel.openTool('doppler', { from: 'hubble', focus: true })
                 })),
-            el('p', { text: `A quasar can't go on this plot. Using v = cz here would give ${sig(v, 3)} km/s, ${compared}. Its light has been stretched by the expanding Universe during a very long journey, so astronomers quote z itself instead of a speed.` }));
+            el('p', { text: `A quasar can't go on this plot: it is too far away for Hubble's straight line. The simple v = cz would give ${sig(v, 3)} km/s, ${compared}, so the speed above comes from a formula that stays below the speed of light. Even that is only a rough picture: its light has been stretched by the expanding Universe during a very long journey.` }));
     }
 
     function refresh() {
@@ -617,8 +622,7 @@ function mountHubble(container, app) {
         if (point) {
             figure.showTip(point.px, point.py, [
                 point.code,
-                `${sig(point.dMpc, 3)} Mpc, ${withCommas(point.v)} km/s`,
-                `z = ${zPlain(point.z, 2)}`
+                `${sig(point.dMpc, 3)} Mpc, ${withCommas(point.v)} km/s`
             ]);
         } else {
             figure.hideTip();

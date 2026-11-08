@@ -45,24 +45,22 @@ export function signed(x, digits = 0) {
     return `${x < 0 ? '−' : '+'}${text}`;
 }
 
-// ---------- A shift along the line of sight, said the same way everywhere ----------
-// z always. While |z| is 0.1 or less, the speed v = cz beside it. Above 0.1, v = cz no longer applies (spec 8.4), so z alone,
-// with that reason where there's room for it.
+// ---------- A shift along the line of sight, said the same way everywhere: as a speed in km/s ----------
+// Up to a shift z = Δλ/λ₀ of 0.1, about 30,000 km/s, the speed is v = cz. Beyond that v = cz no longer holds (spec 8.4), and for
+// a quasar it would pass the speed of light, so the speed is the relativistic Doppler one, which stays below c, to 3 figures.
+// Only what is shown changes: measurements, and the Hubble plot's speeds, stay cz.
 
 export const CZ_LIMIT = 0.1;
-export const CZ_REASON = 'v = cz no longer applies above z = 0.1';
 
 export function beyondCz(z) {
     return Math.abs(z) > CZ_LIMIT;
 }
 
-// "+0.0234", "+0.0000600": z as a plain decimal to n significant figures, signed
-export function zPlain(z, n = 3) {
-    if (!Number.isFinite(z)) return String(z);
-    if (z === 0) return '0';
-    const size = Math.abs(z);
-    const places = Math.min(7, Math.max(1, n - 1 - Math.floor(Math.log10(size))));
-    return `${z < 0 ? '−' : '+'}${size.toFixed(places)}`;
+// The speed a shift gives: cz up to the limit, and past it c((1+z)² − 1)/((1+z)² + 1)
+export function speedOfShift(z) {
+    if (!beyondCz(z)) return z * C_KMS;
+    const s = (1 + z) ** 2;
+    return (C_KMS * (s - 1)) / (s + 1);
 }
 
 // "+18 km/s", "+7,020 km/s", "−2.4 km/s"
@@ -73,10 +71,24 @@ export function speedText(v) {
     return `${v < 0 ? '−' : '+'}${size >= 1000 ? withCommas(size) : size.toFixed(size < 10 ? 1 : 0)} km/s`;
 }
 
-// "z = +0.0234, v = +7,020 km/s", or "z = +0.229 (v = cz no longer applies above z = 0.1)". v defaults to cz.
-export function shiftWords(z, { v = z * C_KMS, n = 3, reason = true } = {}) {
-    if (beyondCz(z)) return reason ? `z = ${zPlain(z, n)} (${CZ_REASON})` : `z = ${zPlain(z, n)}`;
-    return `z = ${zPlain(z, n)}, v = ${speedText(v)}`;
+// "+91,400 km/s": a speed to 3 significant figures
+export function roundSpeedText(v) {
+    if (!Number.isFinite(v)) return String(v);
+    if (v === 0) return '0 km/s';
+    return `${v < 0 ? '−' : '+'}${Number(Math.abs(v).toPrecision(3)).toLocaleString('en-AU')} km/s`;
+}
+
+// A shift as its speed: "+7,020 km/s" while v = cz holds, from v if given (an object's own catalogue speed) and cz if not, and
+// "+91,400 km/s", to 3 figures, beyond it
+export function shiftSpeed(z, v) {
+    if (beyondCz(z)) return roundSpeedText(speedOfShift(z));
+    return speedText(Number.isFinite(v) ? v : z * C_KMS);
+}
+
+// Which way: "moving away", "moving towards us"
+export function shiftDirection(z) {
+    if (z === 0) return 'neither towards nor away';
+    return z > 0 ? 'moving away' : 'moving towards us';
 }
 
 // A wavelength in the unit that reads best: nm below 1 µm, µm above
