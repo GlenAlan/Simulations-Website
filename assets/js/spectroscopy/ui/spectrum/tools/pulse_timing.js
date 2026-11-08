@@ -159,8 +159,8 @@ function mount(container, api) {
             const scaled = period * unit.perS;
             const speeds = [scaled / 2, scaled, 2 * scaled].map((s) => Number(s.toPrecision(2)));
             rate.textContent = pulses > 2
-                ? `${pulsesText}. Slowed right down here, to at most 2 a second, so that it can be watched.`
-                : `${pulsesText}. Played at a rate that's easy to follow.`;
+                ? `${pulsesText}. The trace below plays them at up to 2 a second, so that each pulse can be followed.`
+                : `${pulsesText}. The trace below plays them at a rate that's easy to follow.`;
             playback = createPlayback(controls, {
                 label: 'Pulse playback',
                 speeds,
